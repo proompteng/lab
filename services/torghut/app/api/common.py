@@ -51,7 +51,6 @@ from ..models import (
     WhitepaperRolloutTransition,
 )
 from ..observability import capture_posthog_event, shutdown_posthog_telemetry
-from ..trading import TradingScheduler
 from ..trading.alpha_closure_dividend_slo import build_alpha_closure_dividend_slo
 from ..trading.alpha_evidence_foundry import compact_alpha_evidence_foundry
 from ..trading.alpha_readiness_settlement_conveyor import (
@@ -165,6 +164,7 @@ from ..trading.routeability_repair_acceptance import (
     build_routeability_repair_acceptance_ledger,
 )
 from ..trading.route_reacquisition_board import build_route_reacquisition_board
+from ..trading.scheduler import TradingScheduler
 from ..trading.source_serving_repair_receipt import (
     build_source_serving_repair_receipt_ledger,
 )

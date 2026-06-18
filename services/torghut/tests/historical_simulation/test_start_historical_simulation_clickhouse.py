@@ -146,7 +146,8 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
                 captured["closed"] = True
 
         with patch(
-            "scripts.historical_simulation_verification.HTTPConnection", _FakeConnection
+            "scripts.historical_simulation_verification_modules.shared_runtime.HTTPConnection",
+            _FakeConnection,
         ):
             status, body = _http_clickhouse_query(
                 config=ClickHouseRuntimeConfig(
@@ -217,11 +218,11 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
 
         with (
             patch(
-                "scripts.historical_simulation_verification.HTTPConnection",
+                "scripts.historical_simulation_verification_modules.shared_runtime.HTTPConnection",
                 _FakeConnection,
             ),
             patch(
-                "scripts.historical_simulation_verification._kubectl_json",
+                "scripts.historical_simulation_verification_modules.shared_runtime._kubectl_json",
                 side_effect=_fake_kubectl_json,
             ),
         ):
@@ -248,7 +249,7 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
             password="secret",
         )
         with patch(
-            "scripts.start_historical_simulation._kubectl_json",
+            "scripts.start_historical_simulation_modules.storage_and_database._kubectl_json",
             return_value={
                 "subsets": [
                     {
@@ -285,7 +286,7 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
 
         with (
             patch(
-                "scripts.start_historical_simulation._kubectl_json",
+                "scripts.start_historical_simulation_modules.storage_and_database._kubectl_json",
                 return_value={
                     "subsets": [
                         {
@@ -298,7 +299,7 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
                 },
             ),
             patch(
-                "scripts.start_historical_simulation._http_clickhouse_query",
+                "scripts.start_historical_simulation_modules.storage_and_database._http_clickhouse_query",
                 side_effect=_fake_clickhouse_query,
             ),
         ):
@@ -364,25 +365,25 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
             with ExitStack() as stack:
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_supported_binary",
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_supported_binary",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_lz4_codec_available",
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_lz4_codec_available",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._acquire_simulation_runtime_lock",
+                        "scripts.start_historical_simulation_modules.replay_execution._acquire_simulation_runtime_lock",
                         return_value={"status": "acquired", "run_id": resources.run_id},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._capture_cluster_state",
+                        "scripts.start_historical_simulation_modules.replay_execution._capture_cluster_state",
                         return_value={
                             "ta_data": {
                                 "TA_GROUP_ID": "prod-ta-group",
@@ -394,95 +395,95 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_topics",
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_topics",
                         return_value={"status": "ok"},
                     ),
                 )
                 ensure_db = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_clickhouse_database"
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_database"
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_clickhouse_runtime_tables",
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_clickhouse_runtime_tables",
                         return_value=None,
                     ),
                 )
                 ensure_postgres_db = stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_postgres_database"
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_database"
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ensure_postgres_runtime_permissions",
+                        "scripts.start_historical_simulation_modules.replay_execution._ensure_postgres_runtime_permissions",
                         return_value={"grants_applied": True},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._run_migrations",
+                        "scripts.start_historical_simulation_modules.replay_execution._run_migrations",
                         return_value=None,
                     )
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._reset_postgres_runtime_state",
+                        "scripts.start_historical_simulation_modules.replay_execution._reset_postgres_runtime_state",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._seed_simulation_trade_cursor",
+                        "scripts.start_historical_simulation_modules.replay_execution._seed_simulation_trade_cursor",
                         return_value=datetime(2026, 2, 27, 14, 30, tzinfo=timezone.utc),
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._upsert_simulation_runtime_context",
+                        "scripts.start_historical_simulation_modules.replay_execution._upsert_simulation_runtime_context",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._dump_topics",
+                        "scripts.start_historical_simulation_modules.replay_execution._dump_topics",
                         return_value={"records": 1, "sha256": "abc"},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._validate_dump_coverage",
+                        "scripts.start_historical_simulation_modules.replay_execution._validate_dump_coverage",
                         return_value={"coverage_ratio": 1.0},
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._ta_runtime_reconfigure_required",
+                        "scripts.start_historical_simulation_modules.replay_execution._ta_runtime_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._torghut_service_reconfigure_required",
+                        "scripts.start_historical_simulation_modules.replay_execution._torghut_service_reconfigure_required",
                         return_value=True,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._configure_ta_for_simulation",
+                        "scripts.start_historical_simulation_modules.replay_execution._configure_ta_for_simulation",
                         return_value=None,
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._restart_ta_deployment",
+                        "scripts.start_historical_simulation_modules.replay_execution._restart_ta_deployment",
                         return_value="nonce",
                     ),
                 )
                 stack.enter_context(
                     patch(
-                        "scripts.start_historical_simulation._configure_torghut_service_for_simulation",
+                        "scripts.start_historical_simulation_modules.replay_execution._configure_torghut_service_for_simulation",
                         return_value=None,
                     ),
                 )

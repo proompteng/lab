@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
 from http.client import HTTPConnection, HTTPSConnection
-from typing import Any, TypeVar
 
 from scripts.historical_simulation_verification_modules import (
     artifact_verification as _artifact,
@@ -18,7 +16,6 @@ from scripts.historical_simulation_verification_modules import (
 )
 from scripts.historical_simulation_verification_modules import shared_runtime as _shared
 
-_T = TypeVar("_T")
 
 PRODUCTION_TOPIC_BY_ROLE = _shared.PRODUCTION_TOPIC_BY_ROLE
 TORGHUT_ENV_KEYS = _shared.TORGHUT_ENV_KEYS
@@ -45,30 +42,6 @@ DEFAULT_SIMULATION_ORDER_FEED_GROUP_ID = _shared.DEFAULT_SIMULATION_ORDER_FEED_G
 DEFAULT_SIMULATION_TA_GROUP_ID = _shared.DEFAULT_SIMULATION_TA_GROUP_ID
 MONITOR_PROFILE_DEFAULTS = _shared.MONITOR_PROFILE_DEFAULTS
 TRANSIENT_POSTGRES_ERROR_PATTERNS = _shared.TRANSIENT_POSTGRES_ERROR_PATTERNS
-
-_ORIGINAL_HTTP_CLICKHOUSE_QUERY = _shared._http_clickhouse_query
-_ORIGINAL_DEPLOYMENT_REPLICA_HEALTH = _shared._deployment_replica_health
-_ORIGINAL_FLINK_RUNTIME_HEALTH = _shared._flink_runtime_health
-_ORIGINAL_KSERVICE_ENV = _runtime._kservice_env
-_ORIGINAL_MONITOR_SNAPSHOT = _runtime._monitor_snapshot
-_ORIGINAL_PROGRESS_COMPONENT_SNAPSHOT = _runtime._progress_component_snapshot
-_ORIGINAL_CLICKHOUSE_TABLE_ACTIVITY = _runtime._clickhouse_table_activity
-_ORIGINAL_SIGNAL_SNAPSHOT = _runtime._signal_snapshot
-_ORIGINAL_SIMULATION_PROGRESS_SNAPSHOT = _runtime._simulation_progress_snapshot
-_ORIGINAL_ACTIVITY_STATE = _runtime._activity_state
-_ORIGINAL_RUNTIME_VERIFY = _runtime._runtime_verify
-_ORIGINAL_SCHEMA_REGISTRY_HEALTH = _runtime._schema_registry_health
-_ORIGINAL_HTTP_JSON_GET = _artifact._http_json_get
-_ORIGINAL_ANALYSIS_IMAGE_FRESHNESS = _artifact._analysis_image_freshness
-_ORIGINAL_ANALYSIS_TEMPLATE_NAMES = _artifact._analysis_template_names
-_ORIGINAL_ANALYSIS_TEMPLATE_IMAGE = _artifact._analysis_template_image
-_ORIGINAL_CURRENT_ACTIVITY_REPORT = _artifact._current_activity_report
-_ORIGINAL_MONITOR_RUN_COMPLETION = _artifact._monitor_run_completion
-_ORIGINAL_VERIFY_ISOLATION_GUARDS = _artifact._verify_isolation_guards
-_ORIGINAL_TEARDOWN_CLEAN = _artifact._teardown_clean
-_ORIGINAL_ARTIFACT_BUNDLE = _artifact._artifact_bundle
-_ORIGINAL_PATCH_TARGETS: dict[str, object] = {}
-_FACADE_PATCH_TARGETS: dict[str, object] = {}
 
 _as_mapping = _shared._as_mapping
 _as_text = _shared._as_text
@@ -99,118 +72,27 @@ _first_text = _shared._first_text
 _classify_restore_state_error = _shared._classify_restore_state_error
 
 
-def _sync_patch_targets() -> None:
-    patch_targets = {
-        "HTTPConnection": HTTPConnection,
-        "HTTPSConnection": HTTPSConnection,
-        "time": time,
-        "_kubectl_json": _kubectl_json,
-        "_deployment_replica_health": _deployment_replica_health,
-        "_flink_runtime_health": _flink_runtime_health,
-        "_http_json_get": _http_json_get,
-        "_monitor_snapshot": _monitor_snapshot,
-        "_signal_snapshot": _signal_snapshot,
-        "_progress_component_snapshot": _progress_component_snapshot,
-        "_simulation_progress_snapshot": _simulation_progress_snapshot,
-    }
-    for module in (_shared, _progress, _runtime, _artifact):
-        for name, value in patch_targets.items():
-            if hasattr(module, name):
-                facade = _FACADE_PATCH_TARGETS.get(name)
-                if facade is not None and value is facade:
-                    value = _ORIGINAL_PATCH_TARGETS[name]
-                setattr(module, name, value)
-
-
-def _delegate(func: Callable[..., _T], *args: Any, **kwargs: Any) -> _T:
-    _sync_patch_targets()
-    return func(*args, **kwargs)
-
-
-def _http_clickhouse_query(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_HTTP_CLICKHOUSE_QUERY, *args, **kwargs)
-
-
-def _deployment_replica_health(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_DEPLOYMENT_REPLICA_HEALTH, *args, **kwargs)
-
-
-def _flink_runtime_health(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_FLINK_RUNTIME_HEALTH, *args, **kwargs)
-
-
-def _kservice_env(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_KSERVICE_ENV, *args, **kwargs)
-
-
-def _monitor_snapshot(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_MONITOR_SNAPSHOT, *args, **kwargs)
-
-
-def _progress_component_snapshot(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_PROGRESS_COMPONENT_SNAPSHOT, *args, **kwargs)
-
-
-def _clickhouse_table_activity(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_CLICKHOUSE_TABLE_ACTIVITY, *args, **kwargs)
-
-
-def _signal_snapshot(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_SIGNAL_SNAPSHOT, *args, **kwargs)
-
-
-def _simulation_progress_snapshot(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_SIMULATION_PROGRESS_SNAPSHOT, *args, **kwargs)
-
-
-def _activity_state(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_ACTIVITY_STATE, *args, **kwargs)
-
-
-def _runtime_verify(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_RUNTIME_VERIFY, *args, **kwargs)
-
-
-def _schema_registry_health(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_SCHEMA_REGISTRY_HEALTH, *args, **kwargs)
-
-
-def _http_json_get(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_HTTP_JSON_GET, *args, **kwargs)
-
-
-def _analysis_image_freshness(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_ANALYSIS_IMAGE_FRESHNESS, *args, **kwargs)
-
-
-def _analysis_template_names(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_ANALYSIS_TEMPLATE_NAMES, *args, **kwargs)
-
-
-def _analysis_template_image(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_ANALYSIS_TEMPLATE_IMAGE, *args, **kwargs)
-
-
-def _current_activity_report(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_CURRENT_ACTIVITY_REPORT, *args, **kwargs)
-
-
-def _monitor_run_completion(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_MONITOR_RUN_COMPLETION, *args, **kwargs)
-
-
-def _verify_isolation_guards(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_VERIFY_ISOLATION_GUARDS, *args, **kwargs)
-
-
-def _teardown_clean(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_TEARDOWN_CLEAN, *args, **kwargs)
-
-
-def _artifact_bundle(*args: Any, **kwargs: Any) -> Any:
-    return _delegate(_ORIGINAL_ARTIFACT_BUNDLE, *args, **kwargs)
-
-
+_http_clickhouse_query = _shared._http_clickhouse_query
+_deployment_replica_health = _shared._deployment_replica_health
+_flink_runtime_health = _shared._flink_runtime_health
+_kservice_env = _runtime._kservice_env
+_monitor_snapshot = _progress._monitor_snapshot
+_progress_component_snapshot = _progress._progress_component_snapshot
+_clickhouse_table_activity = _progress._clickhouse_table_activity
+_signal_snapshot = _progress._signal_snapshot
+_simulation_progress_snapshot = _progress._simulation_progress_snapshot
+_activity_state = _progress._activity_state
+_runtime_verify = _runtime._runtime_verify
+_schema_registry_health = _runtime._schema_registry_health
+_http_json_get = _artifact._http_json_get
+_analysis_image_freshness = _artifact._analysis_image_freshness
+_analysis_template_names = _artifact._analysis_template_names
+_analysis_template_image = _artifact._analysis_template_image
+_current_activity_report = _artifact._current_activity_report
+_monitor_run_completion = _artifact._monitor_run_completion
+_verify_isolation_guards = _artifact._verify_isolation_guards
+_teardown_clean = _artifact._teardown_clean
+_artifact_bundle = _artifact._artifact_bundle
 _infer_monitor_profile = _runtime._infer_monitor_profile
 _monitor_settings = _runtime._monitor_settings
 _effective_terminal_signal_ts = _runtime._effective_terminal_signal_ts
@@ -219,29 +101,6 @@ _clickhouse_database_from_table_name = _runtime._clickhouse_database_from_table_
 _cursor_reached_terminal = _runtime._cursor_reached_terminal
 _classify_activity_snapshot = _runtime._classify_activity_snapshot
 _expected_schema_subjects = _artifact._expected_schema_subjects
-
-_ORIGINAL_PATCH_TARGETS.update(
-    {
-        "_deployment_replica_health": _ORIGINAL_DEPLOYMENT_REPLICA_HEALTH,
-        "_flink_runtime_health": _ORIGINAL_FLINK_RUNTIME_HEALTH,
-        "_http_json_get": _ORIGINAL_HTTP_JSON_GET,
-        "_monitor_snapshot": _ORIGINAL_MONITOR_SNAPSHOT,
-        "_progress_component_snapshot": _ORIGINAL_PROGRESS_COMPONENT_SNAPSHOT,
-        "_signal_snapshot": _ORIGINAL_SIGNAL_SNAPSHOT,
-        "_simulation_progress_snapshot": _ORIGINAL_SIMULATION_PROGRESS_SNAPSHOT,
-    }
-)
-_FACADE_PATCH_TARGETS.update(
-    {
-        "_deployment_replica_health": _deployment_replica_health,
-        "_flink_runtime_health": _flink_runtime_health,
-        "_http_json_get": _http_json_get,
-        "_monitor_snapshot": _monitor_snapshot,
-        "_progress_component_snapshot": _progress_component_snapshot,
-        "_signal_snapshot": _signal_snapshot,
-        "_simulation_progress_snapshot": _simulation_progress_snapshot,
-    }
-)
 
 __all__ = [
     "DEFAULT_COVERAGE_STRICT_RATIO",
@@ -317,7 +176,6 @@ __all__ = [
     "_schema_registry_health",
     "_signal_snapshot",
     "_simulation_progress_snapshot",
-    "_sync_patch_targets",
     "_teardown_clean",
     "_validate_dump_coverage",
     "_validate_us_equities_regular_profile",

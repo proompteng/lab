@@ -8,7 +8,7 @@ from app import main as main_module
 from app.api import common as api_common
 from app.api import proofs as proofs_api
 from app.api.application import get_app
-from app.trading import TradingScheduler
+from app.trading.scheduler import TradingScheduler
 
 
 def _route_methods() -> dict[str, set[str]]:

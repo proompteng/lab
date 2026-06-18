@@ -246,17 +246,17 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
 
         with (
             patch(
-                "scripts.start_historical_simulation._kubectl_delete_if_exists",
+                "scripts.start_historical_simulation_modules.argocd_rollouts._kubectl_delete_if_exists",
                 return_value=None,
             ),
             patch(
-                "scripts.start_historical_simulation._kubectl_apply",
+                "scripts.start_historical_simulation_modules.argocd_rollouts._kubectl_apply",
                 side_effect=lambda namespace, payload: captured_apply.update(
                     {"namespace": namespace, "payload": payload}
                 ),
             ),
             patch(
-                "scripts.start_historical_simulation._kubectl_json",
+                "scripts.start_historical_simulation_modules.argocd_rollouts._kubectl_json",
                 side_effect=_fake_kubectl_json,
             ),
         ):
@@ -394,11 +394,11 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         }
         with (
             patch(
-                "scripts.start_historical_simulation._kubectl_json_global",
+                "scripts.start_historical_simulation_modules.kubernetes_argocd._kubectl_json_global",
                 side_effect=[payload_auto, payload_manual],
             ),
             patch(
-                "scripts.start_historical_simulation._kubectl_patch_json"
+                "scripts.start_historical_simulation_modules.kubernetes_argocd._kubectl_patch_json"
             ) as patch_mock,
         ):
             report = _set_argocd_automation_mode(
@@ -445,10 +445,12 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         }
         with (
             patch(
-                "scripts.start_historical_simulation._kubectl_json_global",
+                "scripts.start_historical_simulation_modules.kubernetes_argocd._kubectl_json_global",
                 side_effect=[payload_auto, payload_manual],
             ),
-            patch("scripts.start_historical_simulation._kubectl_patch") as patch_mock,
+            patch(
+                "scripts.start_historical_simulation_modules.kubernetes_argocd._kubectl_patch"
+            ) as patch_mock,
         ):
             report = _set_argocd_application_sync_policy(
                 config=ArgocdAutomationConfig(
@@ -493,7 +495,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
         self.assertNotIn("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS", ignore_jq)
         with (
             patch(
-                "scripts.start_historical_simulation._read_argocd_applicationset_entry",
+                "scripts.start_historical_simulation_modules.service_environment._read_argocd_applicationset_entry",
                 side_effect=[
                     {
                         "pointer": "/spec/generators/0/list/elements/0",
@@ -510,7 +512,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
                 ],
             ),
             patch(
-                "scripts.start_historical_simulation._read_named_argocd_application_sync_policy",
+                "scripts.start_historical_simulation_modules.service_environment._read_named_argocd_application_sync_policy",
                 return_value={
                     "sync_policy": None,
                     "automation_mode": "manual",
@@ -518,7 +520,7 @@ class TestStartHistoricalSimulationArgocdA(StartHistoricalSimulationTestCaseBase
                 },
             ),
             patch(
-                "scripts.start_historical_simulation._kubectl_patch_json"
+                "scripts.start_historical_simulation_modules.service_environment._kubectl_patch_json"
             ) as patch_mock,
         ):
             report = (

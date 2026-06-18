@@ -73,7 +73,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
                 return None
 
         with patch(
-            "scripts.historical_simulation_verification.HTTPConnection",
+            "scripts.historical_simulation_verification_modules.artifact_verification.HTTPConnection",
             _FakeConnection,
         ):
             status, body = historical_simulation_verification._http_json_get(
@@ -200,7 +200,8 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
                 captured["closed"] = True
 
         with patch(
-            "scripts.historical_simulation_verification.HTTPConnection", _FakeConnection
+            "scripts.historical_simulation_verification_modules.artifact_verification.HTTPConnection",
+            _FakeConnection,
         ):
             status, body = historical_simulation_verification._http_json_get(
                 "http://schema-registry:8081",
@@ -472,8 +473,9 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
                 '{"type":"record","name":"Signal","fields":[]}', encoding="utf-8"
             )
 
-            with patch.object(
-                start_historical_simulation, "__file__", str(script_path)
+            with patch(
+                "scripts.start_historical_simulation_modules.kafka_runtime.__file__",
+                str(script_path),
             ):
                 specs = _simulation_schema_registry_subject_specs(resources=resources)
 
