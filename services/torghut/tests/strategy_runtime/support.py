@@ -28,6 +28,7 @@ from app.trading.strategy_runtime import (
     MicrobarCrossSectionalLongPlugin,
     MicrobarCrossSectionalPairsPlugin,
     MicrobarCrossSectionalShortPlugin,
+    PluginEvaluationResult,
     StrategyContext,
     StrategyDefinition,
     StrategyIntent,
@@ -48,7 +49,9 @@ class _FailingPlugin:
     version = "1.0.0"
     required_features = ("macd",)
 
-    def evaluate(self, context: StrategyContext, features):  # type: ignore[no-untyped-def]
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
         _ = context
         _ = features
         raise RuntimeError("boom")
@@ -59,19 +62,21 @@ class _BuyPlugin:
     version = "1.0.0"
     required_features = ("price",)
 
-    def evaluate(  # type: ignore[no-untyped-def]
-        self, context: StrategyContext, features
-    ) -> StrategyIntent:
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction="buy",
-            confidence=Decimal("0.90"),
-            target_notional=Decimal("100"),
-            horizon=context.timeframe,
-            explain=("buy_signal",),
-            feature_snapshot_hash=features.normalization_hash,
-            required_features=self.required_features,
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction="buy",
+                confidence=Decimal("0.90"),
+                target_notional=Decimal("100"),
+                horizon=context.timeframe,
+                explain=("buy_signal",),
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=self.required_features,
+            )
         )
 
 
@@ -80,19 +85,21 @@ class _SellPlugin:
     version = "1.0.0"
     required_features = ("price",)
 
-    def evaluate(  # type: ignore[no-untyped-def]
-        self, context: StrategyContext, features
-    ) -> StrategyIntent:
-        return StrategyIntent(
-            strategy_id=context.strategy_id,
-            symbol=context.symbol,
-            direction="sell",
-            confidence=Decimal("0.40"),
-            target_notional=Decimal("200"),
-            horizon=context.timeframe,
-            explain=("sell_signal",),
-            feature_snapshot_hash=features.normalization_hash,
-            required_features=self.required_features,
+    def evaluate(
+        self, context: StrategyContext, features: FeatureVectorV3
+    ) -> PluginEvaluationResult:
+        return PluginEvaluationResult(
+            intent=StrategyIntent(
+                strategy_id=context.strategy_id,
+                symbol=context.symbol,
+                direction="sell",
+                confidence=Decimal("0.40"),
+                target_notional=Decimal("200"),
+                horizon=context.timeframe,
+                explain=("sell_signal",),
+                feature_snapshot_hash=features.normalization_hash,
+                required_features=self.required_features,
+            )
         )
 
 
@@ -114,8 +121,6 @@ def _test_feature_vector(
     )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "FeatureNormalizationError",
@@ -125,6 +130,7 @@ __all__: tuple[str, ...] = (
     "MicrobarCrossSectionalLongPlugin",
     "MicrobarCrossSectionalPairsPlugin",
     "MicrobarCrossSectionalShortPlugin",
+    "PluginEvaluationResult",
     "SignalEnvelope",
     "Strategy",
     "StrategyCatalogConfig",

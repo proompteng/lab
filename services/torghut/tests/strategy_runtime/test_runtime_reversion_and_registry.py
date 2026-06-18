@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from tests.strategy_runtime.support import (
     Decimal,
+    FeatureVectorV3,
     GateTrace,
     LegacyMacdRsiPlugin,
+    PluginEvaluationResult,
     SignalEnvelope,
     Strategy,
     StrategyConfig,
+    StrategyContext,
     StrategyRegistry,
     StrategyRuntime,
     StrategyTrace,
@@ -651,10 +654,12 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
             version = "1.0.0"
             required_features = ("price", "not_in_feature_contract")
 
-            def evaluate(self, context, features):  # type: ignore[no-untyped-def]
+            def evaluate(
+                self, context: StrategyContext, features: FeatureVectorV3
+            ) -> PluginEvaluationResult:
                 _ = context
                 _ = features
-                return None
+                return PluginEvaluationResult(intent=None)
 
         strategy = Strategy(
             id=uuid.uuid4(),

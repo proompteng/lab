@@ -3,7 +3,9 @@ from __future__ import annotations
 from tests.decisions.support import (
     Decimal,
     DecisionEngine,
+    FeatureVectorV3,
     MarketSnapshot,
+    PluginEvaluationResult,
     PriceFetcher,
     SignalEnvelope,
     Strategy,
@@ -77,10 +79,12 @@ class TestDecisionEngineCore(TestCase):
 
     def test_price_snapshot_attached_when_fetched(self) -> None:
         class DummyFetcher(PriceFetcher):
-            def fetch_price(self, signal: SignalEnvelope):  # type: ignore[override]
+            def fetch_price(self, signal: SignalEnvelope) -> Decimal | None:
                 return None
 
-            def fetch_market_snapshot(self, signal: SignalEnvelope):  # type: ignore[override]
+            def fetch_market_snapshot(
+                self, signal: SignalEnvelope
+            ) -> MarketSnapshot | None:
                 return MarketSnapshot(
                     symbol=signal.symbol,
                     as_of=signal.event_ts,
@@ -535,17 +539,21 @@ class TestDecisionEngineCore(TestCase):
             version = "1.0.0"
             required_features = ("price",)
 
-            def evaluate(self, context: StrategyContext, features) -> StrategyIntent:  # type: ignore[no-untyped-def]
-                return StrategyIntent(
-                    strategy_id=context.strategy_id,
-                    symbol=context.symbol,
-                    direction="sell",
-                    confidence=Decimal("0.40"),
-                    target_notional=Decimal("50"),
-                    horizon=context.timeframe,
-                    explain=("sell_signal",),
-                    feature_snapshot_hash=features.normalization_hash,
-                    required_features=self.required_features,
+            def evaluate(
+                self, context: StrategyContext, features: FeatureVectorV3
+            ) -> PluginEvaluationResult:
+                return PluginEvaluationResult(
+                    intent=StrategyIntent(
+                        strategy_id=context.strategy_id,
+                        symbol=context.symbol,
+                        direction="sell",
+                        confidence=Decimal("0.40"),
+                        target_notional=Decimal("50"),
+                        horizon=context.timeframe,
+                        explain=("sell_signal",),
+                        feature_snapshot_hash=features.normalization_hash,
+                        required_features=self.required_features,
+                    )
                 )
 
         engine = DecisionEngine(price_fetcher=None)
