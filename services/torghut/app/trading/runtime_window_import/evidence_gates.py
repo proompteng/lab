@@ -34,6 +34,9 @@ from .common import (
 )
 
 
+_CONFIGURED_PAPER_COLLECTION_HYPOTHESIS_PREFIX = "configured-paper-collection:"
+
+
 @dataclass(frozen=True)
 class RuntimeWindowProofBlockerRequest:
     promotion_blocking_reasons: Sequence[str]
@@ -699,15 +702,54 @@ def runtime_promotion_blocking_reasons(
     return reasons
 
 
+def _normalized_hypothesis_id(value: str) -> str:
+    return value.strip().replace("_", "-").upper()
+
+
+def _manifest_ref_hypothesis_id(source_manifest_ref: str | None) -> str | None:
+    if source_manifest_ref is None:
+        return None
+    normalized = source_manifest_ref.strip().replace("\\", "/")
+    if not normalized:
+        return None
+    filename = normalized.rsplit("/", 1)[-1]
+    stem = filename.rsplit(".", 1)[0].strip()
+    if not stem:
+        return None
+    return _normalized_hypothesis_id(stem)
+
+
+def _manifest_from_source_ref(
+    *,
+    registry: HypothesisRegistryLoadResult,
+    source_manifest_ref: str | None,
+) -> HypothesisManifest | None:
+    manifest_hypothesis_id = _manifest_ref_hypothesis_id(source_manifest_ref)
+    if manifest_hypothesis_id is None:
+        return None
+    for item in registry.items:
+        if _normalized_hypothesis_id(item.hypothesis_id) == manifest_hypothesis_id:
+            return item
+    return None
+
+
 def resolve_hypothesis_manifest(
     *,
     hypothesis_id: str,
     strategy_family: str | None = None,
+    source_manifest_ref: str | None = None,
 ) -> tuple[HypothesisRegistryLoadResult, HypothesisManifest]:
     registry = load_hypothesis_registry(raise_on_error=True)
     manifest = next(
         (item for item in registry.items if item.hypothesis_id == hypothesis_id), None
     )
+    if manifest is None and hypothesis_id.startswith(
+        _CONFIGURED_PAPER_COLLECTION_HYPOTHESIS_PREFIX
+    ):
+        manifest = _manifest_from_source_ref(
+            registry=registry,
+            source_manifest_ref=source_manifest_ref,
+        )
     if manifest is None:
         raise RuntimeError(f"hypothesis_manifest_not_found:{hypothesis_id}")
     if not strategy_family_matches(manifest=manifest, strategy_family=strategy_family):

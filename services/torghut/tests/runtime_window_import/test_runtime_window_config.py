@@ -21,6 +21,10 @@ from tests.runtime_window_import.runtime_window_import_base import (
     patch,
     timezone,
 )
+from app.trading.runtime_window_import import resolve_hypothesis_manifest
+from scripts.import_hypothesis_runtime_windows import (
+    _manifest_strategy_family_for_resolution,
+)
 
 
 class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
@@ -233,6 +237,62 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
             args.target_metadata_json, '{"paper_probation_authorized":true}'
         )
         self.assertEqual(args.json, True)
+
+    def test_configured_paper_collection_alias_resolves_source_manifest_ref(
+        self,
+    ) -> None:
+        _, manifest = resolve_hypothesis_manifest(
+            hypothesis_id="configured-paper-collection:breakout-continuation-long-v1",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+        )
+
+        self.assertEqual(manifest.hypothesis_id, "H-PAIRS-01")
+
+    def test_configured_paper_collection_alias_requires_source_manifest_ref(
+        self,
+    ) -> None:
+        source_refs = [
+            None,
+            "",
+            "config/trading/hypotheses/.json",
+            "config/trading/hypotheses/missing.json",
+        ]
+
+        for source_ref in source_refs:
+            kwargs = {}
+            if source_ref is not None:
+                kwargs["source_manifest_ref"] = source_ref
+            with self.subTest(source_ref=source_ref):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "hypothesis_manifest_not_found:"
+                    "configured-paper-collection:breakout-continuation-long-v1",
+                ):
+                    resolve_hypothesis_manifest(
+                        hypothesis_id=(
+                            "configured-paper-collection:breakout-continuation-long-v1"
+                        ),
+                        **kwargs,
+                    )
+
+    def test_configured_paper_collection_import_uses_source_manifest_family(
+        self,
+    ) -> None:
+        family = _manifest_strategy_family_for_resolution(
+            hypothesis_id="configured-paper-collection:breakout-continuation-long-v1",
+            strategy_family="breakout_continuation_long_v1",
+            source_kind="configured_simple_lane_paper_data_collection",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+        )
+        normal_family = _manifest_strategy_family_for_resolution(
+            hypothesis_id="H-PAIRS-01",
+            strategy_family="microbar_cross_sectional_pairs",
+            source_kind="paper_runtime_observed",
+            source_manifest_ref="config/trading/hypotheses/h-pairs-01.json",
+        )
+
+        self.assertIsNone(family)
+        self.assertEqual(normal_family, "microbar_cross_sectional_pairs")
 
     def test_source_row_lineage_accepts_plural_target_plan_ids(self) -> None:
         row = {
