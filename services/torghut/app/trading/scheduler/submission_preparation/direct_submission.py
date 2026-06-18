@@ -215,6 +215,10 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
     ) -> bool:
         if not self._bounded_live_paper_route_probe_decision_applies(decision):
             return False
+        collection_gate = live_submission_gate.get("bounded_live_paper_collection_gate")
+        if isinstance(collection_gate, Mapping):
+            collection_gate_mapping = cast(Mapping[str, Any], collection_gate)
+            return collection_gate_mapping.get("allowed") is True
         blocked_reasons = {
             str(reason).strip()
             for reason in cast(

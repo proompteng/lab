@@ -107,6 +107,34 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                     gate,
                 )
             )
+            self.assertTrue(
+                pipeline._bounded_live_paper_route_probe_submission_allowed(
+                    decision,
+                    {
+                        **gate,
+                        "blocked_reasons": [
+                            *cast(list[str], gate["blocked_reasons"]),
+                            "empirical_jobs_not_ready",
+                        ],
+                        "bounded_live_paper_collection_gate": {
+                            "allowed": True,
+                            "authority_scope": "bounded_evidence_collection_only",
+                        },
+                    },
+                )
+            )
+            self.assertFalse(
+                pipeline._bounded_live_paper_route_probe_submission_allowed(
+                    decision,
+                    {
+                        **gate,
+                        "bounded_live_paper_collection_gate": {
+                            "allowed": False,
+                            "reason": "live_submit_activation_expired",
+                        },
+                    },
+                )
+            )
             self.assertFalse(
                 pipeline._bounded_live_paper_route_probe_submission_allowed(
                     decision,

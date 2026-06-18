@@ -82,6 +82,91 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             "2000-01-01T00:00:00+00:00",
         )
 
+    def test_bounded_live_paper_collection_gate_fails_closed_without_explicit_contract(
+        self,
+    ) -> None:
+        from app.config import settings
+
+        settings.trading_simple_paper_route_probe_enabled = False
+        settings.trading_simple_paper_route_probe_allow_live_mode = False
+        settings.trading_simple_submit_enabled = False
+        settings.trading_simple_paper_route_probe_max_notional = 0
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=True,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        collection_gate = result["bounded_live_paper_collection_gate"]
+        self.assertFalse(collection_gate["allowed"])
+        self.assertEqual(collection_gate["reason"], "paper_route_probe_disabled")
+        self.assertIn("paper_route_probe_disabled", collection_gate["blocked_reasons"])
+        self.assertIn(
+            "live_paper_route_probe_collection_disabled",
+            collection_gate["blocked_reasons"],
+        )
+        self.assertIn("simple_submit_disabled", collection_gate["blocked_reasons"])
+        self.assertIn(
+            "live_submit_activation_missing", collection_gate["blocked_reasons"]
+        )
+        self.assertIn(
+            "paper_route_probe_notional_not_configured",
+            collection_gate["blocked_reasons"],
+        )
+
+    def test_bounded_live_paper_collection_gate_rejects_invalid_activation(
+        self,
+    ) -> None:
+        from app.config import settings
+
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        settings.trading_simple_submit_enabled = True
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        settings.trading_live_submit_activation_expires_at = "not-a-date"
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=True,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        collection_gate = result["bounded_live_paper_collection_gate"]
+        self.assertFalse(collection_gate["allowed"])
+        self.assertIn(
+            "live_submit_activation_expiry_invalid",
+            collection_gate["blocked_reasons"],
+        )
+
     def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(
         self,
     ) -> None:
