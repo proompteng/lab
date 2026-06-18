@@ -407,6 +407,8 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
         source = "local_target_plan_probe_symbols"
         if _target_truthy(target.get("paper_route_probe_strategy_universe_fallback")):
             source = "local_strategy_universe_target_plan_fallback"
+        elif _target_truthy(target.get("paper_route_probe_static_universe_fallback")):
+            source = "local_static_universe_target_plan_fallback"
         elif strategy is None:
             source = "local_target_plan_strategy_unresolved"
         return {
@@ -456,6 +458,39 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
                 )
             elif strategy_symbols:
                 scoped_symbols = raw_symbols & strategy_symbols
+
+        static_symbols = {
+            symbol
+            for raw in settings.trading_static_symbols
+            if (symbol := str(raw).strip().upper())
+        }
+        target_promoted = any(
+            _target_truthy(normalized.get(key))
+            for key in (
+                "promotion_allowed",
+                "capital_promotion_allowed",
+                "final_promotion_allowed",
+                "final_promotion_authorized",
+            )
+        )
+        if (
+            not raw_symbols
+            and _target_bounded_collection_authorized(normalized)
+            and not target_promoted
+            and static_symbols
+        ):
+            raw_symbols = set(static_symbols)
+            scoped_symbols = set(static_symbols)
+            normalized.setdefault("paper_route_probe_raw_target_symbols", [])
+            normalized.setdefault("paper_route_probe_static_universe_fallback", True)
+            normalized.setdefault(
+                "paper_route_probe_static_universe_symbols",
+                sorted(static_symbols),
+            )
+            normalized.setdefault(
+                "paper_route_probe_scope_authority",
+                "static_trading_universe",
+            )
 
         if raw_symbols and not _target_symbols(normalized):
             normalized["paper_route_probe_symbols"] = sorted(raw_symbols)

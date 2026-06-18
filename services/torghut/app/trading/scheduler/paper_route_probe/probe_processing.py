@@ -586,8 +586,12 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
         strategy: Strategy | None,
         cap: Decimal | None,
     ) -> bool:
+        mode_allows_probe = settings.trading_mode == "paper" or (
+            settings.trading_mode == "live"
+            and settings.trading_simple_paper_route_probe_allow_live_mode
+        )
         return (
-            settings.trading_mode == "paper"
+            mode_allows_probe
             and settings.trading_simple_paper_route_probe_enabled
             and not _paper_route_probe_blocked_by_short_policy(decision)
             and decision.action in {"buy", "sell"}

@@ -185,6 +185,95 @@ def test_live_bounded_paper_route_target_blocks_without_activation(
         )
 
 
+def test_bounded_paper_route_target_uses_static_universe_without_promotion() -> None:
+    static_symbols_before = settings.trading_static_symbols_raw
+    try:
+        settings.trading_static_symbols_raw = "AAPL,nvda,AAPL"
+        target = _bounded_hpairs_target(
+            paper_route_probe_symbols=[],
+            target_symbols=[],
+            symbols=[],
+            paper_route_target_account_audit_state={},
+            source_decision_readiness=None,
+            promotion_allowed=False,
+            capital_promotion_allowed=False,
+            final_promotion_allowed=False,
+            final_promotion_authorized=False,
+        )
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=[],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+
+        resolved = pipeline._paper_route_target_with_local_probe_contract(
+            target,
+            strategies=[strategy],
+        )
+
+        assert resolved["paper_route_probe_symbols"] == ["AAPL", "NVDA"]
+        assert resolved["paper_route_probe_static_universe_fallback"] is True
+        assert resolved["paper_route_probe_static_universe_symbols"] == ["AAPL", "NVDA"]
+        assert (
+            resolved["paper_route_probe_scope_authority"] == "static_trading_universe"
+        )
+        readiness = resolved["source_decision_readiness"]
+        assert readiness["ready"] is True
+        assert readiness["source"] == "local_static_universe_target_plan_fallback"
+        assert readiness["blockers"] == []
+        assert readiness["raw_probe_symbols"] == ["AAPL", "NVDA"]
+        assert readiness["scoped_probe_symbols"] == ["AAPL", "NVDA"]
+        assert readiness["matched_strategy"]["strategy_name"] == (
+            "microbar-cross-sectional-pairs-v1"
+        )
+    finally:
+        settings.trading_static_symbols_raw = static_symbols_before
+
+
+def test_bounded_paper_route_static_universe_does_not_override_promotion() -> None:
+    static_symbols_before = settings.trading_static_symbols_raw
+    try:
+        settings.trading_static_symbols_raw = "AAPL,NVDA"
+        target = _bounded_hpairs_target(
+            paper_route_probe_symbols=[],
+            target_symbols=[],
+            symbols=[],
+            paper_route_target_account_audit_state={},
+            source_decision_readiness=None,
+            promotion_allowed=True,
+            capital_promotion_allowed=False,
+            final_promotion_allowed=False,
+            final_promotion_authorized=False,
+        )
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=[],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+
+        resolved = pipeline._paper_route_target_with_local_probe_contract(
+            target,
+            strategies=[strategy],
+        )
+
+        assert resolved["paper_route_probe_symbols"] == []
+        assert "paper_route_probe_static_universe_fallback" not in resolved
+        assert resolved["source_decision_readiness"]["ready"] is False
+        assert resolved["source_decision_readiness"]["blockers"] == [
+            "paper_route_probe_symbol_missing"
+        ]
+    finally:
+        settings.trading_static_symbols_raw = static_symbols_before
+
+
 def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
     probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
     submit_enabled_before = settings.trading_simple_submit_enabled
@@ -230,6 +319,39 @@ def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
         )
         settings.trading_simple_paper_route_probe_max_notional = (
             probe_max_notional_before
+        )
+
+
+def test_live_bounded_paper_route_probe_context_precondition_allows_live_mode() -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
+    try:
+        settings.trading_mode = "live"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        pipeline = object.__new__(SimpleTradingPipeline)
+        proof_floor = {"market_window": {"session_open": True}}
+
+        assert pipeline._paper_route_probe_context_preconditions(
+            proof_floor=proof_floor,
+            decision=_routeability_decision(symbol="AAPL"),
+            strategy=None,
+            cap=Decimal("100"),
+        )
+
+        settings.trading_simple_paper_route_probe_allow_live_mode = False
+        assert not pipeline._paper_route_probe_context_preconditions(
+            proof_floor=proof_floor,
+            decision=_routeability_decision(symbol="AAPL"),
+            strategy=None,
+            cap=Decimal("100"),
+        )
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
         )
 
 

@@ -2,20 +2,57 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from . import shared_context as _proof_floor
 from . import build_jangar_reliability_settlement_ref as _proof_refs
+from .paper_route_probe_targets import bounded_paper_route_probe_target_symbols
 from ..proxy import capture_module_exports
 
 _IMPLEMENTATION_MODULES: tuple[object, ...] = (
     _proof_floor,
     _proof_refs,
 )
-
-_build_profitability_proof_floor_payload: Any = getattr(
-    _proof_floor, "_build_profitability_proof_floor_payload"
+_build_simple_lane_status_payload: Any = getattr(
+    _proof_floor, "_build_simple_lane_status_payload"
 )
+
+
+def _build_profitability_proof_floor_payload(
+    *,
+    state: object,
+    torghut_revision: str | None,
+    live_submission_gate: Mapping[str, Any],
+    hypothesis_payload: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any],
+    quant_evidence: Mapping[str, Any],
+    market_context_status: Mapping[str, Any],
+    tca_summary: Mapping[str, Any],
+    simple_lane_status: Mapping[str, Any] | None = None,
+) -> dict[str, object]:
+    return _proof_floor.build_profitability_proof_floor_receipt(
+        account_label=_proof_floor.settings.trading_account_label,
+        torghut_revision=torghut_revision,
+        trading_mode=_proof_floor.settings.trading_mode,
+        market_session_open=cast(
+            bool | None,
+            getattr(state, "market_session_open", None),
+        ),
+        live_submission_gate=live_submission_gate,
+        hypothesis_payload=hypothesis_payload,
+        empirical_jobs_status=empirical_jobs_status,
+        quant_evidence=quant_evidence,
+        market_context_status=market_context_status,
+        tca_summary=tca_summary,
+        simple_lane_status=simple_lane_status or _build_simple_lane_status_payload(),
+        paper_route_probe_target_symbols=bounded_paper_route_probe_target_symbols(
+            live_submission_gate
+        ),
+        tca_max_age_seconds=_proof_floor.PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
+    )
+
+
 _build_renewal_bond_profit_escrow_payload: Any = getattr(
     _proof_floor, "_build_renewal_bond_profit_escrow_payload"
 )
