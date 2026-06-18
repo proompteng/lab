@@ -100,7 +100,7 @@ def _budget_unavailable_tca_summary_payload(reason: str) -> dict[str, object]:
     return unavailable_payload(reason)
 
 
-def _remember_alpaca_success(
+def remember_alpaca_success(
     *,
     account: Mapping[str, Any],
     endpoint_class: str,
@@ -122,7 +122,7 @@ def _remember_alpaca_success(
         )
 
 
-def _alpaca_cached_last_good(
+def alpaca_cached_last_good(
     *,
     failure_status: str,
     failure_detail: str,
@@ -165,7 +165,7 @@ def _alpaca_cached_last_good(
     }
 
 
-def _check_alpaca() -> dict[str, object]:
+def check_alpaca() -> dict[str, object]:
     if not settings.apca_api_key_id or not settings.apca_api_secret_key:
         return {
             "ok": False,
@@ -188,7 +188,7 @@ def _check_alpaca() -> dict[str, object]:
         probe = _alpaca_probe_account(client, timeout_seconds=timeout_seconds)
         if bool(probe.get("ok")):
             account = cast(Mapping[str, Any], probe.get("account") or {})
-            _remember_alpaca_success(
+            remember_alpaca_success(
                 account=account,
                 endpoint_class=endpoint_class,
             )
@@ -216,7 +216,7 @@ def _check_alpaca() -> dict[str, object]:
     failure_detail = str(
         last_failure.get("detail") if last_failure else "alpaca probe failed"
     )
-    cached = _alpaca_cached_last_good(
+    cached = alpaca_cached_last_good(
         failure_status=failure_status,
         failure_detail=failure_detail,
         endpoint_class=endpoint_class,
@@ -232,7 +232,7 @@ def _check_alpaca() -> dict[str, object]:
     }
 
 
-def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None:
+def tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None:
     if row is None:
         return None
     return {
@@ -251,7 +251,7 @@ def _tca_row_payload(row: ExecutionTCAMetric | None) -> dict[str, object] | None
     }
 
 
-def _load_tca_summary(
+def load_tca_summary(
     session: Session,
     *,
     scheduler: TradingScheduler | None = None,
@@ -268,13 +268,13 @@ def _load_tca_summary(
         _rollback_status_read_session(session, context="execution TCA summary")
         reason = (
             "execution_tca_summary_query_timeout"
-            if _sqlalchemy_error_indicates_statement_timeout(exc)
+            if sqlalchemy_error_indicates_statement_timeout(exc)
             else "execution_tca_summary_unavailable"
         )
         return _budget_unavailable_tca_summary_payload(reason)
 
 
-def _load_clickhouse_ta_status(
+def load_clickhouse_ta_status(
     scheduler: TradingScheduler | None = None,
 ) -> dict[str, object]:
     pipeline = getattr(scheduler, "_pipeline", None) if scheduler is not None else None
@@ -286,7 +286,7 @@ def _load_clickhouse_ta_status(
     ).latest_signal_status()
 
 
-def _budget_exhausted_live_submission_gate_payload(
+def budget_exhausted_live_submission_gate_payload(
     *,
     reason: str,
     empirical_jobs_status: Mapping[str, Any],
@@ -371,7 +371,7 @@ def _budget_exhausted_live_submission_gate_payload(
     }
 
 
-def _budget_exhausted_options_catalog_freshness_payload(
+def budget_exhausted_options_catalog_freshness_payload(
     *,
     reason: str,
     route_symbols: Sequence[str],
@@ -394,7 +394,7 @@ def _budget_exhausted_options_catalog_freshness_payload(
     }
 
 
-def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, ...]:
+def route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, ...]:
     raw_quorums = profit_signal_quorum.get("quorums")
     if not isinstance(raw_quorums, Sequence) or isinstance(
         raw_quorums, (str, bytes, bytearray)
@@ -432,7 +432,7 @@ def _route_claim_symbols(profit_signal_quorum: Mapping[str, Any]) -> tuple[str, 
     return tuple(sorted(symbols))
 
 
-def _load_cached_options_catalog_freshness_summary(
+def load_cached_options_catalog_freshness_summary(
     cache_key: tuple[str, ...],
 ) -> dict[str, object] | None:
     ttl_seconds = max(0, settings.trading_options_catalog_freshness_cache_seconds)
@@ -458,7 +458,7 @@ def _load_cached_options_catalog_freshness_summary(
     return payload
 
 
-def _store_options_catalog_freshness_summary(
+def store_options_catalog_freshness_summary(
     cache_key: tuple[str, ...],
     payload: dict[str, object],
 ) -> dict[str, object]:
@@ -480,7 +480,7 @@ def _store_options_catalog_freshness_summary(
     return payload
 
 
-def _decimal_or_none(value: object) -> Decimal | None:
+def decimal_or_none(value: object) -> Decimal | None:
     if value is None:
         return None
     try:
@@ -489,7 +489,7 @@ def _decimal_or_none(value: object) -> Decimal | None:
         return None
 
 
-def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
+def sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
     message = str(exc).lower()
     return (
         "statement timeout" in message
@@ -498,7 +498,7 @@ def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
     )
 
 
-def _load_bounded_options_catalog_freshness_summary(
+def load_bounded_options_catalog_freshness_summary(
     session: Session,
     scoped_symbols: tuple[str, ...],
     *,
@@ -545,7 +545,7 @@ LIMIT 1
         )
         fallback_reason_codes.append(
             "options_catalog_freshness_bounded_route_scope_timeout"
-            if _sqlalchemy_error_indicates_statement_timeout(bounded_exc)
+            if sqlalchemy_error_indicates_statement_timeout(bounded_exc)
             else "options_catalog_freshness_bounded_route_scope_unavailable"
         )
         return None
@@ -571,7 +571,7 @@ LIMIT 1
             ),
             "missing_close_price_count": 1 if row.get("close_price") is None else 0,
             "zero_open_interest_count": 1
-            if (_decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
+            if (decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
             else 0,
             "reason_codes": [
                 "options_catalog_freshness_bounded_route_scope",
@@ -617,7 +617,7 @@ LIMIT 1
         "zero_open_interest_count": sum(
             1
             for row in rows
-            if (_decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
+            if (decimal_or_none(row.get("open_interest")) or Decimal("0")) <= 0
         ),
         "route_symbols": list(scoped_symbols),
         "route_symbol_freshness": route_symbol_freshness,
@@ -648,29 +648,3 @@ __all__: tuple[str, ...] = (
     "store_options_catalog_freshness_summary",
     "tca_row_payload",
 )
-
-# Public aliases used by split modules.
-alpaca_cached_last_good = _alpaca_cached_last_good
-budget_exhausted_live_submission_gate_payload = (
-    _budget_exhausted_live_submission_gate_payload
-)
-budget_exhausted_options_catalog_freshness_payload = (
-    _budget_exhausted_options_catalog_freshness_payload
-)
-check_alpaca = _check_alpaca
-decimal_or_none = _decimal_or_none
-load_bounded_options_catalog_freshness_summary = (
-    _load_bounded_options_catalog_freshness_summary
-)
-load_cached_options_catalog_freshness_summary = (
-    _load_cached_options_catalog_freshness_summary
-)
-load_clickhouse_ta_status = _load_clickhouse_ta_status
-load_tca_summary = _load_tca_summary
-remember_alpaca_success = _remember_alpaca_success
-route_claim_symbols = _route_claim_symbols
-sqlalchemy_error_indicates_statement_timeout = (
-    _sqlalchemy_error_indicates_statement_timeout
-)
-store_options_catalog_freshness_summary = _store_options_catalog_freshness_summary
-tca_row_payload = _tca_row_payload

@@ -17,15 +17,15 @@ UncertaintyGateAction = Literal["pass", "degrade", "abstain", "fail"]
 PromotionTarget = Literal["shadow", "paper", "live"]
 
 
-def _empty_str_list() -> list[str]:
+def empty_str_list() -> list[str]:
     return []
 
 
-def _empty_artifact_refs() -> list[str]:
+def empty_artifact_refs() -> list[str]:
     return []
 
 
-def _empty_dict() -> dict[str, Any]:
+def empty_dict() -> dict[str, Any]:
     return {}
 
 
@@ -84,8 +84,8 @@ def _gate7_uncertainty_calibration(*args: Any, **kwargs: Any) -> Any:
 class GateResult:
     gate_id: str
     status: GateStatus
-    reasons: list[str] = field(default_factory=_empty_str_list)
-    artifact_refs: list[str] = field(default_factory=_empty_artifact_refs)
+    reasons: list[str] = field(default_factory=empty_str_list)
+    artifact_refs: list[str] = field(default_factory=empty_artifact_refs)
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -104,10 +104,10 @@ class GateInputs:
     symbol_coverage: int
     metrics: dict[str, Any]
     robustness: dict[str, Any]
-    tca_metrics: dict[str, Any] = field(default_factory=_empty_dict)
-    llm_metrics: dict[str, Any] = field(default_factory=_empty_dict)
-    forecast_metrics: dict[str, Any] = field(default_factory=_empty_dict)
-    profitability_evidence: dict[str, Any] = field(default_factory=_empty_dict)
+    tca_metrics: dict[str, Any] = field(default_factory=empty_dict)
+    llm_metrics: dict[str, Any] = field(default_factory=empty_dict)
+    forecast_metrics: dict[str, Any] = field(default_factory=empty_dict)
+    profitability_evidence: dict[str, Any] = field(default_factory=empty_dict)
     fragility_state: str = "elevated"
     fragility_score: Decimal = Decimal("0.5")
     stability_mode_active: bool = False
@@ -417,7 +417,7 @@ class GateEvaluationReport:
     evaluated_at: datetime
     code_version: str
     evidence_collection_allowed: bool = False
-    promotion_blockers: list[str] = field(default_factory=_empty_str_list)
+    promotion_blockers: list[str] = field(default_factory=empty_str_list)
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -464,17 +464,17 @@ def evaluate_gate_matrix(
     now = evaluated_at or datetime.now(timezone.utc)
     gates: list[GateResult] = []
 
-    gates.append(_gate0_data_integrity(inputs, policy))
-    gates.append(_gate1_statistical_robustness(inputs, policy))
-    gates.append(_gate2_risk_and_capacity(inputs, policy))
-    gates.append(_gate3_shadow_paper_quality(inputs, policy))
-    gates.append(_gate4_operational_readiness(inputs))
-    gates.append(_gate6_profitability_evidence(inputs, policy, promotion_target))
+    gates.append(gate0_data_integrity(inputs, policy))
+    gates.append(gate1_statistical_robustness(inputs, policy))
+    gates.append(gate2_risk_and_capacity(inputs, policy))
+    gates.append(gate3_shadow_paper_quality(inputs, policy))
+    gates.append(gate4_operational_readiness(inputs))
+    gates.append(gate6_profitability_evidence(inputs, policy, promotion_target))
     uncertainty_gate, uncertainty_outcome = _gate7_uncertainty_calibration(
         inputs, policy, promotion_target
     )
     gates.append(uncertainty_gate)
-    gates.append(_gate5_live_ramp_readiness(inputs, policy, promotion_target))
+    gates.append(gate5_live_ramp_readiness(inputs, policy, promotion_target))
 
     gate_index = {gate.gate_id: gate for gate in gates}
     all_required_pass = all(
@@ -547,7 +547,7 @@ def evaluate_gate_matrix(
     )
 
 
-def _gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
+def gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
     reasons: list[str] = []
     if inputs.feature_schema_version != policy.required_feature_schema_version:
         reasons.append("schema_version_incompatible")
@@ -566,7 +566,7 @@ def _gate0_data_integrity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateR
     )
 
 
-def _gate1_statistical_robustness(
+def gate1_statistical_robustness(
     inputs: GateInputs, policy: GatePolicyMatrix
 ) -> GateResult:
     reasons: list[str] = []
@@ -598,9 +598,7 @@ def _gate1_statistical_robustness(
     )
 
 
-def _gate2_risk_and_capacity(
-    inputs: GateInputs, policy: GatePolicyMatrix
-) -> GateResult:
+def gate2_risk_and_capacity(inputs: GateInputs, policy: GatePolicyMatrix) -> GateResult:
     reasons = _gate2_base_reasons(inputs, policy)
     reasons.extend(_gate2_tca_reasons(inputs, policy))
 
@@ -611,7 +609,7 @@ def _gate2_risk_and_capacity(
     )
 
 
-def _gate3_shadow_paper_quality(
+def gate3_shadow_paper_quality(
     inputs: GateInputs, policy: GatePolicyMatrix
 ) -> GateResult:
     reasons: list[str] = []
@@ -652,7 +650,7 @@ def _gate3_shadow_paper_quality(
     )
 
 
-def _gate4_operational_readiness(inputs: GateInputs) -> GateResult:
+def gate4_operational_readiness(inputs: GateInputs) -> GateResult:
     reasons: list[str] = []
     if not inputs.operational_ready:
         reasons.append("operational_readiness_incomplete")
@@ -669,7 +667,7 @@ def _gate4_operational_readiness(inputs: GateInputs) -> GateResult:
     )
 
 
-def _gate5_live_ramp_readiness(
+def gate5_live_ramp_readiness(
     inputs: GateInputs,
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
@@ -692,7 +690,7 @@ def _gate5_live_ramp_readiness(
     )
 
 
-def _gate6_profitability_evidence(
+def gate6_profitability_evidence(
     inputs: GateInputs,
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
@@ -726,18 +724,6 @@ __all__ = (
     "evaluate_gate_matrix",
 )
 
-# Public aliases used by split modules.
-empty_artifact_refs = _empty_artifact_refs
-empty_dict = _empty_dict
-empty_str_list = _empty_str_list
-gate0_data_integrity = _gate0_data_integrity
-gate1_statistical_robustness = _gate1_statistical_robustness
-gate2_risk_and_capacity = _gate2_risk_and_capacity
-gate3_shadow_paper_quality = _gate3_shadow_paper_quality
-gate4_operational_readiness = _gate4_operational_readiness
-gate5_live_ramp_readiness = _gate5_live_ramp_readiness
-gate6_profitability_evidence = _gate6_profitability_evidence
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -755,20 +741,20 @@ __all__: tuple[str, ...] = (
     "UncertaintyGateOutcome",
     "_decimal",
     "_decimal_or_default",
-    "_empty_artifact_refs",
-    "_empty_dict",
-    "_empty_str_list",
-    "_gate0_data_integrity",
-    "_gate1_statistical_robustness",
+    "empty_artifact_refs",
+    "empty_dict",
+    "empty_str_list",
+    "gate0_data_integrity",
+    "gate1_statistical_robustness",
     "_gate2_base_reasons",
-    "_gate2_risk_and_capacity",
+    "gate2_risk_and_capacity",
     "_gate2_tca_reasons",
-    "_gate3_shadow_paper_quality",
-    "_gate4_operational_readiness",
-    "_gate5_live_ramp_readiness",
+    "gate3_shadow_paper_quality",
+    "gate4_operational_readiness",
+    "gate5_live_ramp_readiness",
     "_gate6_early_result",
     "_gate6_janus_q_reasons",
-    "_gate6_profitability_evidence",
+    "gate6_profitability_evidence",
     "_gate6_reproducibility_reasons",
     "_gate6_schema_reasons",
     "_gate6_threshold_reasons",

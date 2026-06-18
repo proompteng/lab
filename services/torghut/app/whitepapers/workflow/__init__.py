@@ -81,7 +81,7 @@ from .whitepaper_workflow_service import (
     WhitepaperKafkaWorker,
 )
 
-_http_request_bytes = getattr(_whitepaper_shared_context, "_http_request_bytes")
+_http_request_bytes = getattr(_whitepaper_shared_context, "http_request_bytes")
 logger = getattr(_whitepaper_shared_context, "logger")
 __all__ = [
     "asyncio",

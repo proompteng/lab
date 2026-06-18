@@ -46,7 +46,7 @@ from .runtime_certificates import (
 )
 
 
-def _load_latest_certificate_evidence(
+def load_latest_certificate_evidence(
     session: RuntimeLedgerReadSession,
     *,
     hypothesis_ids: Sequence[str],
@@ -159,7 +159,7 @@ def _load_latest_certificate_evidence(
             evidence.append(
                 max(
                     candidate_rows,
-                    key=lambda row: _certificate_evidence_selection_key(
+                    key=lambda row: certificate_evidence_selection_key(
                         row,
                         now=now,
                         max_age_seconds=max_age_seconds,
@@ -194,7 +194,7 @@ def _load_latest_certificate_evidence(
     return evidence
 
 
-def _window_evidence_issued_at(
+def window_evidence_issued_at(
     metric_window: StrategyHypothesisMetricWindow,
 ) -> datetime | None:
     return _coerce_aware_datetime(
@@ -202,19 +202,19 @@ def _window_evidence_issued_at(
     )
 
 
-def _certificate_evidence_is_fresh(
+def certificate_evidence_is_fresh(
     metric_window: StrategyHypothesisMetricWindow,
     *,
     max_age_seconds: int,
     now: datetime,
 ) -> bool:
-    issued_at = _window_evidence_issued_at(metric_window)
+    issued_at = window_evidence_issued_at(metric_window)
     if issued_at is None:
         return False
     return max_age_seconds <= 0 or issued_at >= now - timedelta(seconds=max_age_seconds)
 
 
-def _certificate_capital_stage(
+def certificate_capital_stage(
     metric_window: StrategyHypothesisMetricWindow,
     promotion_decision: StrategyPromotionDecision,
 ) -> str | None:
@@ -230,7 +230,7 @@ def _certificate_capital_stage(
     return min(ranked_stages, key=_stage_rank)
 
 
-def _metric_window_activity_reason_codes(
+def metric_window_activity_reason_codes(
     metric_window: StrategyHypothesisMetricWindow,
 ) -> list[str]:
     reasons: list[str] = []
@@ -285,7 +285,7 @@ def _metric_window_activity_reason_codes(
     return reasons
 
 
-def _promotion_decision_blocking_reason_codes(
+def promotion_decision_blocking_reason_codes(
     promotion_decision: StrategyPromotionDecision,
 ) -> list[str]:
     payload_raw = getattr(promotion_decision, "payload_json", None)
@@ -316,7 +316,7 @@ def _promotion_decision_blocking_reason_codes(
     return _normalize_reason_codes(reasons)
 
 
-def _certificate_evidence_selection_key(
+def certificate_evidence_selection_key(
     row: Mapping[str, object],
     *,
     now: datetime | None,
@@ -355,9 +355,9 @@ def _certificate_evidence_selection_key(
     if promotion_decision is not None:
         decision_score = int(
             _safe_bool(getattr(promotion_decision, "allowed", False)) is True
-            and not _promotion_decision_blocking_reason_codes(promotion_decision)
+            and not promotion_decision_blocking_reason_codes(promotion_decision)
         )
-    activity_score = int(not _metric_window_activity_reason_codes(metric_window))
+    activity_score = int(not metric_window_activity_reason_codes(metric_window))
     continuity_score = int(
         bool(getattr(metric_window, "continuity_ok", False))
         and bool(getattr(metric_window, "drift_ok", False))
@@ -384,7 +384,7 @@ def _certificate_evidence_selection_key(
     )
 
 
-def _merge_runtime_certificate_evidence(
+def merge_runtime_certificate_evidence(
     items: Sequence[Mapping[str, Any]],
     *,
     evidence: Sequence[Mapping[str, object]],
@@ -414,7 +414,7 @@ def _merge_runtime_certificate_evidence(
         if metric_window is None or promotion_decision is None:
             merged.append(updated)
             continue
-        if not _certificate_evidence_is_fresh(
+        if not certificate_evidence_is_fresh(
             metric_window,
             max_age_seconds=max_age_seconds,
             now=now,
@@ -427,9 +427,7 @@ def _merge_runtime_certificate_evidence(
         if _safe_text(metric_window.dependency_quorum_decision) != "allow":
             merged.append(updated)
             continue
-        decision_blockers = _promotion_decision_blocking_reason_codes(
-            promotion_decision
-        )
+        decision_blockers = promotion_decision_blocking_reason_codes(promotion_decision)
         if decision_blockers:
             updated = _mark_runtime_certificate_rejected(
                 updated,
@@ -439,7 +437,7 @@ def _merge_runtime_certificate_evidence(
             )
             merged.append(updated)
             continue
-        activity_reason_codes = _metric_window_activity_reason_codes(metric_window)
+        activity_reason_codes = metric_window_activity_reason_codes(metric_window)
         if activity_reason_codes:
             updated = _mark_runtime_certificate_rejected(
                 updated,
@@ -450,13 +448,13 @@ def _merge_runtime_certificate_evidence(
             merged.append(updated)
             continue
 
-        capital_stage = _certificate_capital_stage(metric_window, promotion_decision)
+        capital_stage = certificate_capital_stage(metric_window, promotion_decision)
         if capital_stage is None:
             merged.append(updated)
             continue
         observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
         if observed_stage == "paper":
-            issued_at = _window_evidence_issued_at(metric_window)
+            issued_at = window_evidence_issued_at(metric_window)
             candidate_id = (
                 _safe_text(metric_window.candidate_id)
                 or _safe_text(promotion_decision.candidate_id)
@@ -544,7 +542,7 @@ def _merge_runtime_certificate_evidence(
             merged.append(updated)
             continue
 
-        issued_at = _window_evidence_issued_at(metric_window)
+        issued_at = window_evidence_issued_at(metric_window)
         candidate_id = (
             _safe_text(metric_window.candidate_id)
             or _safe_text(promotion_decision.candidate_id)
@@ -614,13 +612,3 @@ def _merge_runtime_certificate_evidence(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-certificate_capital_stage = _certificate_capital_stage
-certificate_evidence_is_fresh = _certificate_evidence_is_fresh
-certificate_evidence_selection_key = _certificate_evidence_selection_key
-load_latest_certificate_evidence = _load_latest_certificate_evidence
-merge_runtime_certificate_evidence = _merge_runtime_certificate_evidence
-metric_window_activity_reason_codes = _metric_window_activity_reason_codes
-promotion_decision_blocking_reason_codes = _promotion_decision_blocking_reason_codes
-window_evidence_issued_at = _window_evidence_issued_at

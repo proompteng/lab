@@ -35,12 +35,12 @@ from .shared_context import (
 )
 from . import status_dependencies as _status_dependencies
 from .universe_dependency import (
-    evaluate_universe_dependency as _evaluate_universe_dependency,
+    evaluate_universe_dependency as evaluate_universe_dependency,
 )
 from ..trading_scheduler_state import get_trading_scheduler
 
 
-def _evaluate_trading_health_payload(
+def evaluate_trading_health_payload(
     *,
     include_database_contract: bool = False,
     allow_stale_dependency_cache: bool = False,
@@ -58,7 +58,7 @@ def _evaluate_trading_health_payload(
             allow_stale_dependency_cache=allow_stale_dependency_cache,
         )
     dependencies = dict(dependencies)
-    dependencies["universe"] = _evaluate_universe_dependency(scheduler)
+    dependencies["universe"] = evaluate_universe_dependency(scheduler)
     cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
     cache_age_seconds = 0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
     cache_stale = (
@@ -654,7 +654,3 @@ def _evaluate_trading_health_payload(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_trading_health_payload = _evaluate_trading_health_payload
-evaluate_universe_dependency = _evaluate_universe_dependency

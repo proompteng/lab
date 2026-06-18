@@ -179,7 +179,7 @@ def trading_autonomy() -> dict[str, object]:
     }
 
 
-def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> bool:
+def runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> bool:
     raw_blockers = cast(Sequence[object], row.blockers_json or [])
     blockers = [str(item).strip() for item in raw_blockers if str(item).strip()]
     raw_payload_json = cast(object, row.payload_json)
@@ -209,7 +209,7 @@ def _runtime_ledger_bucket_evidence_grade(row: StrategyRuntimeLedgerBucket) -> b
     )
 
 
-def _daily_runtime_ledger_portfolio_summary(
+def daily_runtime_ledger_portfolio_summary(
     *,
     session: Session,
     account_label: str,
@@ -258,7 +258,7 @@ def _daily_runtime_ledger_portfolio_summary(
             observed_at=observed,
             reason=reason_code,
         )
-    evidence_rows = [row for row in rows if _runtime_ledger_bucket_evidence_grade(row)]
+    evidence_rows = [row for row in rows if runtime_ledger_bucket_evidence_grade(row)]
     net_pnl = sum(
         (row.net_strategy_pnl_after_costs for row in evidence_rows),
         Decimal("0"),
@@ -372,7 +372,7 @@ def _daily_runtime_ledger_portfolio_summary(
     }
 
 
-def _build_current_evidence_epoch(
+def build_current_evidence_epoch(
     *,
     session: Session,
     account_label: str,
@@ -491,7 +491,7 @@ def _build_current_evidence_epoch(
             observed_at=observed_at,
         )
     )
-    portfolio_runtime_ledger_summary = _daily_runtime_ledger_portfolio_summary(
+    portfolio_runtime_ledger_summary = daily_runtime_ledger_portfolio_summary(
         session=session,
         account_label=account_label,
         stage_scope=stage_scope,
@@ -561,7 +561,7 @@ def trading_evidence_epoch_latest(
         if persisted_payload is not None:
             return persisted_payload
 
-    epoch = _build_current_evidence_epoch(
+    epoch = build_current_evidence_epoch(
         session=session,
         account_label=account_label,
         stage_scope=stage_scope,
@@ -785,8 +785,3 @@ __all__ = (
     "prometheus_metrics",
     "trading_decisions",
 )
-
-# Public aliases used by split modules.
-build_current_evidence_epoch = _build_current_evidence_epoch
-daily_runtime_ledger_portfolio_summary = _daily_runtime_ledger_portfolio_summary
-runtime_ledger_bucket_evidence_grade = _runtime_ledger_bucket_evidence_grade

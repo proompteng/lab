@@ -25,7 +25,7 @@ from .requirements import (
 )
 
 
-def _evaluate_advisor_fallback_slo_evidence(
+def evaluate_advisor_fallback_slo_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -343,6 +343,3 @@ def _evaluate_advisor_fallback_slo_evidence(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_advisor_fallback_slo_evidence = _evaluate_advisor_fallback_slo_evidence

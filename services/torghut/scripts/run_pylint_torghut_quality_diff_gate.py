@@ -34,6 +34,9 @@ _PYLINT_MESSAGE_RE = re.compile(
     r"^(?P<path>[^:]+):(?P<line>\d+):(?P<column>\d+): "
     r"(?P<code>[A-Z]\d+): "
 )
+_PRIVATE_DEFINITION_RE = re.compile(
+    r"^(?P<prefix>\s*(?:async\s+def|def|class)\s+)_(?P<name>[A-Za-z][A-Za-z0-9_]*\b)"
+)
 _SOURCE_PAYLOAD_FILE_PREFIX = "source_" + "segment_"
 
 
@@ -230,7 +233,7 @@ def _base_torghut_app_script_lines(base: str, repo_root: Path) -> set[str]:
     )
     if content.returncode not in {0, 1}:
         raise RuntimeError(content.stdout)
-    lines = {line.strip() for line in content.stdout.splitlines() if line.strip()}
+    lines = _source_line_equivalents(content.stdout.splitlines())
     lines.update(_base_generated_payload_lines(base, repo_root))
     return lines
 
@@ -261,8 +264,27 @@ def _base_generated_payload_lines(base: str, repo_root: Path) -> set[str]:
         )
         if segment_source.returncode != 0:
             continue
-        segment_lines.update(_source_literal_lines(segment_source.stdout))
+        segment_lines.update(
+            _source_line_equivalents(_source_literal_lines(segment_source.stdout))
+        )
     return segment_lines
+
+
+def _source_line_equivalents(lines: Iterable[str]) -> set[str]:
+    equivalents: set[str] = set()
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        equivalents.add(stripped)
+        private_definition = _PRIVATE_DEFINITION_RE.match(line)
+        if private_definition is not None:
+            normalized = (
+                f"{private_definition.group('prefix')}{private_definition.group('name')}"
+                f"{line[private_definition.end() :]}"
+            )
+            equivalents.add(normalized.strip())
+    return equivalents
 
 
 def _source_literal_lines(module_text: str) -> set[str]:

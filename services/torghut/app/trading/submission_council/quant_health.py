@@ -90,7 +90,7 @@ def _rollback_runtime_ledger_status_session(session: Session) -> None:
         logger.warning("Failed to roll back runtime-ledger status session")
 
 
-def _empty_profit_promotion_table_counts(
+def empty_profit_promotion_table_counts(
     *,
     count_errors: Sequence[str] | None = None,
 ) -> dict[str, Any]:
@@ -118,7 +118,7 @@ def _empty_profit_promotion_table_counts(
     }
 
 
-def _load_profit_promotion_bounded_row_count(
+def load_profit_promotion_bounded_row_count(
     session: Session,
     *,
     table_name: str,
@@ -161,7 +161,7 @@ def _load_profit_promotion_bounded_row_count(
     return min(len(rows), _PROMOTION_TABLE_COUNT_SCAN_LIMIT)
 
 
-def _fresh_clickhouse_signal_continuity(
+def fresh_clickhouse_signal_continuity(
     clickhouse_ta_status: Mapping[str, Any] | None,
 ) -> tuple[str, str, str] | None:
     if not isinstance(clickhouse_ta_status, Mapping):
@@ -188,12 +188,12 @@ def _fresh_clickhouse_signal_continuity(
     return "false", "clickhouse_ta_status", "signal_lag_exceeded"
 
 
-def _runtime_window_import_continuity_signal(
+def runtime_window_import_continuity_signal(
     state: object,
     *,
     clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> tuple[str, str, str]:
-    persisted_signal = _fresh_clickhouse_signal_continuity(clickhouse_ta_status)
+    persisted_signal = fresh_clickhouse_signal_continuity(clickhouse_ta_status)
     if persisted_signal is not None and persisted_signal[0] == "true":
         return persisted_signal
 
@@ -223,7 +223,7 @@ def _runtime_window_import_continuity_signal(
     return "false", "missing", "signal_continuity_missing"
 
 
-def _runtime_window_import_drift_signal(state: object) -> tuple[str, str, str]:
+def runtime_window_import_drift_signal(state: object) -> tuple[str, str, str]:
     if hasattr(state, "drift_live_promotion_eligible"):
         eligible = bool(getattr(state, "drift_live_promotion_eligible", False))
         return (
@@ -236,19 +236,19 @@ def _runtime_window_import_drift_signal(state: object) -> tuple[str, str, str]:
     return "false", "missing", "drift_live_promotion_eligible_missing"
 
 
-def _runtime_window_import_health_gate_inputs(
+def runtime_window_import_health_gate_inputs(
     state: object,
     *,
     dependency_quorum_decision: str,
     clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     continuity_ok, continuity_source, continuity_reason = (
-        _runtime_window_import_continuity_signal(
+        runtime_window_import_continuity_signal(
             state,
             clickhouse_ta_status=clickhouse_ta_status,
         )
     )
-    drift_ok, drift_source, drift_reason = _runtime_window_import_drift_signal(state)
+    drift_ok, drift_source, drift_reason = runtime_window_import_drift_signal(state)
     blockers: list[str] = []
     promotion_blockers: list[str] = []
     if dependency_quorum_decision != "allow":
@@ -288,7 +288,7 @@ def _runtime_window_import_health_gate_inputs(
     }
 
 
-def _autoresearch_portfolio_current_oracle_passed(
+def autoresearch_portfolio_current_oracle_passed(
     row: AutoresearchPortfolioCandidate | _PortfolioPromotionRow,
 ) -> bool:
     scorecard = row.objective_scorecard_json
@@ -301,7 +301,7 @@ def _autoresearch_portfolio_current_oracle_passed(
     return bool(oracle.get("passed"))
 
 
-def _derive_quant_health_url(
+def derive_quant_health_url(
     value: str | None,
     *,
     preserve_path: bool = False,
@@ -339,13 +339,13 @@ def _derive_quant_health_url(
 
 
 def resolve_quant_health_url() -> str | None:
-    return _derive_quant_health_url(
+    return derive_quant_health_url(
         settings.trading_jangar_quant_health_url,
         preserve_path=True,
     )
 
 
-def _build_quant_health_request_url(
+def build_quant_health_request_url(
     base_url: str,
     *,
     account: str,
@@ -412,7 +412,7 @@ def load_quant_evidence_status(
             "source_url": None,
         }
 
-    request_url = _build_quant_health_request_url(
+    request_url = build_quant_health_request_url(
         base_url,
         account=account,
         window=window,
@@ -589,16 +589,3 @@ __all__ = (
     "build_shadow_first_toggle_parity",
     "resolve_active_capital_stage",
 )
-
-# Public aliases used by split modules.
-autoresearch_portfolio_current_oracle_passed = (
-    _autoresearch_portfolio_current_oracle_passed
-)
-build_quant_health_request_url = _build_quant_health_request_url
-derive_quant_health_url = _derive_quant_health_url
-empty_profit_promotion_table_counts = _empty_profit_promotion_table_counts
-fresh_clickhouse_signal_continuity = _fresh_clickhouse_signal_continuity
-load_profit_promotion_bounded_row_count = _load_profit_promotion_bounded_row_count
-runtime_window_import_continuity_signal = _runtime_window_import_continuity_signal
-runtime_window_import_drift_signal = _runtime_window_import_drift_signal
-runtime_window_import_health_gate_inputs = _runtime_window_import_health_gate_inputs

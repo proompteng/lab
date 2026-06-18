@@ -28,7 +28,7 @@ from .requirements import (
 from .benchmark_parity import policy_float as _policy_float
 
 
-def _evaluate_deeplob_bdlob_contract_evidence(
+def evaluate_deeplob_bdlob_contract_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -521,6 +521,3 @@ def _validate_deeplob_bdlob_boolean_gates(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_deeplob_bdlob_contract_evidence = _evaluate_deeplob_bdlob_contract_evidence

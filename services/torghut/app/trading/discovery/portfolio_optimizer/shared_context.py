@@ -35,7 +35,7 @@ PORTFOLIO_WEIGHTING_EDGE_RISK_GROSS_EXPOSURE_BUDGET = "edge_risk_gross_exposure_
 
 PORTFOLIO_RUNTIME_LEDGER_PNL_SOURCE = "exact_replay_runtime_ledger"
 
-_ACCEPTED_LEDGER_PNL_SOURCES = frozenset(
+ACCEPTED_LEDGER_PNL_SOURCES = frozenset(
     {
         "exact_replay_ledger",
         "exact_replay_runtime_ledger",
@@ -69,89 +69,89 @@ PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES = frozenset(
 )
 
 
-def _decimal(value: Any, *, default: str = "0") -> Decimal:
+def decimal(value: Any, *, default: str = "0") -> Decimal:
     try:
         return Decimal(str(value if value is not None else default))
     except Exception:
         return Decimal(default)
 
 
-def _string(value: Any) -> str:
+def string(value: Any) -> str:
     return str(value or "").strip()
 
 
-def _mapping(value: Any) -> dict[str, Any]:
+def mapping(value: Any) -> dict[str, Any]:
     if not isinstance(value, Mapping):
         return {}
     return {str(key): item for key, item in cast(Mapping[Any, Any], value).items()}
 
 
-def _boolish(value: Any) -> bool:
+def boolish(value: Any) -> bool:
     if isinstance(value, bool):
         return value
-    return _string(value).lower() in {"1", "true", "yes", "y", "passed"}
+    return string(value).lower() in {"1", "true", "yes", "y", "passed"}
 
 
-def _scorecard(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
+def scorecard(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
     return bundle.objective_scorecard
 
 
-def _scorecard_runtime_params(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
-    return _mapping(_scorecard(bundle).get("runtime_params"))
+def scorecard_runtime_params(bundle: CandidateEvidenceBundle) -> Mapping[str, Any]:
+    return mapping(scorecard(bundle).get("runtime_params"))
 
 
-def _scorecard_universe_symbols(bundle: CandidateEvidenceBundle) -> list[str]:
-    raw_symbols = _scorecard(bundle).get("universe_symbols")
+def scorecard_universe_symbols(bundle: CandidateEvidenceBundle) -> list[str]:
+    raw_symbols = scorecard(bundle).get("universe_symbols")
     if not isinstance(raw_symbols, Sequence) or isinstance(raw_symbols, str):
         return []
     return [
         symbol
         for symbol in (
-            _string(item).upper() for item in cast(Sequence[Any], raw_symbols)
+            string(item).upper() for item in cast(Sequence[Any], raw_symbols)
         )
         if symbol
     ]
 
 
-def _scorecard_primary_symbol(bundle: CandidateEvidenceBundle) -> str:
-    raw_symbol_shares = _scorecard(bundle).get("symbol_contribution_shares")
+def scorecard_primary_symbol(bundle: CandidateEvidenceBundle) -> str:
+    raw_symbol_shares = scorecard(bundle).get("symbol_contribution_shares")
     if isinstance(raw_symbol_shares, Mapping):
         rows = cast(Mapping[Any, Any], raw_symbol_shares)
         symbols = [
-            (_string(symbol).upper(), _decimal(share))
+            (string(symbol).upper(), decimal(share))
             for symbol, share in rows.items()
-            if _string(symbol)
+            if string(symbol)
         ]
         if symbols:
             symbols.sort(key=lambda item: (item[1], item[0]), reverse=True)
             return symbols[0][0]
-    symbol = _string(_scorecard(bundle).get("symbol")).upper()
+    symbol = string(scorecard(bundle).get("symbol")).upper()
     if symbol:
         return symbol
-    universe_symbols = _scorecard_universe_symbols(bundle)
+    universe_symbols = scorecard_universe_symbols(bundle)
     if universe_symbols:
         return universe_symbols[0]
     return "UNKNOWN"
 
 
 def _diversification_sleeve_score(bundle: CandidateEvidenceBundle) -> Decimal:
-    scorecard = _scorecard(bundle)
-    deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
+    scorecard_payload = scorecard(bundle)
+    deployable_lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard_payload)
     return (
         (
             deployable_lower_bound
             if deployable_lower_bound is not None
-            else _net_per_day(bundle)
+            else net_per_day(bundle)
         )
-        + (_active_ratio(bundle) * Decimal("300"))
-        + (_positive_ratio(bundle) * Decimal("150"))
-        - (_worst_day_loss(bundle) * Decimal("0.50"))
-        - (_max_drawdown(bundle) * Decimal("0.10"))
-        - (_best_day_share(bundle) * Decimal("300"))
+        + (active_ratio(bundle) * Decimal("300"))
+        + (positive_ratio(bundle) * Decimal("150"))
+        - (worst_day_loss(bundle) * Decimal("0.50"))
+        - (max_drawdown(bundle) * Decimal("0.10"))
+        - (best_day_share(bundle) * Decimal("300"))
     )
 
 
-def _diversified_candidate_order(
+def diversified_candidate_order(
     candidates: Sequence[CandidateEvidenceBundle],
 ) -> list[CandidateEvidenceBundle]:
     """Interleave sleeves by primary symbol before the bounded beam search.
@@ -166,12 +166,12 @@ def _diversified_candidate_order(
 
     buckets: dict[str, list[CandidateEvidenceBundle]] = {}
     for candidate in candidates:
-        buckets.setdefault(_scorecard_primary_symbol(candidate), []).append(candidate)
+        buckets.setdefault(scorecard_primary_symbol(candidate), []).append(candidate)
     ordered_buckets = sorted(
         buckets.values(),
         key=lambda bucket: (
             _diversification_sleeve_score(bucket[0]),
-            _net_per_day(bucket[0]),
+            net_per_day(bucket[0]),
             bucket[0].candidate_id,
         ),
         reverse=True,
@@ -187,7 +187,7 @@ def _diversified_candidate_order(
             next_buckets,
             key=lambda bucket: (
                 _diversification_sleeve_score(bucket[0]),
-                _net_per_day(bucket[0]),
+                net_per_day(bucket[0]),
                 bucket[0].candidate_id,
             ),
             reverse=True,
@@ -195,98 +195,98 @@ def _diversified_candidate_order(
     return diversified
 
 
-def _scorecard_sleeve_runtime_limits(bundle: CandidateEvidenceBundle) -> dict[str, str]:
+def scorecard_sleeve_runtime_limits(bundle: CandidateEvidenceBundle) -> dict[str, str]:
     limits: dict[str, str] = {}
-    scorecard = _scorecard(bundle)
+    scorecard_payload = scorecard(bundle)
     for key in ("max_notional_per_trade", "max_position_pct_equity"):
-        value = _string(scorecard.get(key))
+        value = string(scorecard_payload.get(key))
         if value:
             limits[key] = value
     return limits
 
 
-def _scorecard_signal(bundle: CandidateEvidenceBundle) -> str:
-    params = _scorecard_runtime_params(bundle)
-    signal = _string(params.get("signal_motif"))
+def scorecard_signal(bundle: CandidateEvidenceBundle) -> str:
+    params = scorecard_runtime_params(bundle)
+    signal = string(params.get("signal_motif"))
     if signal:
         return signal
-    signal_key = _string(_scorecard(bundle).get("signal_key"))
+    signal_key = string(scorecard(bundle).get("signal_key"))
     return signal_key.split("|", 1)[0] if signal_key else ""
 
 
-def _net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("net_pnl_per_day"))
+def net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("net_pnl_per_day"))
 
 
-def _active_ratio(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("active_day_ratio"))
+def active_ratio(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("active_day_ratio"))
 
 
-def _positive_ratio(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("positive_day_ratio"))
+def positive_ratio(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("positive_day_ratio"))
 
 
-def _best_day_share(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("best_day_share"))
+def best_day_share(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("best_day_share"))
 
 
-def _max_drawdown(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("max_drawdown"))
+def max_drawdown(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("max_drawdown"))
 
 
-def _worst_day_loss(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("worst_day_loss"))
+def worst_day_loss(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("worst_day_loss"))
 
 
-def _max_gross_exposure_pct_equity(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("max_gross_exposure_pct_equity"))
+def max_gross_exposure_pct_equity(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("max_gross_exposure_pct_equity"))
 
 
-def _min_cash(bundle: CandidateEvidenceBundle) -> Decimal:
-    return _decimal(_scorecard(bundle).get("min_cash"))
+def min_cash(bundle: CandidateEvidenceBundle) -> Decimal:
+    return decimal(scorecard(bundle).get("min_cash"))
 
 
-def _negative_cash_observation_count(bundle: CandidateEvidenceBundle) -> int:
+def negative_cash_observation_count(bundle: CandidateEvidenceBundle) -> int:
     try:
         return max(
             0,
-            int(_decimal(_scorecard(bundle).get("negative_cash_observation_count"))),
+            int(decimal(scorecard(bundle).get("negative_cash_observation_count"))),
         )
     except Exception:
         return 0
 
 
-def _hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
-    raw_hard_vetoes = _scorecard(bundle).get("hard_vetoes")
+def hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
+    raw_hard_vetoes = scorecard(bundle).get("hard_vetoes")
     if isinstance(raw_hard_vetoes, str):
         return (raw_hard_vetoes,) if raw_hard_vetoes.strip() else ()
     if not isinstance(raw_hard_vetoes, Sequence):
         return ()
     vetoes: list[str] = []
     for raw_value in cast(Sequence[object], raw_hard_vetoes):
-        veto = _string(raw_value)
+        veto = string(raw_value)
         if veto:
             vetoes.append(veto)
     return tuple(vetoes)
 
 
-def _non_composable_hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
+def non_composable_hard_vetoes(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
     return tuple(
         veto
-        for veto in _hard_vetoes(bundle)
+        for veto in hard_vetoes(bundle)
         if veto not in PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES
     )
 
 
-def _capital_safety_rejection(
+def capital_safety_rejection(
     bundle: CandidateEvidenceBundle,
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Any] | None:
     policy = oracle_policy or ProfitTargetOraclePolicy()
-    max_gross = _max_gross_exposure_pct_equity(bundle)
-    min_cash = _min_cash(bundle)
-    negative_cash_observations = _negative_cash_observation_count(bundle)
+    max_gross = max_gross_exposure_pct_equity(bundle)
+    minimum_cash = min_cash(bundle)
+    negative_cash_observations = negative_cash_observation_count(bundle)
     if max_gross > policy.max_gross_exposure_pct_equity:
         return {
             "candidate_id": bundle.candidate_id,
@@ -294,11 +294,11 @@ def _capital_safety_rejection(
             "max_gross_exposure_pct_equity": str(max_gross),
             "limit": str(policy.max_gross_exposure_pct_equity),
         }
-    if min_cash < policy.min_cash:
+    if minimum_cash < policy.min_cash:
         return {
             "candidate_id": bundle.candidate_id,
             "reason": "frontier_negative_cash",
-            "min_cash": str(min_cash),
+            "min_cash": str(minimum_cash),
             "limit": str(policy.min_cash),
         }
     if negative_cash_observations > policy.max_negative_cash_observation_count:
@@ -311,20 +311,20 @@ def _capital_safety_rejection(
     return None
 
 
-def _candidate_passes_minimums(
+def candidate_passes_minimums(
     bundle: CandidateEvidenceBundle,
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> bool:
     if not evidence_bundle_is_valid(bundle):
         return False
-    if _non_composable_hard_vetoes(bundle):
+    if non_composable_hard_vetoes(bundle):
         return False
-    if _capital_safety_rejection(bundle, oracle_policy=oracle_policy) is not None:
+    if capital_safety_rejection(bundle, oracle_policy=oracle_policy) is not None:
         return False
-    if _net_per_day(bundle) <= 0:
+    if net_per_day(bundle) <= 0:
         return False
-    if _active_ratio(bundle) <= 0 or _positive_ratio(bundle) <= 0:
+    if active_ratio(bundle) <= 0 or positive_ratio(bundle) <= 0:
         return False
     if bool(bundle.promotion_readiness.get("promotable")):
         return True
@@ -342,51 +342,51 @@ def _candidate_passes_minimums(
     return True
 
 
-def _daily_net(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
-    raw_daily = _scorecard(bundle).get("daily_net")
+def daily_net(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
+    raw_daily = scorecard(bundle).get("daily_net")
     if isinstance(raw_daily, Mapping):
         daily_mapping = cast(Mapping[Any, Any], raw_daily)
-        return {str(day): _decimal(value) for day, value in daily_mapping.items()}
+        return {str(day): decimal(value) for day, value in daily_mapping.items()}
     return {}
 
 
-def _daily_filled_notional(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
-    raw_daily = _scorecard(bundle).get("daily_filled_notional")
+def daily_filled_notional(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
+    raw_daily = scorecard(bundle).get("daily_filled_notional")
     if isinstance(raw_daily, Mapping):
         daily_mapping = cast(Mapping[Any, Any], raw_daily)
-        return {str(day): _decimal(value) for day, value in daily_mapping.items()}
-    notional = _decimal(_scorecard(bundle).get("avg_filled_notional_per_day"))
+        return {str(day): decimal(value) for day, value in daily_mapping.items()}
+    notional = decimal(scorecard(bundle).get("avg_filled_notional_per_day"))
     return {"synthetic": notional} if notional > 0 else {}
 
 
-def _trading_day_count(bundle: CandidateEvidenceBundle) -> int:
+def trading_day_count(bundle: CandidateEvidenceBundle) -> int:
     try:
-        expected = int(_decimal(_scorecard(bundle).get("trading_day_count")))
+        expected = int(decimal(scorecard(bundle).get("trading_day_count")))
     except Exception:
         expected = 0
     if (
         expected <= 0
-        and _scorecard(bundle).get("daily_net") is None
-        and _net_per_day(bundle) != 0
+        and scorecard(bundle).get("daily_net") is None
+        and net_per_day(bundle) != 0
     ):
         expected = 1
-    return max(expected, len(_daily_net(bundle)))
+    return max(expected, len(daily_net(bundle)))
 
 
-def _mean(values: Sequence[Decimal]) -> Decimal:
+def mean(values: Sequence[Decimal]) -> Decimal:
     if not values:
         return Decimal("0")
     return sum(values, Decimal("0")) / Decimal(len(values))
 
 
-def _correlation(left: Mapping[str, Decimal], right: Mapping[str, Decimal]) -> Decimal:
+def correlation(left: Mapping[str, Decimal], right: Mapping[str, Decimal]) -> Decimal:
     common_days = sorted(set(left) & set(right))
     if len(common_days) < 2:
         return Decimal("0")
     left_values = [left[day] for day in common_days]
     right_values = [right[day] for day in common_days]
-    left_mean = _mean(left_values)
-    right_mean = _mean(right_values)
+    left_mean = mean(left_values)
+    right_mean = mean(right_values)
     numerator: Decimal = sum(
         (
             (left_value - left_mean) * (right_value - right_mean)
@@ -415,10 +415,10 @@ def _equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal
 def _gross_exposure_allocation_edge_net_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
-    scorecard = _scorecard(bundle)
-    lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard)
+    scorecard_payload = scorecard(bundle)
+    lower_bound = deployable_lower_bound_net_pnl_per_day(scorecard_payload)
     edge_candidates: list[Decimal] = [
-        _net_per_day(bundle),
+        net_per_day(bundle),
     ]
     if lower_bound is not None:
         edge_candidates.append(lower_bound)
@@ -431,8 +431,8 @@ def _gross_exposure_allocation_edge_net_per_day(
         "double_oos_net_pnl_per_day",
         "conformal_tail_risk_adjusted_net_pnl_per_day",
     ):
-        if key in scorecard:
-            edge_candidates.append(_decimal(scorecard.get(key)))
+        if key in scorecard_payload:
+            edge_candidates.append(decimal(scorecard_payload.get(key)))
     return min(edge_candidates, default=Decimal("0"))
 
 
@@ -441,16 +441,16 @@ def _gross_exposure_allocation_priority(bundle: CandidateEvidenceBundle) -> Deci
     if edge <= 0:
         return Decimal("0")
     downside_risk = max(
-        _worst_day_loss(bundle),
-        _max_drawdown(bundle),
+        worst_day_loss(bundle),
+        max_drawdown(bundle),
         Decimal("1"),
     )
     concentration_penalty = Decimal("1") + max(
-        _best_day_share(bundle),
+        best_day_share(bundle),
         Decimal("0"),
     )
-    quality = max(_active_ratio(bundle), Decimal("0")) * max(
-        _positive_ratio(bundle),
+    quality = max(active_ratio(bundle), Decimal("0")) * max(
+        positive_ratio(bundle),
         Decimal("0"),
     )
     if quality <= 0:
@@ -521,7 +521,7 @@ def _gross_exposure_budget_weights(
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Decimal, ...] | None:
     policy = oracle_policy or ProfitTargetOraclePolicy()
-    exposures = tuple(_max_gross_exposure_pct_equity(bundle) for bundle in selected)
+    exposures = tuple(max_gross_exposure_pct_equity(bundle) for bundle in selected)
     if not exposures or any(exposure <= 0 for exposure in exposures):
         return None
     total_exposure = sum(exposures, Decimal("0"))
@@ -556,7 +556,7 @@ def _portfolio_weights(
     return _equal_weights(selected)
 
 
-def _portfolio_daily_net(
+def portfolio_daily_net(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
@@ -564,12 +564,12 @@ def _portfolio_daily_net(
     weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     daily_totals: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
-        for day, value in _daily_net(bundle).items():
+        for day, value in daily_net(bundle).items():
             daily_totals[day] = daily_totals.get(day, Decimal("0")) + (value * weight)
     return daily_totals
 
 
-def _portfolio_daily_filled_notional(
+def portfolio_daily_filled_notional(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
@@ -577,25 +577,25 @@ def _portfolio_daily_filled_notional(
     weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
     daily_totals: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
-        for day, value in _daily_filled_notional(bundle).items():
+        for day, value in daily_filled_notional(bundle).items():
             daily_totals[day] = daily_totals.get(day, Decimal("0")) + (value * weight)
     return daily_totals
 
 
-def _executable_replay_passed(bundle: CandidateEvidenceBundle) -> bool:
-    return _boolish(_scorecard(bundle).get("executable_replay_passed"))
+def executable_replay_passed(bundle: CandidateEvidenceBundle) -> bool:
+    return boolish(scorecard(bundle).get("executable_replay_passed"))
 
 
-def _executable_replay_order_count(bundle: CandidateEvidenceBundle) -> int:
-    scorecard = _scorecard(bundle)
+def executable_replay_order_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard_payload = scorecard(bundle)
     try:
         return max(
             0,
             int(
-                _decimal(
-                    scorecard.get("executable_replay_order_count")
-                    or scorecard.get("executable_replay_submitted_order_count")
-                    or scorecard.get("executable_replay_orders_submitted_total")
+                decimal(
+                    scorecard_payload.get("executable_replay_order_count")
+                    or scorecard_payload.get("executable_replay_submitted_order_count")
+                    or scorecard_payload.get("executable_replay_orders_submitted_total")
                 )
             ),
         )
@@ -603,66 +603,64 @@ def _executable_replay_order_count(bundle: CandidateEvidenceBundle) -> int:
         return 0
 
 
-def _executable_replay_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
-    scorecard = _scorecard(bundle)
-    return _string(scorecard.get("executable_replay_artifact_ref"))
+def executable_replay_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
+    scorecard_payload = scorecard(bundle)
+    return string(scorecard_payload.get("executable_replay_artifact_ref"))
 
 
-def _artifact_refs_from_scorecard(
-    scorecard: Mapping[str, Any], *keys: str
-) -> list[str]:
+def artifact_refs_from_scorecard(scorecard: Mapping[str, Any], *keys: str) -> list[str]:
     refs: list[str] = []
     for key in keys:
         value = scorecard.get(key)
         if isinstance(value, Sequence) and not isinstance(value, str):
             refs.extend(
                 normalized
-                for normalized in (_string(item) for item in cast(Sequence[Any], value))
+                for normalized in (string(item) for item in cast(Sequence[Any], value))
                 if normalized
             )
             continue
-        normalized = _string(value)
+        normalized = string(value)
         if normalized:
             refs.append(normalized)
     return list(dict.fromkeys(refs))
 
 
-def _exact_replay_ledger_artifact_refs(bundle: CandidateEvidenceBundle) -> list[str]:
-    scorecard = _scorecard(bundle)
-    return _artifact_refs_from_scorecard(
-        scorecard,
+def exact_replay_ledger_artifact_refs(bundle: CandidateEvidenceBundle) -> list[str]:
+    scorecard_payload = scorecard(bundle)
+    return artifact_refs_from_scorecard(
+        scorecard_payload,
         "exact_replay_ledger_artifact_ref",
         "exact_replay_ledger_artifact_refs",
     )
 
 
-def _exact_replay_ledger_row_count(bundle: CandidateEvidenceBundle) -> int:
-    scorecard = _scorecard(bundle)
+def exact_replay_ledger_row_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard_payload = scorecard(bundle)
     return max(
         0,
-        int(_decimal(scorecard.get("exact_replay_ledger_artifact_row_count"))),
+        int(decimal(scorecard_payload.get("exact_replay_ledger_artifact_row_count"))),
     )
 
 
-def _exact_replay_ledger_fill_count(bundle: CandidateEvidenceBundle) -> int:
-    scorecard = _scorecard(bundle)
+def exact_replay_ledger_fill_count(bundle: CandidateEvidenceBundle) -> int:
+    scorecard_payload = scorecard(bundle)
     return max(
         0,
-        int(_decimal(scorecard.get("exact_replay_ledger_artifact_fill_count"))),
+        int(decimal(scorecard_payload.get("exact_replay_ledger_artifact_fill_count"))),
     )
 
 
-def _first_normalized_scorecard_text(scorecard: Mapping[str, Any], *keys: str) -> str:
+def first_normalized_scorecard_text(scorecard: Mapping[str, Any], *keys: str) -> str:
     for key in keys:
-        normalized = _string(scorecard.get(key)).lower()
+        normalized = string(scorecard.get(key)).lower()
         if normalized:
             return normalized
     return ""
 
 
-def _ledger_pnl_basis(bundle: CandidateEvidenceBundle) -> str:
-    return _first_normalized_scorecard_text(
-        _scorecard(bundle),
+def ledger_pnl_basis(bundle: CandidateEvidenceBundle) -> str:
+    return first_normalized_scorecard_text(
+        scorecard(bundle),
         "portfolio_post_cost_net_pnl_basis",
         "portfolio_post_cost_net_pnl_per_day_basis",
         "post_cost_net_pnl_basis",
@@ -674,9 +672,9 @@ def _ledger_pnl_basis(bundle: CandidateEvidenceBundle) -> str:
     )
 
 
-def _ledger_pnl_source(bundle: CandidateEvidenceBundle) -> str:
-    return _first_normalized_scorecard_text(
-        _scorecard(bundle),
+def ledger_pnl_source(bundle: CandidateEvidenceBundle) -> str:
+    return first_normalized_scorecard_text(
+        scorecard(bundle),
         "portfolio_post_cost_net_pnl_source",
         "portfolio_post_cost_net_pnl_per_day_source",
         "post_cost_net_pnl_source",
@@ -688,130 +686,128 @@ def _ledger_pnl_source(bundle: CandidateEvidenceBundle) -> str:
     )
 
 
-def _executable_replay_buying_power(bundle: CandidateEvidenceBundle) -> Decimal:
-    scorecard = _scorecard(bundle)
-    return _decimal(
-        scorecard.get("executable_replay_account_buying_power")
-        or scorecard.get("executable_replay_buying_power")
+def executable_replay_buying_power(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard_payload = scorecard(bundle)
+    return decimal(
+        scorecard_payload.get("executable_replay_account_buying_power")
+        or scorecard_payload.get("executable_replay_buying_power")
     )
 
 
-def _executable_replay_max_notional(bundle: CandidateEvidenceBundle) -> Decimal:
-    scorecard = _scorecard(bundle)
-    return _decimal(
-        scorecard.get("executable_replay_max_notional_per_trade")
-        or scorecard.get("executable_replay_max_notional_per_order")
+def executable_replay_max_notional(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard_payload = scorecard(bundle)
+    return decimal(
+        scorecard_payload.get("executable_replay_max_notional_per_trade")
+        or scorecard_payload.get("executable_replay_max_notional_per_order")
     )
 
 
-def _market_impact_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
-    scorecard = _scorecard(bundle)
-    return _boolish(
-        scorecard.get("nonlinear_market_impact_stress_passed")
-        or scorecard.get("market_impact_stress_passed")
-        or scorecard.get("cost_shock_stress_passed")
+def market_impact_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
+    scorecard_payload = scorecard(bundle)
+    return boolish(
+        scorecard_payload.get("nonlinear_market_impact_stress_passed")
+        or scorecard_payload.get("market_impact_stress_passed")
+        or scorecard_payload.get("cost_shock_stress_passed")
     )
 
 
-def _market_impact_stress_model(bundle: CandidateEvidenceBundle) -> str:
-    scorecard = _scorecard(bundle)
-    return _string(
-        scorecard.get("nonlinear_market_impact_stress_model")
-        or scorecard.get("market_impact_stress_model")
+def market_impact_stress_model(bundle: CandidateEvidenceBundle) -> str:
+    scorecard_payload = scorecard(bundle)
+    return string(
+        scorecard_payload.get("nonlinear_market_impact_stress_model")
+        or scorecard_payload.get("market_impact_stress_model")
     )
 
 
-def _market_impact_stress_components(
+def market_impact_stress_components(
     bundle: CandidateEvidenceBundle,
 ) -> Mapping[str, Any]:
-    return _mapping(_scorecard(bundle).get("market_impact_stress_components"))
+    return mapping(scorecard(bundle).get("market_impact_stress_components"))
 
 
-def _market_impact_stress_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
-    scorecard = _scorecard(bundle)
-    return _string(
-        scorecard.get("market_impact_stress_artifact_ref")
-        or scorecard.get("impact_stress_artifact_ref")
-        or scorecard.get("cost_shock_artifact_ref")
+def market_impact_stress_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
+    scorecard_payload = scorecard(bundle)
+    return string(
+        scorecard_payload.get("market_impact_stress_artifact_ref")
+        or scorecard_payload.get("impact_stress_artifact_ref")
+        or scorecard_payload.get("cost_shock_artifact_ref")
     )
 
 
-def _market_impact_stress_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
-    scorecard = _scorecard(bundle)
-    return _decimal(
-        scorecard.get("market_impact_stress_net_pnl_per_day")
-        or scorecard.get("post_impact_net_pnl_per_day")
-        or scorecard.get("cost_shock_net_pnl_per_day")
+def market_impact_stress_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard_payload = scorecard(bundle)
+    return decimal(
+        scorecard_payload.get("market_impact_stress_net_pnl_per_day")
+        or scorecard_payload.get("post_impact_net_pnl_per_day")
+        or scorecard_payload.get("cost_shock_net_pnl_per_day")
     )
 
 
-def _market_impact_stress_cost_bps(bundle: CandidateEvidenceBundle) -> Decimal:
-    scorecard = _scorecard(bundle)
-    return _decimal(
-        scorecard.get("market_impact_stress_cost_bps")
-        or scorecard.get("market_impact_cost_bps")
-        or scorecard.get("cost_shock_bps")
+def market_impact_stress_cost_bps(bundle: CandidateEvidenceBundle) -> Decimal:
+    scorecard_payload = scorecard(bundle)
+    return decimal(
+        scorecard_payload.get("market_impact_stress_cost_bps")
+        or scorecard_payload.get("market_impact_cost_bps")
+        or scorecard_payload.get("cost_shock_bps")
     )
 
 
-def _market_impact_liquidity_evidence_present(
+def market_impact_liquidity_evidence_present(
     bundle: CandidateEvidenceBundle,
 ) -> bool:
-    scorecard = _scorecard(bundle)
-    return _boolish(
-        scorecard.get("market_impact_liquidity_evidence_present")
-        or scorecard.get("liquidity_evidence_present")
+    scorecard_payload = scorecard(bundle)
+    return boolish(
+        scorecard_payload.get("market_impact_liquidity_evidence_present")
+        or scorecard_payload.get("liquidity_evidence_present")
     )
 
 
-def _implementation_uncertainty_required(bundle: CandidateEvidenceBundle) -> bool:
-    return _boolish(_scorecard(bundle).get("implementation_uncertainty_required"))
+def implementation_uncertainty_required(bundle: CandidateEvidenceBundle) -> bool:
+    return boolish(scorecard(bundle).get("implementation_uncertainty_required"))
 
 
-def _implementation_uncertainty_stability_passed(
+def implementation_uncertainty_stability_passed(
     bundle: CandidateEvidenceBundle,
 ) -> bool:
-    scorecard = _scorecard(bundle)
-    if not _implementation_uncertainty_required(bundle):
+    scorecard_payload = scorecard(bundle)
+    if not implementation_uncertainty_required(bundle):
         return True
-    return _boolish(scorecard.get("implementation_uncertainty_stability_passed"))
+    return boolish(scorecard_payload.get("implementation_uncertainty_stability_passed"))
 
 
-def _implementation_uncertainty_model_count(bundle: CandidateEvidenceBundle) -> int:
-    return int(
-        _decimal(_scorecard(bundle).get("implementation_uncertainty_model_count"))
-    )
+def implementation_uncertainty_model_count(bundle: CandidateEvidenceBundle) -> int:
+    return int(decimal(scorecard(bundle).get("implementation_uncertainty_model_count")))
 
 
-def _implementation_uncertainty_lower_net_per_day(
+def implementation_uncertainty_lower_net_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
-    return _decimal(
-        _scorecard(bundle).get("implementation_uncertainty_lower_net_pnl_per_day")
+    return decimal(
+        scorecard(bundle).get("implementation_uncertainty_lower_net_pnl_per_day")
     )
 
 
-def _implementation_uncertainty_upper_net_per_day(
+def implementation_uncertainty_upper_net_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
-    return _decimal(
-        _scorecard(bundle).get("implementation_uncertainty_upper_net_pnl_per_day")
+    return decimal(
+        scorecard(bundle).get("implementation_uncertainty_upper_net_pnl_per_day")
     )
 
 
-def _implementation_uncertainty_interval_width_per_day(
+def implementation_uncertainty_interval_width_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
-    return _decimal(
-        _scorecard(bundle).get("implementation_uncertainty_interval_width_per_day")
+    return decimal(
+        scorecard(bundle).get("implementation_uncertainty_interval_width_per_day")
     )
 
 
-def _conformal_tail_risk_required(bundle: CandidateEvidenceBundle) -> bool:
-    return _boolish(_scorecard(bundle).get("conformal_tail_risk_required"))
+def conformal_tail_risk_required(bundle: CandidateEvidenceBundle) -> bool:
+    return boolish(scorecard(bundle).get("conformal_tail_risk_required"))
 
 
-def _conformal_tail_loss_buffer(values: Sequence[Decimal]) -> Decimal:
+def conformal_tail_loss_buffer(values: Sequence[Decimal]) -> Decimal:
     losses = sorted(max(Decimal("0"), -value) for value in values)
     if not losses:
         return Decimal("0")
@@ -838,75 +834,6 @@ __all__ = (
     "PORTFOLIO_COMPOSABLE_SINGLE_SLEEVE_VETOES",
 )
 
-# Public aliases used by split modules.
-ACCEPTED_LEDGER_PNL_SOURCES = _ACCEPTED_LEDGER_PNL_SOURCES
-active_ratio = _active_ratio
-artifact_refs_from_scorecard = _artifact_refs_from_scorecard
-best_day_share = _best_day_share
-boolish = _boolish
-candidate_passes_minimums = _candidate_passes_minimums
-capital_safety_rejection = _capital_safety_rejection
-conformal_tail_loss_buffer = _conformal_tail_loss_buffer
-conformal_tail_risk_required = _conformal_tail_risk_required
-correlation = _correlation
-daily_filled_notional = _daily_filled_notional
-daily_net = _daily_net
-decimal = _decimal
-diversified_candidate_order = _diversified_candidate_order
-exact_replay_ledger_artifact_refs = _exact_replay_ledger_artifact_refs
-exact_replay_ledger_fill_count = _exact_replay_ledger_fill_count
-exact_replay_ledger_row_count = _exact_replay_ledger_row_count
-executable_replay_artifact_ref = _executable_replay_artifact_ref
-executable_replay_buying_power = _executable_replay_buying_power
-executable_replay_max_notional = _executable_replay_max_notional
-executable_replay_order_count = _executable_replay_order_count
-executable_replay_passed = _executable_replay_passed
-first_normalized_scorecard_text = _first_normalized_scorecard_text
-hard_vetoes = _hard_vetoes
-implementation_uncertainty_interval_width_per_day = (
-    _implementation_uncertainty_interval_width_per_day
-)
-implementation_uncertainty_lower_net_per_day = (
-    _implementation_uncertainty_lower_net_per_day
-)
-implementation_uncertainty_model_count = _implementation_uncertainty_model_count
-implementation_uncertainty_required = _implementation_uncertainty_required
-implementation_uncertainty_stability_passed = (
-    _implementation_uncertainty_stability_passed
-)
-implementation_uncertainty_upper_net_per_day = (
-    _implementation_uncertainty_upper_net_per_day
-)
-ledger_pnl_basis = _ledger_pnl_basis
-ledger_pnl_source = _ledger_pnl_source
-mapping = _mapping
-market_impact_liquidity_evidence_present = _market_impact_liquidity_evidence_present
-market_impact_stress_artifact_ref = _market_impact_stress_artifact_ref
-market_impact_stress_components = _market_impact_stress_components
-market_impact_stress_cost_bps = _market_impact_stress_cost_bps
-market_impact_stress_model = _market_impact_stress_model
-market_impact_stress_net_per_day = _market_impact_stress_net_per_day
-market_impact_stress_passed = _market_impact_stress_passed
-max_drawdown = _max_drawdown
-max_gross_exposure_pct_equity = _max_gross_exposure_pct_equity
-mean = _mean
-min_cash = _min_cash
-negative_cash_observation_count = _negative_cash_observation_count
-net_per_day = _net_per_day
-non_composable_hard_vetoes = _non_composable_hard_vetoes
-portfolio_daily_filled_notional = _portfolio_daily_filled_notional
-portfolio_daily_net = _portfolio_daily_net
-positive_ratio = _positive_ratio
-scorecard = _scorecard
-scorecard_primary_symbol = _scorecard_primary_symbol
-scorecard_runtime_params = _scorecard_runtime_params
-scorecard_signal = _scorecard_signal
-scorecard_sleeve_runtime_limits = _scorecard_sleeve_runtime_limits
-scorecard_universe_symbols = _scorecard_universe_symbols
-string = _string
-trading_day_count = _trading_day_count
-worst_day_loss = _worst_day_loss
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
@@ -929,72 +856,72 @@ __all__: tuple[str, ...] = (
     "ProfitTargetOraclePolicy",
     "ROUND_CEILING",
     "Sequence",
-    "_ACCEPTED_LEDGER_PNL_SOURCES",
-    "_active_ratio",
-    "_artifact_refs_from_scorecard",
-    "_best_day_share",
-    "_boolish",
-    "_candidate_passes_minimums",
-    "_capital_safety_rejection",
-    "_conformal_tail_loss_buffer",
-    "_conformal_tail_risk_required",
-    "_correlation",
-    "_daily_filled_notional",
-    "_daily_net",
-    "_decimal",
+    "ACCEPTED_LEDGER_PNL_SOURCES",
+    "active_ratio",
+    "artifact_refs_from_scorecard",
+    "best_day_share",
+    "boolish",
+    "candidate_passes_minimums",
+    "capital_safety_rejection",
+    "conformal_tail_loss_buffer",
+    "conformal_tail_risk_required",
+    "correlation",
+    "daily_filled_notional",
+    "daily_net",
+    "decimal",
     "_diversification_sleeve_score",
-    "_diversified_candidate_order",
+    "diversified_candidate_order",
     "_edge_risk_gross_exposure_budget_weights",
     "_equal_weights",
-    "_exact_replay_ledger_artifact_refs",
-    "_exact_replay_ledger_fill_count",
-    "_exact_replay_ledger_row_count",
-    "_executable_replay_artifact_ref",
-    "_executable_replay_buying_power",
-    "_executable_replay_max_notional",
-    "_executable_replay_order_count",
-    "_executable_replay_passed",
-    "_first_normalized_scorecard_text",
+    "exact_replay_ledger_artifact_refs",
+    "exact_replay_ledger_fill_count",
+    "exact_replay_ledger_row_count",
+    "executable_replay_artifact_ref",
+    "executable_replay_buying_power",
+    "executable_replay_max_notional",
+    "executable_replay_order_count",
+    "executable_replay_passed",
+    "first_normalized_scorecard_text",
     "_gross_exposure_allocation_edge_net_per_day",
     "_gross_exposure_allocation_priority",
     "_gross_exposure_budget_weights",
-    "_hard_vetoes",
-    "_implementation_uncertainty_interval_width_per_day",
-    "_implementation_uncertainty_lower_net_per_day",
-    "_implementation_uncertainty_model_count",
-    "_implementation_uncertainty_required",
-    "_implementation_uncertainty_stability_passed",
-    "_implementation_uncertainty_upper_net_per_day",
-    "_ledger_pnl_basis",
-    "_ledger_pnl_source",
-    "_mapping",
-    "_market_impact_liquidity_evidence_present",
-    "_market_impact_stress_artifact_ref",
-    "_market_impact_stress_components",
-    "_market_impact_stress_cost_bps",
-    "_market_impact_stress_model",
-    "_market_impact_stress_net_per_day",
-    "_market_impact_stress_passed",
-    "_max_drawdown",
-    "_max_gross_exposure_pct_equity",
-    "_mean",
-    "_min_cash",
-    "_negative_cash_observation_count",
-    "_net_per_day",
-    "_non_composable_hard_vetoes",
-    "_portfolio_daily_filled_notional",
-    "_portfolio_daily_net",
+    "hard_vetoes",
+    "implementation_uncertainty_interval_width_per_day",
+    "implementation_uncertainty_lower_net_per_day",
+    "implementation_uncertainty_model_count",
+    "implementation_uncertainty_required",
+    "implementation_uncertainty_stability_passed",
+    "implementation_uncertainty_upper_net_per_day",
+    "ledger_pnl_basis",
+    "ledger_pnl_source",
+    "mapping",
+    "market_impact_liquidity_evidence_present",
+    "market_impact_stress_artifact_ref",
+    "market_impact_stress_components",
+    "market_impact_stress_cost_bps",
+    "market_impact_stress_model",
+    "market_impact_stress_net_per_day",
+    "market_impact_stress_passed",
+    "max_drawdown",
+    "max_gross_exposure_pct_equity",
+    "mean",
+    "min_cash",
+    "negative_cash_observation_count",
+    "net_per_day",
+    "non_composable_hard_vetoes",
+    "portfolio_daily_filled_notional",
+    "portfolio_daily_net",
     "_portfolio_weights",
-    "_positive_ratio",
-    "_scorecard",
-    "_scorecard_primary_symbol",
-    "_scorecard_runtime_params",
-    "_scorecard_signal",
-    "_scorecard_sleeve_runtime_limits",
-    "_scorecard_universe_symbols",
-    "_string",
-    "_trading_day_count",
-    "_worst_day_loss",
+    "positive_ratio",
+    "scorecard",
+    "scorecard_primary_symbol",
+    "scorecard_runtime_params",
+    "scorecard_signal",
+    "scorecard_sleeve_runtime_limits",
+    "scorecard_universe_symbols",
+    "string",
+    "trading_day_count",
+    "worst_day_loss",
     "active_ratio",
     "annotations",
     "artifact_refs_from_scorecard",

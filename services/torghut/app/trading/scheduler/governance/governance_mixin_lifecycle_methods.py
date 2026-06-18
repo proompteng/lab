@@ -46,7 +46,7 @@ else:
     _TradingSchedulerGovernanceLifecycleBase = object
 
 
-class _TradingSchedulerGovernanceLifecycleMethods(
+class TradingSchedulerGovernanceLifecycleMethods(
     _TradingSchedulerGovernanceLifecycleBase,
 ):
     def _emit_autonomy_domain_telemetry(
@@ -721,6 +721,3 @@ class _TradingSchedulerGovernanceLifecycleMethods(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-TradingSchedulerGovernanceLifecycleMethods = _TradingSchedulerGovernanceLifecycleMethods

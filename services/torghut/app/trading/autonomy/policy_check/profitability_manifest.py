@@ -28,7 +28,7 @@ from .requirements import (
 )
 
 
-def _append_profitability_stage_manifest_reasons(
+def append_profitability_stage_manifest_reasons(
     *,
     reasons: list[str],
     reason_details: list[dict[str, object]],
@@ -478,7 +478,7 @@ def _append_profitability_stage_manifest_reasons(
         )
 
 
-def _append_portfolio_optimizer_evidence_reasons(
+def append_portfolio_optimizer_evidence_reasons(
     *,
     reasons: list[str],
     reason_details: list[dict[str, object]],
@@ -678,7 +678,7 @@ def _append_profitability_stage_manifest_replay_contract_reasons(
             )
 
 
-def _append_profitability_evidence_reasons(
+def append_profitability_evidence_reasons(
     *,
     reasons: list[str],
     reason_details: list[dict[str, object]],
@@ -747,7 +747,7 @@ def _append_profitability_evidence_reasons(
         )
 
 
-def _append_janus_evidence_reasons(
+def append_janus_evidence_reasons(
     *,
     reasons: list[str],
     reason_details: list[dict[str, object]],
@@ -840,7 +840,7 @@ def _append_janus_evidence_reasons(
         )
 
 
-def _append_benchmark_parity_evidence_reasons(
+def append_benchmark_parity_evidence_reasons(
     *,
     reasons: list[str],
     reason_details: list[dict[str, object]],
@@ -908,14 +908,3 @@ def _append_benchmark_parity_evidence_reasons(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-append_benchmark_parity_evidence_reasons = _append_benchmark_parity_evidence_reasons
-append_janus_evidence_reasons = _append_janus_evidence_reasons
-append_portfolio_optimizer_evidence_reasons = (
-    _append_portfolio_optimizer_evidence_reasons
-)
-append_profitability_evidence_reasons = _append_profitability_evidence_reasons
-append_profitability_stage_manifest_reasons = (
-    _append_profitability_stage_manifest_reasons
-)

@@ -6,9 +6,9 @@ from unittest import TestCase
 
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.scheduler.pipeline_helpers import (
-    _resolve_decision_regime_label,
-    _resolve_decision_regime_label_with_source,
-    _resolve_signal_regime,
+    resolve_decision_regime_label,
+    resolve_decision_regime_label_with_source,
+    resolve_signal_regime,
 )
 
 
@@ -27,7 +27,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        regime_label = _resolve_decision_regime_label(decision)
+        regime_label = resolve_decision_regime_label(decision)
 
         self.assertEqual(regime_label, "vol=high|trend=flat|liq=liquid")
 
@@ -42,7 +42,7 @@ class TestSchedulerRegimeResolution(TestCase):
             params={"regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"}},
         )
 
-        regime_label = _resolve_decision_regime_label(decision)
+        regime_label = resolve_decision_regime_label(decision)
 
         self.assertEqual(regime_label, "vol=mid|trend=up|liq=liquid")
 
@@ -71,7 +71,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -101,7 +101,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(source_regime_label, ("r2", "hmm", None))
 
@@ -128,7 +128,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -158,7 +158,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -190,7 +190,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -223,7 +223,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -256,7 +256,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -291,7 +291,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -324,7 +324,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,
@@ -338,7 +338,7 @@ class TestSchedulerRegimeResolution(TestCase):
             payload={"regime": {"label": "Vol=Mid|Trend=Up|Liq=Liquid"}},
         )
 
-        regime_label = _resolve_signal_regime(signal)
+        regime_label = resolve_signal_regime(signal)
 
         self.assertEqual(regime_label, "vol=mid|trend=up|liq=liquid")
 
@@ -358,7 +358,7 @@ class TestSchedulerRegimeResolution(TestCase):
             },
         )
 
-        source_regime_label = _resolve_decision_regime_label_with_source(decision)
+        source_regime_label = resolve_decision_regime_label_with_source(decision)
 
         self.assertEqual(
             source_regime_label,

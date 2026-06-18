@@ -16,21 +16,21 @@ _IMPLEMENTATION_MODULES: tuple[object, ...] = (
 
 router: Any = getattr(_executions, "router")
 _consumer_evidence_dependency_quorum: Any = getattr(
-    _consumer_evidence, "_consumer_evidence_dependency_quorum"
+    _consumer_evidence, "consumer_evidence_dependency_quorum"
 )
 _build_consumer_evidence_receipt_projection: Any = getattr(
-    _consumer_evidence, "_build_consumer_evidence_receipt_projection"
+    _consumer_evidence, "build_consumer_evidence_receipt_projection"
 )
 _consumer_evidence_summary_view: Any = getattr(
-    _consumer_evidence, "_consumer_evidence_summary_view"
+    _consumer_evidence, "consumer_evidence_summary_view"
 )
 _revenue_repair_topline_fields: Any = getattr(
-    _consumer_evidence, "_revenue_repair_topline_fields"
+    _consumer_evidence, "revenue_repair_topline_fields"
 )
 build_consumer_evidence_receipt_projection = _build_consumer_evidence_receipt_projection
 revenue_repair_topline_fields = _revenue_repair_topline_fields
 _build_trading_consumer_evidence_payload: Any = getattr(
-    _consumer_evidence, "_build_trading_consumer_evidence_payload"
+    _consumer_evidence, "build_trading_consumer_evidence_payload"
 )
 trading_consumer_evidence: Any = getattr(
     _consumer_evidence, "trading_consumer_evidence"
@@ -44,13 +44,13 @@ get_lean_backtest: Any = getattr(_consumer_evidence, "get_lean_backtest")
 get_lean_shadow_parity: Any = getattr(_consumer_evidence, "get_lean_shadow_parity")
 trading_autonomy: Any = getattr(_autonomy, "trading_autonomy")
 _runtime_ledger_bucket_evidence_grade: Any = getattr(
-    _autonomy, "_runtime_ledger_bucket_evidence_grade"
+    _autonomy, "runtime_ledger_bucket_evidence_grade"
 )
 _daily_runtime_ledger_portfolio_summary: Any = getattr(
-    _autonomy, "_daily_runtime_ledger_portfolio_summary"
+    _autonomy, "daily_runtime_ledger_portfolio_summary"
 )
 daily_runtime_ledger_portfolio_summary = _daily_runtime_ledger_portfolio_summary
-_build_current_evidence_epoch: Any = getattr(_autonomy, "_build_current_evidence_epoch")
+_build_current_evidence_epoch: Any = getattr(_autonomy, "build_current_evidence_epoch")
 trading_evidence_epoch_latest: Any = getattr(_autonomy, "trading_evidence_epoch_latest")
 trading_evidence_epoch_detail: Any = getattr(_autonomy, "trading_evidence_epoch_detail")
 trading_empirical_jobs: Any = getattr(_autonomy, "trading_empirical_jobs")

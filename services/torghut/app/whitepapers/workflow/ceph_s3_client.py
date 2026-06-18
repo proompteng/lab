@@ -280,14 +280,14 @@ class IssueKickoffResult:
 
 
 @dataclass(frozen=True)
-class _IssueRunIdentity:
+class IssueRunIdentity:
     run_id: str
     retry_of_run_id: str | None
     marker_hash: str
 
 
 @dataclass(frozen=True)
-class _PdfStorageOutcome:
+class PdfStorageOutcome:
     ceph_bucket: str
     ceph_key: str
     checksum: str
@@ -297,14 +297,14 @@ class _PdfStorageOutcome:
     parse_error: str | None
 
 
-class _WhitepaperWorkflowServiceFields:
+class WhitepaperWorkflowServiceFields:
     """State transitions and persistence for whitepaper analysis workflow."""
 
     ceph_client: Any | None
     inngest_client: Any | None
 
 
-class _WhitepaperWorkflowServiceContract(Protocol):
+class WhitepaperWorkflowServiceContract(Protocol):
     ceph_client: Any | None
     inngest_client: Any | None
 
@@ -538,9 +538,3 @@ __all__ = (
     "IssueKickoffResult",
     "WhitepaperWorkflowServiceContract",
 )
-
-# Public aliases used by split modules.
-IssueRunIdentity = _IssueRunIdentity
-PdfStorageOutcome = _PdfStorageOutcome
-WhitepaperWorkflowServiceContract = _WhitepaperWorkflowServiceContract
-WhitepaperWorkflowServiceFields = _WhitepaperWorkflowServiceFields

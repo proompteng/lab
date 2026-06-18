@@ -484,7 +484,7 @@ def _validate_expert_lineage(evaluation: _ArtifactEvaluation) -> None:
         )
 
 
-def _evaluate_janus_evidence(
+def evaluate_janus_evidence(
     *,
     policy_payload: dict[str, Any],
     promotion_target: str,
@@ -556,7 +556,7 @@ def _evaluate_janus_evidence(
     return reasons, details, refs
 
 
-def _evaluate_contamination_registry_evidence(
+def evaluate_contamination_registry_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -605,7 +605,7 @@ def _evaluate_contamination_registry_evidence(
     return evaluation.result()
 
 
-def _evaluate_hmm_state_posterior_evidence(
+def evaluate_hmm_state_posterior_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -657,7 +657,7 @@ def _evaluate_hmm_state_posterior_evidence(
     return evaluation.result()
 
 
-def _evaluate_expert_router_registry_evidence(
+def evaluate_expert_router_registry_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -702,9 +702,3 @@ def _evaluate_expert_router_registry_evidence(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_contamination_registry_evidence = _evaluate_contamination_registry_evidence
-evaluate_expert_router_registry_evidence = _evaluate_expert_router_registry_evidence
-evaluate_hmm_state_posterior_evidence = _evaluate_hmm_state_posterior_evidence
-evaluate_janus_evidence = _evaluate_janus_evidence

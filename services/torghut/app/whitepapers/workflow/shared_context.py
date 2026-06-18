@@ -53,12 +53,12 @@ from ...trading.discovery.whitepaper_candidate_compiler import (
 
 logger = logging.getLogger(__name__)
 
-_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = "/etc/torghut/whitepapers-config"
+WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = "/etc/torghut/whitepapers-config"
 
-_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = "/etc/torghut/whitepapers-secret"
+WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = "/etc/torghut/whitepapers-secret"
 
 
-def _read_text_file(path: str | None) -> str | None:
+def read_text_file(path: str | None) -> str | None:
     if path is None:
         return None
     normalized = path.strip()
@@ -72,7 +72,7 @@ def _read_text_file(path: str | None) -> str | None:
     return payload or None
 
 
-def _mounted_or_env_value(
+def mounted_or_env_value(
     *,
     env_name: str,
     mounted_key: str,
@@ -80,36 +80,36 @@ def _mounted_or_env_value(
     default_dir: str,
     fallback_env_names: tuple[str, ...] = (),
 ) -> str | None:
-    mounted_dir = _str_env(dir_env_name, default_dir) or default_dir
-    mounted_value = _read_text_file(os.path.join(mounted_dir, mounted_key))
+    mounted_dir = str_env(dir_env_name, default_dir) or default_dir
+    mounted_value = read_text_file(os.path.join(mounted_dir, mounted_key))
     if mounted_value is not None:
         return mounted_value
 
-    direct_value = _str_env(env_name)
+    direct_value = str_env(env_name)
     if direct_value is not None:
         return direct_value
 
     for fallback_name in fallback_env_names:
-        fallback_value = _str_env(fallback_name)
+        fallback_value = str_env(fallback_name)
         if fallback_value is not None:
             return fallback_value
     return None
 
 
-def _whitepaper_ceph_bucket_name() -> str:
+def whitepaper_ceph_bucket_name() -> str:
     return (
-        _mounted_or_env_value(
+        mounted_or_env_value(
             env_name="WHITEPAPER_CEPH_BUCKET",
             mounted_key="BUCKET_NAME",
             dir_env_name="WHITEPAPER_CEPH_CONFIG_DIR",
-            default_dir=_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
+            default_dir=WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR,
             fallback_env_names=("BUCKET_NAME",),
         )
         or "torghut-whitepapers"
     )
 
 
-def _http_request_bytes(
+def http_request_bytes(
     url: str,
     *,
     method: str,
@@ -192,11 +192,11 @@ def _http_request_bytes(
     raise RuntimeError("http_redirect_processing_failed")
 
 
-_GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
+GITHUB_ISSUE_ACTIONS = {"opened", "edited", "reopened", "labeled"}
 
-_GITHUB_ISSUE_COMMENT_ACTIONS = {"created", "edited"}
+GITHUB_ISSUE_COMMENT_ACTIONS = {"created", "edited"}
 
-_RETRYABLE_AGENTRUN_STATUSES = {
+RETRYABLE_AGENTRUN_STATUSES = {
     "failed",
     "error",
     "cancelled",
@@ -205,15 +205,15 @@ _RETRYABLE_AGENTRUN_STATUSES = {
     "timed_out",
 }
 
-_ELIGIBLE_AUTO_VERDICTS = {"implement", "conditional_implement"}
+ELIGIBLE_AUTO_VERDICTS = {"implement", "conditional_implement"}
 
-_REJECT_VERDICTS = {"reject", "not_viable", "not-viable"}
+REJECT_VERDICTS = {"reject", "not_viable", "not-viable"}
 
-_PASS_GATE_STATUSES = {"pass", "passed", "ok", "true", "green"}
+PASS_GATE_STATUSES = {"pass", "passed", "ok", "true", "green"}
 
-_MAX_SEMANTIC_RELEVANT_DISTANCE = 0.62
+MAX_SEMANTIC_RELEVANT_DISTANCE = 0.62
 
-_SEMANTIC_RELATIVE_DISTANCE_WINDOW = 0.18
+SEMANTIC_RELATIVE_DISTANCE_WINDOW = 0.18
 
 
 @dataclass(frozen=True)
@@ -257,14 +257,14 @@ class GithubIssueEvent:
     requeue_requested: bool = False
 
 
-def _bool_env(name: str, default: bool = False) -> bool:
+def bool_env(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _str_env(name: str, default: str | None = None) -> str | None:
+def str_env(name: str, default: str | None = None) -> str | None:
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -272,8 +272,8 @@ def _str_env(name: str, default: str | None = None) -> str | None:
     return normalized or default
 
 
-def _int_env(name: str, default: int) -> int:
-    raw = _str_env(name)
+def int_env(name: str, default: int) -> int:
+    raw = str_env(name)
     if raw is None:
         return default
     try:
@@ -282,8 +282,8 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
-def _float_env(name: str, default: float) -> float:
-    raw = _str_env(name)
+def float_env(name: str, default: float) -> float:
+    raw = str_env(name)
     if raw is None:
         return default
     try:
@@ -292,14 +292,14 @@ def _float_env(name: str, default: float) -> float:
         return default
 
 
-def _optional_text(value: Any) -> str | None:
+def optional_text(value: Any) -> str | None:
     if value is None:
         return None
     text_value = str(value).strip()
     return text_value or None
 
 
-def _optional_int(value: Any) -> int | None:
+def optional_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
@@ -308,7 +308,7 @@ def _optional_int(value: Any) -> int | None:
         return None
 
 
-def _optional_decimal(value: Any) -> Decimal | None:
+def optional_decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     try:
@@ -317,18 +317,18 @@ def _optional_decimal(value: Any) -> Decimal | None:
         return None
 
 
-def _optional_json(value: Any) -> Any:
+def optional_json(value: Any) -> Any:
     if value is None:
         return None
     return coerce_json_payload(value)
 
 
-def _normalize_identifier(value: str) -> str:
+def normalize_identifier(value: str) -> str:
     normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
     return normalized or "unknown"
 
 
-def _sorted_unique(values: list[str]) -> list[str]:
+def sorted_unique(values: list[str]) -> list[str]:
     seen: set[str] = set()
     ordered: list[str] = []
     for value in values:
@@ -341,42 +341,42 @@ def _sorted_unique(values: list[str]) -> list[str]:
 
 
 def whitepaper_workflow_enabled() -> bool:
-    return _bool_env("WHITEPAPER_WORKFLOW_ENABLED", default=False)
+    return bool_env("WHITEPAPER_WORKFLOW_ENABLED", default=False)
 
 
 def whitepaper_inngest_enabled() -> bool:
-    return _bool_env("WHITEPAPER_INNGEST_ENABLED", default=False)
+    return bool_env("WHITEPAPER_INNGEST_ENABLED", default=False)
 
 
 def whitepaper_kafka_enabled() -> bool:
-    return _bool_env("WHITEPAPER_KAFKA_ENABLED", default=False)
+    return bool_env("WHITEPAPER_KAFKA_ENABLED", default=False)
 
 
 def whitepaper_semantic_indexing_enabled() -> bool:
-    return _bool_env("WHITEPAPER_SEMANTIC_INDEXING_ENABLED", default=False)
+    return bool_env("WHITEPAPER_SEMANTIC_INDEXING_ENABLED", default=False)
 
 
 def whitepaper_semantic_required() -> bool:
-    return _bool_env("WHITEPAPER_SEMANTIC_REQUIRED", default=False)
+    return bool_env("WHITEPAPER_SEMANTIC_REQUIRED", default=False)
 
 
 def whitepaper_requeue_comment_keyword() -> str:
     return (
-        _str_env("WHITEPAPER_REQUEUE_COMMENT_KEYWORD", "research whitepaper")
+        str_env("WHITEPAPER_REQUEUE_COMMENT_KEYWORD", "research whitepaper")
         or "research whitepaper"
     )
 
 
 def marker_start() -> str:
     return (
-        _str_env("WHITEPAPER_ISSUE_MARKER_START", "<!-- TORGHUT_WHITEPAPER:START -->")
+        str_env("WHITEPAPER_ISSUE_MARKER_START", "<!-- TORGHUT_WHITEPAPER:START -->")
         or ""
     )
 
 
 def marker_end() -> str:
     return (
-        _str_env("WHITEPAPER_ISSUE_MARKER_END", "<!-- TORGHUT_WHITEPAPER:END -->") or ""
+        str_env("WHITEPAPER_ISSUE_MARKER_END", "<!-- TORGHUT_WHITEPAPER:END -->") or ""
     )
 
 
@@ -404,7 +404,7 @@ def parse_marker_block(issue_body: str) -> dict[str, str] | None:
 
 
 def normalize_analysis_mode(value: str | None) -> str:
-    normalized = _normalize_identifier(value or "")
+    normalized = normalize_identifier(value or "")
     if normalized in {"implementation", "analysis_only"}:
         return normalized
     return "implementation"
@@ -414,9 +414,9 @@ def parse_marker_tags(value: str | None) -> list[str]:
     raw = value or ""
     if not raw.strip():
         return []
-    return _sorted_unique(
+    return sorted_unique(
         [
-            _normalize_identifier(item)
+            normalize_identifier(item)
             for item in re.split(r"[,\n]", raw)
             if item and item.strip()
         ]
@@ -497,7 +497,7 @@ def extract_pdf_urls(text: str) -> list[str]:
     return urls
 
 
-def _extract_github_event_metadata(
+def extract_github_event_metadata(
     envelope: Mapping[str, Any],
 ) -> tuple[str | None, str | None]:
     headers_raw = envelope.get("headers")
@@ -525,20 +525,20 @@ def _extract_github_event_metadata(
     return event_name, delivery_id
 
 
-def _extract_github_issue_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
+def extract_github_issue_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
     body_raw = envelope.get("body")
     if isinstance(body_raw, Mapping):
         return cast(dict[str, Any], body_raw)
     return cast(dict[str, Any], envelope)
 
 
-def _coerce_issue_number(value: Any) -> int:
+def coerce_issue_number(value: Any) -> int:
     if isinstance(value, (int, float)):
         return int(value)
     return 0
 
 
-def _extract_sender_login(sender: object) -> str | None:
+def extract_sender_login(sender: object) -> str | None:
     if not isinstance(sender, Mapping):
         return None
     return str(cast(dict[str, Any], sender).get("login") or "").strip() or None
@@ -546,14 +546,14 @@ def _extract_sender_login(sender: object) -> str | None:
 
 def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent | None:
     envelope = cast(dict[str, Any], payload)
-    event_name, delivery_id = _extract_github_event_metadata(envelope)
+    event_name, delivery_id = extract_github_event_metadata(envelope)
     if not event_name:
         event_name = (
             str(envelope.get("event") or envelope.get("event_name") or "").strip()
             or None
         )
 
-    github_payload = _extract_github_issue_payload(envelope)
+    github_payload = extract_github_issue_payload(envelope)
     if not event_name:
         if (
             "comment" in github_payload
@@ -565,9 +565,9 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
             event_name = "issues"
 
     if event_name == "issues":
-        allowed_actions = _GITHUB_ISSUE_ACTIONS
+        allowed_actions = GITHUB_ISSUE_ACTIONS
     elif event_name == "issue_comment":
-        allowed_actions = _GITHUB_ISSUE_COMMENT_ACTIONS
+        allowed_actions = GITHUB_ISSUE_COMMENT_ACTIONS
     else:
         return None
 
@@ -583,7 +583,7 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
     issue_payload = cast(dict[str, Any], issue)
     repository_payload = cast(dict[str, Any], repository)
     repo_full_name = str(repository_payload.get("full_name") or "").strip()
-    issue_number = _coerce_issue_number(issue_payload.get("number"))
+    issue_number = coerce_issue_number(issue_payload.get("number"))
     if not repo_full_name or issue_number <= 0:
         return None
 
@@ -599,7 +599,7 @@ def normalize_github_issue_event(payload: Mapping[str, Any]) -> GithubIssueEvent
             return None
         comment_body = str(cast(dict[str, Any], comment).get("body") or "")
 
-    actor = _extract_sender_login(github_payload.get("sender"))
+    actor = extract_sender_login(github_payload.get("sender"))
 
     return GithubIssueEvent(
         event_name=event_name,
@@ -640,36 +640,6 @@ __all__ = (
     "extract_pdf_urls",
     "normalize_github_issue_event",
 )
-
-# Public aliases used by split modules.
-bool_env = _bool_env
-coerce_issue_number = _coerce_issue_number
-ELIGIBLE_AUTO_VERDICTS = _ELIGIBLE_AUTO_VERDICTS
-extract_github_event_metadata = _extract_github_event_metadata
-extract_github_issue_payload = _extract_github_issue_payload
-extract_sender_login = _extract_sender_login
-float_env = _float_env
-GITHUB_ISSUE_ACTIONS = _GITHUB_ISSUE_ACTIONS
-GITHUB_ISSUE_COMMENT_ACTIONS = _GITHUB_ISSUE_COMMENT_ACTIONS
-http_request_bytes = _http_request_bytes
-int_env = _int_env
-MAX_SEMANTIC_RELEVANT_DISTANCE = _MAX_SEMANTIC_RELEVANT_DISTANCE
-mounted_or_env_value = _mounted_or_env_value
-normalize_identifier = _normalize_identifier
-optional_decimal = _optional_decimal
-optional_int = _optional_int
-optional_json = _optional_json
-optional_text = _optional_text
-PASS_GATE_STATUSES = _PASS_GATE_STATUSES
-read_text_file = _read_text_file
-REJECT_VERDICTS = _REJECT_VERDICTS
-RETRYABLE_AGENTRUN_STATUSES = _RETRYABLE_AGENTRUN_STATUSES
-SEMANTIC_RELATIVE_DISTANCE_WINDOW = _SEMANTIC_RELATIVE_DISTANCE_WINDOW
-sorted_unique = _sorted_unique
-str_env = _str_env
-whitepaper_ceph_bucket_name = _whitepaper_ceph_bucket_name
-WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR = _WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR
-WHITEPAPER_CEPH_DEFAULT_SECRET_DIR = _WHITEPAPER_CEPH_DEFAULT_SECRET_DIR
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
@@ -713,34 +683,34 @@ __all__: tuple[str, ...] = (
     "WhitepaperStrategyTemplate",
     "WhitepaperSynthesis",
     "WhitepaperViabilityVerdict",
-    "_ELIGIBLE_AUTO_VERDICTS",
-    "_GITHUB_ISSUE_ACTIONS",
-    "_GITHUB_ISSUE_COMMENT_ACTIONS",
-    "_MAX_SEMANTIC_RELEVANT_DISTANCE",
-    "_PASS_GATE_STATUSES",
-    "_REJECT_VERDICTS",
-    "_RETRYABLE_AGENTRUN_STATUSES",
-    "_SEMANTIC_RELATIVE_DISTANCE_WINDOW",
-    "_WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR",
-    "_WHITEPAPER_CEPH_DEFAULT_SECRET_DIR",
-    "_bool_env",
-    "_coerce_issue_number",
-    "_extract_github_event_metadata",
-    "_extract_github_issue_payload",
-    "_extract_sender_login",
-    "_float_env",
-    "_http_request_bytes",
-    "_int_env",
-    "_mounted_or_env_value",
-    "_normalize_identifier",
-    "_optional_decimal",
-    "_optional_int",
-    "_optional_json",
-    "_optional_text",
-    "_read_text_file",
-    "_sorted_unique",
-    "_str_env",
-    "_whitepaper_ceph_bucket_name",
+    "ELIGIBLE_AUTO_VERDICTS",
+    "GITHUB_ISSUE_ACTIONS",
+    "GITHUB_ISSUE_COMMENT_ACTIONS",
+    "MAX_SEMANTIC_RELEVANT_DISTANCE",
+    "PASS_GATE_STATUSES",
+    "REJECT_VERDICTS",
+    "RETRYABLE_AGENTRUN_STATUSES",
+    "SEMANTIC_RELATIVE_DISTANCE_WINDOW",
+    "WHITEPAPER_CEPH_DEFAULT_CONFIG_DIR",
+    "WHITEPAPER_CEPH_DEFAULT_SECRET_DIR",
+    "bool_env",
+    "coerce_issue_number",
+    "extract_github_event_metadata",
+    "extract_github_issue_payload",
+    "extract_sender_login",
+    "float_env",
+    "http_request_bytes",
+    "int_env",
+    "mounted_or_env_value",
+    "normalize_identifier",
+    "optional_decimal",
+    "optional_int",
+    "optional_json",
+    "optional_text",
+    "read_text_file",
+    "sorted_unique",
+    "str_env",
+    "whitepaper_ceph_bucket_name",
     "annotations",
     "asyncio",
     "bool_env",

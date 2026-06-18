@@ -49,7 +49,7 @@ def _dedupe(items: Sequence[str]) -> list[str]:
 
 def _row_requires_promotion_source_authority(row: _NormalizedFill) -> bool:
     return getattr(
-        _lifecycle_helper_module(), "_row_requires_promotion_source_authority"
+        _lifecycle_helper_module(), "row_requires_promotion_source_authority"
     )(row)
 
 
@@ -59,7 +59,7 @@ def _apply_fill_to_position(
     fill: _NormalizedFill,
     accumulator: _LedgerAccumulator,
 ) -> None:
-    getattr(_lifecycle_helper_module(), "_apply_fill_to_position")(
+    getattr(_lifecycle_helper_module(), "apply_fill_to_position")(
         state=state,
         fill=fill,
         accumulator=accumulator,
@@ -67,7 +67,7 @@ def _apply_fill_to_position(
 
 
 def _order_lifecycle_blockers(*args: object, **kwargs: object) -> list[str]:
-    return getattr(_lifecycle_helper_module(), "_order_lifecycle_blockers")(
+    return getattr(_lifecycle_helper_module(), "order_lifecycle_blockers")(
         *args, **kwargs
     )
 
@@ -75,7 +75,7 @@ def _order_lifecycle_blockers(*args: object, **kwargs: object) -> list[str]:
 def _source_materialization_blockers(
     lifecycle_rows: Sequence[_NormalizedFill],
 ) -> list[str]:
-    return getattr(_lifecycle_helper_module(), "_source_materialization_blockers")(
+    return getattr(_lifecycle_helper_module(), "source_materialization_blockers")(
         lifecycle_rows
     )
 

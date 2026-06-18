@@ -154,7 +154,7 @@ def build_hypothesis_runtime_summary(
     return summary
 
 
-def _runtime_ledger_bucket_payload(
+def runtime_ledger_bucket_payload(
     row: StrategyRuntimeLedgerBucket,
 ) -> dict[str, object]:
     payload_json: Mapping[str, object]
@@ -229,7 +229,7 @@ def _runtime_ledger_bucket_payload(
     }
 
 
-_RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS = (
+RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS = (
     "fill_count",
     "decision_count",
     "submitted_order_count",
@@ -239,20 +239,20 @@ _RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS = (
     "closed_trade_count",
     "open_position_count",
 )
-_RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS = (
+RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS = (
     "filled_notional",
     "gross_strategy_pnl",
     "cost_amount",
     "net_strategy_pnl_after_costs",
 )
-_RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS = (
+RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS = (
     "execution_policy_hash_counts",
     "cost_model_hash_counts",
     "lineage_hash_counts",
     "cost_basis_counts",
     "source_row_counts",
 )
-_RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS = (
+RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS = (
     "source_refs",
     "source_window_ids",
     "trade_decision_ids",
@@ -261,7 +261,7 @@ _RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS = (
     "execution_order_event_ids",
     "source_offsets",
 )
-_RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS = (
+RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS = (
     "source_materialization",
     "authority_class",
     "authority_reason",
@@ -269,7 +269,7 @@ _RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS = (
 )
 
 
-def _runtime_ledger_candidate_group_key(
+def runtime_ledger_candidate_group_key(
     payload: Mapping[str, object],
 ) -> tuple[str, str, str, str, str, str, str, str, str]:
     return (
@@ -285,31 +285,29 @@ def _runtime_ledger_candidate_group_key(
     )
 
 
-def _runtime_ledger_bucket_symbol(payload: Mapping[str, object]) -> str | None:
+def runtime_ledger_bucket_symbol(payload: Mapping[str, object]) -> str | None:
     symbol = _safe_text(payload.get("symbol"))
     return symbol.upper() if symbol is not None else None
 
 
-def _runtime_ledger_latest_payloads_per_symbol(
+def runtime_ledger_latest_payloads_per_symbol(
     payloads: Sequence[dict[str, object]],
 ) -> list[dict[str, object]]:
     no_symbol = [
-        payload
-        for payload in payloads
-        if _runtime_ledger_bucket_symbol(payload) is None
+        payload for payload in payloads if runtime_ledger_bucket_symbol(payload) is None
     ]
     if no_symbol:
         return [dict(no_symbol[0])]
     by_symbol: dict[str, dict[str, object]] = {}
     for payload in payloads:
-        symbol = _runtime_ledger_bucket_symbol(payload)
+        symbol = runtime_ledger_bucket_symbol(payload)
         if symbol is None or symbol in by_symbol:
             continue
         by_symbol[symbol] = dict(payload)
     return list(by_symbol.values())
 
 
-def _runtime_ledger_merge_count_maps(
+def runtime_ledger_merge_count_maps(
     payloads: Sequence[Mapping[str, object]],
     key: str,
 ) -> dict[str, int]:
@@ -327,7 +325,7 @@ def _runtime_ledger_merge_count_maps(
     return dict(sorted(merged.items()))
 
 
-def _runtime_ledger_unique_sequence(
+def runtime_ledger_unique_sequence(
     payloads: Sequence[Mapping[str, object]],
     key: str,
 ) -> list[object]:
@@ -348,7 +346,7 @@ def _runtime_ledger_unique_sequence(
     return values
 
 
-def _runtime_ledger_common_text(
+def runtime_ledger_common_text(
     payloads: Sequence[Mapping[str, object]],
     key: str,
 ) -> str | None:
@@ -362,10 +360,10 @@ def _runtime_ledger_common_text(
     return values[0] if len(values) == 1 else None
 
 
-def _runtime_ledger_aggregate_candidate_payloads(
+def runtime_ledger_aggregate_candidate_payloads(
     payloads: Sequence[dict[str, object]],
 ) -> dict[str, object]:
-    selected = _runtime_ledger_latest_payloads_per_symbol(payloads)
+    selected = runtime_ledger_latest_payloads_per_symbol(payloads)
     if len(selected) <= 1:
         return dict(selected[0]) if selected else {}
 
@@ -373,11 +371,11 @@ def _runtime_ledger_aggregate_candidate_payloads(
     symbols = sorted(
         symbol
         for payload in selected
-        if (symbol := _runtime_ledger_bucket_symbol(payload)) is not None
+        if (symbol := runtime_ledger_bucket_symbol(payload)) is not None
     )
-    for key in _RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS:
+    for key in RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS:
         aggregate[key] = sum(_safe_int(payload.get(key)) for payload in selected)
-    for key in _RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS:
+    for key in RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS:
         aggregate[key] = _decimal_text(
             sum(
                 (
@@ -396,12 +394,12 @@ def _runtime_ledger_aggregate_candidate_payloads(
         if filled_notional > 0
         else None
     )
-    for key in _RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS:
-        merged = _runtime_ledger_merge_count_maps(selected, key)
+    for key in RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS:
+        merged = runtime_ledger_merge_count_maps(selected, key)
         if merged:
             aggregate[key] = merged
-    for key in _RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS:
-        merged_sequence = _runtime_ledger_unique_sequence(selected, key)
+    for key in RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS:
+        merged_sequence = runtime_ledger_unique_sequence(selected, key)
         if merged_sequence:
             aggregate[key] = merged_sequence
     aggregate_blockers = [
@@ -424,8 +422,8 @@ def _runtime_ledger_aggregate_candidate_payloads(
     )
     aggregate["runtime_ledger_aggregate_bucket_count"] = len(selected)
     aggregate["runtime_ledger_aggregate_symbols"] = symbols
-    for key in _RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS:
-        common_value = _runtime_ledger_common_text(selected, key)
+    for key in RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS:
+        common_value = runtime_ledger_common_text(selected, key)
         if common_value is not None:
             aggregate[key] = common_value
         else:
@@ -433,7 +431,7 @@ def _runtime_ledger_aggregate_candidate_payloads(
     return aggregate
 
 
-_RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
+RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
     "source_window_start",
     "source_window_end",
     "source_refs",
@@ -454,7 +452,7 @@ _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = (
 )
 
 
-def _runtime_ledger_source_evidence_payload(
+def runtime_ledger_source_evidence_payload(
     candidate: Mapping[str, object],
 ) -> dict[str, object]:
     from .paper_probation import (
@@ -463,7 +461,7 @@ def _runtime_ledger_source_evidence_payload(
 
     payload = _runtime_ledger_paper_probation_payload(candidate)
     evidence: dict[str, object] = {}
-    for key in _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS:
+    for key in RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS:
         value = payload.get(key)
         if value is None or value == "" or value == [] or value == {}:
             continue
@@ -471,12 +469,12 @@ def _runtime_ledger_source_evidence_payload(
     return evidence
 
 
-def _normalized_strategy_family(value: object) -> str | None:
+def normalized_strategy_family(value: object) -> str | None:
     text = _safe_text(value)
     return text.replace("-", "_").lower() if text is not None else None
 
 
-def _runtime_ledger_hash_count(
+def runtime_ledger_hash_count(
     payload: Mapping[str, object],
     *,
     payload_key: str,
@@ -498,7 +496,7 @@ def _runtime_ledger_hash_count(
     return _safe_int(observed.get(observed_key))
 
 
-def _runtime_ledger_payload_from_runtime_item(
+def runtime_ledger_payload_from_runtime_item(
     runtime_item: Mapping[str, object],
 ) -> dict[str, object]:
     observed_raw = runtime_item.get("observed")
@@ -555,7 +553,7 @@ def _runtime_ledger_payload_from_runtime_item(
     }
 
 
-def _runtime_ledger_bucket_within_metric_window(
+def runtime_ledger_bucket_within_metric_window(
     *,
     bucket_started_at: object,
     bucket_ended_at: object,
@@ -581,19 +579,19 @@ def _runtime_ledger_bucket_within_metric_window(
     return window_started_at <= bucket_start and bucket_end <= window_ended_at
 
 
-def _runtime_ledger_bucket_matches_metric_window(
+def runtime_ledger_bucket_matches_metric_window(
     ledger: StrategyRuntimeLedgerBucket,
     *,
     metric_window: StrategyHypothesisMetricWindow,
 ) -> bool:
-    return _runtime_ledger_bucket_within_metric_window(
+    return runtime_ledger_bucket_within_metric_window(
         bucket_started_at=ledger.bucket_started_at,
         bucket_ended_at=ledger.bucket_ended_at,
         metric_window=metric_window,
     )
 
 
-def _runtime_ledger_bucket_window_reason_code(
+def runtime_ledger_bucket_window_reason_code(
     payload: Mapping[str, object],
     *,
     metric_window: StrategyHypothesisMetricWindow,
@@ -606,7 +604,7 @@ def _runtime_ledger_bucket_window_reason_code(
     bucket_ended_at = payload.get("bucket_ended_at")
     if bucket_started_at is None or bucket_ended_at is None:
         return "runtime_ledger_window_bounds_missing"
-    if not _runtime_ledger_bucket_within_metric_window(
+    if not runtime_ledger_bucket_within_metric_window(
         bucket_started_at=bucket_started_at,
         bucket_ended_at=bucket_ended_at,
         metric_window=metric_window,
@@ -615,7 +613,7 @@ def _runtime_ledger_bucket_window_reason_code(
     return None
 
 
-def _certificate_runtime_ledger_payload(
+def certificate_runtime_ledger_payload(
     *,
     evidence_row: Mapping[str, object],
     runtime_item: Mapping[str, object],
@@ -625,35 +623,7 @@ def _certificate_runtime_ledger_payload(
         return {}
     if isinstance(payload, Mapping):
         return dict(cast(Mapping[str, object], payload))
-    return _runtime_ledger_payload_from_runtime_item(runtime_item)
+    return runtime_ledger_payload_from_runtime_item(runtime_item)
 
 
 __all__ = ("build_hypothesis_runtime_summary",)
-
-# Public aliases used by split modules.
-certificate_runtime_ledger_payload = _certificate_runtime_ledger_payload
-normalized_strategy_family = _normalized_strategy_family
-runtime_ledger_aggregate_candidate_payloads = (
-    _runtime_ledger_aggregate_candidate_payloads
-)
-RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS = _RUNTIME_LEDGER_BUCKET_COMMON_TEXT_KEYS
-RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS = _RUNTIME_LEDGER_BUCKET_COUNT_MAP_KEYS
-RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS = _RUNTIME_LEDGER_BUCKET_DECIMAL_TOTAL_KEYS
-RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS = _RUNTIME_LEDGER_BUCKET_INT_TOTAL_KEYS
-runtime_ledger_bucket_matches_metric_window = (
-    _runtime_ledger_bucket_matches_metric_window
-)
-runtime_ledger_bucket_payload = _runtime_ledger_bucket_payload
-RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS = _RUNTIME_LEDGER_BUCKET_SEQUENCE_KEYS
-runtime_ledger_bucket_symbol = _runtime_ledger_bucket_symbol
-runtime_ledger_bucket_window_reason_code = _runtime_ledger_bucket_window_reason_code
-runtime_ledger_bucket_within_metric_window = _runtime_ledger_bucket_within_metric_window
-runtime_ledger_candidate_group_key = _runtime_ledger_candidate_group_key
-runtime_ledger_common_text = _runtime_ledger_common_text
-runtime_ledger_hash_count = _runtime_ledger_hash_count
-runtime_ledger_latest_payloads_per_symbol = _runtime_ledger_latest_payloads_per_symbol
-runtime_ledger_merge_count_maps = _runtime_ledger_merge_count_maps
-runtime_ledger_payload_from_runtime_item = _runtime_ledger_payload_from_runtime_item
-RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS = _RUNTIME_LEDGER_SOURCE_EVIDENCE_KEYS
-runtime_ledger_source_evidence_payload = _runtime_ledger_source_evidence_payload
-runtime_ledger_unique_sequence = _runtime_ledger_unique_sequence

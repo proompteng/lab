@@ -48,7 +48,7 @@ from .shared_context import (
 )
 
 
-def _tca_dimension(
+def tca_dimension(
     *,
     proof_floor_receipt: Mapping[str, Any],
     routeability_ledger: Mapping[str, Any],
@@ -124,7 +124,7 @@ def _tca_dimension(
     )
 
 
-def _route_readiness_dimension(
+def route_readiness_dimension(
     *,
     routeability_ledger: Mapping[str, Any],
     generated_at: datetime,
@@ -155,14 +155,14 @@ def _route_readiness_dimension(
     )
 
 
-def _is_routeability_tca_repair_reason(reason: str) -> bool:
+def is_routeability_tca_repair_reason(reason: str) -> bool:
     normalized = reason.strip().lower()
     return normalized.startswith(_ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES) or any(
         fragment in normalized for fragment in _ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS
     )
 
 
-def _route_readiness_action(routeability_ledger: Mapping[str, Any]) -> str:
+def route_readiness_action(routeability_ledger: Mapping[str, Any]) -> str:
     for raw_lot in _sequence(routeability_ledger.get("lots")):
         lot = _mapping(raw_lot)
         if _text(lot.get("lot_type")) not in _ROUTEABILITY_TCA_REPAIR_LOT_TYPES:
@@ -170,24 +170,24 @@ def _route_readiness_action(routeability_ledger: Mapping[str, Any]) -> str:
         if _text(lot.get("current_state")).lower() in _CURRENT_STATES:
             continue
         if any(
-            _is_routeability_tca_repair_reason(reason)
+            is_routeability_tca_repair_reason(reason)
             for reason in _strings(lot.get("blocking_reason_codes"))
         ):
             return _ROUTEABILITY_TCA_REPAIR_ACTION
     return _DIMENSION_ACTION["route_readiness"]
 
 
-def _zero_notional_action(
+def zero_notional_action(
     dimension_name: str,
     *,
     routeability_ledger: Mapping[str, Any],
 ) -> str:
     if dimension_name == "route_readiness":
-        return _route_readiness_action(routeability_ledger)
+        return route_readiness_action(routeability_ledger)
     return _DIMENSION_ACTION.get(dimension_name, "observe_profit_freshness_frontier")
 
 
-def _schema_dimension(
+def schema_dimension(
     *,
     proof_floor_receipt: Mapping[str, Any],
     generated_at: datetime,
@@ -206,7 +206,7 @@ def _schema_dimension(
     )
 
 
-def _jangar_dimension(
+def jangar_dimension(
     *,
     jangar_reliability_settlement_ref: Mapping[str, Any],
     generated_at: datetime,
@@ -263,7 +263,7 @@ def _jangar_dimension(
     )
 
 
-def _confidence_for_state(state: str) -> Decimal:
+def confidence_for_state(state: str) -> Decimal:
     if state == "stale":
         return Decimal("0.90")
     if state == "degraded":
@@ -275,7 +275,7 @@ def _confidence_for_state(state: str) -> Decimal:
     return Decimal("0")
 
 
-def _routeability_confidence(routeability_ledger: Mapping[str, Any]) -> Decimal:
+def routeability_confidence(routeability_ledger: Mapping[str, Any]) -> Decimal:
     state = _text(routeability_ledger.get("aggregate_state"), "missing").lower()
     if state == "accepted":
         return Decimal("1.00")
@@ -286,7 +286,7 @@ def _routeability_confidence(routeability_ledger: Mapping[str, Any]) -> Decimal:
     return Decimal("0.55")
 
 
-def _jangar_confidence(jangar_reliability_settlement_ref: Mapping[str, Any]) -> Decimal:
+def jangar_confidence(jangar_reliability_settlement_ref: Mapping[str, Any]) -> Decimal:
     decision = _text(
         jangar_reliability_settlement_ref.get("decision")
         or jangar_reliability_settlement_ref.get("state"),
@@ -301,7 +301,7 @@ def _jangar_confidence(jangar_reliability_settlement_ref: Mapping[str, Any]) -> 
     return Decimal("0.30")
 
 
-def _packet_dimension(packet: Mapping[str, Any]) -> str:
+def packet_dimension(packet: Mapping[str, Any]) -> str:
     explicit = _text(
         packet.get("blocked_dimension")
         or packet.get("dimension")
@@ -320,7 +320,7 @@ def _packet_dimension(packet: Mapping[str, Any]) -> str:
     return ""
 
 
-def _packet_hypothesis_refs(packet: Mapping[str, Any]) -> list[str]:
+def packet_hypothesis_refs(packet: Mapping[str, Any]) -> list[str]:
     refs = [
         _text(packet.get(key))
         for key in (
@@ -335,14 +335,14 @@ def _packet_hypothesis_refs(packet: Mapping[str, Any]) -> list[str]:
     return _unique(refs)
 
 
-def _packet_symbols(packet: Mapping[str, Any]) -> list[str]:
+def packet_symbols(packet: Mapping[str, Any]) -> list[str]:
     symbols = [_text(packet.get("symbol")).upper()]
     symbols.extend(_symbols(packet.get("symbol_set")))
     symbols.extend(_symbols(packet.get("symbols")))
     return _unique(symbols)
 
 
-def _daily_net_pnl_unlock(source: Mapping[str, Any]) -> Decimal | None:
+def daily_net_pnl_unlock(source: Mapping[str, Any]) -> Decimal | None:
     for key in _DAILY_NET_PNL_UNLOCK_KEYS:
         parsed = _decimal(source.get(key))
         if parsed is not None:
@@ -362,7 +362,7 @@ def _daily_net_pnl_unlock(source: Mapping[str, Any]) -> Decimal | None:
     return None
 
 
-def _expected_daily_net_pnl_unlock(
+def expected_daily_net_pnl_unlock(
     *,
     dimension_name: str,
     quality_adjusted_profit_frontier: Mapping[str, Any],
@@ -377,12 +377,12 @@ def _expected_daily_net_pnl_unlock(
 
     for raw_packet in _sequence(quality_adjusted_profit_frontier.get("packets")):
         packet = _mapping(raw_packet)
-        if _packet_dimension(packet) != dimension_name:
+        if packet_dimension(packet) != dimension_name:
             continue
-        value = _daily_net_pnl_unlock(packet)
+        value = daily_net_pnl_unlock(packet)
         if value is None:
             continue
-        packet_refs = _packet_hypothesis_refs(packet)
+        packet_refs = packet_hypothesis_refs(packet)
         if (
             targets
             and packet_refs
@@ -390,8 +390,8 @@ def _expected_daily_net_pnl_unlock(
             and targets.isdisjoint(packet_refs)
         ):
             continue
-        packet_symbols = _packet_symbols(packet)
-        if symbols and packet_symbols and symbols.isdisjoint(packet_symbols):
+        packet_symbol_set = packet_symbols(packet)
+        if symbols and packet_symbol_set and symbols.isdisjoint(packet_symbol_set):
             continue
         packet_ref = _text(
             packet.get("packet_id")
@@ -408,7 +408,7 @@ def _expected_daily_net_pnl_unlock(
     return best_value, _unique(best_refs)
 
 
-def _target_notional_rankings(
+def target_notional_rankings(
     *,
     dimension_name: str,
     quality_adjusted_profit_frontier: Mapping[str, Any],
@@ -421,9 +421,9 @@ def _target_notional_rankings(
     rankings: list[dict[str, object]] = []
     for raw_packet in _sequence(quality_adjusted_profit_frontier.get("packets")):
         packet = _mapping(raw_packet)
-        if _packet_dimension(packet) != dimension_name:
+        if packet_dimension(packet) != dimension_name:
             continue
-        packet_refs = _packet_hypothesis_refs(packet)
+        packet_refs = packet_hypothesis_refs(packet)
         if (
             targets
             and packet_refs
@@ -431,8 +431,8 @@ def _target_notional_rankings(
             and targets.isdisjoint(packet_refs)
         ):
             continue
-        packet_symbols = _packet_symbols(packet)
-        if symbols and packet_symbols and symbols.isdisjoint(packet_symbols):
+        packet_symbol_set = packet_symbols(packet)
+        if symbols and packet_symbol_set and symbols.isdisjoint(packet_symbol_set):
             continue
         ranking = _mapping(packet.get("target_notional_ranking"))
         if not ranking:
@@ -468,7 +468,7 @@ def _target_notional_rankings(
     return rankings[:3]
 
 
-def _repair_lot(
+def repair_lot(
     *,
     dimension: Mapping[str, Any],
     routeability_ledger: Mapping[str, Any],
@@ -500,26 +500,26 @@ def _repair_lot(
     blocking_hypotheses = _strings(dimension.get("blocking_hypotheses"))
     candidate_ids = _strings(empirical_jobs_status.get("candidate_ids"))
     symbol_set = _route_symbols(route_reacquisition_board)
-    expected_daily_net_pnl_unlock, profit_unlock_refs = _expected_daily_net_pnl_unlock(
+    expected_unlock_value, profit_unlock_refs = expected_daily_net_pnl_unlock(
         dimension_name=dimension_name,
         quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
         blocking_hypotheses=blocking_hypotheses,
         candidate_ids=candidate_ids if dimension_name == "empirical_proof" else (),
         symbol_set=symbol_set,
     )
-    target_rankings = _target_notional_rankings(
+    target_rankings = target_notional_rankings(
         dimension_name=dimension_name,
         quality_adjusted_profit_frontier=quality_adjusted_profit_frontier,
         blocking_hypotheses=blocking_hypotheses,
         candidate_ids=candidate_ids if dimension_name == "empirical_proof" else (),
         symbol_set=symbol_set,
     )
-    expected_profit = expected_daily_net_pnl_unlock or expected_bps
+    expected_profit = expected_unlock_value or expected_bps
     repair_priority = (
         expected_profit
-        * _confidence_for_state(state)
-        * _routeability_confidence(routeability_ledger)
-        * _jangar_confidence(jangar_reliability_settlement_ref)
+        * confidence_for_state(state)
+        * routeability_confidence(routeability_ledger)
+        * jangar_confidence(jangar_reliability_settlement_ref)
         - _REPAIR_COST_PENALTY.get(repair_cost_class, Decimal("5"))
         + priority_bonus
     )
@@ -540,12 +540,12 @@ def _repair_lot(
         "symbol_set": symbol_set,
         "blocked_dimension": dimension_name,
         "before_refs": _strings(dimension.get("evidence_refs")),
-        "zero_notional_action": _zero_notional_action(
+        "zero_notional_action": zero_notional_action(
             dimension_name,
             routeability_ledger=routeability_ledger,
         ),
         "expected_profit_unlock_bps": float(expected_bps),
-        "expected_daily_net_pnl_unlock": _decimal_text(expected_daily_net_pnl_unlock),
+        "expected_daily_net_pnl_unlock": _decimal_text(expected_unlock_value),
         "profit_unlock_refs": profit_unlock_refs,
         "target_notional_rankings": target_rankings,
         "target_notional_ranking_basis": "non_authoritative_candidate_comparison",
@@ -553,7 +553,7 @@ def _repair_lot(
         "priority_adjustments": priority_adjustments,
         "repair_priority_basis": (
             "expected_daily_net_pnl_unlock"
-            if expected_daily_net_pnl_unlock is not None
+            if expected_unlock_value is not None
             else "expected_profit_unlock_bps_proxy"
         ),
         "repair_cost_class": repair_cost_class,
@@ -574,22 +574,3 @@ def _repair_lot(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-confidence_for_state = _confidence_for_state
-daily_net_pnl_unlock = _daily_net_pnl_unlock
-expected_daily_net_pnl_unlock = _expected_daily_net_pnl_unlock
-is_routeability_tca_repair_reason = _is_routeability_tca_repair_reason
-jangar_confidence = _jangar_confidence
-jangar_dimension = _jangar_dimension
-packet_dimension = _packet_dimension
-packet_hypothesis_refs = _packet_hypothesis_refs
-packet_symbols = _packet_symbols
-repair_lot = _repair_lot
-route_readiness_action = _route_readiness_action
-route_readiness_dimension = _route_readiness_dimension
-routeability_confidence = _routeability_confidence
-schema_dimension = _schema_dimension
-target_notional_rankings = _target_notional_rankings
-tca_dimension = _tca_dimension
-zero_notional_action = _zero_notional_action

@@ -32,7 +32,7 @@ from .requirements import (
 )
 
 
-def _evaluate_benchmark_parity_evidence(
+def evaluate_benchmark_parity_evidence(
     *,
     policy_payload: dict[str, Any],
     gate_report_payload: dict[str, Any],
@@ -437,49 +437,49 @@ def _validate_benchmark_parity_scorecards(
 def _benchmark_parity_thresholds(
     policy_payload: dict[str, Any],
 ) -> _BenchmarkParityThresholds:
-    max_confidence_degradation = _policy_float(
+    max_confidence_degradation = policy_float(
         policy_payload,
         "promotion_benchmark_parity_max_confidence_calibration_error_degradation",
         0.01,
     )
     return _BenchmarkParityThresholds(
-        min_advisory_output_rate=_policy_float(
+        min_advisory_output_rate=policy_float(
             policy_payload,
             "promotion_benchmark_parity_min_advisory_output_rate",
             0.995,
         ),
-        max_policy_violation_degradation=_policy_float(
+        max_policy_violation_degradation=policy_float(
             policy_payload,
             "promotion_benchmark_parity_max_policy_violation_rate_degradation",
             0.0,
         ),
-        max_fallback_rate=_policy_float(
+        max_fallback_rate=policy_float(
             policy_payload,
             "promotion_benchmark_parity_max_fallback_rate",
             0.01,
         ),
-        max_timeout_rate=_policy_float(
+        max_timeout_rate=policy_float(
             policy_payload,
             "promotion_benchmark_parity_max_timeout_rate",
             0.005,
         ),
-        max_adverse_regime_degradation=_policy_float(
+        max_adverse_regime_degradation=policy_float(
             policy_payload,
             "promotion_benchmark_parity_max_adverse_regime_decision_quality_degradation",
             0.01,
         ),
-        max_risk_veto_degradation=_policy_float(
+        max_risk_veto_degradation=policy_float(
             policy_payload,
             "promotion_benchmark_parity_max_risk_veto_alignment_degradation",
             0.01,
         ),
         max_confidence_degradation=max_confidence_degradation,
-        max_scorecard_confidence_drift=_policy_float(
+        max_scorecard_confidence_drift=policy_float(
             policy_payload,
             "promotion_benchmark_parity_max_scorecard_confidence_calibration_error_drift",
             max_confidence_degradation,
         ),
-        min_family_coverage_ratio=_policy_float(
+        min_family_coverage_ratio=policy_float(
             policy_payload,
             "promotion_benchmark_parity_min_family_coverage_ratio",
             1.0,
@@ -487,7 +487,7 @@ def _benchmark_parity_thresholds(
     )
 
 
-def _policy_float(
+def policy_float(
     policy_payload: dict[str, Any],
     key: str,
     default: float,
@@ -902,7 +902,3 @@ def _append_degradation_issue(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-evaluate_benchmark_parity_evidence = _evaluate_benchmark_parity_evidence
-policy_float = _policy_float

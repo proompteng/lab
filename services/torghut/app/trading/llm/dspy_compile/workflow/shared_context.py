@@ -32,9 +32,9 @@ DSPyWorkflowLane = Literal[
 
 DSPyWorkflowExecutionMode = Literal["agentrun", "local"]
 
-_DEFAULT_DSPY_AGENT_NAME = "codex-spark-agent"
+DEFAULT_DSPY_AGENT_NAME = "codex-spark-agent"
 
-_IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
+IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "dataset-build": "torghut-dspy-dataset-build-v1",
     "compile": "torghut-dspy-compile-mipro-v1",
     "eval": "torghut-dspy-eval-v1",
@@ -42,19 +42,19 @@ _IMPLEMENTATION_SPEC_BY_LANE: dict[DSPyWorkflowLane, str] = {
     "promote": "torghut-dspy-promote-artifact-v1",
 }
 
-_TERMINAL_PHASES = {"succeeded", "failed", "cancelled"}
+TERMINAL_PHASES = {"succeeded", "failed", "cancelled"}
 
-_K8S_LABEL_VALUE_MAX_LENGTH = 63
+K8S_LABEL_VALUE_MAX_LENGTH = 63
 
-_IDEMPOTENCY_HASH_HEX_LENGTH = 10
+IDEMPOTENCY_HASH_HEX_LENGTH = 10
 
-_PROMOTION_MIN_SCHEMA_VALID_RATE = 0.995
+PROMOTION_MIN_SCHEMA_VALID_RATE = 0.995
 
-_PROMOTION_MAX_FALLBACK_RATE = 0.05
+PROMOTION_MAX_FALLBACK_RATE = 0.05
 
-_PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = 60 * 60 * 24
+PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = 60 * 60 * 24
 
-_PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
+PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
     "gateCompatibility",
     "schemaValidRate",
     "deterministicCompatibility",
@@ -63,7 +63,7 @@ _PROMOTION_EVIDENCE_OVERRIDE_KEYS = {
 }
 
 
-def _normalize_local_path(candidate_ref: str) -> Path | None:
+def normalize_local_path(candidate_ref: str) -> Path | None:
     parsed_ref = urlsplit(candidate_ref)
     if parsed_ref.scheme not in {"", "file"}:
         return None
@@ -76,8 +76,8 @@ def _normalize_local_path(candidate_ref: str) -> Path | None:
     return candidate.resolve()
 
 
-def _load_local_artifact_payload(path_ref: str) -> dict[str, Any] | None:
-    candidate = _normalize_local_path(path_ref)
+def load_local_artifact_payload(path_ref: str) -> dict[str, Any] | None:
+    candidate = normalize_local_path(path_ref)
     if candidate is None:
         return None
     if not candidate.exists() or not candidate.is_file():
@@ -91,7 +91,7 @@ def _load_local_artifact_payload(path_ref: str) -> dict[str, Any] | None:
     return cast(dict[str, Any], payload)
 
 
-def _parse_iso_datetime(value: object) -> datetime | None:
+def parse_iso_datetime(value: object) -> datetime | None:
     if not isinstance(value, str):
         return None
     parsed = value.strip()
@@ -433,7 +433,7 @@ def build_dspy_agentrun_payload(
     issue_number: str = "0",
     priority_id: str | None = None,
     namespace: str = "agents",
-    agent_name: str = _DEFAULT_DSPY_AGENT_NAME,
+    agent_name: str = DEFAULT_DSPY_AGENT_NAME,
     vcs_ref_name: str = "github",
     secret_binding_ref: str = "codex-github-token",
     ttl_seconds_after_finished: int = 14_400,
@@ -441,7 +441,7 @@ def build_dspy_agentrun_payload(
     normalized_idempotency = idempotency_key.strip()
     if not normalized_idempotency:
         raise ValueError("idempotency_key_required")
-    implementation_spec_ref = _IMPLEMENTATION_SPEC_BY_LANE[lane]
+    implementation_spec_ref = IMPLEMENTATION_SPEC_BY_LANE[lane]
 
     parameters: dict[str, str] = {
         "repository": repository.strip(),
@@ -472,7 +472,7 @@ def build_dspy_agentrun_payload(
     return {
         "namespace": namespace.strip() or "agents",
         "idempotencyKey": normalized_idempotency,
-        "agentRef": {"name": agent_name.strip() or _DEFAULT_DSPY_AGENT_NAME},
+        "agentRef": {"name": agent_name.strip() or DEFAULT_DSPY_AGENT_NAME},
         "implementationSpecRef": {"name": implementation_spec_ref},
         "runtime": {"type": "job"},
         "vcsRef": {"name": vcs_ref_name.strip() or "github"},
@@ -488,13 +488,13 @@ def _sanitize_idempotency_key(value: str) -> str:
     normalized = normalized.strip("-.")
     if not normalized:
         raise ValueError("idempotency_key_invalid")
-    if len(normalized) <= _K8S_LABEL_VALUE_MAX_LENGTH:
+    if len(normalized) <= K8S_LABEL_VALUE_MAX_LENGTH:
         return normalized
 
     digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[
-        :_IDEMPOTENCY_HASH_HEX_LENGTH
+        :IDEMPOTENCY_HASH_HEX_LENGTH
     ]
-    max_head_length = _K8S_LABEL_VALUE_MAX_LENGTH - _IDEMPOTENCY_HASH_HEX_LENGTH - 1
+    max_head_length = K8S_LABEL_VALUE_MAX_LENGTH - IDEMPOTENCY_HASH_HEX_LENGTH - 1
     head = normalized[:max_head_length].rstrip("-.")
     if not head:
         return digest
@@ -591,7 +591,7 @@ def wait_for_agents_agentrun_terminal_status(
         phase = str(phase_raw).strip().lower()
         if phase:
             last_phase = phase
-        if phase in _TERMINAL_PHASES:
+        if phase in TERMINAL_PHASES:
             return phase
         if time.monotonic() >= deadline:
             raise RuntimeError(
@@ -600,7 +600,7 @@ def wait_for_agents_agentrun_terminal_status(
         time.sleep(normalized_poll)
 
 
-def _extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
+def extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
     agent_run = cast(dict[str, Any], submit_response.get("agentRun") or {})
     run_id = str(agent_run.get("id") or "").strip()
     if run_id:
@@ -608,7 +608,7 @@ def _extract_submitted_agentrun_id(submit_response: Mapping[str, Any]) -> str:
     raise RuntimeError("jangar_submit_missing_agent_run_id")
 
 
-def _lane_overrides_with_defaults(
+def lane_overrides_with_defaults(
     *,
     lane: DSPyWorkflowLane,
     lane_overrides: Mapping[str, Any],
@@ -620,7 +620,7 @@ def _lane_overrides_with_defaults(
         eval_report_ref = normalized.get("evalReportRef")
         if eval_report_ref:
             requested_eval_report_ref = str(eval_report_ref).strip()
-        for key in _PROMOTION_EVIDENCE_OVERRIDE_KEYS:
+        for key in PROMOTION_EVIDENCE_OVERRIDE_KEYS:
             normalized.pop(key, None)
     if lane == "compile":
         normalized.setdefault(
@@ -640,7 +640,7 @@ def _lane_overrides_with_defaults(
     return normalized, requested_eval_report_ref
 
 
-def _to_float(value: Any) -> float | None:
+def to_float(value: Any) -> float | None:
     if value is None:
         return None
     if isinstance(value, bool):
@@ -651,7 +651,7 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
-def _to_bool(value: Any) -> bool | None:
+def to_bool(value: Any) -> bool | None:
     if isinstance(value, bool):
         return value
     text = str(value or "").strip().lower()
@@ -662,7 +662,7 @@ def _to_bool(value: Any) -> bool | None:
     return None
 
 
-def _json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
+def json_copy(payload: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(dict(payload), sort_keys=True, default=str))
 
 
@@ -695,8 +695,8 @@ def _http_json_request(
         connection.close()
 
 
-def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
-    candidate = _normalize_local_path(eval_report_ref)
+def load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
+    candidate = normalize_local_path(eval_report_ref)
     if candidate is None:
         return None
     if not candidate.exists() or not candidate.is_file():
@@ -713,7 +713,7 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
         dict[str, Any], metric_bundle.get("deterministicCompatibility") or {}
     )
     observed_metrics = cast(dict[str, Any], metric_bundle.get("observed") or {})
-    created_at = _parse_iso_datetime(
+    created_at = parse_iso_datetime(
         payload.get("createdAt") or payload.get("created_at")
     )
     return {
@@ -721,11 +721,11 @@ def _load_eval_gate_snapshot(eval_report_ref: str) -> dict[str, Any] | None:
         "gate_compatibility": str(payload.get("gateCompatibility") or "")
         .strip()
         .lower(),
-        "schema_valid_rate": _to_float(payload.get("schemaValidRate")),
-        "deterministic_compatibility": _to_bool(
+        "schema_valid_rate": to_float(payload.get("schemaValidRate")),
+        "deterministic_compatibility": to_bool(
             deterministic_compatibility.get("passed")
         ),
-        "fallback_rate": _to_float(observed_metrics.get("fallbackRate")),
+        "fallback_rate": to_float(observed_metrics.get("fallbackRate")),
     }
 
 
@@ -751,23 +751,3 @@ __all__ = (
 # Public aliases used by split-module consumers.
 http_json_request = _http_json_request
 normalize_string_parameter = _normalize_string_parameter
-
-# Public aliases used by split modules.
-DEFAULT_DSPY_AGENT_NAME = _DEFAULT_DSPY_AGENT_NAME
-extract_submitted_agentrun_id = _extract_submitted_agentrun_id
-IDEMPOTENCY_HASH_HEX_LENGTH = _IDEMPOTENCY_HASH_HEX_LENGTH
-IMPLEMENTATION_SPEC_BY_LANE = _IMPLEMENTATION_SPEC_BY_LANE
-json_copy = _json_copy
-K8S_LABEL_VALUE_MAX_LENGTH = _K8S_LABEL_VALUE_MAX_LENGTH
-lane_overrides_with_defaults = _lane_overrides_with_defaults
-load_eval_gate_snapshot = _load_eval_gate_snapshot
-load_local_artifact_payload = _load_local_artifact_payload
-normalize_local_path = _normalize_local_path
-parse_iso_datetime = _parse_iso_datetime
-PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS = _PROMOTION_EVAL_REPORT_MAX_AGE_SECONDS
-PROMOTION_EVIDENCE_OVERRIDE_KEYS = _PROMOTION_EVIDENCE_OVERRIDE_KEYS
-PROMOTION_MAX_FALLBACK_RATE = _PROMOTION_MAX_FALLBACK_RATE
-PROMOTION_MIN_SCHEMA_VALID_RATE = _PROMOTION_MIN_SCHEMA_VALID_RATE
-TERMINAL_PHASES = _TERMINAL_PHASES
-to_bool = _to_bool
-to_float = _to_float

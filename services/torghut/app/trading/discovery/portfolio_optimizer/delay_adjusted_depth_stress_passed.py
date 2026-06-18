@@ -35,7 +35,7 @@ from .shared_context import (
 )
 
 
-def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
+def delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
         scorecard.get("delay_adjusted_depth_stress_passed")
@@ -44,7 +44,7 @@ def _delay_adjusted_depth_stress_passed(bundle: CandidateEvidenceBundle) -> bool
     )
 
 
-def _delay_adjusted_depth_liquidity_evidence_present(
+def delay_adjusted_depth_liquidity_evidence_present(
     bundle: CandidateEvidenceBundle,
 ) -> bool:
     scorecard = _scorecard(bundle)
@@ -55,7 +55,7 @@ def _delay_adjusted_depth_liquidity_evidence_present(
     )
 
 
-def _delay_adjusted_depth_liquidity_missing_day_count(
+def delay_adjusted_depth_liquidity_missing_day_count(
     bundle: CandidateEvidenceBundle,
 ) -> int:
     scorecard = _scorecard(bundle)
@@ -68,7 +68,7 @@ def _delay_adjusted_depth_liquidity_missing_day_count(
     )
 
 
-def _delay_adjusted_depth_tail_coverage_passed(
+def delay_adjusted_depth_tail_coverage_passed(
     bundle: CandidateEvidenceBundle,
 ) -> bool:
     scorecard = _scorecard(bundle)
@@ -79,7 +79,7 @@ def _delay_adjusted_depth_tail_coverage_passed(
     )
 
 
-def _fill_survival_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
+def fill_survival_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
         scorecard.get("delay_adjusted_depth_fill_survival_evidence_present")
@@ -87,7 +87,7 @@ def _fill_survival_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
     )
 
 
-def _fill_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
+def fill_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
     scorecard = _scorecard(bundle)
     return int(
         max(
@@ -97,7 +97,7 @@ def _fill_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
     )
 
 
-def _fill_survival_rate(bundle: CandidateEvidenceBundle) -> Decimal:
+def fill_survival_rate(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     return max(
         _decimal(scorecard.get("delay_adjusted_depth_fill_survival_rate")),
@@ -106,7 +106,7 @@ def _fill_survival_rate(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
-def _queue_position_survival_evidence_present(
+def queue_position_survival_evidence_present(
     bundle: CandidateEvidenceBundle,
 ) -> bool:
     scorecard = _scorecard(bundle)
@@ -115,21 +115,21 @@ def _queue_position_survival_evidence_present(
     )
 
 
-def _queue_position_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
+def queue_position_survival_sample_count(bundle: CandidateEvidenceBundle) -> int:
     return int(_decimal(_scorecard(bundle).get("queue_position_survival_sample_count")))
 
 
-def _queue_position_survival_fill_rate(bundle: CandidateEvidenceBundle) -> Decimal:
+def queue_position_survival_fill_rate(bundle: CandidateEvidenceBundle) -> Decimal:
     return _decimal(_scorecard(bundle).get("queue_position_survival_fill_rate"))
 
 
-def _queue_position_survival_queue_ratio_p95(
+def queue_position_survival_queue_ratio_p95(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     return _decimal(_scorecard(bundle).get("queue_position_survival_queue_ratio_p95"))
 
 
-def _queue_ahead_depletion_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
+def queue_ahead_depletion_evidence_present(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     return _boolish(
         scorecard.get("queue_position_survival_queue_ahead_depletion_evidence_present")
@@ -138,7 +138,7 @@ def _queue_ahead_depletion_evidence_present(bundle: CandidateEvidenceBundle) -> 
     )
 
 
-def _queue_ahead_depletion_sample_count(bundle: CandidateEvidenceBundle) -> int:
+def queue_ahead_depletion_sample_count(bundle: CandidateEvidenceBundle) -> int:
     scorecard = _scorecard(bundle)
     return int(
         max(
@@ -155,7 +155,7 @@ def _queue_ahead_depletion_sample_count(bundle: CandidateEvidenceBundle) -> int:
     )
 
 
-def _queue_position_survival_stress_net_per_day(
+def queue_position_survival_stress_net_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     scorecard = _scorecard(bundle)
@@ -165,7 +165,7 @@ def _queue_position_survival_stress_net_per_day(
     )
 
 
-def _delay_adjusted_depth_stress_artifact_ref(
+def delay_adjusted_depth_stress_artifact_ref(
     bundle: CandidateEvidenceBundle,
 ) -> str:
     scorecard = _scorecard(bundle)
@@ -176,7 +176,7 @@ def _delay_adjusted_depth_stress_artifact_ref(
     )
 
 
-def _delay_adjusted_depth_stress_net_per_day(
+def delay_adjusted_depth_stress_net_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     scorecard = _scorecard(bundle)
@@ -187,7 +187,7 @@ def _delay_adjusted_depth_stress_net_per_day(
     )
 
 
-def _delay_adjusted_depth_stress_ms(bundle: CandidateEvidenceBundle) -> Decimal:
+def delay_adjusted_depth_stress_ms(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     return _decimal(
         scorecard.get("delay_adjusted_depth_stress_ms")
@@ -196,7 +196,7 @@ def _delay_adjusted_depth_stress_ms(bundle: CandidateEvidenceBundle) -> Decimal:
     )
 
 
-def _delay_adjusted_depth_fillable_notional_per_day(
+def delay_adjusted_depth_fillable_notional_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     scorecard = _scorecard(bundle)
@@ -207,7 +207,7 @@ def _delay_adjusted_depth_fillable_notional_per_day(
     )
 
 
-def _delay_adjusted_depth_worst_active_day_fillable_notional(
+def delay_adjusted_depth_worst_active_day_fillable_notional(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     scorecard = _scorecard(bundle)
@@ -218,7 +218,7 @@ def _delay_adjusted_depth_worst_active_day_fillable_notional(
     )
 
 
-def _delay_adjusted_depth_p10_active_day_fillable_notional(
+def delay_adjusted_depth_p10_active_day_fillable_notional(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     scorecard = _scorecard(bundle)
@@ -229,7 +229,7 @@ def _delay_adjusted_depth_p10_active_day_fillable_notional(
     )
 
 
-def _double_oos_fold_metrics(
+def double_oos_fold_metrics(
     bundle: CandidateEvidenceBundle,
 ) -> tuple[Mapping[str, Any], ...]:
     folds: list[Mapping[str, Any]] = []
@@ -254,13 +254,13 @@ def _double_oos_fold_metrics(
     return tuple(folds)
 
 
-def _fold_passed(fold: Mapping[str, Any]) -> bool:
+def fold_passed(fold: Mapping[str, Any]) -> bool:
     if "passed" in fold:
         return _boolish(fold.get("passed"))
     return _boolish(fold.get("status"))
 
 
-def _double_oos_independent_window_count(bundle: CandidateEvidenceBundle) -> int:
+def double_oos_independent_window_count(bundle: CandidateEvidenceBundle) -> int:
     scorecard = _scorecard(bundle)
     explicit = _decimal(
         scorecard.get("double_oos_independent_window_count")
@@ -269,7 +269,7 @@ def _double_oos_independent_window_count(bundle: CandidateEvidenceBundle) -> int
     )
     if explicit > 0:
         return int(explicit)
-    folds = _double_oos_fold_metrics(bundle)
+    folds = double_oos_fold_metrics(bundle)
     if not folds:
         return 0
     window_ids = {
@@ -285,7 +285,7 @@ def _double_oos_independent_window_count(bundle: CandidateEvidenceBundle) -> int
     return len(window_ids) if window_ids else len(folds)
 
 
-def _double_oos_pass_rate(bundle: CandidateEvidenceBundle) -> Decimal:
+def double_oos_pass_rate(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     explicit = _decimal(
         scorecard.get("double_oos_pass_rate")
@@ -295,14 +295,14 @@ def _double_oos_pass_rate(bundle: CandidateEvidenceBundle) -> Decimal:
     )
     if explicit >= 0:
         return explicit
-    folds = _double_oos_fold_metrics(bundle)
+    folds = double_oos_fold_metrics(bundle)
     if not folds:
         return Decimal("0")
-    passed = sum(1 for fold in folds if _fold_passed(fold))
+    passed = sum(1 for fold in folds if fold_passed(fold))
     return Decimal(passed) / Decimal(len(folds))
 
 
-def _double_oos_passed(bundle: CandidateEvidenceBundle) -> bool:
+def double_oos_passed(bundle: CandidateEvidenceBundle) -> bool:
     scorecard = _scorecard(bundle)
     if any(
         key in scorecard
@@ -317,11 +317,11 @@ def _double_oos_passed(bundle: CandidateEvidenceBundle) -> bool:
             or scorecard.get("double_out_of_sample_passed")
             or scorecard.get("walk_forward_oos_passed")
         )
-    folds = _double_oos_fold_metrics(bundle)
-    return bool(folds) and all(_fold_passed(fold) for fold in folds)
+    folds = double_oos_fold_metrics(bundle)
+    return bool(folds) and all(fold_passed(fold) for fold in folds)
 
 
-def _double_oos_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+def double_oos_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     explicit = _decimal(
         scorecard.get("double_oos_net_pnl_per_day")
@@ -331,7 +331,7 @@ def _double_oos_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
     )
     if explicit != Decimal("-999999999"):
         return explicit
-    folds = _double_oos_fold_metrics(bundle)
+    folds = double_oos_fold_metrics(bundle)
     fold_net = [
         _decimal(
             fold.get("net_pnl_per_day")
@@ -343,7 +343,7 @@ def _double_oos_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
     return min(fold_net, default=Decimal("0"))
 
 
-def _double_oos_cost_shock_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
+def double_oos_cost_shock_net_per_day(bundle: CandidateEvidenceBundle) -> Decimal:
     scorecard = _scorecard(bundle)
     explicit = _decimal(
         scorecard.get("double_oos_cost_shock_net_pnl_per_day")
@@ -353,7 +353,7 @@ def _double_oos_cost_shock_net_per_day(bundle: CandidateEvidenceBundle) -> Decim
     )
     if explicit != Decimal("-999999999"):
         return explicit
-    folds = _double_oos_fold_metrics(bundle)
+    folds = double_oos_fold_metrics(bundle)
     fold_net = [
         _decimal(
             fold.get("cost_shock_net_pnl_per_day")
@@ -365,7 +365,7 @@ def _double_oos_cost_shock_net_per_day(bundle: CandidateEvidenceBundle) -> Decim
     return min(fold_net, default=Decimal("0"))
 
 
-def _double_oos_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
+def double_oos_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
     scorecard = _scorecard(bundle)
     direct = _string(
         scorecard.get("double_oos_artifact_ref")
@@ -380,47 +380,47 @@ def _double_oos_artifact_ref(bundle: CandidateEvidenceBundle) -> str:
             normalized = _string(item)
             if normalized:
                 return normalized
-    for fold in _double_oos_fold_metrics(bundle):
+    for fold in double_oos_fold_metrics(bundle):
         normalized = _string(fold.get("artifact_ref") or fold.get("report_ref"))
         if normalized:
             return normalized
     return ""
 
 
-def _positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
+def positive_net_contribution(bundle: CandidateEvidenceBundle) -> Decimal:
     return max(_net_per_day(bundle), Decimal("0"))
 
 
-def _cluster_id(bundle: CandidateEvidenceBundle) -> str:
+def cluster_id(bundle: CandidateEvidenceBundle) -> str:
     return (
         _string(_scorecard(bundle).get("correlation_cluster"))
         or bundle.candidate_spec_id
     )
 
 
-def _contribution_shares(values: Mapping[str, Decimal]) -> dict[str, Decimal]:
+def contribution_shares(values: Mapping[str, Decimal]) -> dict[str, Decimal]:
     total = sum(values.values(), Decimal("0"))
     if total <= 0:
         return {}
     return {key: value / total for key, value in values.items()}
 
 
-def _cluster_contribution_shares(
+def cluster_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Decimal]:
-    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
+    weights = portfolio_weights(selected, oracle_policy=oracle_policy)
     contributions: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
-        cluster = _cluster_id(bundle)
+        cluster = cluster_id(bundle)
         contributions[cluster] = contributions.get(cluster, Decimal("0")) + (
-            _positive_net_contribution(bundle) * weight
+            positive_net_contribution(bundle) * weight
         )
-    return _contribution_shares(contributions)
+    return contribution_shares(contributions)
 
 
-def _bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
+def bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]:
     raw_symbol_shares = _scorecard(bundle).get("symbol_contribution_shares")
     if isinstance(raw_symbol_shares, Mapping):
         rows = cast(Mapping[Any, Any], raw_symbol_shares)
@@ -430,30 +430,30 @@ def _bundle_symbol_shares(bundle: CandidateEvidenceBundle) -> dict[str, Decimal]
             if _string(symbol)
         }
         if shares:
-            return _contribution_shares(shares)
+            return contribution_shares(shares)
     symbol = _string(_scorecard(bundle).get("symbol")).upper()
     if symbol:
         return {symbol: Decimal("1")}
     return {"UNKNOWN": Decimal("1")}
 
 
-def _symbol_contribution_shares(
+def symbol_contribution_shares(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> dict[str, Decimal]:
-    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
+    weights = portfolio_weights(selected, oracle_policy=oracle_policy)
     contributions: dict[str, Decimal] = {}
     for bundle, weight in zip(selected, weights, strict=True):
-        bundle_positive_net = _positive_net_contribution(bundle) * weight
-        for symbol, share in _bundle_symbol_shares(bundle).items():
+        bundle_positive_net = positive_net_contribution(bundle) * weight
+        for symbol, share in bundle_symbol_shares(bundle).items():
             contributions[symbol] = contributions.get(symbol, Decimal("0")) + (
                 bundle_positive_net * share
             )
-    return _contribution_shares(contributions)
+    return contribution_shares(contributions)
 
 
-def _max_pairwise_correlation(
+def max_pairwise_correlation(
     bundle: CandidateEvidenceBundle,
     selected: Sequence[CandidateEvidenceBundle],
 ) -> Decimal:
@@ -466,11 +466,11 @@ def _max_pairwise_correlation(
     )
 
 
-def _max_share(shares: Mapping[str, Decimal]) -> Decimal:
+def max_share(shares: Mapping[str, Decimal]) -> Decimal:
     return max(shares.values(), default=Decimal("0"))
 
 
-def _max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
+def max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
     peak = Decimal("0")
     cumulative = Decimal("0")
     drawdown = Decimal("0")
@@ -481,14 +481,14 @@ def _max_drawdown_from_daily(daily_net: Mapping[str, Decimal]) -> Decimal:
     return drawdown
 
 
-def _equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal, ...]:
+def equal_weights(selected: Sequence[CandidateEvidenceBundle]) -> tuple[Decimal, ...]:
     if not selected:
         return ()
     weight = Decimal("1") / Decimal(len(selected))
     return tuple(weight for _ in selected)
 
 
-def _gross_exposure_allocation_edge_net_per_day(
+def gross_exposure_allocation_edge_net_per_day(
     bundle: CandidateEvidenceBundle,
 ) -> Decimal:
     scorecard = _scorecard(bundle)
@@ -512,8 +512,8 @@ def _gross_exposure_allocation_edge_net_per_day(
     return min(edge_candidates, default=Decimal("0"))
 
 
-def _gross_exposure_allocation_priority(bundle: CandidateEvidenceBundle) -> Decimal:
-    edge = _gross_exposure_allocation_edge_net_per_day(bundle)
+def gross_exposure_allocation_priority(bundle: CandidateEvidenceBundle) -> Decimal:
+    edge = gross_exposure_allocation_edge_net_per_day(bundle)
     if edge <= 0:
         return Decimal("0")
     downside_risk = max(
@@ -534,7 +534,7 @@ def _gross_exposure_allocation_priority(bundle: CandidateEvidenceBundle) -> Deci
     return (edge * quality) / (downside_risk * concentration_penalty)
 
 
-def _edge_risk_gross_exposure_budget_weights(
+def edge_risk_gross_exposure_budget_weights(
     exposures: Sequence[Decimal],
     priorities: Sequence[Decimal],
     *,
@@ -591,7 +591,7 @@ def _edge_risk_gross_exposure_budget_weights(
     return tuple(weights)
 
 
-def _gross_exposure_budget_weights(
+def gross_exposure_budget_weights(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
@@ -608,9 +608,9 @@ def _gross_exposure_budget_weights(
         policy.max_gross_exposure_pct_equity / total_exposure,
     )
     if scale < Decimal("1"):
-        edge_risk_weights = _edge_risk_gross_exposure_budget_weights(
+        edge_risk_weights = edge_risk_gross_exposure_budget_weights(
             exposures,
-            tuple(_gross_exposure_allocation_priority(bundle) for bundle in selected),
+            tuple(gross_exposure_allocation_priority(bundle) for bundle in selected),
             max_gross_exposure_pct_equity=policy.max_gross_exposure_pct_equity,
             equal_scale=scale,
         )
@@ -619,25 +619,25 @@ def _gross_exposure_budget_weights(
     return tuple(scale for _ in selected)
 
 
-def _portfolio_weights(
+def portfolio_weights(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> tuple[Decimal, ...]:
-    gross_budget_weights = _gross_exposure_budget_weights(
+    gross_budget_weights = gross_exposure_budget_weights(
         selected, oracle_policy=oracle_policy
     )
     if gross_budget_weights is not None:
         return gross_budget_weights
-    return _equal_weights(selected)
+    return equal_weights(selected)
 
 
-def _portfolio_weighting_mode(
+def portfolio_weighting_mode(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> str:
-    weights = _gross_exposure_budget_weights(selected, oracle_policy=oracle_policy)
+    weights = gross_exposure_budget_weights(selected, oracle_policy=oracle_policy)
     if weights is not None:
         policy = oracle_policy or ProfitTargetOraclePolicy()
         exposures = tuple(_max_gross_exposure_pct_equity(bundle) for bundle in selected)
@@ -651,12 +651,12 @@ def _portfolio_weighting_mode(
     return PORTFOLIO_WEIGHTING_EQUAL_COUNT
 
 
-def _portfolio_max_gross_exposure_pct_equity(
+def portfolio_max_gross_exposure_pct_equity(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> Decimal:
-    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
+    weights = portfolio_weights(selected, oracle_policy=oracle_policy)
     return sum(
         (
             _max_gross_exposure_pct_equity(bundle) * weight
@@ -666,12 +666,12 @@ def _portfolio_max_gross_exposure_pct_equity(
     )
 
 
-def _portfolio_min_cash(
+def portfolio_min_cash(
     selected: Sequence[CandidateEvidenceBundle],
     *,
     oracle_policy: ProfitTargetOraclePolicy | None = None,
 ) -> Decimal:
-    weights = _portfolio_weights(selected, oracle_policy=oracle_policy)
+    weights = portfolio_weights(selected, oracle_policy=oracle_policy)
     return sum(
         (
             _min_cash(bundle) * weight
@@ -681,13 +681,13 @@ def _portfolio_min_cash(
     )
 
 
-def _portfolio_negative_cash_observation_count(
+def portfolio_negative_cash_observation_count(
     selected: Sequence[CandidateEvidenceBundle],
 ) -> int:
     return sum(_negative_cash_observation_count(bundle) for bundle in selected)
 
 
-def _missing_sleeve_daily_net_count(
+def missing_sleeve_daily_net_count(
     selected: Sequence[CandidateEvidenceBundle],
     daily_net: Mapping[str, Decimal],
 ) -> int:
@@ -704,63 +704,3 @@ def _missing_sleeve_daily_net_count(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-bundle_symbol_shares = _bundle_symbol_shares
-cluster_contribution_shares = _cluster_contribution_shares
-cluster_id = _cluster_id
-contribution_shares = _contribution_shares
-delay_adjusted_depth_fillable_notional_per_day = (
-    _delay_adjusted_depth_fillable_notional_per_day
-)
-delay_adjusted_depth_liquidity_evidence_present = (
-    _delay_adjusted_depth_liquidity_evidence_present
-)
-delay_adjusted_depth_liquidity_missing_day_count = (
-    _delay_adjusted_depth_liquidity_missing_day_count
-)
-delay_adjusted_depth_p10_active_day_fillable_notional = (
-    _delay_adjusted_depth_p10_active_day_fillable_notional
-)
-delay_adjusted_depth_stress_artifact_ref = _delay_adjusted_depth_stress_artifact_ref
-delay_adjusted_depth_stress_ms = _delay_adjusted_depth_stress_ms
-delay_adjusted_depth_stress_net_per_day = _delay_adjusted_depth_stress_net_per_day
-delay_adjusted_depth_stress_passed = _delay_adjusted_depth_stress_passed
-delay_adjusted_depth_tail_coverage_passed = _delay_adjusted_depth_tail_coverage_passed
-delay_adjusted_depth_worst_active_day_fillable_notional = (
-    _delay_adjusted_depth_worst_active_day_fillable_notional
-)
-double_oos_artifact_ref = _double_oos_artifact_ref
-double_oos_cost_shock_net_per_day = _double_oos_cost_shock_net_per_day
-double_oos_fold_metrics = _double_oos_fold_metrics
-double_oos_independent_window_count = _double_oos_independent_window_count
-double_oos_net_per_day = _double_oos_net_per_day
-double_oos_pass_rate = _double_oos_pass_rate
-double_oos_passed = _double_oos_passed
-edge_risk_gross_exposure_budget_weights = _edge_risk_gross_exposure_budget_weights
-equal_weights = _equal_weights
-fill_survival_evidence_present = _fill_survival_evidence_present
-fill_survival_rate = _fill_survival_rate
-fill_survival_sample_count = _fill_survival_sample_count
-fold_passed = _fold_passed
-gross_exposure_allocation_edge_net_per_day = _gross_exposure_allocation_edge_net_per_day
-gross_exposure_allocation_priority = _gross_exposure_allocation_priority
-gross_exposure_budget_weights = _gross_exposure_budget_weights
-max_drawdown_from_daily = _max_drawdown_from_daily
-max_pairwise_correlation = _max_pairwise_correlation
-max_share = _max_share
-missing_sleeve_daily_net_count = _missing_sleeve_daily_net_count
-portfolio_max_gross_exposure_pct_equity = _portfolio_max_gross_exposure_pct_equity
-portfolio_min_cash = _portfolio_min_cash
-portfolio_negative_cash_observation_count = _portfolio_negative_cash_observation_count
-portfolio_weighting_mode = _portfolio_weighting_mode
-portfolio_weights = _portfolio_weights
-positive_net_contribution = _positive_net_contribution
-queue_ahead_depletion_evidence_present = _queue_ahead_depletion_evidence_present
-queue_ahead_depletion_sample_count = _queue_ahead_depletion_sample_count
-queue_position_survival_evidence_present = _queue_position_survival_evidence_present
-queue_position_survival_fill_rate = _queue_position_survival_fill_rate
-queue_position_survival_queue_ratio_p95 = _queue_position_survival_queue_ratio_p95
-queue_position_survival_sample_count = _queue_position_survival_sample_count
-queue_position_survival_stress_net_per_day = _queue_position_survival_stress_net_per_day
-symbol_contribution_shares = _symbol_contribution_shares

@@ -39,7 +39,7 @@ from .runtime_summary import (
 )
 
 
-def _certificate_runtime_ledger_reason_codes(
+def certificate_runtime_ledger_reason_codes(
     *,
     evidence_row: Mapping[str, object],
     runtime_item: Mapping[str, object],
@@ -183,7 +183,7 @@ def _certificate_runtime_ledger_reason_codes(
     return _normalize_reason_codes(reasons)
 
 
-def _mark_runtime_certificate_rejected(
+def mark_runtime_certificate_rejected(
     updated: dict[str, object],
     *,
     metric_window: StrategyHypothesisMetricWindow,
@@ -239,7 +239,7 @@ def _mark_runtime_certificate_rejected(
     return updated
 
 
-def _load_latest_runtime_ledger_summary(
+def load_latest_runtime_ledger_summary(
     session: RuntimeLedgerReadSession,
     *,
     hypothesis_ids: Sequence[str],
@@ -325,7 +325,7 @@ def _load_latest_runtime_ledger_summary(
     }
 
 
-def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int:
+def runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int:
     if not isinstance(payload, Mapping):
         return 0
 
@@ -380,25 +380,25 @@ def _runtime_ledger_selection_score(payload: Mapping[str, object] | None) -> int
     return score
 
 
-def _certificate_evidence_authority_score(
+def certificate_evidence_authority_score(
     *,
     observed_stage: str | None,
     runtime_ledger_bucket: Mapping[str, object] | None,
 ) -> int:
     if observed_stage == "live":
-        return 2 if _runtime_ledger_selection_score(runtime_ledger_bucket) >= 9 else 0
+        return 2 if runtime_ledger_selection_score(runtime_ledger_bucket) >= 9 else 0
     if observed_stage == "paper":
         return 1
     return 0
 
 
-def _runtime_ledger_target_reason_codes(
+def runtime_ledger_target_reason_codes(
     payload: Mapping[str, object],
     *,
     manifest: Mapping[str, object],
 ) -> list[str]:
     reasons: list[str] = []
-    expected_candidates = _runtime_ledger_manifest_candidate_ids(manifest)
+    expected_candidates = runtime_ledger_manifest_candidate_ids(manifest)
     actual_candidate = _safe_text(payload.get("candidate_id"))
     if expected_candidates:
         if actual_candidate is None:
@@ -417,7 +417,7 @@ def _runtime_ledger_target_reason_codes(
     return reasons
 
 
-def _runtime_ledger_manifest_candidate_ids(
+def runtime_ledger_manifest_candidate_ids(
     manifest: Mapping[str, object],
 ) -> set[str]:
     candidates: set[str] = set()
@@ -435,7 +435,7 @@ def _runtime_ledger_manifest_candidate_ids(
     return candidates
 
 
-def _runtime_ledger_repair_reason_codes(
+def runtime_ledger_repair_reason_codes(
     payload: Mapping[str, object],
     *,
     manifest: Mapping[str, object],
@@ -446,7 +446,7 @@ def _runtime_ledger_repair_reason_codes(
         if str(reason).strip()
     ]
     reasons.extend(runtime_ledger_promotion_source_authority_blockers(payload))
-    reasons.extend(_runtime_ledger_target_reason_codes(payload, manifest=manifest))
+    reasons.extend(runtime_ledger_target_reason_codes(payload, manifest=manifest))
     if _safe_text(payload.get("observed_stage")) != "live":
         reasons.append("runtime_ledger_stage_not_live")
     if _safe_text(payload.get("pnl_basis")) != POST_COST_PNL_BASIS:
@@ -501,7 +501,7 @@ def _runtime_ledger_repair_reason_codes(
     return _normalize_reason_codes(reasons)
 
 
-def _runtime_ledger_repair_score(
+def runtime_ledger_repair_score(
     candidate: Mapping[str, object],
 ) -> tuple[int, int, int, int, int, int, int, Decimal, Decimal, Decimal, float]:
     reason_codes = set(
@@ -565,14 +565,3 @@ def _runtime_ledger_repair_score(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-certificate_evidence_authority_score = _certificate_evidence_authority_score
-certificate_runtime_ledger_reason_codes = _certificate_runtime_ledger_reason_codes
-load_latest_runtime_ledger_summary = _load_latest_runtime_ledger_summary
-mark_runtime_certificate_rejected = _mark_runtime_certificate_rejected
-runtime_ledger_manifest_candidate_ids = _runtime_ledger_manifest_candidate_ids
-runtime_ledger_repair_reason_codes = _runtime_ledger_repair_reason_codes
-runtime_ledger_repair_score = _runtime_ledger_repair_score
-runtime_ledger_selection_score = _runtime_ledger_selection_score
-runtime_ledger_target_reason_codes = _runtime_ledger_target_reason_codes

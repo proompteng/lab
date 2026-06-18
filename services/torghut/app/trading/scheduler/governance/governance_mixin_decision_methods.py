@@ -33,7 +33,7 @@ else:
     _TradingSchedulerGovernanceDecisionBase = object
 
 
-class _TradingSchedulerGovernanceDecisionMethods(
+class TradingSchedulerGovernanceDecisionMethods(
     _TradingSchedulerGovernanceDecisionBase,
 ):
     def _run_autonomous_cycle(
@@ -689,6 +689,3 @@ class _TradingSchedulerGovernanceDecisionMethods(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-TradingSchedulerGovernanceDecisionMethods = _TradingSchedulerGovernanceDecisionMethods

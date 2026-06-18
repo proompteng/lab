@@ -17,15 +17,15 @@ from ..market_context_domains import (
 
 PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION = "torghut.profit-freshness-frontier.v1"
 
-_FRESHNESS_SECONDS = 60
+FRESHNESS_SECONDS = 60
 
-_CURRENT_STATES = {"accepted", "allow", "current", "healthy", "ok", "pass", "ready"}
+CURRENT_STATES = {"accepted", "allow", "current", "healthy", "ok", "pass", "ready"}
 
-_ROUTE_SETTLED_ROW_STATES = _CURRENT_STATES | {"routeable"}
+ROUTE_SETTLED_ROW_STATES = CURRENT_STATES | {"routeable"}
 
-_BAD_STATES = {"blocked", "degraded", "fail", "missing", "repair", "stale", "unknown"}
+BAD_STATES = {"blocked", "degraded", "fail", "missing", "repair", "stale", "unknown"}
 
-_DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
+DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
     "empirical_proof": Decimal("24"),
     "tca_fill_quality": Decimal("22"),
     "signal_ingestion": Decimal("18"),
@@ -36,7 +36,7 @@ _DIMENSION_EXPECTED_BPS: Mapping[str, Decimal] = {
     "jangar_settlement": Decimal("8"),
 }
 
-_DIMENSION_REPAIR_COST: Mapping[str, str] = {
+DIMENSION_REPAIR_COST: Mapping[str, str] = {
     "empirical_proof": "medium",
     "tca_fill_quality": "medium",
     "signal_ingestion": "medium",
@@ -47,13 +47,13 @@ _DIMENSION_REPAIR_COST: Mapping[str, str] = {
     "jangar_settlement": "low",
 }
 
-_REPAIR_COST_PENALTY: Mapping[str, Decimal] = {
+REPAIR_COST_PENALTY: Mapping[str, Decimal] = {
     "low": Decimal("2"),
     "medium": Decimal("5"),
     "high": Decimal("8"),
 }
 
-_DIMENSION_ACTION: Mapping[str, str] = {
+DIMENSION_ACTION: Mapping[str, str] = {
     "signal_ingestion": "refresh_scoped_quant_pipeline_stage_receipts",
     "empirical_proof": "renew_empirical_proof_jobs",
     "feature_coverage": "rebuild_required_feature_rows",
@@ -64,7 +64,7 @@ _DIMENSION_ACTION: Mapping[str, str] = {
     "jangar_settlement": "refresh_jangar_reliability_settlement",
 }
 
-_DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
+DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
     "signal_ingestion": ("quant", "scoped_quant", "signal", "signal_ingestion"),
     "empirical_proof": ("empirical", "empirical_proof", "replay", "simulation"),
     "feature_coverage": ("feature", "feature_coverage"),
@@ -75,7 +75,7 @@ _DIMENSION_REPAIR_CLASSES: Mapping[str, tuple[str, ...]] = {
     "jangar_settlement": ("jangar", "jangar_settlement", "reliability_settlement"),
 }
 
-_DAILY_NET_PNL_UNLOCK_KEYS = (
+DAILY_NET_PNL_UNLOCK_KEYS = (
     "expected_daily_net_pnl_unlock",
     "post_cost_daily_net_pnl_unlock",
     "expected_post_cost_daily_net_pnl_unlock",
@@ -87,7 +87,7 @@ _DAILY_NET_PNL_UNLOCK_KEYS = (
     "daily_net_pnl",
 )
 
-_DIMENSION_SUCCESS: Mapping[str, str] = {
+DIMENSION_SUCCESS: Mapping[str, str] = {
     "signal_ingestion": "scoped quant metrics and stage receipts are current",
     "empirical_proof": "all required empirical jobs are fresh, truthful, and promotion eligible",
     "feature_coverage": "required feature rows are present for blocked hypotheses",
@@ -98,53 +98,53 @@ _DIMENSION_SUCCESS: Mapping[str, str] = {
     "jangar_settlement": "Jangar reliability settlement allows paper canary consideration",
 }
 
-_REPAIRABLE_DIMENSIONS = frozenset(_DIMENSION_ACTION)
+REPAIRABLE_DIMENSIONS = frozenset(DIMENSION_ACTION)
 
-_ROUTEABILITY_ONLY_TCA_REASON_CODES = {
+ROUTEABILITY_ONLY_TCA_REASON_CODES = {
     "execution_tca_route_universe_exclusions_applied",
     "execution_tca_symbol_missing",
     "route_tca_passed_but_dependency_receipts_block_capital",
 }
 
-_ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
+ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = ("capital_state_", "proof_floor_")
 
-_NONBLOCKING_JANGAR_RELIABILITY_REASONS = {
+NONBLOCKING_JANGAR_RELIABILITY_REASONS = {
     "torghut_dependency_quorum_not_required",
 }
 
-_NONBLOCKING_QUANT_HEALTH_REASONS = {
+NONBLOCKING_QUANT_HEALTH_REASONS = {
     "quant_health_not_configured",
 }
 
-_ROUTEABILITY_TCA_REPAIR_LOT_TYPES = {"route_universe_tca_repair"}
+ROUTEABILITY_TCA_REPAIR_LOT_TYPES = {"route_universe_tca_repair"}
 
-_ROUTEABILITY_TCA_REPAIR_ACTION = "recompute_route_tca_and_fill_quality"
+ROUTEABILITY_TCA_REPAIR_ACTION = "recompute_route_tca_and_fill_quality"
 
-_ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES = ("execution_tca_", "route_tca_")
+ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES = ("execution_tca_", "route_tca_")
 
-_ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS = ("slippage", "route_universe")
+ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS = ("slippage", "route_universe")
 
-_ALPHA_FEATURE_REPLAY_REASON_CODES = {
+ALPHA_FEATURE_REPLAY_REASON_CODES = {
     "feature_rows_missing",
     "required_feature_set_unavailable",
 }
 
-_ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = Decimal("3")
+ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = Decimal("3")
 
-_ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS = Decimal("3")
+ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS = Decimal("3")
 
-_ALPHA_READINESS_ROUTEABILITY_REASON_CODES = {
+ALPHA_READINESS_ROUTEABILITY_REASON_CODES = {
     "alpha_readiness_fail",
     "alpha_readiness_not_promotion_eligible",
     "hypothesis_not_promotion_eligible",
 }
 
 
-def _mapping(value: object) -> Mapping[str, Any]:
+def mapping(value: object) -> Mapping[str, Any]:
     return cast(Mapping[str, Any], value) if isinstance(value, Mapping) else {}
 
 
-def _sequence(value: object) -> Sequence[object]:
+def sequence(value: object) -> Sequence[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return cast(Sequence[object], value)
     return ()
@@ -157,7 +157,7 @@ def text(value: object, default: str = "") -> str:
     return text or default
 
 
-def _decimal(value: object) -> Decimal | None:
+def decimal(value: object) -> Decimal | None:
     if value is None:
         return None
     try:
@@ -166,7 +166,7 @@ def _decimal(value: object) -> Decimal | None:
         return None
 
 
-def _decimal_text(value: Decimal | None) -> str | None:
+def decimal_text(value: Decimal | None) -> str | None:
     if value is None:
         return None
     text = format(value, "f")
@@ -177,17 +177,17 @@ def _decimal_text(value: Decimal | None) -> str | None:
     return text
 
 
-def _int(value: object, default: int = 0) -> int:
-    parsed = _decimal(value)
+def int_value(value: object, default: int = 0) -> int:
+    parsed = decimal(value)
     return default if parsed is None else int(parsed)
 
 
-def _float(value: object) -> float | None:
-    parsed = _decimal(value)
+def float_value(value: object) -> float | None:
+    parsed = decimal(value)
     return None if parsed is None else float(parsed)
 
 
-def _bool(value: object, default: bool = False) -> bool:
+def bool_value(value: object, default: bool = False) -> bool:
     if isinstance(value, bool):
         return value
     if isinstance(value, str):
@@ -209,7 +209,7 @@ def _bool(value: object, default: bool = False) -> bool:
     return default
 
 
-def _unique(values: Sequence[str]) -> list[str]:
+def unique(values: Sequence[str]) -> list[str]:
     result: list[str] = []
     seen: set[str] = set()
     for value in values:
@@ -220,22 +220,22 @@ def _unique(values: Sequence[str]) -> list[str]:
     return result
 
 
-def _strings(value: object) -> list[str]:
-    return _unique([text(item) for item in _sequence(value)])
+def strings(value: object) -> list[str]:
+    return unique([text(item) for item in sequence(value)])
 
 
-def _symbols(value: object) -> list[str]:
+def symbols(value: object) -> list[str]:
     if isinstance(value, str):
-        return _unique([value.upper()])
-    return _unique([text(item).upper() for item in _sequence(value)])
+        return unique([value.upper()])
+    return unique([text(item).upper() for item in sequence(value)])
 
 
-def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
+def stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return f"{prefix}:{sha256(encoded.encode()).hexdigest()[:16]}"
 
 
-def _timestamp(value: object) -> datetime | None:
+def timestamp(value: object) -> datetime | None:
     if isinstance(value, datetime):
         parsed = value
     elif isinstance(value, str) and value.strip():
@@ -255,7 +255,7 @@ def _timestamp(value: object) -> datetime | None:
     )
 
 
-def _state_from_reasons(
+def state_from_reasons(
     reasons: Sequence[str],
     *,
     missing: bool = False,
@@ -279,47 +279,47 @@ def _state_from_reasons(
     return "current"
 
 
-def _hypothesis_items(hypothesis_payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
-    return [_mapping(item) for item in _sequence(hypothesis_payload.get("items"))]
+def hypothesis_items(hypothesis_payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    return [mapping(item) for item in sequence(hypothesis_payload.get("items"))]
 
 
-def _hypothesis_summary(hypothesis_payload: Mapping[str, Any]) -> Mapping[str, Any]:
-    summary = _mapping(hypothesis_payload.get("summary"))
+def hypothesis_summary(hypothesis_payload: Mapping[str, Any]) -> Mapping[str, Any]:
+    summary = mapping(hypothesis_payload.get("summary"))
     return summary if summary else hypothesis_payload
 
 
-def _hypothesis_ids_for_reasons(
+def hypothesis_ids_for_reasons(
     hypothesis_payload: Mapping[str, Any],
     target_reasons: Sequence[str],
 ) -> list[str]:
     targets = set(target_reasons)
     ids: list[str] = []
-    for item in _hypothesis_items(hypothesis_payload):
-        reasons = set(_strings(item.get("reasons")))
+    for item in hypothesis_items(hypothesis_payload):
+        reasons = set(strings(item.get("reasons")))
         if not targets or reasons.intersection(targets):
             for key in ("hypothesis_id", "id", "candidate_id", "strategy_id"):
                 if value := text(item.get(key)):
                     ids.append(value)
                     break
-    return _unique(ids)
+    return unique(ids)
 
 
-def _reason_total(
+def reason_total(
     hypothesis_payload: Mapping[str, Any],
     reason: str,
 ) -> int:
-    summary = _hypothesis_summary(hypothesis_payload)
-    totals = _mapping(summary.get("reason_totals"))
+    summary = hypothesis_summary(hypothesis_payload)
+    totals = mapping(summary.get("reason_totals"))
     if reason in totals:
-        return _int(totals.get(reason))
+        return int_value(totals.get(reason))
     return sum(
         1
-        for item in _hypothesis_items(hypothesis_payload)
-        if reason in _strings(item.get("reasons"))
+        for item in hypothesis_items(hypothesis_payload)
+        if reason in strings(item.get("reasons"))
     )
 
 
-def _dimension(
+def dimension(
     *,
     name: str,
     state: str,
@@ -332,11 +332,11 @@ def _dimension(
     fresh_until: object = None,
     details: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    observed = _timestamp(observed_at) or generated_at
+    observed = timestamp(observed_at) or generated_at
     fresh = (
         text(fresh_until)
         or (
-            observed + timedelta(seconds=_FRESHNESS_SECONDS)
+            observed + timedelta(seconds=FRESHNESS_SECONDS)
             if state == "current"
             else generated_at
         ).isoformat()
@@ -348,34 +348,34 @@ def _dimension(
         "fresh_until": fresh,
         "staleness_seconds": staleness_seconds,
         "blocking_hypotheses": list(blocking_hypotheses),
-        "reason_codes": _unique(list(reason_codes)),
-        "evidence_refs": _unique(list(evidence_refs)),
+        "reason_codes": unique(list(reason_codes)),
+        "evidence_refs": unique(list(evidence_refs)),
         "details": dict(details or {}),
     }
 
 
-def _proof_dimension(
+def proof_dimension(
     proof_floor_receipt: Mapping[str, Any],
     dimension_name: str,
 ) -> Mapping[str, Any]:
-    for raw_dimension in _sequence(proof_floor_receipt.get("proof_dimensions")):
-        dimension = _mapping(raw_dimension)
+    for raw_dimension in sequence(proof_floor_receipt.get("proof_dimensions")):
+        dimension = mapping(raw_dimension)
         if text(dimension.get("dimension")) == dimension_name:
             return dimension
     return {}
 
 
-def _market_domain_states(
+def market_domain_states(
     market_context_status: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     for key in ("last_domain_states", "domain_states", "domains"):
-        domains = _mapping(market_context_status.get(key))
+        domains = mapping(market_context_status.get(key))
         if domains:
             return domains
-    return _mapping(_mapping(market_context_status.get("health")).get("domain_states"))
+    return mapping(mapping(market_context_status.get("health")).get("domain_states"))
 
 
-def _market_dimension(
+def market_dimension(
     *,
     market_context_status: Mapping[str, Any],
     hypothesis_payload: Mapping[str, Any],
@@ -383,26 +383,26 @@ def _market_dimension(
 ) -> dict[str, object]:
     reasons = active_market_context_reasons(
         [
-            *_strings(market_context_status.get("blocking_reasons")),
-            *_strings(market_context_status.get("reason_codes")),
-            *_strings(market_context_status.get("last_risk_flags")),
+            *strings(market_context_status.get("blocking_reasons")),
+            *strings(market_context_status.get("reason_codes")),
+            *strings(market_context_status.get("last_risk_flags")),
         ]
     )
     status = text(
-        _mapping(market_context_status.get("health")).get("status")
+        mapping(market_context_status.get("health")).get("status")
         or market_context_status.get("status")
         or market_context_status.get("state")
         or market_context_status.get("last_reason")
     ).lower()
     stale_domains: list[str] = []
     for domain_name, raw_domain in active_market_context_mapping(
-        _market_domain_states(market_context_status)
+        market_domain_states(market_context_status)
     ).items():
-        domain = _mapping(raw_domain)
+        domain = mapping(raw_domain)
         domain_state = text(domain.get("status") or domain.get("state")).lower()
         if domain_state == "stale" or domain.get("stale") is True:
             stale_domains.append(str(domain_name))
-    if _bool(market_context_status.get("alert_active")):
+    if bool_value(market_context_status.get("alert_active")):
         reasons.extend(
             active_market_context_reasons(
                 [
@@ -413,43 +413,45 @@ def _market_dimension(
                 ]
             )
         )
-    if status and status not in _CURRENT_STATES and status != "fresh":
+    if status and status not in CURRENT_STATES and status != "fresh":
         reasons.append(f"market_context_{status}")
     reasons.extend([f"market_context_{domain}_stale" for domain in stale_domains])
-    staleness = _int(market_context_status.get("last_freshness_seconds"), default=-1)
+    staleness = int_value(
+        market_context_status.get("last_freshness_seconds"), default=-1
+    )
     stale = (
         bool(stale_domains)
         or "stale" in status
         or staleness
-        > _int(
+        > int_value(
             market_context_status.get("max_staleness_seconds"),
             default=86_400,
         )
     )
     if stale and not reasons:
         reasons.append("market_context_stale")
-    return _dimension(
+    return dimension(
         name="market_context",
-        state=_state_from_reasons(
+        state=state_from_reasons(
             reasons, missing=not market_context_status, stale=stale
         ),
         generated_at=generated_at,
         reason_codes=reasons,
         evidence_refs=[
             text(market_context_status.get("last_symbol"), "market_context"),
-            *_unique([f"market_context:{domain}" for domain in stale_domains]),
+            *unique([f"market_context:{domain}" for domain in stale_domains]),
         ],
-        blocking_hypotheses=_hypothesis_ids_for_reasons(
+        blocking_hypotheses=hypothesis_ids_for_reasons(
             hypothesis_payload, ["market_context_stale"]
         ),
         staleness_seconds=None if staleness < 0 else staleness,
         observed_at=market_context_status.get("last_checked_at")
         or market_context_status.get("last_as_of"),
-        details={"stale_domains": _unique(stale_domains)},
+        details={"stale_domains": unique(stale_domains)},
     )
 
 
-def _signal_dimension(
+def signal_dimension(
     *,
     quant_evidence: Mapping[str, Any],
     hypothesis_payload: Mapping[str, Any],
@@ -457,25 +459,25 @@ def _signal_dimension(
 ) -> dict[str, object]:
     informational_reasons = [
         reason
-        for reason in _strings(quant_evidence.get("informational_reasons"))
-        if reason in _NONBLOCKING_QUANT_HEALTH_REASONS
+        for reason in strings(quant_evidence.get("informational_reasons"))
+        if reason in NONBLOCKING_QUANT_HEALTH_REASONS
     ]
     reasons = [
-        *_strings(quant_evidence.get("blocking_reasons")),
-        *_strings(quant_evidence.get("non_promoting_receipts")),
+        *strings(quant_evidence.get("blocking_reasons")),
+        *strings(quant_evidence.get("non_promoting_receipts")),
     ]
-    latest_count = _int(
+    latest_count = int_value(
         quant_evidence.get("latest_metrics_count")
         or quant_evidence.get("latestMetricsCount"),
         default=-1,
     )
-    stage_count = _int(
+    stage_count = int_value(
         quant_evidence.get("stage_count") or quant_evidence.get("stageCount"),
         default=-1,
     )
     lag_seconds = max(
-        _int(quant_evidence.get("metrics_pipeline_lag_seconds"), default=0),
-        _int(
+        int_value(quant_evidence.get("metrics_pipeline_lag_seconds"), default=0),
+        int_value(
             quant_evidence.get("max_stage_lag_seconds")
             or quant_evidence.get("maxStageLagSeconds"),
             default=0,
@@ -494,11 +496,11 @@ def _signal_dimension(
         reasons.append("signal_pipeline_stages_missing")
     if quant_evidence.get("ok") is False:
         reasons.append(text(quant_evidence.get("reason"), "quant_health_degraded"))
-    elif status and status not in _CURRENT_STATES and status != "not_required":
+    elif status and status not in CURRENT_STATES and status != "not_required":
         reasons.append(text(quant_evidence.get("reason"), f"quant_health_{status}"))
-    return _dimension(
+    return dimension(
         name="signal_ingestion",
-        state=_state_from_reasons(
+        state=state_from_reasons(
             reasons,
             missing=latest_count == 0 or stage_count == 0,
             stale=lag_seconds > 0,
@@ -506,7 +508,7 @@ def _signal_dimension(
         generated_at=generated_at,
         reason_codes=reasons,
         evidence_refs=[text(quant_evidence.get("source_url"), "quant_health")],
-        blocking_hypotheses=_hypothesis_ids_for_reasons(
+        blocking_hypotheses=hypothesis_ids_for_reasons(
             hypothesis_payload, ["signal_lag_exceeded"]
         ),
         staleness_seconds=lag_seconds or None,
@@ -524,65 +526,65 @@ def _signal_dimension(
     )
 
 
-def _empirical_dimension(
+def empirical_dimension(
     *,
     empirical_jobs_status: Mapping[str, Any],
     generated_at: datetime,
 ) -> dict[str, object]:
     reasons = [
-        *_strings(empirical_jobs_status.get("blocked_reasons")),
+        *strings(empirical_jobs_status.get("blocked_reasons")),
         *[
             f"empirical_job_missing:{item}"
-            for item in _strings(empirical_jobs_status.get("missing_jobs"))
+            for item in strings(empirical_jobs_status.get("missing_jobs"))
         ],
         *[
             f"empirical_job_stale:{item}"
-            for item in _strings(empirical_jobs_status.get("stale_jobs"))
+            for item in strings(empirical_jobs_status.get("stale_jobs"))
         ],
         *[
             f"empirical_job_ineligible:{item}"
-            for item in _strings(empirical_jobs_status.get("ineligible_jobs"))
+            for item in strings(empirical_jobs_status.get("ineligible_jobs"))
         ],
     ]
-    jobs = _mapping(empirical_jobs_status.get("jobs"))
+    jobs = mapping(empirical_jobs_status.get("jobs"))
     for job_name, raw_job in jobs.items():
-        job = _mapping(raw_job)
+        job = mapping(raw_job)
         reasons.extend(
-            [f"{job_name}:{reason}" for reason in _strings(job.get("blocked_reasons"))]
+            [f"{job_name}:{reason}" for reason in strings(job.get("blocked_reasons"))]
         )
-    ready = _bool(empirical_jobs_status.get("ready"))
+    ready = bool_value(empirical_jobs_status.get("ready"))
     if not ready and not reasons:
         reasons.append(
             text(empirical_jobs_status.get("status"), "empirical_jobs_not_ready")
         )
-    state = _state_from_reasons(
+    state = state_from_reasons(
         reasons,
-        missing=bool(_strings(empirical_jobs_status.get("missing_jobs")))
+        missing=bool(strings(empirical_jobs_status.get("missing_jobs")))
         or not empirical_jobs_status,
-        stale=bool(_strings(empirical_jobs_status.get("stale_jobs"))),
+        stale=bool(strings(empirical_jobs_status.get("stale_jobs"))),
     )
-    return _dimension(
+    return dimension(
         name="empirical_proof",
         state="current" if ready and not reasons else state,
         generated_at=generated_at,
         reason_codes=reasons,
         evidence_refs=[
-            *_strings(empirical_jobs_status.get("dataset_snapshot_refs")),
-            *_strings(empirical_jobs_status.get("candidate_ids")),
+            *strings(empirical_jobs_status.get("dataset_snapshot_refs")),
+            *strings(empirical_jobs_status.get("candidate_ids")),
         ]
         or ["empirical_jobs"],
-        blocking_hypotheses=_strings(empirical_jobs_status.get("candidate_ids")),
+        blocking_hypotheses=strings(empirical_jobs_status.get("candidate_ids")),
         observed_at=empirical_jobs_status.get("last_completed_at")
         or empirical_jobs_status.get("as_of"),
         details={
-            "eligible_jobs": _strings(empirical_jobs_status.get("eligible_jobs")),
-            "missing_jobs": _strings(empirical_jobs_status.get("missing_jobs")),
-            "stale_jobs": _strings(empirical_jobs_status.get("stale_jobs")),
+            "eligible_jobs": strings(empirical_jobs_status.get("eligible_jobs")),
+            "missing_jobs": strings(empirical_jobs_status.get("missing_jobs")),
+            "stale_jobs": strings(empirical_jobs_status.get("stale_jobs")),
         },
     )
 
 
-def _hypothesis_dimension(
+def hypothesis_dimension(
     *,
     name: str,
     reason_names: Sequence[str],
@@ -591,52 +593,52 @@ def _hypothesis_dimension(
 ) -> dict[str, object]:
     reasons: list[str] = []
     for reason_name in reason_names:
-        count = _reason_total(hypothesis_payload, reason_name)
+        count = reason_total(hypothesis_payload, reason_name)
         if count > 0:
             reasons.append(reason_name)
-    return _dimension(
+    return dimension(
         name=name,
-        state=_state_from_reasons(reasons, missing=bool(reasons)),
+        state=state_from_reasons(reasons, missing=bool(reasons)),
         generated_at=generated_at,
         reason_codes=reasons,
         evidence_refs=[
             f"hypothesis:{hypothesis_id}"
-            for hypothesis_id in _hypothesis_ids_for_reasons(
+            for hypothesis_id in hypothesis_ids_for_reasons(
                 hypothesis_payload, reason_names
             )
         ]
         or ["hypothesis_runtime_summary"],
-        blocking_hypotheses=_hypothesis_ids_for_reasons(
+        blocking_hypotheses=hypothesis_ids_for_reasons(
             hypothesis_payload, reason_names
         ),
         details={
             "reason_totals": {
-                reason: _reason_total(hypothesis_payload, reason)
+                reason: reason_total(hypothesis_payload, reason)
                 for reason in reason_names
             }
         },
     )
 
 
-def _route_rows(
+def route_rows(
     route_reacquisition_board: Mapping[str, Any],
 ) -> list[Mapping[str, Any]]:
-    return [_mapping(row) for row in _sequence(route_reacquisition_board.get("rows"))]
+    return [mapping(row) for row in sequence(route_reacquisition_board.get("rows"))]
 
 
-def _route_symbols(route_reacquisition_board: Mapping[str, Any]) -> list[str]:
+def route_symbols(route_reacquisition_board: Mapping[str, Any]) -> list[str]:
     return sorted(
         {
             text(row.get("symbol")).upper()
-            for row in _route_rows(route_reacquisition_board)
+            for row in route_rows(route_reacquisition_board)
             if text(row.get("symbol"))
         }
     )
 
 
-def _routeability_only_tca_reason(reason: str) -> bool:
-    return reason in _ROUTEABILITY_ONLY_TCA_REASON_CODES or reason.startswith(
-        _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES
+def routeability_only_tca_reason(reason: str) -> bool:
+    return reason in ROUTEABILITY_ONLY_TCA_REASON_CODES or reason.startswith(
+        ROUTEABILITY_ONLY_TCA_REASON_PREFIXES
     )
 
 
@@ -644,56 +646,3 @@ __all__ = (
     "PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION",
     "text",
 )
-
-# Public aliases used by split modules.
-ALPHA_FEATURE_REPLAY_PRIORITY_BONUS = _ALPHA_FEATURE_REPLAY_PRIORITY_BONUS
-ALPHA_FEATURE_REPLAY_REASON_CODES = _ALPHA_FEATURE_REPLAY_REASON_CODES
-ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS = _ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS
-ALPHA_READINESS_ROUTEABILITY_REASON_CODES = _ALPHA_READINESS_ROUTEABILITY_REASON_CODES
-BAD_STATES = _BAD_STATES
-bool_value = _bool
-CURRENT_STATES = _CURRENT_STATES
-DAILY_NET_PNL_UNLOCK_KEYS = _DAILY_NET_PNL_UNLOCK_KEYS
-decimal = _decimal
-decimal_text = _decimal_text
-dimension = _dimension
-DIMENSION_ACTION = _DIMENSION_ACTION
-DIMENSION_EXPECTED_BPS = _DIMENSION_EXPECTED_BPS
-DIMENSION_REPAIR_CLASSES = _DIMENSION_REPAIR_CLASSES
-DIMENSION_REPAIR_COST = _DIMENSION_REPAIR_COST
-DIMENSION_SUCCESS = _DIMENSION_SUCCESS
-empirical_dimension = _empirical_dimension
-float_value = _float
-FRESHNESS_SECONDS = _FRESHNESS_SECONDS
-hypothesis_dimension = _hypothesis_dimension
-hypothesis_ids_for_reasons = _hypothesis_ids_for_reasons
-hypothesis_items = _hypothesis_items
-hypothesis_summary = _hypothesis_summary
-int_value = _int
-mapping = _mapping
-market_dimension = _market_dimension
-market_domain_states = _market_domain_states
-NONBLOCKING_JANGAR_RELIABILITY_REASONS = _NONBLOCKING_JANGAR_RELIABILITY_REASONS
-NONBLOCKING_QUANT_HEALTH_REASONS = _NONBLOCKING_QUANT_HEALTH_REASONS
-proof_dimension = _proof_dimension
-reason_total = _reason_total
-REPAIR_COST_PENALTY = _REPAIR_COST_PENALTY
-REPAIRABLE_DIMENSIONS = _REPAIRABLE_DIMENSIONS
-route_rows = _route_rows
-ROUTE_SETTLED_ROW_STATES = _ROUTE_SETTLED_ROW_STATES
-route_symbols = _route_symbols
-routeability_only_tca_reason = _routeability_only_tca_reason
-ROUTEABILITY_ONLY_TCA_REASON_CODES = _ROUTEABILITY_ONLY_TCA_REASON_CODES
-ROUTEABILITY_ONLY_TCA_REASON_PREFIXES = _ROUTEABILITY_ONLY_TCA_REASON_PREFIXES
-ROUTEABILITY_TCA_REPAIR_ACTION = _ROUTEABILITY_TCA_REPAIR_ACTION
-ROUTEABILITY_TCA_REPAIR_LOT_TYPES = _ROUTEABILITY_TCA_REPAIR_LOT_TYPES
-ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS = _ROUTEABILITY_TCA_REPAIR_REASON_FRAGMENTS
-ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES = _ROUTEABILITY_TCA_REPAIR_REASON_PREFIXES
-sequence = _sequence
-signal_dimension = _signal_dimension
-stable_ref = _stable_ref
-state_from_reasons = _state_from_reasons
-strings = _strings
-symbols = _symbols
-timestamp = _timestamp
-unique = _unique

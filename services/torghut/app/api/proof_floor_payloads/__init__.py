@@ -53,70 +53,70 @@ def _build_profitability_proof_floor_payload(
 
 
 _build_renewal_bond_profit_escrow_payload: Any = getattr(
-    _proof_floor, "_build_renewal_bond_profit_escrow_payload"
+    _proof_floor, "build_renewal_bond_profit_escrow_payload"
 )
 _build_route_reacquisition_board_payload: Any = getattr(
-    _proof_floor, "_build_route_reacquisition_board_payload"
+    _proof_floor, "build_route_reacquisition_board_payload"
 )
 _build_jangar_contract_graduation_ref: Any = getattr(
-    _proof_floor, "_build_jangar_contract_graduation_ref"
+    _proof_floor, "build_jangar_contract_graduation_ref"
 )
 _build_jangar_material_verdict_ref: Any = getattr(
-    _proof_floor, "_build_jangar_material_verdict_ref"
+    _proof_floor, "build_jangar_material_verdict_ref"
 )
 _build_jangar_execution_trust_admission_ref: Any = getattr(
-    _proof_floor, "_build_jangar_execution_trust_admission_ref"
+    _proof_floor, "build_jangar_execution_trust_admission_ref"
 )
 _consumer_evidence_jangar_continuity_packet: Any = getattr(
-    _proof_floor, "_consumer_evidence_jangar_continuity_packet"
+    _proof_floor, "consumer_evidence_jangar_continuity_packet"
 )
 _build_capital_replay_projection_payload: Any = getattr(
     _proof_refs, "_build_capital_replay_projection_payload"
 )
 _build_profit_carry_passport_ledger_payload: Any = getattr(
-    _proof_floor, "_build_profit_carry_passport_ledger_payload"
+    _proof_floor, "build_profit_carry_passport_ledger_payload"
 )
 _build_capital_reentry_cohort_ledger_payload: Any = getattr(
-    _proof_floor, "_build_capital_reentry_cohort_ledger_payload"
+    _proof_floor, "build_capital_reentry_cohort_ledger_payload"
 )
 _build_profit_repair_settlement_ledger_payload: Any = getattr(
-    _proof_floor, "_build_profit_repair_settlement_ledger_payload"
+    _proof_floor, "build_profit_repair_settlement_ledger_payload"
 )
 _build_profit_freshness_frontier_payload: Any = getattr(
-    _proof_floor, "_build_profit_freshness_frontier_payload"
+    _proof_floor, "build_profit_freshness_frontier_payload"
 )
 _build_routeability_repair_acceptance_ledger_payload: Any = getattr(
-    _proof_floor, "_build_routeability_repair_acceptance_ledger_payload"
+    _proof_floor, "build_routeability_repair_acceptance_ledger_payload"
 )
 _build_evidence_clock_payloads: Any = getattr(
-    _proof_floor, "_build_evidence_clock_payloads"
+    _proof_floor, "build_evidence_clock_payloads"
 )
 _build_clock_settlement_payload: Any = getattr(
-    _proof_floor, "_build_clock_settlement_payload"
+    _proof_floor, "build_clock_settlement_payload"
 )
 _build_route_image_proof_summary: Any = getattr(
-    _proof_floor, "_build_route_image_proof_summary"
+    _proof_floor, "build_route_image_proof_summary"
 )
 _build_route_evidence_clearinghouse_payload: Any = getattr(
-    _proof_floor, "_build_route_evidence_clearinghouse_payload"
+    _proof_floor, "build_route_evidence_clearinghouse_payload"
 )
 _build_repair_bid_settlement_payload: Any = getattr(
-    _proof_floor, "_build_repair_bid_settlement_payload"
+    _proof_floor, "build_repair_bid_settlement_payload"
 )
 _build_route_warrant_exchange_payload: Any = getattr(
-    _proof_floor, "_build_route_warrant_exchange_payload"
+    _proof_floor, "build_route_warrant_exchange_payload"
 )
 _build_source_serving_repair_receipt_payload: Any = getattr(
-    _proof_floor, "_build_source_serving_repair_receipt_payload"
+    _proof_floor, "build_source_serving_repair_receipt_payload"
 )
 _build_freshness_carry_ledger_payload: Any = getattr(
-    _proof_floor, "_build_freshness_carry_ledger_payload"
+    _proof_floor, "build_freshness_carry_ledger_payload"
 )
 _build_repair_receipt_frontier_payload: Any = getattr(
-    _proof_floor, "_build_repair_receipt_frontier_payload"
+    _proof_floor, "build_repair_receipt_frontier_payload"
 )
 _build_repair_outcome_dividend_ledger_payload: Any = getattr(
-    _proof_floor, "_build_repair_outcome_dividend_ledger_payload"
+    _proof_floor, "build_repair_outcome_dividend_ledger_payload"
 )
 _build_jangar_reliability_settlement_ref: Any = getattr(
     _proof_refs, "_build_jangar_reliability_settlement_ref"

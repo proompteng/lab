@@ -84,30 +84,30 @@ from ..common import (
     WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
     WhitepaperWorkflowService,
-    ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
-    ALPACA_HEALTH_CACHE_LOCK as _ALPACA_HEALTH_CACHE_LOCK,
-    ALPACA_HEALTH_STATE as _ALPACA_HEALTH_STATE,
-    OPTIONS_CATALOG_FRESHNESS_CACHE as _OPTIONS_CATALOG_FRESHNESS_CACHE,
-    OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK as _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
-    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL as _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS as _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK as _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    READINESS_PROMOTION_AUTHORITY_KEYS as _READINESS_PROMOTION_AUTHORITY_KEYS,
-    RETRYABLE_TCA_RECOMPUTE_SQLSTATES as _RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
-    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-    TRADING_DEPENDENCY_HEALTH_CACHE as _TRADING_DEPENDENCY_HEALTH_CACHE,
-    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK as _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
-    TRADING_HEALTH_SURFACE_EVALUATIONS as _TRADING_HEALTH_SURFACE_EVALUATIONS,
-    TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
-    TRADING_HEALTH_SURFACE_EVALUATION_LOCK as _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
-    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS as _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-    TRADING_STATUS_READ_BUDGET_SECONDS as _TRADING_STATUS_READ_BUDGET_SECONDS,
-    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS as _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    paper_route_target_plan_success_cache as _paper_route_target_plan_success_cache,
-    retryable_tca_recompute_error as _retryable_tca_recompute_error,
-    shared_mapping_items as _shared_mapping_items,
-    shared_paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
+    ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
+    ALPACA_HEALTH_CACHE_LOCK as ALPACA_HEALTH_CACHE_LOCK,
+    ALPACA_HEALTH_STATE as ALPACA_HEALTH_STATE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE as OPTIONS_CATALOG_FRESHNESS_CACHE,
+    OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK as OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL as PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS as PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK as PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
+    READINESS_PROMOTION_AUTHORITY_KEYS as READINESS_PROMOTION_AUTHORITY_KEYS,
+    RETRYABLE_TCA_RECOMPUTE_SQLSTATES as RETRYABLE_TCA_RECOMPUTE_SQLSTATES,
+    SIMPLE_LANE_ALLOWED_REJECT_REASONS as SIMPLE_LANE_ALLOWED_REJECT_REASONS,
+    TRADING_DEPENDENCY_HEALTH_CACHE as TRADING_DEPENDENCY_HEALTH_CACHE,
+    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK as TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATIONS as TRADING_HEALTH_SURFACE_EVALUATIONS,
+    TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
+    TRADING_HEALTH_SURFACE_EVALUATION_LOCK as TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
+    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
+    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS as TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
+    TRADING_STATUS_READ_BUDGET_SECONDS as TRADING_STATUS_READ_BUDGET_SECONDS,
+    ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS as ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
+    paper_route_target_plan_success_cache as paper_route_target_plan_success_cache,
+    retryable_tca_recompute_error as retryable_tca_recompute_error,
+    shared_mapping_items as shared_mapping_items,
+    shared_paper_route_target_plan_from_payload as shared_paper_route_target_plan_from_payload,
     active_simulation_runtime_context,
     assert_runtime_gate_policy_contract,
     asynccontextmanager,
@@ -242,7 +242,7 @@ def _sqlalchemy_error_indicates_statement_timeout(exc: SQLAlchemyError) -> bool:
     )
 
 
-def _check_postgres(session: Session) -> dict[str, object]:
+def check_postgres(session: Session) -> dict[str, object]:
     try:
         ping(session)
     except SQLAlchemyError as exc:
@@ -250,7 +250,7 @@ def _check_postgres(session: Session) -> dict[str, object]:
     return {"ok": True, "detail": "ok"}
 
 
-def _check_tigerbeetle_protocol_health() -> dict[str, object]:
+def check_tigerbeetle_protocol_health() -> dict[str, object]:
     if not settings.tigerbeetle_enabled:
         health = check_tigerbeetle_health(settings)
         payload = health.as_dict()
@@ -305,7 +305,7 @@ def _check_tigerbeetle_protocol_health() -> dict[str, object]:
     return payload
 
 
-def _tigerbeetle_status_int(value: object) -> int:
+def tigerbeetle_status_int(value: object) -> int:
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, int):
@@ -316,7 +316,7 @@ def _tigerbeetle_status_int(value: object) -> int:
         return 0
 
 
-def _empty_tigerbeetle_ref_counts(
+def empty_tigerbeetle_ref_counts(
     *,
     reason_codes: Sequence[str],
     last_error: str | None = None,
@@ -361,7 +361,7 @@ def _empty_tigerbeetle_ref_counts(
     }
 
 
-def _latest_reconciliation_ref_counts(
+def latest_reconciliation_ref_counts(
     latest_reconciliation: Mapping[str, object] | None,
 ) -> dict[str, object] | None:
     if latest_reconciliation is None:
@@ -410,7 +410,7 @@ def _latest_reconciliation_ref_counts(
     return ref_counts
 
 
-def _unavailable_tigerbeetle_reconciliation_payload(
+def unavailable_tigerbeetle_reconciliation_payload(
     *,
     reason_codes: Sequence[str],
     last_error: str | None = None,
@@ -440,8 +440,8 @@ def _unavailable_tigerbeetle_reconciliation_payload(
     }
 
 
-def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
-    protocol = _check_tigerbeetle_protocol_health()
+def build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
+    protocol = check_tigerbeetle_protocol_health()
     blockers: list[str] = []
     latest_reconciliation: dict[str, object] | None
     reconciliation_status_available = True
@@ -464,14 +464,14 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
         if _sqlalchemy_error_indicates_statement_timeout(exc):
             reason_codes.append("tigerbeetle_reconciliation_status_query_timeout")
         blockers.extend(reason_codes)
-        latest_reconciliation = _unavailable_tigerbeetle_reconciliation_payload(
+        latest_reconciliation = unavailable_tigerbeetle_reconciliation_payload(
             reason_codes=reason_codes,
             last_error=str(exc),
         )
 
     ref_counts: dict[str, object]
     ref_counts_available = True
-    latest_ref_counts = _latest_reconciliation_ref_counts(latest_reconciliation)
+    latest_ref_counts = latest_reconciliation_ref_counts(latest_reconciliation)
     if latest_ref_counts is not None:
         ref_counts = latest_ref_counts
     else:
@@ -490,20 +490,20 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
             if _sqlalchemy_error_indicates_statement_timeout(exc):
                 reason_codes.append("tigerbeetle_ref_counts_query_timeout")
             blockers.extend(reason_codes)
-            ref_counts = _empty_tigerbeetle_ref_counts(
+            ref_counts = empty_tigerbeetle_ref_counts(
                 reason_codes=reason_codes,
                 last_error=str(exc),
             )
-    runtime_ledger_ref_count = _tigerbeetle_status_int(
+    runtime_ledger_ref_count = tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_ref_count")
     )
-    runtime_ledger_signed_ref_count = _tigerbeetle_status_int(
+    runtime_ledger_signed_ref_count = tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_signed_ref_count")
     )
-    runtime_ledger_missing_signed_ref_count = _tigerbeetle_status_int(
+    runtime_ledger_missing_signed_ref_count = tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_missing_signed_ref_count")
     )
-    runtime_ledger_missing_account_ref_count = _tigerbeetle_status_int(
+    runtime_ledger_missing_account_ref_count = tigerbeetle_status_int(
         ref_counts.get("runtime_ledger_missing_account_ref_count")
     )
     claimed_by_runtime_evidence = runtime_ledger_ref_count > 0
@@ -523,7 +523,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
             blockers.append("tigerbeetle_reconciliation_missing")
     else:
         reconciliation_ok = bool(latest_reconciliation.get("ok"))
-        reconciliation_age_seconds = _tigerbeetle_status_int(
+        reconciliation_age_seconds = tigerbeetle_status_int(
             latest_reconciliation.get("age_seconds")
         )
         reconciliation_max_age_seconds = max(
@@ -544,7 +544,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     if not ref_counts_available:
         reconciliation_ok = False
     reconciliation_age_seconds = (
-        _tigerbeetle_status_int(latest_reconciliation.get("age_seconds"))
+        tigerbeetle_status_int(latest_reconciliation.get("age_seconds"))
         if latest_reconciliation is not None
         else None
     )
@@ -603,7 +603,7 @@ def _build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     }
 
 
-def _build_control_plane_contract(
+def build_control_plane_contract(
     state: object,
     *,
     hypothesis_summary: Mapping[str, Any] | None = None,
@@ -637,7 +637,7 @@ def _build_control_plane_contract(
     )
     return {
         "contract_version": "torghut.quant-producer.v1",
-        "active_revision": _active_runtime_revision(),
+        "active_revision": active_runtime_revision(),
         "signal_lag_seconds": signal_lag_seconds,
         "signal_continuity_state": getattr(state, "last_signal_continuity_state", None),
         "signal_continuity_reason": getattr(
@@ -722,7 +722,7 @@ def _build_control_plane_contract(
     }
 
 
-def _active_runtime_revision() -> str | None:
+def active_runtime_revision() -> str | None:
     revision = os.getenv("K_REVISION", "").strip()
     return revision or None
 
@@ -737,14 +737,14 @@ def _resolve_active_capital_stage(
     return resolve_active_capital_stage(hypothesis_summary)
 
 
-def _build_shadow_first_runtime_payload(
+def build_shadow_first_runtime_payload(
     *,
     state: object,
     hypothesis_summary: Mapping[str, Any] | None,
 ) -> dict[str, object]:
     metrics = getattr(state, "metrics", None)
     return {
-        "active_revision": _active_runtime_revision(),
+        "active_revision": active_runtime_revision(),
         "capital_stage": _resolve_active_capital_stage(hypothesis_summary),
         "capital_stage_totals": (
             dict(
@@ -773,7 +773,7 @@ def _build_shadow_first_runtime_payload(
     }
 
 
-def _check_clickhouse() -> dict[str, object]:
+def check_clickhouse() -> dict[str, object]:
     if not settings.trading_clickhouse_url:
         return {"ok": False, "detail": "clickhouse url missing"}
     query = "SELECT 1 FORMAT JSONEachRow"
@@ -821,7 +821,7 @@ def _check_clickhouse() -> dict[str, object]:
     return {"ok": True, "detail": "ok"}
 
 
-def _forecast_service_status(
+def forecast_service_status(
     empirical_jobs_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     return cast(
@@ -834,7 +834,7 @@ def _lean_authority_status() -> dict[str, object]:
     return cast(dict[str, object], lean_authority_status())
 
 
-def _empirical_jobs_status() -> dict[str, object]:
+def empirical_jobs_status() -> dict[str, object]:
     try:
         with SessionLocal() as session:
             return build_empirical_jobs_status(
@@ -851,12 +851,12 @@ def _empirical_jobs_status() -> dict[str, object]:
         }
 
 
-def _alpaca_endpoint_class(*, paper: bool | None = None) -> str:
+def alpaca_endpoint_class(*, paper: bool | None = None) -> str:
     use_paper = settings.trading_mode != "live" if paper is None else paper
     return "paper" if use_paper else "live"
 
 
-def _alpaca_failure_status(detail: str) -> str:
+def alpaca_failure_status(detail: str) -> str:
     message = detail.strip().lower()
     if "keys missing" in message:
         return "credentials_missing"
@@ -904,7 +904,7 @@ def _alpaca_failure_status(detail: str) -> str:
     return "broker_error"
 
 
-def _alpaca_probe_account(
+def alpaca_probe_account(
     client: TorghutAlpacaClient,
     *,
     timeout_seconds: float,
@@ -926,7 +926,7 @@ def _alpaca_probe_account(
         detail = str(exc).strip() or type(exc).__name__
         return {
             "ok": False,
-            "status": _alpaca_failure_status(detail),
+            "status": alpaca_failure_status(detail),
             "detail": detail,
         }
     finally:
@@ -940,56 +940,6 @@ def _alpaca_probe_account(
 
 
 __all__: tuple[str, ...] = ()
-
-# Public aliases used by split modules.
-ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS = _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS
-active_runtime_revision = _active_runtime_revision
-alpaca_endpoint_class = _alpaca_endpoint_class
-alpaca_failure_status = _alpaca_failure_status
-ALPACA_HEALTH_CACHE_LOCK = _ALPACA_HEALTH_CACHE_LOCK
-ALPACA_HEALTH_STATE = _ALPACA_HEALTH_STATE
-alpaca_probe_account = _alpaca_probe_account
-build_control_plane_contract = _build_control_plane_contract
-build_shadow_first_runtime_payload = _build_shadow_first_runtime_payload
-build_tigerbeetle_ledger_status = _build_tigerbeetle_ledger_status
-check_clickhouse = _check_clickhouse
-check_postgres = _check_postgres
-check_tigerbeetle_protocol_health = _check_tigerbeetle_protocol_health
-empirical_jobs_status = _empirical_jobs_status
-empty_tigerbeetle_ref_counts = _empty_tigerbeetle_ref_counts
-forecast_service_status = _forecast_service_status
-latest_reconciliation_ref_counts = _latest_reconciliation_ref_counts
-OPTIONS_CATALOG_FRESHNESS_CACHE = _OPTIONS_CATALOG_FRESHNESS_CACHE
-OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK = _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK
-PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = (
-    _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
-)
-PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = (
-    _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS
-)
-paper_route_target_plan_success_cache = _paper_route_target_plan_success_cache
-PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK
-READINESS_PROMOTION_AUTHORITY_KEYS = _READINESS_PROMOTION_AUTHORITY_KEYS
-retryable_tca_recompute_error = _retryable_tca_recompute_error
-RETRYABLE_TCA_RECOMPUTE_SQLSTATES = _RETRYABLE_TCA_RECOMPUTE_SQLSTATES
-shared_mapping_items = _shared_mapping_items
-shared_paper_route_target_plan_from_payload = (
-    _shared_paper_route_target_plan_from_payload
-)
-SIMPLE_LANE_ALLOWED_REJECT_REASONS = _SIMPLE_LANE_ALLOWED_REJECT_REASONS
-tigerbeetle_status_int = _tigerbeetle_status_int
-TRADING_DEPENDENCY_HEALTH_CACHE = _TRADING_DEPENDENCY_HEALTH_CACHE
-TRADING_DEPENDENCY_HEALTH_CACHE_LOCK = _TRADING_DEPENDENCY_HEALTH_CACHE_LOCK
-TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR
-TRADING_HEALTH_SURFACE_EVALUATION_LOCK = _TRADING_HEALTH_SURFACE_EVALUATION_LOCK
-TRADING_HEALTH_SURFACE_EVALUATIONS = _TRADING_HEALTH_SURFACE_EVALUATIONS
-TRADING_HEALTH_SURFACE_PAYLOAD_CACHE = _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE
-TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
-TRADING_STATUS_READ_BUDGET_SECONDS = _TRADING_STATUS_READ_BUDGET_SECONDS
-unavailable_tigerbeetle_reconciliation_payload = (
-    _unavailable_tigerbeetle_reconciliation_payload
-)
-ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
@@ -1091,51 +1041,51 @@ __all__: tuple[str, ...] = (
     "WhitepaperRolloutTransition",
     "WhitepaperWorkflowService",
     "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
-    "_ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS",
-    "_ALPACA_HEALTH_CACHE_LOCK",
-    "_ALPACA_HEALTH_STATE",
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE",
-    "_OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",
-    "_PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL",
-    "_PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS",
-    "_PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK",
-    "_READINESS_PROMOTION_AUTHORITY_KEYS",
-    "_RETRYABLE_TCA_RECOMPUTE_SQLSTATES",
-    "_SIMPLE_LANE_ALLOWED_REJECT_REASONS",
-    "_TRADING_DEPENDENCY_HEALTH_CACHE",
-    "_TRADING_DEPENDENCY_HEALTH_CACHE_LOCK",
-    "_TRADING_HEALTH_SURFACE_EVALUATIONS",
-    "_TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR",
-    "_TRADING_HEALTH_SURFACE_EVALUATION_LOCK",
-    "_TRADING_HEALTH_SURFACE_PAYLOAD_CACHE",
-    "_TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
-    "_TRADING_STATUS_READ_BUDGET_SECONDS",
-    "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
-    "_active_runtime_revision",
-    "_alpaca_endpoint_class",
-    "_alpaca_failure_status",
-    "_alpaca_probe_account",
+    "ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS",
+    "ALPACA_HEALTH_CACHE_LOCK",
+    "ALPACA_HEALTH_STATE",
+    "OPTIONS_CATALOG_FRESHNESS_CACHE",
+    "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",
+    "PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL",
+    "PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS",
+    "PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK",
+    "READINESS_PROMOTION_AUTHORITY_KEYS",
+    "RETRYABLE_TCA_RECOMPUTE_SQLSTATES",
+    "SIMPLE_LANE_ALLOWED_REJECT_REASONS",
+    "TRADING_DEPENDENCY_HEALTH_CACHE",
+    "TRADING_DEPENDENCY_HEALTH_CACHE_LOCK",
+    "TRADING_HEALTH_SURFACE_EVALUATIONS",
+    "TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR",
+    "TRADING_HEALTH_SURFACE_EVALUATION_LOCK",
+    "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE",
+    "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
+    "TRADING_STATUS_READ_BUDGET_SECONDS",
+    "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
+    "active_runtime_revision",
+    "alpaca_endpoint_class",
+    "alpaca_failure_status",
+    "alpaca_probe_account",
     "_apply_status_read_statement_timeout",
-    "_build_control_plane_contract",
-    "_build_shadow_first_runtime_payload",
+    "build_control_plane_contract",
+    "build_shadow_first_runtime_payload",
     "_build_shadow_first_toggle_parity",
-    "_build_tigerbeetle_ledger_status",
-    "_check_clickhouse",
-    "_check_postgres",
-    "_check_tigerbeetle_protocol_health",
-    "_empirical_jobs_status",
-    "_empty_tigerbeetle_ref_counts",
-    "_forecast_service_status",
-    "_latest_reconciliation_ref_counts",
+    "build_tigerbeetle_ledger_status",
+    "check_clickhouse",
+    "check_postgres",
+    "check_tigerbeetle_protocol_health",
+    "empirical_jobs_status",
+    "empty_tigerbeetle_ref_counts",
+    "forecast_service_status",
+    "latest_reconciliation_ref_counts",
     "_lean_authority_status",
-    "_paper_route_target_plan_success_cache",
+    "paper_route_target_plan_success_cache",
     "_resolve_active_capital_stage",
-    "_retryable_tca_recompute_error",
-    "_shared_mapping_items",
-    "_shared_paper_route_target_plan_from_payload",
+    "retryable_tca_recompute_error",
+    "shared_mapping_items",
+    "shared_paper_route_target_plan_from_payload",
     "_sqlalchemy_error_indicates_statement_timeout",
-    "_tigerbeetle_status_int",
-    "_unavailable_tigerbeetle_reconciliation_payload",
+    "tigerbeetle_status_int",
+    "unavailable_tigerbeetle_reconciliation_payload",
     "active_runtime_revision",
     "active_simulation_runtime_context",
     "alpaca_endpoint_class",

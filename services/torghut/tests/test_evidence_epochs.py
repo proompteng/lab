@@ -14,7 +14,10 @@ from sqlalchemy.pool import StaticPool
 from app.config import settings
 from app.db import get_session
 from app import bootstrap as app_bootstrap
-from app.api import trading_misc as trading_misc_api
+from app.api.trading_misc.trading_autonomy import (
+    build_current_evidence_epoch,
+    daily_runtime_ledger_portfolio_summary,
+)
 from app.main import app
 from app.models import Base, EvidenceEpochRecord, StrategyRuntimeLedgerBucket
 from app.trading.evidence_epochs import (
@@ -34,10 +37,6 @@ from app.trading.evidence_receipts import (
 )
 from app.trading.scheduler import TradingScheduler
 
-_build_current_evidence_epoch = trading_misc_api._build_current_evidence_epoch
-_daily_runtime_ledger_portfolio_summary = (
-    trading_misc_api._daily_runtime_ledger_portfolio_summary
-)
 _env_json_string_list = app_bootstrap.env_json_string_list
 
 
@@ -289,7 +288,7 @@ class TestEvidenceEpochs(TestCase):
                     return_value={"ready": True},
                 ),
             ):
-                epoch = _build_current_evidence_epoch(
+                epoch = build_current_evidence_epoch(
                     session=session,
                     account_label="paper",
                     stage_scope="paper",
@@ -387,7 +386,7 @@ class TestEvidenceEpochs(TestCase):
                     return_value={"ready": True},
                 ),
             ):
-                epoch = _build_current_evidence_epoch(
+                epoch = build_current_evidence_epoch(
                     session=session,
                     account_label="paper",
                     stage_scope="paper",
@@ -457,7 +456,7 @@ class TestEvidenceEpochs(TestCase):
             )
             session.commit()
 
-            summary = _daily_runtime_ledger_portfolio_summary(
+            summary = daily_runtime_ledger_portfolio_summary(
                 session=session,
                 account_label="paper",
                 stage_scope="paper",
@@ -484,7 +483,7 @@ class TestEvidenceEpochs(TestCase):
         session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
         observed_at = datetime(2026, 5, 26, 12, 0, tzinfo=timezone.utc)
         with session_local() as session:
-            summary = _daily_runtime_ledger_portfolio_summary(
+            summary = daily_runtime_ledger_portfolio_summary(
                 session=session,
                 account_label="paper",
                 stage_scope="research",
@@ -527,7 +526,7 @@ class TestEvidenceEpochs(TestCase):
                     return_value={"ready": True},
                 ),
             ):
-                epoch = _build_current_evidence_epoch(
+                epoch = build_current_evidence_epoch(
                     session=session,
                     account_label="paper",
                     stage_scope="paper",
@@ -569,7 +568,7 @@ class TestEvidenceEpochs(TestCase):
                     return_value={"ready": True},
                 ),
                 patch(
-                    "app.api.trading_misc.trading_autonomy._daily_runtime_ledger_portfolio_summary",
+                    "app.api.trading_misc.trading_autonomy.daily_runtime_ledger_portfolio_summary",
                     return_value={
                         "bucket_count": 1,
                         "evidence_grade_bucket_count": 1,
@@ -578,7 +577,7 @@ class TestEvidenceEpochs(TestCase):
                     },
                 ),
             ):
-                epoch = _build_current_evidence_epoch(
+                epoch = build_current_evidence_epoch(
                     session=session,
                     account_label="paper",
                     stage_scope="paper",

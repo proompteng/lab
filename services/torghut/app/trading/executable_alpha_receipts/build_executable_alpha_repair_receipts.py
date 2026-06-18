@@ -152,11 +152,11 @@ def build_executable_alpha_repair_receipts(
     }
 
 
-def _zero_notional(value: object) -> bool:
+def zero_notional(value: object) -> bool:
     return _text(value, "0") in {"0", "0.0", "0.00", "0.0000"}
 
 
-def _top_queue_item(repair_queue: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
+def top_queue_item(repair_queue: Sequence[Mapping[str, Any]]) -> Mapping[str, Any]:
     for item in repair_queue:
         payload = _mapping(item)
         if payload:
@@ -164,7 +164,7 @@ def _top_queue_item(repair_queue: Sequence[Mapping[str, Any]]) -> Mapping[str, A
     return {}
 
 
-def _repair_receipt_reason_codes(receipt: Mapping[str, Any]) -> list[str]:
+def repair_receipt_reason_codes(receipt: Mapping[str, Any]) -> list[str]:
     reason_codes = _string_list(receipt.get("reason_codes"))
     settlement = _mapping(receipt.get("settlement"))
     if not reason_codes:
@@ -172,7 +172,7 @@ def _repair_receipt_reason_codes(receipt: Mapping[str, Any]) -> list[str]:
     return reason_codes
 
 
-def _selected_repair_receipt(
+def selected_repair_receipt(
     executable_alpha_repair_receipts: Mapping[str, Any],
 ) -> Mapping[str, Any]:
     selected = _mapping(executable_alpha_repair_receipts.get("selected_receipt"))
@@ -194,7 +194,7 @@ def _selected_repair_receipt(
     return receipts[0] if receipts else {}
 
 
-def _parse_datetime(value: object) -> datetime | None:
+def parse_datetime(value: object) -> datetime | None:
     text = _text(value)
     if not text:
         return None
@@ -209,7 +209,7 @@ def _parse_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
-def _routeable_candidate_count_from_evidence(evidence: Mapping[str, Any]) -> int:
+def routeable_candidate_count_from_evidence(evidence: Mapping[str, Any]) -> int:
     repair_bid_settlement = _mapping(evidence.get("repair_bid_settlement"))
     routeability_acceptance = _mapping(evidence.get("routeability_acceptance"))
     route_clearinghouse = _mapping(evidence.get("route_evidence_clearinghouse"))
@@ -220,7 +220,7 @@ def _routeable_candidate_count_from_evidence(evidence: Mapping[str, Any]) -> int
     )
 
 
-def _alpha_target_reason_codes(
+def alpha_target_reason_codes(
     evidence: Mapping[str, Any], hypothesis_id: str
 ) -> list[str]:
     alpha_readiness = _mapping(evidence.get("alpha_readiness"))
@@ -232,7 +232,7 @@ def _alpha_target_reason_codes(
     return []
 
 
-def _required_after_receipts(
+def required_after_receipts(
     top_queue_item: Mapping[str, Any], selected_receipt: Mapping[str, Any]
 ) -> list[str]:
     receipts = _string_list(selected_receipt.get("required_output_receipts"))
@@ -245,13 +245,13 @@ def _required_after_receipts(
     return receipts
 
 
-def _before_routeable_candidate_count(selected_receipt: Mapping[str, Any]) -> int:
+def before_routeable_candidate_count(selected_receipt: Mapping[str, Any]) -> int:
     settlement = _mapping(selected_receipt.get("settlement"))
     before_value_gate = _mapping(settlement.get("before_value_gate"))
     return _int(before_value_gate.get("routeable_candidate_count"))
 
 
-def _settlement_state(
+def settlement_state(
     *,
     before_reason_codes: Sequence[str],
     after_reason_codes: Sequence[str],
@@ -269,7 +269,7 @@ def _settlement_state(
     return "no_delta"
 
 
-def _build_executable_alpha_settlement_slot(
+def build_executable_alpha_settlement_slot(
     *,
     generated: datetime,
     fresh_until: datetime,
@@ -280,14 +280,14 @@ def _build_executable_alpha_settlement_slot(
 ) -> dict[str, object]:
     selected_receipt_id = _text(selected_receipt.get("receipt_id"))
     hypothesis_id = _text(selected_receipt.get("hypothesis_id"), "unknown")
-    before_reason_codes = _repair_receipt_reason_codes(selected_receipt)
-    after_reason_codes = _alpha_target_reason_codes(evidence, hypothesis_id)
+    before_reason_codes = repair_receipt_reason_codes(selected_receipt)
+    after_reason_codes = alpha_target_reason_codes(evidence, hypothesis_id)
     if not after_reason_codes:
         after_reason_codes = before_reason_codes
-    routeable_before = _before_routeable_candidate_count(selected_receipt)
-    routeable_after = _routeable_candidate_count_from_evidence(evidence)
+    routeable_before = before_routeable_candidate_count(selected_receipt)
+    routeable_after = routeable_candidate_count_from_evidence(evidence)
     measured_delta = routeable_after - routeable_before
-    state = _settlement_state(
+    state = settlement_state(
         before_reason_codes=before_reason_codes,
         after_reason_codes=after_reason_codes,
         routeable_before=routeable_before,
@@ -314,7 +314,7 @@ def _build_executable_alpha_settlement_slot(
             "selected_receipt_id": selected_receipt_id,
             "hypothesis_id": hypothesis_id,
             "before_reason_codes": before_reason_codes,
-            "required_after_receipts": _required_after_receipts(
+            "required_after_receipts": required_after_receipts(
                 top_queue_item, selected_receipt
             ),
         },
@@ -355,7 +355,7 @@ def _build_executable_alpha_settlement_slot(
         "introduced_reason_codes": introduced_reason_codes,
         "before_refs": _string_list(selected_receipt.get("required_input_refs")),
         "after_refs": [],
-        "required_after_receipts": _required_after_receipts(
+        "required_after_receipts": required_after_receipts(
             top_queue_item, selected_receipt
         ),
         "validation_commands": _string_list(
@@ -385,7 +385,7 @@ def _build_executable_alpha_settlement_slot(
     }
 
 
-def _no_delta_debt_from_settlement_slot(
+def no_delta_debt_from_settlement_slot(
     slot: Mapping[str, Any],
 ) -> dict[str, object] | None:
     if _text(slot.get("settlement_state")) != "no_delta":
@@ -414,12 +414,12 @@ def _no_delta_debt_from_settlement_slot(
         "routeable_candidate_count_after": slot.get("routeable_candidate_count_after"),
         "measured_delta": slot.get("measured_delta"),
         "no_delta_reason": slot.get("no_delta_reason"),
-        "remaining_blocker": _primary_remaining_blocker(preserved_reason_codes),
+        "remaining_blocker": primary_remaining_blocker(preserved_reason_codes),
         "release_conditions": list(_NO_DELTA_RELEASE_CONDITIONS),
     }
 
 
-def _primary_remaining_blocker(reason_codes: Sequence[str]) -> str:
+def primary_remaining_blocker(reason_codes: Sequence[str]) -> str:
     for reason in reason_codes:
         if not reason.startswith("closed_session_"):
             return reason
@@ -442,8 +442,8 @@ def build_executable_alpha_settlement_slots(
         raise ValueError("generated_at_missing_timezone")
     generated = generated_at.astimezone(timezone.utc)
     fresh_until = generated + timedelta(seconds=_DEFAULT_FRESHNESS_SECONDS)
-    top_item = _top_queue_item(repair_queue)
-    selected_receipt = _selected_repair_receipt(executable_alpha_repair_receipts)
+    top_item = top_queue_item(repair_queue)
+    selected_receipt = selected_repair_receipt(executable_alpha_repair_receipts)
     max_notional = _text(capital.get("max_notional"), "0")
 
     reason_codes: list[str] = []
@@ -456,14 +456,14 @@ def build_executable_alpha_settlement_slots(
         reason_codes.append("revenue_repair_top_item_not_alpha_readiness")
     if top_alpha_repair and not selected_receipt:
         reason_codes.append("selected_executable_alpha_repair_receipt_missing")
-    if not _zero_notional(max_notional):
+    if not zero_notional(max_notional):
         reason_codes.append("capital_notional_nonzero")
     if bool(capital.get("live_submission_allowed")):
         reason_codes.append("live_submission_enabled")
-    if selected_receipt and not _zero_notional(selected_receipt.get("max_notional")):
+    if selected_receipt and not zero_notional(selected_receipt.get("max_notional")):
         reason_codes.append("selected_receipt_notional_nonzero")
 
-    selected_fresh_until = _parse_datetime(selected_receipt.get("fresh_until"))
+    selected_fresh_until = parse_datetime(selected_receipt.get("fresh_until"))
     if (
         selected_receipt
         and selected_fresh_until is not None
@@ -474,7 +474,7 @@ def build_executable_alpha_settlement_slots(
     slots: list[dict[str, object]] = []
     if not reason_codes:
         slots.append(
-            _build_executable_alpha_settlement_slot(
+            build_executable_alpha_settlement_slot(
                 generated=generated,
                 fresh_until=fresh_until,
                 top_queue_item=top_item,
@@ -488,7 +488,7 @@ def build_executable_alpha_settlement_slots(
     no_delta_debt = [
         debt
         for slot in slots
-        if (debt := _no_delta_debt_from_settlement_slot(slot)) is not None
+        if (debt := no_delta_debt_from_settlement_slot(slot)) is not None
     ]
 
     if any(
@@ -573,7 +573,7 @@ def compact_executable_alpha_settlement_slots(
         "active_dedupe_key": selected_slot.get("dedupe_key"),
         "material_reentry_receipt_id": selected_slot.get("material_reentry_receipt_id"),
         "no_delta_debt_count": len(no_delta_debt),
-        "remaining_blocker": _primary_remaining_blocker(preserved_reason_codes)
+        "remaining_blocker": primary_remaining_blocker(preserved_reason_codes)
         if preserved_reason_codes
         else None,
         "max_notional": payload.get("max_notional"),
@@ -582,7 +582,7 @@ def compact_executable_alpha_settlement_slots(
     }
 
 
-def _graduation_state(
+def graduation_state(
     jangar_contract_graduation_ref: Mapping[str, Any],
 ) -> tuple[str, list[str]]:
     state = _text(jangar_contract_graduation_ref.get("state"))
@@ -593,7 +593,7 @@ def _graduation_state(
     return state or "missing", reasons or ["jangar_contract_graduation_missing"]
 
 
-def _market_context_blockers(market_context_status: Mapping[str, Any]) -> list[str]:
+def market_context_blockers(market_context_status: Mapping[str, Any]) -> list[str]:
     if not market_context_status:
         return ["market_context_missing"]
     state = _text(
@@ -616,7 +616,7 @@ def _market_context_blockers(market_context_status: Mapping[str, Any]) -> list[s
     return ["market_context_state_unknown"]
 
 
-def _quant_blockers(quant_evidence: Mapping[str, Any]) -> list[str]:
+def quant_blockers(quant_evidence: Mapping[str, Any]) -> list[str]:
     blockers = _string_list(quant_evidence.get("blocking_reasons"))
     blockers.extend(_string_list(quant_evidence.get("informational_reasons")))
     latest_count = _int(quant_evidence.get("latest_metrics_count"), default=-1)
@@ -631,7 +631,7 @@ def _quant_blockers(quant_evidence: Mapping[str, Any]) -> list[str]:
     return sorted(set(blockers))
 
 
-def _empirical_blockers(empirical_jobs_status: Mapping[str, Any]) -> list[str]:
+def empirical_blockers(empirical_jobs_status: Mapping[str, Any]) -> list[str]:
     if bool(empirical_jobs_status.get("ready")):
         return []
     status = _text(empirical_jobs_status.get("status"), "unknown")
@@ -639,7 +639,7 @@ def _empirical_blockers(empirical_jobs_status: Mapping[str, Any]) -> list[str]:
     return sorted(set(reasons or [f"empirical_jobs_{status}"]))
 
 
-def _tca_guardrail_blockers(route_record: Mapping[str, Any]) -> list[str]:
+def tca_guardrail_blockers(route_record: Mapping[str, Any]) -> list[str]:
     observed = _float(route_record.get("avg_abs_slippage_bps"))
     guardrail = _float(route_record.get("slippage_guardrail_bps"))
     if observed is not None and guardrail is not None and observed > guardrail:
@@ -651,7 +651,7 @@ def _tca_guardrail_blockers(route_record: Mapping[str, Any]) -> list[str]:
     return []
 
 
-def _capital_blockers(
+def capital_blockers(
     *,
     proof_floor_receipt: Mapping[str, Any],
     live_submission_gate: Mapping[str, Any],
@@ -663,19 +663,19 @@ def _capital_blockers(
 ) -> list[str]:
     blockers = set(_string_list(proof_floor_receipt.get("blocking_reasons")))
     blockers.update(_string_list(live_submission_gate.get("blocked_reasons")))
-    blockers.update(_empirical_blockers(empirical_jobs_status))
-    blockers.update(_quant_blockers(quant_evidence))
-    blockers.update(_market_context_blockers(market_context_status))
-    blockers.update(_tca_guardrail_blockers(route_record))
-    graduation_state, graduation_reasons = _graduation_state(
+    blockers.update(empirical_blockers(empirical_jobs_status))
+    blockers.update(quant_blockers(quant_evidence))
+    blockers.update(market_context_blockers(market_context_status))
+    blockers.update(tca_guardrail_blockers(route_record))
+    graduation_verdict, graduation_reasons = graduation_state(
         jangar_contract_graduation_ref
     )
-    if graduation_state != "current":
+    if graduation_verdict != "current":
         blockers.update(graduation_reasons)
     return sorted(blocker for blocker in blockers if blocker)
 
 
-def _before_refs(
+def before_refs(
     *,
     replay_class: str,
     route_row: Mapping[str, Any],
@@ -741,25 +741,3 @@ __all__ = (
     "build_executable_alpha_settlement_slots",
     "compact_executable_alpha_settlement_slots",
 )
-
-# Public aliases used by split modules.
-alpha_target_reason_codes = _alpha_target_reason_codes
-before_refs = _before_refs
-before_routeable_candidate_count = _before_routeable_candidate_count
-build_executable_alpha_settlement_slot = _build_executable_alpha_settlement_slot
-capital_blockers = _capital_blockers
-empirical_blockers = _empirical_blockers
-graduation_state = _graduation_state
-market_context_blockers = _market_context_blockers
-no_delta_debt_from_settlement_slot = _no_delta_debt_from_settlement_slot
-parse_datetime = _parse_datetime
-primary_remaining_blocker = _primary_remaining_blocker
-quant_blockers = _quant_blockers
-repair_receipt_reason_codes = _repair_receipt_reason_codes
-required_after_receipts = _required_after_receipts
-routeable_candidate_count_from_evidence = _routeable_candidate_count_from_evidence
-selected_repair_receipt = _selected_repair_receipt
-settlement_state = _settlement_state
-tca_guardrail_blockers = _tca_guardrail_blockers
-top_queue_item = _top_queue_item
-zero_notional = _zero_notional

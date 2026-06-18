@@ -624,7 +624,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         try:
             with (
                 patch(
-                    "app.api.health_checks.shared_context._check_tigerbeetle_protocol_health",
+                    "app.api.health_checks.shared_context.check_tigerbeetle_protocol_health",
                     return_value={"ok": True, "protocol_ok": True},
                 ),
                 patch(
@@ -674,7 +674,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         try:
             with (
                 patch(
-                    "app.api.health_checks.shared_context._check_tigerbeetle_protocol_health",
+                    "app.api.health_checks.shared_context.check_tigerbeetle_protocol_health",
                     return_value={"ok": True, "protocol_ok": True},
                 ),
                 patch(

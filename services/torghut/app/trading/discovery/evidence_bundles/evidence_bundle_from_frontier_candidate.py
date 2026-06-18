@@ -452,7 +452,7 @@ def evidence_bundle_from_payload(payload: Mapping[str, Any]) -> CandidateEvidenc
     )
 
 
-def _requires_promotion_proof(bundle: CandidateEvidenceBundle) -> bool:
+def requires_promotion_proof(bundle: CandidateEvidenceBundle) -> bool:
     readiness = bundle.promotion_readiness
     if _bool(readiness.get("promotable")):
         return True
@@ -469,7 +469,7 @@ def _requires_promotion_proof(bundle: CandidateEvidenceBundle) -> bool:
     }
 
 
-def _delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+def delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
     if not _bool(scorecard.get("delay_adjusted_depth_stress_passed")):
         blockers.append("delay_adjusted_depth_stress_failed")
@@ -570,7 +570,7 @@ def _delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
-def _has_artifact_ref(scorecard: Mapping[str, Any], *keys: str) -> bool:
+def has_artifact_ref(scorecard: Mapping[str, Any], *keys: str) -> bool:
     for key in keys:
         raw_value = scorecard.get(key)
         if isinstance(raw_value, Sequence) and not isinstance(
@@ -584,7 +584,7 @@ def _has_artifact_ref(scorecard: Mapping[str, Any], *keys: str) -> bool:
     return False
 
 
-def _order_type_execution_validation_required(scorecard: Mapping[str, Any]) -> bool:
+def order_type_execution_validation_required(scorecard: Mapping[str, Any]) -> bool:
     if any(
         _bool(scorecard.get(key))
         for key in (
@@ -596,7 +596,7 @@ def _order_type_execution_validation_required(scorecard: Mapping[str, Any]) -> b
         return True
     if _int(scorecard.get("market_limit_order_mix_sample_count")) > 0:
         return True
-    if _has_artifact_ref(
+    if has_artifact_ref(
         scorecard,
         "order_type_ablation_artifact_ref",
         "order_type_ablation_artifact_refs",
@@ -623,8 +623,8 @@ def _order_type_execution_validation_required(scorecard: Mapping[str, Any]) -> b
     )
 
 
-def _order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
-    if not _order_type_execution_validation_required(scorecard):
+def order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    if not order_type_execution_validation_required(scorecard):
         return []
 
     blockers: list[str] = []
@@ -637,13 +637,13 @@ def _order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         or _bool(scorecard.get("market_limit_execution_policy_passed"))
     ):
         blockers.append("market_limit_order_mix_missing_or_failed")
-    if not _has_artifact_ref(
+    if not has_artifact_ref(
         scorecard,
         "route_tca_artifact_ref",
         "route_tca_artifact_refs",
     ) and not _bool(scorecard.get("route_tca_evidence_present")):
         blockers.append("route_tca_evidence_missing")
-    if not _has_artifact_ref(
+    if not has_artifact_ref(
         scorecard,
         "order_type_ablation_artifact_ref",
         "order_type_ablation_artifact_refs",
@@ -669,14 +669,14 @@ def _order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
-def _market_impact_stress_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+def market_impact_stress_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
     market_impact_passed = _bool(
         scorecard.get("nonlinear_market_impact_stress_passed")
     ) or _bool(scorecard.get("market_impact_stress_passed"))
     if not market_impact_passed:
         blockers.append("market_impact_stress_failed")
-    if not _has_artifact_ref(
+    if not has_artifact_ref(
         scorecard,
         "market_impact_stress_artifact_ref",
         "market_impact_stress_artifact_refs",
@@ -712,7 +712,7 @@ def _market_impact_stress_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     return blockers
 
 
-def _implementation_uncertainty_blockers(
+def implementation_uncertainty_blockers(
     scorecard: Mapping[str, Any],
 ) -> list[str]:
     requires_implementation_uncertainty = _bool(
@@ -731,7 +731,7 @@ def _implementation_uncertainty_blockers(
     return blockers
 
 
-def _implementation_risk_backtest_stability_required(
+def implementation_risk_backtest_stability_required(
     scorecard: Mapping[str, Any],
 ) -> bool:
     if any(
@@ -758,15 +758,3 @@ __all__ = (
     "evidence_bundle_from_frontier_candidate",
     "evidence_bundle_from_payload",
 )
-
-# Public aliases used by split modules.
-delay_depth_survival_blockers = _delay_depth_survival_blockers
-has_artifact_ref = _has_artifact_ref
-implementation_risk_backtest_stability_required = (
-    _implementation_risk_backtest_stability_required
-)
-implementation_uncertainty_blockers = _implementation_uncertainty_blockers
-market_impact_stress_blockers = _market_impact_stress_blockers
-order_type_execution_blockers = _order_type_execution_blockers
-order_type_execution_validation_required = _order_type_execution_validation_required
-requires_promotion_proof = _requires_promotion_proof
