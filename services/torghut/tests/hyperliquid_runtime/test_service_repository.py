@@ -11,6 +11,8 @@ from app.hyperliquid_runtime.clickhouse import ClickHouseStatus
 from app.hyperliquid_runtime.config import HyperliquidRuntimeConfig
 from app.hyperliquid_runtime.ledger import HyperliquidJournalEvent
 from app.hyperliquid_runtime.models import (
+    AccountSnapshot,
+    AccountState,
     DecisionRecord,
     FeatureSnapshot,
     Fill,
@@ -18,6 +20,7 @@ from app.hyperliquid_runtime.models import (
     OrderIntent,
     OrderResult,
     PerformanceSnapshot,
+    PositionSnapshot,
     RiskState,
     RuntimeDependencyStatus,
 )
@@ -93,6 +96,31 @@ def _fill() -> Fill:
     )
 
 
+def _account_state() -> AccountState:
+    observed_at = datetime(2026, 6, 18, tzinfo=timezone.utc)
+    return AccountState(
+        account=AccountSnapshot(
+            observed_at=observed_at,
+            account_value_usd=Decimal("1000"),
+            withdrawable_usd=Decimal("900"),
+            gross_exposure_usd=Decimal("20"),
+            raw_payload={"marginSummary": {"accountValue": "1000"}},
+        ),
+        positions=(
+            PositionSnapshot(
+                market_id="hl:perp:cash:cash:AAPL",
+                coin="cash:AAPL",
+                size=Decimal("0.1"),
+                entry_price=Decimal("200"),
+                notional_usd=Decimal("20"),
+                unrealized_pnl_usd=Decimal("0.75"),
+                observed_at=observed_at,
+                raw_payload={"coin": "cash:AAPL"},
+            ),
+        ),
+    )
+
+
 def _intent() -> OrderIntent:
     return OrderIntent(
         market_id="hl:perp:cash:cash:AAPL",
@@ -134,7 +162,14 @@ class _FakeSession:
         self.executed.append((sql, params))
         if "gross_exposure_usd" in sql:
             return _MappingResult(
-                [{"gross_exposure_usd": "25.5", "daily_realized_pnl_usd": "-1.25"}]
+                [
+                    {
+                        "gross_exposure_usd": "25.5",
+                        "daily_realized_pnl_usd": "-1.25",
+                        "unrealized_pnl_usd": "0.75",
+                        "daily_fees_usd": "0.01",
+                    }
+                ]
             )
         if "SELECT DISTINCT market_id" in sql:
             return _MappingResult([{"market_id": "hl:perp:cash:cash:AAPL"}])
@@ -170,6 +205,7 @@ def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
         ),
     )
     fill_count = repository.upsert_fills([_fill()])
+    repository.upsert_account_state(_account_state())
     repository.insert_performance_snapshot(
         PerformanceSnapshot(
             observed_at=datetime(2026, 6, 18, tzinfo=timezone.utc),
@@ -191,6 +227,8 @@ def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
     assert fill_count == 1
     assert risk_state.gross_exposure_usd == Decimal("25.5")
     assert risk_state.daily_realized_pnl_usd == Decimal("-1.25")
+    assert risk_state.unrealized_pnl_usd == Decimal("0.75")
+    assert risk_state.daily_fees_usd == Decimal("0.01")
     assert risk_state.open_order_markets == frozenset({"hl:perp:cash:cash:AAPL"})
     assert any(
         params and params.get("coin") == "cash:AAPL" for _, params in session.executed
@@ -201,6 +239,7 @@ class _FakeRepository:
     def __init__(self, _session: _FakeSession) -> None:
         self.orders: list[tuple[OrderIntent, OrderResult]] = []
         self.performance: list[PerformanceSnapshot] = []
+        self.account_states: list[AccountState] = []
 
     def upsert_markets(self, markets: list[HyperliquidMarket]) -> None:
         self.markets = markets
@@ -209,12 +248,17 @@ class _FakeRepository:
         self.fills = fills
         return len(fills)
 
+    def upsert_account_state(self, account_state: AccountState) -> None:
+        self.account_states.append(account_state)
+
     def risk_state(
         self, *, dependencies: tuple[RuntimeDependencyStatus, ...]
     ) -> RiskState:
         return RiskState(
             gross_exposure_usd=Decimal("0"),
             daily_realized_pnl_usd=Decimal("0"),
+            unrealized_pnl_usd=Decimal("0"),
+            daily_fees_usd=Decimal("0"),
             open_order_markets=frozenset(),
             dependencies=dependencies,
         )
@@ -235,6 +279,9 @@ class _FakeRepository:
 
 
 class _FakeClickHouse:
+    def __init__(self, *, features: list[FeatureSnapshot] | None = None) -> None:
+        self._features = features if features is not None else [_feature()]
+
     def status(self) -> ClickHouseStatus:
         return ClickHouseStatus(
             ready=True,
@@ -253,7 +300,7 @@ class _FakeClickHouse:
         ]
 
     def load_feature_rows(self, _market_ids: list[str]) -> list[FeatureSnapshot]:
-        return [_feature()]
+        return self._features
 
 
 class _FakeExchange:
@@ -284,6 +331,9 @@ class _FakeExchange:
         if not self._fills:
             return []
         return [_fill()]
+
+    def reconcile_account(self, _market_id_by_coin: dict[str, str]) -> AccountState:
+        return _account_state()
 
     def dependency_status(self) -> RuntimeDependencyStatus:
         return RuntimeDependencyStatus("hyperliquid_exchange_shadow", True)
@@ -361,7 +411,9 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     assert result.blocked_decisions == 0
     assert exchange.submitted[0].side == "buy"
     assert repository.orders[0][0].decision_id == "decision-id"
+    assert repository.account_states[0].positions[0].coin == "cash:AAPL"
     assert repository.performance[0].reconciliation_status == "pass"
+    assert exchange.dead_man_seconds == 60
     assert journal.persisted
 
 
@@ -435,3 +487,43 @@ def test_runtime_service_blocks_when_no_testnet_execution_markets(
     assert exchange.submitted == []
     assert repository.orders == []
     assert journal.persisted == []
+
+
+def test_runtime_service_marks_missing_execution_features_not_ready(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(fills=False)
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(features=[]),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert session.committed
+    assert result.markets_seen == 1
+    assert result.signals_written == 0
+    assert result.decisions_written == 0
+    assert result.orders_submitted == 0
+    assert any(
+        dependency.name == "hyperliquid_execution_features"
+        and not dependency.ready
+        and dependency.reason == "missing_fresh_features_for_execution_markets"
+        for dependency in result.dependency_statuses
+    )
+    assert exchange.submitted == []
+    assert repository.orders == []

@@ -105,6 +105,8 @@ class RiskState:
 
     gross_exposure_usd: Decimal
     daily_realized_pnl_usd: Decimal
+    unrealized_pnl_usd: Decimal
+    daily_fees_usd: Decimal
     open_order_markets: frozenset[str]
     dependencies: tuple[RuntimeDependencyStatus, ...]
 
@@ -164,6 +166,39 @@ class Fill:
     fill_hash: str
     event_ts: datetime
     raw_payload: dict[str, object]
+
+
+@dataclass(frozen=True)
+class PositionSnapshot:
+    """Latest reconciled Hyperliquid position for risk and performance state."""
+
+    market_id: str
+    coin: str
+    size: Decimal
+    entry_price: Decimal | None
+    notional_usd: Decimal
+    unrealized_pnl_usd: Decimal
+    observed_at: datetime
+    raw_payload: dict[str, object]
+
+
+@dataclass(frozen=True)
+class AccountSnapshot:
+    """Latest reconciled account summary from the dedicated testnet account."""
+
+    observed_at: datetime
+    account_value_usd: Decimal
+    withdrawable_usd: Decimal
+    gross_exposure_usd: Decimal
+    raw_payload: dict[str, object]
+
+
+@dataclass(frozen=True)
+class AccountState:
+    """Exchange user-state reconciliation result for one runtime cycle."""
+
+    account: AccountSnapshot
+    positions: tuple[PositionSnapshot, ...]
 
 
 @dataclass(frozen=True)

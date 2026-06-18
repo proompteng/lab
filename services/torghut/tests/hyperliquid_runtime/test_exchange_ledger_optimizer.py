@@ -6,6 +6,7 @@ from decimal import Decimal
 from app.hyperliquid_runtime.config import HyperliquidRuntimeConfig
 from app.hyperliquid_runtime.exchange import (
     ShadowHyperliquidExchange,
+    _account_state_from_payload,
     exchange_from_config,
 )
 from app.hyperliquid_runtime.ledger import HyperliquidTigerBeetleJournal
@@ -50,6 +51,54 @@ def test_shadow_exchange_never_requires_private_keys() -> None:
         "shadow": True,
         "reason": "trading_disabled_shadow",
     }
+
+
+def test_user_state_payload_materializes_account_and_positions() -> None:
+    observed_at = datetime(2026, 6, 18, tzinfo=timezone.utc)
+    state = _account_state_from_payload(
+        {
+            "marginSummary": {
+                "accountValue": "1000.5",
+                "totalNtlPos": "25.5",
+            },
+            "withdrawable": "900.25",
+            "assetPositions": [
+                {
+                    "position": {
+                        "coin": "SPX",
+                        "szi": "0.01",
+                        "entryPx": "6000",
+                        "positionValue": "60",
+                        "unrealizedPnl": "1.25",
+                    }
+                },
+                {
+                    "position": {
+                        "coin": "MSFT",
+                        "szi": "-0.02",
+                        "entryPx": "500",
+                        "unrealizedPnl": "-0.50",
+                    }
+                },
+            ],
+        },
+        {"SPX": "hl:perp:default:SPX", "MSFT": "hl:perp:default:MSFT"},
+        observed_at,
+    )
+
+    assert state.account.account_value_usd == Decimal("1000.5")
+    assert state.account.withdrawable_usd == Decimal("900.25")
+    assert state.account.gross_exposure_usd == Decimal("25.5")
+    assert len(state.positions) == 2
+    assert state.positions[0].market_id == "hl:perp:default:SPX"
+    assert state.positions[0].coin == "SPX"
+    assert state.positions[0].size == Decimal("0.01")
+    assert state.positions[0].entry_price == Decimal("6000")
+    assert state.positions[0].notional_usd == Decimal("60")
+    assert state.positions[0].unrealized_pnl_usd == Decimal("1.25")
+    assert state.positions[1].market_id == "hl:perp:default:MSFT"
+    assert state.positions[1].notional_usd == Decimal("10.00")
+    assert state.positions[1].unrealized_pnl_usd == Decimal("-0.50")
 
 
 def test_tigerbeetle_journal_transfer_ids_are_deterministic() -> None:

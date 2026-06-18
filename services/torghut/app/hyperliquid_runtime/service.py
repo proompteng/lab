@@ -5,7 +5,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Protocol
 
 from .clickhouse import ClickHouseStatus
@@ -134,15 +133,28 @@ class HyperliquidRuntimeService:
             if execution_markets
             else []
         )
-        fills = self._exchange.reconcile_fills(
-            {market.coin: market.market_id for market in execution_markets}
+        feature_status = _feature_readiness_status(
+            execution_markets=execution_markets,
+            features=features,
+            clickhouse_ready=clickhouse_status.ready,
         )
+        market_id_by_coin = {
+            market.coin: market.market_id for market in execution_markets
+        }
+        if self._config.trading_enabled:
+            self._exchange.schedule_dead_man_cancel(
+                seconds_from_now=max(60, self._config.poll_interval_seconds * 4)
+            )
+        fills = self._exchange.reconcile_fills(market_id_by_coin)
         fill_count = repository.upsert_fills(fills)
         for fill in fills:
             self._journal.persist_refs(session, self._journal.fill_events(fill))
+        account_state = self._exchange.reconcile_account(market_id_by_coin)
+        repository.upsert_account_state(account_state)
         exchange_status = self._exchange.dependency_status()
         dependencies = clickhouse_status.statuses + (
             execution_universe_status,
+            feature_status,
             exchange_status,
         )
         return _CycleContext(
@@ -207,8 +219,8 @@ class HyperliquidRuntimeService:
                 observed_at=observed_at,
                 gross_exposure_usd=context.risk_state.gross_exposure_usd,
                 realized_pnl_usd=context.risk_state.daily_realized_pnl_usd,
-                unrealized_pnl_usd=Decimal("0"),
-                fees_usd=Decimal("0"),
+                unrealized_pnl_usd=context.risk_state.unrealized_pnl_usd,
+                fees_usd=context.risk_state.daily_fees_usd,
                 trade_count=context.fill_count,
                 reconciliation_status="pass"
                 if context.exchange_ready
@@ -257,6 +269,40 @@ def _decision_record(
         status="allowed" if verdict.allowed else "blocked",
         reason=verdict.reason,
         order_notional_usd=verdict.order_notional_usd,
+    )
+
+
+def _feature_readiness_status(
+    *,
+    execution_markets: tuple[HyperliquidMarket, ...],
+    features: list[FeatureSnapshot],
+    clickhouse_ready: bool,
+) -> RuntimeDependencyStatus:
+    if not execution_markets:
+        return RuntimeDependencyStatus(
+            name="hyperliquid_execution_features",
+            ready=True,
+            reason=None,
+        )
+    feature_market_ids = {feature.market_id for feature in features}
+    execution_market_ids = {market.market_id for market in execution_markets}
+    if features and feature_market_ids == execution_market_ids:
+        newest = max(feature.event_ts for feature in features)
+        observed_at = datetime.now(timezone.utc)
+        return RuntimeDependencyStatus(
+            name="hyperliquid_execution_features",
+            ready=True,
+            observed_at=newest,
+            lag_seconds=max(0, int((observed_at - newest).total_seconds())),
+        )
+    return RuntimeDependencyStatus(
+        name="hyperliquid_execution_features",
+        ready=False,
+        reason=(
+            "missing_fresh_features_for_execution_markets"
+            if clickhouse_ready
+            else "clickhouse_not_ready_for_execution_features"
+        ),
     )
 
 

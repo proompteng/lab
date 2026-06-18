@@ -11,6 +11,7 @@ from typing import Iterable
 from sqlalchemy import text
 
 from .models import (
+    AccountState,
     DecisionRecord,
     Fill,
     HyperliquidMarket,
@@ -323,6 +324,86 @@ class HyperliquidRuntimeRepository:
             count += 1
         return count
 
+    def upsert_account_state(self, account_state: AccountState) -> None:
+        self._session.execute(
+            text(
+                """
+                INSERT INTO hyperliquid_runtime_account_snapshots (
+                  id,
+                  network,
+                  observed_at,
+                  account_value_usd,
+                  withdrawable_usd,
+                  gross_exposure_usd,
+                  raw_payload
+                )
+                VALUES (
+                  :id,
+                  :network,
+                  :observed_at,
+                  :account_value_usd,
+                  :withdrawable_usd,
+                  :gross_exposure_usd,
+                  CAST(:raw_payload AS jsonb)
+                )
+                """
+            ),
+            {
+                "id": str(uuid.uuid4()),
+                "network": "testnet",
+                "observed_at": account_state.account.observed_at,
+                "account_value_usd": str(account_state.account.account_value_usd),
+                "withdrawable_usd": str(account_state.account.withdrawable_usd),
+                "gross_exposure_usd": str(account_state.account.gross_exposure_usd),
+                "raw_payload": json.dumps(
+                    account_state.account.raw_payload, sort_keys=True
+                ),
+            },
+        )
+        self._session.execute(
+            text("DELETE FROM hyperliquid_runtime_positions WHERE network = 'testnet'")
+        )
+        for position in account_state.positions:
+            self._session.execute(
+                text(
+                    """
+                    INSERT INTO hyperliquid_runtime_positions (
+                      network,
+                      market_id,
+                      coin,
+                      size,
+                      entry_price,
+                      notional_usd,
+                      unrealized_pnl_usd,
+                      observed_at,
+                      raw_payload
+                    )
+                    VALUES (
+                      :network,
+                      :market_id,
+                      :coin,
+                      :size,
+                      :entry_price,
+                      :notional_usd,
+                      :unrealized_pnl_usd,
+                      :observed_at,
+                      CAST(:raw_payload AS jsonb)
+                    )
+                    """
+                ),
+                {
+                    "network": "testnet",
+                    "market_id": position.market_id,
+                    "coin": position.coin,
+                    "size": str(position.size),
+                    "entry_price": _decimal_or_none(position.entry_price),
+                    "notional_usd": str(position.notional_usd),
+                    "unrealized_pnl_usd": str(position.unrealized_pnl_usd),
+                    "observed_at": position.observed_at,
+                    "raw_payload": json.dumps(position.raw_payload, sort_keys=True),
+                },
+            )
+
     def insert_performance_snapshot(self, snapshot: PerformanceSnapshot) -> None:
         self._session.execute(
             text(
@@ -371,14 +452,28 @@ class HyperliquidRuntimeRepository:
                 text(
                     """
                 SELECT
-                  COALESCE((SELECT SUM(ABS(notional_usd)) FROM hyperliquid_runtime_positions WHERE network = 'testnet'), 0)
+                  COALESCE((
+                    SELECT gross_exposure_usd
+                    FROM hyperliquid_runtime_account_snapshots
+                    WHERE network = 'testnet'
+                    ORDER BY observed_at DESC
+                    LIMIT 1
+                  ), 0)
                     AS gross_exposure_usd,
+                  COALESCE((SELECT SUM(unrealized_pnl_usd) FROM hyperliquid_runtime_positions WHERE network = 'testnet'), 0)
+                    AS unrealized_pnl_usd,
                   COALESCE((
                     SELECT SUM(closed_pnl_usd - fee_usd)
                     FROM hyperliquid_runtime_fills
                     WHERE network = 'testnet'
                       AND event_ts >= date_trunc('day', now())
-                  ), 0) AS daily_realized_pnl_usd
+                  ), 0) AS daily_realized_pnl_usd,
+                  COALESCE((
+                    SELECT SUM(fee_usd)
+                    FROM hyperliquid_runtime_fills
+                    WHERE network = 'testnet'
+                      AND event_ts >= date_trunc('day', now())
+                  ), 0) AS daily_fees_usd
                 """
                 )
             )
@@ -398,6 +493,8 @@ class HyperliquidRuntimeRepository:
         return RiskState(
             gross_exposure_usd=Decimal(str(row["gross_exposure_usd"])),
             daily_realized_pnl_usd=Decimal(str(row["daily_realized_pnl_usd"])),
+            unrealized_pnl_usd=Decimal(str(row["unrealized_pnl_usd"])),
+            daily_fees_usd=Decimal(str(row["daily_fees_usd"])),
             open_order_markets=frozenset(
                 str(open_row["market_id"]) for open_row in open_rows
             ),
