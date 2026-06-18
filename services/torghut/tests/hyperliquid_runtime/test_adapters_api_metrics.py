@@ -34,6 +34,9 @@ def _config(**overrides: str) -> HyperliquidRuntimeConfig:
         "HYPERLIQUID_RUNTIME_EXCHANGE_API_URL": "https://api.hyperliquid-testnet.xyz",
         "HYPERLIQUID_RUNTIME_CLICKHOUSE_DATABASE": "torghut",
         "HYPERLIQUID_RUNTIME_MARKET_DATA_NETWORK": "mainnet",
+        "TORGHUT_TIGERBEETLE_ENABLED": "true",
+        "TORGHUT_TIGERBEETLE_REQUIRED": "true",
+        "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
     }
     env.update(overrides)
     return HyperliquidRuntimeConfig.from_env(env)

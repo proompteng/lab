@@ -35,7 +35,12 @@ class RuntimeAppState:
             clickhouse=ClickHouseRuntimeReader(self.config),
             exchange=exchange_from_config(self.config),
             journal=HyperliquidTigerBeetleJournal(
-                cluster_id=self.config.tigerbeetle_cluster_id
+                cluster_id=self.config.tigerbeetle_cluster_id,
+                enabled=self.config.tigerbeetle_enabled,
+                required=self.config.tigerbeetle_required,
+                journal_enabled=self.config.tigerbeetle_journal_enabled,
+                replica_addresses=self.config.tigerbeetle_replica_addresses,
+                rpc_timeout_seconds=self.config.tigerbeetle_rpc_timeout_seconds,
             ),
         )
         self.task: asyncio.Task[None] | None = None

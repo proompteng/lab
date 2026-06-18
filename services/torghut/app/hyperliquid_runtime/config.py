@@ -47,7 +47,12 @@ class HyperliquidRuntimeConfig:
     optimizer_max_drawdown_usd: Decimal
     optimizer_min_net_pnl_usd: Decimal
     metrics_namespace: str
+    tigerbeetle_enabled: bool
+    tigerbeetle_required: bool
     tigerbeetle_cluster_id: int
+    tigerbeetle_replica_addresses: str
+    tigerbeetle_rpc_timeout_seconds: float
+    tigerbeetle_journal_enabled: bool
 
     @classmethod
     def from_env(
@@ -171,7 +176,20 @@ class HyperliquidRuntimeConfig:
                 "HYPERLIQUID_RUNTIME_METRICS_NAMESPACE",
                 "torghut_hyperliquid_runtime",
             ),
+            tigerbeetle_enabled=_bool(source, "TORGHUT_TIGERBEETLE_ENABLED", False),
+            tigerbeetle_required=_bool(source, "TORGHUT_TIGERBEETLE_REQUIRED", False),
             tigerbeetle_cluster_id=_int(source, "TORGHUT_TIGERBEETLE_CLUSTER_ID", 2001),
+            tigerbeetle_replica_addresses=_text(
+                source,
+                "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES",
+                "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+            ),
+            tigerbeetle_rpc_timeout_seconds=_float(
+                source, "TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS", 10.0
+            ),
+            tigerbeetle_journal_enabled=_bool(
+                source, "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED", False
+            ),
         )
 
     def validation_errors(self) -> list[str]:
@@ -194,6 +212,16 @@ class HyperliquidRuntimeConfig:
             errors.append("max_slippage_bps_must_be_positive")
         if self.tigerbeetle_cluster_id <= 0:
             errors.append("tigerbeetle_cluster_id_must_be_positive")
+        if self.tigerbeetle_rpc_timeout_seconds <= 0:
+            errors.append("tigerbeetle_rpc_timeout_seconds_must_be_positive")
+        if self.tigerbeetle_enabled and not self.tigerbeetle_replica_addresses:
+            errors.append("tigerbeetle_replica_addresses_required_when_enabled")
+        if self.trading_enabled and not self.tigerbeetle_enabled:
+            errors.append("tigerbeetle_enabled_required_when_trading_enabled")
+        if self.trading_enabled and not self.tigerbeetle_journal_enabled:
+            errors.append("tigerbeetle_journal_enabled_required_when_trading_enabled")
+        if self.trading_enabled and not self.tigerbeetle_required:
+            errors.append("tigerbeetle_required_when_trading_enabled")
         if not set(self.allowed_asset_classes).issubset(
             set(_DEFAULT_ALLOWED_ASSET_CLASSES)
         ):
@@ -232,6 +260,13 @@ def _int(env: Mapping[str, str], name: str, default: int) -> int:
     if value is None:
         return default
     return int(value.strip())
+
+
+def _float(env: Mapping[str, str], name: str, default: float) -> float:
+    value = env.get(name)
+    if value is None:
+        return default
+    return float(value.strip())
 
 
 def _decimal(env: Mapping[str, str], name: str, default: str) -> Decimal:

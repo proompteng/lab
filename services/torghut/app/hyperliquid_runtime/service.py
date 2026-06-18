@@ -71,6 +71,10 @@ class HyperliquidRuntimeJournal(Protocol):
         """Persist journal event references."""
         ...
 
+    def dependency_status(self) -> RuntimeDependencyStatus:
+        """Return TigerBeetle journal readiness."""
+        ...
+
 
 class HyperliquidRuntimeService:
     """One-cycle runtime orchestrator."""
@@ -141,20 +145,23 @@ class HyperliquidRuntimeService:
         market_id_by_coin = {
             market.coin: market.market_id for market in execution_markets
         }
+        journal_status = self._journal.dependency_status()
         if self._config.trading_enabled:
             self._exchange.schedule_dead_man_cancel(
                 seconds_from_now=max(60, self._config.poll_interval_seconds * 4)
             )
         fills = self._exchange.reconcile_fills(market_id_by_coin)
         fill_count = repository.upsert_fills(fills)
-        for fill in fills:
-            self._journal.persist_refs(session, self._journal.fill_events(fill))
+        if journal_status.ready:
+            for fill in fills:
+                self._journal.persist_refs(session, self._journal.fill_events(fill))
         account_state = self._exchange.reconcile_account(market_id_by_coin)
         repository.upsert_account_state(account_state)
         exchange_status = self._exchange.dependency_status()
         dependencies = clickhouse_status.statuses + (
             execution_universe_status,
             feature_status,
+            journal_status,
             exchange_status,
         )
         return _CycleContext(
@@ -166,6 +173,7 @@ class HyperliquidRuntimeService:
             risk_state=repository.risk_state(dependencies=dependencies),
             fill_count=fill_count,
             exchange_ready=exchange_status.ready,
+            journal_ready=journal_status.ready,
         )
 
     def _process_feature(
@@ -222,9 +230,7 @@ class HyperliquidRuntimeService:
                 unrealized_pnl_usd=context.risk_state.unrealized_pnl_usd,
                 fees_usd=context.risk_state.daily_fees_usd,
                 trade_count=context.fill_count,
-                reconciliation_status="pass"
-                if context.exchange_ready
-                else "exchange_stale",
+                reconciliation_status=_performance_reconciliation_status(context),
             )
         )
 
@@ -306,6 +312,14 @@ def _feature_readiness_status(
     )
 
 
+def _performance_reconciliation_status(context: _CycleContext) -> str:
+    if not context.exchange_ready:
+        return "exchange_stale"
+    if not context.journal_ready:
+        return "tigerbeetle_stale"
+    return "pass"
+
+
 @dataclass(frozen=True)
 class _CycleContext:
     session: RuntimeSession
@@ -316,6 +330,7 @@ class _CycleContext:
     risk_state: RiskState
     fill_count: int
     exchange_ready: bool
+    journal_ready: bool
 
 
 @dataclass(frozen=True)

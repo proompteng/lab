@@ -34,6 +34,9 @@ def _config(**overrides: str) -> HyperliquidRuntimeConfig:
     env = {
         "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "false",
         "HYPERLIQUID_RUNTIME_EXECUTION_NETWORK": "testnet",
+        "TORGHUT_TIGERBEETLE_ENABLED": "true",
+        "TORGHUT_TIGERBEETLE_REQUIRED": "true",
+        "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
     }
     env.update(overrides)
     return HyperliquidRuntimeConfig.from_env(env)
@@ -347,8 +350,9 @@ class _FakeExchange:
 
 
 class _FakeJournal:
-    def __init__(self) -> None:
+    def __init__(self, *, ready: bool = True) -> None:
         self.persisted: list[HyperliquidJournalEvent] = []
+        self._ready = ready
 
     def fill_events(self, fill: Fill) -> list[HyperliquidJournalEvent]:
         return [_journal_event(fill.fill_hash, "fill")]
@@ -365,6 +369,13 @@ class _FakeJournal:
     ) -> int:
         self.persisted.extend(events)
         return len(events)
+
+    def dependency_status(self) -> RuntimeDependencyStatus:
+        return RuntimeDependencyStatus(
+            "hyperliquid_tigerbeetle",
+            self._ready,
+            reason=None if self._ready else "tigerbeetle_unavailable:RuntimeError",
+        )
 
 
 def _journal_event(source_id: str, transfer_kind: str) -> HyperliquidJournalEvent:
@@ -445,6 +456,40 @@ def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
     assert repository.decision.reason == "trading_disabled_shadow"
     assert exchange.submitted == []
     assert repository.orders == []
+    assert journal.persisted == []
+
+
+def test_runtime_service_blocks_when_tigerbeetle_is_not_ready(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(fills=False)
+    journal = _FakeJournal(ready=False)
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert session.committed
+    assert result.orders_submitted == 0
+    assert result.blocked_decisions == 1
+    assert repository.decision.reason == "dependency_not_ready:hyperliquid_tigerbeetle"
+    assert repository.performance[0].reconciliation_status == "tigerbeetle_stale"
+    assert exchange.submitted == []
     assert journal.persisted == []
 
 

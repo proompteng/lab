@@ -21,6 +21,9 @@ def _config(**overrides: object) -> HyperliquidRuntimeConfig:
     env = {
         "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "false",
         "HYPERLIQUID_RUNTIME_EXECUTION_NETWORK": "testnet",
+        "TORGHUT_TIGERBEETLE_ENABLED": "true",
+        "TORGHUT_TIGERBEETLE_REQUIRED": "true",
+        "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
     }
     env.update({key: str(value) for key, value in overrides.items()})
     return HyperliquidRuntimeConfig.from_env(env)

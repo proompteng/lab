@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
+
+import pytest
 
 from app.hyperliquid_runtime.config import HyperliquidRuntimeConfig
 from app.hyperliquid_runtime.exchange import (
@@ -9,12 +12,16 @@ from app.hyperliquid_runtime.exchange import (
     _account_state_from_payload,
     exchange_from_config,
 )
-from app.hyperliquid_runtime.ledger import HyperliquidTigerBeetleJournal
+from app.hyperliquid_runtime.ledger import (
+    HyperliquidJournalEvent,
+    HyperliquidTigerBeetleJournal,
+)
 from app.hyperliquid_runtime.models import Fill, OrderIntent, OrderResult
 from app.hyperliquid_runtime.optimizer import (
     OptimizerCandidate,
     evaluate_optimizer_candidate,
 )
+from app.trading.tigerbeetle_client import FakeTigerBeetleClient
 
 
 def test_exchange_from_invalid_enabled_config_reports_unavailable() -> None:
@@ -26,6 +33,22 @@ def test_exchange_from_invalid_enabled_config_reports_unavailable() -> None:
 
     assert not status.ready
     assert "account_address_required_when_trading_enabled" in str(status.reason)
+
+
+def test_trading_config_requires_tigerbeetle_accounting() -> None:
+    config = HyperliquidRuntimeConfig.from_env(
+        {
+            "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "true",
+            "HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY": "0xdef",
+        }
+    )
+
+    assert {
+        "tigerbeetle_enabled_required_when_trading_enabled",
+        "tigerbeetle_journal_enabled_required_when_trading_enabled",
+        "tigerbeetle_required_when_trading_enabled",
+    }.issubset(set(config.validation_errors()))
 
 
 def test_shadow_exchange_never_requires_private_keys() -> None:
@@ -126,6 +149,75 @@ def test_tigerbeetle_journal_transfer_ids_are_deterministic() -> None:
     assert first.amount == 20_000_000
 
 
+def test_tigerbeetle_journal_writes_fake_client_and_persists_status() -> None:
+    client = FakeTigerBeetleClient()
+    journal = HyperliquidTigerBeetleJournal(
+        cluster_id=2001,
+        enabled=True,
+        required=True,
+        journal_enabled=True,
+        client=client,
+    )
+    session = _JournalSession()
+    intent = OrderIntent(
+        market_id="hl:perp:cash:cash:AAPL",
+        coin="cash:AAPL",
+        dex="cash",
+        side="buy",
+        size=Decimal("0.1"),
+        limit_price=Decimal("200"),
+        notional_usd=Decimal("20"),
+        cloid="0x1234567890abcdef1234567890abcdef",
+        reduce_only=False,
+        decision_id="decision",
+    )
+
+    assert journal.dependency_status().ready
+    count = journal.persist_refs(
+        session,
+        journal.order_events(
+            intent,
+            OrderResult(status="submitted", exchange_order_id=None, raw_response={}),
+        ),
+    )
+    repeat_session = _JournalSession()
+    repeat_count = journal.persist_refs(
+        repeat_session,
+        journal.order_events(
+            intent,
+            OrderResult(status="submitted", exchange_order_id=None, raw_response={}),
+        ),
+    )
+
+    assert count == 1
+    assert repeat_count == 1
+    assert len(client.accounts) == 2
+    assert len(client.transfers) == 1
+    assert session.executed[0]["status"] == "created"
+    assert repeat_session.executed[0]["status"] == "exists"
+
+
+def test_tigerbeetle_required_journal_raises_when_write_fails() -> None:
+    journal = HyperliquidTigerBeetleJournal(
+        cluster_id=2001,
+        enabled=True,
+        required=True,
+        journal_enabled=True,
+        client=_FailingTigerBeetleClient(),
+    )
+    event = HyperliquidJournalEvent(
+        source_id="source",
+        transfer_kind="submitted_hold",
+        amount_usd=Decimal("1"),
+        debit_account_key="testnet:1001:testnet-cash",
+        credit_account_key="testnet:1101:hl:perp:default:SPX",
+        transfer_code=2000,
+    )
+
+    with pytest.raises(RuntimeError, match="down"):
+        journal.persist_refs(_JournalSession(), [event])
+
+
 def test_fill_events_include_fee_and_realized_pnl() -> None:
     journal = HyperliquidTigerBeetleJournal(cluster_id=2001)
     fill = Fill(
@@ -186,3 +278,19 @@ def test_optimizer_requires_all_promotion_gates() -> None:
         "stale_data_periods",
     }
     assert promoted.promoted
+
+
+class _JournalSession:
+    def __init__(self) -> None:
+        self.executed: list[dict[str, object]] = []
+
+    def execute(
+        self, _statement: object, params: dict[str, object] | None = None
+    ) -> None:
+        self.executed.append(params or {})
+
+
+class _FailingTigerBeetleClient(FakeTigerBeetleClient):
+    def create_accounts(self, accounts: Sequence[object]) -> Sequence[object]:
+        del accounts
+        raise RuntimeError("down")
