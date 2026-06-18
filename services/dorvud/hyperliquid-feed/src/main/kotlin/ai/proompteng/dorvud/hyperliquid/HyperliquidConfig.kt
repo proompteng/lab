@@ -57,7 +57,6 @@ data class HyperliquidConfig(
   val readyEventMaxAgeMs: Long,
   val healthPort: Int,
   val metricsPort: Int,
-  val healthNotReadyKillAfterMs: Long,
   val kafka: KafkaProducerSettings,
   val topics: HyperliquidTopics,
   val clickHouse: ClickHouseConfig,
@@ -199,7 +198,6 @@ data class HyperliquidConfig(
         readyEventMaxAgeMs = readyEventMaxAgeMs,
         healthPort = intEnv(mergedEnv, "HEALTH_PORT", 8080),
         metricsPort = intEnv(mergedEnv, "METRICS_PORT", 9090),
-        healthNotReadyKillAfterMs = longEnv(mergedEnv, "HEALTH_NOT_READY_KILL_AFTER_MS", 180_000),
         kafka = kafkaSettings(mergedEnv),
         topics =
           HyperliquidTopics(

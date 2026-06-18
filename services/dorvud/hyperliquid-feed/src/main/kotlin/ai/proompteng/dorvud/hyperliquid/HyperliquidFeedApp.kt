@@ -58,12 +58,12 @@ class HyperliquidFeedApp(
   private val wsReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val clickHouseReady = AtomicBoolean(!config.clickHouse.enabled)
+  private val alive = AtomicBoolean(true)
   private val clickHouseLastSuccessMs = AtomicLong(if (config.clickHouse.enabled) 0 else nowMs())
   private val clickHouseLastFailureMs = AtomicLong(0)
   private val catalogReady = AtomicBoolean(false)
   private val marketCount = AtomicInteger(0)
   private val subscriptionCount = AtomicInteger(0)
-  private val notReadySinceMs = AtomicLong(nowMs())
 
   @Volatile
   private var clickHouseTableIngestLagMs: Map<String, Long?> = config.clickHouse.readyTables.associateWith { null }
@@ -129,6 +129,7 @@ class HyperliquidFeedApp(
         jobs.joinAll()
         clickHouseJob.join()
       } finally {
+        alive.set(false)
         markReady(false)
         wsReady.set(false)
         kafkaReady.set(false)
@@ -139,15 +140,12 @@ class HyperliquidFeedApp(
     }
 
   fun stop() {
+    alive.set(false)
     markReady(false)
     scope.cancel()
   }
 
-  fun isAlive(): Boolean {
-    if (!scope.coroutineContext.isActive) return false
-    if (ready.get()) return true
-    return nowMs() - notReadySinceMs.get() < config.healthNotReadyKillAfterMs
-  }
+  fun isAlive(): Boolean = alive.get() && scope.coroutineContext.isActive
 
   fun readinessInfo(): HyperliquidReadinessInfo {
     val freshness = eventFreshnessSnapshot()
@@ -354,13 +352,12 @@ class HyperliquidFeedApp(
   }
 
   private fun markReady(value: Boolean) {
-    val changed = ready.getAndSet(value) != value
+    ready.set(value)
     metrics.setReady(value)
     metrics.setWsConnected(wsReady.get())
     metrics.setKafkaReady(kafkaReady.get())
     metrics.setClickHouseReady(clickHouseFreshAt(nowMs()))
     metrics.setMarketDataReady(eventFreshnessSnapshot().fresh)
-    if (!value && changed) notReadySinceMs.set(nowMs())
   }
 }
 
