@@ -14,6 +14,7 @@ class HyperliquidMetrics(
   private val wsConnected = AtomicInteger(0)
   private val kafkaReady = AtomicInteger(0)
   private val clickHouseReady = AtomicInteger(0)
+  private val marketDataReady = AtomicInteger(0)
   private val catalogMarketCount = AtomicInteger(0)
   private val subscriptionCount = AtomicInteger(0)
   private val catalogLastRefreshEpochMs = AtomicLong(0)
@@ -22,6 +23,7 @@ class HyperliquidMetrics(
   private val kafkaErrors = ConcurrentHashMap<String, Counter>()
   private val clickHouseErrors = ConcurrentHashMap<String, Counter>()
   private val dedupDrops = ConcurrentHashMap<String, Counter>()
+  private val eventLastSeenEpochMs = ConcurrentHashMap<String, AtomicLong>()
 
   val reconnects: Counter = registry.counter("torghut_hyperliquid_ws_reconnects_total")
   val wsConnectSuccess: Counter = registry.counter("torghut_hyperliquid_ws_connect_success_total")
@@ -32,6 +34,7 @@ class HyperliquidMetrics(
     Gauge.builder("torghut_hyperliquid_ws_connected", wsConnected) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_kafka_ready", kafkaReady) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_clickhouse_ready", clickHouseReady) { it.get().toDouble() }.register(registry)
+    Gauge.builder("torghut_hyperliquid_market_data_ready", marketDataReady) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_catalog_markets", catalogMarketCount) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_subscriptions", subscriptionCount) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_rest_weight_used", restWeightUsed) { it.get().toDouble() }.register(registry)
@@ -49,6 +52,8 @@ class HyperliquidMetrics(
 
   fun setClickHouseReady(value: Boolean) = clickHouseReady.set(if (value) 1 else 0)
 
+  fun setMarketDataReady(value: Boolean) = marketDataReady.set(if (value) 1 else 0)
+
   fun setCatalogMarketCount(value: Int) = catalogMarketCount.set(value)
 
   fun setSubscriptionCount(value: Int) = subscriptionCount.set(value)
@@ -61,6 +66,21 @@ class HyperliquidMetrics(
     eventCounters
       .computeIfAbsent(channel) { Counter.builder("torghut_hyperliquid_events_total").tag("channel", it).register(registry) }
       .increment()
+  }
+
+  fun setEventLastSeenEpochMs(
+    channel: String,
+    epochMs: Long,
+  ) {
+    eventLastSeenEpochMs
+      .computeIfAbsent(channel) {
+        val value = AtomicLong(0)
+        Gauge
+          .builder("torghut_hyperliquid_event_last_seen_ts_seconds", value) { it.get().toDouble() / 1_000.0 }
+          .tag("channel", channel)
+          .register(registry)
+        value
+      }.set(epochMs)
   }
 
   fun recordKafkaError(topic: String) {

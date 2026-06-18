@@ -49,11 +49,15 @@ class HyperliquidConfigTest {
           "KAFKA_SASL_PASSWORD" to "secret",
           "CLICKHOUSE_READY_MAX_AGE_MS" to "90000",
           "CLICKHOUSE_FAILURE_HOLD_MS" to "45000",
+          "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,candle",
+          "HYPERLIQUID_READY_EVENT_MAX_AGE_MS" to "120000",
         ),
       )
 
     assertEquals(90_000, config.clickHouse.readyMaxAgeMs)
     assertEquals(45_000, config.clickHouse.failureHoldMs)
+    assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
+    assertEquals(120_000, config.readyEventMaxAgeMs)
   }
 
   @Test
@@ -100,5 +104,20 @@ class HyperliquidConfigTest {
       }
 
     assertTrue(error.message.orEmpty().contains("Unsupported HYPERLIQUID_WS_CHANNELS"))
+  }
+
+  @Test
+  fun `rejects unknown readiness channels`() {
+    val error =
+      assertFailsWith<IllegalStateException> {
+        HyperliquidConfig.fromEnv(
+          mapOf(
+            "KAFKA_SASL_PASSWORD" to "secret",
+            "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,userFills",
+          ),
+        )
+      }
+
+    assertTrue(error.message.orEmpty().contains("Unsupported HYPERLIQUID_READY_REQUIRED_CHANNELS"))
   }
 }

@@ -4,8 +4,10 @@ import io.ktor.client.HttpClient
 import io.ktor.client.request.basicAuth
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.contentType
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,13 +66,8 @@ class ClickHouseSink(
   private suspend fun flush(records: List<RoutedEnvelope>) {
     records.groupBy { tableForTopic(it.topic) }.forEach { (table, tableRecords) ->
       val body = tableRecords.joinToString("\n") { json.encodeToString(rowFor(it)) }
-      val query = "INSERT INTO ${config.database}.$table FORMAT JSONEachRow"
       runCatching {
-        httpClient.post("${config.httpUrl.trimEnd('/')}?query=${java.net.URLEncoder.encode(query, Charsets.UTF_8)}") {
-          if (config.password.isNotEmpty()) basicAuth(config.username, config.password)
-          contentType(ContentType.Application.Json)
-          setBody(body)
-        }
+        insertRows(table, body)
       }.onSuccess {
         metrics.setClickHouseReady(true)
         onReady(true)
@@ -80,6 +77,23 @@ class ClickHouseSink(
         metrics.recordClickHouseError(table)
         clickHouseLogger.warn(error) { "clickhouse insert failed table=$table records=${tableRecords.size}" }
       }
+    }
+  }
+
+  private suspend fun insertRows(
+    table: String,
+    body: String,
+  ) {
+    val query = "INSERT INTO ${config.database}.$table FORMAT JSONEachRow"
+    val response =
+      httpClient.post("${config.httpUrl.trimEnd('/')}?query=${java.net.URLEncoder.encode(query, Charsets.UTF_8)}") {
+        if (config.password.isNotEmpty()) basicAuth(config.username, config.password)
+        contentType(ContentType.Application.Json)
+        setBody(body)
+      }
+    if (!response.status.isSuccess()) {
+      val responseBody = response.bodyAsText().take(256)
+      error("clickhouse_http_${response.status.value}:$responseBody")
     }
   }
 
