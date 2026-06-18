@@ -51,13 +51,13 @@ _HPAIRS_AI_HARDWARE_UNIVERSE = [
     "NVDA",
     "AVGO",
     "AMD",
-    "MRVL",
     "MU",
+    "MRVL",
+    "CRDO",
     "COHR",
     "LITE",
-    "WDC",
-    "STX",
     "TSM",
+    "WDC",
 ]
 
 

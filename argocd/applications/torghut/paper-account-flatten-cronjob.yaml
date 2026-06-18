@@ -46,7 +46,7 @@ spec:
                   if /opt/venv/bin/python scripts/flatten_paper_account_positions.py --help \
                     | grep -q -- '--target-plan-readback-url'; then
                     target_plan_readback_args=(
-                      --target-plan-readback-url 'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'
+                      --target-plan-readback-url 'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'
                       --target-plan-readback-timeout-seconds 10
                       --require-target-plan-readback-clean
                       --allow-pending-clean-window-baseline-readback
@@ -54,11 +54,11 @@ spec:
                   fi
                   echo "stage=flatten_paper_account started_at=$(date -Iseconds)"
                   /opt/venv/bin/python scripts/flatten_paper_account_positions.py \
-                    --account-label TORGHUT_SIM \
-                    --expected-account-label TORGHUT_SIM \
+                    --account-label PA3SX7FYNUTF \
+                    --expected-account-label PA3SX7FYNUTF \
                     --trading-mode paper \
                     --paper-base-url https://paper-api.alpaca.markets \
-                    --database-dsn-env SIM_DB_DSN \
+                    --database-dsn-env DB_DSN \
                     --max-gross-market-value 1000000 \
                     --max-position-count 25 \
                     --extended-hours-limit \
@@ -122,9 +122,9 @@ spec:
                 - name: TRADING_MODE
                   value: paper
                 - name: TRADING_ACCOUNT_LABEL
-                  value: TORGHUT_SIM
+                  value: PA3SX7FYNUTF
                 - name: TRADING_ACCOUNTS_JSON
                   value: >
-                    [{"label":"TORGHUT_SIM","mode":"paper","enabled":true}]
+                    [{"label":"PA3SX7FYNUTF","mode":"paper","enabled":true}]
                 - name: TRADING_KILL_SWITCH_ENABLED
                   value: "false"

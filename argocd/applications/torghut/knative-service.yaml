@@ -129,7 +129,7 @@ spec:
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "true"
             - name: TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT
-              value: "2026-06-18T20:05:00Z"
+              value: "2026-06-22T20:05:00Z"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
@@ -274,11 +274,11 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "false"
             - name: TRADING_STATIC_SYMBOLS
-              value: NVDA,AVGO,AMD,MRVL,MU,COHR,LITE,WDC,STX,TSM
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: NVDA,AVGO,AMD,MRVL,MU,COHR,LITE,WDC,STX,TSM
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC
             - name: TRADING_UNIVERSE_SYMBOL_ALLOWLIST
-              value: NVDA,AVGO,AMD,MRVL,MU,COHR,LITE,WDC,STX,TSM
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: POSTHOG_ENABLED

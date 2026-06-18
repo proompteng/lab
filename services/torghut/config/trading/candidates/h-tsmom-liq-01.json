@@ -20,7 +20,7 @@
     "strategy_name": "intraday-tsmom-profit-v3",
     "strategy_id": "intraday_tsmom_v1@paper",
     "enabled": false,
-    "universe_symbols": ["NVDA", "AVGO", "AMD", "MRVL", "MU", "COHR", "LITE", "WDC", "STX", "TSM"],
+    "universe_symbols": ["NVDA", "AVGO", "AMD", "MU", "MRVL", "CRDO", "COHR", "LITE", "TSM", "WDC"],
     "max_notional_per_trade": "50000",
     "max_position_pct_equity": "3.0",
     "params": {

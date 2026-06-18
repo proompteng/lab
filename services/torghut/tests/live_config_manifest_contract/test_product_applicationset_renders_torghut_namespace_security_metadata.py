@@ -347,16 +347,25 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
         )
         self.assertEqual(env["TRADING_MODE"].get("value"), "paper")
-        self.assertEqual(env["TRADING_ACCOUNT_LABEL"].get("value"), "TORGHUT_SIM")
+        self.assertEqual(env["TRADING_ACCOUNT_LABEL"].get("value"), "PA3SX7FYNUTF")
+        self.assertEqual(
+            env["TRADING_ACCOUNTS_JSON"].get("value"),
+            '[{"label":"PA3SX7FYNUTF","mode":"paper","enabled":true}]\n',
+        )
         self.assertEqual(env["TRADING_KILL_SWITCH_ENABLED"].get("value"), "false")
 
         args = "\n".join(str(item) for item in container.get("args", []))
         self.assertIn("scripts/flatten_paper_account_positions.py", args)
-        self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--expected-account-label TORGHUT_SIM", args)
+        self.assertIn("--account-label PA3SX7FYNUTF", args)
+        self.assertIn("--expected-account-label PA3SX7FYNUTF", args)
         self.assertIn("--trading-mode paper", args)
         self.assertIn("--paper-base-url https://paper-api.alpaca.markets", args)
-        self.assertIn("--database-dsn-env SIM_DB_DSN", args)
+        self.assertIn("--database-dsn-env DB_DSN", args)
+        self.assertIn(
+            "--target-plan-readback-url "
+            "'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'",
+            args,
+        )
         self.assertIn(
             "--max-gross-market-value "
             f"{_HPAIRS_PAPER_ACCOUNT_FLATTEN_MAX_GROSS_MARKET_VALUE}",
@@ -373,7 +382,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertIn("target_plan_readback_args=()", args)
         self.assertIn("--target-plan-readback-url", args)
         self.assertIn(
-            "http://torghut-sim.torghut.svc.cluster.local/trading/"
+            "http://torghut.torghut.svc.cluster.local/trading/"
             "proofs?kind=runtime_window&window=next&limit=20",
             args,
         )
