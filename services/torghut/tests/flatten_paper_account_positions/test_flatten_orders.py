@@ -19,6 +19,7 @@ from tests.flatten_paper_account_positions.support import (
     _source_strategy,
     cast,
     datetime,
+    flatten_lineage,
     flatten_paper_account_positions,
     flatten_script,
     patch,
@@ -391,7 +392,7 @@ class TestFlattenPaperAccountFlattenOrders(_TestFlattenPaperAccountPositionsBase
         )
         with _memory_session() as session:
             with patch.object(
-                flatten_script,
+                flatten_lineage,
                 "_persist_close_decision",
                 side_effect=RuntimeError("db unavailable"),
             ):

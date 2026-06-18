@@ -156,6 +156,21 @@ def test_generated_split_package_directories_are_absent() -> None:
     assert generated_package_dirs == []
 
 
+def test_flatten_package_does_not_patch_through_public_script_shim() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    flatten_package_root = (
+        service_root / "scripts" / "paper_account_position_flattening"
+    )
+    public_shim_module = "scripts.flatten_paper_account_positions"
+    shim_backchannel_paths = sorted(
+        str(path.relative_to(service_root))
+        for path in flatten_package_root.rglob("*.py")
+        if public_shim_module in path.read_text()
+    )
+
+    assert shim_backchannel_paths == []
+
+
 def test_historical_simulation_startup_module_entrypoint_exits_with_cli_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
