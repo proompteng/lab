@@ -284,6 +284,15 @@ def _target_plan_targets_from_proofs(
         baseline_clean = (
             account_state.get("clean_baseline") is not False and not account_blockers
         )
+        baseline_snapshot_id = _safe_text(
+            account_state.get("clean_baseline_snapshot_id")
+            or account_state.get("snapshot_id")
+        )
+        baseline_snapshot_as_of = _safe_text(
+            account_state.get("clean_baseline_snapshot_at")
+            or account_state.get("clean_baseline_snapshot_as_of")
+            or account_state.get("snapshot_as_of")
+        )
         target = {
             "hypothesis_id": identity.get("hypothesis_id"),
             "candidate_id": identity.get("candidate_id"),
@@ -305,6 +314,10 @@ def _target_plan_targets_from_proofs(
             else "blocked",
             "paper_route_clean_window_baseline_state": {
                 "state": "clean" if baseline_clean else "blocked",
+                "snapshot_id": baseline_snapshot_id,
+                "snapshot_as_of": baseline_snapshot_as_of,
+                "source_auditable": baseline_clean
+                and bool(baseline_snapshot_id or baseline_snapshot_as_of),
                 "blockers": account_blockers,
             },
             "paper_route_clean_window_baseline_blockers": account_blockers,
@@ -450,6 +463,23 @@ def _snapshot_after_matching_target_windows(
     return saw_window_end
 
 
+def _snapshot_seen_by_baseline_as_of(
+    *,
+    snapshot_as_of: str | None,
+    readback_targets: Sequence[Mapping[str, object]],
+) -> bool:
+    snapshot_time = _readback_datetime(snapshot_as_of)
+    if snapshot_time is None or not readback_targets:
+        return False
+    for target in readback_targets:
+        if not bool(target.get("source_auditable")):
+            return False
+        target_snapshot_time = _readback_datetime(target.get("snapshot_as_of"))
+        if target_snapshot_time is None or target_snapshot_time < snapshot_time:
+            return False
+    return True
+
+
 def read_target_plan_clean_window_readback(
     *,
     url: str,
@@ -539,9 +569,16 @@ def read_target_plan_clean_window_readback(
         for target in readback_targets
         if target.get("state") == "clean" and not target.get("blockers")
     ]
-    persisted_snapshot_seen = bool(
+    persisted_snapshot_id_seen = bool(
         snapshot_id
         and any(target.get("snapshot_id") == snapshot_id for target in readback_targets)
+    )
+    persisted_snapshot_as_of_seen = _snapshot_seen_by_baseline_as_of(
+        snapshot_as_of=snapshot_as_of,
+        readback_targets=readback_targets,
+    )
+    persisted_snapshot_seen = (
+        persisted_snapshot_id_seen or persisted_snapshot_as_of_seen
     )
     persisted_snapshot_after_target_window = _snapshot_after_matching_target_windows(
         snapshot_as_of=snapshot_as_of,
@@ -574,6 +611,8 @@ def read_target_plan_clean_window_readback(
         "matching_target_count": len(matching_targets),
         "clean_matching_target_count": len(clean_targets),
         "persisted_snapshot_seen": persisted_snapshot_seen,
+        "persisted_snapshot_id_seen": persisted_snapshot_id_seen,
+        "persisted_snapshot_as_of_seen": persisted_snapshot_as_of_seen,
         "persisted_snapshot_after_target_window": persisted_snapshot_after_target_window,
         "clean_window_baseline_readiness": dict(summary),
         "targets": readback_targets,

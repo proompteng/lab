@@ -30,7 +30,7 @@ strategy_overrides:
   universe_type:
     - microbar_cross_sectional_long_v1
   universe_symbols:
-    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'TSM', 'WDC']
+    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'SNDK', 'WDC']
   normalization_regime:
     - market_neutral_gross_scaled
   max_position_pct_equity:

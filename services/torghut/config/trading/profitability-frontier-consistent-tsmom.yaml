@@ -24,7 +24,7 @@ order_type_ablation:
   max_opportunity_cost_bps: '8'
 strategy_overrides:
   universe_symbols:
-    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'TSM', 'WDC']
+    - ['NVDA', 'AVGO', 'AMD', 'MU', 'MRVL', 'CRDO', 'COHR', 'LITE', 'SNDK', 'WDC']
   max_notional_per_trade:
     - '15000'
     - '25000'

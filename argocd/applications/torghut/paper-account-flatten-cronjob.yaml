@@ -20,7 +20,7 @@ spec:
       activeDeadlineSeconds: 300
       template:
         spec:
-          restartPolicy: OnFailure
+          restartPolicy: Never
           serviceAccountName: torghut-runtime
           containers:
             - name: flatten-paper-account
@@ -46,7 +46,7 @@ spec:
                   if /opt/venv/bin/python scripts/flatten_paper_account_positions.py --help \
                     | grep -q -- '--target-plan-readback-url'; then
                     target_plan_readback_args=(
-                      --target-plan-readback-url 'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20'
+                      --target-plan-readback-url 'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&full_audit=true&limit=20'
                       --target-plan-readback-timeout-seconds 10
                       --require-target-plan-readback-clean
                       --allow-pending-clean-window-baseline-readback

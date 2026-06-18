@@ -56,7 +56,7 @@ _HPAIRS_AI_HARDWARE_UNIVERSE = [
     "CRDO",
     "COHR",
     "LITE",
-    "TSM",
+    "SNDK",
     "WDC",
 ]
 

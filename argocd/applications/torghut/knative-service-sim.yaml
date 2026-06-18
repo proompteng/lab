@@ -314,11 +314,11 @@ spec:
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
               value: "false"
             - name: TRADING_STATIC_SYMBOLS
-              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC
             - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
-              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC
             - name: TRADING_UNIVERSE_SYMBOL_ALLOWLIST
-              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,TSM,WDC
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC
             - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
               value: "900"
             - name: POSTHOG_ENABLED
