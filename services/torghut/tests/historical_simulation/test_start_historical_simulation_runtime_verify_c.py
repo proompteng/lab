@@ -5,7 +5,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     StartHistoricalSimulationTestCaseBase,
     _build_resources,
     _runtime_verify,
-    historical_simulation_verification,
+    runtime_verification,
     patch,
 )
 
@@ -178,7 +178,7 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
             "scripts.historical_simulation_runtime_verification.shared_runtime._kubectl_json",
             return_value=deployment,
         ):
-            health = historical_simulation_verification._flink_runtime_health(
+            health = runtime_verification._flink_runtime_health(
                 "torghut",
                 "torghut-ta-sim",
             )
@@ -616,7 +616,7 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 },
             ),
         ):
-            report = historical_simulation_verification._teardown_clean(
+            report = runtime_verification._teardown_clean(
                 resources=resources,
                 postgres_config=SimpleNamespace(
                     torghut_runtime_dsn="postgresql://torghut@db/torghut_sim_default"
@@ -712,7 +712,7 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 },
             ),
         ):
-            report = historical_simulation_verification._teardown_clean(
+            report = runtime_verification._teardown_clean(
                 resources=resources,
                 postgres_config=SimpleNamespace(
                     torghut_runtime_dsn="postgresql://torghut@db/torghut_sim_2026_03_13_full_day_c981f25b"
@@ -800,7 +800,7 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 },
             ),
         ):
-            report = historical_simulation_verification._teardown_clean(
+            report = runtime_verification._teardown_clean(
                 resources=resources,
                 postgres_config=SimpleNamespace(
                     torghut_runtime_dsn="postgresql://torghut@db/torghut_sim_2026_03_18_full_day_884bec35"
@@ -895,7 +895,7 @@ class TestStartHistoricalSimulationRuntimeVerifyC(
                 },
             ),
         ):
-            report = historical_simulation_verification._teardown_clean(
+            report = runtime_verification._teardown_clean(
                 resources=resources,
                 postgres_config=SimpleNamespace(
                     torghut_runtime_dsn="postgresql://torghut@db/torghut_sim_default"

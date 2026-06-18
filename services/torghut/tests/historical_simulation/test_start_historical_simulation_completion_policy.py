@@ -13,7 +13,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _monitor_run_completion,
     _validate_dump_coverage,
     _validate_window_policy,
-    historical_simulation_verification,
+    runtime_verification,
     json,
     patch,
     replace,
@@ -651,7 +651,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
     def test_activity_state_treats_subsecond_terminal_cursor_gap_as_reached(
         self,
     ) -> None:
-        state = historical_simulation_verification._activity_state(
+        state = runtime_verification._activity_state(
             manifest={
                 "window": {
                     "start": "2026-05-05T13:30:00Z",
@@ -759,7 +759,7 @@ class TestStartHistoricalSimulationCompletionPolicy(
                 "trade_decisions": 174,
             },
         ):
-            report = historical_simulation_verification._current_activity_report(
+            report = runtime_verification._current_activity_report(
                 resources=resources,
                 manifest=manifest,
                 postgres_config=postgres_config,

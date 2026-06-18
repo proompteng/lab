@@ -83,7 +83,6 @@ EXPLICIT_IMPORT_SURFACES = (
     "scripts.historical_profitability_proof",
     "scripts.flatten_paper_account_positions",
     "scripts.paper_account_position_flattening",
-    "scripts.historical_simulation_verification",
     "scripts.historical_simulation_runtime_verification",
     "scripts.journal_tigerbeetle_order_events",
     "scripts.tigerbeetle_order_journal",
@@ -97,6 +96,7 @@ EXPLICIT_IMPORT_SURFACES = (
     "scripts.empirical_promotion_renewal",
     "scripts.run_local_simple_lane_replay",
     "scripts.simple_lane_replay",
+    "scripts.run_simulation_analysis",
     "scripts.run_strategy_autoresearch_loop",
     "scripts.strategy_autoresearch_loop",
     "scripts.historical_simulation_startup",
@@ -130,6 +130,17 @@ def test_app_and_script_import_surfaces_do_not_ship_compatibility_stubs() -> Non
     )
 
     assert stub_paths == []
+
+
+def test_app_and_script_import_surfaces_do_not_ship_runtime_compat_modules() -> None:
+    service_root = Path(__file__).resolve().parents[1]
+    compat_module_paths = sorted(
+        str(path.relative_to(service_root))
+        for tree_name in ("app", "scripts")
+        for path in (service_root / tree_name).rglob("*compat*.py")
+    )
+
+    assert compat_module_paths == []
 
 
 def test_generated_split_package_directories_are_absent() -> None:

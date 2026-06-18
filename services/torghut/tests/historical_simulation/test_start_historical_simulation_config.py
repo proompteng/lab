@@ -20,7 +20,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _redact_dsn_credentials,
     _simulation_evidence_lineage,
     _simulation_schema_registry_subject_specs,
-    historical_simulation_verification,
+    runtime_verification,
     json,
     patch,
     historical_simulation_startup,
@@ -32,9 +32,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         self,
     ) -> None:
         self.assertEqual(
-            historical_simulation_verification._cluster_service_host_candidates(
-                "karapace.kafka"
-            ),
+            runtime_verification._cluster_service_host_candidates("karapace.kafka"),
             [
                 "karapace.kafka",
                 "karapace.kafka.svc",
@@ -76,7 +74,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
             "scripts.historical_simulation_runtime_verification.artifact_verification.HTTPConnection",
             _FakeConnection,
         ):
-            status, body = historical_simulation_verification._http_json_get(
+            status, body = runtime_verification._http_json_get(
                 "http://karapace.kafka:8081",
                 "/subjects",
             )
@@ -203,7 +201,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
             "scripts.historical_simulation_runtime_verification.artifact_verification.HTTPConnection",
             _FakeConnection,
         ):
-            status, body = historical_simulation_verification._http_json_get(
+            status, body = runtime_verification._http_json_get(
                 "http://schema-registry:8081",
                 "/subjects",
             )
@@ -214,7 +212,7 @@ class TestStartHistoricalSimulationConfig(StartHistoricalSimulationTestCaseBase)
         self.assertEqual(captured.get("port"), 8081)
         self.assertEqual(
             captured.get("timeout"),
-            historical_simulation_verification.DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS,
+            runtime_verification.DEFAULT_HTTP_PROBE_TIMEOUT_SECONDS,
         )
         self.assertEqual(captured.get("method"), "GET")
         self.assertEqual(captured.get("path"), "/subjects")

@@ -15,7 +15,10 @@ from unittest import TestCase
 from unittest.mock import call, patch
 
 import yaml
-from scripts import historical_simulation_verification, historical_simulation_startup
+from scripts import (
+    historical_simulation_runtime_verification as runtime_verification,
+)
+from scripts import historical_simulation_startup
 from scripts.historical_simulation_startup import (
     ArgocdAutomationConfig,
     ClickHouseRuntimeConfig,
@@ -148,7 +151,7 @@ __all__: tuple[str, ...] = (
     "call",
     "datetime",
     "gzip",
-    "historical_simulation_verification",
+    "runtime_verification",
     "json",
     "patch",
     "re",
