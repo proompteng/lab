@@ -176,6 +176,18 @@ class _FakeSession:
             )
         if "SELECT DISTINCT market_id" in sql:
             return _MappingResult([{"market_id": "hl:perp:cash:cash:AAPL"}])
+        if "fill_summary AS" in sql:
+            return _MappingResult(
+                [
+                    {
+                        "trade_count": "50",
+                        "net_pnl_usd": "5.25",
+                        "max_drawdown_usd": "1.50",
+                        "stale_period_count": "0",
+                        "reconciliation_gap_count": "0",
+                    }
+                ]
+            )
         return _MappingResult([])
 
     def commit(self) -> None:
@@ -305,6 +317,13 @@ class _FakeClickHouse:
     def load_feature_rows(self, _market_ids: list[str]) -> list[FeatureSnapshot]:
         return self._features
 
+    def load_optimizer_history_summary(self) -> dict[str, object]:
+        return {
+            "feature_rows": "1000",
+            "market_count": "44",
+            "stale_feature_rows": "0",
+        }
+
 
 class _FakeExchange:
     def __init__(self, *, fills: bool = True, supports_markets: bool = True) -> None:
@@ -429,6 +448,33 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
         "fill",
         "order_submitted",
     ]
+
+
+def test_runtime_service_persists_guarded_optimizer_run() -> None:
+    service = HyperliquidRuntimeService(
+        config=_config(HYPERLIQUID_RUNTIME_OPTIMIZER_MIN_TRADES="10"),
+        clickhouse=_FakeClickHouse(),
+        exchange=_FakeExchange(),
+        journal=_FakeJournal(),
+    )
+    session = _FakeSession()
+
+    result = service.run_optimizer_once(session)
+
+    assert result is not None
+    assert result.promoted
+    assert session.committed
+    optimizer_insert = [
+        params
+        for sql, params in session.executed
+        if "hyperliquid_runtime_optimizer_runs" in sql
+    ]
+    assert optimizer_insert
+    assert optimizer_insert[0]
+    assert optimizer_insert[0]["parameter_version"] == (
+        "hl-equity-momentum-v1-offline-v1"
+    )
+    assert optimizer_insert[0]["promoted"] is True
 
 
 def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(

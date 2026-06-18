@@ -26,6 +26,7 @@ from app.hyperliquid_runtime.models import (
     OrderIntent,
     RuntimeDependencyStatus,
 )
+from app.hyperliquid_runtime.optimizer import OptimizerGateResult
 
 
 def _config(**overrides: str) -> HyperliquidRuntimeConfig:
@@ -127,6 +128,11 @@ def test_clickhouse_reader_parses_queries_status_and_features(
                 '{"name":"hyperliquid_candles","observed_at":"2026-06-18T00:00:00Z","lag_seconds":7}\n'
                 '{"name":"hyperliquid_ta_features","observed_at":"2026-06-18T00:00:00","lag_seconds":8}\n'
             )
+        if "feature_rows" in query and "hyperliquid_ta_features" in query:
+            return (
+                '{"feature_rows":"1000","market_count":"44","stale_feature_rows":"0",'
+                '"avg_momentum_5m_bps":"1.5","avg_spread_bps":"4.0"}\n'
+            )
         if "runtime_latest_features" in query and "SELECT" in query:
             return (
                 '{"market_id":"hl:perp:cash:cash:AAPL","coin":"cash:AAPL","dex":"cash",'
@@ -150,10 +156,12 @@ def test_clickhouse_reader_parses_queries_status_and_features(
     assert catalog[0]["dayNtlVlm"] == "500000"
     assert reader.load_feature_rows([]) == []
     features = reader.load_feature_rows(["hl:perp:cash:cash:AAPL"])
+    optimizer_history = reader.load_optimizer_history_summary()
     status = reader.status()
 
     assert features[0].price == Decimal("200")
     assert features[0].event_ts.tzinfo is not None
+    assert optimizer_history["feature_rows"] == "1000"
     assert status.ready
     assert {dependency.name for dependency in status.statuses} == {
         "hyperliquid_candles",
@@ -163,6 +171,7 @@ def test_clickhouse_reader_parses_queries_status_and_features(
     assert any("JSONExtractRaw(a.payload, 'ctx')" in query for query in queries)
     assert any("max(parseDateTimeBestEffort(ingest_ts))" in query for query in queries)
     assert any("FROM torghut.hyperliquid_ta_features" in query for query in queries)
+    assert any("INTERVAL 24 HOUR" in query for query in queries)
     assert any("FORMAT JSONEachRow" in query for query in queries)
 
 
@@ -572,6 +581,7 @@ def test_metrics_and_api_readiness_paths(monkeypatch: pytest.MonkeyPatch) -> Non
 
     assert "torghut_hl_cycles_total 1" in rendered
     assert "torghut_hl_cycle_errors_total 1" in rendered
+    assert "torghut_hl_optimizer_runs_total 0" in rendered
     assert runtime_api.healthz() == {"status": "ok"}
 
     fake_state = SimpleNamespace(
@@ -612,17 +622,24 @@ def test_api_run_one_cycle_success_and_failure(monkeypatch: pytest.MonkeyPatch) 
     class FakeService:
         def __init__(self, *, fail: bool = False) -> None:
             self.fail = fail
+            self.optimizer_calls = 0
 
         def run_once(self, _session: FakeSession) -> CycleResult:
             if self.fail:
                 raise RuntimeError("cycle_failed")
             return _cycle()
 
+        def run_optimizer_once(self, _session: FakeSession) -> OptimizerGateResult:
+            self.optimizer_calls += 1
+            return OptimizerGateResult(promoted=False, reasons=("insufficient",))
+
     session = FakeSession()
     state = SimpleNamespace(
+        config=_config(HYPERLIQUID_RUNTIME_OPTIMIZER_ENABLED="false"),
         service=FakeService(),
         latest_cycle=None,
         latest_error=None,
+        latest_optimizer_at=None,
         metrics=HyperliquidRuntimeMetrics(),
     )
     monkeypatch.setattr(runtime_api, "SessionLocal", lambda: session)
@@ -641,6 +658,55 @@ def test_api_run_one_cycle_success_and_failure(monkeypatch: pytest.MonkeyPatch) 
     assert failing_session.rolled_back
     assert failing_session.closed
     assert state.latest_error == "RuntimeError:cycle_failed"
+
+
+def test_api_run_one_cycle_runs_optimizer_when_due(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+        def rollback(self) -> None:
+            raise AssertionError("rollback should not run")
+
+    class FakeService:
+        def __init__(self) -> None:
+            self.optimizer_calls = 0
+
+        def run_once(self, _session: FakeSession) -> CycleResult:
+            return _cycle()
+
+        def run_optimizer_once(self, _session: FakeSession) -> OptimizerGateResult:
+            self.optimizer_calls += 1
+            return OptimizerGateResult(promoted=True, reasons=())
+
+    session = FakeSession()
+    service = FakeService()
+    state = SimpleNamespace(
+        config=_config(
+            HYPERLIQUID_RUNTIME_OPTIMIZER_ENABLED="true",
+            HYPERLIQUID_RUNTIME_OPTIMIZER_INTERVAL_SECONDS="1",
+        ),
+        service=service,
+        latest_cycle=None,
+        latest_error=None,
+        latest_optimizer_at=None,
+        metrics=HyperliquidRuntimeMetrics(),
+    )
+    monkeypatch.setattr(runtime_api, "SessionLocal", lambda: session)
+    monkeypatch.setattr(runtime_api, "runtime_state", state)
+
+    runtime_api._run_one_cycle()
+
+    assert service.optimizer_calls == 1
+    assert state.latest_optimizer_at is not None
+    assert state.metrics.optimizer_runs_total == 1
+    assert state.metrics.optimizer_promoted_total == 1
+    assert session.closed
 
 
 def test_runtime_loop_continues_after_cycle_failure(

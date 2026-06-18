@@ -43,6 +43,7 @@ class HyperliquidRuntimeConfig:
     min_order_size: Decimal
     strategy_parameter_version: str
     optimizer_enabled: bool
+    optimizer_interval_seconds: int
     optimizer_min_trades: int
     optimizer_max_drawdown_usd: Decimal
     optimizer_min_net_pnl_usd: Decimal
@@ -158,6 +159,9 @@ class HyperliquidRuntimeConfig:
             optimizer_enabled=_bool(
                 source, "HYPERLIQUID_RUNTIME_OPTIMIZER_ENABLED", True
             ),
+            optimizer_interval_seconds=_int(
+                source, "HYPERLIQUID_RUNTIME_OPTIMIZER_INTERVAL_SECONDS", 3600
+            ),
             optimizer_min_trades=_int(
                 source, "HYPERLIQUID_RUNTIME_OPTIMIZER_MIN_TRADES", 40
             ),
@@ -212,6 +216,8 @@ class HyperliquidRuntimeConfig:
             errors.append("max_slippage_bps_must_be_positive")
         if self.tigerbeetle_cluster_id <= 0:
             errors.append("tigerbeetle_cluster_id_must_be_positive")
+        if self.optimizer_interval_seconds <= 0:
+            errors.append("optimizer_interval_seconds_must_be_positive")
         if self.tigerbeetle_rpc_timeout_seconds <= 0:
             errors.append("tigerbeetle_rpc_timeout_seconds_must_be_positive")
         if self.tigerbeetle_enabled and not self.tigerbeetle_replica_addresses:

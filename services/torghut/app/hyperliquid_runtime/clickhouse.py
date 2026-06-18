@@ -132,6 +132,26 @@ class ClickHouseRuntimeReader:
         """
         return [_feature_from_row(row) for row in self.query_json_each_row(query)]
 
+    def load_optimizer_history_summary(self) -> dict[str, object]:
+        database = _identifier(self._config.clickhouse_database)
+        network = _sql_string(self._config.market_data_network)
+        query = f"""
+        SELECT
+          count() AS feature_rows,
+          uniqExact(market_id) AS market_count,
+          min(event_ts) AS min_event_ts,
+          max(event_ts) AS max_event_ts,
+          avg(toFloat64OrZero(toString(momentum_5m_bps))) AS avg_momentum_5m_bps,
+          avg(toFloat64OrZero(toString(spread_bps))) AS avg_spread_bps,
+          sum(if(source_lag_seconds > {self._config.signal_staleness_seconds}, 1, 0))
+            AS stale_feature_rows
+        FROM {database}.hyperliquid_ta_features
+        WHERE network = {network}
+          AND event_ts >= now() - INTERVAL 24 HOUR
+        """
+        rows = self.query_json_each_row(query)
+        return rows[0] if rows else _empty_optimizer_history_summary()
+
     def status(self) -> ClickHouseStatus:
         database = _identifier(self._config.clickhouse_database)
         query = f"""
@@ -195,6 +215,14 @@ class ClickHouseRuntimeReader:
                     }
                 )
         return rows
+
+
+def _empty_optimizer_history_summary() -> dict[str, object]:
+    return {
+        "feature_rows": 0,
+        "market_count": 0,
+        "stale_feature_rows": 0,
+    }
 
 
 def _request_clickhouse(

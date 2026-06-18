@@ -25,6 +25,12 @@ from .models import (
     Signal,
     RiskVerdict,
 )
+from .optimizer import (
+    OptimizerGateResult,
+    build_optimizer_candidate,
+    evaluate_optimizer_candidate,
+    persist_optimizer_run,
+)
 from .repository import HyperliquidRuntimeRepository
 from .risk import build_order_intent, evaluate_signal_risk
 from .runtime_session import RuntimeSession
@@ -45,6 +51,10 @@ class HyperliquidRuntimeClickHouse(Protocol):
 
     def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
         """Load latest feature rows for selected markets."""
+        ...
+
+    def load_optimizer_history_summary(self) -> dict[str, object]:
+        """Load bounded ClickHouse market history for offline optimizer input."""
         ...
 
 
@@ -112,6 +122,22 @@ class HyperliquidRuntimeService:
             blocked_decisions=counts.blocked,
             dependency_statuses=context.dependencies,
         )
+
+    def run_optimizer_once(
+        self,
+        session: RuntimeSession,
+    ) -> OptimizerGateResult | None:
+        if not self._config.optimizer_enabled:
+            return None
+        candidate = build_optimizer_candidate(
+            session,
+            config=self._config,
+            history_summary=self._clickhouse.load_optimizer_history_summary(),
+        )
+        result = evaluate_optimizer_candidate(candidate, self._config)
+        persist_optimizer_run(session, candidate, result)
+        session.commit()
+        return result
 
     def _load_cycle_context(
         self,

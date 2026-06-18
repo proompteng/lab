@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Response
@@ -17,6 +18,7 @@ from .exchange import exchange_from_config
 from .ledger import HyperliquidTigerBeetleJournal
 from .metrics import HyperliquidRuntimeMetrics
 from .models import CycleResult
+from .runtime_session import RuntimeSession
 from .service import HyperliquidRuntimeService, runtime_readiness
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,7 @@ class RuntimeAppState:
         self.metrics = HyperliquidRuntimeMetrics()
         self.latest_cycle: CycleResult | None = None
         self.latest_error: str | None = None
+        self.latest_optimizer_at: datetime | None = None
         self.service = HyperliquidRuntimeService(
             config=self.config,
             clickhouse=ClickHouseRuntimeReader(self.config),
@@ -120,6 +123,7 @@ def _run_one_cycle() -> CycleResult:
         runtime_state.latest_cycle = result
         runtime_state.latest_error = None
         runtime_state.metrics.record_cycle(result)
+        _run_optimizer_if_due(session, result.observed_at)
         return result
     except Exception as exc:
         session.rollback()
@@ -128,3 +132,29 @@ def _run_one_cycle() -> CycleResult:
         raise
     finally:
         session.close()
+
+
+def _run_optimizer_if_due(
+    session: RuntimeSession,
+    observed_at: datetime,
+) -> None:
+    if not runtime_state.config.optimizer_enabled:
+        return
+    latest_optimizer_at = runtime_state.latest_optimizer_at
+    if latest_optimizer_at is not None:
+        elapsed_seconds = (
+            observed_at.astimezone(timezone.utc)
+            - latest_optimizer_at.astimezone(timezone.utc)
+        ).total_seconds()
+        if elapsed_seconds < runtime_state.config.optimizer_interval_seconds:
+            return
+    try:
+        result = runtime_state.service.run_optimizer_once(session)
+    except Exception as exc:
+        logger.exception("Hyperliquid optimizer cycle failed")
+        runtime_state.metrics.record_optimizer_error(exc)
+        return
+    if result is None:
+        return
+    runtime_state.latest_optimizer_at = observed_at
+    runtime_state.metrics.record_optimizer(result)
