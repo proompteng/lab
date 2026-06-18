@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Iterable
+from typing import Iterable, Mapping, cast
 
 from sqlalchemy import text
 
@@ -17,6 +17,7 @@ from .models import (
     HyperliquidMarket,
     OrderIntent,
     OrderResult,
+    OrderSide,
     PerformanceSnapshot,
     RiskState,
     RuntimeDependencyStatus,
@@ -265,6 +266,93 @@ class HyperliquidRuntimeRepository:
             },
         )
         return order_id
+
+    def reconcile_closed_orders(
+        self, *, open_order_market_ids: frozenset[str]
+    ) -> list[tuple[OrderIntent, OrderResult]]:
+        release_orders: list[tuple[OrderIntent, OrderResult]] = []
+        rows = self._session.execute(
+            text(
+                """
+                    SELECT
+                      o.decision_id,
+                      o.network,
+                      o.market_id,
+                      o.coin,
+                      o.cloid,
+                      o.exchange_order_id,
+                      o.side,
+                      o.size,
+                      o.limit_price,
+                      o.notional_usd,
+                      o.reduce_only,
+                      EXISTS (
+                        SELECT 1
+                        FROM hyperliquid_runtime_fills f
+                        WHERE f.network = o.network
+                          AND f.exchange_order_id IS NOT NULL
+                          AND f.exchange_order_id = o.exchange_order_id
+                      ) AS has_fill
+                    FROM hyperliquid_runtime_orders o
+                    WHERE o.network = 'testnet'
+                      AND o.status IN ('accepted', 'submitted')
+                    """
+            )
+        ).mappings()
+        for row in rows:
+            row_map = cast(Mapping[str, object], row)
+            market_id = str(row_map["market_id"])
+            if market_id in open_order_market_ids:
+                continue
+            has_fill = bool(row_map["has_fill"])
+            reconciled_status = "filled" if has_fill else "cancelled"
+            rejection_reason = None
+            if not has_fill:
+                rejection_reason = "not_open_on_exchange_reconciliation"
+            reconciliation_payload: dict[str, object] = {
+                "source": "exchange_open_orders",
+                "open_on_exchange": False,
+                "filled_from_reconciled_fills": has_fill,
+            }
+            raw_response: dict[str, object] = {"reconciliation": reconciliation_payload}
+            self._session.execute(
+                text(
+                    """
+                    UPDATE hyperliquid_runtime_orders
+                    SET
+                      status = :status,
+                      rejection_reason = :rejection_reason,
+                      raw_response = raw_response || CAST(:raw_response AS jsonb),
+                      updated_at = now()
+                    WHERE network = :network
+                      AND cloid = :cloid
+                      AND status IN ('accepted', 'submitted')
+                    """
+                ),
+                {
+                    "network": str(row_map["network"]),
+                    "cloid": str(row_map["cloid"]),
+                    "status": reconciled_status,
+                    "rejection_reason": rejection_reason,
+                    "raw_response": json.dumps(raw_response, sort_keys=True),
+                },
+            )
+            if not has_fill:
+                intent = _order_intent_from_row(row_map)
+                release_orders.append(
+                    (
+                        intent,
+                        OrderResult(
+                            status="cancelled",
+                            exchange_order_id=_optional_text(
+                                row_map["exchange_order_id"]
+                            ),
+                            raw_response=raw_response,
+                            rejection_reason=rejection_reason,
+                        ),
+                    )
+                )
+        return release_orders
 
     def upsert_fills(self, fills: Iterable[Fill]) -> int:
         count = 0
@@ -534,6 +622,41 @@ def _decision_hash(
     return hashlib.sha256(
         f"{signal_id}\0{status}\0{reason}".encode("utf-8")
     ).hexdigest()
+
+
+def _order_intent_from_row(row: Mapping[str, object]) -> OrderIntent:
+    return OrderIntent(
+        market_id=str(row["market_id"]),
+        coin=str(row["coin"]),
+        dex=_coin_dex(str(row["coin"])),
+        side=_order_side(row["side"]),
+        size=Decimal(str(row["size"])),
+        limit_price=Decimal(str(row["limit_price"])),
+        notional_usd=Decimal(str(row["notional_usd"])),
+        cloid=str(row["cloid"]),
+        reduce_only=bool(row["reduce_only"]),
+        decision_id=str(row["decision_id"]),
+    )
+
+
+def _order_side(value: object) -> OrderSide:
+    side = str(value)
+    if side not in {"buy", "sell"}:
+        raise ValueError(f"invalid_order_side:{side}")
+    return cast(OrderSide, side)
+
+
+def _coin_dex(coin: str) -> str:
+    prefix, separator, _suffix = coin.partition(":")
+    if not separator:
+        return "default"
+    return prefix.strip()
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
 
 
 def _decimal_or_none(value: Decimal | None) -> str | None:

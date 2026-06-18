@@ -39,6 +39,12 @@ class HyperliquidExchange(Protocol):
         """Read current account and position state from the dedicated testnet account."""
         ...
 
+    def reconcile_open_order_market_ids(
+        self, market_id_by_coin: dict[str, str]
+    ) -> frozenset[str]:
+        """Read market ids with currently open exchange orders."""
+        ...
+
     def filter_supported_markets(
         self,
         markets: tuple[HyperliquidMarket, ...],
@@ -88,6 +94,13 @@ class ShadowHyperliquidExchange:
             ),
             positions=(),
         )
+
+    def reconcile_open_order_market_ids(
+        self, market_id_by_coin: dict[str, str]
+    ) -> frozenset[str]:
+        _ = market_id_by_coin
+        self._observed_at = datetime.now(timezone.utc)
+        return frozenset()
 
     def filter_supported_markets(
         self,
@@ -145,6 +158,14 @@ class UnavailableHyperliquidExchange:
                 raw_payload={"unavailable": True, "reasons": list(self._reasons)},
             ),
             positions=(),
+        )
+
+    def reconcile_open_order_market_ids(
+        self, market_id_by_coin: dict[str, str]
+    ) -> frozenset[str]:
+        _ = market_id_by_coin
+        raise RuntimeError(
+            f"hyperliquid_exchange_unavailable:{','.join(self._reasons)}"
         )
 
     def filter_supported_markets(
@@ -238,6 +259,25 @@ class HyperliquidSdkExchange:
         raw_state = cast(dict[str, object], info.user_state(account))
         self._last_exchange_read_at = observed_at
         return _account_state_from_payload(raw_state, market_id_by_coin, observed_at)
+
+    def reconcile_open_order_market_ids(
+        self, market_id_by_coin: dict[str, str]
+    ) -> frozenset[str]:
+        info = self._info()
+        account = self._config.account_address
+        if account is None:
+            return frozenset()
+        open_market_ids: set[str] = set()
+        for dex in _open_order_dexes(market_id_by_coin):
+            raw_orders = cast(
+                list[dict[str, object]], info.open_orders(account, dex=dex)
+            )
+            for raw_order in raw_orders:
+                market_id = market_id_by_coin.get(_open_order_coin(raw_order))
+                if market_id:
+                    open_market_ids.add(market_id)
+        self._last_exchange_read_at = datetime.now(timezone.utc)
+        return frozenset(open_market_ids)
 
     def filter_supported_markets(
         self,
@@ -493,6 +533,10 @@ def _fill_coin(payload: dict[str, object]) -> str:
     return str(payload.get("coin") or "").strip()
 
 
+def _open_order_coin(payload: dict[str, object]) -> str:
+    return str(payload.get("coin") or "").strip()
+
+
 def _account_state_from_payload(
     payload: dict[str, object],
     market_id_by_coin: dict[str, str],
@@ -566,6 +610,19 @@ def _execution_metadata_dexes(
     dexes = {_sdk_dex(market.dex) for market in markets}
     _ = execution_network
     return tuple(sorted(dexes))
+
+
+def _open_order_dexes(market_id_by_coin: dict[str, str]) -> tuple[str, ...]:
+    dexes = {_coin_dex(coin) for coin in market_id_by_coin}
+    dexes.add("")
+    return tuple(sorted(dexes))
+
+
+def _coin_dex(coin: str) -> str:
+    prefix, separator, _suffix = coin.partition(":")
+    if not separator:
+        return ""
+    return prefix.strip()
 
 
 def _decimal(value: object) -> Decimal:

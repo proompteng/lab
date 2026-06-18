@@ -157,6 +157,7 @@ class _FakeSession:
     def __init__(self) -> None:
         self.executed: list[tuple[str, dict[str, object] | None]] = []
         self.committed = False
+        self.closed_order_rows: list[dict[str, object]] = []
 
     def execute(
         self, statement: object, params: dict[str, object] | None = None
@@ -176,6 +177,8 @@ class _FakeSession:
             )
         if "SELECT DISTINCT market_id" in sql:
             return _MappingResult([{"market_id": "hl:perp:cash:cash:AAPL"}])
+        if "FROM hyperliquid_runtime_orders o" in sql:
+            return _MappingResult(self.closed_order_rows)
         if "fill_summary AS" in sql:
             return _MappingResult(
                 [
@@ -250,11 +253,82 @@ def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
     )
 
 
+def test_repository_reconciles_orders_not_open_on_exchange() -> None:
+    session = _FakeSession()
+    session.closed_order_rows = [
+        {
+            "decision_id": "decision-cancelled",
+            "network": "testnet",
+            "market_id": "hl:perp:cash:cash:AAPL",
+            "coin": "cash:AAPL",
+            "cloid": "0x11111111111111111111111111111111",
+            "exchange_order_id": "41",
+            "side": "buy",
+            "size": "0.1",
+            "limit_price": "200",
+            "notional_usd": "20",
+            "reduce_only": False,
+            "has_fill": False,
+        },
+        {
+            "decision_id": "decision-filled",
+            "network": "testnet",
+            "market_id": "hl:perp:cash:cash:MSFT",
+            "coin": "cash:MSFT",
+            "cloid": "0x22222222222222222222222222222222",
+            "exchange_order_id": "42",
+            "side": "sell",
+            "size": "0.2",
+            "limit_price": "300",
+            "notional_usd": "60",
+            "reduce_only": False,
+            "has_fill": True,
+        },
+        {
+            "decision_id": "decision-open",
+            "network": "testnet",
+            "market_id": "hl:perp:cash:cash:TSLA",
+            "coin": "cash:TSLA",
+            "cloid": "0x33333333333333333333333333333333",
+            "exchange_order_id": "43",
+            "side": "buy",
+            "size": "0.1",
+            "limit_price": "250",
+            "notional_usd": "25",
+            "reduce_only": False,
+            "has_fill": False,
+        },
+    ]
+    repository = HyperliquidRuntimeRepository(session)
+
+    release_orders = repository.reconcile_closed_orders(
+        open_order_market_ids=frozenset({"hl:perp:cash:cash:TSLA"})
+    )
+
+    assert len(release_orders) == 1
+    intent, result = release_orders[0]
+    assert intent.market_id == "hl:perp:cash:cash:AAPL"
+    assert intent.dex == "cash"
+    assert result.status == "cancelled"
+    assert result.rejection_reason == "not_open_on_exchange_reconciliation"
+    update_params = [
+        params
+        for sql, params in session.executed
+        if "UPDATE hyperliquid_runtime_orders" in sql
+    ]
+    assert [params["status"] for params in update_params if params] == [
+        "cancelled",
+        "filled",
+    ]
+
+
 class _FakeRepository:
     def __init__(self, _session: _FakeSession) -> None:
         self.orders: list[tuple[OrderIntent, OrderResult]] = []
         self.performance: list[PerformanceSnapshot] = []
         self.account_states: list[AccountState] = []
+        self.closed_order_releases: list[tuple[OrderIntent, OrderResult]] = []
+        self.reconciled_open_order_market_ids: list[frozenset[str]] = []
 
     def upsert_markets(self, markets: list[HyperliquidMarket]) -> None:
         self.markets = markets
@@ -265,6 +339,12 @@ class _FakeRepository:
 
     def upsert_account_state(self, account_state: AccountState) -> None:
         self.account_states.append(account_state)
+
+    def reconcile_closed_orders(
+        self, *, open_order_market_ids: frozenset[str]
+    ) -> list[tuple[OrderIntent, OrderResult]]:
+        self.reconciled_open_order_market_ids.append(open_order_market_ids)
+        return self.closed_order_releases
 
     def risk_state(
         self, *, dependencies: tuple[RuntimeDependencyStatus, ...]
@@ -332,11 +412,14 @@ class _FakeExchange:
         fills: bool = True,
         supports_markets: bool = True,
         fail_submit: bool = False,
+        open_order_market_ids: frozenset[str] | None = None,
     ) -> None:
         self.submitted: list[OrderIntent] = []
+        self.open_order_reconcile_inputs: list[dict[str, str]] = []
         self._fills = fills
         self._supports_markets = supports_markets
         self._fail_submit = fail_submit
+        self._open_order_market_ids = open_order_market_ids or frozenset()
 
     def filter_supported_markets(
         self,
@@ -363,6 +446,12 @@ class _FakeExchange:
 
     def reconcile_account(self, _market_id_by_coin: dict[str, str]) -> AccountState:
         return _account_state()
+
+    def reconcile_open_order_market_ids(
+        self, market_id_by_coin: dict[str, str]
+    ) -> frozenset[str]:
+        self.open_order_reconcile_inputs.append(market_id_by_coin)
+        return self._open_order_market_ids
 
     def dependency_status(self) -> RuntimeDependencyStatus:
         return RuntimeDependencyStatus("hyperliquid_exchange_shadow", True)
@@ -453,10 +542,60 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     assert repository.account_states[0].positions[0].coin == "cash:AAPL"
     assert repository.performance[0].reconciliation_status == "pass"
     assert exchange.dead_man_seconds == 60
+    assert exchange.open_order_reconcile_inputs == [
+        {"cash:AAPL": "hl:perp:cash:cash:AAPL"}
+    ]
     assert [event.transfer_kind for event in journal.persisted] == [
         "fill",
         "order_submitted",
     ]
+
+
+def test_runtime_service_releases_reconciled_closed_orders(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    repository.closed_order_releases = [
+        (
+            _intent(),
+            OrderResult(
+                status="cancelled",
+                exchange_order_id="42",
+                raw_response={
+                    "reconciliation": {
+                        "source": "exchange_open_orders",
+                        "open_on_exchange": False,
+                    }
+                },
+                rejection_reason="not_open_on_exchange_reconciliation",
+            ),
+        )
+    ]
+    exchange = _FakeExchange(fills=False)
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(features=[]),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert result.orders_submitted == 0
+    assert repository.reconciled_open_order_market_ids == [frozenset()]
+    assert [event.transfer_kind for event in journal.persisted] == ["order_cancelled"]
+    assert session.committed
 
 
 def test_runtime_service_persists_guarded_optimizer_run() -> None:

@@ -273,6 +273,10 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
 ) -> None:
     shadow = ShadowHyperliquidExchange()
     assert shadow.reconcile_fills({"cash:AAPL": "hl:perp:cash:cash:AAPL"}) == []
+    assert (
+        shadow.reconcile_open_order_market_ids({"cash:AAPL": "hl:perp:cash:cash:AAPL"})
+        == frozenset()
+    )
     shadow_markets, shadow_status = shadow.filter_supported_markets((_market(),))
     assert shadow_markets == (_market(),)
     assert shadow_status.ready
@@ -288,6 +292,10 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     assert not unavailable_status.ready
     with pytest.raises(RuntimeError, match="hyperliquid_exchange_unavailable"):
         unavailable.submit_ioc_limit(_intent())
+    with pytest.raises(RuntimeError, match="hyperliquid_exchange_unavailable"):
+        unavailable.reconcile_open_order_market_ids(
+            {"cash:AAPL": "hl:perp:cash:cash:AAPL"}
+        )
     unavailable.schedule_dead_man_cancel(seconds_from_now=30)
 
     sdk_calls: dict[str, object] = {}
@@ -330,6 +338,15 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
                 },
                 {"coin": "BTC", "side": "A", "px": "1", "sz": "1", "time": 0},
             ]
+
+        def open_orders(self, account: str, dex: str = "") -> list[dict[str, object]]:
+            sdk_calls["open_orders_account"] = account
+            open_order_dexes = sdk_calls.setdefault("open_order_dexes", [])
+            assert isinstance(open_order_dexes, list)
+            open_order_dexes.append(dex)
+            if dex == "":
+                return [{"coin": "SPX"}, {"coin": "BTC"}]
+            return [{"coin": "cash:AAPL"}]
 
         def meta(self, dex: str = "") -> dict[str, object]:
             meta_dexes = sdk_calls.setdefault("meta_dexes", [])
@@ -405,6 +422,12 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
         )
     )
     fills = sdk_exchange.reconcile_fills({"cash:AAPL": "hl:perp:cash:cash:AAPL"})
+    open_market_ids = sdk_exchange.reconcile_open_order_market_ids(
+        {
+            "SPX": "hl:perp:default:SPX",
+            "cash:AAPL": "hl:perp:cash:cash:AAPL",
+        }
+    )
     sdk_exchange.schedule_dead_man_cancel(seconds_from_now=30)
 
     assert supported_markets == (
@@ -418,6 +441,8 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     assert empty_status.ready
     assert sdk_calls["meta_dexes"] == ["", "cash"]
     assert sdk_calls["exchange_init"][1]["perp_dexs"] == ["", "cash"]
+    assert sdk_calls["open_order_dexes"] == ["", "cash"]
+    assert sdk_calls["open_orders_account"] == "0xabc"
     assert result.status == "accepted"
     assert result.exchange_order_id == "42"
     assert non_default_result.status == "accepted"
@@ -426,6 +451,9 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     assert sdk_calls["orders"][1]["name"] == "cash:AAPL"
     assert fills[0].notional_usd == Decimal("20.0")
     assert fills[0].fee_usd == Decimal("0.02")
+    assert open_market_ids == frozenset(
+        {"hl:perp:default:SPX", "hl:perp:cash:cash:AAPL"}
+    )
     assert sdk_exchange.dependency_status().ready
     assert isinstance(exchange_from_config(config), HyperliquidSdkExchange)
 
