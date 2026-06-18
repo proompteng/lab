@@ -21,14 +21,14 @@ def test_source_literal_lines_decodes_generated_payload_lines() -> None:
 def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
     output = "\n".join(
         (
-            "app/trading/research_sleeves.py:1:0: C0302: Too many lines in module (5658/1000) (too-many-lines)",
+            "app/trading/autonomy/lane.py:1:0: C0302: Too many lines in module (8088/1000) (too-many-lines)",
             "app/trading/new_long_module.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)",
         )
     )
 
     messages = _filter_legacy_extracted_messages(
         output,
-        extracted_paths={"app/trading/research_sleeves.py"},
+        extracted_paths={"app/trading/autonomy/lane.py"},
     )
 
     assert messages == [
@@ -37,6 +37,10 @@ def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
 
 
 def test_file_length_filter_carries_transitional_extracted_source_baseline() -> None:
+    assert (
+        "app/trading/research_sleeves.py" not in _TRANSITIONAL_EXTRACTED_SOURCE_MODULES
+    )
+
     output = "\n".join(
         (
             "scripts/run_whitepaper_autoresearch_profit_target.py:1:0: C0302: Too many lines in module (13541/1000) (too-many-lines)",
