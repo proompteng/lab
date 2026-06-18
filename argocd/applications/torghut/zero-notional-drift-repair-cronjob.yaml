@@ -24,7 +24,7 @@ spec:
           serviceAccountName: torghut-runtime
           containers:
             - name: run-zero-notional-drift-repair
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:4801448cb9c5132deee894e7a5271d70fbf2b2065dc7815cdbae8202e91cbe82
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:c65216dbbadf512272037624a223c129afa2b6965ff14c5c0b0b3ae493d09767
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
