@@ -57,19 +57,39 @@ def test_torghut_pylint_quality_plugin_accepts_normal_modules(
     assert "torghut-" not in result.output
 
 
+def test_torghut_pylint_quality_plugin_ignores_forbidden_text_in_literals(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "fixture_text.py"
+    module_path.write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "FIXTURE_LINES = (",
+                '    "# pyright: reportPrivateUsage=false",',
+                '    "# ruff: noqa: F401,F403,F405",',
+                '    "answer = 1  # type: ignore[assignment]",',
+                '    "__compat_module_segments__ = []",',
+                '    "globals().update(other.__dict__)",',
+                '    "_sys.modules[__name__] = other",',
+                ")",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_quality_pylint(module_path)
+
+    assert result.returncode == 0, result.output
+    assert "torghut-" not in result.output
+
+
 def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
     tmp_path: Path,
 ) -> None:
-    dynamic_reexport = "globals()" + ".update(other.__dict__)"
-    module_replacement = "_sys." + "modules[__name__] = other"
-    module_class_mutation = "_sys." + "modules[__name__].__class__ = Facade"
-    dynamic_exports = "__all__ = [name for name in " + "globals() if name]"
-    type_suppression = "# type:" + " ignore[assignment]"
-    private_usage_suppression = "# pyright: " + "report" + "PrivateUsage" + "=false"
-    wildcard_ruff_suppression = "# ruff: noqa: F401,F" + "403"
-    compat_class = "class " + "Compat" + "Module:"
-    compat_registry = "__compat_" + "par" + "t_modules__ = []"
-    module_path = tmp_path / ("par" + "t_01_generated.py")
+    module_path = tmp_path / "part_01_generated.py"
     module_path.write_text(
         "\n".join(
             (
@@ -80,26 +100,26 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
                 "from math import *",
                 "",
                 "# pyright: reportUnknownMemberType=false",
-                private_usage_suppression,
-                wildcard_ruff_suppression,
+                "# pyright: reportPrivateUsage=false",
+                "# ruff: noqa: F401,F403",
                 "# pylint: disable=too-many-lines",
-                f"answer = 1  {type_suppression}",
+                "answer = 1  # type: ignore[assignment]",
                 "",
                 "class Facade(ModuleType):",
                 "    pass",
                 "",
-                compat_class,
+                "class CompatModule:",
                 "    pass",
                 "",
-                compat_registry,
+                "__compat_module_segments__ = []",
                 "",
                 "def __getattr__(name: str) -> object:",
                 "    raise AttributeError(name)",
                 "",
-                dynamic_exports,
-                dynamic_reexport,
-                module_replacement,
-                module_class_mutation,
+                "__all__ = [name for name in globals() if name]",
+                "globals().update(other.__dict__)",
+                "_sys.modules[__name__] = other",
+                "_sys.modules[__name__].__class__ = Facade",
                 "",
             )
         ),
@@ -135,7 +155,6 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
 def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(
     tmp_path: Path,
 ) -> None:
-    wildcard_ruff_suppression = "# ruff: noqa: F401,F" + "403,F" + "405"
     wrapper_path = tmp_path / "test_old_wrapper.py"
     wrapper_path.write_text(
         "\n".join(
@@ -155,7 +174,7 @@ def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(
             (
                 "from __future__ import annotations",
                 "",
-                wildcard_ruff_suppression,
+                "# ruff: noqa: F401,F403,F405",
                 "",
             )
         ),

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 from typing import NamedTuple
 
@@ -16,69 +18,44 @@ PLUGIN_PATH = Path(__file__).resolve()
 GENERATED_SPLIT_NAME_RE = re.compile(
     r"^(?:part_\d+|source_part_\d+|test_part_\d+).*\.(?:py|pyi)$"
 )
-PYRIGHT_PRIVATE_USAGE_SETTING = "report" + "PrivateUsage"
+PYRIGHT_PRIVATE_USAGE_SETTING = "reportPrivateUsage"
 
 
-class TextRule(NamedTuple):
+class CommentRule(NamedTuple):
     pattern: re.Pattern[str]
     symbol: str
     reason: str
 
 
-FORBIDDEN_TEXT_RULES: tuple[TextRule, ...] = (
-    TextRule(
-        re.compile(r"\bglobals\(\)\.update\("),
-        "torghut-dynamic-globals-reexport",
-        "dynamic globals re-export",
-    ),
-    TextRule(
-        re.compile(r"\b__CompatModule__\b|\bCompatModule\b"),
-        "torghut-compat-module-wrapper",
-        "custom compatibility module wrapper",
-    ),
-    TextRule(
-        re.compile(r"\b__compat_" + "par" + r"t_modules__\b"),
-        "torghut-compat-module-registry",
-        "generated compatibility registry",
-    ),
-    TextRule(
-        re.compile(r"sys\.modules\[[^\]]+\]\.__class__\s*="),
-        "torghut-module-class-mutation",
-        "module class mutation",
-    ),
-    TextRule(
-        re.compile(r"sys\.modules\[[^\]]+\]\s*="),
-        "torghut-module-replacement",
-        "module replacement",
-    ),
-    TextRule(
+FORBIDDEN_COMMENT_RULES: tuple[CommentRule, ...] = (
+    CommentRule(
         re.compile(
             rf"^\s*#\s*pyright:.*\b{PYRIGHT_PRIVATE_USAGE_SETTING}\s*=\s*false\b"
         ),
         "torghut-private-pyright-suppression",
         "private-usage Pyright suppression",
     ),
-    TextRule(
+    CommentRule(
         re.compile(r"^\s*#\s*pyright:.*(?:=false|\bignore\b)"),
         "torghut-file-pyright-suppression",
         "file-level Pyright suppression",
     ),
-    TextRule(
+    CommentRule(
         re.compile(r"#\s*type:\s*ignore\b"),
         "torghut-type-ignore",
         "type-check suppression",
     ),
-    TextRule(
+    CommentRule(
         re.compile(r"^\s*#\s*ruff:\s*noqa\b"),
         "torghut-file-ruff-noqa",
         "file-level Ruff suppression",
     ),
-    TextRule(
+    CommentRule(
         re.compile(r"^\s*#\s*ruff:\s*noqa:.*\bF(?:403|405)\b"),
         "torghut-wildcard-ruff-noqa",
         "wildcard-import Ruff suppression",
     ),
-    TextRule(
+    CommentRule(
         re.compile(r"^\s*#\s*pylint:\s*disable=.*(?:too-many-lines|all)"),
         "torghut-blanket-pylint-disable",
         "blanket Pylint suppression",
@@ -107,7 +84,7 @@ class TorghutQualityChecker(BaseChecker):
         "C9004": (
             "%s: %s",
             "torghut-compat-module-registry",
-            "Used when generated part-module compatibility registries are present.",
+            "Used when generated compatibility module registries are present.",
         ),
         "C9005": (
             "%s: %s",
@@ -184,7 +161,7 @@ class TorghutQualityChecker(BaseChecker):
         text = _read_text(path)
         if text is None:
             return
-        self._check_text(node, text)
+        self._check_comments(node, text)
         self._check_ast(node, text)
         self._check_test_wrapper(node, path, text)
 
@@ -197,15 +174,27 @@ class TorghutQualityChecker(BaseChecker):
                 args=(path.name,),
             )
 
-    def _check_text(self, module_node: nodes.Module, text: str) -> None:
-        for line_number, line in enumerate(text.splitlines(), start=1):
-            for rule in FORBIDDEN_TEXT_RULES:
-                if rule.pattern.search(line):
+    def _check_comments(self, module_node: nodes.Module, text: str) -> None:
+        try:
+            tokens = tokenize.generate_tokens(io.StringIO(text).readline)
+            comment_tokens = [
+                token_info
+                for token_info in tokens
+                if token_info.type == tokenize.COMMENT
+            ]
+        except tokenize.TokenError:
+            return
+
+        for token_info in comment_tokens:
+            comment = token_info.string
+            line_number = token_info.start[0]
+            for rule in FORBIDDEN_COMMENT_RULES:
+                if rule.pattern.search(comment):
                     self.add_message(
                         rule.symbol,
                         node=module_node,
                         line=line_number,
-                        args=(rule.reason, line.strip()),
+                        args=(rule.reason, comment.strip()),
                     )
 
     def _check_ast(self, module_node: nodes.Module, text: str) -> None:
@@ -225,8 +214,17 @@ class TorghutQualityChecker(BaseChecker):
             self._check_assignment(module_node, node)
         elif isinstance(node, ast.ImportFrom):
             self._check_import_from(module_node, node)
+        elif isinstance(node, ast.Call):
+            self._check_call(module_node, node)
 
     def _check_class(self, module_node: nodes.Module, node: ast.ClassDef) -> None:
+        if node.name in {"CompatModule", "__CompatModule__"}:
+            self.add_message(
+                "torghut-compat-module-wrapper",
+                node=module_node,
+                line=node.lineno,
+                args=("custom compatibility module wrapper", node.name),
+            )
         if any(_is_module_type_base(base) for base in node.bases):
             self.add_message(
                 "torghut-custom-module-class",
@@ -251,6 +249,30 @@ class TorghutQualityChecker(BaseChecker):
             _is_dynamic_all_assignment(target, node.value) for target in node.targets
         ):
             self.add_message("torghut-dynamic-all", node=module_node, line=node.lineno)
+        for target in node.targets:
+            if _is_compat_module_registry_target(target):
+                self.add_message(
+                    "torghut-compat-module-registry",
+                    node=module_node,
+                    line=node.lineno,
+                    args=("generated compatibility registry", ast.unparse(target)),
+                )
+        for target in node.targets:
+            if _is_sys_modules_class_target(target):
+                self.add_message(
+                    "torghut-module-class-mutation",
+                    node=module_node,
+                    line=node.lineno,
+                    args=("module class mutation", ast.unparse(target)),
+                )
+        for target in node.targets:
+            if _is_sys_modules_replacement_target(target):
+                self.add_message(
+                    "torghut-module-replacement",
+                    node=module_node,
+                    line=node.lineno,
+                    args=("module replacement", ast.unparse(target)),
+                )
 
     def _check_import_from(
         self, module_node: nodes.Module, node: ast.ImportFrom
@@ -263,6 +285,16 @@ class TorghutQualityChecker(BaseChecker):
             node=module_node,
             line=node.lineno,
             args=(module,),
+        )
+
+    def _check_call(self, module_node: nodes.Module, node: ast.Call) -> None:
+        if not _is_globals_update_call(node):
+            return
+        self.add_message(
+            "torghut-dynamic-globals-reexport",
+            node=module_node,
+            line=node.lineno,
+            args=("dynamic globals re-export", ast.unparse(node)),
         )
 
     def _check_test_wrapper(
@@ -307,6 +339,45 @@ def _contains_globals_call(node: ast.AST) -> bool:
         ):
             return True
     return False
+
+
+def _is_compat_module_registry_target(target: ast.AST) -> bool:
+    return isinstance(target, ast.Name) and target.id in {
+        "__compat_part_modules__",
+        "__compat_module_segments__",
+    }
+
+
+def _is_sys_modules_class_target(target: ast.AST) -> bool:
+    return (
+        isinstance(target, ast.Attribute)
+        and target.attr == "__class__"
+        and _is_sys_modules_subscript(target.value)
+    )
+
+
+def _is_sys_modules_replacement_target(target: ast.AST) -> bool:
+    return _is_sys_modules_subscript(target)
+
+
+def _is_sys_modules_subscript(target: ast.AST) -> bool:
+    return (
+        isinstance(target, ast.Subscript)
+        and isinstance(target.value, ast.Attribute)
+        and target.value.attr == "modules"
+        and isinstance(target.value.value, ast.Name)
+        and target.value.value.id in {"sys", "_sys"}
+    )
+
+
+def _is_globals_update_call(node: ast.Call) -> bool:
+    return (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "update"
+        and isinstance(node.func.value, ast.Call)
+        and isinstance(node.func.value.func, ast.Name)
+        and node.func.value.func.id == "globals"
+    )
 
 
 def _is_dead_test_compat_wrapper(path: Path, text: str) -> bool:
