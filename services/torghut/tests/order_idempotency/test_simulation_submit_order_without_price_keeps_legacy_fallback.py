@@ -6,6 +6,7 @@ from tests.order_idempotency.support import (
     Decimal,
     ExecutionTCAMetric,
     FakeAlpacaClient,
+    FilledAlpacaClient,
     OrderExecutor,
     SimulationExecutionAdapter,
     Strategy,
@@ -124,16 +125,8 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 session, decision, strategy, "paper"
             )
 
-            class FilledClient(FakeAlpacaClient):
-                def submit_order(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-                    order = super().submit_order(*args, **kwargs)
-                    order["filled_qty"] = "2"
-                    order["filled_avg_price"] = "101"
-                    order["status"] = "filled"
-                    return order
-
             execution = executor.submit_order(
-                session, FilledClient(), decision, decision_row, "paper"
+                session, FilledAlpacaClient(), decision, decision_row, "paper"
             )
             assert execution is not None
             raw_order = execution.raw_order
@@ -259,16 +252,8 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 session, decision, strategy, "paper"
             )
 
-            class FilledClient(FakeAlpacaClient):
-                def submit_order(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-                    order = super().submit_order(*args, **kwargs)
-                    order["filled_qty"] = "2"
-                    order["filled_avg_price"] = "101"
-                    order["status"] = "filled"
-                    return order
-
             execution = executor.submit_order(
-                session, FilledClient(), decision, decision_row, "paper"
+                session, FilledAlpacaClient(), decision, decision_row, "paper"
             )
             assert execution is not None
             raw_order = execution.raw_order

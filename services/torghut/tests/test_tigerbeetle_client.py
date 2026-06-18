@@ -135,10 +135,16 @@ class TestTigerBeetleClient(TestCase):
         self.assertIn("RuntimeError: boom", health.last_error or "")
 
     def test_health_closes_owned_client(self) -> None:
+        class _ClosableFakeTigerBeetleClient(FakeTigerBeetleClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
         settings = Settings(TORGHUT_TIGERBEETLE_ENABLED=True)
-        client = FakeTigerBeetleClient()
-        closed: list[bool] = []
-        client.close = lambda: closed.append(True)  # type: ignore[attr-defined]
+        client = _ClosableFakeTigerBeetleClient()
 
         with patch(
             "app.trading.tigerbeetle_client.create_tigerbeetle_client",
@@ -147,7 +153,7 @@ class TestTigerBeetleClient(TestCase):
             health = check_tigerbeetle_health(settings)
 
         self.assertTrue(health.ok)
-        self.assertEqual(closed, [True])
+        self.assertTrue(client.closed)
 
     def test_create_tigerbeetle_client_uses_normalized_settings(self) -> None:
         settings = Settings(
@@ -408,9 +414,9 @@ class TestTigerBeetleClient(TestCase):
             def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
                 self.exited = True
 
-        client = object.__new__(RealTigerBeetleClient)
+        client: RealTigerBeetleClient = object.__new__(RealTigerBeetleClient)
         owned = _ExitOnly()
-        client._client = owned  # type: ignore[attr-defined]
+        client._client = owned
 
         client.close()
 
