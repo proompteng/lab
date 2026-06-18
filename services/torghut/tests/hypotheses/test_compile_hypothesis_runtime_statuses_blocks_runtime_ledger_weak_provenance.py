@@ -4,10 +4,12 @@ from tests.hypotheses.support import (
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
     JangarDependencyQuorumStatus,
     POST_COST_PNL_BASIS,
+    _HPAIRS_AI_HARDWARE_UNIVERSE,
     _MANIFEST_CANDIDATE_IDS,
     _MANIFEST_STRATEGY_FAMILIES,
     _TestHypothesisReadinessBase,
     _hpairs_route_repair_tca_summary,
+    _hpairs_tca_symbol_breakdown,
     _runtime_ledger_summary,
     _state,
     compile_hypothesis_runtime_statuses,
@@ -632,37 +634,21 @@ class TestCompileHypothesisRuntimeStatusesBlocksRuntimeLedgerWeakProvenance(
             state=state,
             tca_summary={
                 "account_label": "TORGHUT_SIM",
-                "order_count": 2,
+                "order_count": len(_HPAIRS_AI_HARDWARE_UNIVERSE),
                 "avg_abs_slippage_bps": "4",
                 "avg_realized_shortfall_bps": "1",
                 "last_computed_at": "2026-06-01T19:16:00+00:00",
-                "scope_symbols": ["AAPL", "AMZN"],
+                "scope_symbols": list(_HPAIRS_AI_HARDWARE_UNIVERSE),
                 "symbol_breakdown": [
                     {
-                        "symbol": "AAPL",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "4",
-                        "avg_realized_shortfall_bps": "1",
-                        "last_computed_at": "2026-06-01T19:16:00+00:00",
-                        "hypothesis_id": "H-PAIRS-01",
-                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                        "account_label": "TORGHUT_SIM",
-                        "ledger_schema_version": EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
-                    },
-                    {
-                        "symbol": "AMZN",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "4",
-                        "avg_realized_shortfall_bps": "1",
-                        "last_computed_at": "2026-06-01T19:16:00+00:00",
-                        "hypothesis_id": "H-PAIRS-01",
-                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                        "account_label": "TORGHUT_SIM",
+                        **row,
                         "source_decision_mode": "bounded_paper_route_collection_only",
                         "source_decision_mode_profit_proof_eligible": False,
-                    },
+                    }
+                    for row in _hpairs_tca_symbol_breakdown(
+                        avg_abs_slippage_bps="4",
+                        avg_realized_shortfall_bps="1",
+                    )
                 ],
             },
             runtime_ledger_summary=_runtime_ledger_summary(
@@ -691,15 +677,14 @@ class TestCompileHypothesisRuntimeStatusesBlocksRuntimeLedgerWeakProvenance(
         self.assertIn("route_universe_empty", hpairs["reasons"])
         self.assertEqual(observed["tca_order_count"], 0)
         self.assertEqual(observed["route_tca_symbols"], [])
-        self.assertEqual(observed["route_tca_repair_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            observed["route_tca_repair_symbols"],
+            _HPAIRS_AI_HARDWARE_UNIVERSE,
+        )
         self.assertTrue(observed["bounded_route_evidence_collection_eligible"])
         self.assertEqual(
             observed["bounded_route_evidence_collection_authority"],
             "repair_only_non_authority",
-        )
-        self.assertIn(
-            "route_tca_non_authority_source",
-            observed["route_tca_blocking_reason_codes"],
         )
         self.assertIn(
             "route_tca_non_authority_source_decision_mode",

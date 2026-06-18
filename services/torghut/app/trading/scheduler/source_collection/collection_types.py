@@ -47,8 +47,15 @@ class SourceCollectionDecisionPayload(NamedTuple):
     timeframe: str
 
 
+class SourceCollectionResolvedQuantity(NamedTuple):
+    qty: Decimal
+    audit: Mapping[str, Any]
+    price_params: Mapping[str, Any]
+
+
 class SourceCollectionDecisionRun(NamedTuple):
     session: Session | None
+    positions: Sequence[Mapping[str, Any]] | None
     blocked_symbols: set[str]
     seen: set[tuple[str, str, str, str]]
     now: datetime
@@ -158,6 +165,7 @@ __all__ = [
     "SourceCollectionExposure",
     "SourceCollectionMode",
     "SourceCollectionQuantityResolution",
+    "SourceCollectionResolvedQuantity",
     "SourceCollectionRuntime",
     "SourceCollectionState",
     "SourceCollectionTargetContext",

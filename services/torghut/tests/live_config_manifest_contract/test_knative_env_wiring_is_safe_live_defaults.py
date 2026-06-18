@@ -169,10 +169,10 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                 )
             elif name == "microbar-cross-sectional-pairs-v1":
                 self.assertIn("h-pairs", description)
-                self.assertEqual(
-                    tuple(str(symbol) for symbol in cast(list[object], raw_symbols)),
-                    ("AAPL", "AMZN"),
-                    f"{name} must stay aligned to the active H-PAIRS candidate pair",
+                _assert_exact_live_execution_chip_universe(
+                    self,
+                    cast(list[object], raw_symbols),
+                    context=f"{name} source collection universe",
                 )
             else:
                 self.assertIn("$300/day", description)
@@ -444,7 +444,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(
             sim_env.get("TRADING_STATIC_SYMBOLS"),
-            "AAPL,AMZN,INTC,NVDA",
+            ",".join(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE),
         )
         self.assertEqual(sim_env.get("CLICKHOUSE_DATABASE"), "torghut")
         self.assertEqual(sim_env.get("TRADING_SIGNAL_TABLE"), "torghut.ta_signals")
@@ -523,7 +523,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(
             sim_env.get("TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS"),
-            "AAPL,AMZN,INTC,NVDA",
+            ",".join(_QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE),
         )
         self.assertNotIn("JANGAR_SYMBOLS_URL", sim_env)
         self.assertNotIn("TRADING_JANGAR_CONTROL_PLANE_STATUS_URL", sim_env)

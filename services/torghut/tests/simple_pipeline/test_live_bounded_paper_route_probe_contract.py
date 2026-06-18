@@ -128,6 +128,104 @@ def test_live_bounded_paper_route_target_generates_capped_source_decisions(
         settings.trading_allow_shorts = allow_shorts_before
 
 
+def test_live_bounded_source_collection_skips_unactionable_short_open_leg(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
+    submit_enabled_before = settings.trading_simple_submit_enabled
+    activation_expires_at_before = settings.trading_live_submit_activation_expires_at
+    probe_max_notional_before = settings.trading_simple_paper_route_probe_max_notional
+    allow_shorts_before = settings.trading_allow_shorts
+    fractional_before = settings.trading_fractional_equities_enabled
+    try:
+        settings.trading_mode = "live"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_activation_expires_at = "2026-06-17T20:05:00Z"
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        settings.trading_allow_shorts = True
+        settings.trading_fractional_equities_enabled = True
+        now = datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc)
+        target = _bounded_hpairs_target(
+            account_label="TORGHUT_REPLAY",
+            source_account_label="TORGHUT_REPLAY",
+            paper_account_label="TORGHUT_REPLAY",
+            execution_account_label="TORGHUT_REPLAY",
+            paper_route_probe_symbols=["NVDA", "AMZN"],
+            paper_route_probe_symbol_actions={"NVDA": "buy", "AMZN": "sell"},
+            paper_route_probe_next_session_max_notional="100",
+            target_notional="100",
+            paper_route_probe_window_start="2026-06-17T13:30:00+00:00",
+            paper_route_probe_window_end="2026-06-17T20:00:00+00:00",
+            source_kind="runtime_ledger_source_collection_candidate",
+        )
+        strategy = Strategy(
+            name="microbar-cross-sectional-pairs-v1",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Sec",
+            universe_type="static",
+            universe_symbols=["NVDA", "AMZN"],
+        )
+        prices = {"NVDA": Decimal("50"), "AMZN": Decimal("500")}
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "PA3SX7FYNUTF"
+        pipeline.price_fetcher = SimpleNamespace(
+            fetch_market_snapshot=lambda signal: MarketSnapshot(
+                symbol=signal.symbol,
+                as_of=signal.event_ts,
+                price=prices[signal.symbol],
+                spread=Decimal("0"),
+                source="fixture",
+                bid=prices[signal.symbol],
+                ask=prices[signal.symbol],
+            )
+        )
+        pipeline._is_market_session_open = lambda _now: True
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            {"NVDA", "AMZN"},
+            None,
+            [target],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        decisions = pipeline._paper_route_target_source_decisions(
+            strategies=[strategy],
+            allowed_symbols={"NVDA", "AMZN"},
+            positions=[],
+            session=None,
+        )
+
+        assert [decision.symbol for decision in decisions] == ["NVDA"]
+        decision = decisions[0]
+        assert decision.action == "buy"
+        assert decision.qty == Decimal("1.0000")
+        sizing = decision.params["paper_route_target_notional_sizing"]
+        assert sizing["broker_resolved_qty"] == "1.0000"
+        assert sizing["broker_quantity_resolution"]["fractional_allowed"] is True
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = (
+            probe_allow_live_before
+        )
+        settings.trading_simple_submit_enabled = submit_enabled_before
+        settings.trading_live_submit_activation_expires_at = (
+            activation_expires_at_before
+        )
+        settings.trading_simple_paper_route_probe_max_notional = (
+            probe_max_notional_before
+        )
+        settings.trading_allow_shorts = allow_shorts_before
+        settings.trading_fractional_equities_enabled = fractional_before
+
+
 def test_live_bounded_paper_route_target_blocks_without_activation(
     monkeypatch,
 ) -> None:
