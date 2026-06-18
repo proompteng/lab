@@ -190,7 +190,11 @@ jobs:
           printf 'eligible=%s\n' "${ELIGIBLE}"
           printf 'reason=%s\n' "${REASON}"
 
-      - name: Verify source image build contract
+      - name: Set up Docker Buildx
+        if: steps.gates.outputs.eligible == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Verify source image digest contract
         if: steps.gates.outputs.eligible == 'true' && steps.gates.outputs.release_lane != 'hyperliquid-feed'
         shell: bash
         env:
@@ -205,19 +209,19 @@ jobs:
             codex/torghut-release-*)
               source_manifest='argocd/applications/torghut/knative-service.yaml'
               source_env_name='TORGHUT_COMMIT'
-              build_workflow='torghut-build-push.yaml'
+              expected_image='registry.ide-newton.ts.net/lab/torghut'
               build_label='Torghut'
               ;;
             codex/torghut-ta-release-*)
               source_manifest='argocd/applications/torghut/ta/flinkdeployment.yaml'
               source_env_name='TORGHUT_TA_COMMIT'
-              build_workflow='torghut-ta-build-push.yaml'
+              expected_image='registry.ide-newton.ts.net/lab/torghut-ta'
               build_label='Torghut TA'
               ;;
             codex/torghut-ws-release-*)
               source_manifest='argocd/applications/torghut/ws/deployment.yaml'
               source_env_name='TORGHUT_WS_COMMIT'
-              build_workflow='torghut-ws-build-push.yaml'
+              expected_image='registry.ide-newton.ts.net/lab/torghut-ws'
               build_label='Torghut WS'
               ;;
             *)
@@ -231,9 +235,11 @@ jobs:
               -H 'Accept: application/vnd.github.raw' \
               "repos/${GH_REPO}/contents/${source_manifest}?ref=${PR_HEAD_SHA}"
           )"
-          source_sha="$(
+
+          resolve_env_value() {
+            local env_name="$1"
             printf '%s\n' "${manifest}" |
-              awk -v env_name="${source_env_name}" '
+              awk -v env_name="${env_name}" '
                 $0 ~ "^[[:space:]]*- name:[[:space:]]*" env_name "[[:space:]]*$" { found = 1; next }
                 found && /^[[:space:]]*value:/ {
                   sub(/^[[:space:]]*value:[[:space:]]*/, "")
@@ -242,100 +248,64 @@ jobs:
                   exit
                 }
               '
-          )"
+          }
+
+          resolve_image_ref() {
+            local image_name="$1"
+            printf '%s\n' "${manifest}" |
+              awk -v expected="${image_name}" '
+                /^[[:space:]]*image:[[:space:]]*/ {
+                  sub(/^[[:space:]]*image:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  if (index($0, expected "@sha256:") == 1) {
+                    print
+                    exit
+                  }
+                }
+              '
+          }
+
+          assert_multi_arch_image() {
+            local image_ref="$1"
+            local image_digest manifest_json platform platform_digest
+
+            image_digest="${image_ref#*@}"
+            if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Release manifest image is not digest pinned: ${image_ref}"
+              exit 1
+            fi
+
+            manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image_ref}")"
+            for platform in linux/amd64 linux/arm64; do
+              platform_digest="$(
+                jq -r --arg platform "${platform}" \
+                  '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                  <<< "${manifest_json}" | head -n 1
+              )"
+              if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+                echo "Release manifest image ${image_ref} is missing required platform ${platform}"
+                docker buildx imagetools inspect "${image_ref}"
+                exit 1
+              fi
+            done
+          }
+
+          source_sha="$(resolve_env_value "${source_env_name}")"
           if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
             echo "Unable to resolve ${source_env_name} from ${source_manifest}"
             exit 1
           fi
 
-          required_build_jobs=(
-            'build-platform (linux/amd64, amd64, arc-amd64)'
-            'build-platform (linux/arm64, arm64, arc-arm64)'
-            'publish-index'
-          )
+          image_ref="$(resolve_image_ref "${expected_image}")"
+          if [ -z "${image_ref}" ]; then
+            echo "Unable to resolve digest-pinned ${expected_image} image from ${source_manifest}"
+            exit 1
+          fi
 
-          assert_required_build_jobs() {
-            local run_id="$1"
-            local job_lines
-            job_lines="$(
-              gh run view "${run_id}" \
-                -R "${GH_REPO}" \
-                --json jobs \
-                --jq '.jobs[] | [.name, (.conclusion // ""), (.status // "")] | @tsv'
-            )"
+          assert_multi_arch_image "${image_ref}"
+          echo "${build_label} release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
 
-            for required_job in "${required_build_jobs[@]}"; do
-              state="$(
-                printf '%s\n' "${job_lines}" |
-                  awk -F '\t' \
-                    -v name="${required_job}" \
-                    '$1 == name { print ($2 == "" ? "PENDING" : $2) "\t" $3; found = 1; exit } END { if (!found) print "MISSING\t" }'
-              )"
-              IFS=$'\t' read -r conclusion status <<< "${state}"
-              case "${conclusion}" in
-                success)
-                  ;;
-                MISSING)
-                  echo "Required build-push job is missing from run ${run_id}: ${required_job}"
-                  exit 1
-                  ;;
-                PENDING)
-                  echo "Required build-push job did not complete in successful run ${run_id}: ${required_job} (${status:-unknown})"
-                  exit 1
-                  ;;
-                failure | cancelled | skipped | timed_out | action_required | startup_failure)
-                  echo "Required build-push job failed in run ${run_id}: ${required_job} -> ${conclusion}"
-                  exit 1
-                  ;;
-                *)
-                  echo "Required build-push job has unexpected conclusion in run ${run_id}: ${required_job} -> ${conclusion}"
-                  exit 1
-                  ;;
-              esac
-            done
-          }
-
-          deadline=$((SECONDS + 900))
-          while true; do
-            run_line="$(
-              gh run list \
-                -R "${GH_REPO}" \
-                --workflow "${build_workflow}" \
-                --commit "${source_sha}" \
-                --json databaseId,status,conclusion,url,createdAt \
-                --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
-            )"
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
-
-            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
-              assert_required_build_jobs "${run_id}"
-              echo "${build_label} build-push passed required image contract jobs for ${source_sha}: ${run_url}"
-              break
-            fi
-
-            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
-              echo "${build_label} build-push did not pass for ${source_sha}: ${run_conclusion}"
-              echo "${run_url}"
-              exit 1
-            fi
-
-            if [ "${SECONDS}" -ge "${deadline}" ]; then
-              echo "Timed out waiting for ${build_label} build-push for ${source_sha}"
-              if [ -n "${run_url}" ]; then
-                echo "${run_url}"
-              fi
-              exit 1
-            fi
-
-            if [ -z "${run_id}" ]; then
-              echo "Waiting for ${build_label} build-push to appear for ${source_sha}"
-            else
-              echo "Waiting for ${build_label} build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
-            fi
-            sleep 10
-          done
-
-      - name: Verify source Hyperliquid feed image build contract
+      - name: Verify source Hyperliquid feed image digest contract
         if: steps.gates.outputs.eligible == 'true' && steps.gates.outputs.release_lane == 'hyperliquid-feed'
         shell: bash
         env:
@@ -350,6 +320,7 @@ jobs:
               -H 'Accept: application/vnd.github.raw' \
               "repos/${GH_REPO}/contents/argocd/applications/torghut-hyperliquid-feed/deployment.yaml?ref=${PR_HEAD_SHA}"
           )"
+
           source_sha="$(
             printf '%s\n' "${manifest}" |
               awk '
@@ -367,92 +338,40 @@ jobs:
             exit 1
           fi
 
-          required_build_jobs=(
-            'build-platform (linux/amd64, amd64, arc-amd64)'
-            'build-platform (linux/arm64, arm64, arc-arm64)'
-            'publish-index'
-          )
+          image_ref="$(
+            printf '%s\n' "${manifest}" |
+              awk '
+                /^[[:space:]]*image:[[:space:]]*/ {
+                  sub(/^[[:space:]]*image:[[:space:]]*/, "")
+                  gsub(/"/, "")
+                  if (index($0, "registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:") == 1) {
+                    print
+                    exit
+                  }
+                }
+              '
+          )"
+          image_digest="${image_ref#*@}"
+          if [ -z "${image_ref}" ] || [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+            echo "Unable to resolve digest-pinned Hyperliquid feed image from release manifest"
+            exit 1
+          fi
 
-          assert_required_build_jobs() {
-            local run_id="$1"
-            local job_lines
-            job_lines="$(
-              gh run view "${run_id}" \
-                -R "${GH_REPO}" \
-                --json jobs \
-                --jq '.jobs[] | [.name, (.conclusion // ""), (.status // "")] | @tsv'
+          manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image_ref}")"
+          for platform in linux/amd64 linux/arm64; do
+            platform_digest="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${manifest_json}" | head -n 1
             )"
-
-            for required_job in "${required_build_jobs[@]}"; do
-              state="$(
-                printf '%s\n' "${job_lines}" |
-                  awk -F '\t' \
-                    -v name="${required_job}" \
-                    '$1 == name { print ($2 == "" ? "PENDING" : $2) "\t" $3; found = 1; exit } END { if (!found) print "MISSING\t" }'
-              )"
-              IFS=$'\t' read -r conclusion status <<< "${state}"
-              case "${conclusion}" in
-                success)
-                  ;;
-                MISSING)
-                  echo "Required Hyperliquid feed build-push job is missing from run ${run_id}: ${required_job}"
-                  exit 1
-                  ;;
-                PENDING)
-                  echo "Required Hyperliquid feed build-push job did not complete in successful run ${run_id}: ${required_job} (${status:-unknown})"
-                  exit 1
-                  ;;
-                failure | cancelled | skipped | timed_out | action_required | startup_failure)
-                  echo "Required Hyperliquid feed build-push job failed in run ${run_id}: ${required_job} -> ${conclusion}"
-                  exit 1
-                  ;;
-                *)
-                  echo "Required Hyperliquid feed build-push job has unexpected conclusion in run ${run_id}: ${required_job} -> ${conclusion}"
-                  exit 1
-                  ;;
-              esac
-            done
-          }
-
-          deadline=$((SECONDS + 900))
-          while true; do
-            run_line="$(
-              gh run list \
-                -R "${GH_REPO}" \
-                --workflow torghut-hyperliquid-feed-build-push.yaml \
-                --commit "${source_sha}" \
-                --json databaseId,status,conclusion,url,createdAt \
-                --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
-            )"
-            IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
-
-            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
-              assert_required_build_jobs "${run_id}"
-              echo "Hyperliquid feed build-push passed required image contract jobs for ${source_sha}: ${run_url}"
-              break
-            fi
-
-            if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
-              echo "Source commit Hyperliquid feed build did not pass for ${source_sha}: ${run_conclusion}"
-              echo "${run_url}"
+            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
+              echo "Hyperliquid feed release manifest image ${image_ref} is missing required platform ${platform}"
+              docker buildx imagetools inspect "${image_ref}"
               exit 1
             fi
-
-            if [ "${SECONDS}" -ge "${deadline}" ]; then
-              echo "Timed out waiting for source commit Hyperliquid feed build for ${source_sha}"
-              if [ -n "${run_url}" ]; then
-                echo "${run_url}"
-              fi
-              exit 1
-            fi
-
-            if [ -z "${run_id}" ]; then
-              echo "Waiting for Hyperliquid feed build-push to appear for ${source_sha}"
-            else
-              echo "Waiting for Hyperliquid feed build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
-            fi
-            sleep 10
           done
+
+          echo "Hyperliquid feed release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
 
       - name: Wait for required release checks
         if: steps.gates.outputs.eligible == 'true'
