@@ -15,7 +15,7 @@ from app.trading.llm.dspy_programs.runtime import (
     _resolve_dspy_completion_url,
     _resolve_dspy_api_base,
 )
-from app.trading.llm.dspy_programs.modules import LiveDSPyCommitteeProgram
+from app.trading.llm.dspy_programs.committee_programs import LiveDSPyCommitteeProgram
 from app.trading.llm.schema import (
     LLMDecisionContext,
     LLMPolicyContext,

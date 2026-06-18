@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import patch
 
-from app.trading.llm.dspy_programs.modules import (
+from app.trading.llm.dspy_programs.committee_programs import (
     HeuristicCommitteeProgram,
     LiveDSPyCommitteeProgram,
     _coerce_dspy_api_base,
@@ -116,7 +116,7 @@ class TestDSPyTransportHardening(TestCase):
             Predict=lambda *_args, **_kwargs: _FakePredictor(),
         )
 
-        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
                 model_name="openai/gpt-test",
                 api_base=None,
@@ -140,7 +140,7 @@ class TestDSPyTransportHardening(TestCase):
             Predict=lambda *_args, **_kwargs: _FakePredictor(),
         )
 
-        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
                 model_name="openai/gpt-test",
                 api_base="http://jangar.openai.local/openai/v1/chat/completions",
@@ -171,7 +171,7 @@ class TestDSPyTransportHardening(TestCase):
             configure=lambda **_kwargs: None,
         )
 
-        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
                 model_name="openai/gpt-test",
                 api_base="http://jangar.openai.local/openai/v1",
@@ -202,7 +202,7 @@ class TestDSPyTransportHardening(TestCase):
             configure=lambda **_kwargs: None,
         )
 
-        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
                 model_name="openai/gpt-5.5",
                 api_base="https://jangar.openai.local/openai/v1",
@@ -225,7 +225,7 @@ class TestDSPyTransportHardening(TestCase):
             configure=lambda **_kwargs: None,
         )
 
-        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
                 model_name="openai/gpt-test",
                 api_base="https://jangar.openai.local/openai/v1",
@@ -242,7 +242,7 @@ class TestDSPyTransportHardening(TestCase):
             Predict=lambda *_args, **_kwargs: _FakePredictor(),
         )
 
-        with patch("app.trading.llm.dspy_programs.modules.dspy", fake_dspy):
+        with patch("app.trading.llm.dspy_programs.committee_programs.dspy", fake_dspy):
             program = LiveDSPyCommitteeProgram(
                 model_name="openai/gpt-test",
                 api_base="http://jangar.openai.local/openai/v1/foo",
