@@ -99,7 +99,7 @@ def _cycle() -> CycleResult:
     )
 
 
-def test_execution_metadata_dexes_keeps_all_mainnet_dexes() -> None:
+def test_execution_metadata_dexes_keeps_all_dexes() -> None:
     markets = (
         _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
         _market(),
@@ -108,6 +108,13 @@ def test_execution_metadata_dexes_keeps_all_mainnet_dexes() -> None:
 
     assert exchange_module._execution_metadata_dexes(
         markets, execution_network="mainnet"
+    ) == (
+        "",
+        "cash",
+        "xyz",
+    )
+    assert exchange_module._execution_metadata_dexes(
+        markets, execution_network="testnet"
     ) == (
         "",
         "cash",
@@ -295,7 +302,9 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
             sdk_calls["exchange_init"] = (wallet, kwargs)
 
         def order(self, **kwargs: object) -> dict[str, object]:
-            sdk_calls["order"] = kwargs
+            orders = sdk_calls.setdefault("orders", [])
+            assert isinstance(orders, list)
+            orders.append(kwargs)
             return {"response": {"data": {"statuses": [{"resting": {"oid": 42}}]}}}
 
         def schedule_cancel(self, cancel_at_ms: int) -> None:
@@ -387,7 +396,7 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     )
     empty_markets, empty_status = sdk_exchange.filter_supported_markets(())
     result = sdk_exchange.submit_ioc_limit(_intent())
-    rejected_non_default = sdk_exchange.submit_ioc_limit(
+    non_default_result = sdk_exchange.submit_ioc_limit(
         _intent(
             coin="cash:AAPL",
             dex="cash",
@@ -399,6 +408,7 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     sdk_exchange.schedule_dead_man_cancel(seconds_from_now=30)
 
     assert supported_markets == (
+        _market(),
         _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
     )
     assert universe_status.ready
@@ -406,12 +416,14 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
     assert cached_status.ready
     assert empty_markets == ()
     assert empty_status.ready
-    assert sdk_calls["meta_dexes"] == [""]
+    assert sdk_calls["meta_dexes"] == ["", "cash"]
+    assert sdk_calls["exchange_init"][1]["perp_dexs"] == ["", "cash"]
     assert result.status == "accepted"
     assert result.exchange_order_id == "42"
-    assert rejected_non_default.status == "rejected"
-    assert rejected_non_default.rejection_reason == "unsupported_testnet_dex"
-    assert sdk_calls["order"]  # SDK received a real order payload.
+    assert non_default_result.status == "accepted"
+    assert non_default_result.exchange_order_id == "42"
+    assert len(sdk_calls["orders"]) == 2
+    assert sdk_calls["orders"][1]["name"] == "cash:AAPL"
     assert fills[0].notional_usd == Decimal("20.0")
     assert fills[0].fee_usd == Decimal("0.02")
     assert sdk_exchange.dependency_status().ready
@@ -458,7 +470,7 @@ def test_sdk_execution_universe_reports_metadata_failure(
     assert status.reason == "execution_market_metadata_unavailable:TimeoutError"
 
 
-def test_sdk_execution_universe_skips_unsupported_non_default_testnet_dexes(
+def test_sdk_execution_universe_loads_supported_non_default_testnet_dexes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sdk_calls: dict[str, object] = {}
@@ -471,7 +483,8 @@ def test_sdk_execution_universe_skips_unsupported_non_default_testnet_dexes(
             meta_dexes = sdk_calls.setdefault("meta_dexes", [])
             assert isinstance(meta_dexes, list)
             meta_dexes.append(dex)
-            assert dex == ""
+            if dex == "xyz":
+                return {"universe": [{"name": "xyz:NVDA"}]}
             return {"universe": [{"name": "SPX"}]}
 
     def fake_import(name: str) -> object:
@@ -490,17 +503,17 @@ def test_sdk_execution_universe_skips_unsupported_non_default_testnet_dexes(
 
     supported_markets, status = sdk_exchange.filter_supported_markets(
         (
-            _market(),
             _market(coin="xyz:NVDA", dex="xyz", market_id="hl:perp:xyz:xyz:NVDA"),
             _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
         )
     )
 
     assert supported_markets == (
+        _market(coin="xyz:NVDA", dex="xyz", market_id="hl:perp:xyz:xyz:NVDA"),
         _market(coin="SPX", dex="default", market_id="hl:perp:default:SPX"),
     )
     assert status.ready
-    assert sdk_calls["meta_dexes"] == [""]
+    assert sdk_calls["meta_dexes"] == ["", "xyz"]
     assert sdk_exchange.dependency_status().ready
 
 
@@ -543,7 +556,7 @@ def test_sdk_execution_universe_reports_no_markets_when_only_non_default_dexes_f
     assert supported_markets == ()
     assert not status.ready
     assert status.reason == "no_execution_supported_markets"
-    assert sdk_calls.get("meta_dexes", []) == []
+    assert sdk_calls.get("meta_dexes", []) == ["cash", "xyz"]
     assert not sdk_exchange.dependency_status().ready
     assert sdk_exchange.dependency_status().reason == "exchange_not_read"
 

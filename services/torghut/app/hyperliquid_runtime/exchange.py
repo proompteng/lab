@@ -183,23 +183,13 @@ class HyperliquidSdkExchange:
             raise ValueError("hyperliquid_testnet_account_secret_required")
         self._config = config
         self._sdk_exchange: Any | None = None
+        self._sdk_exchange_perp_dexs: tuple[str, ...] | None = None
         self._sdk_info: Any | None = None
         self._last_exchange_read_at: datetime | None = None
         self._last_execution_universe_at: datetime | None = None
         self._execution_universe_by_dex: dict[str, frozenset[str]] = {}
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
-        if self._config.execution_network == "testnet" and _sdk_dex(intent.dex):
-            return OrderResult(
-                status="rejected",
-                exchange_order_id=None,
-                raw_response={
-                    "reason": "unsupported_testnet_dex",
-                    "dex": intent.dex,
-                    "coin": intent.coin,
-                },
-                rejection_reason="unsupported_testnet_dex",
-            )
         exchange = self._exchange()
         cloid = self._cloid(intent.cloid)
         response = cast(
@@ -324,7 +314,8 @@ class HyperliquidSdkExchange:
         self._last_exchange_read_at = datetime.now(timezone.utc)
 
     def _exchange(self) -> Any:
-        if self._sdk_exchange is None:
+        perp_dexs = self._supported_perp_dexs()
+        if self._sdk_exchange is None or self._sdk_exchange_perp_dexs != perp_dexs:
             eth_account = importlib.import_module("eth_account")
             exchange_module = importlib.import_module("hyperliquid.exchange")
             wallet = eth_account.Account.from_key(self._config.api_wallet_private_key)
@@ -333,9 +324,20 @@ class HyperliquidSdkExchange:
                 wallet,
                 base_url=self._config.exchange_api_url,
                 account_address=self._config.account_address,
+                perp_dexs=list(perp_dexs),
                 timeout=float(self._config.exchange_staleness_seconds),
             )
+            self._sdk_exchange_perp_dexs = perp_dexs
         return self._sdk_exchange
+
+    def _supported_perp_dexs(self) -> tuple[str, ...]:
+        dexes = {
+            dex
+            for dex, coins in self._execution_universe_by_dex.items()
+            if dex == "" or coins
+        }
+        dexes.add("")
+        return tuple(sorted(dexes))
 
     def _info(self) -> Any:
         if self._sdk_info is None:
@@ -562,8 +564,7 @@ def _execution_metadata_dexes(
     execution_network: str,
 ) -> tuple[str, ...]:
     dexes = {_sdk_dex(market.dex) for market in markets}
-    if execution_network == "testnet":
-        return ("",) if "" in dexes else ()
+    _ = execution_network
     return tuple(sorted(dexes))
 
 
