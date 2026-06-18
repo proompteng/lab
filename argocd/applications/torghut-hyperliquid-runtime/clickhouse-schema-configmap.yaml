@@ -48,7 +48,7 @@ data:
     AS
     SELECT
       now64(3) AS ingest_ts,
-      toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC') AS event_ts,
+      event_ts,
       network,
       coalesce(market_id, symbol) AS market_id,
       coalesce(coin, symbol) AS coin,
@@ -68,7 +68,7 @@ data:
       0 AS funding_rate,
       0 AS open_interest_usd,
       multiIf(_return_bps > 8, 'trend_up', _return_bps < -8, 'trend_down', 'range') AS regime,
-      greatest(0, dateDiff('second', toDateTime(parseDateTimeBestEffort(event_ts)), now())) AS source_lag_seconds
+      greatest(0, dateDiff('second', toDateTime(event_ts), now())) AS source_lag_seconds
     FROM
     (
       SELECT
