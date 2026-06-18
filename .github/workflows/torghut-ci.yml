@@ -163,24 +163,7 @@ jobs:
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Cache Bun downloads
-        uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-torghut-ci-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-torghut-ci-
-            ${{ runner.os }}-bun-1.3.14-
-
-      - name: Install script dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
-
-      - name: Require source commit Torghut CI
+      - name: Verify source image build contract
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -189,22 +172,29 @@ jobs:
           set -euo pipefail
 
           source_sha="$(
-            bun run packages/scripts/src/torghut/source-ci.ts source-sha \
-              --manifest argocd/applications/torghut/knative-service.yaml
+            awk '
+              /^[[:space:]]*- name:[[:space:]]*TORGHUT_COMMIT[[:space:]]*$/ { found = 1; next }
+              found && /^[[:space:]]*value:/ {
+                sub(/^[[:space:]]*value:[[:space:]]*/, "")
+                gsub(/"/, "")
+                print
+                exit
+              }
+            ' argocd/applications/torghut/knative-service.yaml
           )"
-          echo "Torghut release manifest-only change; requiring full source CI for ${source_sha}."
+          if ! printf '%s' "${source_sha}" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Unable to resolve TORGHUT_COMMIT from release manifest"
+            exit 1
+          fi
+          echo "Torghut release manifest-only change; requiring successful multi-arch build for ${source_sha}."
 
-          required_source_jobs=(
-            'Pyright'
-            'Bytecode + lint + migration guard'
-            'Pytest shard 0'
-            'Pytest shard 1'
-            'Pytest shard 2'
-            'Pytest shard 3'
-            'Bytecode + pytest + coverage'
+          required_build_jobs=(
+            'build-platform (linux/amd64, amd64, arc-amd64)'
+            'build-platform (linux/arm64, arm64, arc-arm64)'
+            'publish-index'
           )
 
-          assert_required_source_jobs() {
+          assert_required_build_jobs() {
             local run_id="$1"
             local job_lines
             job_lines="$(
@@ -214,7 +204,7 @@ jobs:
                 --jq '.jobs[] | [.name, (.conclusion // ""), (.status // "")] | @tsv'
             )"
 
-            for required_job in "${required_source_jobs[@]}"; do
+            for required_job in "${required_build_jobs[@]}"; do
               state="$(
                 printf '%s\n' "${job_lines}" |
                   awk -F '\t' \
@@ -226,31 +216,31 @@ jobs:
                 success)
                   ;;
                 MISSING)
-                  echo "Required source CI job is missing from run ${run_id}: ${required_job}"
+                  echo "Required build-push job is missing from run ${run_id}: ${required_job}"
                   exit 1
                   ;;
                 PENDING)
-                  echo "Required source CI job did not complete in successful run ${run_id}: ${required_job} (${status:-unknown})"
+                  echo "Required build-push job did not complete in successful run ${run_id}: ${required_job} (${status:-unknown})"
                   exit 1
                   ;;
                 failure | cancelled | skipped | timed_out | action_required | startup_failure)
-                  echo "Required source CI job failed in run ${run_id}: ${required_job} -> ${conclusion}"
+                  echo "Required build-push job failed in run ${run_id}: ${required_job} -> ${conclusion}"
                   exit 1
                   ;;
                 *)
-                  echo "Required source CI job has unexpected conclusion in run ${run_id}: ${required_job} -> ${conclusion}"
+                  echo "Required build-push job has unexpected conclusion in run ${run_id}: ${required_job} -> ${conclusion}"
                   exit 1
                   ;;
               esac
             done
           }
 
-          deadline=$((SECONDS + 2700))
+          deadline=$((SECONDS + 900))
           while true; do
             run_line="$(
               gh run list \
                 -R "${GH_REPO}" \
-                --workflow torghut-ci.yml \
+                --workflow torghut-build-push.yaml \
                 --commit "${source_sha}" \
                 --json databaseId,status,conclusion,url,createdAt \
                 --jq 'sort_by(.createdAt) | reverse | .[0] // {} | [.databaseId // "", .status // "", .conclusion // "", .url // ""] | @tsv'
@@ -258,19 +248,19 @@ jobs:
             IFS=$'\t' read -r run_id run_status run_conclusion run_url <<< "${run_line}"
 
             if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ] && [ "${run_conclusion}" = 'success' ]; then
-              assert_required_source_jobs "${run_id}"
-              echo "Source commit Torghut CI passed required jobs for ${source_sha}: ${run_url}"
+              assert_required_build_jobs "${run_id}"
+              echo "Torghut build-push passed required image contract jobs for ${source_sha}: ${run_url}"
               break
             fi
 
             if [ -n "${run_id}" ] && [ "${run_status}" = 'completed' ]; then
-              echo "Source commit Torghut CI did not pass for ${source_sha}: ${run_conclusion}"
+              echo "Torghut build-push did not pass for ${source_sha}: ${run_conclusion}"
               echo "${run_url}"
               exit 1
             fi
 
             if [ "${SECONDS}" -ge "${deadline}" ]; then
-              echo "Timed out waiting for source commit Torghut CI for ${source_sha}"
+              echo "Timed out waiting for Torghut build-push for ${source_sha}"
               if [ -n "${run_url}" ]; then
                 echo "${run_url}"
               fi
@@ -278,11 +268,11 @@ jobs:
             fi
 
             if [ -z "${run_id}" ]; then
-              echo "Waiting for source commit Torghut CI to appear for ${source_sha}"
+              echo "Waiting for Torghut build-push to appear for ${source_sha}"
             else
-              echo "Waiting for source commit Torghut CI: status=${run_status} conclusion=${run_conclusion:-pending}"
+              echo "Waiting for Torghut build-push: status=${run_status} conclusion=${run_conclusion:-pending}"
             fi
-            sleep 15
+            sleep 10
           done
 
   pyright:

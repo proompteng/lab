@@ -146,16 +146,17 @@ describe('torghut build-push workflow', () => {
     expect(arcApplication).toContain('kubernetes.io/arch: arm64')
   })
 
-  it('caches Bun downloads before manifest-only CI installs script dependencies', () => {
+  it('keeps manifest-only release CI free of package install overhead', () => {
     const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
-    const cacheStep = ciWorkflow.indexOf('name: Cache Bun downloads', releaseManifestJob)
-    const cachePath = ciWorkflow.indexOf('path: ~/.bun/install/cache', cacheStep)
-    const installStep = ciWorkflow.indexOf('name: Install script dependencies', cachePath)
+    const nextJob = ciWorkflow.indexOf('\n  pyright:', releaseManifestJob)
+    const releaseManifestJobBody = ciWorkflow.slice(releaseManifestJob, nextJob)
 
     expect(releaseManifestJob).toBeGreaterThan(-1)
-    expect(cacheStep).toBeGreaterThan(releaseManifestJob)
-    expect(cachePath).toBeGreaterThan(cacheStep)
-    expect(installStep).toBeGreaterThan(cachePath)
+    expect(releaseManifestJobBody).toContain('name: Verify source image build contract')
+    expect(releaseManifestJobBody).toContain('TORGHUT_COMMIT')
+    expect(releaseManifestJobBody).not.toContain('oven-sh/setup-bun')
+    expect(releaseManifestJobBody).not.toContain('actions/cache@v4')
+    expect(releaseManifestJobBody).not.toContain('bun install')
   })
 
   it('authenticates changed-file planner GitHub API calls', () => {
@@ -186,7 +187,21 @@ describe('torghut build-push workflow', () => {
     expect(prFilesCall).toBeGreaterThan(authHeader)
   })
 
-  it('does not cancel main source CI that release promotion must verify', () => {
+  it('gates release manifest-only CI on the completed build-push image contract', () => {
+    const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
+    const buildContractStep = ciWorkflow.indexOf('name: Verify source image build contract', releaseManifestJob)
+
+    expect(buildContractStep).toBeGreaterThan(releaseManifestJob)
+    expect(ciWorkflow).toContain('--workflow torghut-build-push.yaml')
+    expect(ciWorkflow).toContain('build-platform (linux/amd64, amd64, arc-amd64)')
+    expect(ciWorkflow).toContain('build-platform (linux/arm64, arm64, arc-arm64)')
+    expect(ciWorkflow).toContain('publish-index')
+    expect(ciWorkflow).toContain('Torghut build-push passed required image contract jobs')
+    expect(ciWorkflow).not.toContain('name: Require source commit Torghut CI')
+    expect(ciWorkflow).not.toContain('--workflow torghut-ci.yml')
+  })
+
+  it('does not cancel main source CI while release promotion verifies the image contract', () => {
     expect(ciWorkflow).toContain(
       "group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.sha }}",
     )

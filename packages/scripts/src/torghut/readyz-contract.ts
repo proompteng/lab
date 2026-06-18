@@ -29,6 +29,19 @@ const stringAt = (value: unknown, key: string): string => {
   return ''
 }
 
+const booleanAt = (value: unknown, key: string): boolean | undefined => {
+  if (!isObject(value)) return undefined
+  const nested = value[key]
+  if (nested === true || nested === 'true') return true
+  if (nested === false || nested === 'false') return false
+  return undefined
+}
+
+const arrayIncludes = (value: unknown, expected: string): boolean => {
+  if (!Array.isArray(value)) return false
+  return value.some((item) => stringAt({ item }, 'item') === expected)
+}
+
 const parseHttpStatus = (value: string): number | undefined => {
   if (!/^[0-9]{3}$/.test(value)) return undefined
   return Number(value)
@@ -78,6 +91,46 @@ const hasRepairOnlyReadyzContract = (readyz: JsonObject): boolean => {
   return true
 }
 
+const hasCoreDependenciesOnlyReadyzContract = (readyz: JsonObject): boolean => {
+  if (readyz.status !== 'degraded') return false
+  if (stringAt(readyz, 'readiness_surface') !== 'core_dependencies_only') return false
+
+  const dependencies = objectAt(readyz, 'dependencies')
+  if (!dependencies) return false
+  if (!dependencyOk(dependencies, 'postgres')) return false
+  if (!dependencyOk(dependencies, 'clickhouse')) return false
+  if (!dependencyOk(dependencies, 'database')) return false
+
+  const scheduler = objectAt(readyz, 'scheduler')
+  if (!scheduler || scheduler.ok !== true || scheduler.running !== true) return false
+
+  const liveSubmissionGate = objectAt(readyz, 'live_submission_gate')
+  if (!liveSubmissionGate) return false
+  if (booleanAt(liveSubmissionGate, 'allowed') !== false) return false
+  if (stringAt(liveSubmissionGate, 'reason') !== 'readyz_core_dependencies_only') return false
+  if (!arrayIncludes(liveSubmissionGate.reason_codes, 'readyz_core_dependencies_only')) return false
+  if (!arrayIncludes(liveSubmissionGate.blocked_reasons, 'readyz_core_dependencies_only')) return false
+  if (stringAt(liveSubmissionGate, 'readiness_surface') !== 'core_dependencies_only') return false
+  if (booleanAt(liveSubmissionGate, 'read_model_evaluated') !== false) return false
+  for (const authorityKey of [
+    'promotion_authority',
+    'promotion_authority_ok',
+    'final_authority_ok',
+    'final_promotion_allowed',
+    'final_promotion_authorized',
+  ]) {
+    if (booleanAt(liveSubmissionGate, authorityKey) !== false) return false
+  }
+
+  const activation = objectAt(liveSubmissionGate, 'live_submit_activation')
+  if (!activation) return false
+  if (booleanAt(activation, 'configured') !== true) return false
+  if (booleanAt(activation, 'valid') !== true) return false
+  if (!stringAt(activation, 'expires_at')) return false
+
+  return true
+}
+
 export const classifyReadyzForPostDeployRetry = ({
   httpStatus,
   readyz,
@@ -87,6 +140,7 @@ export const classifyReadyzForPostDeployRetry = ({
   if (statusCode >= 200 && statusCode < 300) return 'acceptable'
   if (statusCode !== 503 || readyz.status !== 'degraded') return 'unacceptable'
   if (hasRepairOnlyReadyzContract(readyz)) return 'acceptable'
+  if (hasCoreDependenciesOnlyReadyzContract(readyz)) return 'acceptable'
 
   const database = objectAt(objectAt(readyz, 'dependencies'), 'database')
   if (database && database.ok !== true && containsDatabaseTimeoutSignal(database)) {

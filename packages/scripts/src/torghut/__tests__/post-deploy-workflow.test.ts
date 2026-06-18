@@ -48,7 +48,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('Torghut /readyz returned HTTP')
   })
 
-  it('retries database-timeout readyz 503 payloads until they match the repair-only contract', () => {
+  it('retries database-timeout readyz 503 payloads until they match an accepted readyz contract', () => {
     expect(workflow).toContain('fetch_readyz_json()')
     expect(workflow).toContain('packages/scripts/src/torghut/readyz-contract.ts')
     expect(workflow).toContain('retryable_database_timeout')
