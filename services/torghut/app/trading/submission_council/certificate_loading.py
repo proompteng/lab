@@ -6,9 +6,9 @@ from .common import (
     Any,
     Decimal,
     Mapping,
+    RuntimeLedgerReadSession,
     SQLAlchemyError,
     Sequence,
-    Session,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
@@ -48,7 +48,7 @@ from .runtime_certificates import (
 
 
 def _load_latest_certificate_evidence(
-    session: Session,
+    session: RuntimeLedgerReadSession,
     *,
     hypothesis_ids: Sequence[str],
     now: datetime | None = None,

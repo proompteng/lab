@@ -6,9 +6,9 @@ from .common import (
     Any,
     Decimal,
     Mapping,
+    RuntimeLedgerReadSession,
     SQLAlchemyError,
     Sequence,
-    Session,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
@@ -56,7 +56,7 @@ from .runtime_certificates import (
 
 
 def _load_runtime_ledger_repair_candidates(
-    session: Session,
+    session: RuntimeLedgerReadSession,
     *,
     registry_items: Sequence[Mapping[str, object]],
     limit: int = _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,

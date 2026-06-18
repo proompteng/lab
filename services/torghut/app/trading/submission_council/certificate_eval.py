@@ -5,9 +5,9 @@ from __future__ import annotations
 from .common import (
     Any,
     Mapping,
+    RuntimeLedgerReadSession,
     SQLAlchemyError,
     Sequence,
-    Session,
     StrategyHypothesis,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
@@ -349,7 +349,7 @@ def _default_lineage_ref(
 
 
 def _attach_lineage_refs(
-    session: Session,
+    session: RuntimeLedgerReadSession,
     *,
     evaluated_rows: Sequence[Mapping[str, object]],
 ) -> list[dict[str, object]]:

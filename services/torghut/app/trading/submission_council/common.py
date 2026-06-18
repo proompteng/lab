@@ -11,7 +11,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from threading import Lock
-from typing import Any, NamedTuple, TypeVar, cast
+from typing import Any, NamedTuple, Protocol, TypeVar, cast
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
@@ -130,6 +130,12 @@ _CERTIFICATE_EVIDENCE_WINDOW_LIMIT = _CERTIFICATE_EVIDENCE_PER_HYPOTHESIS_LIMIT
 _CERTIFICATE_EVIDENCE_RUNTIME_LEDGER_LIMIT = 16
 _PROMOTION_SCALAR_COUNT_LIMIT = _PROMOTION_TABLE_COUNT_SCAN_LIMIT
 _PROMOTION_PORTFOLIO_SAMPLE_LIMIT = _PROMOTION_PORTFOLIO_READY_SCAN_LIMIT
+
+
+class RuntimeLedgerReadSession(Protocol):
+    """Minimal read-session surface used by runtime-ledger status probes."""
+
+    def execute(self, statement: Any, *args: Any, **kwargs: Any) -> Any: ...
 
 
 class _PortfolioPromotionRow(NamedTuple):
@@ -284,7 +290,7 @@ def _runtime_ledger_status_query_timeout_ms() -> int:
     )
 
 
-def _maybe_set_runtime_ledger_status_statement_timeout(session: Session) -> None:
+def _maybe_set_runtime_ledger_status_statement_timeout(session: object) -> None:
     get_bind = getattr(session, "get_bind", None)
     if callable(get_bind):
         try:
@@ -294,14 +300,17 @@ def _maybe_set_runtime_ledger_status_statement_timeout(session: Session) -> None
                 return
         except Exception:
             pass
-    session.execute(
+    execute = getattr(session, "execute", None)
+    if not callable(execute):
+        return
+    execute(
         sql_text(
             f"SET LOCAL statement_timeout = {_runtime_ledger_status_query_timeout_ms()}"
         )
     )
 
 
-def _rollback_runtime_ledger_status_session(session: Session) -> None:
+def _rollback_runtime_ledger_status_session(session: object) -> None:
     rollback = getattr(session, "rollback", None)
     if not callable(rollback):
         return
@@ -404,6 +413,7 @@ __all__ = [
     "Request",
     "ResearchCandidate",
     "ResearchPromotion",
+    "RuntimeLedgerReadSession",
     "SQLAlchemyError",
     "Sequence",
     "Session",

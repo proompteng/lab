@@ -6,9 +6,9 @@ from .common import (
     Decimal,
     Mapping,
     POST_COST_PNL_BASIS,
+    RuntimeLedgerReadSession,
     SQLAlchemyError,
     Sequence,
-    Session,
     StrategyHypothesisMetricWindow,
     StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
@@ -240,7 +240,7 @@ def _mark_runtime_certificate_rejected(
 
 
 def _load_latest_runtime_ledger_summary(
-    session: Session,
+    session: RuntimeLedgerReadSession,
     *,
     hypothesis_ids: Sequence[str],
 ) -> dict[str, object]:

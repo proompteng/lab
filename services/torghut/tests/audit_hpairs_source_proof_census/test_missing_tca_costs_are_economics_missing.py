@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+from types import TracebackType
+from typing import cast
+
+import pytest
+
 from tests.audit_hpairs_source_proof_census.support import (
     AUTHORITY_EXPLICIT_COSTS_BLOCKER,
     AUTHORITY_OPEN_POSITIONS_BLOCKER,
@@ -71,7 +76,10 @@ def test_runtime_bucket_aggregate_only_is_source_refs_missing() -> None:
     )
 
 
-def test_json_output_is_stable_and_cli_reads_fixture(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+def test_json_output_is_stable_and_cli_reads_fixture(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     path = tmp_path / "fixture.json"
     path.write_text(json.dumps(_fixture()))
 
@@ -156,7 +164,9 @@ def test_too_few_source_backed_days_are_distribution_missing() -> None:
     assert census.AUTHORITY_TRADING_DAYS_BLOCKER in report["blockers"]
 
 
-def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_session_loader_normalizes_bounded_sqlalchemy_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from types import SimpleNamespace
 
     start = datetime(2026, 5, 1, 14, tzinfo=timezone.utc)
@@ -318,7 +328,7 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
     )
 
     rows = census._load_session_rows(
-        FakeSession(),  # type: ignore[arg-type]
+        cast(census.Session, FakeSession()),
         identity=census.CensusIdentity(
             hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
             candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
@@ -343,7 +353,9 @@ def test_session_loader_normalizes_bounded_sqlalchemy_rows(monkeypatch) -> None:
     assert rows.runtime_ledger_buckets[0]["id"] == "ledger-0"
 
 
-def test_dsn_loader_opens_session_and_delegates(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_dsn_loader_opens_session_and_delegates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     identity = census.CensusIdentity(
         hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
         candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
@@ -357,7 +369,12 @@ def test_dsn_loader_opens_session_and_delegates(monkeypatch) -> None:  # type: i
         def __enter__(self) -> "FakeSession":
             return self
 
-        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
             return None
 
     monkeypatch.setattr(census, "create_engine", lambda dsn, **kwargs: f"engine:{dsn}")
@@ -371,7 +388,9 @@ def test_dsn_loader_opens_session_and_delegates(monkeypatch) -> None:  # type: i
     assert rows is expected
 
 
-def test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+def test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     identity = census.CensusIdentity(
         hypothesis_id=DEFAULT_HPAIRS_HYPOTHESIS_ID,
         candidate_id=DEFAULT_HPAIRS_CANDIDATE_ID,
@@ -385,7 +404,12 @@ def test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver(monkeypatch) ->
         def __enter__(self) -> "FakeSession":
             return self
 
-        def __exit__(self, exc_type, exc, traceback) -> None:  # type: ignore[no-untyped-def]
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            traceback: TracebackType | None,
+        ) -> None:
             return None
 
     def fake_create_engine(dsn: str, **kwargs: object) -> str:
@@ -422,7 +446,10 @@ def test_dsn_loader_sqlalchemy_dsn_uses_installed_psycopg_driver(monkeypatch) ->
     )
 
 
-def test_main_reports_read_errors_as_json(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+def test_main_reports_read_errors_as_json(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     missing = tmp_path / "missing.json"
 
     exit_code = census.main(["--fixture-json", str(missing)])
