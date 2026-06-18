@@ -35,6 +35,7 @@ data class HyperliquidConfig(
   val includePerps: Boolean,
   val includeSpot: Boolean,
   val marketCoverage: String,
+  val topMarketCount: Int,
   val canaryCoins: Set<String>,
   val candleIntervals: List<String>,
   val wsChannels: Set<String>,
@@ -81,6 +82,14 @@ data class HyperliquidConfig(
       val includePerps = mergedEnv["HYPERLIQUID_INCLUDE_PERPS"]?.toBooleanStrictOrNull() ?: true
       val includeSpot = mergedEnv["HYPERLIQUID_INCLUDE_SPOT"]?.toBooleanStrictOrNull() ?: true
       if (!includePerps && !includeSpot) error("At least one of HYPERLIQUID_INCLUDE_PERPS or HYPERLIQUID_INCLUDE_SPOT must be true")
+
+      val marketCoverage = mergedEnv["HYPERLIQUID_MARKET_COVERAGE"]?.trim()?.lowercase() ?: "all"
+      val supportedCoverage = setOf("all", "canary", "top-liquidity-canary", "top-volume", "top-volume-100")
+      if (marketCoverage !in supportedCoverage) {
+        error("HYPERLIQUID_MARKET_COVERAGE must be one of ${supportedCoverage.joinToString(",")}")
+      }
+      val topMarketCount = intEnv(mergedEnv, "HYPERLIQUID_TOP_MARKET_COUNT", 100)
+      if (topMarketCount !in 1..1000) error("HYPERLIQUID_TOP_MARKET_COUNT must be within 1..1000")
 
       val candleIntervals =
         csv(mergedEnv["HYPERLIQUID_CANDLE_INTERVALS"] ?: "1m")
@@ -133,7 +142,8 @@ data class HyperliquidConfig(
         wsUrl = mergedEnv["HYPERLIQUID_WS_URL"] ?: defaultWsUrl,
         includePerps = includePerps,
         includeSpot = includeSpot,
-        marketCoverage = mergedEnv["HYPERLIQUID_MARKET_COVERAGE"]?.trim()?.lowercase() ?: "all",
+        marketCoverage = marketCoverage,
+        topMarketCount = topMarketCount,
         canaryCoins = csv(mergedEnv["HYPERLIQUID_CANARY_COINS"] ?: "BTC,ETH,SOL,HYPE").map { it.uppercase() }.toSet(),
         candleIntervals = candleIntervals,
         wsChannels = wsChannels,

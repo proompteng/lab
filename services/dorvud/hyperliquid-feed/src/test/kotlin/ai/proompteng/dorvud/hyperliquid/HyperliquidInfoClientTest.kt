@@ -56,10 +56,89 @@ class HyperliquidInfoClientTest {
       assertEquals(3, requests.size)
     }
 
+  @Test
+  fun `selects top markets by public twenty four hour notional volume`() =
+    runTest {
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            val body = (request.body as TextContent).text
+            when {
+              body.hasType("perpDexs") -> jsonResponse("""[null,{"name":"test"}]""")
+              body.hasType("metaAndAssetCtxs") && body.contains(""""dex":"test"""") ->
+                jsonResponse(
+                  """
+                  [
+                    {"universe":[{"name":"COIN1","szDecimals":1},{"name":"COIN2","szDecimals":1}]},
+                    [{"dayNtlVlm":"3000.25"},{"dayNtlVlm":"5"}]
+                  ]
+                  """.trimIndent(),
+                )
+              body.hasType("metaAndAssetCtxs") ->
+                jsonResponse(
+                  """
+                  [
+                    {"universe":[{"name":"BTC","szDecimals":5},{"name":"ETH","szDecimals":4}]},
+                    [{"dayNtlVlm":"1000"},{"dayNtlVlm":"25"}]
+                  ]
+                  """.trimIndent(),
+                )
+              body.hasType("meta") && body.contains(""""dex":"test"""") ->
+                jsonResponse("""{"universe":[{"name":"COIN1","szDecimals":1},{"name":"COIN2","szDecimals":1}]}""")
+              body.hasType("meta") ->
+                jsonResponse("""{"universe":[{"name":"BTC","szDecimals":5},{"name":"ETH","szDecimals":4}]}""")
+              body.hasType("spotMetaAndAssetCtxs") ->
+                jsonResponse(
+                  """
+                  [
+                    {"tokens":[],"universe":[{"name":"PURR/USDC","tokens":[0,1],"index":0},{"name":"@1","tokens":[2,1],"index":1}]},
+                    [{"dayNtlVlm":"2000"},{"dayNtlVlm":"10"}]
+                  ]
+                  """.trimIndent(),
+                )
+              body.hasType("spotMeta") ->
+                jsonResponse(
+                  """
+                  {
+                    "tokens": [],
+                    "universe": [
+                      {"name":"PURR/USDC","tokens":[0,1],"index":0},
+                      {"name":"@1","tokens":[2,1],"index":1}
+                    ]
+                  }
+                  """.trimIndent(),
+                )
+              else -> jsonResponse("""{}""")
+            }
+          },
+        ) {
+          install(ContentNegotiation) { json(json) }
+        }
+      val config =
+        HyperliquidConfig.fromEnv(
+          mapOf(
+            "KAFKA_SASL_PASSWORD" to "secret",
+            "CLICKHOUSE_ENABLED" to "false",
+            "HYPERLIQUID_MARKET_COVERAGE" to "top-volume",
+            "HYPERLIQUID_TOP_MARKET_COUNT" to "3",
+          ),
+        )
+      val infoClient = HyperliquidInfoClient(config, client, MinuteWeightBudget(1000), json)
+
+      val markets = infoClient.loadMarkets()
+
+      assertEquals(
+        listOf("hl:perp:test:COIN1", "hl:spot:0:PURR/USDC", "hl:perp:default:BTC"),
+        markets.map { it.marketId },
+      )
+    }
+
   private fun MockRequestHandleScope.jsonResponse(body: String): HttpResponseData =
     respond(
       content = body,
       status = HttpStatusCode.OK,
       headers = headersOf(HttpHeaders.ContentType, ContentType.Application.Json.toString()),
     )
+
+  private fun String.hasType(type: String): Boolean = contains(""""type":"$type"""")
 }
