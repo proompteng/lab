@@ -1,24 +1,11 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-from types import ModuleType
 from unittest import TestCase
 
+from tests.migration_testing import load_migration_module
 
-def _load_migration_module() -> ModuleType:
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "migrations"
-        / "versions"
-        / "0021_strategy_hypothesis_governance.py"
-    )
-    spec = importlib.util.spec_from_file_location("torghut_migration_0021", path)
-    if spec is None or spec.loader is None:  # pragma: no cover - importlib guard
-        raise AssertionError("failed_to_load_migration_0021")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+
+MIGRATION_FILENAME = "0021_strategy_hypothesis_governance.py"
 
 
 class _FakeInspector:
@@ -66,7 +53,7 @@ class _FakeOp:
 
 class TestStrategyHypothesisGovernanceMigration(TestCase):
     def test_upgrade_skips_existing_tables_and_indexes(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
         fake_op = _FakeOp()
         fake_inspector = _FakeInspector(
             {
@@ -111,7 +98,7 @@ class TestStrategyHypothesisGovernanceMigration(TestCase):
         self.assertEqual(fake_op.create_index_calls, [])
 
     def test_downgrade_skips_absent_tables_and_indexes(self) -> None:
-        module = _load_migration_module()
+        module = load_migration_module(MIGRATION_FILENAME)
         fake_op = _FakeOp()
         fake_inspector = _FakeInspector({})
         original_op = module.op
