@@ -9,7 +9,7 @@ import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import yaml
 
@@ -50,6 +50,48 @@ from .offline_replay_triage_candidates_from_rank import (
     runtime_window_import_payload_proof_blockers as _runtime_window_import_payload_proof_blockers,
     runtime_window_source_collection_materialization_blocked_result as _runtime_window_source_collection_materialization_blocked_result,
 )
+
+
+_CHILD_OUTPUT_MAX_CHARS = 20_000
+
+
+def _write_child_stream(context: str, stream_name: str, output: str | None) -> None:
+    if not output:
+        return
+    text = output
+    if len(text) > _CHILD_OUTPUT_MAX_CHARS:
+        text = (
+            f"... truncated to last {_CHILD_OUTPUT_MAX_CHARS} chars ...\n"
+            f"{text[-_CHILD_OUTPUT_MAX_CHARS:]}"
+        )
+    if not text.endswith("\n"):
+        text = f"{text}\n"
+    sys.stderr.write(
+        f"{context}_{stream_name}_begin\n{text}{context}_{stream_name}_end\n"
+    )
+    sys.stderr.flush()
+
+
+def run_captured_child(
+    command: Sequence[str],
+    *,
+    context: str,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            list(command),
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        command_name = str(command[1]) if len(command) > 1 else str(command[0])
+        sys.stderr.write(
+            f"{context}_failed exit_code={exc.returncode} command={command_name}\n"
+        )
+        _write_child_stream(context, "stdout", exc.stdout)
+        _write_child_stream(context, "stderr", exc.stderr)
+        raise RuntimeError(f"{context}_failed: exit_code={exc.returncode}") from exc
 
 
 def _renewal_root_export(name: str, fallback: Any) -> Any:
@@ -267,7 +309,7 @@ def _run_runtime_window_import_target(
         command.extend(
             ["--delay-adjusted-depth-stress-report-ref", delay_depth_report_ref]
         )
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = run_captured_child(command, context="runtime_window_import_child")
     payload = json.loads(result.stdout)
     if not isinstance(payload, Mapping):
         raise RuntimeError("runtime_window_import_payload_not_mapping")
@@ -386,7 +428,7 @@ def main() -> int:
         str(output_dir),
         "--json",
     ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = run_captured_child(command, context="empirical_promotion_jobs_child")
     runtime_window_import = _run_runtime_window_import(
         args=args,
         manifest=manifest,
