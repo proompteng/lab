@@ -43,7 +43,7 @@ spec:
       - name: seedRecentWhitepapers
         value: 'true'
       - name: symbols
-        value: NVDA,AAPL,AMZN,GOOGL,AVGO,AMD,ORCL,INTC
+        value: NVDA,AVGO,AMD,MRVL,MU,COHR,LITE,WDC,STX,TSM
       - name: fullWindowStartDate
         value: ''
       - name: fullWindowEndDate

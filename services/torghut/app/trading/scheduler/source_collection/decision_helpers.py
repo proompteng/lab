@@ -11,7 +11,9 @@ from typing import Any, Protocol, cast
 from sqlalchemy.orm import Session
 
 from ....config import settings
+from ...decisions.positions_for_strategy_action import position_qty_for_symbol
 from ...promotion_authority import source_collection_authority
+from ...quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
 from ...runtime_decision_authority import source_decision_mode_is_profit_proof_eligible
 from ..target_plan_helpers import (
     PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON as _PAPER_ROUTE_TARGET_OPEN_EXPOSURE_EPSILON,
@@ -23,8 +25,11 @@ from ..target_plan_helpers import (
     target_symbols as _target_symbols,
 )
 from .collection_types import (
+    SourceCollectionAction,
     SourceCollectionExposure,
     SourceCollectionMode,
+    SourceCollectionQuantityResolution,
+    SourceCollectionResolvedQuantity,
     SourceCollectionTargetContext,
 )
 
@@ -297,6 +302,71 @@ def log_target_notional_sizing_blocker(
     )
 
 
+def source_collection_broker_quantity_resolution(
+    context: SourceCollectionTargetContext,
+    *,
+    symbol: str,
+    action: SourceCollectionAction,
+    positions: Sequence[Mapping[str, Any]] | None,
+    quantity_resolution: SourceCollectionQuantityResolution,
+) -> SourceCollectionResolvedQuantity | None:
+    audit = dict(quantity_resolution.audit)
+    position_rows = [dict(position) for position in positions or []]
+    position_qty = position_qty_for_symbol(position_rows, symbol)
+    broker_resolution = resolve_quantity_resolution(
+        symbol,
+        action=action,
+        global_enabled=settings.trading_fractional_equities_enabled,
+        allow_shorts=settings.trading_allow_shorts,
+        position_qty=position_qty,
+        requested_qty=quantity_resolution.qty,
+    )
+    broker_qty = quantize_qty_for_symbol(
+        symbol,
+        quantity_resolution.qty,
+        fractional_equities_enabled=broker_resolution.fractional_allowed,
+    )
+    if broker_qty <= 0:
+        blockers = list(cast(list[Any], audit.get("blockers") or []))
+        blockers.append("paper_route_target_notional_broker_qty_below_min_step")
+        audit["blockers"] = list(dict.fromkeys(str(item) for item in blockers))
+        audit["broker_quantity_resolution"] = broker_resolution.to_payload()
+        log_target_notional_sizing_blocker(
+            context,
+            symbol=symbol,
+            blockers=audit.get("blockers"),
+        )
+        logger.warning(
+            "Skipping paper-route target source decision because broker quantity "
+            "is below the minimum step strategy=%s symbol=%s action=%s "
+            "requested_qty=%s broker_reason=%s",
+            context.strategy.name,
+            symbol,
+            action,
+            quantity_resolution.qty,
+            broker_resolution.reason,
+        )
+        return None
+
+    reference_price = _optional_decimal(audit.get("reference_price"))
+    audit["target_notional_resolved_qty"] = audit.get("resolved_qty")
+    audit["target_notional_resolved_notional"] = audit.get("resolved_notional")
+    audit["broker_quantity_resolution"] = broker_resolution.to_payload()
+    audit["broker_quantity_adjusted"] = broker_qty != quantity_resolution.qty
+    audit["broker_resolved_qty"] = str(broker_qty)
+    audit["resolved_qty"] = str(broker_qty)
+    if reference_price is not None:
+        resolved_notional = broker_qty * reference_price
+        audit["broker_resolved_notional"] = str(resolved_notional)
+        audit["resolved_notional"] = str(resolved_notional)
+
+    return SourceCollectionResolvedQuantity(
+        qty=broker_qty,
+        audit=audit,
+        price_params=quantity_resolution.price_params,
+    )
+
+
 def apply_source_collection_quantity_resolution(
     *,
     metadata: dict[str, Any],
@@ -318,6 +388,7 @@ __all__ = [
     "apply_source_collection_quantity_resolution",
     "balanced_pair_needs_short_permission",
     "log_target_notional_sizing_blocker",
+    "source_collection_broker_quantity_resolution",
     "source_collection_has_unrepaired_exposure",
     "source_collection_params",
     "source_collection_profit_proof_exposure",

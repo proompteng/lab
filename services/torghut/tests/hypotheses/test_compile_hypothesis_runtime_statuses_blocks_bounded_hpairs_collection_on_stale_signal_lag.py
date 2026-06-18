@@ -5,10 +5,10 @@ from tests.hypotheses.support import (
     Path,
     TemporaryDirectory,
     _FakeHttpResponse,
-    _MANIFEST_CANDIDATE_IDS,
-    _MANIFEST_STRATEGY_FAMILIES,
+    _HPAIRS_AI_HARDWARE_UNIVERSE,
     _TestHypothesisReadinessBase,
     _hpairs_route_repair_tca_summary,
+    _hpairs_tca_symbol_breakdown,
     _hypothesis_manifest_payload,
     _runtime_ledger_summary,
     _state,
@@ -156,37 +156,15 @@ class TestCompileHypothesisRuntimeStatusesBlocksBoundedHpairsCollectionOnStaleSi
             state=state,
             tca_summary={
                 "account_label": "TORGHUT_SIM",
-                "order_count": 2,
+                "order_count": len(_HPAIRS_AI_HARDWARE_UNIVERSE),
                 "avg_abs_slippage_bps": "4",
                 "avg_realized_shortfall_bps": "1",
                 "last_computed_at": "2026-06-01T19:16:00+00:00",
-                "scope_symbols": ["AAPL", "AMZN"],
-                "symbol_breakdown": [
-                    {
-                        "symbol": "AAPL",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "4",
-                        "avg_realized_shortfall_bps": "1",
-                        "last_computed_at": "2026-06-01T19:16:00+00:00",
-                        "hypothesis_id": "H-PAIRS-01",
-                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                        "account_label": "TORGHUT_SIM",
-                        "source_kind": "live_paper_execution_tca",
-                    },
-                    {
-                        "symbol": "AMZN",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "4",
-                        "avg_realized_shortfall_bps": "1",
-                        "last_computed_at": "2026-06-01T19:16:00+00:00",
-                        "hypothesis_id": "H-PAIRS-01",
-                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                        "account_label": "TORGHUT_SIM",
-                        "source_kind": "live_paper_execution_tca",
-                    },
-                ],
+                "scope_symbols": list(_HPAIRS_AI_HARDWARE_UNIVERSE),
+                "symbol_breakdown": _hpairs_tca_symbol_breakdown(
+                    avg_abs_slippage_bps="4",
+                    avg_realized_shortfall_bps="1",
+                ),
             },
             runtime_ledger_summary=_runtime_ledger_summary(
                 "H-PAIRS-01",
@@ -210,8 +188,8 @@ class TestCompileHypothesisRuntimeStatusesBlocksBoundedHpairsCollectionOnStaleSi
             item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
         )
         observed = hpairs["observed"]
-        self.assertEqual(observed["tca_order_count"], 2)
-        self.assertEqual(observed["route_tca_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(observed["tca_order_count"], len(_HPAIRS_AI_HARDWARE_UNIVERSE))
+        self.assertEqual(observed["route_tca_symbols"], _HPAIRS_AI_HARDWARE_UNIVERSE)
         self.assertEqual(observed["route_tca_repair_symbols"], [])
         self.assertNotIn("route_universe_empty", hpairs["reasons"])
 
@@ -234,37 +212,15 @@ class TestCompileHypothesisRuntimeStatusesBlocksBoundedHpairsCollectionOnStaleSi
             state=state,
             tca_summary={
                 "account_label": "TORGHUT_SIM",
-                "order_count": 2,
+                "order_count": len(_HPAIRS_AI_HARDWARE_UNIVERSE),
                 "avg_abs_slippage_bps": "24.34",
                 "avg_realized_shortfall_bps": "24.34",
                 "last_computed_at": "2026-06-01T19:16:00+00:00",
-                "scope_symbols": ["AAPL", "AMZN"],
-                "symbol_breakdown": [
-                    {
-                        "symbol": "AAPL",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "24.34",
-                        "avg_realized_shortfall_bps": "24.34",
-                        "last_computed_at": "2026-06-01T19:16:00+00:00",
-                        "hypothesis_id": "H-PAIRS-01",
-                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                        "account_label": "TORGHUT_SIM",
-                        "source_kind": "live_paper_execution_tca",
-                    },
-                    {
-                        "symbol": "AMZN",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "24.34",
-                        "avg_realized_shortfall_bps": "24.34",
-                        "last_computed_at": "2026-06-01T19:16:00+00:00",
-                        "hypothesis_id": "H-PAIRS-01",
-                        "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                        "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                        "account_label": "TORGHUT_SIM",
-                        "source_kind": "live_paper_execution_tca",
-                    },
-                ],
+                "scope_symbols": list(_HPAIRS_AI_HARDWARE_UNIVERSE),
+                "symbol_breakdown": _hpairs_tca_symbol_breakdown(
+                    avg_abs_slippage_bps="24.34",
+                    avg_realized_shortfall_bps="24.34",
+                ),
             },
             runtime_ledger_summary=_runtime_ledger_summary(
                 "H-PAIRS-01",
@@ -293,7 +249,10 @@ class TestCompileHypothesisRuntimeStatusesBlocksBoundedHpairsCollectionOnStaleSi
         self.assertIn("route_universe_empty", hpairs["reasons"])
         self.assertEqual(observed["tca_order_count"], 0)
         self.assertEqual(observed["route_tca_symbols"], [])
-        self.assertEqual(observed["route_tca_repair_symbols"], ["AAPL", "AMZN"])
+        self.assertEqual(
+            observed["route_tca_repair_symbols"],
+            _HPAIRS_AI_HARDWARE_UNIVERSE,
+        )
         self.assertIn(
             "route_tca_avg_abs_slippage_above_guardrail",
             observed["route_tca_blocking_reason_codes"],

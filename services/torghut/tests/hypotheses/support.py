@@ -47,6 +47,19 @@ _MANIFEST_STRATEGY_FAMILIES = {
     "H-TSMOM-LIQ-01": "intraday_tsmom_consistent",
 }
 
+_HPAIRS_AI_HARDWARE_UNIVERSE = [
+    "NVDA",
+    "AVGO",
+    "AMD",
+    "MRVL",
+    "MU",
+    "COHR",
+    "LITE",
+    "WDC",
+    "STX",
+    "TSM",
+]
+
 
 def _state(
     *,
@@ -170,38 +183,38 @@ def _runtime_ledger_summary(
 def _hpairs_route_repair_tca_summary() -> dict[str, object]:
     return {
         "account_label": "TORGHUT_SIM",
-        "order_count": 2,
+        "order_count": len(_HPAIRS_AI_HARDWARE_UNIVERSE),
         "avg_abs_slippage_bps": "24.34",
         "avg_realized_shortfall_bps": "24.34",
         "last_computed_at": "2026-06-01T19:16:00+00:00",
-        "scope_symbols": ["AAPL", "AMZN"],
-        "symbol_breakdown": [
-            {
-                "symbol": "AAPL",
-                "order_count": 1,
-                "avg_abs_slippage_bps": "24.34",
-                "avg_realized_shortfall_bps": "24.34",
-                "last_computed_at": "2026-06-01T19:16:00+00:00",
-                "hypothesis_id": "H-PAIRS-01",
-                "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                "account_label": "TORGHUT_SIM",
-                "source_kind": "live_paper_execution_tca",
-            },
-            {
-                "symbol": "AMZN",
-                "order_count": 1,
-                "avg_abs_slippage_bps": "24.34",
-                "avg_realized_shortfall_bps": "24.34",
-                "last_computed_at": "2026-06-01T19:16:00+00:00",
-                "hypothesis_id": "H-PAIRS-01",
-                "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
-                "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
-                "account_label": "TORGHUT_SIM",
-                "source_kind": "live_paper_execution_tca",
-            },
-        ],
+        "scope_symbols": list(_HPAIRS_AI_HARDWARE_UNIVERSE),
+        "symbol_breakdown": _hpairs_tca_symbol_breakdown(
+            avg_abs_slippage_bps="24.34",
+            avg_realized_shortfall_bps="24.34",
+        ),
     }
+
+
+def _hpairs_tca_symbol_breakdown(
+    *,
+    avg_abs_slippage_bps: str,
+    avg_realized_shortfall_bps: str,
+) -> list[dict[str, object]]:
+    return [
+        {
+            "symbol": symbol,
+            "order_count": 1,
+            "avg_abs_slippage_bps": avg_abs_slippage_bps,
+            "avg_realized_shortfall_bps": avg_realized_shortfall_bps,
+            "last_computed_at": "2026-06-01T19:16:00+00:00",
+            "hypothesis_id": "H-PAIRS-01",
+            "candidate_id": _MANIFEST_CANDIDATE_IDS["H-PAIRS-01"],
+            "strategy_family": _MANIFEST_STRATEGY_FAMILIES["H-PAIRS-01"],
+            "account_label": "TORGHUT_SIM",
+            "source_kind": "live_paper_execution_tca",
+        }
+        for symbol in _HPAIRS_AI_HARDWARE_UNIVERSE
+    ]
 
 
 class _FakeHttpResponse:
@@ -259,11 +272,13 @@ __all__: tuple[str, ...] = (
     "TemporaryDirectory",
     "TestCase",
     "_FakeHttpResponse",
+    "_HPAIRS_AI_HARDWARE_UNIVERSE",
     "_JANGAR_QUORUM_CACHE",
     "_MANIFEST_CANDIDATE_IDS",
     "_MANIFEST_STRATEGY_FAMILIES",
     "_TestHypothesisReadinessBase",
     "_hpairs_route_repair_tca_summary",
+    "_hpairs_tca_symbol_breakdown",
     "_hypothesis_manifest_payload",
     "_optional_bool",
     "_optional_decimal",

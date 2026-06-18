@@ -58,6 +58,7 @@ from .decision_helpers import (
     apply_source_collection_quantity_resolution,
     balanced_pair_needs_short_permission,
     log_target_notional_sizing_blocker,
+    source_collection_broker_quantity_resolution,
     source_collection_has_unrepaired_exposure,
     source_collection_params,
     source_collection_profit_proof_exposure,
@@ -127,6 +128,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
                 continue
             run = SourceCollectionDecisionRun(
                 session=session,
+                positions=positions,
                 blocked_symbols=set(blocked_symbols),
                 seen=seen,
                 now=state.now,
@@ -497,6 +499,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             context,
             symbol=symbol,
             action=action,
+            positions=run.positions,
             now=run.now,
         )
         if payload is None:
@@ -520,6 +523,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         *,
         symbol: str,
         action: SourceCollectionAction,
+        positions: Sequence[Mapping[str, Any]] | None,
         now: datetime,
     ) -> SourceCollectionDecisionPayload | None:
         metadata, mode = self._paper_route_target_source_collection_metadata(
@@ -566,15 +570,24 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
                 blockers=quantity_resolution.audit.get("blockers"),
             )
             return None
+        broker_quantity_resolution = source_collection_broker_quantity_resolution(
+            context,
+            symbol=symbol,
+            action=action,
+            positions=positions,
+            quantity_resolution=quantity_resolution,
+        )
+        if broker_quantity_resolution is None:
+            return None
         apply_source_collection_quantity_resolution(
             metadata=metadata,
             simple_lane=simple_lane,
             params=params,
-            quantity_resolution=quantity_resolution,
+            quantity_resolution=broker_quantity_resolution,
         )
         return SourceCollectionDecisionPayload(
             params=params,
-            qty=quantity_resolution.qty,
+            qty=broker_quantity_resolution.qty,
             timeframe=timeframe,
         )
 

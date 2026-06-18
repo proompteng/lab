@@ -391,6 +391,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
         config.settings.trading_allow_shorts = False
+        config.settings.trading_fractional_equities_enabled = True
 
         strategy = Strategy(
             name="paper-route-candidate-v1",
@@ -507,6 +508,7 @@ class TestTradingPipelineTargetPlanSourceA(TradingPipelineTestCaseBase):
         window_end = datetime(2026, 5, 26, 20, 0, tzinfo=timezone.utc)
         config.settings.trading_mode = "paper"
         config.settings.trading_simple_paper_route_probe_enabled = True
+        config.settings.trading_fractional_equities_enabled = True
 
         strategy = Strategy(
             name="paper-route-candidate-v1",

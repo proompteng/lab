@@ -9,7 +9,9 @@ from tests.hypotheses.support import (
     TemporaryDirectory,
     _MANIFEST_CANDIDATE_IDS,
     _MANIFEST_STRATEGY_FAMILIES,
+    _HPAIRS_AI_HARDWARE_UNIVERSE,
     _TestHypothesisReadinessBase,
+    _hpairs_tca_symbol_breakdown,
     _hypothesis_manifest_payload,
     _optional_bool,
     _optional_decimal,
@@ -429,7 +431,10 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
             item for item in registry.items if item.hypothesis_id == "H-PAIRS-01"
         )
 
-        self.assertEqual(hpairs_manifest.evidence_universe_symbols, ["AAPL", "AMZN"])
+        self.assertEqual(
+            hpairs_manifest.evidence_universe_symbols,
+            sorted(_HPAIRS_AI_HARDWARE_UNIVERSE),
+        )
         self.assertTrue(hpairs_manifest.require_pair_balance)
 
         statuses = compile_hypothesis_runtime_statuses(
@@ -446,24 +451,14 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
             ),
             tca_summary={
                 "account_label": "TORGHUT_SIM",
-                "order_count": 2,
+                "order_count": len(_HPAIRS_AI_HARDWARE_UNIVERSE),
                 "avg_abs_slippage_bps": "3",
                 "last_computed_at": "2026-06-01T19:50:00+00:00",
-                "scope_symbols": ["AAPL", "AMZN"],
-                "symbol_breakdown": [
-                    {
-                        "symbol": "AAPL",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "3",
-                        "last_computed_at": "2026-06-01T19:50:00+00:00",
-                    },
-                    {
-                        "symbol": "AMZN",
-                        "order_count": 1,
-                        "avg_abs_slippage_bps": "3",
-                        "last_computed_at": "2026-06-01T19:50:00+00:00",
-                    },
-                ],
+                "scope_symbols": list(_HPAIRS_AI_HARDWARE_UNIVERSE),
+                "symbol_breakdown": _hpairs_tca_symbol_breakdown(
+                    avg_abs_slippage_bps="3",
+                    avg_realized_shortfall_bps="1",
+                ),
             },
             runtime_ledger_summary=_runtime_ledger_summary(
                 "H-PAIRS-01",
@@ -485,12 +480,18 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
         )
 
         self.assertEqual(
-            hpairs["lineage_ref"]["evidence_universe_symbols"], ["AAPL", "AMZN"]
+            hpairs["lineage_ref"]["evidence_universe_symbols"],
+            sorted(_HPAIRS_AI_HARDWARE_UNIVERSE),
         )
         self.assertTrue(hpairs["lineage_ref"]["require_pair_balance"])
         observed = hpairs["observed"]
-        self.assertEqual(observed["evidence_universe_symbols"], ["AAPL", "AMZN"])
-        self.assertEqual(observed["evidence_universe_symbol_count"], 2)
+        self.assertEqual(
+            observed["evidence_universe_symbols"], sorted(_HPAIRS_AI_HARDWARE_UNIVERSE)
+        )
+        self.assertEqual(
+            observed["evidence_universe_symbol_count"],
+            len(_HPAIRS_AI_HARDWARE_UNIVERSE),
+        )
         self.assertEqual(observed["pair_contract_blockers"], [])
 
     def test_hpairs_route_tca_ignores_unrelated_tsmom_symbols_without_lineage(
@@ -515,17 +516,17 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
                 "avg_abs_slippage_bps": "12",
                 "avg_realized_shortfall_bps": "1",
                 "last_computed_at": "2026-06-01T19:16:00+00:00",
-                "scope_symbols": ["AAPL", "AMZN", "INTC", "NVDA"],
+                "scope_symbols": ["NVDA", "AVGO", "INTC", "AAPL"],
                 "symbol_breakdown": [
                     {
-                        "symbol": "AAPL",
+                        "symbol": "NVDA",
                         "order_count": 1,
                         "avg_abs_slippage_bps": "4",
                         "avg_realized_shortfall_bps": "1",
                         "last_computed_at": "2026-06-01T19:16:00+00:00",
                     },
                     {
-                        "symbol": "AMZN",
+                        "symbol": "AVGO",
                         "order_count": 0,
                         "avg_abs_slippage_bps": None,
                         "avg_realized_shortfall_bps": None,
@@ -539,7 +540,7 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
                         "last_computed_at": "2026-06-01T19:16:00+00:00",
                     },
                     {
-                        "symbol": "NVDA",
+                        "symbol": "AAPL",
                         "order_count": 1,
                         "avg_abs_slippage_bps": "2",
                         "avg_realized_shortfall_bps": "1",
@@ -567,8 +568,19 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
             item for item in statuses if item["hypothesis_id"] == "H-PAIRS-01"
         )
         observed = hpairs["observed"]
-        self.assertEqual(observed["route_tca_symbols"], ["AAPL"])
-        self.assertEqual(observed["route_tca_repair_symbols"], ["AMZN"])
+        self.assertEqual(observed["route_tca_symbols"], ["NVDA"])
+        self.assertEqual(
+            set(observed["route_tca_repair_symbols"]),
+            set(_HPAIRS_AI_HARDWARE_UNIVERSE) - {"NVDA"},
+        )
+        self.assertEqual(
+            len(observed["route_tca_repair_symbols"]),
+            len(_HPAIRS_AI_HARDWARE_UNIVERSE) - 1,
+        )
+        self.assertNotIn(
+            "NVDA",
+            observed["route_tca_repair_symbols"],
+        )
         self.assertEqual(observed["route_tca_excluded_symbol_count"], 2)
         self.assertIn(
             "route_tca_out_of_scope_symbol",
@@ -578,7 +590,8 @@ class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
             diagnostic["symbol"]
             for diagnostic in observed["route_tca_symbol_diagnostics"]
         ]
-        self.assertEqual(diagnostic_symbols, ["AAPL", "AMZN"])
+        self.assertEqual(set(diagnostic_symbols), set(_HPAIRS_AI_HARDWARE_UNIVERSE))
+        self.assertEqual(len(diagnostic_symbols), len(_HPAIRS_AI_HARDWARE_UNIVERSE))
 
     def test_pairs_manifest_fails_closed_without_balanced_evidence_universe(
         self,
