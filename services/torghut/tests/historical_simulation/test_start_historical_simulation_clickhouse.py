@@ -16,7 +16,7 @@ from tests.historical_simulation.start_historical_simulation_base import (
     _http_clickhouse_query,
     _pacing_delay_seconds,
     datetime,
-    historical_simulation_verification,
+    runtime_verification,
     patch,
     replace,
     historical_simulation_startup,
@@ -226,7 +226,7 @@ class TestStartHistoricalSimulationClickhouse(StartHistoricalSimulationTestCaseB
                 side_effect=_fake_kubectl_json,
             ),
         ):
-            status, body = historical_simulation_verification._http_clickhouse_query(
+            status, body = runtime_verification._http_clickhouse_query(
                 config=ClickHouseRuntimeConfig(
                     http_url="http://torghut-clickhouse.torghut.svc.cluster.local:8123",
                     username="torghut",

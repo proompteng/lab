@@ -52,7 +52,9 @@ from app.trading.simulation_progress import (
     COMPONENT_TORGHUT,
 )
 from app.whitepapers.workflow import CephS3Client
-from scripts import historical_simulation_verification as simulation_verification
+from scripts import (
+    historical_simulation_runtime_verification as simulation_verification,
+)
 from scripts.simulation_lane_contracts import (
     EQUITY_SIMULATION_LANE,
     simulation_clickhouse_table_names,
