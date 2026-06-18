@@ -86,6 +86,7 @@ from scripts.empirical_promotion_renewal.raise_if_runtime_window_target_plan_imp
     runtime_window_targets_from_plan as _runtime_window_targets_from_plan,
 )
 from scripts.empirical_promotion_renewal.run_runtime_window_import_target import (
+    run_captured_child as _run_captured_child,
     run_runtime_window_import_target as _run_runtime_window_import_target,
 )
 from scripts.empirical_promotion_renewal.runtime_window_targets import (
@@ -145,7 +146,7 @@ def main() -> int:
         str(output_dir),
         "--json",
     ]
-    result = subprocess.run(command, check=True, capture_output=True, text=True)
+    result = _run_captured_child(command, context="empirical_promotion_jobs_child")
     runtime_window_import = _run_runtime_window_import(
         args=args,
         manifest=manifest,
