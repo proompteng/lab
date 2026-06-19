@@ -268,6 +268,9 @@ describe('Torghut manifest scheduling', () => {
     const externalSecret = parseManifest('argocd/applications/torghut-hyperliquid-runtime/externalsecret.yaml')
     expect(externalSecret.kind).toBe('ExternalSecret')
     expect(getAtPath(externalSecret, ['metadata']).name).toBe('torghut-hyperliquid-testnet')
+    expect(getAtPath(externalSecret, ['metadata', 'annotations'])).toMatchObject({
+      'argocd.argoproj.io/ignore-healthcheck': 'true',
+    })
     expect(getAtPath(externalSecret, ['spec'])).toMatchObject({
       refreshPolicy: 'CreatedOnce',
       refreshInterval: '0s',
