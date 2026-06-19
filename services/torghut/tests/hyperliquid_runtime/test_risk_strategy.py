@@ -35,6 +35,7 @@ def _feature(
     market_id: str = "hl:perp:cash:cash:AAPL",
     coin: str = "cash:AAPL",
     dex: str = "cash",
+    liquidity_usd: Decimal = Decimal("500000"),
     bid_price: Decimal | None = Decimal("199.9"),
     ask_price: Decimal | None = Decimal("200"),
     quote_lag_seconds: int | None = 5,
@@ -54,7 +55,7 @@ def _feature(
         vwap_distance_bps=Decimal("5"),
         spread_bps=Decimal("4"),
         book_imbalance=Decimal("0.10"),
-        liquidity_usd=Decimal("500000"),
+        liquidity_usd=liquidity_usd,
         funding_rate=Decimal("0.0001"),
         open_interest_usd=Decimal("1000000"),
         regime="trend",
@@ -103,6 +104,22 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
     assert intent.limit_price == Decimal("200.300000")
     assert intent.cloid.startswith("0x")
     assert len(intent.cloid) == 34
+
+
+def test_signal_uses_testnet_equity_top_book_liquidity_floor() -> None:
+    signal = generate_signal(
+        _feature(coin="xyz:HOOD", dex="xyz", liquidity_usd=Decimal("3000")),
+        parameter_version="test-v1",
+    )
+    blocked = generate_signal(
+        _feature(coin="xyz:META", dex="xyz", liquidity_usd=Decimal("2499.99")),
+        parameter_version="test-v1",
+    )
+
+    assert signal.action == "buy"
+    assert signal.reason == "positive_momentum_liquid_book"
+    assert blocked.action == "hold"
+    assert blocked.reason == "liquidity_below_floor"
 
 
 def test_risk_blocks_shadow_mode_before_order_path() -> None:

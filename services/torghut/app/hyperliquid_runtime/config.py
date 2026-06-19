@@ -159,7 +159,7 @@ class HyperliquidRuntimeConfig:
             strategy_parameter_version=_text(
                 source,
                 "HYPERLIQUID_RUNTIME_STRATEGY_PARAMETER_VERSION",
-                "hl-equity-momentum-v1",
+                "hl-equity-momentum-v2",
             ),
             optimizer_enabled=_bool(
                 source, "HYPERLIQUID_RUNTIME_OPTIMIZER_ENABLED", True

@@ -12,7 +12,8 @@ _LONG_THRESHOLD_BPS = Decimal("8")
 _SHORT_THRESHOLD_BPS = Decimal("-8")
 _MAX_SPREAD_BPS = Decimal("20")
 _MAX_VOLATILITY_BPS = Decimal("250")
-_MIN_LIQUIDITY_USD = Decimal("25000")
+# This is executable top-book liquidity, not 24h market notional.
+_MIN_LIQUIDITY_USD = Decimal("2500")
 
 
 def generate_signal(
