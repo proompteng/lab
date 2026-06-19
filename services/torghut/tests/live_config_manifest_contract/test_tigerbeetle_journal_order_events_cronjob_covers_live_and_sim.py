@@ -262,7 +262,7 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)
-        self.assertIn("--runtime-window-target-plan-required", args)
+        self.assertNotIn("--runtime-window-target-plan-required", args)
         self.assertIn("--runtime-window-target-plan-settlement-seconds 3600", args)
         self.assertNotIn("--runtime-window-targets-from-latest-autoresearch", args)
         self.assertNotIn("--runtime-window-targets-from-registry", args)
