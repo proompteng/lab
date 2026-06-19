@@ -326,6 +326,53 @@ class ClickHouseSinkTest {
     }
 
   @Test
+  fun `marks clickhouse ready when candle event time is ahead of observed clock`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (queryParam(request.url).startsWith("INSERT")) {
+              respond(content = "", status = HttpStatusCode.OK)
+            } else {
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":12000}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":9900}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config = clickHouseConfig(readyMaxAgeMs = 1_000),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord())
+
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != true) {
+          delay(10)
+        }
+      }
+
+      assertEquals(true, readySignals.last().ready)
+      assertEquals(true, readySignals.last().tableFreshnessReady)
+      assertEquals(-2_000, readySignals.last().tableEventLagMs["hyperliquid_candles"])
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
   fun `skips clickhouse writes for disabled tables`() =
     runBlocking {
       val observedQueries = mutableListOf<String>()

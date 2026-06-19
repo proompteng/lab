@@ -157,7 +157,7 @@ class ClickHouseSink(
         latestTableEventLagMs = freshness.eventLagMs
         freshness.ingestLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableIngestLagMs(table, lagMs) }
         freshness.eventLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableEventLagMs(table, lagMs) }
-        val fresh = freshness.eventLagMs.values.all { lagMs -> lagMs != null && lagMs in 0L..config.readyMaxAgeMs }
+        val fresh = freshness.eventLagMs.values.all { lagMs -> lagMs != null && lagMs <= config.readyMaxAgeMs }
         tableFreshnessReady.set(fresh)
         lastFreshnessCheckMs.set(observedAt)
         if (!fresh) clickHouseLogger.warn { "clickhouse table event freshness stale lags_ms=${freshness.eventLagMs}" }
