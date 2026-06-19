@@ -69,6 +69,9 @@ class HyperliquidFeedApp(
   @Volatile
   private var clickHouseTableIngestLagMs: Map<String, Long?> = config.clickHouse.readyTables.associateWith { null }
 
+  @Volatile
+  private var clickHouseTableEventLagMs: Map<String, Long?> = config.clickHouse.readyTables.associateWith { null }
+
   private val httpClient =
     HttpClient(CIO) {
       install(WebSockets)
@@ -96,6 +99,7 @@ class HyperliquidFeedApp(
         ClickHouseSink(config.clickHouse, httpClient, metrics, json, network = config.network) { update ->
           val observedAt = nowMs()
           clickHouseTableIngestLagMs = update.tableIngestLagMs
+          clickHouseTableEventLagMs = update.tableEventLagMs
           clickHouseTableFresh.set(update.tableFreshnessReady)
           if (update.ready) {
             clickHouseLastSuccessMs.set(observedAt)
@@ -161,6 +165,7 @@ class HyperliquidFeedApp(
       clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
       clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
       clickhouseTableIngestLagMs = clickHouseTableIngestLagMs,
+      clickhouseTableEventLagMs = clickHouseTableEventLagMs,
       marketDataFresh = freshness.fresh,
       marketDataLastSeenLagMs = freshness.lastSeenLagMs,
       marketDataMaxAgeMs = config.readyEventMaxAgeMs,
@@ -267,19 +272,26 @@ class HyperliquidFeedApp(
       }
       val payload = json.encodeToString(record.envelope)
       runCatching {
-        producer.send(ProducerRecord(record.topic, record.key, payload)).get()
-      }.onSuccess {
-        kafkaReady.set(true)
-        metrics.kafkaProduceSuccess.increment()
-        metrics.recordEvent(record.envelope.channel)
-        recordMarketDataFreshness(record.envelope.channel)
+        producer.send(ProducerRecord(record.topic, record.key, payload)) { _, error ->
+          if (error == null) {
+            kafkaReady.set(true)
+            metrics.kafkaProduceSuccess.increment()
+            metrics.recordEvent(record.envelope.channel)
+            recordMarketDataFreshness(record.envelope.channel)
+          } else {
+            kafkaReady.set(false)
+            metrics.recordKafkaError(record.topic)
+            appLogger.warn(error) { "Kafka produce failed topic=${record.topic}" }
+          }
+          updateReady()
+        }
         clickHouseSink.enqueue(record)
       }.onFailure { error ->
         kafkaReady.set(false)
         metrics.recordKafkaError(record.topic)
         appLogger.warn(error) { "Kafka produce failed topic=${record.topic}" }
+        updateReady()
       }
-      updateReady()
     }
   }
 

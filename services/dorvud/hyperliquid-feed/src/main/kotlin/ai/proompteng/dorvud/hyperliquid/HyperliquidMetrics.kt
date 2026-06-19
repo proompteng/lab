@@ -25,6 +25,7 @@ class HyperliquidMetrics(
   private val dedupDrops = ConcurrentHashMap<String, Counter>()
   private val eventLastSeenEpochMs = ConcurrentHashMap<String, AtomicLong>()
   private val clickHouseTableIngestLagMs = ConcurrentHashMap<String, AtomicLong>()
+  private val clickHouseTableEventLagMs = ConcurrentHashMap<String, AtomicLong>()
 
   val reconnects: Counter = registry.counter("torghut_hyperliquid_ws_reconnects_total")
   val wsConnectSuccess: Counter = registry.counter("torghut_hyperliquid_ws_connect_success_total")
@@ -107,6 +108,23 @@ class HyperliquidMetrics(
         val value = AtomicLong(-1)
         Gauge
           .builder("torghut_hyperliquid_clickhouse_table_ingest_lag_seconds", value) {
+            val observed = it.get()
+            if (observed < 0) -1.0 else observed.toDouble() / 1_000.0
+          }.tag("table", table)
+          .register(registry)
+        value
+      }.set(lagMs ?: -1)
+  }
+
+  fun setClickHouseTableEventLagMs(
+    table: String,
+    lagMs: Long?,
+  ) {
+    clickHouseTableEventLagMs
+      .computeIfAbsent(table) {
+        val value = AtomicLong(-1)
+        Gauge
+          .builder("torghut_hyperliquid_clickhouse_table_event_lag_seconds", value) {
             val observed = it.get()
             if (observed < 0) -1.0 else observed.toDouble() / 1_000.0
           }.tag("table", table)
