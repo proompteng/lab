@@ -659,6 +659,61 @@ def test_metrics_and_api_readiness_paths(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "torghut_hl_last_cycle_ts_seconds" in runtime_api.metrics().body.decode()
 
 
+def test_api_report_returns_configured_runtime_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeRepository:
+        def __init__(self, session: FakeSession) -> None:
+            self.session = session
+
+        def operational_report(
+            self, *, config_payload: dict[str, object]
+        ) -> dict[str, object]:
+            return {
+                "schema_version": "torghut.hyperliquid-runtime-report.v1",
+                "config": config_payload,
+                "positions": [],
+                "fills_by_coin": [],
+                "rejects_by_coin_reason": [],
+                "cooldowns": {},
+            }
+
+    session = FakeSession()
+    monkeypatch.setattr(runtime_api, "SessionLocal", lambda: session)
+    monkeypatch.setattr(runtime_api, "HyperliquidRuntimeRepository", FakeRepository)
+    monkeypatch.setattr(
+        runtime_api,
+        "runtime_state",
+        SimpleNamespace(
+            config=_config(
+                HYPERLIQUID_RUNTIME_TRADE_COINS="xyz:NVDA,xyz:AMD",
+                HYPERLIQUID_RUNTIME_EXCLUDED_COINS="SPX",
+                HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD="10",
+                HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD="10",
+                HYPERLIQUID_RUNTIME_MAX_SYMBOL_EXPOSURE_USD="25",
+            )
+        ),
+    )
+
+    payload = runtime_api.report()
+
+    assert session.closed
+    assert payload["config"]["market_data_network"] == "mainnet"
+    assert payload["config"]["execution_network"] == "testnet"
+    assert payload["config"]["trade_coins"] == ["xyz:NVDA", "xyz:AMD"]
+    assert payload["config"]["excluded_coins"] == ["SPX"]
+    assert payload["config"]["max_order_notional_usd"] == "10"
+    assert payload["config"]["max_symbol_exposure_usd"] == "25"
+    assert payload["config"]["halted_cooldown_seconds"] == 120
+
+
 def test_api_run_one_cycle_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeSession:
         def __init__(self) -> None:

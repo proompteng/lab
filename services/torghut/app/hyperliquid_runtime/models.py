@@ -25,6 +25,14 @@ def _empty_payload() -> dict[str, object]:
     return {}
 
 
+def _empty_decimal_by_coin() -> dict[str, Decimal]:
+    return {}
+
+
+def _empty_frozenset() -> frozenset[str]:
+    return frozenset()
+
+
 @dataclass(frozen=True)
 class RuntimeDependencyStatus:
     """Readiness state for a runtime dependency."""
@@ -118,6 +126,11 @@ class RiskState:
     daily_fees_usd: Decimal
     open_order_markets: frozenset[str]
     dependencies: tuple[RuntimeDependencyStatus, ...]
+    symbol_exposure_usd_by_coin: dict[str, Decimal] = field(
+        default_factory=_empty_decimal_by_coin
+    )
+    reject_cooldown_coins: frozenset[str] = field(default_factory=_empty_frozenset)
+    halted_coins: frozenset[str] = field(default_factory=_empty_frozenset)
 
 
 @dataclass(frozen=True)

@@ -27,7 +27,15 @@ def evaluate_signal_risk(
         return _blocked("gross_exposure_cap")
     if remaining_exposure < config.min_order_notional_usd:
         return _blocked("remaining_exposure_below_min_order_notional")
-    notional = min(config.max_order_notional_usd, remaining_exposure)
+    symbol_exposure = state.symbol_exposure_usd_by_coin.get(signal.coin, Decimal("0"))
+    remaining_symbol_exposure = config.max_symbol_exposure_usd - symbol_exposure
+    if remaining_symbol_exposure <= Decimal("0"):
+        return _blocked("symbol_exposure_cap")
+    if remaining_symbol_exposure < config.min_order_notional_usd:
+        return _blocked("symbol_remaining_exposure_below_min_order_notional")
+    notional = min(
+        config.max_order_notional_usd, remaining_exposure, remaining_symbol_exposure
+    )
     return RiskVerdict("allowed", "allowed", notional)
 
 
@@ -124,6 +132,11 @@ def _blocked_reason(
     checks = (
         (bool(config_errors), ",".join(config_errors)),
         (not config.trading_enabled, "trading_disabled_shadow"),
+        (
+            bool(config.excluded_coins)
+            and _coin_key(signal.coin) in _coin_keys(config.excluded_coins),
+            "coin_excluded",
+        ),
         (signal.action not in {"buy", "sell"}, f"signal_{signal.action}"),
         (
             signal.feature.source_lag_seconds > config.signal_staleness_seconds,
@@ -133,11 +146,21 @@ def _blocked_reason(
             bool(dependency_blockers),
             f"dependency_not_ready:{','.join(dependency_blockers)}",
         ),
+        (signal.coin in state.reject_cooldown_coins, "symbol_reject_cooldown"),
+        (signal.coin in state.halted_coins, "symbol_halted_cooldown"),
         (signal.market_id in state.open_order_markets, "open_order_exists_for_market"),
         (state.daily_realized_pnl_usd <= -config.max_daily_loss_usd, "daily_loss_stop"),
         (quote_blocker is not None, quote_blocker or ""),
     )
     return next((reason for blocked, reason in checks if blocked), None)
+
+
+def _coin_keys(coins: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(_coin_key(coin) for coin in coins)
+
+
+def _coin_key(coin: str) -> str:
+    return coin.strip().upper()
 
 
 def _quote_blocked_reason(

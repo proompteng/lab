@@ -106,6 +106,14 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
     assert len(intent.cloid) == 34
 
 
+def test_runtime_config_preserves_mainnet_data_and_testnet_execution() -> None:
+    config = _config()
+
+    assert config.market_data_network == "mainnet"
+    assert config.execution_network == "testnet"
+    assert "execution_network_must_be_testnet" not in config.validation_errors()
+
+
 def test_signal_uses_testnet_equity_top_book_liquidity_floor() -> None:
     signal = generate_signal(
         _feature(coin="xyz:HOOD", dex="xyz", liquidity_usd=Decimal("3000")),
@@ -143,6 +151,38 @@ def test_risk_blocks_shadow_mode_before_order_path() -> None:
     assert verdict.order_notional_usd == Decimal("0")
 
 
+def test_risk_blocks_excluded_coin_before_order_path() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+        HYPERLIQUID_RUNTIME_EXCLUDED_COINS="SPX",
+    )
+    signal = generate_signal(
+        _feature(
+            market_id="hl:perp:default:SPX",
+            coin="SPX",
+            dex="default",
+        ),
+        parameter_version="test-v1",
+    )
+    state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+    )
+
+    verdict = evaluate_signal_risk(signal, state, config)
+
+    assert not verdict.allowed
+    assert verdict.reason == "coin_excluded"
+
+
 def test_risk_blocks_remaining_exposure_below_min_order_notional() -> None:
     config = _config(
         HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
@@ -170,6 +210,88 @@ def test_risk_blocks_remaining_exposure_below_min_order_notional() -> None:
 
     assert not verdict.allowed
     assert verdict.reason == "remaining_exposure_below_min_order_notional"
+
+
+def test_risk_caps_symbol_exposure_before_global_cap() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+        HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD="10",
+        HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD="10",
+        HYPERLIQUID_RUNTIME_MAX_SYMBOL_EXPOSURE_USD="25",
+    )
+    signal = generate_signal(
+        _feature(coin="xyz:NVDA", dex="xyz"), parameter_version="test-v1"
+    )
+    capped = RiskState(
+        gross_exposure_usd=Decimal("20"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+        symbol_exposure_usd_by_coin={"xyz:NVDA": Decimal("25")},
+    )
+    partial = RiskState(
+        gross_exposure_usd=Decimal("20"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+        symbol_exposure_usd_by_coin={"xyz:NVDA": Decimal("18")},
+    )
+
+    capped_verdict = evaluate_signal_risk(signal, capped, config)
+    partial_verdict = evaluate_signal_risk(signal, partial, config)
+
+    assert not capped_verdict.allowed
+    assert capped_verdict.reason == "symbol_exposure_cap"
+    assert not partial_verdict.allowed
+    assert (
+        partial_verdict.reason == "symbol_remaining_exposure_below_min_order_notional"
+    )
+
+
+def test_risk_blocks_reject_and_halted_cooldowns() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
+    signal = generate_signal(
+        _feature(coin="xyz:NVDA", dex="xyz"), parameter_version="test-v1"
+    )
+    reject_state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+        reject_cooldown_coins=frozenset({"xyz:NVDA"}),
+    )
+    halted_state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+        halted_coins=frozenset({"xyz:NVDA"}),
+    )
+
+    assert evaluate_signal_risk(signal, reject_state, config).reason == (
+        "symbol_reject_cooldown"
+    )
+    assert evaluate_signal_risk(signal, halted_state, config).reason == (
+        "symbol_halted_cooldown"
+    )
 
 
 def test_risk_blocks_missing_stale_or_crossed_executable_quote() -> None:

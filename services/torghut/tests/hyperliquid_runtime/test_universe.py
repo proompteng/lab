@@ -88,3 +88,48 @@ def test_default_runtime_universe_excludes_crypto() -> None:
     )
 
     assert [market.market_id for market in markets] == ["hl:perp:xyz:NVDA"]
+
+
+def test_select_runtime_markets_applies_explicit_trade_coins_and_exclusions() -> None:
+    rows = [
+        {
+            "market_type": "perp",
+            "market_id": "hl:perp:default:SPX",
+            "coin": "SPX",
+            "dex": "default",
+            "payload": '{"dayNtlVlm":"9000000","markPx":"6000"}',
+        },
+        {
+            "market_type": "perp",
+            "market_id": "hl:perp:xyz:xyz:NVDA",
+            "coin": "xyz:NVDA",
+            "dex": "xyz",
+            "payload": '{"dayNtlVlm":"800000","markPx":"145"}',
+        },
+        {
+            "market_type": "perp",
+            "market_id": "hl:perp:xyz:xyz:AMD",
+            "coin": "xyz:AMD",
+            "dex": "xyz",
+            "payload": '{"dayNtlVlm":"700000","markPx":"130"}',
+        },
+        {
+            "market_type": "perp",
+            "market_id": "hl:perp:xyz:xyz:TSLA",
+            "coin": "xyz:TSLA",
+            "dex": "xyz",
+            "payload": '{"dayNtlVlm":"600000","markPx":"300"}',
+        },
+    ]
+
+    markets = select_runtime_markets(
+        rows,
+        market_data_network="mainnet",
+        allowed_asset_classes=("stocks", "indices", "preipo"),
+        min_day_notional_volume_usd=Decimal("100000"),
+        max_markets=10,
+        trade_coins=("xyz:nvda", "XYZ:AMD"),
+        excluded_coins=("spx",),
+    )
+
+    assert [market.coin for market in markets] == ["xyz:NVDA", "xyz:AMD"]

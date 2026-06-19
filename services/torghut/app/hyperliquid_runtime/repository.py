@@ -534,6 +534,10 @@ class HyperliquidRuntimeRepository:
         self,
         *,
         dependencies: Iterable[RuntimeDependencyStatus],
+        reject_cooldown_threshold: int = 3,
+        reject_cooldown_window_seconds: int = 1800,
+        reject_cooldown_seconds: int = 900,
+        halted_cooldown_seconds: int = 300,
     ) -> RiskState:
         row = (
             self._session.execute(
@@ -548,7 +552,11 @@ class HyperliquidRuntimeRepository:
                     LIMIT 1
                   ), 0)
                     AS gross_exposure_usd,
-                  COALESCE((SELECT SUM(unrealized_pnl_usd) FROM hyperliquid_runtime_positions WHERE network = 'testnet'), 0)
+                  COALESCE((
+                    SELECT SUM(unrealized_pnl_usd)
+                    FROM hyperliquid_runtime_positions
+                    WHERE network = 'testnet'
+                  ), 0)
                     AS unrealized_pnl_usd,
                   COALESCE((
                     SELECT SUM(closed_pnl_usd - fee_usd)
@@ -578,6 +586,58 @@ class HyperliquidRuntimeRepository:
                 """
             )
         ).mappings()
+        symbol_exposure_rows = self._session.execute(
+            text(
+                """
+                SELECT coin, SUM(notional_usd) AS exposure_usd
+                FROM (
+                  SELECT coin, ABS(notional_usd) AS notional_usd
+                  FROM hyperliquid_runtime_positions
+                  WHERE network = 'testnet'
+                  UNION ALL
+                  SELECT coin, ABS(notional_usd) AS notional_usd
+                  FROM hyperliquid_runtime_orders
+                  WHERE network = 'testnet'
+                    AND status IN ('accepted', 'submitted')
+                ) exposures
+                GROUP BY coin
+                """
+            )
+        ).mappings()
+        reject_cooldown_rows = self._session.execute(
+            text(
+                """
+                SELECT coin
+                FROM hyperliquid_runtime_orders
+                WHERE network = 'testnet'
+                  AND status = 'rejected'
+                  AND rejection_reason ILIKE '%could not immediately match%'
+                  AND created_at >= now() - (:window_seconds * interval '1 second')
+                GROUP BY coin
+                HAVING count(*) >= :threshold
+                  AND max(created_at) >= now()
+                    - (:cooldown_seconds * interval '1 second')
+                """
+            ),
+            {
+                "window_seconds": reject_cooldown_window_seconds,
+                "cooldown_seconds": reject_cooldown_seconds,
+                "threshold": reject_cooldown_threshold,
+            },
+        ).mappings()
+        halted_rows = self._session.execute(
+            text(
+                """
+                SELECT DISTINCT coin
+                FROM hyperliquid_runtime_orders
+                WHERE network = 'testnet'
+                  AND status = 'rejected'
+                  AND rejection_reason = 'Trading is halted.'
+                  AND created_at >= now() - (:cooldown_seconds * interval '1 second')
+                """
+            ),
+            {"cooldown_seconds": halted_cooldown_seconds},
+        ).mappings()
         return RiskState(
             gross_exposure_usd=Decimal(str(row["gross_exposure_usd"])),
             daily_realized_pnl_usd=Decimal(str(row["daily_realized_pnl_usd"])),
@@ -587,7 +647,163 @@ class HyperliquidRuntimeRepository:
                 str(open_row["market_id"]) for open_row in open_rows
             ),
             dependencies=tuple(dependencies),
+            symbol_exposure_usd_by_coin={
+                str(exposure_row["coin"]): Decimal(str(exposure_row["exposure_usd"]))
+                for exposure_row in symbol_exposure_rows
+            },
+            reject_cooldown_coins=frozenset(
+                str(cooldown_row["coin"]) for cooldown_row in reject_cooldown_rows
+            ),
+            halted_coins=frozenset(
+                str(halted_row["coin"]) for halted_row in halted_rows
+            ),
         )
+
+    def operational_report(
+        self,
+        *,
+        config_payload: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Return a compact operator report from existing runtime evidence."""
+
+        return {
+            "schema_version": "torghut.hyperliquid-runtime-report.v1",
+            "config": dict(config_payload),
+            "positions": self._query_report_rows(
+                """
+                SELECT
+                  observed_at::text,
+                  coin,
+                  size::text,
+                  entry_price::text,
+                  notional_usd::text,
+                  unrealized_pnl_usd::text
+                FROM hyperliquid_runtime_positions
+                WHERE network = 'testnet'
+                ORDER BY observed_at DESC, coin
+                LIMIT 50
+                """
+            ),
+            "fills_by_coin": self._query_report_rows(
+                """
+                SELECT
+                  coin,
+                  side,
+                  count(*)::int AS fills,
+                  COALESCE(sum(notional_usd), 0)::text AS notional_usd,
+                  COALESCE(sum(fee_usd), 0)::text AS fees_usd,
+                  COALESCE(sum(closed_pnl_usd - fee_usd), 0)::text
+                    AS net_pnl_after_fees_usd,
+                  max(event_ts)::text AS latest_fill_at
+                FROM hyperliquid_runtime_fills
+                WHERE network = 'testnet'
+                GROUP BY coin, side
+                ORDER BY max(event_ts) DESC NULLS LAST
+                LIMIT 100
+                """
+            ),
+            "rejects_by_coin_reason": self._query_report_rows(
+                """
+                SELECT
+                  coin,
+                  rejection_reason,
+                  count(*)::int AS rejects,
+                  max(created_at)::text AS latest_reject_at
+                FROM hyperliquid_runtime_orders
+                WHERE network = 'testnet'
+                  AND status = 'rejected'
+                GROUP BY coin, rejection_reason
+                ORDER BY max(created_at) DESC NULLS LAST, rejects DESC
+                LIMIT 100
+                """
+            ),
+            "blocked_decisions_by_reason": self._query_report_rows(
+                """
+                SELECT
+                  coin,
+                  action,
+                  reason,
+                  count(*)::int AS decisions,
+                  max(decided_at)::text AS latest_decision_at
+                FROM hyperliquid_runtime_decisions
+                WHERE network = 'testnet'
+                  AND status = 'blocked'
+                  AND decided_at >= now() - interval '1 hour'
+                GROUP BY coin, action, reason
+                ORDER BY max(decided_at) DESC NULLS LAST, decisions DESC
+                LIMIT 100
+                """
+            ),
+            "cooldowns": {
+                "immediate_match_rejects": self._query_report_rows(
+                    """
+                    SELECT
+                      coin,
+                      count(*)::int AS rejects,
+                      max(created_at)::text AS latest_reject_at
+                    FROM hyperliquid_runtime_orders
+                    WHERE network = 'testnet'
+                      AND status = 'rejected'
+                      AND rejection_reason ILIKE '%could not immediately match%'
+                      AND created_at >= now() - (:window_seconds * interval '1 second')
+                    GROUP BY coin
+                    HAVING count(*) >= :threshold
+                      AND max(created_at) >= now()
+                        - (:cooldown_seconds * interval '1 second')
+                    ORDER BY max(created_at) DESC NULLS LAST
+                    """,
+                    {
+                        "window_seconds": config_payload[
+                            "reject_cooldown_window_seconds"
+                        ],
+                        "cooldown_seconds": config_payload["reject_cooldown_seconds"],
+                        "threshold": config_payload["reject_cooldown_threshold"],
+                    },
+                ),
+                "halted": self._query_report_rows(
+                    """
+                    SELECT
+                      coin,
+                      max(created_at)::text AS latest_reject_at
+                    FROM hyperliquid_runtime_orders
+                    WHERE network = 'testnet'
+                      AND status = 'rejected'
+                      AND rejection_reason = 'Trading is halted.'
+                      AND created_at >= now()
+                        - (:cooldown_seconds * interval '1 second')
+                    GROUP BY coin
+                    ORDER BY max(created_at) DESC NULLS LAST
+                    """,
+                    {"cooldown_seconds": config_payload["halted_cooldown_seconds"]},
+                ),
+            },
+            "latest_performance": self._query_report_rows(
+                """
+                SELECT
+                  observed_at::text,
+                  gross_exposure_usd::text,
+                  realized_pnl_usd::text,
+                  unrealized_pnl_usd::text,
+                  fees_usd::text,
+                  (realized_pnl_usd + unrealized_pnl_usd - fees_usd)::text
+                    AS net_pnl_after_fees_usd,
+                  trade_count,
+                  reconciliation_status
+                FROM hyperliquid_runtime_performance_snapshots
+                WHERE network = 'testnet'
+                ORDER BY observed_at DESC
+                LIMIT 1
+                """
+            ),
+        }
+
+    def _query_report_rows(
+        self,
+        sql: str,
+        params: Mapping[str, object] | None = None,
+    ) -> list[dict[str, object]]:
+        rows = self._session.execute(text(sql), dict(params or {})).mappings()
+        return [dict(row) for row in rows]
 
 
 def _feature_payload(signal: Signal) -> dict[str, str | int]:

@@ -90,14 +90,23 @@ def select_runtime_markets(
     allowed_asset_classes: Iterable[str],
     min_day_notional_volume_usd: Decimal,
     max_markets: int,
+    trade_coins: Iterable[str] = (),
+    excluded_coins: Iterable[str] = (),
 ) -> list[HyperliquidMarket]:
     """Select liquid runtime-approved perp markets."""
 
     allowed = {item.strip().lower() for item in allowed_asset_classes}
+    trade_coin_keys = _coin_keys(trade_coins)
+    excluded_coin_keys = _coin_keys(excluded_coins)
     selected: list[HyperliquidMarket] = []
     for row in rows:
         market = market_from_catalog_row(row, market_data_network=market_data_network)
         if market is None:
+            continue
+        coin_key = _coin_key(market.coin)
+        if coin_key in excluded_coin_keys:
+            continue
+        if trade_coin_keys and coin_key not in trade_coin_keys:
             continue
         if market.asset_class not in allowed:
             continue
@@ -196,6 +205,8 @@ def select_equity_like_markets(
     allowed_asset_classes: Iterable[str],
     min_day_notional_volume_usd: Decimal,
     max_markets: int,
+    trade_coins: Iterable[str] = (),
+    excluded_coins: Iterable[str] = (),
 ) -> list[HyperliquidMarket]:
     """Backward-compatible wrapper for callers not yet renamed."""
 
@@ -205,6 +216,8 @@ def select_equity_like_markets(
         allowed_asset_classes=allowed_asset_classes,
         min_day_notional_volume_usd=min_day_notional_volume_usd,
         max_markets=max_markets,
+        trade_coins=trade_coins,
+        excluded_coins=excluded_coins,
     )
 
 
@@ -246,6 +259,14 @@ def _string(value: object) -> str:
     if value is None:
         return ""
     return str(value).strip()
+
+
+def _coin_keys(coins: Iterable[str]) -> frozenset[str]:
+    return frozenset(_coin_key(coin) for coin in coins if coin.strip())
+
+
+def _coin_key(coin: str) -> str:
+    return coin.strip().upper()
 
 
 def _decimal(value: object) -> Decimal:

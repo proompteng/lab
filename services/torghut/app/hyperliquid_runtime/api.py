@@ -18,6 +18,7 @@ from .exchange import exchange_from_config
 from .ledger import HyperliquidTigerBeetleJournal
 from .metrics import HyperliquidRuntimeMetrics
 from .models import CycleResult
+from .repository import HyperliquidRuntimeRepository
 from .runtime_session import RuntimeSession
 from .service import HyperliquidRuntimeService, runtime_readiness
 
@@ -106,6 +107,46 @@ def metrics() -> Response:
         runtime_state.metrics.render(runtime_state.config.metrics_namespace),
         media_type="text/plain; version=0.0.4",
     )
+
+
+@app.get("/report")
+def report() -> dict[str, object]:
+    session = SessionLocal()
+    try:
+        return HyperliquidRuntimeRepository(session).operational_report(
+            config_payload={
+                "execution_network": runtime_state.config.execution_network,
+                "market_data_network": runtime_state.config.market_data_network,
+                "trade_coins": list(runtime_state.config.trade_coins),
+                "excluded_coins": list(runtime_state.config.excluded_coins),
+                "max_order_notional_usd": str(
+                    runtime_state.config.max_order_notional_usd
+                ),
+                "min_order_notional_usd": str(
+                    runtime_state.config.min_order_notional_usd
+                ),
+                "max_gross_exposure_usd": str(
+                    runtime_state.config.max_gross_exposure_usd
+                ),
+                "max_symbol_exposure_usd": str(
+                    runtime_state.config.max_symbol_exposure_usd
+                ),
+                "reject_cooldown_threshold": (
+                    runtime_state.config.reject_cooldown_threshold
+                ),
+                "reject_cooldown_window_seconds": (
+                    runtime_state.config.reject_cooldown_window_seconds
+                ),
+                "reject_cooldown_seconds": (
+                    runtime_state.config.reject_cooldown_seconds
+                ),
+                "halted_cooldown_seconds": (
+                    runtime_state.config.exchange_staleness_seconds
+                ),
+            }
+        )
+    finally:
+        session.close()
 
 
 async def _runtime_loop() -> None:

@@ -151,6 +151,8 @@ class HyperliquidRuntimeService:
             allowed_asset_classes=self._config.allowed_asset_classes,
             min_day_notional_volume_usd=self._config.min_day_notional_volume_usd,
             max_markets=self._config.max_markets_per_cycle,
+            trade_coins=self._config.trade_coins,
+            excluded_coins=self._config.excluded_coins,
         )
         repository.upsert_markets(markets)
         execution_markets, execution_universe_status = (
@@ -206,7 +208,15 @@ class HyperliquidRuntimeService:
             markets=execution_markets,
             features=tuple(fresh_features),
             dependencies=dependencies,
-            risk_state=repository.risk_state(dependencies=dependencies),
+            risk_state=repository.risk_state(
+                dependencies=dependencies,
+                reject_cooldown_threshold=self._config.reject_cooldown_threshold,
+                reject_cooldown_window_seconds=(
+                    self._config.reject_cooldown_window_seconds
+                ),
+                reject_cooldown_seconds=self._config.reject_cooldown_seconds,
+                halted_cooldown_seconds=self._config.exchange_staleness_seconds,
+            ),
             fill_count=fill_count,
             exchange_ready=exchange_status.ready,
             journal_ready=journal_status.ready,
