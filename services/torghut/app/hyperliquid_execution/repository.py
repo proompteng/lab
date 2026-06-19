@@ -628,6 +628,16 @@ class HyperliquidExecutionRepository:
                   CAST(:universe_details AS jsonb),
                   :error
                 )
+                ON CONFLICT (id) DO UPDATE SET
+                  finished_at = EXCLUDED.finished_at,
+                  trading_enabled = EXCLUDED.trading_enabled,
+                  selected_coins = EXCLUDED.selected_coins,
+                  signals_written = EXCLUDED.signals_written,
+                  orders_submitted = EXCLUDED.orders_submitted,
+                  orders_cancelled = EXCLUDED.orders_cancelled,
+                  dependency_statuses = EXCLUDED.dependency_statuses,
+                  universe_details = EXCLUDED.universe_details,
+                  error = EXCLUDED.error
                 """
             ),
             {

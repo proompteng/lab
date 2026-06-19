@@ -267,6 +267,17 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     assert result.orders_submitted == 1
     assert result.orders_cancelled == 1
     assert session.committed
+    cycle_calls = [
+        index
+        for index, (sql, _) in enumerate(session.calls)
+        if "INSERT INTO hyperliquid_execution_cycles" in sql
+    ]
+    signal_call = next(
+        index
+        for index, (sql, _) in enumerate(session.calls)
+        if "INSERT INTO hyperliquid_execution_signals" in sql
+    )
+    assert cycle_calls[0] < signal_call < cycle_calls[-1]
 
 
 def test_runtime_readiness_reports_config_errors_and_dependency_blockers() -> None:

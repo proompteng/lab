@@ -68,6 +68,22 @@ class HyperliquidExecutionService:
         repository = HyperliquidExecutionRepository(session)
         context = self._load_context(repository, started_at)
         counts = _CycleCounts()
+        repository.insert_cycle(
+            self._cycle_record(
+                cycle_id,
+                started_at,
+                CycleResult(
+                    observed_at=started_at,
+                    markets_seen=len(context.markets),
+                    selected_coins=tuple(market.coin for market in context.markets),
+                    signals_written=0,
+                    orders_submitted=0,
+                    orders_cancelled=0,
+                    dependencies=context.dependencies,
+                    universe_details=context.universe_details,
+                ),
+            )
+        )
 
         counts.orders_cancelled = self._cancel_expired_orders(repository, started_at)
 
