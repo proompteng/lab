@@ -78,11 +78,11 @@ class TestRuntimeWindowImportConfig(RuntimeWindowImportTestCaseBase):
                 clear=True,
             ),
             patch(
-                "scripts.import_hypothesis_runtime_windows.create_engine",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.create_engine",
                 return_value=fake_engine,
             ) as create_engine_mock,
             patch(
-                "scripts.import_hypothesis_runtime_windows.sessionmaker",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.sessionmaker",
                 side_effect=fake_sessionmaker,
             ),
         ):

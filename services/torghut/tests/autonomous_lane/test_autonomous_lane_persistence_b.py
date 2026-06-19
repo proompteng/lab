@@ -424,7 +424,7 @@ class TestAutonomousLanePersistenceB(AutonomousLaneTestCaseBase):
         self.assertEqual(run_row.runner_version, "run_autonomous_lane_no_signals")
         self.assertEqual(run_row.dataset_snapshot_ref, "no_signal_window")
 
-    @patch("app.trading.autonomy.lane._persist_run_outputs")
+    @patch("app.trading.autonomy.lane_result_persistence._persist_run_outputs")
     def test_lane_persistence_failure_marks_run_failed(
         self, mock_persist: object
     ) -> None:
