@@ -114,6 +114,7 @@ def report() -> dict[str, object]:
     session = SessionLocal()
     try:
         return HyperliquidRuntimeRepository(session).operational_report(
+            runtime_payload=_runtime_report_payload(),
             config_payload={
                 "execution_network": runtime_state.config.execution_network,
                 "market_data_network": runtime_state.config.market_data_network,
@@ -143,10 +144,44 @@ def report() -> dict[str, object]:
                 "halted_cooldown_seconds": (
                     runtime_state.config.exchange_staleness_seconds
                 ),
-            }
+            },
         )
     finally:
         session.close()
+
+
+def _runtime_report_payload() -> dict[str, object]:
+    latest_cycle = runtime_state.latest_cycle
+    if latest_cycle is None:
+        return {
+            "latest_cycle_at": None,
+            "selected_coins": [],
+            "markets_seen": 0,
+            "signals_written": 0,
+            "decisions_written": 0,
+            "orders_submitted": 0,
+            "blocked_decisions": 0,
+            "dependencies": [],
+        }
+    return {
+        "latest_cycle_at": latest_cycle.observed_at.isoformat(),
+        "selected_coins": list(latest_cycle.selected_coins),
+        "markets_seen": latest_cycle.markets_seen,
+        "signals_written": latest_cycle.signals_written,
+        "decisions_written": latest_cycle.decisions_written,
+        "orders_submitted": latest_cycle.orders_submitted,
+        "blocked_decisions": latest_cycle.blocked_decisions,
+        "dependencies": [
+            {
+                "name": dependency.name,
+                "ready": dependency.ready,
+                "lag_seconds": dependency.lag_seconds,
+                "reason": dependency.reason,
+                "details": dependency.details,
+            }
+            for dependency in latest_cycle.dependency_statuses
+        ],
+    }
 
 
 async def _runtime_loop() -> None:
