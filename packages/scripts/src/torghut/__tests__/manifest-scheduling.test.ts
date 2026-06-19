@@ -268,6 +268,10 @@ describe('Torghut manifest scheduling', () => {
     const externalSecret = parseManifest('argocd/applications/torghut-hyperliquid-runtime/externalsecret.yaml')
     expect(externalSecret.kind).toBe('ExternalSecret')
     expect(getAtPath(externalSecret, ['metadata']).name).toBe('torghut-hyperliquid-testnet')
+    expect(getAtPath(externalSecret, ['spec'])).toMatchObject({
+      refreshPolicy: 'CreatedOnce',
+      refreshInterval: '0s',
+    })
     expect(getAtPath(externalSecret, ['spec', 'secretStoreRef'])).toMatchObject({
       kind: 'ClusterSecretStore',
       name: 'onepassword-infra',
