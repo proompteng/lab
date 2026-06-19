@@ -13,6 +13,7 @@ import {
   SettingsManager,
 } from '@earendil-works/pi-coding-agent'
 
+import { BoundedText, createBoundedText } from './bounded-text'
 import type { AnypiConfig } from './config'
 import { writeModelsFile } from './config'
 import { buildSystemPrompt } from './prompt'
@@ -136,11 +137,11 @@ export const runPiAgent = async (
   session.setActiveToolsByName(session.getAllTools().map((tool) => tool.name))
   await log(`pi active tools: ${session.getActiveToolNames().join(', ')}`)
 
-  let text = ''
+  const boundedText = createBoundedText({ maxSize: config.boundedTextLimit })
   const unsubscribe = session.subscribe((event) => {
     if (event.type === 'message_update' && event.assistantMessageEvent.type === 'text_delta') {
       const delta = event.assistantMessageEvent.delta
-      text += delta
+      boundedText.append(delta)
       void log(delta)
     }
     if (event.type === 'tool_execution_start') {
@@ -155,11 +156,11 @@ export const runPiAgent = async (
     try {
       await runPromptWithTimeout(session, prompt, config.piPromptTimeoutSeconds)
     } catch (error) {
-      if (!text.trim() || !isBenignAssistantContinuationError(error)) throw error
+      if (!boundedText.getTail().trim() || !isBenignAssistantContinuationError(error)) throw error
       await log(`pi stopped after assistant final response: ${(error as Error).message}`)
     }
     return {
-      text,
+      text: boundedText.getTail(),
       tools: session.getActiveToolNames(),
       sessionFile: session.sessionFile,
     }

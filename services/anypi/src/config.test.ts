@@ -5,7 +5,14 @@ import { execFileSync } from 'node:child_process'
 
 import { describe, expect, test } from 'vitest'
 
-import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
+import {
+  ALL_PI_TOOL_NAMES,
+  buildModelsJson,
+  BOUNDED_TEXT_DEFAULT_LIMIT,
+  BOUNDED_TEXT_HARD_LIMIT,
+  parseCommandList,
+  resolveConfig,
+} from './config'
 import {
   isNoChecksReportedResult,
   isNoRequiredChecksResult,
@@ -58,6 +65,7 @@ describe('Anypi config', () => {
     expect(config.validationRepairAttempts).toBe(2)
     expect(config.ciRepairAttempts).toBe(1)
     expect(config.ciRequiredOnly).toBe(true)
+    expect(config.boundedTextLimit).toBe(BOUNDED_TEXT_DEFAULT_LIMIT)
   })
 
   test('renders Pi custom models.json for vLLM OpenAI-compatible serving', () => {
@@ -96,6 +104,24 @@ describe('Anypi config', () => {
       validationPolicy: 'override',
       piPromptTimeoutSeconds: 900,
     })
+  })
+
+  test('configures bounded text limit with default 4 MiB', () => {
+    const config = resolveConfig({})
+    expect(config.boundedTextLimit).toBe(BOUNDED_TEXT_DEFAULT_LIMIT)
+    expect(config.boundedTextLimit).toBe(4 * 1024 * 1024)
+  })
+
+  test('allows overriding bounded text limit via env', () => {
+    const customLimit = 8 * 1024 * 1024 // 8 MiB
+    const config = resolveConfig({ ANYPI_BOUNDED_TEXT_LIMIT: customLimit.toString() })
+    expect(config.boundedTextLimit).toBe(customLimit)
+  })
+
+  test('enforces 16 MiB hard limit on bounded text', () => {
+    const tooLarge = BOUNDED_TEXT_HARD_LIMIT + 1
+    const config = resolveConfig({ ANYPI_BOUNDED_TEXT_LIMIT: tooLarge.toString() })
+    expect(config.boundedTextLimit).toBe(BOUNDED_TEXT_HARD_LIMIT)
   })
 
   test('isolates persisted sessions per agent attempt', () => {

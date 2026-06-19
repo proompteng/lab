@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
+import { createBoundedText } from './bounded-text'
 import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
 import {
@@ -283,10 +284,11 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     status.promptChars = prompt.length
     const systemPrompt = config.allowSystemPromptOverride ? runSpec.systemPrompt : undefined
 
-    let piText = ''
+    const boundedPiText = createBoundedText({ maxSize: config.boundedTextLimit })
     const sessionFiles: string[] = []
     const recordPiResult = async (result: Awaited<ReturnType<typeof runPiAgent>>, label?: string) => {
-      piText = piText ? `${piText}\n\n${label ? `## ${label}\n` : ''}${result.text}` : result.text
+      const piTextFragment = result.text
+      boundedPiText.append(piTextFragment)
       status.tools = mergeTools(status.tools, result.tools)
       if (result.sessionFile) {
         sessionFiles.push(result.sessionFile)
@@ -352,7 +354,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
         systemPrompt,
       })
       status.agentAttempts += 1
-      piText = `${piText}\n\n## Validation repair ${attempt + 1}\n${repairResult.text}`
+      boundedPiText.append(`\n\n## Validation repair ${attempt + 1}\n${repairResult.text}`)
       status.tools = mergeTools(status.tools, repairResult.tools)
       if (repairResult.sessionFile) {
         sessionFiles.push(repairResult.sessionFile)
@@ -375,7 +377,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
       await pushBranch(git)
       pullRequest = await createOrUpdatePullRequest(git, {
         title: buildPullRequestTitle(runSpec),
-        body: await buildPullRequestBody({ runSpec, status, git, piText }),
+        body: await buildPullRequestBody({ runSpec, status, git, piText: boundedPiText.getTail() }),
       })
       status.pullRequest = pullRequest
       await writeStatus(config.statusPath, status)
@@ -429,7 +431,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
           await pushBranch(git)
           pullRequest = await createOrUpdatePullRequest(git, {
             title: buildPullRequestTitle(runSpec),
-            body: await buildPullRequestBody({ runSpec, status, git, piText }),
+            body: await buildPullRequestBody({ runSpec, status, git, piText: boundedPiText.getTail() }),
           })
           status.pullRequest = pullRequest
           await writeStatus(config.statusPath, status)
@@ -437,7 +439,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
 
         pullRequest = await createOrUpdatePullRequest(git, {
           title: buildPullRequestTitle(runSpec),
-          body: await buildPullRequestBody({ runSpec, status, git, piText }),
+          body: await buildPullRequestBody({ runSpec, status, git, piText: boundedPiText.getTail() }),
         })
         status.pullRequest = pullRequest
         await writeStatus(config.statusPath, status)

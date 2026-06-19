@@ -7,6 +7,9 @@ import type { AgentRunnerSpecPayload, AgentRunSpecPayload, PromptVariant, Valida
 
 export const ALL_PI_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const
 
+export const BOUNDED_TEXT_DEFAULT_LIMIT = 4 * 1024 * 1024 // 4 MiB
+export const BOUNDED_TEXT_HARD_LIMIT = 16 * 1024 * 1024 // 16 MiB
+
 export type AnypiConfig = {
   workspace: string
   worktree: string
@@ -39,6 +42,7 @@ export type AnypiConfig = {
   ciCheckIntervalSeconds: number
   ciRepairAttempts: number
   ciRequiredOnly: boolean
+  boundedTextLimit: number
 }
 
 const readEnv = (env: NodeJS.ProcessEnv, name: string, fallback: string) => {
@@ -129,6 +133,10 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     ciCheckIntervalSeconds: readNumber(env, 'ANYPI_CI_CHECK_INTERVAL_SECONDS', 30),
     ciRepairAttempts: readNumber(env, 'ANYPI_CI_REPAIR_ATTEMPTS', 1),
     ciRequiredOnly: readBoolean(env, 'ANYPI_CI_REQUIRED_ONLY', true),
+    boundedTextLimit: Math.min(
+      readNumber(env, 'ANYPI_BOUNDED_TEXT_LIMIT', BOUNDED_TEXT_DEFAULT_LIMIT),
+      BOUNDED_TEXT_HARD_LIMIT,
+    ),
   }
 }
 
