@@ -165,7 +165,7 @@ describe('Torghut manifest scheduling', () => {
     expect(readyTables.every((table) => enabledTables.includes(table))).toBe(true)
     expect(data.CLICKHOUSE_REQUEST_TIMEOUT_MS).toBe('30000')
     expect(data.CLICKHOUSE_ENABLED).toBe('true')
-    expect(data.CLICKHOUSE_REQUIRED_FOR_READINESS).toBe('false')
+    expect(data.CLICKHOUSE_REQUIRED_FOR_READINESS).toBe('true')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     const feedContainer = getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0])
@@ -188,7 +188,7 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-bbo-clickhouse-20260619a')
+    ).toBe('hyperliquid-feed-nonblocking-publish-20260619a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
@@ -216,6 +216,12 @@ describe('Torghut manifest scheduling', () => {
     const data = getAtPath(schema, ['data'])
     expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 10;')
     expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
+    expect(data['schema.sql']).toContain(
+      "greatest(0, dateDiff('second', b.quote_ingest_ts, now64(3))) AS quote_lag_seconds",
+    )
+    expect(data['schema.sql']).toContain('parseDateTimeBestEffort(ingest_ts)')
+    expect(data['schema.sql']).toContain('AS quote_ingest_ts')
+    expect(data['schema.sql']).toContain('AND parseDateTimeBestEffort(ingest_ts) >= now() - INTERVAL 2 HOUR')
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 

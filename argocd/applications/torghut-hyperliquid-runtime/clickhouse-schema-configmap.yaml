@@ -118,7 +118,7 @@ data:
       b.bid_price,
       b.ask_price,
       b.quote_event_ts,
-      greatest(0, dateDiff('second', b.quote_event_ts, now64(3))) AS quote_lag_seconds
+      greatest(0, dateDiff('second', b.quote_ingest_ts, now64(3))) AS quote_lag_seconds
     FROM
     (
       SELECT
@@ -157,18 +157,22 @@ data:
         market_id,
         argMax(
           toFloat64OrZero(JSONExtractString(payload, 'bbo', 1, 'px')),
-          parseDateTimeBestEffort(event_ts)
+          parseDateTimeBestEffort(ingest_ts)
         ) AS bid_price,
         argMax(
           toFloat64OrZero(JSONExtractString(payload, 'bbo', 2, 'px')),
-          parseDateTimeBestEffort(event_ts)
+          parseDateTimeBestEffort(ingest_ts)
         ) AS ask_price,
-        max(toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC')) AS quote_event_ts
+        argMax(
+          toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC'),
+          parseDateTimeBestEffort(ingest_ts)
+        ) AS quote_event_ts,
+        max(toDateTime64(parseDateTimeBestEffort(ingest_ts), 3, 'UTC')) AS quote_ingest_ts
       FROM torghut.hyperliquid_bbo
       WHERE channel = 'bbo'
         AND market_type = 'perp'
         AND market_id IS NOT NULL
-        AND parseDateTimeBestEffort(event_ts) >= now() - INTERVAL 2 HOUR
+        AND parseDateTimeBestEffort(ingest_ts) >= now() - INTERVAL 2 HOUR
       GROUP BY network, market_id
     ) AS b
       ON f.network = b.network
