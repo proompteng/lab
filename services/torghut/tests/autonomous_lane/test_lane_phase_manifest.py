@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from app.models import Base, ResearchRun
 from app.trading.autonomy import lane
 from app.trading.autonomy import lane_common
+from app.trading.autonomy import lane_persistence
 from app.trading.autonomy import lane_phase_payloads as phase_payloads
 from app.trading.autonomy.gates import GateEvaluationReport, GateResult
 from app.trading.autonomy.lane_common import LANE_AUTONOMY_PHASE_ORDER
@@ -304,7 +305,7 @@ def test_upsert_no_signal_run_updates_existing_research_run(
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     monkeypatch.setattr(
-        lane,
+        lane_persistence,
         "load_runtime_strategy_config",
         lambda _path: [
             _runtime_strategy(

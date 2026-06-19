@@ -228,111 +228,74 @@ from .lane_strategy_factory import (
     strategy_factory_gate_summary as _strategy_factory_gate_summary,
 )
 
+from .lane_config_loading import (
+    load_runtime_strategy_config,
+    load_signals as _load_signals,
+    deterministic_run_id as _deterministic_run_id,
+    required_feature_null_rate as _required_feature_null_rate,
+    compute_no_signal_feature_spec_hash as _compute_no_signal_feature_spec_hash,
+    compute_no_signal_dataset_version_hash as _compute_no_signal_dataset_version_hash,
+    compute_feature_spec_hash as _compute_feature_spec_hash,
+    compute_dataset_version_hash as _compute_dataset_version_hash,
+    strategy_parameter_set as _strategy_parameter_set,
+    strategy_universe_definition as _strategy_universe_definition,
+    metric_counter_int as _metric_counter_int,
+    build_stress_bundle as _build_stress_bundle,
+)
 
-def upsert_autonomy_no_signal_run(
-    *,
-    session_factory: Callable[[], Session],
-    query_start: datetime,
-    query_end: datetime,
-    strategy_config_path: Path,
-    gate_policy_path: Path,
-    no_signal_reason: str | None,
-    now: datetime,
-    code_version: str = "live",
-) -> str:
-    """Persist a zero-signal window as a skipped research run."""
+from .lane_persistence import (
+    upsert_autonomy_no_signal_run,
+    collect_walk_decisions_for_runtime as _collect_walk_decisions_for_runtime,
+    resolve_confidence_calibration as _resolve_confidence_calibration,
+    resolve_paper_patch_path as _resolve_paper_patch_path,
+    mark_run_passed_if_requested as _mark_run_passed_if_requested,
+    mark_run_failed_if_requested as _mark_run_failed_if_requested,
+    upsert_research_run as _upsert_research_run,
+    mark_run_failed as _mark_run_failed,
+    mark_run_passed as _mark_run_passed,
+    persist_strategy_spec_lineage_trace as _persist_strategy_spec_lineage_trace,
+    persist_hypothesis_governance_rows as _persist_hypothesis_governance_rows,
+    persist_vnext_objects as _persist_vnext_objects,
+    trace_id as _trace_id,
+)
+from .lane_result_persistence import (
+    persist_run_outputs as _persist_run_outputs,
+    persist_run_outputs_if_requested as _persist_run_outputs_if_requested,
+)
 
-    strategy: StrategyRuntimeConfig | None = None
-    try:
-        runtime_strategies = load_runtime_strategy_config(strategy_config_path)
-        strategy = runtime_strategies[0] if runtime_strategies else None
-    except Exception:
-        strategy = None
+from .lane_governance import (
+    runtime_observation_contract_payload as _runtime_observation_contract_payload,
+    runtime_observation_has_ledger_profit_proof as _runtime_observation_has_ledger_profit_proof,
+    resolve_hypothesis_window_evidence as _resolve_hypothesis_window_evidence,
+    compute_candidate_hash as _compute_candidate_hash,
+    build_promotion_rationale as _build_promotion_rationale,
+)
 
-    strategy_id = strategy.strategy_id if strategy else None
-    strategy_type = strategy.strategy_type if strategy else None
-    strategy_version = strategy.version if strategy else None
+from .lane_gate_inputs import (
+    coerce_fragility_state as _coerce_fragility_state,
+    fragility_state_rank as _fragility_state_rank,
+    coerce_fragility_bool as _coerce_fragility_bool,
+    coerce_fragility_score as _coerce_fragility_score,
+    coerce_fragility_measurement as _coerce_fragility_measurement,
+    is_more_worse_fragility as _is_more_worse_fragility,
+    resolve_gate_fragility_inputs as _resolve_gate_fragility_inputs,
+    resolve_gate_forecast_metrics as _resolve_gate_forecast_metrics,
+    resolve_gate_staleness_ms_p95 as _resolve_gate_staleness_ms_p95,
+    to_finite_float as _to_finite_float,
+    resolve_gate_llm_metrics as _resolve_gate_llm_metrics,
+    nearest_rank_percentile as _nearest_rank_percentile,
+    load_tca_gate_inputs as _load_tca_gate_inputs,
+)
 
-    reason_label = (no_signal_reason or "no_signal").strip()
-    query_start_utc = _ensure_utc(query_start)
-    query_end_utc = _ensure_utc(query_end)
-
-    run_signature = {
-        "query_start": query_start_utc.isoformat() if query_start_utc else None,
-        "query_end": query_end_utc.isoformat() if query_end_utc else None,
-        "strategy_config_path": str(strategy_config_path),
-        "reason": reason_label,
-    }
-    run_signature_bytes = json.dumps(run_signature, sort_keys=True).encode("utf-8")
-    run_id = hashlib.sha256(run_signature_bytes).hexdigest()[:24]
-
-    feature_spec_hash = _compute_no_signal_feature_spec_hash(
-        strategy_config_path=strategy_config_path,
-        gate_policy_path=gate_policy_path,
-        reason=reason_label,
-        query_start=query_start_utc,
-        query_end=query_end_utc,
-    )
-    dataset_version = _compute_no_signal_dataset_version_hash(
-        query_start=query_start_utc,
-        query_end=query_end_utc,
-        no_signal_reason=reason_label,
-    )
-
-    with session_factory() as session:
-        existing_run = session.execute(
-            select(ResearchRun).where(ResearchRun.run_id == run_id)
-        ).scalar_one_or_none()
-
-        if existing_run is None:
-            run = ResearchRun(
-                run_id=run_id,
-                status="skipped",
-                strategy_id=strategy_id,
-                strategy_name=strategy_id,
-                strategy_type=strategy_type,
-                strategy_version=strategy_version,
-                code_commit=code_version,
-                feature_version=settings.trading_feature_normalization_version,
-                feature_schema_version=settings.trading_feature_schema_version,
-                feature_spec_hash=feature_spec_hash,
-                signal_source="autonomy-signals",
-                dataset_version=dataset_version,
-                dataset_from=query_start_utc,
-                dataset_to=query_end_utc,
-                dataset_snapshot_ref="no_signal_window",
-                runner_version="run_autonomous_lane_no_signals",
-                runner_binary_hash=hashlib.sha256(run_id.encode("utf-8")).hexdigest(),
-                updated_at=now,
-            )
-            session.add(run)
-        else:
-            existing_run.status = "skipped"
-            existing_run.strategy_id = strategy_id
-            existing_run.strategy_name = strategy_id
-            existing_run.strategy_type = strategy_type
-            existing_run.strategy_version = strategy_version
-            existing_run.code_commit = code_version
-            existing_run.feature_version = (
-                settings.trading_feature_normalization_version
-            )
-            existing_run.feature_spec_hash = feature_spec_hash
-            existing_run.feature_schema_version = (
-                settings.trading_feature_schema_version
-            )
-            existing_run.signal_source = "autonomy-signals"
-            existing_run.dataset_version = dataset_version
-            existing_run.dataset_from = query_start_utc
-            existing_run.dataset_to = query_end_utc
-            existing_run.dataset_snapshot_ref = "no_signal_window"
-            existing_run.runner_version = "run_autonomous_lane_no_signals"
-            existing_run.runner_binary_hash = hashlib.sha256(
-                run_id.encode("utf-8")
-            ).hexdigest()
-            existing_run.updated_at = now
-            session.add(existing_run)
-        session.commit()
-        return run_id
+from .lane_run_summary import (
+    baseline_runtime_strategies as _baseline_runtime_strategies,
+    profitability_threshold_payload as _profitability_threshold_payload,
+    collect_confidence_values as _collect_confidence_values,
+    to_orm_strategies as _to_orm_strategies,
+    strategy_universe_type as _strategy_universe_type,
+    evaluate_drift_promotion_gate as _evaluate_drift_promotion_gate,
+    write_paper_candidate_patch as _write_paper_candidate_patch,
+)
 
 
 def run_autonomous_lane(
@@ -2723,2625 +2686,28 @@ def run_autonomous_lane(
         raise RuntimeError(f"autonomous_lane_persistence_failed: {exc}") from exc
 
 
-def _collect_walk_decisions_for_runtime(
-    *,
-    runtime: StrategyRuntime,
-    ordered_signals: list[SignalEnvelope],
-    runtime_strategies: list[StrategyRuntimeConfig],
-) -> tuple[list[WalkForwardDecision], list[str]]:
-    walk_decisions: list[WalkForwardDecision] = []
-    runtime_errors: list[str] = []
-    for signal in ordered_signals:
-        result = runtime.evaluate(signal, runtime_strategies)
-        runtime_errors.extend(result.errors)
-        features = extract_signal_features(signal)
-        for decision in result.decisions:
-            walk_decisions.append(
-                WalkForwardDecision(decision=decision, features=features)
-            )
-    return walk_decisions, runtime_errors
-
-
-def _resolve_confidence_calibration(
-    *,
-    profitability_evidence_payload: dict[str, Any],
-    run_id: str,
-    recalibration_report_path: Path,
-) -> tuple[dict[str, Any], str, str | None]:
-    confidence_calibration_raw = profitability_evidence_payload.get(
-        "confidence_calibration"
-    )
-    confidence_calibration = (
-        dict(cast(Mapping[str, Any], confidence_calibration_raw))
-        if isinstance(confidence_calibration_raw, dict)
-        else {}
-    )
-    uncertainty_action = str(
-        confidence_calibration.get("gate_action", "abstain")
-    ).strip()
-    recalibration_run_id: str | None = None
-    if uncertainty_action != "pass":
-        recalibration_run_id = f"recal-{run_id[:12]}"
-        confidence_calibration["recalibration_run_id"] = recalibration_run_id
-        confidence_calibration["recalibration_artifact_ref"] = str(
-            recalibration_report_path
-        )
-    profitability_evidence_payload["confidence_calibration"] = confidence_calibration
-    return confidence_calibration, uncertainty_action, recalibration_run_id
-
-
-def _resolve_paper_patch_path(
-    *,
-    gate_report: GateEvaluationReport,
-    strategy_configmap_path: Path | None,
-    runtime_strategies: list[StrategyRuntimeConfig],
-    candidate_id: str,
-    promotion_target: str,
-    paper_dir: Path,
-) -> Path | None:
-    if not gate_report.promotion_allowed:
-        return None
-    if gate_report.recommended_mode != "paper":
-        return None
-    resolved_configmap = strategy_configmap_path or _default_strategy_configmap_path()
-    return _write_paper_candidate_patch(
-        configmap_path=resolved_configmap,
-        runtime_strategies=runtime_strategies,
-        candidate_id=candidate_id,
-        output_path=paper_dir / "strategy-configmap-patch.yaml",
-    )
-
-
-def _persist_run_outputs_if_requested(
-    *,
-    persist_results: bool,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    candidate_id: str,
-    candidate_hash: str,
-    runtime_strategies: list[StrategyRuntimeConfig],
-    signals: list[SignalEnvelope],
-    walk_results: WalkForwardResults,
-    report: EvaluationReport,
-    candidate_spec_path: Path,
-    evaluation_report_path: Path,
-    gate_report_path: Path,
-    actuation_intent_path: Path | None,
-    patch_path: Path | None,
-    now: datetime,
-    promotion_target: str,
-    actuation_allowed: bool,
-    promotion_allowed: bool,
-    promotion_reasons: list[str],
-    promotion_recommendation: PromotionRecommendation,
-    fold_metrics_count: int,
-    stress_metrics_count: int,
-    gate_report_trace_id: str,
-    recommendation_trace_id: str,
-    stage_trace_ids: dict[str, str],
-    stage_lineage_payload: dict[str, Any],
-    stage_manifest_refs: dict[str, str],
-    replay_artifact_hashes: dict[str, str],
-    simulation_calibration_report_payload: dict[str, Any],
-    shadow_live_deviation_report_payload: dict[str, Any],
-) -> None:
-    if not persist_results:
-        return
-    _persist_run_outputs(
-        session_factory=session_factory,
-        run_id=run_id,
-        candidate_id=candidate_id,
-        candidate_hash=candidate_hash,
-        runtime_strategies=runtime_strategies,
-        signals=signals,
-        walk_results=walk_results,
-        report=report,
-        candidate_spec_path=candidate_spec_path,
-        evaluation_report_path=evaluation_report_path,
-        gate_report_path=gate_report_path,
-        actuation_intent_path=actuation_intent_path,
-        patch_path=patch_path,
-        now=now,
-        promotion_target=promotion_target,
-        actuation_allowed=actuation_allowed,
-        promotion_allowed=promotion_allowed,
-        promotion_reasons=promotion_reasons,
-        promotion_recommendation=promotion_recommendation,
-        fold_metrics_count=fold_metrics_count,
-        stress_metrics_count=stress_metrics_count,
-        gate_report_trace_id=gate_report_trace_id,
-        recommendation_trace_id=recommendation_trace_id,
-        stage_trace_ids=stage_trace_ids,
-        stage_lineage_payload=stage_lineage_payload,
-        stage_manifest_refs=stage_manifest_refs,
-        replay_artifact_hashes=replay_artifact_hashes,
-        simulation_calibration_report_payload=simulation_calibration_report_payload,
-        shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
-    )
-
-
-def _mark_run_passed_if_requested(
-    *,
-    persist_results: bool,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    run_row: ResearchRun | None,
-    now: datetime,
-    gate_report_trace_id: str | None,
-    recommendation_trace_id: str | None,
-) -> None:
-    if not persist_results:
-        return
-    _mark_run_passed(
-        session_factory=session_factory,
-        run_id=run_id,
-        run_row=run_row,
-        now=now,
-        gate_report_trace_id=gate_report_trace_id,
-        recommendation_trace_id=recommendation_trace_id,
-    )
-
-
-def _mark_run_failed_if_requested(
-    *,
-    persist_results: bool,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    run_row: ResearchRun | None,
-    now: datetime,
-) -> None:
-    if not persist_results:
-        return
-    _mark_run_failed(
-        session_factory=session_factory,
-        run_id=run_id,
-        run_row=run_row,
-        now=now,
-    )
-
-
-def _upsert_research_run(
-    *,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    strategy: StrategyRuntimeConfig | None,
-    signals: list[SignalEnvelope],
-    strategy_config_path: Path,
-    signals_path: Path,
-    gate_policy_path: Path,
-    code_version: str,
-    now: datetime,
-) -> ResearchRun:
-    with session_factory() as session:
-        existing_run = session.execute(
-            select(ResearchRun).where(ResearchRun.run_id == run_id)
-        ).scalar_one_or_none()
-
-        dataset_from = signals[0].event_ts if signals else None
-        dataset_to = signals[-1].event_ts if signals else None
-
-        strategy_id = strategy.strategy_id if strategy else None
-        strategy_type = strategy.strategy_type if strategy else None
-        strategy_version = strategy.version if strategy else None
-
-        if existing_run is None:
-            run = ResearchRun(
-                run_id=run_id,
-                status="running",
-                strategy_id=strategy_id,
-                strategy_name=strategy_id,
-                strategy_type=strategy_type,
-                strategy_version=strategy_version,
-                code_commit=code_version,
-                feature_version=settings.trading_feature_normalization_version,
-                feature_schema_version=settings.trading_feature_schema_version,
-                feature_spec_hash=_compute_feature_spec_hash(
-                    strategy_config_path=strategy_config_path,
-                    gate_policy_path=gate_policy_path,
-                    signals_path=signals_path,
-                ),
-                signal_source="autonomy-signals",
-                dataset_version=_compute_dataset_version_hash(
-                    signals_path=signals_path
-                ),
-                dataset_from=dataset_from,
-                dataset_to=dataset_to,
-                dataset_snapshot_ref=str(strategy_config_path),
-                runner_version="run_autonomous_lane",
-                runner_binary_hash=hashlib.sha256(run_id.encode("utf-8")).hexdigest(),
-                gate_report_trace_id=None,
-                recommendation_trace_id=None,
-                updated_at=now,
-            )
-            session.add(run)
-            session.commit()
-            session.refresh(run)
-            return run
-
-        existing_run.status = "running"
-        existing_run.strategy_id = strategy_id
-        existing_run.strategy_name = strategy_id
-        existing_run.strategy_type = strategy_type
-        existing_run.strategy_version = strategy_version
-        existing_run.code_commit = code_version
-        existing_run.feature_version = settings.trading_feature_normalization_version
-        existing_run.feature_schema_version = settings.trading_feature_schema_version
-        existing_run.feature_spec_hash = _compute_feature_spec_hash(
-            strategy_config_path=strategy_config_path,
-            gate_policy_path=gate_policy_path,
-            signals_path=signals_path,
-        )
-        existing_run.signal_source = "autonomy-signals"
-        existing_run.dataset_from = dataset_from
-        existing_run.dataset_to = dataset_to
-        existing_run.dataset_version = _compute_dataset_version_hash(
-            signals_path=signals_path
-        )
-        existing_run.dataset_snapshot_ref = str(strategy_config_path)
-        existing_run.runner_version = "run_autonomous_lane"
-        existing_run.runner_binary_hash = hashlib.sha256(
-            run_id.encode("utf-8")
-        ).hexdigest()
-        existing_run.gate_report_trace_id = None
-        existing_run.recommendation_trace_id = None
-        existing_run.updated_at = now
-        session.add(existing_run)
-        session.commit()
-        session.refresh(existing_run)
-        return existing_run
-
-
-def _mark_run_failed(
-    *,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    run_row: ResearchRun | None,
-    now: datetime,
-) -> None:
-    if run_row is None:
-        return
-    with session_factory() as session:
-        existing_run = session.execute(
-            select(ResearchRun).where(ResearchRun.run_id == run_id)
-        ).scalar_one_or_none()
-        if existing_run is None:
-            return
-        existing_run.status = "failed"
-        existing_run.updated_at = now
-        session.add(existing_run)
-        session.commit()
-
-
-def _mark_run_passed(
-    *,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    run_row: ResearchRun | None,
-    now: datetime,
-    gate_report_trace_id: str | None,
-    recommendation_trace_id: str | None,
-) -> None:
-    if run_row is None:
-        return
-    with session_factory() as session:
-        existing_run = session.execute(
-            select(ResearchRun).where(ResearchRun.run_id == run_id)
-        ).scalar_one_or_none()
-        if existing_run is None:
-            return
-        existing_run.status = "passed"
-        existing_run.gate_report_trace_id = gate_report_trace_id
-        existing_run.recommendation_trace_id = recommendation_trace_id
-        existing_run.updated_at = now
-        session.add(existing_run)
-        session.commit()
-
-
-def _persist_run_outputs(
-    *,
-    session_factory: Callable[[], Session],
-    run_id: str,
-    candidate_id: str,
-    candidate_hash: str,
-    runtime_strategies: list[StrategyRuntimeConfig],
-    signals: list[SignalEnvelope],
-    walk_results: WalkForwardResults,
-    report: EvaluationReport,
-    candidate_spec_path: Path,
-    evaluation_report_path: Path,
-    gate_report_path: Path,
-    actuation_intent_path: Path | None,
-    patch_path: Path | None,
-    now: datetime,
-    promotion_target: str,
-    actuation_allowed: bool,
-    promotion_allowed: bool,
-    promotion_reasons: list[str],
-    promotion_recommendation: PromotionRecommendation,
-    fold_metrics_count: int,
-    stress_metrics_count: int,
-    gate_report_trace_id: str,
-    recommendation_trace_id: str,
-    stage_trace_ids: dict[str, str],
-    stage_lineage_payload: dict[str, Any],
-    stage_manifest_refs: dict[str, str],
-    replay_artifact_hashes: dict[str, str],
-    simulation_calibration_report_payload: dict[str, Any],
-    shadow_live_deviation_report_payload: dict[str, Any],
-) -> None:
-    robustness_by_fold = {fold.fold_name: fold for fold in report.robustness.folds}
-    effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
-    candidate_spec_payload = _load_json_if_exists(candidate_spec_path) or {}
-    candidate_dependency_quorum_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("dependency_quorum"))
-        if isinstance(candidate_spec_payload.get("dependency_quorum"), dict)
-        else {}
-    )
-    candidate_alpha_readiness_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("alpha_readiness"))
-        if isinstance(candidate_spec_payload.get("alpha_readiness"), dict)
-        else {}
-    )
-    strategy_factory_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("strategy_factory"))
-        if isinstance(candidate_spec_payload.get("strategy_factory"), dict)
-        else {}
-    )
-    strategy_factory_attempt_payload = (
-        cast(dict[str, Any], strategy_factory_payload.get("attempt_ledger"))
-        if isinstance(strategy_factory_payload.get("attempt_ledger"), dict)
-        else {}
-    )
-    strategy_factory_cost_calibration_payload = (
-        cast(dict[str, Any], strategy_factory_payload.get("cost_calibration"))
-        if isinstance(strategy_factory_payload.get("cost_calibration"), dict)
-        else {}
-    )
-    strategy_factory_sequential_payload = (
-        cast(dict[str, Any], strategy_factory_payload.get("sequential_trial"))
-        if isinstance(strategy_factory_payload.get("sequential_trial"), dict)
-        else {}
-    )
-    strategy_factory_validation_payloads = [
-        cast(dict[str, Any], item)
-        for item in cast(
-            list[Any], strategy_factory_payload.get("validation_tests", [])
-        )
-        if isinstance(item, dict)
-    ]
-
-    with session_factory() as session:
-        with session.begin():
-            existing_champion = (
-                session.execute(
-                    select(ResearchCandidate)
-                    .where(
-                        ResearchCandidate.lifecycle_role == "champion",
-                        ResearchCandidate.lifecycle_status == "active",
-                        ResearchCandidate.promotion_target == promotion_target,
-                        ResearchCandidate.candidate_id != candidate_id,
-                    )
-                    .order_by(ResearchCandidate.created_at.desc())
-                )
-                .scalars()
-                .first()
-            )
-            session.execute(
-                delete(ResearchFoldMetrics).where(
-                    ResearchFoldMetrics.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(ResearchAttempt).where(ResearchAttempt.run_id == run_id)
-            )
-            session.execute(
-                delete(ResearchValidationTest).where(
-                    ResearchValidationTest.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(ResearchSequentialTrial).where(
-                    ResearchSequentialTrial.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(ResearchStressMetrics).where(
-                    ResearchStressMetrics.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(ResearchCandidate).where(
-                    ResearchCandidate.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextDatasetSnapshot).where(
-                    VNextDatasetSnapshot.run_id == run_id
-                )
-            )
-            session.execute(
-                delete(VNextFeatureViewSpec).where(
-                    VNextFeatureViewSpec.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextModelArtifact).where(
-                    VNextModelArtifact.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextExperimentSpec).where(
-                    VNextExperimentSpec.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextExperimentRun).where(
-                    VNextExperimentRun.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextSimulationCalibration).where(
-                    VNextSimulationCalibration.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextShadowLiveDeviation).where(
-                    VNextShadowLiveDeviation.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(VNextPromotionDecision).where(
-                    VNextPromotionDecision.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(StrategyHypothesisMetricWindow).where(
-                    StrategyHypothesisMetricWindow.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(StrategyCapitalAllocation).where(
-                    StrategyCapitalAllocation.candidate_id == candidate_id
-                )
-            )
-            session.execute(
-                delete(StrategyPromotionDecision).where(
-                    StrategyPromotionDecision.candidate_id == candidate_id
-                )
-            )
-            calibration_id = _coerce_str(
-                strategy_factory_cost_calibration_payload.get("calibration_id")
-            )
-            if calibration_id:
-                session.execute(
-                    delete(ResearchCostCalibration).where(
-                        ResearchCostCalibration.calibration_id == calibration_id
-                    )
-                )
-            should_promote = (
-                effective_promotion_allowed
-                and promotion_recommendation.action == "promote"
-                and promotion_recommendation.recommended_mode in {"paper", "live"}
-            )
-            candidate_role = "champion" if should_promote else "challenger"
-            candidate_status = "active" if should_promote else "evaluated"
-            metadata_bundle = {
-                "promotion_gate_trace_id": gate_report_trace_id,
-                "recommendation_trace_id": recommendation_trace_id,
-                "throughput": {
-                    "signal_count": len(signals),
-                    "decision_count": report.metrics.decision_count,
-                    "trade_count": report.metrics.trade_count,
-                },
-                "gate_reasons": sorted(set(promotion_reasons)),
-                "stage_lineage": stage_lineage_payload,
-                "stage_trace_ids": dict(stage_trace_ids),
-                "stage_manifest_refs": dict(stage_manifest_refs),
-                "replay_artifact_hashes": replay_artifact_hashes,
-                "existing_champion_candidate_id": (
-                    existing_champion.candidate_id
-                    if existing_champion is not None
-                    else None
-                ),
-                "actuation_allowed": effective_promotion_allowed,
-                "dependency_quorum": candidate_dependency_quorum_payload,
-                "alpha_readiness": candidate_alpha_readiness_payload,
-                "actuation_intent_artifact": (
-                    str(actuation_intent_path) if actuation_intent_path else None
-                ),
-                "strategy_compilation": [
-                    {
-                        "strategy_id": strategy.strategy_id,
-                        "compiler_source": strategy.compiler_source,
-                        "strategy_spec_v2": strategy.strategy_spec,
-                    }
-                    for strategy in runtime_strategies
-                ],
-                "simulation_calibration": {
-                    key: simulation_calibration_report_payload.get(key)
-                    for key in (
-                        "status",
-                        "order_count",
-                        "expected_shortfall_coverage",
-                        "avg_calibration_error_bps",
-                        "confidence_gate_action",
-                    )
-                },
-                "shadow_live_deviation": {
-                    key: shadow_live_deviation_report_payload.get(key)
-                    for key in (
-                        "status",
-                        "order_count",
-                        "avg_abs_slippage_bps",
-                        "avg_abs_divergence_bps",
-                        "deviation_budget_utilization",
-                    )
-                },
-            }
-            if strategy_factory_payload:
-                metadata_bundle["strategy_factory"] = {
-                    "candidate_family": strategy_factory_payload.get(
-                        "candidate_family"
-                    ),
-                    "semantic_hash": strategy_factory_payload.get("semantic_hash"),
-                    "posterior_edge_summary": strategy_factory_payload.get(
-                        "posterior_edge_summary"
-                    ),
-                    "economic_validity_card": strategy_factory_payload.get(
-                        "economic_validity_card"
-                    ),
-                    "null_comparator_summary": strategy_factory_payload.get(
-                        "null_comparator_summary"
-                    ),
-                    "cost_calibration": strategy_factory_cost_calibration_payload,
-                    "sequential_trial": strategy_factory_sequential_payload,
-                    "validation_test_count": len(strategy_factory_validation_payloads),
-                    "attempt_count": len(
-                        cast(
-                            list[Any],
-                            strategy_factory_attempt_payload.get("attempts", []),
-                        )
-                    ),
-                    "gate_summary": strategy_factory_payload.get("gate_summary"),
-                }
-            recommended_mode = promotion_recommendation.recommended_mode
-            lifecycle_payload = {
-                "role": "challenger",
-                "status": "promoted_champion"
-                if should_promote
-                else "retained_challenger",
-                "promotable": effective_promotion_allowed,
-                "promotion_target": promotion_target,
-                "recommended_mode": recommended_mode,
-                "reason_codes": list(promotion_reasons),
-                "recommendation_trace_id": recommendation_trace_id,
-                "gate_report_trace_id": gate_report_trace_id,
-                "champion_before": (
-                    {"candidate_id": existing_champion.candidate_id}
-                    if existing_champion is not None
-                    else None
-                ),
-            }
-
-            candidate = ResearchCandidate(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                candidate_hash=candidate_hash,
-                parameter_set=_strategy_parameter_set(runtime_strategies),
-                decision_count=report.metrics.decision_count,
-                trade_count=report.metrics.trade_count,
-                symbols_covered=sorted({signal.symbol for signal in signals}),
-                universe_definition=_strategy_universe_definition(
-                    runtime_strategies,
-                    lifecycle_payload=lifecycle_payload,
-                ),
-                promotion_target=promotion_target,
-                lifecycle_role=candidate_role,
-                lifecycle_status=candidate_status,
-                metadata_bundle=metadata_bundle,
-                recommendation_bundle=promotion_recommendation.to_payload(),
-                candidate_family=_coerce_str(
-                    strategy_factory_payload.get("candidate_family")
-                ),
-                canonical_spec=strategy_factory_payload.get("canonical_spec"),
-                semantic_hash=_coerce_str(
-                    strategy_factory_payload.get("semantic_hash")
-                ),
-                economic_rationale=_coerce_str(
-                    strategy_factory_payload.get("economic_rationale")
-                ),
-                complexity_score=_decimal_or_none(
-                    strategy_factory_payload.get("complexity_score")
-                ),
-                discovery_rank=_metric_counter_int(
-                    strategy_factory_payload.get("discovery_rank")
-                )
-                if strategy_factory_payload.get("discovery_rank") is not None
-                else None,
-                posterior_edge_summary=strategy_factory_payload.get(
-                    "posterior_edge_summary"
-                ),
-                economic_validity_card=strategy_factory_payload.get(
-                    "economic_validity_card"
-                ),
-                valid_regime_envelope=strategy_factory_payload.get(
-                    "valid_regime_envelope"
-                ),
-                invalidation_clauses=strategy_factory_payload.get(
-                    "invalidation_clauses"
-                ),
-                null_comparator_summary=strategy_factory_payload.get(
-                    "null_comparator_summary"
-                ),
-            )
-            session.add(candidate)
-
-            for fold_order, fold in enumerate(walk_results.folds, start=1):
-                fold_metrics = fold.fold_metrics()
-                robustness = robustness_by_fold.get(fold.fold.name)
-                decision_count = _metric_counter_int(
-                    fold_metrics.get("decision_count", 0)
-                )
-                trade_count = _metric_counter_int(
-                    fold_metrics.get("buy_count", 0)
-                ) + _metric_counter_int(
-                    fold_metrics.get("sell_count", 0),
-                )
-                regime_label = (
-                    robustness.regime.label()
-                    if robustness is not None
-                    else str(
-                        fold_metrics.get("regime_label", "unknown"),
-                    )
-                )
-
-                session.add(
-                    ResearchFoldMetrics(
-                        candidate_id=candidate_id,
-                        fold_name=fold.fold.name,
-                        fold_order=fold_order,
-                        train_start=fold.fold.train_start,
-                        train_end=fold.fold.train_end,
-                        test_start=fold.fold.test_start,
-                        test_end=fold.fold.test_end,
-                        decision_count=decision_count,
-                        trade_count=trade_count,
-                        gross_pnl=robustness.net_pnl
-                        if robustness is not None
-                        else None,
-                        net_pnl=robustness.net_pnl
-                        if robustness is not None
-                        else report.metrics.net_pnl,
-                        max_drawdown=robustness.max_drawdown
-                        if robustness is not None
-                        else report.metrics.max_drawdown,
-                        turnover_ratio=robustness.turnover_ratio
-                        if robustness is not None
-                        else report.metrics.turnover_ratio,
-                        cost_bps=robustness.cost_bps
-                        if robustness is not None
-                        else report.metrics.cost_bps,
-                        cost_assumptions=report.impact_assumptions.assumptions,
-                        regime_label=regime_label,
-                        stat_bundle=(
-                            strategy_factory_payload.get("fold_stat_bundle")
-                            if fold_order == 1 and strategy_factory_payload
-                            else None
-                        ),
-                        purge_window=0 if strategy_factory_payload else None,
-                        embargo_window=0 if strategy_factory_payload else None,
-                        feature_availability_hash=(
-                            _coerce_str(strategy_factory_payload.get("semantic_hash"))
-                            or None
-                        ),
-                    ),
-                )
-
-            for stress_case in ("spread", "volatility", "liquidity", "halt"):
-                session.add(
-                    ResearchStressMetrics(
-                        candidate_id=candidate_id,
-                        stress_case=stress_case,
-                        metric_bundle=_build_stress_bundle(report, stress_case),
-                        pessimistic_pnl_delta=None,
-                    )
-                )
-
-            evidence_bundle: dict[str, Any] = {
-                "fold_metrics_count": fold_metrics_count,
-                "stress_metrics_count": stress_metrics_count,
-                "rationale_present": bool(promotion_recommendation.rationale),
-                "evidence_complete": promotion_recommendation.evidence.evidence_complete,
-                "actuation_allowed": effective_promotion_allowed,
-                "stage_lineage": stage_lineage_payload,
-                "stage_trace_ids": dict(stage_trace_ids),
-                "stage_manifest_refs": dict(stage_manifest_refs),
-                "replay_artifact_hashes": replay_artifact_hashes,
-                "dependency_quorum": candidate_dependency_quorum_payload,
-                "alpha_readiness": candidate_alpha_readiness_payload,
-                "reasons": list(promotion_recommendation.evidence.reasons),
-                "actuation_intent_artifact": (
-                    str(actuation_intent_path) if actuation_intent_path else None
-                ),
-                "strategy_compilation": [
-                    {
-                        "strategy_id": strategy.strategy_id,
-                        "compiler_source": strategy.compiler_source,
-                    }
-                    for strategy in runtime_strategies
-                ],
-                "evidence_authority": {
-                    "fold_metrics": _artifact_authority_for_evidence("fold_metrics"),
-                    "stress_metrics": _artifact_authority_for_evidence(
-                        "stress_metrics"
-                    ),
-                    "simulation_calibration": simulation_calibration_report_payload.get(
-                        "artifact_authority"
-                    ),
-                    "shadow_live_deviation": shadow_live_deviation_report_payload.get(
-                        "artifact_authority"
-                    ),
-                    "benchmark_parity": _artifact_authority_for_evidence(
-                        "benchmark_parity"
-                    ),
-                    "foundation_router_parity": _artifact_authority_for_evidence(
-                        "foundation_router_parity"
-                    ),
-                    "deeplob_bdlob_contract": _artifact_authority_for_evidence(
-                        "deeplob_bdlob_contract"
-                    ),
-                    "advisor_fallback_slo": _artifact_authority_for_evidence(
-                        "advisor_fallback_slo"
-                    ),
-                    "hmm_state_posterior": _artifact_authority_for_evidence(
-                        "hmm_state_posterior"
-                    ),
-                    "expert_router_registry": _artifact_authority_for_evidence(
-                        "expert_router_registry"
-                    ),
-                    "contamination_registry": _artifact_authority_for_evidence(
-                        "contamination_registry"
-                    ),
-                    "janus_q": _artifact_authority_for_evidence("janus_q"),
-                },
-                "simulation_calibration": {
-                    key: simulation_calibration_report_payload.get(key)
-                    for key in (
-                        "status",
-                        "order_count",
-                        "expected_shortfall_coverage",
-                        "avg_calibration_error_bps",
-                    )
-                },
-                "shadow_live_deviation": {
-                    key: shadow_live_deviation_report_payload.get(key)
-                    for key in (
-                        "status",
-                        "order_count",
-                        "avg_abs_slippage_bps",
-                        "avg_abs_divergence_bps",
-                        "deviation_budget_utilization",
-                    )
-                },
-            }
-            if strategy_factory_payload:
-                evidence_bundle["strategy_factory"] = metadata_bundle.get(
-                    "strategy_factory"
-                )
-            challenger_decision = {
-                "decision_type": "promotion",
-                "run_id": run_id,
-                "candidate_id": candidate_id,
-                "promotion_target": promotion_target,
-                "recommended_mode": recommended_mode,
-                "promotion_allowed": effective_promotion_allowed,
-                "reason_codes": list(promotion_reasons),
-                "recommendation_trace_id": recommendation_trace_id,
-                "gate_report_trace_id": gate_report_trace_id,
-            }
-            session.add(
-                ResearchPromotion(
-                    candidate_id=candidate_id,
-                    requested_mode=promotion_target,
-                    approved_mode=recommended_mode
-                    if effective_promotion_allowed
-                    else None,
-                    approver="autonomous_scheduler",
-                    approver_role="system",
-                    approve_reason=json.dumps(challenger_decision, sort_keys=True)
-                    if effective_promotion_allowed
-                    else None,
-                    deny_reason=None
-                    if effective_promotion_allowed
-                    else json.dumps(challenger_decision, sort_keys=True),
-                    paper_candidate_patch_ref=str(patch_path) if patch_path else None,
-                    effective_time=now if effective_promotion_allowed else None,
-                    decision_action=promotion_recommendation.action,
-                    decision_rationale=promotion_recommendation.rationale,
-                    evidence_bundle=evidence_bundle,
-                    recommendation_trace_id=recommendation_trace_id,
-                    successor_candidate_id=(
-                        None
-                        if promotion_recommendation.action != "demote"
-                        else candidate_id
-                    ),
-                    rollback_candidate_id=(
-                        existing_champion.candidate_id
-                        if existing_champion is not None
-                        else None
-                    ),
-                )
-            )
-            if should_promote and existing_champion is not None:
-                existing_champion.lifecycle_role = "demoted"
-                existing_champion.lifecycle_status = "standby"
-                existing_champion.metadata_bundle = {
-                    "demoted_at": now.isoformat(),
-                    "demoted_by_candidate_id": candidate_id,
-                    "rollback_safe": True,
-                    "gate_report_trace_id": gate_report_trace_id,
-                }
-                session.add(existing_champion)
-                demotion_trace_id = _trace_id(
-                    {
-                        "decision_action": "demote",
-                        "candidate_id": existing_champion.candidate_id,
-                        "successor_candidate_id": candidate_id,
-                        "run_id": run_id,
-                        "recommended_mode": promotion_recommendation.recommended_mode,
-                    }
-                )
-                demotion_decision = {
-                    "decision_type": "demotion",
-                    "run_id": run_id,
-                    "candidate_id": existing_champion.candidate_id,
-                    "successor_candidate_id": candidate_id,
-                    "recommended_mode": promotion_recommendation.recommended_mode,
-                    "rollback_safe": True,
-                    "recommendation_trace_id": demotion_trace_id,
-                    "gate_report_trace_id": gate_report_trace_id,
-                }
-                session.add(
-                    ResearchPromotion(
-                        candidate_id=existing_champion.candidate_id,
-                        requested_mode=promotion_target,
-                        approved_mode="shadow",
-                        approver="autonomous_scheduler",
-                        approver_role="system",
-                        approve_reason=json.dumps(demotion_decision, sort_keys=True),
-                        deny_reason=None,
-                        paper_candidate_patch_ref=None,
-                        effective_time=now,
-                        decision_action="demote",
-                        decision_rationale=(
-                            f"demoted_after_promotion_of_{candidate_id}_for_{promotion_target}"
-                        ),
-                        evidence_bundle=evidence_bundle,
-                        recommendation_trace_id=demotion_trace_id,
-                        successor_candidate_id=candidate_id,
-                        rollback_candidate_id=existing_champion.candidate_id,
-                    )
-                )
-            run = session.execute(
-                select(ResearchRun).where(ResearchRun.run_id == run_id)
-            ).scalar_one_or_none()
-            if run is not None:
-                run.gate_report_trace_id = gate_report_trace_id
-                run.recommendation_trace_id = recommendation_trace_id
-                if strategy_factory_payload:
-                    run.discovery_mode = "strategy_factory_autonomy_v1"
-                    run.generator_family = _coerce_str(
-                        strategy_factory_payload.get("candidate_family"),
-                        "strategy_factory_bridge_v1",
-                    )
-                    run.grammar_version = "strategy_factory.bridge.v1"
-                    run.selection_protocol_version = "autonomy-strategy-factory-v1"
-                    run.pilot_program_id = "torghut-strategy-factory-pilot-v1"
-                    run.kill_criteria_version = "pilot-kill-criteria-v1"
-                run.updated_at = now
-                session.add(run)
-
-            for attempt in cast(
-                list[dict[str, Any]],
-                strategy_factory_attempt_payload.get("attempts", []),
-            ):
-                session.add(
-                    ResearchAttempt(
-                        attempt_id=str(attempt["attempt_id"]),
-                        run_id=run_id,
-                        candidate_hash=cast(str | None, attempt.get("candidate_hash")),
-                        generator_family=cast(
-                            str | None, attempt.get("generator_family")
-                        ),
-                        attempt_stage=str(attempt["attempt_stage"]),
-                        status=str(attempt["status"]),
-                        reason_codes=attempt.get("reason_codes"),
-                        artifact_ref=cast(str | None, attempt.get("artifact_ref")),
-                        metadata_bundle=attempt.get("metadata_bundle"),
-                    )
-                )
-
-            for validation_payload in strategy_factory_validation_payloads:
-                session.add(
-                    ResearchValidationTest(
-                        candidate_id=candidate_id,
-                        test_name=str(validation_payload["test_name"]),
-                        status=str(validation_payload["status"]),
-                        metric_bundle=validation_payload,
-                        artifact_ref=_coerce_str(
-                            validation_payload.get("artifact_name")
-                        )
-                        or cast(str | None, validation_payload.get("artifact_ref")),
-                        computed_at=now,
-                    )
-                )
-
-            if strategy_factory_sequential_payload:
-                session.add(
-                    ResearchSequentialTrial(
-                        candidate_id=candidate_id,
-                        trial_stage=str(
-                            strategy_factory_sequential_payload["trial_stage"]
-                        ),
-                        account=str(strategy_factory_sequential_payload["account"]),
-                        start_at=datetime.fromisoformat(
-                            str(strategy_factory_sequential_payload["start_at"])
-                        ),
-                        last_update_at=datetime.fromisoformat(
-                            str(strategy_factory_sequential_payload["last_update_at"])
-                        ),
-                        sample_count=_metric_counter_int(
-                            strategy_factory_sequential_payload.get("sample_count")
-                        ),
-                        confidence_sequence_lower=_decimal_or_none(
-                            strategy_factory_sequential_payload.get(
-                                "confidence_sequence_lower"
-                            )
-                        ),
-                        confidence_sequence_upper=_decimal_or_none(
-                            strategy_factory_sequential_payload.get(
-                                "confidence_sequence_upper"
-                            )
-                        ),
-                        posterior_edge_mean=_decimal_or_none(
-                            strategy_factory_sequential_payload.get(
-                                "posterior_edge_mean"
-                            )
-                        ),
-                        posterior_edge_lower=_decimal_or_none(
-                            strategy_factory_sequential_payload.get(
-                                "posterior_edge_lower"
-                            )
-                        ),
-                        status=str(strategy_factory_sequential_payload["status"]),
-                        reason_codes=strategy_factory_sequential_payload.get(
-                            "reason_codes"
-                        ),
-                    )
-                )
-
-            if strategy_factory_cost_calibration_payload:
-                computed_at_raw = _coerce_str(
-                    strategy_factory_cost_calibration_payload.get("computed_at")
-                )
-                session.add(
-                    ResearchCostCalibration(
-                        calibration_id=str(
-                            strategy_factory_cost_calibration_payload["calibration_id"]
-                        ),
-                        scope_type=str(
-                            strategy_factory_cost_calibration_payload["scope_type"]
-                        ),
-                        scope_id=str(
-                            strategy_factory_cost_calibration_payload["scope_id"]
-                        ),
-                        window_start=(
-                            datetime.fromisoformat(
-                                str(
-                                    strategy_factory_cost_calibration_payload[
-                                        "window_start"
-                                    ]
-                                )
-                            )
-                            if strategy_factory_cost_calibration_payload.get(
-                                "window_start"
-                            )
-                            else None
-                        ),
-                        window_end=(
-                            datetime.fromisoformat(
-                                str(
-                                    strategy_factory_cost_calibration_payload[
-                                        "window_end"
-                                    ]
-                                )
-                            )
-                            if strategy_factory_cost_calibration_payload.get(
-                                "window_end"
-                            )
-                            else None
-                        ),
-                        modeled_slippage_bps=_decimal_or_none(
-                            strategy_factory_cost_calibration_payload.get(
-                                "modeled_slippage_bps"
-                            )
-                        ),
-                        realized_slippage_bps=_decimal_or_none(
-                            strategy_factory_cost_calibration_payload.get(
-                                "realized_slippage_bps"
-                            )
-                        ),
-                        modeled_shortfall_bps=_decimal_or_none(
-                            strategy_factory_cost_calibration_payload.get(
-                                "modeled_shortfall_bps"
-                            )
-                        ),
-                        realized_shortfall_bps=_decimal_or_none(
-                            strategy_factory_cost_calibration_payload.get(
-                                "realized_shortfall_bps"
-                            )
-                        ),
-                        calibration_error_bundle=strategy_factory_cost_calibration_payload.get(
-                            "calibration_error_bundle"
-                        ),
-                        status=str(strategy_factory_cost_calibration_payload["status"]),
-                        computed_at=(
-                            datetime.fromisoformat(computed_at_raw)
-                            if computed_at_raw
-                            else now
-                        ),
-                    )
-                )
-
-            _persist_vnext_objects(
-                session=session,
-                run_id=run_id,
-                candidate_id=candidate_id,
-                runtime_strategies=runtime_strategies,
-                candidate_spec_payload=candidate_spec_payload,
-                signals=signals,
-                walk_results=walk_results,
-                report=report,
-                promotion_target=promotion_target,
-                promotion_recommendation=promotion_recommendation,
-                effective_promotion_allowed=effective_promotion_allowed,
-                gate_report_trace_id=gate_report_trace_id,
-                recommendation_trace_id=recommendation_trace_id,
-                now=now,
-                simulation_calibration_report_payload=simulation_calibration_report_payload,
-                shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
-            )
-
-
-def _persist_strategy_spec_lineage_trace(
-    *,
-    session: Session,
-    run_id: str,
-    candidate_id: str,
-    runtime_strategies: Sequence[StrategyRuntimeConfig],
-    candidate_spec_payload: Mapping[str, Any],
-    experiment_payload: Mapping[str, Any],
-) -> None:
-    gate_id = "strategy_spec_v2_runtime_lineage"
-    artifacts_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("artifacts"))
-        if isinstance(candidate_spec_payload.get("artifacts"), dict)
-        else {}
-    )
-    walkforward_results_ref = (
-        _coerce_str(artifacts_payload.get("walkforward_results")) or None
-    )
-    evaluation_report_ref = (
-        _coerce_str(artifacts_payload.get("evaluation_report")) or None
-    )
-    gate_evaluation_ref = _coerce_str(artifacts_payload.get("gate_evaluation")) or None
-    strategy_items = [
-        {
-            "strategy_id": strategy.strategy_id,
-            "compiler_source": strategy.compiler_source,
-            "spec_compiled": bool(strategy.strategy_spec)
-            and bool(strategy.compiled_targets),
-        }
-        for strategy in runtime_strategies
-    ]
-    spec_compiled_count = sum(1 for item in strategy_items if item["spec_compiled"])
-    satisfied = bool(strategy_items) and spec_compiled_count == len(strategy_items)
-    blocked_reason = None if satisfied else "strategy_spec_v2_lineage_incomplete"
-    trace_payload = build_completion_trace(
-        doc_id="doc29",
-        gate_ids_attempted=[gate_id],
-        run_id=run_id,
-        dataset_snapshot_ref=walkforward_results_ref,
-        candidate_id=candidate_id,
-        workflow_name="torghut-autonomy-lane",
-        analysis_run_names=[],
-        artifact_refs=[
-            str(item)
-            for item in [
-                walkforward_results_ref,
-                evaluation_report_ref,
-                gate_evaluation_ref,
-            ]
-            if item is not None
-        ],
-        db_row_refs={},
-        status_snapshot={
-            "strategy_migration_state": {
-                "total_strategies": len(strategy_items),
-                "spec_compiled_count": spec_compiled_count,
-                "experiment_spec_present": bool(experiment_payload),
-                "strategies": strategy_items,
-            }
-        },
-        result_by_gate={
-            gate_id: {
-                "status": "satisfied" if satisfied else "blocked",
-                "blocked_reason": blocked_reason,
-                "artifact_ref": walkforward_results_ref,
-                "acceptance_snapshot": {
-                    "strategy_migration_state": {
-                        "total_strategies": len(strategy_items),
-                        "spec_compiled_count": spec_compiled_count,
-                        "experiment_spec_present": bool(experiment_payload),
-                    }
-                },
-            }
-        },
-        blocked_reasons={gate_id: blocked_reason} if blocked_reason else {},
-    )
-    persist_completion_trace(session=session, trace_payload=trace_payload)
-
-
-def _runtime_observation_contract_payload(
-    candidate_spec_payload: Mapping[str, Any],
-) -> dict[str, Any]:
-    payload = candidate_spec_payload.get("runtime_observation")
-    if isinstance(payload, dict):
-        return cast(dict[str, Any], payload)
-    return {}
-
-
-def _runtime_observation_has_ledger_profit_proof(
-    runtime_observation_payload: Mapping[str, Any],
-) -> bool:
-    return bool(runtime_observation_payload.get("runtime_ledger_profit_proof_present"))
-
-
-def _resolve_hypothesis_window_evidence(
-    *,
-    promotion_target: str,
-    runtime_observation_payload: Mapping[str, Any],
-    effective_promotion_allowed: bool,
-    order_count: int,
-    min_sample_count_for_scale_up: int,
-) -> tuple[str, str, str, dict[str, Any]]:
-    observed_stage = "paper" if promotion_target == "paper" else "live"
-    expected_provenance = (
-        "paper_runtime_observed"
-        if observed_stage == "paper"
-        else "live_runtime_observed"
-    )
-    runtime_observation_stage = _coerce_str(
-        runtime_observation_payload.get("observed_stage")
-    )
-    runtime_observation_provenance = _coerce_str(
-        runtime_observation_payload.get("evidence_provenance")
-    )
-    runtime_observation_authoritative = bool(
-        runtime_observation_payload.get("authoritative")
-    )
-    runtime_observation_source_kind = _coerce_str(
-        runtime_observation_payload.get("source_kind")
-    )
-    runtime_observation_has_runtime_ledger_profit_proof = (
-        _runtime_observation_has_ledger_profit_proof(runtime_observation_payload)
-    )
-    simulation_observation = runtime_observation_source_kind.startswith("simulation_")
-    qualified_runtime_observation = (
-        runtime_observation_authoritative
-        and runtime_observation_stage == observed_stage
-        and runtime_observation_provenance == expected_provenance
-        and not simulation_observation
-    )
-    if qualified_runtime_observation:
-        evidence_provenance = expected_provenance
-        evidence_maturity = (
-            "empirically_validated"
-            if order_count > 0 and effective_promotion_allowed
-            else "uncalibrated"
-        )
-        if observed_stage == "paper":
-            capital_stage = "shadow"
-        elif (
-            effective_promotion_allowed and order_count >= min_sample_count_for_scale_up
-        ):
-            capital_stage = "0.50x live"
-        elif effective_promotion_allowed:
-            capital_stage = "0.10x canary"
-        else:
-            capital_stage = "shadow"
-        qualification_reason = "runtime_observation_contract_qualified"
-    else:
-        evidence_provenance = "historical_market_replay"
-        evidence_maturity = (
-            "calibrated"
-            if order_count > 0 and effective_promotion_allowed
-            else "uncalibrated"
-        )
-        capital_stage = "shadow"
-        qualification_reason = (
-            "simulation_source_replay_only"
-            if simulation_observation
-            else "runtime_observation_contract_missing_or_ineligible"
-        )
-    return (
-        evidence_provenance,
-        evidence_maturity,
-        capital_stage,
-        {
-            "requested_promotion_target": promotion_target,
-            "runtime_observation_present": bool(runtime_observation_payload),
-            "runtime_observation_authoritative": runtime_observation_authoritative,
-            "runtime_observation_stage": runtime_observation_stage,
-            "runtime_observation_provenance": runtime_observation_provenance,
-            "runtime_observation_source_kind": runtime_observation_source_kind,
-            "runtime_observation_has_runtime_ledger_profit_proof": (
-                runtime_observation_has_runtime_ledger_profit_proof
-            ),
-            "qualified_runtime_observation": qualified_runtime_observation,
-            "qualification_reason": qualification_reason,
-        },
-    )
-
-
-def _persist_hypothesis_governance_rows(
-    *,
-    session: Session,
-    run_id: str,
-    candidate_id: str,
-    candidate_spec_payload: Mapping[str, Any],
-    signals: Sequence[SignalEnvelope],
-    report: EvaluationReport,
-    promotion_target: str,
-    effective_promotion_allowed: bool,
-    promotion_recommendation: PromotionRecommendation,
-    simulation_calibration_report_payload: Mapping[str, Any],
-    shadow_live_deviation_report_payload: Mapping[str, Any],
-    now: datetime,
-) -> None:
-    alpha_readiness_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("alpha_readiness"))
-        if isinstance(candidate_spec_payload.get("alpha_readiness"), dict)
-        else {}
-    )
-    dependency_quorum_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("dependency_quorum"))
-        if isinstance(candidate_spec_payload.get("dependency_quorum"), dict)
-        else {}
-    )
-    strategy_factory_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("strategy_factory"))
-        if isinstance(candidate_spec_payload.get("strategy_factory"), dict)
-        else {}
-    )
-    matched_hypothesis_values = (
-        cast(list[Any], alpha_readiness_payload.get("matched_hypothesis_ids"))
-        if isinstance(alpha_readiness_payload.get("matched_hypothesis_ids"), list)
-        else []
-    )
-    matched_hypothesis_ids = [
-        str(item) for item in matched_hypothesis_values if str(item).strip()
-    ]
-    if not matched_hypothesis_ids:
-        return
-    registry = load_hypothesis_registry()
-    manifest_by_id = {item.hypothesis_id: item for item in registry.items}
-    source_manifest_ref = str(registry.path)
-    runtime_observation_payload = _runtime_observation_contract_payload(
-        candidate_spec_payload
-    )
-    shadow_authority = contract_from_artifact_payload(
-        shadow_live_deviation_report_payload
-    )
-    simulation_authority = contract_from_artifact_payload(
-        simulation_calibration_report_payload
-    )
-    order_count = max(
-        _metric_counter_int(shadow_live_deviation_report_payload.get("order_count")),
-        _metric_counter_int(simulation_calibration_report_payload.get("order_count")),
-    )
-    decision_count = max(0, int(report.metrics.decision_count))
-    trade_count = max(0, int(report.metrics.trade_count))
-    decision_alignment_ratio = (
-        Decimal(trade_count) / Decimal(decision_count)
-        if decision_count > 0
-        else Decimal("0")
-    )
-    post_cost_expectancy_bps = -_decimal_or_zero(
-        simulation_calibration_report_payload.get("avg_realized_shortfall_bps")
-    )
-    observed_stage = "paper" if promotion_target == "paper" else "live"
-    dependency_decision = _coerce_str(
-        dependency_quorum_payload.get("decision"), "unknown"
-    )
-    drift_ok = not any(
-        "drift" in str(reason) for reason in promotion_recommendation.reasons
-    )
-    continuity_ok = dependency_decision == "allow"
-    for hypothesis_id in matched_hypothesis_ids:
-        manifest = manifest_by_id.get(hypothesis_id)
-        if manifest is None:
-            continue
-        existing_hypothesis = session.execute(
-            select(StrategyHypothesis).where(
-                StrategyHypothesis.hypothesis_id == hypothesis_id
-            )
-        ).scalar_one_or_none()
-        if existing_hypothesis is None:
-            session.add(
-                StrategyHypothesis(
-                    hypothesis_id=hypothesis_id,
-                    lane_id=manifest.lane_id,
-                    strategy_family=manifest.strategy_family,
-                    source_manifest_ref=source_manifest_ref,
-                    active=True,
-                    payload_json=manifest.model_dump(mode="json"),
-                )
-            )
-        version_key = f"{manifest.schema_version}:{manifest.lane_id}"
-        existing_version = session.execute(
-            select(StrategyHypothesisVersion).where(
-                StrategyHypothesisVersion.hypothesis_id == hypothesis_id,
-                StrategyHypothesisVersion.version_key == version_key,
-            )
-        ).scalar_one_or_none()
-        if existing_version is None:
-            session.add(
-                StrategyHypothesisVersion(
-                    hypothesis_id=hypothesis_id,
-                    version_key=version_key,
-                    source_manifest_ref=source_manifest_ref,
-                    active=True,
-                    payload_json=manifest.model_dump(mode="json"),
-                )
-            )
-        (
-            evidence_provenance,
-            evidence_maturity,
-            capital_stage,
-            qualification_payload,
-        ) = _resolve_hypothesis_window_evidence(
-            promotion_target=promotion_target,
-            runtime_observation_payload=runtime_observation_payload,
-            effective_promotion_allowed=effective_promotion_allowed,
-            order_count=order_count,
-            min_sample_count_for_scale_up=manifest.min_sample_count_for_scale_up,
-        )
-        session.add(
-            StrategyHypothesisMetricWindow(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                hypothesis_id=hypothesis_id,
-                observed_stage=observed_stage,
-                window_started_at=signals[0].event_ts if signals else now,
-                window_ended_at=signals[-1].event_ts if signals else now,
-                market_session_count=1,
-                decision_count=decision_count,
-                trade_count=trade_count,
-                order_count=order_count,
-                evidence_provenance=evidence_provenance,
-                evidence_maturity=evidence_maturity,
-                decision_alignment_ratio=str(decision_alignment_ratio),
-                avg_abs_slippage_bps=str(
-                    shadow_live_deviation_report_payload.get("avg_abs_slippage_bps")
-                    or "0"
-                ),
-                slippage_budget_bps=str(manifest.max_allowed_slippage_bps),
-                post_cost_expectancy_bps=str(post_cost_expectancy_bps),
-                continuity_ok=continuity_ok,
-                drift_ok=drift_ok,
-                dependency_quorum_decision=dependency_decision,
-                capital_stage=capital_stage,
-                payload_json={
-                    "alpha_readiness": alpha_readiness_payload,
-                    "dependency_quorum": dependency_quorum_payload,
-                    "strategy_factory": strategy_factory_payload,
-                    "runtime_observation": dict(runtime_observation_payload),
-                    "runtime_observation_qualification": qualification_payload,
-                    "shadow_live_deviation": dict(shadow_live_deviation_report_payload),
-                    "simulation_calibration": dict(
-                        simulation_calibration_report_payload
-                    ),
-                    "shadow_live_authority": shadow_authority,
-                    "simulation_authority": simulation_authority,
-                },
-            )
-        )
-        session.add(
-            StrategyCapitalAllocation(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                hypothesis_id=hypothesis_id,
-                prior_stage="shadow",
-                stage=capital_stage,
-                capital_multiplier={
-                    "shadow": "0",
-                    "0.10x canary": "0.10",
-                    "0.25x canary": "0.25",
-                    "0.50x live": "0.50",
-                    "1.00x live": "1.00",
-                }.get(capital_stage, "0"),
-                rollback_target_stage="shadow",
-                payload_json={
-                    "effective_promotion_allowed": effective_promotion_allowed,
-                    "promotion_target": promotion_target,
-                    "promotion_recommendation": promotion_recommendation.to_payload(),
-                    "strategy_factory": strategy_factory_payload,
-                },
-            )
-        )
-        session.add(
-            StrategyPromotionDecision(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                hypothesis_id=hypothesis_id,
-                promotion_target=promotion_target,
-                state=capital_stage,
-                allowed=effective_promotion_allowed,
-                reason_summary=",".join(sorted(set(promotion_recommendation.reasons)))[
-                    :255
-                ]
-                or None,
-                payload_json={
-                    "promotion_recommendation": promotion_recommendation.to_payload(),
-                    "alpha_readiness": alpha_readiness_payload,
-                    "dependency_quorum": dependency_quorum_payload,
-                    "strategy_factory": strategy_factory_payload,
-                },
-            )
-        )
-
-
-def _persist_vnext_objects(
-    *,
-    session: Session,
-    run_id: str,
-    candidate_id: str,
-    runtime_strategies: Sequence[StrategyRuntimeConfig],
-    candidate_spec_payload: dict[str, Any],
-    signals: Sequence[SignalEnvelope],
-    walk_results: WalkForwardResults,
-    report: EvaluationReport,
-    promotion_target: str,
-    promotion_recommendation: PromotionRecommendation,
-    effective_promotion_allowed: bool,
-    gate_report_trace_id: str,
-    recommendation_trace_id: str,
-    now: datetime,
-    simulation_calibration_report_payload: dict[str, Any],
-    shadow_live_deviation_report_payload: dict[str, Any],
-) -> None:
-    _persist_strategy_spec_lineage_trace(
-        session=session,
-        run_id=run_id,
-        candidate_id=candidate_id,
-        runtime_strategies=runtime_strategies,
-        candidate_spec_payload=candidate_spec_payload,
-        experiment_payload=(
-            cast(dict[str, Any], candidate_spec_payload.get("experiment_spec"))
-            if isinstance(candidate_spec_payload.get("experiment_spec"), dict)
-            else {}
-        ),
-    )
-    experiment_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("experiment_spec"))
-        if isinstance(candidate_spec_payload.get("experiment_spec"), dict)
-        else {}
-    )
-    bridge_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("bridge_persistence_v2"))
-        if isinstance(candidate_spec_payload.get("bridge_persistence_v2"), dict)
-        else {}
-    )
-    dependency_quorum_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("dependency_quorum"))
-        if isinstance(candidate_spec_payload.get("dependency_quorum"), dict)
-        else {}
-    )
-    alpha_readiness_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("alpha_readiness"))
-        if isinstance(candidate_spec_payload.get("alpha_readiness"), dict)
-        else {}
-    )
-    portfolio_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("portfolio_promotion_v2"))
-        if isinstance(candidate_spec_payload.get("portfolio_promotion_v2"), dict)
-        else {}
-    )
-    strategy_factory_payload = (
-        cast(dict[str, Any], candidate_spec_payload.get("strategy_factory"))
-        if isinstance(candidate_spec_payload.get("strategy_factory"), dict)
-        else {}
-    )
-
-    dataset_snapshot_ref = (
-        str(
-            candidate_spec_payload.get("artifacts", {}).get("walkforward_results", "")
-        ).strip()
-        if isinstance(candidate_spec_payload.get("artifacts"), dict)
-        else ""
-    )
-    ordered_signals = sorted(signals, key=lambda item: item.event_ts)
-    dataset_from = ordered_signals[0].event_ts if ordered_signals else None
-    dataset_to = ordered_signals[-1].event_ts if ordered_signals else None
-    session.add(
-        VNextDatasetSnapshot(
-            run_id=run_id,
-            candidate_id=candidate_id,
-            dataset_id=f"dataset-{run_id}",
-            source="historical_market_replay",
-            dataset_version=str(candidate_spec_payload.get("run_id") or run_id),
-            dataset_from=dataset_from,
-            dataset_to=dataset_to,
-            artifact_ref=dataset_snapshot_ref or None,
-            payload_json=bridge_payload.get("dataset_snapshots")
-            if isinstance(bridge_payload.get("dataset_snapshots"), list)
-            else candidate_spec_payload,
-        )
-    )
-
-    for strategy in runtime_strategies:
-        strategy_spec = dict(strategy.strategy_spec)
-        if not strategy_spec:
-            continue
-        feature_view_spec_ref = str(
-            strategy_spec.get("feature_view_spec_ref") or ""
-        ).strip()
-        if feature_view_spec_ref:
-            session.add(
-                VNextFeatureViewSpec(
-                    run_id=run_id,
-                    candidate_id=candidate_id,
-                    strategy_id=strategy.strategy_id,
-                    feature_view_spec_ref=feature_view_spec_ref,
-                    payload_json=strategy_spec,
-                )
-            )
-        artifact_ref = str(
-            strategy_spec.get("model_ref")
-            or strategy_spec.get("deterministic_rule_ref")
-            or ""
-        ).strip()
-        if artifact_ref:
-            session.add(
-                VNextModelArtifact(
-                    run_id=run_id,
-                    candidate_id=candidate_id,
-                    strategy_id=strategy.strategy_id,
-                    artifact_ref=artifact_ref,
-                    artifact_kind="model"
-                    if str(strategy_spec.get("model_ref") or "").strip()
-                    else "deterministic_rule",
-                    payload_json={
-                        "strategy_spec_v2": strategy_spec,
-                        "compiled_targets": strategy.compiled_targets,
-                    },
-                )
-            )
-
-    if experiment_payload:
-        experiment_id = str(
-            experiment_payload.get("experiment_id") or f"exp-{run_id}"
-        ).strip()
-        session.add(
-            VNextExperimentSpec(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                experiment_id=experiment_id,
-                payload_json=experiment_payload,
-            )
-        )
-        session.add(
-            VNextExperimentRun(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                experiment_id=experiment_id,
-                stage_lineage_root=str(
-                    cast(dict[str, Any], experiment_payload.get("lineage", {})).get(
-                        "stage_lineage_root", ""
-                    )
-                ).strip()
-                or None,
-                payload_json={
-                    "bridge_experiment_runs": bridge_payload.get("experiment_runs"),
-                    "created_at": now.isoformat(),
-                },
-            )
-        )
-
-    simulation_artifact_ref = (
-        str(
-            candidate_spec_payload.get("artifacts", {}).get(
-                "simulation_calibration", ""
-            )
-        ).strip()
-        if isinstance(candidate_spec_payload.get("artifacts"), dict)
-        else ""
-    )
-    if simulation_artifact_ref:
-        session.add(
-            VNextSimulationCalibration(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                artifact_ref=simulation_artifact_ref,
-                status=str(
-                    simulation_calibration_report_payload.get("status") or ""
-                ).strip()
-                or None,
-                order_count=_metric_counter_int(
-                    simulation_calibration_report_payload.get("order_count")
-                ),
-                payload_json=simulation_calibration_report_payload,
-            )
-        )
-
-    shadow_artifact_ref = (
-        str(
-            candidate_spec_payload.get("artifacts", {}).get("shadow_live_deviation", "")
-        ).strip()
-        if isinstance(candidate_spec_payload.get("artifacts"), dict)
-        else ""
-    )
-    if shadow_artifact_ref:
-        session.add(
-            VNextShadowLiveDeviation(
-                run_id=run_id,
-                candidate_id=candidate_id,
-                artifact_ref=shadow_artifact_ref,
-                status=str(
-                    shadow_live_deviation_report_payload.get("status") or ""
-                ).strip()
-                or None,
-                order_count=_metric_counter_int(
-                    shadow_live_deviation_report_payload.get("order_count")
-                ),
-                payload_json=shadow_live_deviation_report_payload,
-            )
-        )
-
-    session.add(
-        VNextPromotionDecision(
-            run_id=run_id,
-            candidate_id=candidate_id,
-            promotion_target=promotion_target,
-            recommended_mode=promotion_recommendation.recommended_mode,
-            decision_action=promotion_recommendation.action,
-            allowed=effective_promotion_allowed,
-            gate_report_trace_id=gate_report_trace_id,
-            recommendation_trace_id=recommendation_trace_id,
-            payload_json={
-                "promotion_rationale": promotion_recommendation.rationale,
-                "portfolio_promotion_v2": portfolio_payload,
-                "dependency_quorum": dependency_quorum_payload,
-                "alpha_readiness": alpha_readiness_payload,
-                "strategy_factory": strategy_factory_payload,
-                "experiment_spec_ref": str(
-                    experiment_payload.get("experiment_id") or ""
-                ).strip()
-                or None,
-                "decision_count": report.metrics.decision_count,
-                "trade_count": report.metrics.trade_count,
-            },
-        )
-    )
-    _persist_hypothesis_governance_rows(
-        session=session,
-        run_id=run_id,
-        candidate_id=candidate_id,
-        candidate_spec_payload=candidate_spec_payload,
-        signals=signals,
-        report=report,
-        promotion_target=promotion_target,
-        effective_promotion_allowed=effective_promotion_allowed,
-        promotion_recommendation=promotion_recommendation,
-        simulation_calibration_report_payload=simulation_calibration_report_payload,
-        shadow_live_deviation_report_payload=shadow_live_deviation_report_payload,
-        now=now,
-    )
-
-
-def _compute_candidate_hash(
-    *,
-    run_id: str,
-    runtime_strategies: list[StrategyRuntimeConfig],
-    gate_report: GateEvaluationReport,
-    signals_path: Path,
-    strategy_config_path: Path,
-    gate_policy_path: Path,
-    stage_lineage_payload: dict[str, Any],
-    replay_artifact_hashes: dict[str, str],
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(signals_path.read_bytes())
-    hasher.update(strategy_config_path.read_bytes())
-    hasher.update(gate_policy_path.read_bytes())
-    hasher.update(run_id.encode("utf-8"))
-    hasher.update(str(_strategy_parameter_set(runtime_strategies)).encode("utf-8"))
-    hasher.update(gate_report.recommended_mode.encode("utf-8"))
-    hasher.update(str(sorted(gate_report.reasons)).encode("utf-8"))
-    hasher.update(
-        json.dumps(
-            stage_lineage_payload,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-    hasher.update(
-        json.dumps(
-            replay_artifact_hashes,
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode("utf-8")
-    )
-    return hasher.hexdigest()[:32]
-
-
-def _build_promotion_rationale(
-    *,
-    gate_report: GateEvaluationReport,
-    promotion_check_reasons: list[str],
-    rollback_check_reasons: list[str],
-    promotion_target: str,
-    additional_reasons: Sequence[str] = (),
-) -> str:
-    if (
-        gate_report.promotion_allowed
-        and not promotion_check_reasons
-        and not rollback_check_reasons
-        and not additional_reasons
-    ):
-        return (
-            f"all_required_gates_passed_for_{promotion_target}_promotion_"
-            f"recommended_mode_{gate_report.recommended_mode}"
-        )
-    reasons = sorted(
-        set(
-            [
-                *gate_report.reasons,
-                *promotion_check_reasons,
-                *rollback_check_reasons,
-                *additional_reasons,
-            ]
-        )
-    )
-    if not reasons:
-        return f"promotion_target_{promotion_target}_held_without_additional_reasons"
-    return f"promotion_blocked_or_held:{','.join(reasons)}"
-
-
-def _trace_id(payload: object) -> str:
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:24]
-
-
-def _compute_no_signal_feature_spec_hash(
-    *,
-    strategy_config_path: Path,
-    gate_policy_path: Path,
-    reason: str,
-    query_start: datetime,
-    query_end: datetime,
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(reason.encode("utf-8"))
-    hasher.update(strategy_config_path.read_bytes())
-    hasher.update(gate_policy_path.read_bytes())
-    hasher.update(str(query_start).encode("utf-8"))
-    hasher.update(str(query_end).encode("utf-8"))
-    return hasher.hexdigest()[:128]
-
-
-def _compute_no_signal_dataset_version_hash(
-    *,
-    query_start: datetime,
-    query_end: datetime,
-    no_signal_reason: str,
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(str(query_start).encode("utf-8"))
-    hasher.update(str(query_end).encode("utf-8"))
-    hasher.update(no_signal_reason.encode("utf-8"))
-    return hasher.hexdigest()[:64]
-
-
-def _compute_feature_spec_hash(
-    *,
-    strategy_config_path: Path,
-    gate_policy_path: Path,
-    signals_path: Path,
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(strategy_config_path.read_bytes())
-    hasher.update(gate_policy_path.read_bytes())
-    hasher.update(signals_path.read_bytes())
-    return hasher.hexdigest()[:128]
-
-
-def _compute_dataset_version_hash(*, signals_path: Path) -> str:
-    hasher = hashlib.sha256()
-    try:
-        payload = json.loads(signals_path.read_text(encoding="utf-8"))
-    except Exception:
-        payload = []
-    payload_json = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-    hasher.update(payload_json.encode("utf-8"))
-    return hasher.hexdigest()[:64]
-
-
-def _strategy_parameter_set(
-    runtime_strategies: list[StrategyRuntimeConfig],
-) -> list[dict[str, Any]]:
-    return [
-        {
-            "strategy_id": strategy.strategy_id,
-            "strategy_type": strategy.strategy_type,
-            "version": strategy.version,
-            "priority": strategy.priority,
-            "base_timeframe": strategy.base_timeframe,
-            "enabled": strategy.enabled,
-            "params": strategy.params,
-        }
-        for strategy in sorted(
-            runtime_strategies, key=lambda item: (item.priority, item.strategy_id)
-        )
-    ]
-
-
-def _strategy_universe_definition(
-    runtime_strategies: list[StrategyRuntimeConfig],
-    *,
-    lifecycle_payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    if not runtime_strategies:
-        return {
-            "autonomy_lifecycle": lifecycle_payload or {},
-        }
-    payload: dict[str, Any] = {
-        "strategies": [
-            {
-                "strategy_id": item.strategy_id,
-                "strategy_type": item.strategy_type,
-                "universe_type": _strategy_universe_type(item.strategy_type),
-            }
-            for item in runtime_strategies
-        ],
-        "count": len(runtime_strategies),
-    }
-    payload["autonomy_lifecycle"] = lifecycle_payload or {}
-    return payload
-
-
-def _metric_counter_int(value: object) -> int:
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, int):
-        return value
-    return 0
-
-
-def _build_stress_bundle(report: EvaluationReport, stress_case: str) -> dict[str, Any]:
-    return {
-        "case": stress_case,
-        "max_drawdown": str(report.metrics.max_drawdown),
-        "cost_bps": str(report.metrics.cost_bps),
-        "turnover_ratio": str(report.metrics.turnover_ratio),
-        "net_pnl": str(report.metrics.net_pnl),
-        "gross_pnl": str(report.metrics.gross_pnl),
-        "decision_count": report.metrics.decision_count,
-        "trade_count": report.metrics.trade_count,
-    }
-
-
-def load_runtime_strategy_config(path: Path) -> list[StrategyRuntimeConfig]:
-    raw = path.read_text(encoding="utf-8")
-    if path.suffix.lower() in {".yaml", ".yml"}:
-        payload_raw: object = yaml.safe_load(raw)
-    else:
-        payload_raw = json.loads(raw)
-
-    if isinstance(payload_raw, Mapping):
-        payload_mapping = cast(Mapping[str, Any], payload_raw)
-        payload: object = payload_mapping.get("strategies", payload_raw)
-    else:
-        payload = payload_raw
-    if not isinstance(payload, list):
-        raise ValueError("strategy config must be a list or include strategies key")
-
-    strategies: list[StrategyRuntimeConfig] = []
-    for index, item_raw in enumerate(cast(list[object], payload)):
-        if not isinstance(item_raw, Mapping):
-            raise ValueError(f"invalid strategy entry at index {index}")
-        item = cast(Mapping[str, Any], item_raw)
-        strategy_id = str(
-            item.get("strategy_id") or item.get("name") or f"strategy-{index + 1}"
-        )
-        strategy_spec_raw = item.get("strategy_spec_v2")
-        if isinstance(strategy_spec_raw, Mapping):
-            strategy_spec = load_strategy_spec_v2_payload(
-                dict(cast(Mapping[str, Any], strategy_spec_raw))
-            )
-            strategy_params_raw = item.get("params", {})
-            if isinstance(strategy_params_raw, Mapping) and strategy_params_raw:
-                strategy_spec_payload = strategy_spec.to_payload()
-                strategy_spec_payload["runtime_parameters"] = {
-                    **dict(strategy_spec.runtime_parameters),
-                    **dict(cast(Mapping[str, Any], strategy_params_raw)),
-                }
-                strategy_spec = load_strategy_spec_v2_payload(strategy_spec_payload)
-            compiled = compile_strategy_spec_v2(strategy_spec)
-            strategies.append(
-                StrategyRuntimeConfig(
-                    strategy_id=strategy_spec.strategy_id or strategy_id,
-                    strategy_type=str(
-                        compiled.shadow_runtime_config.get(
-                            "strategy_type", "legacy_macd_rsi"
-                        )
-                    ),
-                    version=str(compiled.shadow_runtime_config.get("version", "1.0.0")),
-                    params=cast(
-                        dict[str, Any], compiled.shadow_runtime_config.get("params", {})
-                    )
-                    if isinstance(
-                        compiled.shadow_runtime_config.get("params", {}), dict
-                    )
-                    else {},
-                    base_timeframe=str(
-                        compiled.shadow_runtime_config.get("base_timeframe", "1Min")
-                    ),
-                    enabled=bool(item.get("enabled", True)),
-                    priority=int(item.get("priority", 100)),
-                    compiler_source="spec_v2",
-                    strategy_spec=compiled.strategy_spec.to_payload(),
-                    compiled_targets={
-                        "evaluator_config": compiled.evaluator_config,
-                        "shadow_runtime_config": compiled.shadow_runtime_config,
-                        "live_runtime_config": compiled.live_runtime_config,
-                        "promotion_metadata": compiled.promotion_metadata,
-                    },
-                )
-            )
-            continue
-
-        strategy_type = str(item.get("strategy_type", "legacy_macd_rsi"))
-        version = str(item.get("version", "1.0.0"))
-        params_raw = item.get("params")
-        if params_raw is None:
-            params = {
-                "buy_rsi_threshold": item.get("buy_rsi_threshold", 35),
-                "sell_rsi_threshold": item.get("sell_rsi_threshold", 65),
-                "qty": item.get("qty", 1),
-            }
-        elif isinstance(params_raw, Mapping):
-            params = dict(cast(Mapping[str, Any], params_raw))
-        else:
-            raise ValueError(f"params for strategy {strategy_id} must be an object")
-        config = StrategyRuntimeConfig(
-            strategy_id=strategy_id,
-            strategy_type=strategy_type,
-            version=version,
-            params=params,
-            base_timeframe=str(item.get("base_timeframe", "1Min")),
-            enabled=bool(item.get("enabled", True)),
-            priority=int(item.get("priority", 100)),
-        )
-        if strategy_type_supports_spec_v2(strategy_type):
-            config = compile_runtime_config(config)
-        strategies.append(config)
-
-    return sorted(strategies, key=lambda item: (item.priority, item.strategy_id))
-
-
-def _load_signals(path: Path) -> list[SignalEnvelope]:
-    payload: object = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(payload, list):
-        raise ValueError("signals payload must be a list")
-    signals = [
-        SignalEnvelope.model_validate(item) for item in cast(list[object], payload)
-    ]
-    return sorted(signals, key=lambda item: (item.event_ts, item.symbol, item.seq or 0))
-
-
-def _deterministic_run_id(
-    signals_path: Path,
-    strategy_config_path: Path,
-    gate_policy_path: Path,
-    promotion_target: PromotionTarget,
-    alpha_train_prices_path: Path | None = None,
-    alpha_test_prices_path: Path | None = None,
-    alpha_gate_policy_path: Path | None = None,
-) -> str:
-    hasher = hashlib.sha256()
-    hasher.update(signals_path.read_bytes())
-    hasher.update(strategy_config_path.read_bytes())
-    hasher.update(gate_policy_path.read_bytes())
-    hasher.update(promotion_target.encode("utf-8"))
-    for optional_path in (
-        alpha_train_prices_path,
-        alpha_test_prices_path,
-        alpha_gate_policy_path,
-    ):
-        if optional_path is None:
-            hasher.update(b"\x00")
-            continue
-        hasher.update(optional_path.read_bytes())
-    return hasher.hexdigest()[:24]
-
-
-def _required_feature_null_rate(signals: list[SignalEnvelope]) -> Decimal:
-    required_keys = ("macd", "rsi", "price")
-    missing = 0
-    total = 0
-    for signal in signals:
-        payload = dict(signal.payload or {})
-        for key in required_keys:
-            total += 1
-            if key == "macd":
-                macd_block = payload.get("macd")
-                macd_payload: dict[str, Any] = (
-                    dict(cast(Mapping[str, Any], macd_block))
-                    if isinstance(macd_block, Mapping)
-                    else {}
-                )
-                if (
-                    not macd_payload
-                    or macd_payload.get("macd") is None
-                    or macd_payload.get("signal") is None
-                ):
-                    missing += 1
-            elif key == "rsi":
-                if extract_rsi(payload) is None:
-                    missing += 1
-            elif key == "price":
-                if extract_price(payload) is None:
-                    missing += 1
-            else:
-                missing += 1
-    if total == 0:
-        return Decimal("1")
-    return Decimal(missing) / Decimal(total)
-
-
-def _coerce_fragility_state(value: object) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().lower()
-    if normalized in {"normal", "elevated", "stress", "crisis"}:
-        return normalized
-    return None
-
-
-def _fragility_state_rank(state: str) -> int:
-    normalized = state.strip().lower()
-    if normalized == "normal":
-        return 0
-    if normalized == "elevated":
-        return 1
-    if normalized == "stress":
-        return 2
-    return 3
-
-
-def _coerce_fragility_bool(value: object) -> bool | None:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float, Decimal)):
-        return value != 0
-    if isinstance(value, str):
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off", ""}:
-            return False
-    return None
-
-
-def _coerce_fragility_score(value: object) -> Decimal | None:
-    try:
-        parsed = Decimal(str(value))
-    except (ArithmeticError, TypeError, ValueError):
-        return None
-    if not parsed.is_finite():
-        return None
-    return parsed
-
-
-def _coerce_fragility_measurement(
-    payload: dict[str, object],
-) -> tuple[str, Decimal, bool] | None:
-    state = _coerce_fragility_state(payload.get("fragility_state"))
-    score = _coerce_fragility_score(payload.get("fragility_score"))
-    stability = _coerce_fragility_bool(payload.get("stability_mode_active"))
-    if state is None or score is None or stability is None:
-        return None
-    return (state, score, stability)
-
-
-def _is_more_worse_fragility(
-    candidate: tuple[str, Decimal, bool], current: tuple[str, Decimal, bool]
-) -> bool:
-    candidate_rank = _fragility_state_rank(candidate[0])
-    current_rank = _fragility_state_rank(current[0])
-    if candidate_rank != current_rank:
-        return candidate_rank > current_rank
-    if candidate[1] != current[1]:
-        return candidate[1] > current[1]
-    return not candidate[2] and current[2]
-
-
-def _resolve_gate_fragility_inputs(
-    *,
-    metrics_payload: dict[str, object],
-    decisions: list[WalkForwardDecision],
-) -> tuple[str, Decimal, bool, bool]:
-    fallback_measurement = _coerce_fragility_measurement(
-        {
-            "fragility_state": metrics_payload.get("fragility_state"),
-            "fragility_score": metrics_payload.get("fragility_score"),
-            "stability_mode_active": metrics_payload.get("stability_mode_active"),
-        }
-    )
-    selected_measurement: tuple[str, Decimal, bool] | None = None
-
-    for item in decisions:
-        params = item.decision.params
-        allocator_payload = params.get("allocator")
-        allocator: dict[str, Any] = (
-            dict(cast(Mapping[str, Any], allocator_payload))
-            if isinstance(allocator_payload, Mapping)
-            else {}
-        )
-        snapshot_payload = params.get("fragility_snapshot")
-        snapshot: dict[str, Any] = (
-            dict(cast(Mapping[str, Any], snapshot_payload))
-            if isinstance(snapshot_payload, Mapping)
-            else {}
-        )
-
-        raw_state = allocator.get("fragility_state")
-        if raw_state is None:
-            raw_state = snapshot.get("fragility_state")
-        if raw_state is None:
-            raw_state = params.get("fragility_state")
-
-        raw_score = allocator.get("fragility_score")
-        if raw_score is None:
-            raw_score = snapshot.get("fragility_score")
-        if raw_score is None:
-            raw_score = params.get("fragility_score")
-
-        raw_stability = allocator.get("stability_mode_active")
-        if raw_stability is None:
-            raw_stability = params.get("stability_mode_active")
-
-        candidate = _coerce_fragility_measurement(
-            {
-                "fragility_state": raw_state,
-                "fragility_score": raw_score,
-                "stability_mode_active": raw_stability,
-            }
-        )
-        if candidate is None:
-            continue
-
-        if selected_measurement is None or _is_more_worse_fragility(
-            candidate, selected_measurement
-        ):
-            selected_measurement = candidate
-
-    if selected_measurement is None:
-        if fallback_measurement is None:
-            return ("crisis", Decimal("1"), False, False)
-        selected_measurement = fallback_measurement
-
-    selected_state, selected_score, selected_stability = selected_measurement
-    return selected_state, selected_score, selected_stability, True
-
-
-def _resolve_gate_forecast_metrics(
-    *,
-    signals: list[SignalEnvelope],
-) -> dict[str, str]:
-    if not signals or not settings.trading_forecast_router_enabled:
-        return {}
-
-    try:
-        router = build_default_forecast_router(
-            policy_path=settings.trading_forecast_router_policy_path,
-            refinement_enabled=settings.trading_forecast_router_refinement_enabled,
-        )
-    except Exception:
-        return {}
-
-    fallback_total = 0
-    latency_samples_ms: list[int] = []
-    calibration_scores: list[Decimal] = []
-
-    for signal in signals:
-        try:
-            feature_vector = normalize_feature_vector_v3(signal)
-        except FeatureNormalizationError:
-            return {}
-
-        try:
-            route_result = router.route_and_forecast(
-                feature_vector=feature_vector,
-                horizon=signal.timeframe or "1Min",
-                event_ts=signal.event_ts,
-            )
-        except Exception:
-            return {}
-
-        contract_payload = route_result.contract.to_payload()
-        authority = contract_from_artifact_payload(contract_payload)
-        if (
-            not authority
-            or not bool(authority.get("authoritative", False))
-            or bool(authority.get("placeholder", False))
-            or not bool(route_result.contract.promotion_authority_eligible)
-        ):
-            return {}
-
-        if route_result.contract.fallback.applied:
-            fallback_total += 1
-        latency_samples_ms.append(route_result.contract.inference_latency_ms)
-        calibration_scores.append(route_result.contract.calibration_score)
-
-    expected_samples = len(signals)
-    if (
-        len(latency_samples_ms) != expected_samples
-        or len(calibration_scores) != expected_samples
-    ):
-        return {}
-
-    fallback_rate = (Decimal(fallback_total) / Decimal(expected_samples)).quantize(
-        Decimal("0.0001")
-    )
-    calibration_score_min = min(calibration_scores).quantize(Decimal("0.0001"))
-    latency_ms_p95 = _nearest_rank_percentile(latency_samples_ms, 95)
-
-    return {
-        "fallback_rate": str(fallback_rate),
-        "inference_latency_ms_p95": str(latency_ms_p95),
-        "calibration_score_min": str(calibration_score_min),
-    }
-
-
-def _resolve_gate_staleness_ms_p95(
-    *,
-    signals: list[SignalEnvelope],
-) -> int | None:
-    if not signals:
-        return None
-    staleness_values_ms: list[int] = []
-    for signal in signals:
-        if signal.ingest_ts is None:
-            return None
-        event_ts = signal.event_ts.astimezone(timezone.utc)
-        ingest_ts = signal.ingest_ts.astimezone(timezone.utc)
-        age_ms = int((ingest_ts - event_ts).total_seconds() * 1000)
-        if age_ms < 0:
-            age_ms = 0
-        staleness_values_ms.append(age_ms)
-    return _nearest_rank_percentile(staleness_values_ms, 95)
-
-
-def _to_finite_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float, Decimal)):
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return None
-    elif isinstance(value, str):
-        value = value.strip()
-        try:
-            parsed = float(value)
-        except (TypeError, ValueError):
-            return None
-    else:
-        return None
-    if not math.isfinite(parsed):
-        return None
-    return parsed
-
-
-def _resolve_gate_llm_metrics(
-    *,
-    session_factory: Callable[[], Session],
-    now: datetime,
-) -> dict[str, str]:
-    try:
-        with session_factory() as session:
-            payload = build_llm_evaluation_metrics(session=session, now=now)
-            metrics_payload = payload.get("metrics")
-            if not isinstance(metrics_payload, dict):
-                return {}
-            metrics = cast(Mapping[str, Any], metrics_payload)
-            error_rate = _to_finite_float(metrics.get("error_rate"))
-            if error_rate is None or error_rate < 0 or error_rate > 1:
-                return {}
-            return {"error_ratio": str(Decimal(str(error_rate)))}
-    except Exception:
-        return {}
-
-
-def _nearest_rank_percentile(values: list[int], percentile: int) -> int:
-    if not values:
-        return 0
-    bounded = max(1, min(100, percentile))
-    ordered = sorted(values)
-    index = ((len(ordered) * bounded) + 99) // 100 - 1
-    if index < 0:
-        index = 0
-    return ordered[index]
-
-
-def _load_tca_gate_inputs(
-    session_factory: Callable[[], Session],
-) -> dict[str, object]:
-    try:
-        with session_factory() as session:
-            return build_tca_gate_inputs(session)
-    except Exception:
-        return {
-            "order_count": 0,
-            "avg_slippage_bps": Decimal("0"),
-            "avg_abs_slippage_bps": Decimal("0"),
-            "avg_shortfall_notional": Decimal("0"),
-            "avg_shortfall_notional_abs": Decimal("0"),
-            "avg_churn_ratio": Decimal("0"),
-            "avg_divergence_bps": Decimal("0"),
-            "avg_divergence_bps_abs": Decimal("0"),
-            "avg_realized_shortfall_bps": Decimal("0"),
-            "avg_realized_shortfall_bps_abs": Decimal("0"),
-            "avg_calibration_error_bps": Decimal("0"),
-            "expected_shortfall_coverage": Decimal("0"),
-            "expected_shortfall_sample_count": 0,
-            "avg_expected_shortfall_bps_p50": Decimal("0"),
-            "avg_expected_shortfall_bps_p95": Decimal("0"),
-        }
-
-
-def _baseline_runtime_strategies() -> list[StrategyRuntimeConfig]:
-    return [
-        StrategyRuntimeConfig(
-            strategy_id="baseline-legacy-macd-rsi",
-            strategy_type="legacy_macd_rsi",
-            version="1.0.0",
-            params={"buy_rsi_threshold": 35, "sell_rsi_threshold": 65, "qty": 1},
-            base_timeframe="1Min",
-            enabled=True,
-            priority=0,
-        )
-    ]
-
-
-def _profitability_threshold_payload(
-    policy_payload: dict[str, Any],
-) -> dict[str, object]:
-    return {
-        "min_market_net_pnl_delta": str(
-            policy_payload.get("gate6_min_market_net_pnl_delta", "0")
-        ),
-        "min_risk_adjusted_return_over_drawdown": str(
-            policy_payload.get("gate6_min_return_over_drawdown", "0")
-        ),
-        "min_regime_slice_pass_ratio": str(
-            policy_payload.get("gate6_min_regime_slice_pass_ratio", "0.50")
-        ),
-        "max_cost_bps": str(policy_payload.get("gate6_max_cost_bps", "35")),
-        "max_calibration_error": str(
-            policy_payload.get("gate6_max_calibration_error", "0.45")
-        ),
-        "min_confidence_samples": int(
-            policy_payload.get("gate6_min_confidence_samples", 1)
-        ),
-        "min_reproducibility_hashes": int(
-            policy_payload.get("gate6_min_reproducibility_hashes", 5)
-        ),
-    }
-
-
-def _collect_confidence_values(decisions: list[WalkForwardDecision]) -> list[Decimal]:
-    values: list[Decimal] = []
-    for item in decisions:
-        raw_value = item.decision.params.get("confidence")
-        if raw_value is None:
-            runtime_payload = item.decision.params.get("runtime")
-            if isinstance(runtime_payload, Mapping):
-                raw_value = cast(Mapping[str, Any], runtime_payload).get("confidence")
-        if raw_value is None:
-            continue
-        try:
-            values.append(Decimal(str(raw_value)))
-        except (ArithmeticError, TypeError, ValueError):
-            continue
-    return values
-
-
-def _to_orm_strategies(
-    runtime_strategies: list[StrategyRuntimeConfig],
-) -> list[Strategy]:
-    strategies: list[Strategy] = []
-    for item in runtime_strategies:
-        strategies.append(
-            Strategy(
-                name=item.strategy_id,
-                description=f"{item.strategy_type}@{item.version}",
-                enabled=item.enabled,
-                base_timeframe=item.base_timeframe,
-                universe_type=_strategy_universe_type(item.strategy_type),
-                universe_symbols=None,
-                max_position_pct_equity=None,
-                max_notional_per_trade=None,
-            )
-        )
-    return strategies
-
-
-def _strategy_universe_type(strategy_type: str) -> str:
-    normalized = strategy_type.strip().lower()
-    if normalized in {"static", "legacy_macd_rsi"}:
-        return "static"
-    if normalized in {"intraday_tsmom", "intraday_tsmom_v1", "tsmom_intraday"}:
-        return "intraday_tsmom_v1"
-    return strategy_type
-
-
-def _evaluate_drift_promotion_gate(
-    *,
-    promotion_target: PromotionTarget,
-    drift_promotion_evidence: dict[str, Any] | None,
-) -> dict[str, Any]:
-    evidence = drift_promotion_evidence or {}
-    artifact_refs_raw = evidence.get("evidence_artifact_refs")
-    artifact_refs = (
-        [
-            str(item)
-            for item in cast(list[object], artifact_refs_raw)
-            if str(item).strip()
-        ]
-        if isinstance(artifact_refs_raw, list)
-        else []
-    )
-    if promotion_target != "live":
-        return {
-            "allowed": True,
-            "reasons": [],
-            "eligible_for_live_promotion": bool(
-                evidence.get("eligible_for_live_promotion", False)
-            ),
-            "artifact_refs": sorted(set(artifact_refs)),
-        }
-
-    if not evidence:
-        return {
-            "allowed": False,
-            "reasons": ["drift_promotion_evidence_missing"],
-            "eligible_for_live_promotion": False,
-            "artifact_refs": [],
-        }
-
-    reasons_raw = evidence.get("reasons")
-    reasons = (
-        [str(item) for item in cast(list[object], reasons_raw) if str(item).strip()]
-        if isinstance(reasons_raw, list)
-        else []
-    )
-    eligible = bool(evidence.get("eligible_for_live_promotion", False))
-    if not eligible:
-        if not reasons:
-            reasons.append("drift_promotion_evidence_not_eligible")
-        return {
-            "allowed": False,
-            "reasons": sorted(set(reasons)),
-            "eligible_for_live_promotion": False,
-            "artifact_refs": sorted(set(artifact_refs)),
-        }
-    return {
-        "allowed": True,
-        "reasons": [],
-        "eligible_for_live_promotion": True,
-        "artifact_refs": sorted(set(artifact_refs)),
-    }
-
-
-def _write_paper_candidate_patch(
-    *,
-    configmap_path: Path,
-    runtime_strategies: list[StrategyRuntimeConfig],
-    candidate_id: str,
-    output_path: Path,
-) -> Path:
-    configmap_payload_raw: object = yaml.safe_load(
-        configmap_path.read_text(encoding="utf-8")
-    )
-    if not isinstance(configmap_payload_raw, Mapping):
-        raise ValueError("invalid configmap payload")
-    configmap_payload = cast(Mapping[str, Any], configmap_payload_raw)
-
-    candidate_strategies: list[dict[str, Any]] = []
-    for strategy in runtime_strategies:
-        if not strategy.enabled:
-            continue
-        candidate_strategies.append(
-            {
-                "name": strategy.strategy_id,
-                "description": f"Autonomous candidate {candidate_id} ({strategy.strategy_type}@{strategy.version})",
-                "enabled": True,
-                "base_timeframe": strategy.base_timeframe,
-                "universe_type": _strategy_universe_type(strategy.strategy_type),
-                "max_notional_per_trade": 250,
-                "max_position_pct_equity": 0.025,
-            }
-        )
-
-    candidate_strategies.sort(key=lambda item: str(item["name"]))
-
-    metadata_raw = configmap_payload.get("metadata", {})
-    metadata: dict[str, Any] = (
-        dict(cast(Mapping[str, Any], metadata_raw))
-        if isinstance(metadata_raw, Mapping)
-        else {}
-    )
-    patch_payload: dict[str, Any] = {
-        "apiVersion": "v1",
-        "kind": "ConfigMap",
-        "metadata": {
-            "name": metadata.get("name", "torghut-strategy-config"),
-            "namespace": metadata.get("namespace", "torghut"),
-            "annotations": {
-                "torghut.proompteng.ai/candidate-id": candidate_id,
-                "torghut.proompteng.ai/recommended-mode": "paper",
-            },
-        },
-        "data": {
-            "strategies.yaml": yaml.safe_dump(
-                {"strategies": candidate_strategies}, sort_keys=False
-            ),
-        },
-    }
-    output_path.write_text(
-        yaml.safe_dump(patch_payload, sort_keys=False), encoding="utf-8"
-    )
-    return output_path
-
-
 __all__ = [
-    "annotations",
-    "hashlib",
-    "json",
-    "math",
-    "re",
-    "dataclass",
-    "field",
-    "datetime",
-    "timezone",
-    "Decimal",
-    "Path",
+    "AUTONOMY_PHASE_ORDER",
+    "AlphaLaneResult",
     "Any",
+    "ArtifactProvenance",
+    "AutonomousLaneResult",
     "Callable",
+    "Decimal",
+    "EvaluationReport",
+    "EvaluationReportConfig",
+    "EvidenceMaturity",
+    "FeatureNormalizationError",
+    "FoldResult",
+    "GateEvaluationReport",
+    "GateInputs",
+    "GatePolicyMatrix",
+    "HMM_UNKNOWN_REGIME_ID",
     "Mapping",
-    "Sequence",
-    "cast",
-    "delete",
-    "select",
-    "Session",
-    "pd",
-    "yaml",
-    "settings",
-    "SessionLocal",
+    "Path",
+    "ProfitabilityEvidenceThresholdsV4",
+    "PromotionRecommendation",
+    "PromotionTarget",
     "ResearchAttempt",
     "ResearchCandidate",
     "ResearchCostCalibration",
@@ -5351,12 +2717,19 @@ __all__ = [
     "ResearchSequentialTrial",
     "ResearchStressMetrics",
     "ResearchValidationTest",
+    "RollbackReadinessResult",
+    "Sequence",
+    "Session",
+    "SessionLocal",
+    "SignalEnvelope",
+    "Strategy",
     "StrategyCapitalAllocation",
     "StrategyHypothesis",
     "StrategyHypothesisMetricWindow",
     "StrategyHypothesisVersion",
     "StrategyPromotionDecision",
-    "Strategy",
+    "StrategyRuntime",
+    "StrategyRuntimeConfig",
     "VNextDatasetSnapshot",
     "VNextExperimentRun",
     "VNextExperimentSpec",
@@ -5365,203 +2738,198 @@ __all__ = [
     "VNextPromotionDecision",
     "VNextShadowLiveDeviation",
     "VNextSimulationCalibration",
-    "AlphaLaneResult",
-    "run_alpha_discovery_lane",
-    "build_completion_trace",
-    "persist_completion_trace",
-    "FoldResult",
-    "ProfitabilityEvidenceThresholdsV4",
     "WalkForwardDecision",
     "WalkForwardFold",
     "WalkForwardResults",
-    "build_profitability_evidence_v4",
-    "build_shadow_live_deviation_report_v1",
-    "build_simulation_calibration_report_v1",
-    "execute_profitability_benchmark_v4",
-    "validate_profitability_evidence_v4",
-    "write_walk_forward_results",
-    "ArtifactProvenance",
-    "EvidenceMaturity",
-    "contract_from_artifact_payload",
-    "evidence_contract_payload",
-    "FeatureNormalizationError",
-    "extract_price",
-    "extract_rsi",
-    "extract_signal_features",
-    "normalize_feature_vector_v3",
-    "build_default_forecast_router",
-    "hypothesis_registry_requires_dependency_capability",
-    "load_hypothesis_registry",
-    "resolve_hypothesis_dependency_quorum",
-    "build_llm_evaluation_metrics",
-    "SignalEnvelope",
+    "_ACTUATION_CONFIRMATION_PHRASE",
+    "_ACTUATION_INTENT_PATH",
+    "_ACTUATION_INTENT_SCHEMA_VERSION",
+    "_ADVISOR_FALLBACK_SLO_REPORT_PATH",
+    "_AUTONOMY_LANE_SCHEMA_VERSION",
+    "_AUTONOMY_PHASE_ORDER",
+    "_BENCHMARK_PARITY_REPORT_PATH",
+    "_CONTAMINATION_REGISTRY_ARTIFACT_PATH",
+    "_DEEPLOB_BDLOB_REPORT_PATH",
+    "_EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH",
+    "_FOLD_METRICS_ARTIFACT_PATH",
+    "_FOUNDATION_ROUTER_PARITY_REPORT_PATH",
+    "_HMM_STATE_POSTERIOR_ARTIFACT_PATH",
+    "_PROFITABILITY_STAGE_MANIFEST_PATH",
+    "_PROFITABILITY_STAGE_MANIFEST_SCHEMA_VERSION",
+    "_STAGE_CANDIDATE_GENERATION",
+    "_STAGE_EVALUATION",
+    "_STAGE_PROFITABILITY",
+    "_STAGE_RECOMMENDATION",
+    "_STRESS_METRICS_ARTIFACT_PATH",
+    "_STRESS_METRICS_CASES",
+    "_StageManifestRecord",
+    "_StrategyFactoryBridge",
+    "_V6_08_GOVERNING_DESIGN_DOC",
+    "_artifact_authority_for_check",
+    "_artifact_authority_for_evidence",
+    "_artifact_hashes",
+    "_as_object_dict",
+    "_baseline_runtime_strategies",
+    "_build_actuation_intent_payload",
+    "_build_bridge_evidence_payload",
+    "_build_candidate_alpha_readiness_payload",
+    "_build_candidate_state_payload",
+    "_build_contamination_registry_payload",
+    "_build_expert_router_registry_payload",
+    "_build_expert_router_weights",
+    "_build_hmm_state_posterior_payload",
+    "_build_janus_q_summary_from_payloads",
+    "_build_phase_manifest",
+    "_build_portfolio_promotion_summary",
+    "_build_profitability_stage_manifest",
+    "_build_promotion_rationale",
+    "_build_stage_lineage_payload",
+    "_build_strategy_factory_bridge",
+    "_build_stress_bundle",
+    "_build_vnext_gate_summary",
+    "_candidate_state_readiness_payload",
+    "_coalesce_governance_context",
+    "_coerce_evidence_bool",
+    "_coerce_fragility_bool",
+    "_coerce_fragility_measurement",
+    "_coerce_fragility_score",
+    "_coerce_fragility_state",
+    "_coerce_gate_phase_gates",
+    "_coerce_int",
+    "_coerce_path_strings",
+    "_coerce_str",
+    "_collect_confidence_values",
+    "_collect_walk_decisions_for_runtime",
+    "_compute_candidate_hash",
+    "_compute_dataset_version_hash",
+    "_compute_feature_spec_hash",
+    "_compute_no_signal_dataset_version_hash",
+    "_compute_no_signal_feature_spec_hash",
+    "_decimal_or_none",
+    "_decimal_or_zero",
+    "_default_strategy_configmap_path",
+    "_deterministic_run_id",
+    "_empirical_artifact_authority",
+    "_ensure_utc",
+    "_evaluate_drift_promotion_gate",
+    "_extract_janus_q_metrics",
+    "_fragility_state_rank",
+    "_is_more_worse_fragility",
+    "_is_runbook_valid",
+    "_load_configured_empirical_payload",
+    "_load_json_if_exists",
+    "_load_price_frame",
+    "_load_signals",
+    "_load_tca_gate_inputs",
+    "_manifest_artifact_payload",
+    "_manifest_relative_path",
+    "_mark_run_failed",
+    "_mark_run_failed_if_requested",
+    "_mark_run_passed",
+    "_mark_run_passed_if_requested",
+    "_metric_counter_int",
+    "_nearest_rank_percentile",
+    "_normalize_expert_weights",
+    "_normalize_governance_inputs",
+    "_normalize_hmm_regime_id",
+    "_normalize_strategy_artifacts",
+    "_persist_hypothesis_governance_rows",
+    "_persist_run_outputs",
+    "_persist_run_outputs_if_requested",
+    "_persist_strategy_spec_lineage_trace",
+    "_persist_vnext_objects",
+    "_prepare_lane_output_dirs",
+    "_profitability_threshold_payload",
+    "_readable_notes_iteration_number",
+    "_required_feature_null_rate",
+    "_resolve_confidence_calibration",
+    "_resolve_gate_forecast_metrics",
+    "_resolve_gate_fragility_inputs",
+    "_resolve_gate_llm_metrics",
+    "_resolve_gate_staleness_ms_p95",
+    "_resolve_hypothesis_window_evidence",
+    "_resolve_optional_service_path",
+    "_resolve_paper_patch_path",
+    "_runtime_observation_contract_payload",
+    "_runtime_observation_has_ledger_profit_proof",
+    "_safe_int",
+    "_sha256_path",
+    "_stable_hash",
+    "_strategy_factory_artifact_refs",
+    "_strategy_factory_gate_summary",
+    "_strategy_parameter_set",
+    "_strategy_universe_definition",
+    "_strategy_universe_type",
+    "_to_finite_float",
+    "_to_orm_strategies",
+    "_trace_id",
+    "_upsert_research_run",
+    "_write_iteration_notes",
+    "_write_paper_candidate_patch",
+    "_write_stage_manifest",
     "build_advisor_fallback_slo_report",
     "build_benchmark_parity_report",
-    "build_deeplob_bdlob_report",
-    "build_foundation_router_parity_report",
-    "write_advisor_fallback_slo_report",
-    "write_benchmark_parity_report",
-    "write_deeplob_bdlob_report",
-    "write_foundation_router_parity_report",
-    "HMM_UNKNOWN_REGIME_ID",
-    "resolve_hmm_context",
-    "EvaluationReport",
-    "EvaluationReportConfig",
-    "PromotionRecommendation",
-    "build_promotion_recommendation",
-    "generate_evaluation_report",
-    "write_evaluation_report",
     "build_compiled_strategy_artifacts",
+    "build_completion_trace",
+    "build_deeplob_bdlob_report",
+    "build_default_forecast_router",
     "build_experiment_spec_from_strategy",
-    "compile_strategy_spec_v2",
-    "load_strategy_spec_v2_payload",
-    "strategy_type_supports_spec_v2",
-    "build_tca_gate_inputs",
-    "GateEvaluationReport",
-    "GateInputs",
-    "GatePolicyMatrix",
-    "PromotionTarget",
-    "evaluate_gate_matrix",
+    "build_foundation_router_parity_report",
     "build_janus_event_car_artifact_v1",
     "build_janus_hgrm_reward_artifact_v1",
     "build_janus_q_evidence_summary_v1",
-    "RollbackReadinessResult",
+    "build_llm_evaluation_metrics",
+    "build_profitability_evidence_v4",
+    "build_promotion_recommendation",
+    "build_shadow_live_deviation_report_v1",
+    "build_simulation_calibration_report_v1",
+    "build_tca_gate_inputs",
+    "cast",
+    "coerce_phase_status",
+    "compile_runtime_config",
+    "compile_strategy_spec_v2",
+    "contract_from_artifact_payload",
+    "dataclass",
+    "datetime",
+    "default_runtime_registry",
+    "delete",
+    "evaluate_gate_matrix",
     "evaluate_promotion_prerequisites",
     "evaluate_rollback_readiness",
-    "StrategyRuntime",
-    "StrategyRuntimeConfig",
-    "compile_runtime_config",
-    "default_runtime_registry",
-    "AUTONOMY_PHASE_ORDER",
-    "coerce_phase_status",
-    "normalize_phase_transitions",
-    "_AUTONOMY_PHASE_ORDER",
-    "_ACTUATION_INTENT_SCHEMA_VERSION",
-    "_ACTUATION_CONFIRMATION_PHRASE",
-    "_ACTUATION_INTENT_PATH",
-    "_AUTONOMY_LANE_SCHEMA_VERSION",
-    "_PROFITABILITY_STAGE_MANIFEST_SCHEMA_VERSION",
-    "_PROFITABILITY_STAGE_MANIFEST_PATH",
-    "_STAGE_CANDIDATE_GENERATION",
-    "_STAGE_EVALUATION",
-    "_STAGE_RECOMMENDATION",
-    "_STRESS_METRICS_ARTIFACT_PATH",
-    "_CONTAMINATION_REGISTRY_ARTIFACT_PATH",
-    "_HMM_STATE_POSTERIOR_ARTIFACT_PATH",
-    "_EXPERT_ROUTER_REGISTRY_ARTIFACT_PATH",
-    "_FOLD_METRICS_ARTIFACT_PATH",
-    "_STRESS_METRICS_CASES",
-    "_BENCHMARK_PARITY_REPORT_PATH",
-    "_FOUNDATION_ROUTER_PARITY_REPORT_PATH",
-    "_DEEPLOB_BDLOB_REPORT_PATH",
-    "_ADVISOR_FALLBACK_SLO_REPORT_PATH",
-    "_STAGE_PROFITABILITY",
-    "_V6_08_GOVERNING_DESIGN_DOC",
-    "_StageManifestRecord",
-    "_coerce_evidence_bool",
-    "_normalize_strategy_artifacts",
-    "_is_runbook_valid",
-    "_build_candidate_state_payload",
-    "_build_candidate_alpha_readiness_payload",
-    "AutonomousLaneResult",
-    "_StrategyFactoryBridge",
-    "_load_price_frame",
-    "_build_strategy_factory_bridge",
-    "_strategy_factory_gate_summary",
-    "_strategy_factory_artifact_refs",
-    "upsert_autonomy_no_signal_run",
-    "_ensure_utc",
-    "_safe_int",
-    "_as_object_dict",
-    "_stable_hash",
-    "_artifact_hashes",
-    "_readable_notes_iteration_number",
-    "_write_stage_manifest",
-    "_build_stage_lineage_payload",
-    "_manifest_relative_path",
-    "_artifact_authority_for_check",
-    "_artifact_authority_for_evidence",
-    "_empirical_artifact_authority",
-    "_resolve_optional_service_path",
-    "_load_configured_empirical_payload",
-    "_build_janus_q_summary_from_payloads",
-    "_build_bridge_evidence_payload",
-    "_build_vnext_gate_summary",
-    "_build_portfolio_promotion_summary",
-    "_manifest_artifact_payload",
-    "_load_json_if_exists",
-    "_build_contamination_registry_payload",
-    "_normalize_hmm_regime_id",
-    "_build_hmm_state_posterior_payload",
-    "_decimal_or_zero",
-    "_decimal_or_none",
-    "_normalize_expert_weights",
-    "_build_expert_router_weights",
-    "_build_expert_router_registry_payload",
-    "_build_profitability_stage_manifest",
-    "_write_iteration_notes",
-    "_extract_janus_q_metrics",
-    "run_autonomous_lane",
-    "_prepare_lane_output_dirs",
-    "_normalize_governance_inputs",
-    "_coalesce_governance_context",
-    "_build_phase_manifest",
-    "_coerce_str",
-    "_coerce_int",
-    "_coerce_path_strings",
-    "_coerce_gate_phase_gates",
-    "_build_actuation_intent_payload",
-    "_collect_walk_decisions_for_runtime",
-    "_resolve_confidence_calibration",
-    "_resolve_paper_patch_path",
-    "_persist_run_outputs_if_requested",
-    "_mark_run_passed_if_requested",
-    "_mark_run_failed_if_requested",
-    "_upsert_research_run",
-    "_mark_run_failed",
-    "_mark_run_passed",
-    "_persist_run_outputs",
-    "_persist_strategy_spec_lineage_trace",
-    "_runtime_observation_contract_payload",
-    "_runtime_observation_has_ledger_profit_proof",
-    "_resolve_hypothesis_window_evidence",
-    "_persist_hypothesis_governance_rows",
-    "_persist_vnext_objects",
-    "_compute_candidate_hash",
-    "_build_promotion_rationale",
-    "_trace_id",
-    "_compute_no_signal_feature_spec_hash",
-    "_compute_no_signal_dataset_version_hash",
-    "_compute_feature_spec_hash",
-    "_compute_dataset_version_hash",
-    "_strategy_parameter_set",
-    "_strategy_universe_definition",
-    "_metric_counter_int",
-    "_build_stress_bundle",
+    "evidence_contract_payload",
+    "execute_profitability_benchmark_v4",
+    "extract_price",
+    "extract_rsi",
+    "extract_signal_features",
+    "field",
+    "generate_evaluation_report",
+    "hashlib",
+    "hypothesis_registry_requires_dependency_capability",
+    "json",
+    "load_hypothesis_registry",
     "load_runtime_strategy_config",
-    "_load_signals",
-    "_deterministic_run_id",
-    "_required_feature_null_rate",
-    "_coerce_fragility_state",
-    "_fragility_state_rank",
-    "_coerce_fragility_bool",
-    "_coerce_fragility_score",
-    "_coerce_fragility_measurement",
-    "_is_more_worse_fragility",
-    "_resolve_gate_fragility_inputs",
-    "_resolve_gate_forecast_metrics",
-    "_resolve_gate_staleness_ms_p95",
-    "_to_finite_float",
-    "_resolve_gate_llm_metrics",
-    "_nearest_rank_percentile",
-    "_load_tca_gate_inputs",
-    "_baseline_runtime_strategies",
-    "_sha256_path",
-    "_profitability_threshold_payload",
-    "_collect_confidence_values",
-    "_default_strategy_configmap_path",
-    "_to_orm_strategies",
-    "_strategy_universe_type",
-    "_evaluate_drift_promotion_gate",
-    "_write_paper_candidate_patch",
+    "load_strategy_spec_v2_payload",
+    "math",
+    "normalize_feature_vector_v3",
+    "normalize_phase_transitions",
+    "pd",
+    "persist_completion_trace",
+    "re",
+    "resolve_hmm_context",
+    "resolve_hypothesis_dependency_quorum",
+    "run_alpha_discovery_lane",
+    "run_autonomous_lane",
+    "select",
+    "settings",
+    "strategy_type_supports_spec_v2",
+    "timezone",
+    "upsert_autonomy_no_signal_run",
+    "validate_profitability_evidence_v4",
+    "write_advisor_fallback_slo_report",
+    "write_benchmark_parity_report",
+    "write_deeplob_bdlob_report",
+    "write_evaluation_report",
+    "write_foundation_router_parity_report",
+    "write_walk_forward_results",
+    "yaml",
 ]
