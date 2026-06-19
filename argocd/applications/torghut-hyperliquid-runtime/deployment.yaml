@@ -8,7 +8,7 @@ metadata:
   labels:
     app: torghut-hyperliquid-runtime
 spec:
-  replicas: 1
+  replicas: 0
   strategy:
     type: Recreate
   selector:
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-runtime-v1-20260619-equity-recovery-min-notional
+        proompteng.ai/config-revision: hyperliquid-hard-reset-freeze-20260619
       labels:
         app: torghut-hyperliquid-runtime
     spec:

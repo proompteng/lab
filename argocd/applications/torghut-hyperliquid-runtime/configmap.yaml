@@ -11,7 +11,7 @@ data:
   LOG_FORMAT: json
   HYPERLIQUID_RUNTIME_ENABLED: "true"
   # Testnet-only execution is enabled after the ExternalSecret is ready and the dedicated account is funded.
-  HYPERLIQUID_RUNTIME_TRADING_ENABLED: "true"
+  HYPERLIQUID_RUNTIME_TRADING_ENABLED: "false"
   HYPERLIQUID_RUNTIME_EXECUTION_NETWORK: testnet
   HYPERLIQUID_RUNTIME_MARKET_DATA_NETWORK: mainnet
   HYPERLIQUID_RUNTIME_EXCHANGE_API_URL: https://api.hyperliquid-testnet.xyz
