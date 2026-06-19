@@ -72,7 +72,8 @@ describe('torghut build-push workflow', () => {
     expect(registryWaitStep).toBeGreaterThan(buildJob)
     expect(buildStep).toBeGreaterThan(registryWaitStep)
     expect(workflow).toContain('REGISTRY_URL: https://registry.ide-newton.ts.net/v2/')
-    expect(workflow).toContain('REGISTRY_WAIT_TIMEOUT_SECONDS: 7200')
+    expect(workflow).toContain('REGISTRY_WAIT_TIMEOUT_SECONDS: 600')
+    expect(workflow).toContain('REGISTRY_WAIT_INTERVAL_SECONDS: 15')
   })
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {

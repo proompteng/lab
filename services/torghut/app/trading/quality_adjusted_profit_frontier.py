@@ -12,6 +12,7 @@ from .market_context_domains import (
     ACTIVE_MARKET_CONTEXT_DOMAINS,
     active_market_context_reasons,
 )
+from .market_context import market_context_status_enforced
 from .risk import target_sizing_payload
 
 
@@ -226,6 +227,8 @@ def _quant_receipts(quant: Mapping[str, Any]) -> list[str]:
 
 
 def _market_receipts(market: Mapping[str, Any]) -> list[str]:
+    if not market_context_status_enforced(market):
+        return []
     receipts: set[str] = set()
     state = _first(market, "state", "status", "overallState", "overall_state").lower()
     if state in {"degraded", "down", "error", "fail", "stale"}:

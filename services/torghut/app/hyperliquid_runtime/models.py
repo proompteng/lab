@@ -8,7 +8,7 @@ from decimal import Decimal
 from typing import Literal
 
 
-AssetClass = Literal["stocks", "indices", "preipo"]
+AssetClass = Literal["crypto", "stocks", "indices", "preipo"]
 DecisionAction = Literal["buy", "sell", "hold", "cancel_only"]
 OrderSide = Literal["buy", "sell"]
 OrderStatus = Literal[

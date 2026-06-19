@@ -1,4 +1,4 @@
-"""Equity-like Hyperliquid universe selection."""
+"""Hyperliquid runtime universe selection."""
 
 from __future__ import annotations
 
@@ -83,7 +83,7 @@ _STOCK_PREFIX = "cash:"
 _PREIPO_DEXES = {"xyz", "preipo"}
 
 
-def select_equity_like_markets(
+def select_runtime_markets(
     rows: Iterable[Mapping[str, object]],
     *,
     market_data_network: str,
@@ -91,7 +91,7 @@ def select_equity_like_markets(
     min_day_notional_volume_usd: Decimal,
     max_markets: int,
 ) -> list[HyperliquidMarket]:
-    """Select liquid stock, index, and vetted pre-IPO perp markets."""
+    """Select liquid runtime-approved perp markets."""
 
     allowed = {item.strip().lower() for item in allowed_asset_classes}
     selected: list[HyperliquidMarket] = []
@@ -165,13 +165,13 @@ def classify_asset(
     dex: str,
     payload: Mapping[str, object] | None = None,
 ) -> AssetClass | None:
-    """Classify public Hyperliquid perps into V1 allowed equity-like buckets."""
+    """Classify public Hyperliquid perps into runtime asset buckets."""
 
     normalized_coin = coin.strip()
     symbol = normalized_coin.removeprefix(_STOCK_PREFIX).split(":")[-1].upper()
     normalized_dex = dex.strip().lower()
     payload_class = _payload_asset_class(payload)
-    if payload_class in {"stocks", "indices", "preipo"}:
+    if payload_class in {"crypto", "stocks", "indices", "preipo"}:
         return cast(AssetClass, payload_class)
     if symbol in _COMMODITY_COINS or symbol in _FX_COINS:
         return None
@@ -184,7 +184,28 @@ def classify_asset(
             return "preipo"
         if symbol in _STOCK_COINS:
             return "stocks"
+    if normalized_dex in {"", "default"}:
+        return "crypto"
     return None
+
+
+def select_equity_like_markets(
+    rows: Iterable[Mapping[str, object]],
+    *,
+    market_data_network: str,
+    allowed_asset_classes: Iterable[str],
+    min_day_notional_volume_usd: Decimal,
+    max_markets: int,
+) -> list[HyperliquidMarket]:
+    """Backward-compatible wrapper for callers not yet renamed."""
+
+    return select_runtime_markets(
+        rows,
+        market_data_network=market_data_network,
+        allowed_asset_classes=allowed_asset_classes,
+        min_day_notional_volume_usd=min_day_notional_volume_usd,
+        max_markets=max_markets,
+    )
 
 
 def _payload_asset_class(payload: Mapping[str, object] | None) -> str | None:
@@ -194,6 +215,8 @@ def _payload_asset_class(payload: Mapping[str, object] | None) -> str | None:
         value = payload.get(key)
         if isinstance(value, str):
             normalized = value.strip().lower().replace("-", "_")
+            if normalized in {"crypto", "cryptocurrency", "digital_asset"}:
+                return "crypto"
             if normalized in {"stock", "stocks", "equity", "equities"}:
                 return "stocks"
             if normalized in {"index", "indices", "equity_index"}:

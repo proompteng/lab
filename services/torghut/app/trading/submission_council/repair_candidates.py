@@ -21,6 +21,7 @@ from .common import (
     safe_bool as _safe_bool,
     safe_int as _safe_int,
     safe_text as _safe_text,
+    settings,
     stage_rank as _stage_rank,
     active_market_context_mapping,
     active_market_context_reasons,
@@ -341,6 +342,10 @@ def build_submission_gate_market_context_status(state: object) -> dict[str, obje
         cast(Sequence[str], getattr(state, "last_market_context_risk_flags", []))
     )
     raw_alert_active = bool(getattr(state, "market_context_alert_active", False))
+    enforced = (
+        settings.trading_market_context_required
+        or settings.trading_market_context_fail_mode == "fail_closed"
+    )
     alert_reason = (
         getattr(state, "market_context_alert_reason", None)
         or "market_context_alert_active"
@@ -358,8 +363,17 @@ def build_submission_gate_market_context_status(state: object) -> dict[str, obje
         ),
         "last_domain_states": last_domain_states,
         "last_risk_flags": last_risk_flags,
-        "alert_active": raw_alert_active and filtered_alert_reason is not None,
-        "alert_reason": filtered_alert_reason,
+        "required": settings.trading_market_context_required,
+        "fail_mode": settings.trading_market_context_fail_mode,
+        "max_staleness_seconds": settings.trading_market_context_max_staleness_seconds,
+        "alert_active": enforced
+        and raw_alert_active
+        and filtered_alert_reason is not None,
+        "alert_reason": filtered_alert_reason
+        if enforced and raw_alert_active and filtered_alert_reason is not None
+        else None,
+        "shadow_alert_active": raw_alert_active and filtered_alert_reason is not None,
+        "shadow_alert_reason": filtered_alert_reason,
     }
 
 

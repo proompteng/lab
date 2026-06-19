@@ -92,6 +92,12 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).not.toContain('--workflow torghut-ci.yml')
   })
 
+  test('bounds release-check polling so generated release PRs fail fast', () => {
+    expect(deployAutomergeWorkflow).toContain('deadline=$((SECONDS + 600))')
+    expect(deployAutomergeWorkflow).toContain('sleep 10')
+    expect(deployAutomergeWorkflow).not.toContain('deadline=$((SECONDS + 2700))')
+  })
+
   test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {
     const manifestPath = 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
 

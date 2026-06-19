@@ -26,6 +26,7 @@ from ...llm.schema import MarketSnapshot as LLMMarketSnapshot
 from ...market_context import (
     MarketContextStatus,
     evaluate_market_context,
+    market_context_enforced,
 )
 from ...market_context_domains import (
     active_market_context_domain_states,
@@ -73,7 +74,7 @@ class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
         market_context_status = evaluate_market_context(market_context)
         if request.market_context_error is not None:
             market_context_status = MarketContextStatus(
-                allow_llm=False,
+                allow_llm=not market_context_enforced(),
                 reason="market_context_fetch_error",
                 risk_flags=["market_context_fetch_error"],
             )
@@ -126,17 +127,15 @@ class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
             self.state.last_market_context_quality_score = None
             self.state.last_market_context_domain_states = {}
             self.state.last_market_context_risk_flags = []
-            allow_llm = not settings.trading_market_context_required
+            enforce_market_context = market_context_enforced()
+            allow_llm = not enforce_market_context
             reason = market_context_error or (
-                "market_context_required_missing"
-                if settings.trading_market_context_required
-                else None
+                "market_context_required_missing" if enforce_market_context else None
             )
             self.state.last_market_context_allow_llm = allow_llm
             self.state.last_market_context_reason = reason
-            self.state.market_context_alert_active = (
-                market_context_error is not None
-                or (settings.trading_market_context_required and not allow_llm)
+            self.state.market_context_alert_active = enforce_market_context and (
+                market_context_error is not None or not allow_llm
             )
             self.state.market_context_alert_reason = reason
             return
@@ -160,8 +159,9 @@ class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
         self.state.last_market_context_reason = (
             market_context_error or market_context_status.reason
         )
-        self.state.market_context_alert_active = market_context_error is not None or (
-            not market_context_status.allow_llm
+        enforce_market_context = market_context_enforced()
+        self.state.market_context_alert_active = enforce_market_context and (
+            market_context_error is not None or not market_context_status.allow_llm
         )
         self.state.market_context_alert_reason = (
             market_context_error or market_context_status.reason

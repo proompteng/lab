@@ -155,6 +155,49 @@ def _intent() -> OrderIntent:
     )
 
 
+def _crypto_catalog_row(
+    *,
+    market_id: str = "hl:perp:default:BTC",
+    coin: str = "BTC",
+    day_notional_volume: str = "500000000",
+    mark_price: str = "100000",
+) -> dict[str, object]:
+    return {
+        "market_type": "perp",
+        "market_id": market_id,
+        "coin": coin,
+        "dex": "default",
+        "payload": (
+            '{"dayNtlVlm":"'
+            + day_notional_volume
+            + '","markPx":"'
+            + mark_price
+            + '","openInterest":"1000000"}'
+        ),
+    }
+
+
+def _crypto_clickhouse(
+    *,
+    features: list[FeatureSnapshot] | None = None,
+    catalog_rows: list[dict[str, object]] | None = None,
+) -> "_FakeClickHouse":
+    return _FakeClickHouse(
+        features=features
+        if features is not None
+        else [
+            _feature(
+                market_id="hl:perp:default:BTC",
+                coin="BTC",
+                dex="default",
+            )
+        ],
+        catalog_rows=catalog_rows
+        if catalog_rows is not None
+        else [_crypto_catalog_row()],
+    )
+
+
 class _MappingResult:
     def __init__(self, rows: list[dict[str, object]]) -> None:
         self._rows = rows
@@ -622,7 +665,11 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     exchange = _FakeExchange(normalized_intent=normalized_intent)
     journal = _FakeJournal()
     _patch_repository(monkeypatch, repository)
-    service = _enabled_service(exchange=exchange, journal=journal)
+    service = _enabled_service(
+        clickhouse=_crypto_clickhouse(),
+        exchange=exchange,
+        journal=journal,
+    )
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -642,9 +689,7 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     assert repository.account_states[0].positions[0].coin == "cash:AAPL"
     assert repository.performance[0].reconciliation_status == "pass"
     assert exchange.dead_man_seconds == 60
-    assert exchange.open_order_reconcile_inputs == [
-        {"cash:AAPL": "hl:perp:cash:cash:AAPL"}
-    ]
+    assert exchange.open_order_reconcile_inputs == [{"BTC": "hl:perp:default:BTC"}]
     assert [event.transfer_kind for event in journal.persisted] == [
         "fill",
         "order_submitted",
@@ -659,30 +704,28 @@ def test_runtime_service_skips_execution_markets_without_fresh_features(
     journal = _FakeJournal()
     _patch_repository(monkeypatch, repository)
     service = _enabled_service(
-        clickhouse=_FakeClickHouse(
+        clickhouse=_crypto_clickhouse(
             features=[
-                _feature(),
                 _feature(
-                    market_id="hl:perp:cash:cash:TSLA",
-                    coin="cash:TSLA",
+                    market_id="hl:perp:default:BTC",
+                    coin="BTC",
+                    dex="default",
+                ),
+                _feature(
+                    market_id="hl:perp:default:ETH",
+                    coin="ETH",
+                    dex="default",
                     source_lag_seconds=999,
                 ),
             ],
             catalog_rows=[
-                {
-                    "market_type": "perp",
-                    "market_id": "hl:perp:cash:cash:AAPL",
-                    "coin": "cash:AAPL",
-                    "dex": "cash",
-                    "payload": '{"dayNtlVlm":"500000","markPx":"200","openInterest":"1000000"}',
-                },
-                {
-                    "market_type": "perp",
-                    "market_id": "hl:perp:cash:cash:TSLA",
-                    "coin": "cash:TSLA",
-                    "dex": "cash",
-                    "payload": '{"dayNtlVlm":"400000","markPx":"250","openInterest":"1000000"}',
-                },
+                _crypto_catalog_row(),
+                _crypto_catalog_row(
+                    market_id="hl:perp:default:ETH",
+                    coin="ETH",
+                    day_notional_volume="400000000",
+                    mark_price="5000",
+                ),
             ],
         ),
         exchange=exchange,
@@ -697,8 +740,8 @@ def test_runtime_service_skips_execution_markets_without_fresh_features(
     assert result.orders_submitted == 1
     assert exchange.open_order_reconcile_inputs == [
         {
-            "cash:AAPL": "hl:perp:cash:cash:AAPL",
-            "cash:TSLA": "hl:perp:cash:cash:TSLA",
+            "BTC": "hl:perp:default:BTC",
+            "ETH": "hl:perp:default:ETH",
         }
     ]
     assert any(
@@ -750,7 +793,7 @@ def test_runtime_service_releases_reconciled_closed_orders(
 def test_runtime_service_persists_guarded_optimizer_run() -> None:
     service = HyperliquidRuntimeService(
         config=_config(HYPERLIQUID_RUNTIME_OPTIMIZER_MIN_TRADES="10"),
-        clickhouse=_FakeClickHouse(),
+        clickhouse=_crypto_clickhouse(),
         exchange=_FakeExchange(),
         journal=_FakeJournal(),
     )
@@ -781,7 +824,11 @@ def test_runtime_service_releases_hold_when_submit_raises(
     exchange = _FakeExchange(fills=False, fail_submit=True)
     journal = _FakeJournal()
     _patch_repository(monkeypatch, repository)
-    service = _enabled_service(exchange=exchange, journal=journal)
+    service = _enabled_service(
+        clickhouse=_crypto_clickhouse(),
+        exchange=exchange,
+        journal=journal,
+    )
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -808,7 +855,11 @@ def test_runtime_service_rejects_invalid_normalized_order_without_submit(
     )
     journal = _FakeJournal()
     _patch_repository(monkeypatch, repository)
-    service = _enabled_service(exchange=exchange, journal=journal)
+    service = _enabled_service(
+        clickhouse=_crypto_clickhouse(),
+        exchange=exchange,
+        journal=journal,
+    )
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -836,7 +887,11 @@ def test_runtime_service_rejects_market_setup_failure_without_submit(
     exchange = _FakeExchange(fills=False, market_setup_result=setup_result)
     journal = _FakeJournal()
     _patch_repository(monkeypatch, repository)
-    service = _enabled_service(exchange=exchange, journal=journal)
+    service = _enabled_service(
+        clickhouse=_crypto_clickhouse(),
+        exchange=exchange,
+        journal=journal,
+    )
     session = _FakeSession()
 
     result = service.run_once(session)

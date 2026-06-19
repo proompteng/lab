@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from ..market_context import market_context_status_enforced
+
 
 from .shared_context import (
     EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION,
@@ -596,6 +598,8 @@ def graduation_state(
 def market_context_blockers(market_context_status: Mapping[str, Any]) -> list[str]:
     if not market_context_status:
         return ["market_context_missing"]
+    if not market_context_status_enforced(market_context_status):
+        return []
     state = _text(
         market_context_status.get("overallState")
         or market_context_status.get("overall_state")

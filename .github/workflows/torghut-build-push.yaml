@@ -56,8 +56,8 @@ jobs:
         shell: bash
         env:
           REGISTRY_URL: https://registry.ide-newton.ts.net/v2/
-          REGISTRY_WAIT_TIMEOUT_SECONDS: 7200
-          REGISTRY_WAIT_INTERVAL_SECONDS: 60
+          REGISTRY_WAIT_TIMEOUT_SECONDS: 600
+          REGISTRY_WAIT_INTERVAL_SECONDS: 15
         run: |
           set -euo pipefail
 

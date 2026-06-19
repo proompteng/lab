@@ -35,7 +35,7 @@ from .repository import HyperliquidRuntimeRepository
 from .risk import build_order_intent, evaluate_signal_risk
 from .runtime_session import RuntimeSession
 from .strategy import generate_signal
-from .universe import select_equity_like_markets
+from .universe import select_runtime_markets
 
 
 class HyperliquidRuntimeClickHouse(Protocol):
@@ -145,7 +145,7 @@ class HyperliquidRuntimeService:
         repository: HyperliquidRuntimeRepository,
     ) -> _CycleContext:
         clickhouse_status = self._clickhouse.status()
-        markets = select_equity_like_markets(
+        markets = select_runtime_markets(
             self._clickhouse.load_catalog_rows(),
             market_data_network=self._config.market_data_network,
             allowed_asset_classes=self._config.allowed_asset_classes,

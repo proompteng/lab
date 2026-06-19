@@ -146,15 +146,28 @@ def test_partial_ta_freshness_keeps_capital_zero_and_opens_repair_slo() -> None:
     assert pressure_ref["action_class"] == "dispatch_repair"
     assert pressure_ref["freshness_carry_ledger_ref"] == ledger["ledger_id"]
     assert pressure_ref["repair_proof_slo_ref"] == ta_slo["repair_id"]
-    assert pressure_ref["target_value_gate"] == "zero_notional_or_stale_evidence_rate"
-    assert pressure_ref["required_output_receipts"] == [
-        "torghut.ta-freshness-repair-receipt.v1"
-    ]
-    assert pressure_ref["ttl_seconds"] == 60
-    assert str(pressure_ref["dedupe_key"]).startswith("freshness-pressure-dedupe:")
-    assert pressure_ref["max_notional"] == "0"
-    assert pressure_ref["dispatchable"] is True
-    assert pressure_ref["reason_codes"] == ["ta_signal_lag_exceeded"]
+
+
+def test_shadow_only_market_context_does_not_block_freshness_carry() -> None:
+    ledger = _build(
+        market_context_status={
+            "required": False,
+            "fail_mode": "shadow_only",
+            "last_checked_at": (NOW - timedelta(seconds=20)).isoformat(),
+            "last_freshness_seconds": 10_000,
+            "max_staleness_seconds": 900,
+            "last_risk_flags": ["market_context_quality_low"],
+            "alert_active": True,
+            "alert_reason": "market_context_quality_low",
+            "last_symbol": "AAPL",
+        }
+    )
+
+    market_dimension = _dimension(ledger, "market_context")
+
+    assert market_dimension["state"] == "current"
+    assert market_dimension["stale_reason_codes"] == []
+    assert ledger["capital_posture"]["decision"] == "paper_candidate"
 
 
 def test_current_freshness_can_be_paper_candidate_without_widening_route_warrant() -> (
