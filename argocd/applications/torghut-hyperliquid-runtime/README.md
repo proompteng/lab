@@ -34,8 +34,9 @@ and target Kubernetes Secret exist; it does not print credential values.
 
 This app includes the ExternalSecret because `op://infra/hyperliquid-testnet` exists with the required fields.
 Before enabling trading, `reconcile` must report the Kubernetes Secret as ready and the exchange-side testnet account
-must be funded or authorized. Trading is now enabled with `HYPERLIQUID_RUNTIME_TRADING_ENABLED=true`; the runtime must
-continue to report `execution_network=testnet`, and mainnet execution is rejected by config validation.
+must be funded or authorized. Trading is intentionally frozen with `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false` and
+`replicas=0` while the hard-reset migration replaces the v1 runtime. The runtime must continue to report
+`execution_network=testnet` when it is restored, and mainnet execution is rejected by config validation.
 
 Acceptance checks:
 

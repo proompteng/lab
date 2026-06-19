@@ -228,10 +228,10 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('keeps Hyperliquid runtime testnet trading wired to a gated execution secret', () => {
+  it('freezes the v1 Hyperliquid runtime before hard-reset migration', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
-    expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('true')
+    expect(runtimeData.HYPERLIQUID_RUNTIME_TRADING_ENABLED).toBe('false')
     expect(runtimeData.HYPERLIQUID_RUNTIME_MARKET_DATA_NETWORK).toBe('mainnet')
     expect(runtimeData.HYPERLIQUID_RUNTIME_EXECUTION_NETWORK).toBe('testnet')
     expect(runtimeData.HYPERLIQUID_RUNTIME_TRADE_COINS).toBe(
@@ -243,8 +243,9 @@ describe('Torghut manifest scheduling', () => {
     expect(runtimeData.HYPERLIQUID_RUNTIME_MAX_SYMBOL_EXPOSURE_USD).toBe('25')
 
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
+    expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(0)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-runtime-v1-20260619-equity-recovery-min-notional',
+      'proompteng.ai/config-revision': 'hyperliquid-hard-reset-freeze-20260619',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(String(runtimeContainer.image)).toMatch(/^registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:[0-9a-f]{64}$/)
@@ -327,7 +328,7 @@ describe('Torghut manifest scheduling', () => {
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
     expect(readme).toContain('Before enabling trading')
     expect(readme).toContain('must be funded or authorized')
-    expect(readme).toContain('HYPERLIQUID_RUNTIME_TRADING_ENABLED=true')
+    expect(readme).toContain('HYPERLIQUID_RUNTIME_TRADING_ENABLED=false')
     expect(bootstrapScript).toContain('$0 check')
     expect(bootstrapScript).toContain('check_item()')
   })
