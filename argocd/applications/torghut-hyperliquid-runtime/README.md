@@ -1,21 +1,27 @@
-# Torghut Hyperliquid Runtime
+# Torghut Hyperliquid Execution
 
-This app runs the isolated Hyperliquid testnet trading lane. It does not replace the existing Torghut or Alpaca services.
+This app keeps the existing `torghut-hyperliquid-runtime` Kubernetes shell name, but runs the hard-reset v2
+`app.hyperliquid_execution` implementation underneath it. It does not replace Alpaca, Torghut TA, options, or proof
+systems.
 
-V1 runs as a testnet-only trading lane:
+V2 contract:
 
-- Public market and signal state comes from ClickHouse Hyperliquid feed tables.
-- Operational state is written to the Hyperliquid-specific Postgres tables from migration `0054`.
-- TigerBeetle transfer refs are planned deterministically for submitted holds, fills, fees, realized PnL, and releases.
-- Mainnet execution is blocked in config validation and code.
-- Tiny testnet orders are enabled after the ExternalSecret is ready and the dedicated Hyperliquid testnet account is
-  funded. Keep the default risk caps unless a separate rollout approves a larger envelope.
-- When trading is enabled, the runtime filters the selected mainnet market-data universe through Hyperliquid testnet
-  perp metadata before any feature can produce an order. Crypto perps are eligible for the 24/7 lane. Equity-like
-  stocks, indices, and pre-IPO perps are locally blocked outside the U.S. cash session so halted venues do not receive
-  exchange orders.
+- Market data network is `mainnet`.
+- Execution network is `testnet`.
+- Runtime env names use `HYPERLIQUID_EXECUTION_*`; old `HYPERLIQUID_RUNTIME_*` names are rejected by config validation.
+- The configured execution universe is
+  `xyz:NVDA,xyz:AMD,xyz:AVGO,xyz:MRVL,xyz:INTC,xyz:MU,xyz:WDC,xyz:SNDK,xyz:ARM,xyz:LITE`.
+- `SPX` is excluded.
+- Strategy entry is maker-first only: `ORDER_POLICY=maker_ttl`, `MAKER_TIF=Alo`, and `MAKER_TTL_SECONDS=45`.
+- Caps are intentionally small: `$10` max order notional, `$25` max symbol exposure, and `$100` max gross exposure.
+- `sample_ready=false` until at least 40 v2 fills exist.
 
-To enable tiny testnet orders, create and authorize a Hyperliquid testnet API/agent wallet for the dedicated testnet account. Store the main account address and authorized API wallet private key in the 1Password item `hyperliquid-testnet` in the `infra` vault with fields:
+Trading remains disabled in the hard-reset migration PR with `HYPERLIQUID_EXECUTION_TRADING_ENABLED=false`. Enable it
+only in the separate activation PR after `/readyz`, `/report`, DB migration, and account checks pass.
+
+To authorize execution, create and authorize a Hyperliquid testnet API/agent wallet for the dedicated testnet account.
+Store the main account address and authorized API wallet private key in the 1Password item `hyperliquid-testnet` in the
+`infra` vault with fields:
 
 - `account-address`
 - `api-wallet-private-key`
@@ -29,18 +35,10 @@ scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh create
 scripts/torghut/bootstrap-hyperliquid-testnet-1password.sh reconcile
 ```
 
-`status` is safe to run repeatedly. It reports only whether the 1Password item, required fields, ExternalSecret,
-and target Kubernetes Secret exist; it does not print credential values.
-
-This app includes the ExternalSecret because `op://infra/hyperliquid-testnet` exists with the required fields.
-Before enabling trading, `reconcile` must report the Kubernetes Secret as ready and the exchange-side testnet account
-must be funded or authorized. Trading is intentionally frozen with `HYPERLIQUID_RUNTIME_TRADING_ENABLED=false` and
-`replicas=0` while the hard-reset migration replaces the v1 runtime. The runtime must continue to report
-`execution_network=testnet` when it is restored, and mainnet execution is rejected by config validation.
-
 Acceptance checks:
 
 - `kubectl -n argocd get application torghut-hyperliquid-runtime`
 - `kubectl -n torghut rollout status deploy/torghut-hyperliquid-runtime --timeout=180s`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/readyz`
+- `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/report`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/metrics`
