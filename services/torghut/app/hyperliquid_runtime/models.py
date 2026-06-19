@@ -243,6 +243,7 @@ class CycleResult:
 
     observed_at: datetime
     markets_seen: int
+    selected_coins: tuple[str, ...]
     signals_written: int
     decisions_written: int
     orders_submitted: int

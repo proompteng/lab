@@ -89,6 +89,7 @@ def _cycle() -> CycleResult:
     return CycleResult(
         observed_at=datetime.now(timezone.utc),
         markets_seen=2,
+        selected_coins=("xyz:NVDA", "xyz:AMD"),
         signals_written=3,
         decisions_written=3,
         orders_submitted=1,
@@ -674,10 +675,14 @@ def test_api_report_returns_configured_runtime_evidence(
             self.session = session
 
         def operational_report(
-            self, *, config_payload: dict[str, object]
+            self,
+            *,
+            runtime_payload: dict[str, object],
+            config_payload: dict[str, object],
         ) -> dict[str, object]:
             return {
                 "schema_version": "torghut.hyperliquid-runtime-report.v1",
+                "runtime": runtime_payload,
                 "config": config_payload,
                 "account": [{"gross_exposure_usd": "100.59"}],
                 "positions": [],
@@ -699,7 +704,8 @@ def test_api_report_returns_configured_runtime_evidence(
                 HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD="10",
                 HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD="10",
                 HYPERLIQUID_RUNTIME_MAX_SYMBOL_EXPOSURE_USD="25",
-            )
+            ),
+            latest_cycle=_cycle(),
         ),
     )
 
@@ -713,6 +719,17 @@ def test_api_report_returns_configured_runtime_evidence(
     assert payload["config"]["max_order_notional_usd"] == "10"
     assert payload["config"]["max_symbol_exposure_usd"] == "25"
     assert payload["config"]["halted_cooldown_seconds"] == 120
+    assert payload["runtime"]["selected_coins"] == ["xyz:NVDA", "xyz:AMD"]
+    assert payload["runtime"]["orders_submitted"] == 1
+    assert payload["runtime"]["dependencies"] == [
+        {
+            "name": "clickhouse",
+            "ready": True,
+            "lag_seconds": 1,
+            "reason": None,
+            "details": {},
+        }
+    ]
     assert payload["account"] == [{"gross_exposure_usd": "100.59"}]
 
 
@@ -849,6 +866,7 @@ def test_runtime_readiness_stale_cycle() -> None:
     stale_cycle = CycleResult(
         observed_at=datetime.now(timezone.utc) - timedelta(seconds=1000),
         markets_seen=0,
+        selected_coins=(),
         signals_written=0,
         decisions_written=0,
         orders_submitted=0,

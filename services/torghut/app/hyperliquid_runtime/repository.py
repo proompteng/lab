@@ -673,12 +673,14 @@ class HyperliquidRuntimeRepository:
     def operational_report(
         self,
         *,
+        runtime_payload: Mapping[str, object],
         config_payload: Mapping[str, object],
     ) -> dict[str, object]:
         """Return a compact operator report from existing runtime evidence."""
 
         return {
             "schema_version": "torghut.hyperliquid-runtime-report.v1",
+            "runtime": dict(runtime_payload),
             "config": dict(config_payload),
             "account": self._query_report_rows(
                 """

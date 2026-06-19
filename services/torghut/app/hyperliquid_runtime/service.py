@@ -116,6 +116,7 @@ class HyperliquidRuntimeService:
         return CycleResult(
             observed_at=observed_at,
             markets_seen=len(context.markets),
+            selected_coins=tuple(market.coin for market in context.markets),
             signals_written=counts.signals,
             decisions_written=counts.decisions,
             orders_submitted=counts.orders,
