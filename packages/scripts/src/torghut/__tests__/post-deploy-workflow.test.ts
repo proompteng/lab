@@ -54,6 +54,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('retryable_database_timeout')
     expect(workflow).toContain('database readiness timed out; retrying')
     expect(workflow).toContain('without an acceptable readyz contract')
+    expect(workflow).toContain('READYZ_EVIDENCE_ATTEMPTS=12')
     expect(workflow).toContain('fetch_readyz_json \\')
   })
 
@@ -69,7 +70,11 @@ describe('torghut post-deploy verifier workflow', () => {
   it('retries parseable non-2xx deploy evidence before failing', () => {
     expect(workflow).toContain('Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying')
     expect(workflow).toContain('did not return a parseable JSON HTTP 2xx response')
+    expect(workflow).toContain('HTTP_MAX_TIME_SECONDS=15')
+    expect(workflow).toContain('JSON_EVIDENCE_ATTEMPTS=3')
+    expect(workflow).toContain('--max-time "${HTTP_MAX_TIME_SECONDS}"')
     expect(workflow).not.toContain('status="$(fetch_json "${url}" "${output_path}" "${label}")"')
+    expect(workflow).not.toContain('--max-time 90')
   })
 
   it('verifies torghut-sim paper-route target mirroring after deploy', () => {
@@ -89,6 +94,9 @@ describe('torghut post-deploy verifier workflow', () => {
       'Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads',
     )
     expect(workflow).toContain('Torghut sim paper-route target mirror did not materialize after bounded retry window')
+    expect(workflow).toContain('SIM_MIRROR_ATTEMPTS=12')
+    expect(workflow).toContain('SIM_MIRROR_RETRY_INTERVAL_SECONDS=5')
+    expect(workflow).not.toContain('sleep 10')
   })
 
   it('requests explicit Argo sync before polling deployed revisions', () => {
@@ -100,8 +108,13 @@ describe('torghut post-deploy verifier workflow', () => {
   })
 
   it('bounds Argo convergence waits and prints resource diagnostics on timeout', () => {
-    expect(workflow).toContain('for attempt in $(seq 1 60); do')
-    expect(workflow).toContain('sleep 5')
+    expect(workflow).toContain('ARGO_SYNC_POLL_ATTEMPTS=150')
+    expect(workflow).toContain('ARGO_SYNC_POLL_INTERVAL_SECONDS=2')
+    expect(workflow).toContain('for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do')
+    expect(workflow).toContain('sleep "${ARGO_SYNC_POLL_INTERVAL_SECONDS}"')
+    expect(workflow).toContain(
+      'Argo application ${app} sync operation succeeded while health is Progressing; runtime checks will verify readiness',
+    )
     expect(workflow).toContain('dump_argocd_app_diagnostics "${app}"')
     expect(workflow).toContain('Argo application ${app} OutOfSync resources:')
   })
