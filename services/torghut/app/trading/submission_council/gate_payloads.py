@@ -70,6 +70,7 @@ def bounded_live_paper_collection_gate_payload(
         len(runtime_ledger.source_collection_candidates),
         safe_int(import_plan.get("source_collection_target_count")),
         safe_int(import_plan.get("manifest_bounded_collection_target_count")),
+        safe_int(import_plan.get("configured_bounded_collection_target_count")),
     )
     profit_target_count = max(
         len(runtime_ledger.source_collection_profit_target_candidates),

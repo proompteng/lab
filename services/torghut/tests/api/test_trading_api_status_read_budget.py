@@ -79,6 +79,76 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         payload = response.json()
         self.assertIn("status_read_budget", payload)
 
+    def test_trading_status_builds_live_gate_before_clickhouse_ta_read(
+        self,
+    ) -> None:
+        class ManualBudget(TradingStatusReadBudget):
+            def __init__(self) -> None:
+                super().__init__(max_seconds=10.0)
+                self.current_elapsed = 1.0
+
+            def elapsed_seconds(self) -> float:
+                return self.current_elapsed
+
+        budget = ManualBudget()
+        call_order: list[str] = []
+        live_submission_gate_payload = {
+            "allowed": False,
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "read_model_unavailable": False,
+            "promotion_authority": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+        }
+
+        def _load_clickhouse_ta_status(*_args: object) -> dict[str, object]:
+            call_order.append("clickhouse_ta_status")
+            budget.current_elapsed = 9.8
+            return {
+                "state": "current",
+                "latest_signal_at": datetime(2026, 6, 1, tzinfo=timezone.utc),
+                "source_ref": "clickhouse:ta_signals",
+            }
+
+        def _build_live_submission_gate(
+            *args: object,
+            **kwargs: object,
+        ) -> dict[str, object]:
+            call_order.append("live_submission_gate")
+            clickhouse_ta_status = kwargs["clickhouse_ta_status"]
+            self.assertEqual(clickhouse_ta_status["state"], "deferred")
+            self.assertIn(
+                "clickhouse_ta_status_deferred_until_after_live_submission_gate",
+                clickhouse_ta_status["reason_codes"],
+            )
+            return live_submission_gate_payload
+
+        with (
+            patch(
+                "app.api.trading_status._TradingStatusReadBudget", return_value=budget
+            ),
+            patch(
+                "app.api.trading_status._load_clickhouse_ta_status",
+                side_effect=_load_clickhouse_ta_status,
+            ),
+            patch(
+                "app.api.trading_status._build_live_submission_gate_payload",
+                side_effect=_build_live_submission_gate,
+            ) as live_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        live_gate.assert_called_once()
+        self.assertEqual(call_order, ["live_submission_gate", "clickhouse_ta_status"])
+        payload = response.json()
+        self.assertNotIn(
+            "live_submission_gate",
+            payload["status_read_budget"]["skipped_reads"],
+        )
+        self.assertFalse(payload["live_submission_gate"]["read_model_unavailable"])
+
     def test_trading_status_fails_closed_late_reads_after_budget_exhausted(
         self,
     ) -> None:
