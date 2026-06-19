@@ -2,10 +2,16 @@ from __future__ import annotations
 
 
 from tests.submission_council.support import (
+    Base,
     SimpleNamespace,
+    StaticPool,
+    Strategy,
     SubmissionCouncilTestCase,
     build_live_submission_gate_payload,
+    create_engine,
     datetime,
+    sessionmaker,
+    settings,
     timezone,
 )
 
@@ -165,6 +171,106 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertIn(
             "live_submit_activation_expiry_invalid",
             collection_gate["blocked_reasons"],
+        )
+
+    def test_bounded_live_paper_collection_gate_uses_configured_strategy_universe(
+        self,
+    ) -> None:
+        account_label_before = settings.trading_account_label
+        static_symbols_before = settings.trading_static_symbols_raw
+        try:
+            settings.trading_simple_paper_route_probe_enabled = True
+            settings.trading_simple_paper_route_probe_allow_live_mode = True
+            settings.trading_simple_submit_enabled = True
+            settings.trading_simple_paper_route_probe_max_notional = 100
+            settings.trading_live_submit_activation_expires_at = "2026-06-22T20:05:00Z"
+            settings.trading_account_label = "PA3SX7FYNUTF"
+            settings.trading_static_symbols_raw = "NVDA,AMD,MU,WDC"
+
+            engine = create_engine(
+                "sqlite+pysqlite:///:memory:",
+                future=True,
+                connect_args={"check_same_thread": False},
+                poolclass=StaticPool,
+            )
+            Base.metadata.create_all(engine)
+            session_local = sessionmaker(
+                bind=engine,
+                expire_on_commit=False,
+                future=True,
+            )
+
+            with session_local() as session:
+                session.add_all(
+                    [
+                        Strategy(
+                            name="ai-chip-momentum",
+                            description="configured paper collection",
+                            enabled=True,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["NVDA", "TSLA", "AMD"],
+                        ),
+                        Strategy(
+                            name="disabled-collector",
+                            description="disabled collector",
+                            enabled=False,
+                            base_timeframe="1Min",
+                            universe_type="static",
+                            universe_symbols=["MU"],
+                        ),
+                    ]
+                )
+                session.commit()
+
+                result = build_live_submission_gate_payload(
+                    SimpleNamespace(
+                        market_session_open=True,
+                        last_autonomy_promotion_eligible=False,
+                        last_autonomy_promotion_action=None,
+                        drift_live_promotion_eligible=False,
+                        last_market_context_freshness_seconds=45,
+                    ),
+                    hypothesis_summary={
+                        "promotion_eligible_total": 0,
+                        "capital_stage_totals": {"shadow": 1},
+                        "dependency_quorum": {
+                            "decision": "allow",
+                            "reasons": [],
+                            "message": "ready",
+                        },
+                    },
+                    empirical_jobs_status={"ready": True, "status": "healthy"},
+                    quant_health_status=self._healthy_quant_status(),
+                    session=session,
+                )
+        finally:
+            settings.trading_account_label = account_label_before
+            settings.trading_static_symbols_raw = static_symbols_before
+
+        self.assertFalse(result["allowed"])
+        self.assertIn(
+            "runtime_ledger_source_collection_pending",
+            result["blocked_reasons"],
+        )
+        import_plan = result["runtime_ledger_paper_probation_import_plan"]
+        self.assertEqual(import_plan["configured_bounded_collection_target_count"], 1)
+        self.assertGreaterEqual(import_plan["target_count"], 1)
+        self.assertGreaterEqual(import_plan["source_collection_target_count"], 1)
+        targets = {target["strategy_name"]: target for target in import_plan["targets"]}
+        target = targets["ai-chip-momentum"]
+        self.assertEqual(target["strategy_name"], "ai-chip-momentum")
+        self.assertEqual(target["paper_route_probe_symbols"], ["NVDA", "AMD"])
+        self.assertEqual(target["account_label"], "TORGHUT_SIM")
+        self.assertEqual(target["execution_account_label"], "PA3SX7FYNUTF")
+        self.assertTrue(target["bounded_live_paper_collection_authorized"])
+        self.assertFalse(target["final_promotion_allowed"])
+        collection_gate = result["bounded_live_paper_collection_gate"]
+        self.assertTrue(collection_gate["allowed"])
+        self.assertTrue(collection_gate["active"])
+        self.assertEqual(
+            collection_gate["reason"],
+            "bounded_live_paper_collection_ready",
         )
 
     def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(

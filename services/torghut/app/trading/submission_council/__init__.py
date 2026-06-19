@@ -50,6 +50,9 @@ from .gate_payloads import (
     bounded_live_paper_collection_gate_payload as _bounded_live_paper_collection_gate_payload,
     common_submission_payload as _common_submission_payload,
 )
+from .configured_collection import (
+    with_configured_paper_collection_targets as _with_configured_paper_collection_targets,
+)
 from .runtime_summary import (
     runtime_ledger_aggregate_candidate_payloads as _runtime_ledger_aggregate_candidate_payloads,
     runtime_ledger_latest_payloads_per_symbol as _runtime_ledger_latest_payloads_per_symbol,
@@ -485,15 +488,20 @@ def _submission_runtime_ledger_context(
     import_plan = _runtime_ledger_paper_probation_import_plan(
         [*paper_probation_candidates, *source_collection_candidates]
     )
+    merged_import_plan = _with_bounded_paper_route_manifest_collection_targets(
+        import_plan,
+        registry_items=registry_item_payloads,
+    )
+    merged_import_plan = _with_configured_paper_collection_targets(
+        merged_import_plan,
+        session=session,
+    )
     return _SubmissionRuntimeLedgerContext(
         repair_candidates=repair_candidates,
         paper_probation_candidates=paper_probation_candidates,
         source_collection_candidates=source_collection_candidates,
         source_collection_profit_target_candidates=source_collection_profit_target_candidates,
-        paper_probation_import_plan=_with_bounded_paper_route_manifest_collection_targets(
-            import_plan,
-            registry_items=registry_item_payloads,
-        ),
+        paper_probation_import_plan=merged_import_plan,
     )
 
 

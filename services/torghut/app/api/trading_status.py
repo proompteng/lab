@@ -184,6 +184,30 @@ def _skip_expensive_status_reads_after_closed_gate(
     )
 
 
+def _deferred_clickhouse_ta_status(reason: str) -> dict[str, object]:
+    return {
+        "state": "deferred",
+        "source_ref": "trading_status",
+        "read_model_unavailable": True,
+        "read_model_status": "deferred",
+        "reason": reason,
+        "reason_codes": [reason],
+    }
+
+
+def _load_clickhouse_ta_status_for_trading_status(
+    status_read_budget: TradingStatusReadBudget,
+    scheduler: TradingScheduler,
+) -> dict[str, object]:
+    skip_reason = status_read_budget.skip_reason_if_unavailable(
+        "clickhouse_ta_status",
+        min_remaining_seconds=0.75,
+    )
+    if skip_reason is not None:
+        return _deferred_clickhouse_ta_status(skip_reason)
+    return _load_clickhouse_ta_status(scheduler)
+
+
 @router.get("/trading/status")
 def trading_status() -> dict[str, object]:
     """Return trading loop status and metrics."""
@@ -204,7 +228,9 @@ def trading_status() -> dict[str, object]:
     )
     forecast_service_status = _forecast_service_status(empirical_jobs)
     lean_authority_status = _lean_authority_status()
-    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
+    clickhouse_ta_status = _deferred_clickhouse_ta_status(
+        "clickhouse_ta_status_deferred_until_after_live_submission_gate"
+    )
     status_observed_at = datetime.now(timezone.utc)
     status_stage_scope = "live" if settings.trading_mode == "live" else "paper"
     market_context_status = scheduler.market_context_status()
@@ -252,6 +278,10 @@ def trading_status() -> dict[str, object]:
             reason=fast_status_gate_reason,
         )
     else:
+        clickhouse_ta_status = _load_clickhouse_ta_status_for_trading_status(
+            status_read_budget,
+            scheduler,
+        )
         llm_evaluation = _load_trading_status_llm_evaluation(status_read_budget)
         tca_summary = _load_trading_status_tca_summary(
             status_read_budget,
