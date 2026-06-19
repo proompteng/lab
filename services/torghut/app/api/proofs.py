@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 from .common import (
     BUILD_VERSION,
-    DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     Decimal,
     Depends,
@@ -21,7 +20,6 @@ from .common import (
     HTTPException,
     HTTPSConnection,
     JSONResponse,
-    MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     Mapping,
     PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
@@ -124,15 +122,6 @@ def _set_paper_route_target_plan_success_cache(
     global _paper_route_target_plan_success_cache
 
     _paper_route_target_plan_success_cache = cache
-
-
-def _paper_route_target_plan_audit_mode_value(mode: str) -> bool | None:
-    normalized = mode.strip().lower()
-    if normalized == "deferred":
-        return False
-    if normalized == "full":
-        return True
-    return None
 
 
 def _proof_kind_value(kind: str) -> ProofKind:
@@ -273,61 +262,6 @@ def trading_proofs(
         window=_proof_window_value(window),
         full_audit=full_audit,
     )
-    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
-
-
-@router.get("/trading/paper-route-evidence")
-def trading_paper_route_evidence(
-    lookback_hours: int = Query(
-        DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-        ge=1,
-        le=MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-        description="Deprecated; use /trading/proofs limit/window instead.",
-    ),
-    target_limit: int = Query(
-        DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-        ge=1,
-        le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-        description="Deprecated alias for /trading/proofs limit.",
-    ),
-    full_audit: bool = Query(
-        False,
-        description="Deprecated alias for /trading/proofs full_audit.",
-    ),
-) -> JSONResponse:
-    """Deprecated adapter for the canonical proof payload."""
-
-    del lookback_hours
-    payload = _build_trading_proofs_payload(
-        kind="runtime_window",
-        limit=target_limit,
-        window="auto",
-        full_audit=full_audit,
-    )
-    payload["deprecated_endpoint"] = True
-    payload["replacement_endpoint"] = "/trading/proofs"
-    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
-
-
-@router.get("/trading/paper-route-target-plan")
-def trading_paper_route_target_plan(
-    runtime_window_import_audit: str = Query(
-        "auto",
-        pattern="^(auto|deferred|full)$",
-        description="Deprecated; use /trading/proofs?window=next.",
-    ),
-) -> JSONResponse:
-    """Deprecated adapter for the canonical proof payload."""
-
-    audit_mode = _paper_route_target_plan_audit_mode_value(runtime_window_import_audit)
-    payload = _build_trading_proofs_payload(
-        kind="runtime_window",
-        limit=DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-        window="next",
-        full_audit=audit_mode is True,
-    )
-    payload["deprecated_endpoint"] = True
-    payload["replacement_endpoint"] = "/trading/proofs"
     return JSONResponse(status_code=200, content=jsonable_encoder(payload))
 
 
@@ -950,14 +884,11 @@ def trading_tca(
 
 
 __all__ = [
-    "_paper_route_target_plan_audit_mode_value",
     "_proof_kind_value",
     "_proof_window_value",
     "_trading_scheduler_for_proofs",
     "_build_trading_proofs_payload",
     "trading_proofs",
-    "trading_paper_route_evidence",
-    "trading_paper_route_target_plan",
     "_mapping_items",
     "_normalized_paper_route_text",
     "_paper_route_mapping_targets_sim_account",

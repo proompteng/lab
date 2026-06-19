@@ -41,6 +41,8 @@ def fetch_paper_route_target_plan_url(
             }
         if not parsed.hostname:
             return {"load_error": "paper_route_target_plan_invalid_host"}
+        if (parsed.path or "").rstrip("/") != "/trading/proofs":
+            return {"load_error": "paper_route_target_plan_invalid_path"}
         if paper_route_target_plan_url_points_to_self(parsed):
             return {"load_error": "paper_route_target_plan_self_reference"}
 
@@ -123,7 +125,7 @@ def fetch_paper_route_target_plan_url(
 
 def paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
     path = str(getattr(parsed, "path", "") or "").rstrip("/")
-    if path not in {"/trading/paper-route-target-plan", "/trading/proofs"}:
+    if path != "/trading/proofs":
         return False
     hostname = str(getattr(parsed, "hostname", "") or "").strip().lower()
     if not hostname:

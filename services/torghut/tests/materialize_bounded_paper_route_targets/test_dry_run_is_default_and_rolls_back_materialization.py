@@ -615,7 +615,7 @@ def test_url_payload_prefers_nested_hpairs_materialization_plan(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--max-notional",
             "25",
         ],
@@ -625,7 +625,7 @@ def test_url_payload_prefers_nested_hpairs_materialization_plan(
     assert exit_code == 0
     assert report["plan_source"] == {
         "kind": "url",
-        "url": "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+        "url": "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
         "selected_plan": (
             "live_submission_gate.runtime_ledger_paper_probation_import_plan"
         ),
@@ -738,7 +738,7 @@ def test_url_payload_prefers_bounded_plan_over_larger_source_collection_plan(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--max-notional",
             "25",
         ],
@@ -777,7 +777,7 @@ def test_source_collection_only_plan_blocks_materialization_before_db_write(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",

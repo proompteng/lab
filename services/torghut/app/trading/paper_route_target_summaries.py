@@ -1,91 +1,12 @@
-"""Deprecated adapters that delegate paper-route endpoints to proofs."""
+"""Paper-route target summary helpers."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from decimal import Decimal
-from typing import Any, cast
+from typing import cast
 
-from sqlalchemy.orm import Session
-
-from .proofs import schemas as proof_schemas
-from .proofs.service import build_proofs_payload
-from .proofs.targets import next_regular_equities_session_window, text_value
-
-DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = (
-    proof_schemas.DEFAULT_PROOFS_LOOKBACK_HOURS
-)
-DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = proof_schemas.DEFAULT_PROOFS_LIMIT
-MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS = proof_schemas.MAX_PROOFS_LOOKBACK_HOURS
-MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT = proof_schemas.MAX_PROOFS_LIMIT
-PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL = proof_schemas.PROOFS_RUNTIME_ACCOUNT_LABEL
-PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS = (
-    proof_schemas.PROOFS_ACCOUNT_PRE_SESSION_READINESS_SECONDS
-)
-PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS = (
-    proof_schemas.PROOFS_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
-)
-PAPER_ROUTE_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS = (
-    proof_schemas.PROOFS_ACCOUNT_CLOSE_SNAPSHOT_STALE_SECONDS
-)
-_next_regular_equities_session_window = next_regular_equities_session_window
-
-
-def build_paper_route_evidence_audit(
-    session: Session,
-    *,
-    live_submission_gate: Mapping[str, Any],
-    route_reacquisition_book: Mapping[str, Any],
-    generated_at: Any | None = None,
-    lookback_hours: int = DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-    target_limit: int = DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    include_runtime_window_import_audit: bool | None = True,
-    target_account_audit_available: bool = True,
-) -> dict[str, object]:
-    del lookback_hours
-    return _deprecated_payload(
-        build_proofs_payload(
-            session,
-            live_submission_gate=live_submission_gate,
-            route_reacquisition_book=route_reacquisition_book,
-            generated_at=generated_at,
-            limit=target_limit,
-            window="auto",
-            full_audit=include_runtime_window_import_audit is True,
-            target_account_audit_available=target_account_audit_available,
-        )
-    )
-
-
-def build_paper_route_target_plan_payload(
-    session: Session,
-    *,
-    live_submission_gate: Mapping[str, Any],
-    route_reacquisition_book: Mapping[str, Any],
-    generated_at: Any | None = None,
-    target_limit: int = DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    include_runtime_window_import_audit: bool | None = True,
-    target_account_audit_available: bool = True,
-) -> dict[str, object]:
-    return _deprecated_payload(
-        build_proofs_payload(
-            session,
-            live_submission_gate=live_submission_gate,
-            route_reacquisition_book=route_reacquisition_book,
-            generated_at=generated_at,
-            limit=target_limit,
-            window="next",
-            full_audit=include_runtime_window_import_audit is True,
-            target_account_audit_available=target_account_audit_available,
-        )
-    )
-
-
-def _deprecated_payload(payload: Mapping[str, object]) -> dict[str, object]:
-    result = dict(payload)
-    result["deprecated_endpoint"] = True
-    result["replacement_endpoint"] = "/trading/proofs"
-    return result
+from .proofs.targets import text_value
 
 
 def paper_route_target_summaries(

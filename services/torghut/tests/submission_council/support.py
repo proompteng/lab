@@ -31,7 +31,7 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.hypotheses import JangarDependencyQuorumStatus
-from app.trading.paper_route_evidence import _next_paper_route_target_summaries
+from app.trading.paper_route_target_summaries import _next_paper_route_target_summaries
 from app.trading.paper_route_target_plan import (
     materialize_bounded_paper_route_target_plan,
 )

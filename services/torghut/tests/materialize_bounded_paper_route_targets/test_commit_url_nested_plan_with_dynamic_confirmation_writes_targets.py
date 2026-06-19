@@ -43,7 +43,7 @@ def test_commit_url_nested_plan_with_dynamic_confirmation_writes_targets(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -108,7 +108,7 @@ def test_commit_dynamic_plan_skips_before_active_target_window_without_writes(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -190,7 +190,7 @@ def test_commit_dynamic_source_collection_plan_skips_without_target_window(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -266,7 +266,7 @@ def test_commit_dynamic_plan_confirms_strategy_lookup_alias_before_skip(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -338,7 +338,7 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_skips_before_ope
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -412,7 +412,7 @@ def test_commit_dynamic_next_window_plan_at_configured_notional_writes_when_open
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -492,7 +492,7 @@ def test_commit_dynamic_plan_prefers_materializable_next_window_over_stale_hpair
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -557,7 +557,7 @@ def test_commit_dynamic_next_window_plan_filters_to_confirmed_hpairs_target(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -677,7 +677,7 @@ def test_commit_dynamic_source_allowlist_selects_active_next_window_over_closed_
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -734,7 +734,7 @@ def test_commit_dynamic_next_window_plan_blocks_when_confirmed_target_is_absent(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",

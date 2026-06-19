@@ -460,6 +460,8 @@ def _parse_paper_route_target_plan_url(url: str) -> tuple[SplitResult, str | Non
         return parsed, f"paper_route_target_plan_invalid_scheme:{scheme or 'missing'}"
     if not parsed.hostname:
         return parsed, "paper_route_target_plan_invalid_host"
+    if (parsed.path or "").rstrip("/") != "/trading/proofs":
+        return parsed, "paper_route_target_plan_invalid_path"
     return parsed, None
 
 

@@ -32,9 +32,9 @@ from ...market_context import (
 )
 from ...models import SignalEnvelope
 from ...order_feed import OrderFeedIngestor
-from ...paper_route_evidence import (
-    PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
-    PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
+from ...proofs.schemas import (
+    PROOFS_ACCOUNT_PRE_SESSION_READINESS_SECONDS as PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
+    PROOFS_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS as PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
 )
 from ...prices import ClickHousePriceFetcher
 from ...quote_quality import (

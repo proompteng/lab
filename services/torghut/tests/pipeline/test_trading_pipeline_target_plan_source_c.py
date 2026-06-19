@@ -119,9 +119,7 @@ class TestTradingPipelineTargetPlanSourceC(TradingPipelineTestCaseBase):
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
         config.settings.trading_simple_paper_route_probe_max_notional = 25.0
-        config.settings.trading_paper_route_target_plan_url = (
-            "http://torghut.local/trading/paper-route-evidence"
-        )
+        config.settings.trading_paper_route_target_plan_url = "http://torghut.local/trading/proofs?kind=runtime_window&window=auto&limit=20"
         config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
 
         with patch(
@@ -230,9 +228,7 @@ class TestTradingPipelineTargetPlanSourceC(TradingPipelineTestCaseBase):
 
         config.settings.trading_mode = "paper"
         config.settings.trading_simple_paper_route_probe_enabled = True
-        config.settings.trading_paper_route_target_plan_url = (
-            "http://torghut.local/trading/paper-route-evidence"
-        )
+        config.settings.trading_paper_route_target_plan_url = "http://torghut.local/trading/proofs?kind=runtime_window&window=auto&limit=20"
         config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -317,9 +313,7 @@ class TestTradingPipelineTargetPlanSourceC(TradingPipelineTestCaseBase):
         original_target_plan_timeout = (
             config.settings.trading_paper_route_target_plan_timeout_seconds
         )
-        config.settings.trading_paper_route_target_plan_url = (
-            "http://torghut.local/trading/paper-route-evidence"
-        )
+        config.settings.trading_paper_route_target_plan_url = "http://torghut.local/trading/proofs?kind=runtime_window&window=auto&limit=20"
         config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -395,9 +389,7 @@ class TestTradingPipelineTargetPlanSourceC(TradingPipelineTestCaseBase):
         original_target_plan_timeout = (
             config.settings.trading_paper_route_target_plan_timeout_seconds
         )
-        config.settings.trading_paper_route_target_plan_url = (
-            "http://torghut.local/trading/paper-route-evidence"
-        )
+        config.settings.trading_paper_route_target_plan_url = "http://torghut.local/trading/proofs?kind=runtime_window&window=auto&limit=20"
         config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -486,7 +478,7 @@ class TestTradingPipelineTargetPlanSourceC(TradingPipelineTestCaseBase):
         )
         config.settings.trading_mode = "paper"
         config.settings.trading_simple_paper_route_probe_enabled = True
-        config.settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        config.settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
         config.settings.trading_paper_route_target_plan_timeout_seconds = 1.0
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),

@@ -44,7 +44,7 @@ def test_commit_dynamic_plan_filters_to_active_target_window_subset(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -111,7 +111,7 @@ def test_commit_dynamic_plan_requires_active_target_window_without_skip(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -166,7 +166,7 @@ def test_commit_dynamic_confirmation_rejects_wrong_selected_plan_source(
     exit_code, report = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--database-dsn-env",
             "DB_DSN",
             "--max-notional",
@@ -328,7 +328,7 @@ def test_plan_url_fetch_requests_json_path_query_and_closes(
     )
 
     payload = cli._fetch_plan_url_payload_once(
-        "http://torghut-sim.torghut.svc.cluster.local:8080/trading/paper-route-target-plan?target_limit=1",
+        "http://torghut-sim.torghut.svc.cluster.local:8080/trading/proofs?kind=runtime_window&window=next&limit=1",
         timeout_seconds=0,
     )
 
@@ -339,7 +339,7 @@ def test_plan_url_fetch_requests_json_path_query_and_closes(
     assert connection.port == 8080
     assert connection.timeout == 0.1
     assert connection.method == "GET"
-    assert connection.path == "/trading/paper-route-target-plan?target_limit=1"
+    assert connection.path == "/trading/proofs?kind=runtime_window&window=next&limit=1"
     assert connection.headers == {
         "Accept": "application/json",
         "Connection": "close",
@@ -490,7 +490,7 @@ def test_plan_url_payload_without_materializable_plan_is_reported(
     exit_code, payload = _run_cli(
         [
             "--plan-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--max-notional",
             "25",
         ],

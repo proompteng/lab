@@ -41,9 +41,7 @@ class TestTradingPipelineExternalTargetsB(TradingPipelineTestCaseBase):
         window_end = datetime(2026, 5, 28, 20, 0, tzinfo=timezone.utc)
         config.settings.trading_mode = "paper"
         config.settings.trading_simple_paper_route_probe_enabled = True
-        config.settings.trading_paper_route_target_plan_url = (
-            "http://torghut.local/trading/paper-route-evidence"
-        )
+        config.settings.trading_paper_route_target_plan_url = "http://torghut.local/trading/proofs?kind=runtime_window&window=auto&limit=20"
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
             order_firewall=OrderFirewall(FakeAlpacaClient()),

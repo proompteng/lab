@@ -77,7 +77,7 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
     def _paper_route_target_plan_url_points_to_current_service(url: str) -> bool:
         parsed = urlsplit(url)
         path = (parsed.path or "").rstrip("/")
-        if path not in {"/trading/paper-route-target-plan", "/trading/proofs"}:
+        if path != "/trading/proofs":
             return False
         hostname = (parsed.hostname or "").strip().lower()
         service_name = os.getenv("K_SERVICE", "").strip().lower()

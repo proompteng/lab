@@ -530,7 +530,7 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowTargetPlanA(
                             "paper_route_runtime_window_import_not_before": "2026-05-26T20:00:00+00:00",
                             "paper_route_runtime_import_handoff": {
                                 "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
-                                "target_plan_endpoint": "/trading/paper-route-evidence",
+                                "target_plan_endpoint": "/trading/proofs?kind=runtime_window&window=auto&limit=20",
                                 "required_flags": [
                                     "--runtime-window-import",
                                     "--runtime-window-target-plan-url",
@@ -651,7 +651,7 @@ class TestRunEmpiricalPromotionJobsRuntimeWindowTargetPlanA(
             targets[0].target_metadata["paper_route_runtime_import_handoff"][
                 "target_plan_endpoint"
             ],
-            "/trading/paper-route-evidence",
+            "/trading/proofs?kind=runtime_window&window=auto&limit=20",
         )
         self.assertFalse(targets[0].target_metadata["promotion_allowed"])
         self.assertFalse(targets[0].target_metadata["final_promotion_allowed"])

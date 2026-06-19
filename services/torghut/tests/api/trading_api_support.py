@@ -39,7 +39,9 @@ from app.trading.paper_route_target_plan import (
     fetch_paper_route_target_plan_url as shared_fetch_paper_route_target_plan_url,
     paper_route_target_plan_probe_symbols,
 )
-from app.trading.paper_route_evidence import _next_regular_equities_session_window
+from app.trading.proofs.targets import (
+    next_regular_equities_session_window as _next_regular_equities_session_window,
+)
 from app.trading.forecast_runtime import forecast_registry
 from app.trading.scheduler import TradingScheduler
 from app.trading.feature_quality import FeatureQualityReport
