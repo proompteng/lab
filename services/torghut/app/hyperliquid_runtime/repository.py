@@ -534,6 +534,8 @@ class HyperliquidRuntimeRepository:
         self,
         *,
         dependencies: Iterable[RuntimeDependencyStatus],
+        trade_coins: Iterable[str] = (),
+        excluded_coins: Iterable[str] = (),
         reject_cooldown_threshold: int = 3,
         reject_cooldown_window_seconds: int = 1800,
         reject_cooldown_seconds: int = 900,
@@ -638,8 +640,19 @@ class HyperliquidRuntimeRepository:
             ),
             {"cooldown_seconds": halted_cooldown_seconds},
         ).mappings()
+        symbol_exposure_usd_by_coin = {
+            str(exposure_row["coin"]): Decimal(str(exposure_row["exposure_usd"]))
+            for exposure_row in symbol_exposure_rows
+        }
+        account_gross_exposure_usd = Decimal(str(row["gross_exposure_usd"]))
+        collection_gross_exposure_usd = _collection_gross_exposure_usd(
+            account_gross_exposure_usd=account_gross_exposure_usd,
+            symbol_exposure_usd_by_coin=symbol_exposure_usd_by_coin,
+            trade_coins=trade_coins,
+            excluded_coins=excluded_coins,
+        )
         return RiskState(
-            gross_exposure_usd=Decimal(str(row["gross_exposure_usd"])),
+            gross_exposure_usd=account_gross_exposure_usd,
             daily_realized_pnl_usd=Decimal(str(row["daily_realized_pnl_usd"])),
             unrealized_pnl_usd=Decimal(str(row["unrealized_pnl_usd"])),
             daily_fees_usd=Decimal(str(row["daily_fees_usd"])),
@@ -647,10 +660,8 @@ class HyperliquidRuntimeRepository:
                 str(open_row["market_id"]) for open_row in open_rows
             ),
             dependencies=tuple(dependencies),
-            symbol_exposure_usd_by_coin={
-                str(exposure_row["coin"]): Decimal(str(exposure_row["exposure_usd"]))
-                for exposure_row in symbol_exposure_rows
-            },
+            symbol_exposure_usd_by_coin=symbol_exposure_usd_by_coin,
+            collection_gross_exposure_usd=collection_gross_exposure_usd,
             reject_cooldown_coins=frozenset(
                 str(cooldown_row["coin"]) for cooldown_row in reject_cooldown_rows
             ),
@@ -669,6 +680,20 @@ class HyperliquidRuntimeRepository:
         return {
             "schema_version": "torghut.hyperliquid-runtime-report.v1",
             "config": dict(config_payload),
+            "account": self._query_report_rows(
+                """
+                SELECT
+                  observed_at::text,
+                  account_value_usd::text,
+                  withdrawable_usd::text,
+                  gross_exposure_usd::text,
+                  raw_payload
+                FROM hyperliquid_runtime_account_snapshots
+                WHERE network = 'testnet'
+                ORDER BY observed_at DESC
+                LIMIT 1
+                """
+            ),
             "positions": self._query_report_rows(
                 """
                 SELECT
@@ -804,6 +829,32 @@ class HyperliquidRuntimeRepository:
     ) -> list[dict[str, object]]:
         rows = self._session.execute(text(sql), dict(params or {})).mappings()
         return [dict(row) for row in rows]
+
+
+def _collection_gross_exposure_usd(
+    *,
+    account_gross_exposure_usd: Decimal,
+    symbol_exposure_usd_by_coin: Mapping[str, Decimal],
+    trade_coins: Iterable[str],
+    excluded_coins: Iterable[str],
+) -> Decimal:
+    trade_coin_set = _normalized_coin_set(trade_coins)
+    excluded_coin_set = _normalized_coin_set(excluded_coins)
+    if not trade_coin_set and not excluded_coin_set:
+        return account_gross_exposure_usd
+    total = Decimal("0")
+    for coin, exposure_usd in symbol_exposure_usd_by_coin.items():
+        normalized = coin.casefold()
+        if normalized in excluded_coin_set:
+            continue
+        if trade_coin_set and normalized not in trade_coin_set:
+            continue
+        total += exposure_usd.copy_abs()
+    return total
+
+
+def _normalized_coin_set(coins: Iterable[str]) -> frozenset[str]:
+    return frozenset(coin.strip().casefold() for coin in coins if coin.strip())
 
 
 def _feature_payload(signal: Signal) -> dict[str, str | int]:

@@ -210,6 +210,8 @@ class HyperliquidRuntimeService:
             dependencies=dependencies,
             risk_state=repository.risk_state(
                 dependencies=dependencies,
+                trade_coins=self._config.trade_coins,
+                excluded_coins=self._config.excluded_coins,
                 reject_cooldown_threshold=self._config.reject_cooldown_threshold,
                 reject_cooldown_window_seconds=(
                     self._config.reject_cooldown_window_seconds

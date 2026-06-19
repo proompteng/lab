@@ -212,6 +212,40 @@ def test_risk_blocks_remaining_exposure_below_min_order_notional() -> None:
     assert verdict.reason == "remaining_exposure_below_min_order_notional"
 
 
+def test_risk_uses_collection_exposure_for_order_cap() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+        HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD="10",
+        HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD="10",
+    )
+    signal = generate_signal(
+        _feature(coin="xyz:NVDA", dex="xyz"), parameter_version="test-v1"
+    )
+    state = RiskState(
+        gross_exposure_usd=Decimal("100.59"),
+        collection_gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+    )
+
+    verdict = evaluate_signal_risk(
+        signal,
+        state,
+        config,
+        now=datetime(2026, 6, 18, 15, tzinfo=timezone.utc),
+    )
+
+    assert verdict.allowed
+    assert verdict.order_notional_usd == Decimal("10")
+
+
 def test_risk_caps_symbol_exposure_before_global_cap() -> None:
     config = _config(
         HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
