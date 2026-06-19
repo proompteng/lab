@@ -21,7 +21,6 @@ _PYLINT_FILE_LENGTH_RE = re.compile(
 # should split them; until then, keep the gate blocking every other long file.
 _TRANSITIONAL_EXTRACTED_SOURCE_PATHS = {
     "app/trading/autonomy/lane.py",
-    "app/trading/discovery/candidate_specs.py",
     "scripts/import_hypothesis_runtime_windows.py",
     "scripts/run_whitepaper_autoresearch_profit_target.py",
     "scripts/search_consistent_profitability_frontier.py",
