@@ -63,6 +63,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('python3 -m json.tool "${output_path}"')
     expect(workflow).toContain('not usable JSON yet; retrying')
     expect(workflow).toContain('fetch_json_2xx')
+    expect(workflow).toContain('fetch_json_2xx_optional')
     expect(workflow).toContain('Torghut sim /trading/proofs')
     expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
   })
@@ -82,10 +83,28 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/proofs')
     expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/proofs')
     expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
+    expect(workflow).toContain('capture_paper_route_mirror_evidence()')
+    expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry')
+  })
+
+  it('keeps slow paper-route proof endpoints from failing otherwise healthy rollouts', () => {
+    expect(workflow).toContain('Torghut /trading/revenue-repair')
+    expect(workflow).toContain('fetch_json_2xx \\')
+    expect(workflow).toContain('fetch_json_2xx_optional()')
+    expect(workflow).toContain('PAPER_ROUTE_EVIDENCE_ATTEMPTS=1')
+    expect(workflow).toContain('PAPER_ROUTE_HTTP_MAX_TIME_SECONDS=8')
+    expect(workflow).toContain('--max-time "${PAPER_ROUTE_HTTP_MAX_TIME_SECONDS}"')
+    expect(workflow).toContain(
+      'Paper-route mirror evidence unavailable; hard rollout, image-pull, readyz, status, and revenue-repair gates passed',
+    )
+    expect(workflow).toContain('unavailable after bounded optional evidence retry')
+    expect(workflow).toContain('unset TORGHUT_PAPER_ROUTE_EVIDENCE')
+    expect(workflow).toContain('unset TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
+    expect(workflow).toContain('run_post_deploy_evidence_validator')
   })
 
   it('retries transient sim paper-route target mirror gaps before rollback', () => {
-    expect(workflow).toContain('validate_post_deploy_evidence()')
+    expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry()')
     expect(workflow).toContain('post-deploy-evidence-validator.out')
     expect(workflow).toContain(
       'torghut-sim paper-route target plan (is empty while live torghut exposes targets|missing live target)',

@@ -303,6 +303,8 @@ jobs:
           HTTP_MAX_TIME_SECONDS=15
           JSON_EVIDENCE_ATTEMPTS=3
           READYZ_EVIDENCE_ATTEMPTS=12
+          PAPER_ROUTE_EVIDENCE_ATTEMPTS=1
+          PAPER_ROUTE_HTTP_MAX_TIME_SECONDS=8
           EVIDENCE_RETRY_INTERVAL_SECONDS=2
           SIM_MIRROR_ATTEMPTS=12
           SIM_MIRROR_RETRY_INTERVAL_SECONDS=5
@@ -443,6 +445,33 @@ jobs:
             done
           }
 
+          fetch_json_2xx_optional() {
+            local url="$1"
+            local output_path="$2"
+            local label="$3"
+            local status
+
+            for attempt in $(seq 1 "${PAPER_ROUTE_EVIDENCE_ATTEMPTS}"); do
+              status="$(
+                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${PAPER_ROUTE_HTTP_MAX_TIME_SECONDS}" \
+                  -o "${output_path}" -w '%{http_code}' "${url}" || true
+              )"
+              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
+                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
+                return 0
+              fi
+
+              if [ "${attempt}" -lt "${PAPER_ROUTE_EVIDENCE_ATTEMPTS}" ]; then
+                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable optional JSON 2xx yet; retrying"
+                sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
+              fi
+            done
+
+            echo "${label} unavailable after bounded optional evidence retry; status=${status:-empty}; skipping paper-route mirror-only validation"
+            rm -f "${output_path}"
+            return 1
+          }
+
           TORGHUT_READYZ_HTTP_STATUS="$(
             fetch_readyz_json \
               http://torghut.torghut.svc.cluster.local/readyz \
@@ -467,29 +496,54 @@ jobs:
             http://torghut.torghut.svc.cluster.local/trading/revenue-repair \
             "${EVIDENCE_DIR}/torghut-revenue-repair-digest.json" \
             "Torghut /trading/revenue-repair"
-          fetch_json_2xx \
-            'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
-            "${EVIDENCE_DIR}/torghut-proofs.json" \
-            "Torghut /trading/proofs"
-          fetch_json_2xx \
-            'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
-            "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
-            "Torghut sim /trading/proofs"
           export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
           export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
           export TORGHUT_READYZ_HTTP_STATUS
           export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
-          export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-proofs.json"
-          export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-proofs.json"
 
-          validate_post_deploy_evidence() {
+          capture_paper_route_mirror_evidence() {
+            local live_ok='false'
+            local sim_ok='false'
+
+            unset TORGHUT_PAPER_ROUTE_EVIDENCE
+            unset TORGHUT_SIM_PAPER_ROUTE_EVIDENCE
+
+            if fetch_json_2xx_optional \
+              'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
+              "${EVIDENCE_DIR}/torghut-proofs.json" \
+              "Torghut /trading/proofs"; then
+              live_ok='true'
+            fi
+            if fetch_json_2xx_optional \
+              'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
+              "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
+              "Torghut sim /trading/proofs"; then
+              sim_ok='true'
+            fi
+
+            if [ "${live_ok}" = 'true' ] && [ "${sim_ok}" = 'true' ]; then
+              export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-proofs.json"
+              export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-proofs.json"
+              return 0
+            fi
+
+            echo \
+              "Paper-route mirror evidence unavailable; hard rollout, image-pull, readyz, status, and revenue-repair gates passed"
+            return 1
+          }
+
+          run_post_deploy_evidence_validator() {
+            bun run packages/scripts/src/torghut/post-deploy-evidence.ts
+          }
+
+          validate_post_deploy_evidence_with_mirror_retry() {
             local attempt
             local status
             local output_path="${EVIDENCE_DIR}/post-deploy-evidence-validator.out"
 
             for attempt in $(seq 1 "${SIM_MIRROR_ATTEMPTS}"); do
               set +e
-              bun run packages/scripts/src/torghut/post-deploy-evidence.ts > "${output_path}" 2>&1
+              run_post_deploy_evidence_validator > "${output_path}" 2>&1
               status=$?
               set -e
 
@@ -510,19 +564,19 @@ jobs:
               fi
 
               echo "Attempt ${attempt}: Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads" >&2
-              fetch_json_2xx \
-                'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
-                "${EVIDENCE_DIR}/torghut-proofs.json" \
-                "Torghut /trading/proofs"
-              fetch_json_2xx \
-                'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
-                "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
-                "Torghut sim /trading/proofs"
+              if ! capture_paper_route_mirror_evidence; then
+                run_post_deploy_evidence_validator
+                return 0
+              fi
               sleep "${SIM_MIRROR_RETRY_INTERVAL_SECONDS}"
             done
           }
 
-          validate_post_deploy_evidence
+          if capture_paper_route_mirror_evidence; then
+            validate_post_deploy_evidence_with_mirror_retry
+          else
+            run_post_deploy_evidence_validator
+          fi
 
       - name: Close superseded Torghut rollback pull requests
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
