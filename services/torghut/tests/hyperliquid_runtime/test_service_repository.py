@@ -821,7 +821,7 @@ def test_runtime_service_persists_guarded_optimizer_run() -> None:
     assert optimizer_insert
     assert optimizer_insert[0]
     assert optimizer_insert[0]["parameter_version"] == (
-        "hl-equity-momentum-v1-offline-v1"
+        "hl-equity-momentum-v2-offline-v1"
     )
     assert optimizer_insert[0]["promoted"] is True
 
