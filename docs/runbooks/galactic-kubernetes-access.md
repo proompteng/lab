@@ -12,17 +12,22 @@ Keep exactly two local `kubectl` contexts for normal operator use:
 | `galactic-lan`       | `https://100.100.244.141:6443` | Provider-managed LAN path. Use this when on the local network. |
 | `galactic-tailscale` | `https://100.94.129.1:6443`    | Tailnet path. Use this when off-LAN with Tailscale connected.  |
 
-The live node layer currently has two Ready Kubernetes nodes:
+The live node layer currently has three Ready Kubernetes nodes:
 
 | Kubernetes node name  | Current internal IP | Role          |
 | --------------------- | ------------------- | ------------- |
 | `talos-192-168-1-194` | `100.100.244.141`   | control plane |
 | `talos-192-168-1-85`  | `100.100.244.142`   | control plane |
+| `turin`               | `100.100.244.171`   | control plane |
 
 The node names still contain the original `192.168.1.*` addresses, but those
 names are not the current LAN reachability source. Do not use old
 `192.168.1.*` addresses for current kube API access unless a separate live
 reachability check proves that path has returned.
+
+MetalLB is on the same provider-managed LAN. The current reserved addresses are
+`100.100.244.180` for Plex, `100.100.244.181` for the shared Traefik/Forgejo
+edge, and `100.100.244.182` for Istio ingress.
 
 ## Rebuild local kubeconfig contexts
 
