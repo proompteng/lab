@@ -261,6 +261,24 @@ describe('torghut build-push workflow', () => {
     expect(autoresearchJobBody).not.toContain('name: torghut-coverage-autoresearch-runner\n')
   })
 
+  it('shards primary Torghut pytest by collected test node instead of file list', () => {
+    const pytestShardJob = ciWorkflow.indexOf('pytest-shards:')
+    const nextJob = ciWorkflow.indexOf('\n  pytest-autoresearch-runner:', pytestShardJob)
+    const pytestShardJobBody = ciWorkflow.slice(pytestShardJob, nextJob)
+
+    expect(pytestShardJob).toBeGreaterThan(-1)
+    expect(pytestShardJobBody).toContain('name: Pytest shard ${{ matrix.shard }}')
+    expect(pytestShardJobBody).toContain('shard: [0, 1, 2, 3, 4, 5, 6, 7]')
+    expect(pytestShardJobBody).toContain('SHARD_TOTAL: 8')
+    expect(pytestShardJobBody).toContain(
+      'uv run --frozen pytest --collect-only -q tests --ignore=tests/autoresearch_runner',
+    )
+    expect(pytestShardJobBody).toContain('EXPECTED_MIN_COUNT_MISMATCH:%d')
+    expect(pytestShardJobBody).toContain('"${TEST_NODES[@]}"')
+    expect(pytestShardJobBody).not.toContain("find tests -name 'test_*.py'")
+    expect(pytestShardJobBody).not.toContain('"${TEST_FILES[@]}"')
+  })
+
   it('keeps TA and WS stale workflow promotions path-aware so unrelated main commits do not force rebuilds', () => {
     const releaseWorkflows = [
       {

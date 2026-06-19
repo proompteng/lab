@@ -565,7 +565,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - name: Checkout
         shell: bash
@@ -614,17 +614,36 @@ jobs:
         env:
           COVERAGE_FILE: .coverage.${{ matrix.shard }}
           SHARD_INDEX: ${{ matrix.shard }}
-          SHARD_TOTAL: 4
+          SHARD_TOTAL: 8
         run: |
           set -euo pipefail
-          mapfile -t TEST_FILES < <(
-            find tests -name 'test_*.py' ! -path 'tests/autoresearch_runner/*' -print |
-              sort |
-              awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '((NR - 1) % total) == shard'
+          collected_tests="$(mktemp)"
+          uv run --frozen pytest --collect-only -q tests --ignore=tests/autoresearch_runner > "${collected_tests}"
+          mapfile -t TEST_NODES < <(
+            awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '
+              /^tests\/.*::/ {
+                collected += 1
+                if (((collected - 1) % total) == shard) {
+                  print
+                }
+              }
+              END {
+                if (collected < 5000) {
+                  printf "EXPECTED_MIN_COUNT_MISMATCH:%d\n", collected
+                }
+              }
+            ' "${collected_tests}"
           )
-          printf 'Running %s test files in shard %s/%s\n' "${#TEST_FILES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
-          if [ "${#TEST_FILES[@]}" -eq 0 ]; then
-            echo "No test files selected for shard ${SHARD_INDEX}"
+          last_index=$((${#TEST_NODES[@]} - 1))
+          if [ "${#TEST_NODES[@]}" -gt 0 ] && [[ "${TEST_NODES[${last_index}]}" == EXPECTED_MIN_COUNT_MISMATCH:* ]]; then
+            collected_count="${TEST_NODES[${last_index}]#EXPECTED_MIN_COUNT_MISMATCH:}"
+            unset 'TEST_NODES[${last_index}]'
+            echo "Expected at least 5000 non-autoresearch tests after split, got ${collected_count}"
+            exit 1
+          fi
+          printf 'Running %s test nodes in shard %s/%s\n' "${#TEST_NODES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
+          if [ "${#TEST_NODES[@]}" -eq 0 ]; then
+            echo "No test nodes selected for shard ${SHARD_INDEX}"
             exit 1
           fi
 
@@ -635,7 +654,7 @@ jobs:
             --cov-branch \
             --cov-fail-under=0 \
             --cov-report= \
-            "${TEST_FILES[@]}"
+            "${TEST_NODES[@]}"
 
       - name: Upload coverage data
         if: always()
@@ -708,21 +727,22 @@ jobs:
           SHARD_TOTAL: 4
         run: |
           set -euo pipefail
+          collected_tests="$(mktemp)"
+          uv run --frozen pytest --collect-only -q tests/autoresearch_runner > "${collected_tests}"
           mapfile -t TEST_NODES < <(
-            uv run --frozen pytest --collect-only -q tests/autoresearch_runner |
-              awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '
-                /^tests\/.*::/ {
-                  collected += 1
-                  if (((collected - 1) % total) == shard) {
-                    print
-                  }
+            awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '
+              /^tests\/.*::/ {
+                collected += 1
+                if (((collected - 1) % total) == shard) {
+                  print
                 }
-                END {
-                  if (collected != 185) {
-                    printf "EXPECTED_COUNT_MISMATCH:%d\n", collected
-                  }
+              }
+              END {
+                if (collected != 185) {
+                  printf "EXPECTED_COUNT_MISMATCH:%d\n", collected
                 }
-              '
+              }
+            ' "${collected_tests}"
           )
           last_index=$((${#TEST_NODES[@]} - 1))
           if [ "${#TEST_NODES[@]}" -gt 0 ] && [[ "${TEST_NODES[${last_index}]}" == EXPECTED_COUNT_MISMATCH:* ]]; then
