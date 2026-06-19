@@ -291,7 +291,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_universe_source = "jangar"
@@ -405,7 +405,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -479,7 +479,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_universe_static_fallback_enabled = True
@@ -551,7 +551,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_universe_static_fallback_enabled = True

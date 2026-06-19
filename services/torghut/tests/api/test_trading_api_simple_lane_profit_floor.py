@@ -322,6 +322,66 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             },
         )
 
+    def test_simple_lane_shared_gate_applies_emergency_stop_reason(self) -> None:
+        original = {
+            "trading_pipeline_mode": settings.trading_pipeline_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_mode": settings.trading_mode,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
+        }
+        settings.trading_pipeline_mode = "simple"
+        settings.trading_enabled = True
+        settings.trading_mode = "live"
+        settings.trading_simple_submit_enabled = True
+        settings.trading_kill_switch_enabled = False
+        settings.trading_emergency_stop_enabled = True
+        try:
+            with patch(
+                "app.api.health_checks.load_options_catalog_freshness_summary.build_live_submission_gate_payload",
+                return_value={
+                    "allowed": True,
+                    "reason": "ready",
+                    "blocked_reasons": [],
+                    "capital_stage": "live",
+                    "capital_state": "live",
+                },
+            ):
+                gate = _build_live_submission_gate_payload(
+                    SimpleNamespace(
+                        emergency_stop_active=True,
+                        emergency_stop_reason="operator_pause",
+                    ),
+                    session=None,
+                    hypothesis_summary={},
+                )
+        finally:
+            settings.trading_pipeline_mode = original["trading_pipeline_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            settings.trading_kill_switch_enabled = original[
+                "trading_kill_switch_enabled"
+            ]
+            settings.trading_emergency_stop_enabled = original[
+                "trading_emergency_stop_enabled"
+            ]
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "operator_pause")
+        self.assertEqual(gate["blocked_reasons"], ["operator_pause"])
+        self.assertEqual(
+            gate["simple_lane"],
+            {
+                "submit_enabled": True,
+                "shared_gate_enforced": True,
+                "blocked_reasons": ["operator_pause"],
+            },
+        )
+
     def test_simple_lane_paper_mode_preserves_shared_runtime_import_plan(self) -> None:
         original = {
             "trading_pipeline_mode": settings.trading_pipeline_mode,

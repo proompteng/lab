@@ -65,11 +65,6 @@ flags:
     description: Enables account-isolated multi-account execution lanes in Torghut.
     type: BOOLEAN_FLAG_TYPE
     enabled: false
-  - key: torghut_trading_strategy_scheduler_enabled
-    name: Torghut Strategy Scheduler Enabled
-    description: Enables scheduler-integrated strategy runtime path.
-    type: BOOLEAN_FLAG_TYPE
-    enabled: true
   - key: torghut_trading_feature_quality_enabled
     name: Torghut Trading Feature Quality Enabled
     description: Enables strict feature quality gate enforcement.

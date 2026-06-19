@@ -769,10 +769,6 @@ class TestStartHistoricalSimulationLifecycleC(StartHistoricalSimulationTestCaseB
                                         "value": "scheduler_v3",
                                     },
                                     {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
                                         "name": "TRADING_SIGNAL_TABLE",
                                         "value": "torghut_sim_sim_2026_03_06_open_hour.ta_signals",
                                     },

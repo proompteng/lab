@@ -42,13 +42,12 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
@@ -87,7 +86,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
 
     def test_simple_pipeline_snapshots_account_for_paper_route_window_without_signals(
         self,
@@ -96,7 +95,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
@@ -252,7 +251,7 @@ class TestTradingPipelineWarmupSubmissionA(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.trading_session_context_warmup_signal_limit = 3

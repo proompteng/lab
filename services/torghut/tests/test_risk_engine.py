@@ -35,22 +35,14 @@ class TestRiskEngine(TestCase):
         self._original_allow_shorts = config.settings.trading_allow_shorts
         self._original_trading_enabled = config.settings.trading_enabled
         self._original_trading_mode = config.settings.trading_mode
-        self._original_trading_live_enabled = config.settings.trading_live_enabled
         self._original_cooldown = config.settings.trading_cooldown_seconds
         self._original_fragility_mode = config.settings.trading_fragility_mode
-        self._original_ws_crypto_enabled = config.settings.trading_ws_crypto_enabled
-        self._original_universe_crypto_enabled = (
-            config.settings.trading_universe_crypto_enabled
-        )
         self._original_trading_crypto_enabled = config.settings.trading_crypto_enabled
         self._original_trading_crypto_live_enabled = (
             config.settings.trading_crypto_live_enabled
         )
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
-        config.settings.trading_ws_crypto_enabled = True
-        config.settings.trading_universe_crypto_enabled = True
         config.settings.trading_crypto_enabled = True
         config.settings.trading_crypto_live_enabled = False
         config.settings.trading_fragility_mode = "enforce"
@@ -59,13 +51,8 @@ class TestRiskEngine(TestCase):
         config.settings.trading_allow_shorts = self._original_allow_shorts
         config.settings.trading_enabled = self._original_trading_enabled
         config.settings.trading_mode = self._original_trading_mode
-        config.settings.trading_live_enabled = self._original_trading_live_enabled
         config.settings.trading_cooldown_seconds = self._original_cooldown
         config.settings.trading_fragility_mode = self._original_fragility_mode
-        config.settings.trading_ws_crypto_enabled = self._original_ws_crypto_enabled
-        config.settings.trading_universe_crypto_enabled = (
-            self._original_universe_crypto_enabled
-        )
         config.settings.trading_crypto_enabled = self._original_trading_crypto_enabled
         config.settings.trading_crypto_live_enabled = (
             self._original_trading_crypto_live_enabled
@@ -446,8 +433,8 @@ class TestRiskEngine(TestCase):
         self.assertNotIn("adverse_selection_risk_exceeds_maximum", verdict.reasons)
 
     def test_crypto_trade_blocked_when_crypto_flags_disabled(self) -> None:
-        config.settings.trading_ws_crypto_enabled = False
-        config.settings.trading_universe_crypto_enabled = False
+        config.settings.trading_crypto_enabled = False
+        config.settings.trading_crypto_enabled = False
         config.settings.trading_crypto_enabled = False
         decision = StrategyDecision(
             strategy_id="s1",
@@ -471,7 +458,7 @@ class TestRiskEngine(TestCase):
 
     def test_crypto_live_trade_blocked_when_live_gate_disabled(self) -> None:
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_crypto_live_enabled = False
         decision = StrategyDecision(
             strategy_id="s1",

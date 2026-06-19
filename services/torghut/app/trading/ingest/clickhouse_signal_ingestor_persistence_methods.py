@@ -379,7 +379,7 @@ def _merge_microstructure_signal_payload(
 
 
 def _copy_extended_ta_fields(payload: dict[str, Any], row: dict[str, Any]) -> None:
-    # Preserve extended TA fields required by plugin_v3 strategy runtime.
+    # Preserve extended TA fields required by the scheduler v3 strategy runtime.
     for key in (
         "macd_hist",
         "ema12",

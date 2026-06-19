@@ -624,6 +624,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
         }
         try:
             settings.trading_enabled = True
@@ -631,6 +632,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             settings.trading_autonomy_enabled = False
             settings.trading_autonomy_allow_live_promotion = False
             settings.trading_kill_switch_enabled = False
+            settings.trading_simple_submit_enabled = True
 
             scheduler = TradingScheduler()
             scheduler.state.last_market_context_freshness_seconds = 30
@@ -768,6 +770,9 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             ]
             settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
+            ]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
             ]
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):

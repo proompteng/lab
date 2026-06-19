@@ -248,10 +248,7 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
             env_by_name["TRADING_STRATEGY_RUNTIME_MODE"].get("value"),
             "scheduler_v3",
         )
-        self.assertEqual(
-            env_by_name["TRADING_STRATEGY_SCHEDULER_ENABLED"].get("value"),
-            "true",
-        )
+        self.assertNotIn("TRADING_STRATEGY_SCHEDULER_ENABLED", env_by_name)
         self.assertEqual(
             env_by_name["TA_CLICKHOUSE_URL"].get("value"),
             "http://chi-torghut-clickhouse-default-0-0.torghut.svc.cluster.local:8123",
@@ -341,8 +338,6 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                 torghut_env_overrides={
                     "TRADING_FEATURE_MAX_STALENESS_MS": "43200000",
                     "TRADING_FEATURE_QUALITY_ENABLED": "true",
-                    "TRADING_STRATEGY_RUNTIME_MODE": "plugin_v3",
-                    "TRADING_STRATEGY_SCHEDULER_ENABLED": "false",
                     "TRADING_SIGNAL_ALLOWED_SOURCES": "rest,ws,ta",
                 },
             )
@@ -376,18 +371,14 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
         )
         self.assertEqual(
             env_by_name["TRADING_STRATEGY_RUNTIME_MODE"].get("value"),
-            "plugin_v3",
-        )
-        self.assertEqual(
-            env_by_name["TRADING_STRATEGY_SCHEDULER_ENABLED"].get("value"),
-            "false",
+            "scheduler_v3",
         )
         self.assertEqual(
             env_by_name["TRADING_SIGNAL_ALLOWED_SOURCES"].get("value"),
             "rest,ws,ta",
         )
 
-    def test_configure_torghut_service_allows_explicit_runtime_override(self) -> None:
+    def test_configure_torghut_service_rejects_runtime_override(self) -> None:
         resources = _build_resources(
             "sim-runtime-override",
             {
@@ -422,8 +413,6 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                 }
             }
         }
-        captured_patch: dict[str, object] = {}
-
         with (
             patch(
                 "scripts.historical_simulation_startup.runtime_migrations._kubectl_json",
@@ -431,56 +420,25 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
             ),
             patch(
                 "scripts.historical_simulation_startup.runtime_migrations._kubectl_patch",
-                side_effect=lambda namespace, kind, name, patch: captured_patch.update(
-                    {"namespace": namespace, "kind": kind, "name": name, "patch": patch}
-                ),
             ),
         ):
-            _configure_torghut_service_for_simulation(
-                resources=resources,
-                manifest={
-                    "window": {
-                        "start": "2026-02-27T14:30:00Z",
-                        "end": "2026-02-27T21:00:00Z",
-                    }
-                },
-                postgres_config=postgres_config,
-                clickhouse_config=ClickHouseRuntimeConfig(
-                    http_url="http://clickhouse:8123",
-                    username="torghut",
-                    password="secret",
-                ),
-                kafka_config=kafka_config,
-                torghut_env_overrides={
-                    "TRADING_STRATEGY_RUNTIME_MODE": "plugin_v3",
-                    "TRADING_STRATEGY_SCHEDULER_ENABLED": "false",
-                },
-            )
-
-        patch_payload = captured_patch.get("patch")
-        self.assertIsInstance(patch_payload, dict)
-        assert isinstance(patch_payload, dict)
-        containers = (
-            patch_payload.get("spec", {})
-            .get("template", {})
-            .get("spec", {})
-            .get("containers", [])
-        )
-        self.assertIsInstance(containers, list)
-        assert isinstance(containers, list)
-        env_entries = containers[0].get("env") if containers else []
-        self.assertIsInstance(env_entries, list)
-        assert isinstance(env_entries, list)
-        env_by_name = {
-            str(item.get("name")): item
-            for item in env_entries
-            if isinstance(item, dict)
-        }
-        self.assertEqual(
-            env_by_name["TRADING_STRATEGY_RUNTIME_MODE"].get("value"),
-            "plugin_v3",
-        )
-        self.assertEqual(
-            env_by_name["TRADING_STRATEGY_SCHEDULER_ENABLED"].get("value"),
-            "false",
-        )
+            with self.assertRaisesRegex(ValueError, "TRADING_STRATEGY_RUNTIME_MODE"):
+                _configure_torghut_service_for_simulation(
+                    resources=resources,
+                    manifest={
+                        "window": {
+                            "start": "2026-02-27T14:30:00Z",
+                            "end": "2026-02-27T21:00:00Z",
+                        }
+                    },
+                    postgres_config=postgres_config,
+                    clickhouse_config=ClickHouseRuntimeConfig(
+                        http_url="http://clickhouse:8123",
+                        username="torghut",
+                        password="secret",
+                    ),
+                    kafka_config=kafka_config,
+                    torghut_env_overrides={
+                        "TRADING_STRATEGY_RUNTIME_MODE": "plugin_v3",
+                    },
+                )

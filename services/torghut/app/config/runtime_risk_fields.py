@@ -38,10 +38,6 @@ class RuntimeRiskSettingsFields(BaseSettings):
     trading_allocator_correlation_group_caps: dict[str, float] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
-        validation_alias=AliasChoices(
-            "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
-            "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
-        ),
         description="Correlation-group->per-cycle notional cap map used by allocator (JSON object).",
     )
 
@@ -158,10 +154,10 @@ class RuntimeRiskSettingsFields(BaseSettings):
         default=True, alias="TRADING_KILL_SWITCH_ENABLED"
     )
 
-    trading_pipeline_mode: Literal["legacy", "simple"] = Field(
-        default="legacy",
+    trading_pipeline_mode: Literal["simple"] = Field(
+        default="simple",
         alias="TRADING_PIPELINE_MODE",
-        description="Select the order-submission pipeline implementation.",
+        description="Order-submission pipeline implementation. The simple lane is the only supported path.",
     )
 
     trading_simple_max_notional_per_order: Optional[float] = Field(

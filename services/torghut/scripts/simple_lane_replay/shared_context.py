@@ -550,7 +550,6 @@ def _configure_replay_settings(
 ) -> None:
     config.settings.trading_enabled = True
     config.settings.trading_mode = "paper"
-    config.settings.trading_live_enabled = False
     config.settings.trading_pipeline_mode = "simple"
     config.settings.trading_simple_submit_enabled = True
     config.settings.trading_simple_order_feed_telemetry_enabled = False
@@ -570,7 +569,6 @@ def _configure_replay_settings(
     config.settings.trading_allow_shorts = allow_shorts
     config.settings.trading_fractional_equities_enabled = True
     config.settings.trading_feature_quality_enabled = False
-    config.settings.trading_strategy_scheduler_enabled = False
     config.settings.trading_strategy_runtime_mode = "scheduler_v3"
     config.settings.llm_enabled = False
 

@@ -115,22 +115,6 @@ class CoreSettingsFields(BaseSettings):
         default="paper", alias="TRADING_MODE"
     )
 
-    # Deprecated compatibility alias for TRADING_MODE.
-
-    trading_live_enabled: bool = Field(default=False, alias="TRADING_LIVE_ENABLED")
-
-    trading_ws_crypto_enabled: bool = Field(
-        default=False,
-        alias="TRADING_WS_CRYPTO_ENABLED",
-        description="Deprecated compatibility alias for TRADING_CRYPTO_ENABLED.",
-    )
-
-    trading_universe_crypto_enabled: bool = Field(
-        default=False,
-        alias="TRADING_UNIVERSE_CRYPTO_ENABLED",
-        description="Deprecated compatibility alias for TRADING_CRYPTO_ENABLED.",
-    )
-
     trading_crypto_enabled: bool = Field(
         default=False,
         alias="TRADING_CRYPTO_ENABLED",
@@ -494,22 +478,10 @@ class CoreSettingsFields(BaseSettings):
         description="Path to the source-controlled hypothesis manifest directory or file.",
     )
 
-    trading_strategy_runtime_mode: Literal["legacy", "plugin_v3", "scheduler_v3"] = (
-        Field(
-            default="scheduler_v3",
-            alias="TRADING_STRATEGY_RUNTIME_MODE",
-            description=(
-                "Strategy runtime mode. plugin_v3 enables plugin scaffolding; "
-                "scheduler_v3 uses scheduler integration with migration controls; "
-                "legacy keeps current behavior."
-            ),
-        )
-    )
-
-    trading_strategy_scheduler_enabled: bool = Field(
-        default=False,
-        alias="TRADING_STRATEGY_SCHEDULER_ENABLED",
-        description="Migration flag for scheduler-integrated strategy runtime path.",
+    trading_strategy_runtime_mode: Literal["scheduler_v3"] = Field(
+        default="scheduler_v3",
+        alias="TRADING_STRATEGY_RUNTIME_MODE",
+        description="Strategy runtime mode. The scheduler_v3 runtime is the only supported path.",
     )
 
     trading_strategy_runtime_circuit_errors: int = Field(

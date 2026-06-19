@@ -57,10 +57,6 @@ class TestStartHistoricalSimulationLifecycleD(StartHistoricalSimulationTestCaseB
                                         "value": "scheduler_v3",
                                     },
                                     {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
                                         "name": "TRADING_SIGNAL_TABLE",
                                         "value": resources.clickhouse_signal_table,
                                     },

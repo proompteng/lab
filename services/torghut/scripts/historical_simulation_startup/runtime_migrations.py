@@ -67,6 +67,7 @@ from .simulation_context import (
     KafkaRuntimeConfig,
     SIMULATION_POSTGRES_REQUIRED_METADATA_TABLES,
     SIMULATION_POSTGRES_RUNTIME_RESET_TABLES,
+    SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST,
     TORGHUT_ENV_KEYS,
 )
 from .runtime_config import (
@@ -593,7 +594,6 @@ def _torghut_service_env_for_simulation(
         "TRADING_ACCOUNT_LABEL": account_label,
         "TRADING_FEATURE_FLAGS_ENABLED": "false",
         "TRADING_STRATEGY_RUNTIME_MODE": "scheduler_v3",
-        "TRADING_STRATEGY_SCHEDULER_ENABLED": "true",
         "TA_CLICKHOUSE_URL": clickhouse_config.http_url,
         "TA_CLICKHOUSE_USERNAME": clickhouse_config.username or "",
         "TA_CLICKHOUSE_PASSWORD": clickhouse_config.password or "",
@@ -636,7 +636,13 @@ def _torghut_service_env_for_simulation(
     }
     if torghut_env_overrides:
         for key, value in torghut_env_overrides.items():
-            updates[str(key)] = str(value)
+            env_key = str(key)
+            if env_key not in SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST:
+                raise ValueError(
+                    "Unsupported torghut_env_overrides key "
+                    f"{env_key!r}; allowed={','.join(sorted(SIMULATION_TORGHUT_ENV_OVERRIDE_ALLOWLIST))}"
+                )
+            updates[env_key] = str(value)
     return _merge_env_entries(current_env, updates)
 
 

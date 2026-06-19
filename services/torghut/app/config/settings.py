@@ -42,7 +42,6 @@ class SettingsAccessorsMixin(SettingsNormalizationMixin):
             self.log_format = "json" if self.app_env in {"stage", "prod"} else "text"
         if not os.getenv("LOG_LEVEL"):
             self.log_level = "INFO"
-        self._validate_allocator_alias_environment_parity()
         self._apply_feature_flag_overrides()
         self._apply_trading_defaults()
         self._normalize_optional_url_settings()

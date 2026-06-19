@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from typing import Literal, Optional
 
-from pydantic import AliasChoices, Field
+from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
@@ -607,10 +607,6 @@ class AutonomyExecutionSettingsFields(BaseSettings):
     trading_allocator_symbol_correlation_groups: dict[str, str] = Field(
         default_factory=dict,
         alias="TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
-        validation_alias=AliasChoices(
-            "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
-            "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS",
-        ),
         description="Symbol->correlation group map used for correlation-aware throttles (JSON object).",
     )
 

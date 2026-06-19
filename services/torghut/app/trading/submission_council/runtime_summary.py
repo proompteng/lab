@@ -72,7 +72,7 @@ def build_hypothesis_runtime_summary(
         market_session_open=cast(
             bool | None, getattr(state, "market_session_open", None)
         ),
-        route_symbol_filter_enabled=settings.trading_pipeline_mode == "simple",
+        route_symbol_filter_enabled=True,
     )
     max_age_seconds = max(
         0, int(settings.trading_drift_live_promotion_max_evidence_age_seconds)

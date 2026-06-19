@@ -173,7 +173,6 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
@@ -188,7 +187,7 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -285,7 +284,7 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
@@ -568,14 +567,13 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_kill_switch_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -654,7 +652,7 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]

@@ -52,7 +52,7 @@ class SimplePipelineProofFloorMixin(TradingPipelineBase):
                 market_context_status=market_context_status,
                 tca_summary=self._build_tca_gate_inputs(session=session),
                 simple_lane_status={
-                    "enabled": settings.trading_pipeline_mode == "simple",
+                    "enabled": True,
                     "submit_enabled": settings.trading_simple_submit_enabled,
                     "order_feed_telemetry_enabled": (
                         settings.trading_simple_order_feed_telemetry_enabled
@@ -70,10 +70,8 @@ class SimplePipelineProofFloorMixin(TradingPipelineBase):
                     "order_feed_auto_offset_reset": (
                         settings.trading_order_feed_auto_offset_reset
                     ),
-                    "order_feed_lifecycle_required": (
-                        settings.trading_pipeline_mode == "simple"
-                        and settings.trading_mode in {"paper", "live"}
-                    ),
+                    "order_feed_lifecycle_required": settings.trading_mode
+                    in {"paper", "live"},
                     "order_feed_lifecycle_status": (
                         "enabled"
                         if settings.trading_simple_order_feed_telemetry_enabled

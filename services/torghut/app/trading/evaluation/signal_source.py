@@ -278,15 +278,81 @@ def run_walk_forward(
     for fold in folds:
         signals = signal_source.fetch_signals(fold.test_start, fold.test_end)
         fold_result = FoldResult(fold=fold, signals_count=len(signals))
+        positions: list[dict[str, Any]] = []
         for signal in signals:
             features = extract_signal_features(signal)
-            for decision in decision_engine.evaluate(signal, strategies):
+            for decision in decision_engine.evaluate(
+                signal, strategies, positions=positions
+            ):
                 fold_result.decisions.append(
                     WalkForwardDecision(decision=decision, features=features)
                 )
+                _apply_walk_forward_position(positions, decision, features)
         results.append(fold_result)
 
     return WalkForwardResults(generated_at=datetime.now(timezone.utc), folds=results)
+
+
+def _apply_walk_forward_position(
+    positions: list[dict[str, Any]],
+    decision: StrategyDecision,
+    features: SignalFeatures,
+) -> None:
+    symbol = decision.symbol.strip().upper()
+    if not symbol:
+        return
+    current_qty = _walk_forward_position_qty(positions, symbol)
+    signed_delta = decision.qty if decision.action == "buy" else -decision.qty
+    next_qty = current_qty + signed_delta
+    positions[:] = [
+        position
+        for position in positions
+        if str(position.get("symbol") or "").strip().upper() != symbol
+    ]
+    if next_qty == 0:
+        return
+    price = features.price or _decision_price(decision)
+    market_value = abs(next_qty) * price if price is not None else None
+    positions.append(
+        {
+            "symbol": symbol,
+            "qty": str(abs(next_qty)),
+            "side": "long" if next_qty > 0 else "short",
+            "market_value": str(market_value) if market_value is not None else None,
+            "avg_entry_price": str(price) if price is not None else None,
+        }
+    )
+
+
+def _walk_forward_position_qty(
+    positions: list[dict[str, Any]],
+    symbol: str,
+) -> Decimal:
+    total = Decimal("0")
+    for position in positions:
+        if str(position.get("symbol") or "").strip().upper() != symbol:
+            continue
+        raw_qty = position.get("qty") or position.get("quantity")
+        if raw_qty is None:
+            continue
+        try:
+            qty = Decimal(str(raw_qty))
+        except (ArithmeticError, ValueError):
+            continue
+        if str(position.get("side") or "").strip().lower() == "short":
+            qty = -abs(qty)
+        total += qty
+    return total
+
+
+def _decision_price(decision: StrategyDecision) -> Decimal | None:
+    raw_price = decision.params.get("price")
+    if raw_price is None:
+        return None
+    try:
+        return Decimal(str(raw_price))
+    except (ArithmeticError, ValueError):
+        return None
 
 
 def write_walk_forward_results(results: WalkForwardResults, output_path: Path) -> None:

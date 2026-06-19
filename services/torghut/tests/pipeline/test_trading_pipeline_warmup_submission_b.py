@@ -40,7 +40,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_autonomy_allow_live_promotion = False
@@ -155,7 +155,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_drift_governance_enabled = True
@@ -253,7 +253,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_order_feed_telemetry_enabled = True
         config.settings.trading_order_feed_enabled = True
@@ -674,7 +674,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_universe_source = "jangar"
@@ -763,7 +763,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = False
         config.settings.trading_universe_source = "jangar"
@@ -861,7 +861,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_universe_source = "jangar"

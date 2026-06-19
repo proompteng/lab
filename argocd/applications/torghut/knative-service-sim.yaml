@@ -165,8 +165,6 @@ spec:
               value: paper
             - name: TRADING_STRATEGY_RUNTIME_MODE
               value: scheduler_v3
-            - name: TRADING_STRATEGY_SCHEDULER_ENABLED
-              value: "true"
             - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
               value: "false"
             - name: TRADING_ACCOUNT_LABEL

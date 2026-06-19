@@ -697,11 +697,7 @@ def trading_status() -> dict[str, object]:
         "last_decision_at": last_decision_at,
         "simple_lane_status": simple_lane_status,
         "simple_lane_reject_reason_totals": simple_lane_reject_reason_totals,
-        "simple_lane_orders_submitted_total": (
-            state.metrics.orders_submitted_total
-            if settings.trading_pipeline_mode == "simple"
-            else 0
-        ),
+        "simple_lane_orders_submitted_total": state.metrics.orders_submitted_total,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,

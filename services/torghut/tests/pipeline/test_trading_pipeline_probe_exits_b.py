@@ -745,7 +745,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_fractional_equities_enabled = True

@@ -41,7 +41,6 @@ def run_replay(config: ReplayConfig) -> dict[str, Any]:
     _log_replay_start(state)
     with (
         patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-        patch.object(settings, "trading_strategy_scheduler_enabled", True),
         patch.object(settings, "trading_allow_shorts", True),
         patch.object(settings, "trading_fractional_equities_enabled", True),
     ):

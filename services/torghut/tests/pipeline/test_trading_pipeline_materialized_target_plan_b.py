@@ -46,7 +46,6 @@ class TestTradingPipelineMaterializedTargetPlanB(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_pipeline_mode": config.settings.trading_pipeline_mode,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_fractional_equities_enabled": config.settings.trading_fractional_equities_enabled,
@@ -68,7 +67,7 @@ class TestTradingPipelineMaterializedTargetPlanB(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_fractional_equities_enabled = True
@@ -225,7 +224,7 @@ class TestTradingPipelineMaterializedTargetPlanB(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_pipeline_mode = original["trading_pipeline_mode"]
             config.settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"

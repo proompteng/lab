@@ -36,7 +36,6 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -52,7 +51,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -129,7 +128,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -161,7 +160,6 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "trading_market_context_fail_mode": config.settings.trading_market_context_fail_mode,
@@ -178,7 +176,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.trading_market_context_fail_mode = "fail_closed"
@@ -269,7 +267,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -304,7 +302,6 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -321,7 +318,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -397,7 +394,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -430,7 +427,6 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -443,7 +439,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -507,7 +503,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -534,7 +530,6 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -548,7 +543,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -638,7 +633,7 @@ class TestTradingPipelineStageLlm(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]

@@ -89,8 +89,8 @@ class _DecisionEngineCoreMethods:
             trace_enabled=runtime_trace_enabled,
         )
         self._last_runtime_telemetry = DecisionRuntimeTelemetry(
-            mode="legacy",
-            runtime_enabled=False,
+            mode=settings.trading_strategy_runtime_mode,
+            runtime_enabled=True,
             fallback_to_legacy=False,
         )
         self._last_emitted_action_at: dict[tuple[str, str, str | None], datetime] = {}
@@ -130,7 +130,7 @@ class _DecisionEngineCoreMethods:
         timeframe = _resolve_signal_timeframe(signal)
         if timeframe is None:
             self._last_runtime_telemetry = DecisionRuntimeTelemetry(
-                mode="legacy",
+                mode=settings.trading_strategy_runtime_mode,
                 runtime_enabled=False,
                 fallback_to_legacy=False,
             )
@@ -158,8 +158,8 @@ class _DecisionEngineCoreMethods:
     def consume_runtime_telemetry(self) -> DecisionRuntimeTelemetry:
         telemetry = self._last_runtime_telemetry
         self._last_runtime_telemetry = DecisionRuntimeTelemetry(
-            mode="legacy",
-            runtime_enabled=False,
+            mode=settings.trading_strategy_runtime_mode,
+            runtime_enabled=True,
             fallback_to_legacy=False,
         )
         return telemetry
@@ -202,6 +202,9 @@ class _DecisionEngineCoreMethods:
             runtime_position_side = _runtime_position_side(runtime_position_qty)
             normalized_payload["runtime_position_side"] = runtime_position_side
         normalized_signal = signal.model_copy(update={"payload": normalized_payload})
+        params_payload = dict(normalized_payload)
+        params_payload.update(signal.payload)
+        params_signal = signal.model_copy(update={"payload": params_payload})
         try:
             feature_vector = normalize_feature_vector_v3(normalized_signal)
         except FeatureNormalizationError:
@@ -424,7 +427,7 @@ class _DecisionEngineCoreMethods:
                 ),
                 rationale=",".join(explain),
                 params=_build_params(
-                    signal=normalized_signal,
+                    signal=params_signal,
                     macd=features.macd,
                     macd_signal=features.macd_signal,
                     rsi=features.rsi,

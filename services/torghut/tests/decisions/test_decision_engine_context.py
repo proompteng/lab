@@ -47,7 +47,6 @@ class TestDecisionEngineContext(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
@@ -88,7 +87,6 @@ class TestDecisionEngineContext(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
@@ -128,7 +126,6 @@ class TestDecisionEngineContext(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_forecast_router_enabled", True),
             patch.object(settings, "trading_forecast_router_policy_path", None),
             patch.object(settings, "trading_forecast_router_refinement_enabled", True),
@@ -239,6 +236,7 @@ class TestDecisionEngineContext(TestCase):
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
+                "price": Decimal("100"),
                 "microstructure_signal": {
                     "schema_version": "microstructure_signal_v1",
                     "symbol": "aapl",
@@ -293,6 +291,7 @@ class TestDecisionEngineContext(TestCase):
             payload={
                 "macd": {"macd": Decimal("1.0"), "signal": Decimal("0.1")},
                 "rsi14": Decimal("20"),
+                "price": Decimal("100"),
                 "microstructure_signal": {
                     "schema_version": "microstructure_signal_v1",
                     "symbol": "aapl",
@@ -924,7 +923,7 @@ class TestDecisionEngineContext(TestCase):
         self.assertEqual(params.get("route_regime_label"), "mean_revert")
         self.assertEqual(params.get("regime_label"), "mean_revert")
 
-    def test_scheduler_runtime_mode_does_not_enable_when_scheduler_disabled(
+    def test_scheduler_runtime_mode_is_enabled_without_legacy_flag(
         self,
     ) -> None:
         engine = DecisionEngine(price_fetcher=None)
@@ -950,11 +949,10 @@ class TestDecisionEngineContext(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", False),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
 
         self.assertEqual(len(decisions), 1)
-        self.assertFalse(telemetry.runtime_enabled)
-        self.assertEqual(telemetry.mode, "legacy")
+        self.assertTrue(telemetry.runtime_enabled)
+        self.assertEqual(telemetry.mode, "scheduler_v3")
