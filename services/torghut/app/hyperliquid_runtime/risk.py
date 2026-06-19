@@ -3,20 +3,31 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import datetime, time, timezone
 from decimal import Decimal, ROUND_DOWN
+from zoneinfo import ZoneInfo
 
 from .config import HyperliquidRuntimeConfig
 from .models import FeatureSnapshot, OrderIntent, RiskState, RiskVerdict, Signal
+from .universe import classify_asset
+
+
+_EQUITY_LIKE_ASSET_CLASSES = frozenset({"stocks", "indices", "preipo"})
+_US_EQUITY_TIMEZONE = ZoneInfo("America/New_York")
+_US_CASH_SESSION_START = time(9, 30)
+_US_CASH_SESSION_END = time(16, 0)
 
 
 def evaluate_signal_risk(
     signal: Signal,
     state: RiskState,
     config: HyperliquidRuntimeConfig,
+    *,
+    now: datetime | None = None,
 ) -> RiskVerdict:
     """Block anything that is stale, over cap, duplicate, or not actionable."""
 
-    blocked_reason = _blocked_reason(signal, state, config)
+    blocked_reason = _blocked_reason(signal, state, config, now=now)
     if blocked_reason is not None:
         return _blocked(blocked_reason)
     remaining_exposure = config.max_gross_exposure_usd - state.gross_exposure_usd
@@ -110,12 +121,15 @@ def _blocked_reason(
     signal: Signal,
     state: RiskState,
     config: HyperliquidRuntimeConfig,
+    *,
+    now: datetime | None = None,
 ) -> str | None:
     config_errors = config.validation_errors()
     dependency_blockers = sorted(
         dependency.name for dependency in state.dependencies if not dependency.ready
     )
     quote_blocker = _quote_blocked_reason(signal.feature, config)
+    observed_at = now or datetime.now(timezone.utc)
     checks = (
         (bool(config_errors), ",".join(config_errors)),
         (not config.trading_enabled, "trading_disabled_shadow"),
@@ -131,6 +145,10 @@ def _blocked_reason(
         (signal.market_id in state.open_order_markets, "open_order_exists_for_market"),
         (state.daily_realized_pnl_usd <= -config.max_daily_loss_usd, "daily_loss_stop"),
         (quote_blocker is not None, quote_blocker or ""),
+        (
+            _equity_like_market_session_closed(signal, observed_at),
+            "equity_like_market_session_closed",
+        ),
     )
     return next((reason for blocked, reason in checks if blocked), None)
 
@@ -156,3 +174,14 @@ def _quote_blocked_reason(
         ),
     )
     return next((reason for blocked, reason in checks if blocked), None)
+
+
+def _equity_like_market_session_closed(signal: Signal, now: datetime) -> bool:
+    asset_class = classify_asset(coin=signal.coin, dex=signal.feature.dex)
+    if asset_class not in _EQUITY_LIKE_ASSET_CLASSES:
+        return False
+    observed = now.astimezone(_US_EQUITY_TIMEZONE)
+    if observed.weekday() >= 5:
+        return True
+    current = observed.time()
+    return not (_US_CASH_SESSION_START <= current < _US_CASH_SESSION_END)

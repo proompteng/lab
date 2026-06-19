@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.hyperliquid_runtime.universe import classify_asset, select_equity_like_markets
+from app.hyperliquid_runtime.universe import classify_asset, select_runtime_markets
 
 
 def test_classifies_equity_like_perps_only() -> None:
@@ -12,7 +12,8 @@ def test_classifies_equity_like_perps_only() -> None:
     assert classify_asset(coin="xyz:SP500", dex="xyz") == "indices"
     assert classify_asset(coin="OPENAI", dex="xyz") == "preipo"
     assert classify_asset(coin="xyz:OPENAI", dex="xyz") == "preipo"
-    assert classify_asset(coin="BTC", dex="default") is None
+    assert classify_asset(coin="BTC", dex="default") == "crypto"
+    assert classify_asset(coin="HYPE", dex="default") == "crypto"
     assert classify_asset(coin="GOLD", dex="cash") is None
     assert classify_asset(coin="xyz:BRENTOIL", dex="xyz") is None
     assert classify_asset(coin="xyz:JPY", dex="xyz") is None
@@ -44,16 +45,17 @@ def test_selects_liquid_allowed_markets_by_volume() -> None:
         },
     ]
 
-    markets = select_equity_like_markets(
+    markets = select_runtime_markets(
         rows,
         market_data_network="mainnet",
-        allowed_asset_classes=("stocks", "preipo"),
+        allowed_asset_classes=("crypto", "stocks", "preipo"),
         min_day_notional_volume_usd=Decimal("100000"),
         max_markets=10,
     )
 
     assert [market.market_id for market in markets] == [
+        "hl:perp:default:BTC",
         "hl:perp:xyz:OPENAI",
         "hl:perp:cash:cash:AAPL",
     ]
-    assert {market.asset_class for market in markets} == {"stocks", "preipo"}
+    assert {market.asset_class for market in markets} == {"crypto", "stocks", "preipo"}

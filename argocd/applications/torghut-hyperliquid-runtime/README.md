@@ -11,8 +11,9 @@ V1 runs as a testnet-only trading lane:
 - Tiny testnet orders are enabled after the ExternalSecret is ready and the dedicated Hyperliquid testnet account is
   funded. Keep the default risk caps unless a separate rollout approves a larger envelope.
 - When trading is enabled, the runtime filters the selected mainnet market-data universe through Hyperliquid testnet
-  perp metadata before any feature can produce an order. If testnet metadata is stale, unavailable, or has no matching
-  equity-like markets, readiness fails and no orders are submitted.
+  perp metadata before any feature can produce an order. Crypto perps are eligible for the 24/7 lane. Equity-like
+  stocks, indices, and pre-IPO perps are locally blocked outside the U.S. cash session so halted venues do not receive
+  exchange orders.
 
 To enable tiny testnet orders, create and authorize a Hyperliquid testnet API/agent wallet for the dedicated testnet account. Store the main account address and authorized API wallet private key in the 1Password item `hyperliquid-testnet` in the `infra` vault with fields:
 

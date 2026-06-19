@@ -32,14 +32,17 @@ def _config(**overrides: object) -> HyperliquidRuntimeConfig:
 
 def _feature(
     *,
+    market_id: str = "hl:perp:cash:cash:AAPL",
+    coin: str = "cash:AAPL",
+    dex: str = "cash",
     bid_price: Decimal | None = Decimal("199.9"),
     ask_price: Decimal | None = Decimal("200"),
     quote_lag_seconds: int | None = 5,
 ) -> FeatureSnapshot:
     return FeatureSnapshot(
-        market_id="hl:perp:cash:cash:AAPL",
-        coin="cash:AAPL",
-        dex="cash",
+        market_id=market_id,
+        coin=coin,
+        dex=dex,
         event_ts=datetime(2026, 6, 18, tzinfo=timezone.utc),
         price=Decimal("200"),
         momentum_1m_bps=Decimal("3"),
@@ -84,7 +87,12 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
         ),
     )
 
-    verdict = evaluate_signal_risk(signal, state, config)
+    verdict = evaluate_signal_risk(
+        signal,
+        state,
+        config,
+        now=datetime(2026, 6, 18, 15, tzinfo=timezone.utc),
+    )
     intent = build_order_intent(
         signal=signal, verdict=verdict, config=config, decision_id="decision-1"
     )
@@ -136,7 +144,12 @@ def test_risk_blocks_remaining_exposure_below_min_order_notional() -> None:
         dependencies=(RuntimeDependencyStatus("clickhouse", True),),
     )
 
-    verdict = evaluate_signal_risk(signal, state, config)
+    verdict = evaluate_signal_risk(
+        signal,
+        state,
+        config,
+        now=datetime(2026, 6, 18, 15, tzinfo=timezone.utc),
+    )
 
     assert not verdict.allowed
     assert verdict.reason == "remaining_exposure_below_min_order_notional"
@@ -251,6 +264,72 @@ def test_risk_blocks_stale_dependency_and_duplicate_market() -> None:
 
     assert not verdict.allowed
     assert verdict.reason == "dependency_not_ready:clickhouse"
+
+
+def test_risk_blocks_equity_like_orders_outside_cash_session() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
+    signal = generate_signal(
+        _feature(coin="xyz:AVGO", dex="xyz"), parameter_version="test-v1"
+    )
+    state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+    )
+
+    verdict = evaluate_signal_risk(
+        signal,
+        state,
+        config,
+        now=datetime(2026, 6, 19, 8, tzinfo=timezone.utc),
+    )
+
+    assert not verdict.allowed
+    assert verdict.reason == "equity_like_market_session_closed"
+
+
+def test_risk_allows_crypto_orders_outside_cash_session() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
+    signal = generate_signal(
+        _feature(
+            market_id="hl:perp:default:BTC",
+            coin="BTC",
+            dex="default",
+        ),
+        parameter_version="test-v1",
+    )
+    state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+    )
+
+    verdict = evaluate_signal_risk(
+        signal,
+        state,
+        config,
+        now=datetime(2026, 6, 19, 8, tzinfo=timezone.utc),
+    )
+
+    assert verdict.allowed
 
 
 def test_deterministic_cloid_is_stable() -> None:
