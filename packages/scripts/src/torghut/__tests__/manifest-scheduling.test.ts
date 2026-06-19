@@ -155,12 +155,13 @@ describe('Torghut manifest scheduling', () => {
 
     expect(enabledTables).toEqual([
       'hyperliquid_market_catalog',
+      'hyperliquid_bbo',
       'hyperliquid_candles',
       'hyperliquid_asset_contexts',
       'hyperliquid_funding',
       'hyperliquid_status',
     ])
-    expect(readyTables).toEqual(['hyperliquid_candles'])
+    expect(readyTables).toEqual(['hyperliquid_bbo', 'hyperliquid_candles'])
     expect(readyTables.every((table) => enabledTables.includes(table))).toBe(true)
     expect(data.CLICKHOUSE_REQUEST_TIMEOUT_MS).toBe('30000')
     expect(data.CLICKHOUSE_ENABLED).toBe('true')
@@ -187,7 +188,7 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-pinned-spx-20260618a')
+    ).toBe('hyperliquid-feed-bbo-clickhouse-20260619a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
