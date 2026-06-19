@@ -16,7 +16,7 @@ spec:
       activeDeadlineSeconds: 900
       template:
         spec:
-          restartPolicy: OnFailure
+          restartPolicy: Never
           serviceAccountName: torghut-runtime
           containers:
             - name: renew
