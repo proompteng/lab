@@ -6,6 +6,7 @@ from decimal import Decimal
 from app.hyperliquid_runtime.config import HyperliquidRuntimeConfig
 from app.hyperliquid_runtime.models import (
     FeatureSnapshot,
+    RiskVerdict,
     RiskState,
     RuntimeDependencyStatus,
 )
@@ -185,6 +186,26 @@ def test_risk_blocks_missing_stale_or_crossed_executable_quote() -> None:
         verdict = evaluate_signal_risk(signal, state, config)
         assert not verdict.allowed
         assert verdict.reason == reason
+
+
+def test_build_order_intent_rejects_missing_touch_price() -> None:
+    config = _config()
+    signal = generate_signal(
+        _feature(bid_price=Decimal("199.9"), ask_price=None),
+        parameter_version="test-v1",
+    )
+
+    try:
+        build_order_intent(
+            signal=signal,
+            verdict=RiskVerdict("allowed", "allowed", Decimal("20")),
+            config=config,
+            decision_id="decision-1",
+        )
+    except ValueError as exc:
+        assert str(exc) == "missing_executable_quote"
+    else:
+        raise AssertionError("expected missing executable quote")
 
 
 def test_risk_blocks_mainnet_execution_config() -> None:

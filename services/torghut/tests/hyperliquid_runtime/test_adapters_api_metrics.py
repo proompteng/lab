@@ -213,6 +213,13 @@ def test_clickhouse_status_reports_query_failure(
     assert status.statuses[0].reason == "clickhouse_query_failed:RuntimeError"
 
 
+def test_clickhouse_optional_parsers_return_none_for_bad_values() -> None:
+    assert clickhouse_module._optional_decimal("12.5") == Decimal("12.5")
+    assert clickhouse_module._optional_decimal("bad") is None
+    assert clickhouse_module._optional_int("7") == 7
+    assert clickhouse_module._optional_int("bad") is None
+
+
 def test_clickhouse_http_request_auth_success_and_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -285,6 +292,10 @@ def test_exchange_shadow_unavailable_and_sdk_paths(
 
     unavailable = UnavailableHyperliquidExchange(["missing_secret"])
     assert not unavailable.dependency_status().ready
+    unavailable_setup = unavailable.prepare_order_market(_intent())
+    assert unavailable_setup is not None
+    assert unavailable_setup.status == "rejected"
+    assert unavailable_setup.rejection_reason == "missing_secret"
     unavailable_markets, unavailable_status = unavailable.filter_supported_markets(
         (_market(),)
     )

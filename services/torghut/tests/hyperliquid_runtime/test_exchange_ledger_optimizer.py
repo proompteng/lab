@@ -58,23 +58,42 @@ def test_trading_config_requires_tigerbeetle_accounting() -> None:
     }.issubset(set(config.validation_errors()))
 
 
-def test_shadow_exchange_never_requires_private_keys() -> None:
-    exchange = ShadowHyperliquidExchange()
-    result = exchange.submit_ioc_limit(
-        OrderIntent(
-            market_id="hl:perp:cash:cash:AAPL",
-            coin="cash:AAPL",
-            dex="cash",
-            side="buy",
-            size=Decimal("0.1"),
-            limit_price=Decimal("200"),
-            notional_usd=Decimal("20"),
-            cloid="0x1234567890abcdef1234567890abcdef",
-            reduce_only=False,
-            decision_id="decision",
-        )
+def test_trading_config_validates_min_order_notional_bounds() -> None:
+    non_positive = HyperliquidRuntimeConfig.from_env(
+        {"HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD": "0"}
+    )
+    inverted = HyperliquidRuntimeConfig.from_env(
+        {
+            "HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD": "10",
+            "HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD": "12",
+        }
     )
 
+    assert "min_order_notional_usd_must_be_positive" in non_positive.validation_errors()
+    assert (
+        "max_order_notional_usd_must_cover_min_order_notional"
+        in inverted.validation_errors()
+    )
+
+
+def test_shadow_exchange_never_requires_private_keys() -> None:
+    exchange = ShadowHyperliquidExchange()
+    intent = OrderIntent(
+        market_id="hl:perp:cash:cash:AAPL",
+        coin="cash:AAPL",
+        dex="cash",
+        side="buy",
+        size=Decimal("0.1"),
+        limit_price=Decimal("200"),
+        notional_usd=Decimal("20"),
+        cloid="0x1234567890abcdef1234567890abcdef",
+        reduce_only=False,
+        decision_id="decision",
+    )
+    setup = exchange.prepare_order_market(intent)
+    result = exchange.submit_ioc_limit(intent)
+
+    assert setup is None
     assert result.status == "rejected"
     assert result.rejection_reason == "trading_disabled_shadow"
     assert result.raw_response == {
@@ -118,12 +137,30 @@ def test_sdk_exchange_normalizes_perp_price_and_size_precision() -> None:
     assert normalized.notional_usd == Decimal("17.609000")
 
 
+def test_sdk_exchange_rejects_normalized_notional_below_configured_floor() -> None:
+    exchange = HyperliquidSdkExchange(
+        _trading_config(HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD="18")
+    )
+    exchange._sz_decimals_by_dex_coin = {"xyz": {"xyz:SMSN": 2}}
+
+    with pytest.raises(ValueError, match="order_notional_below_min_order_notional"):
+        exchange.normalize_order_intent(
+            _intent(
+                coin="xyz:SMSN",
+                dex="xyz",
+                size=Decimal("0.05"),
+                notional_usd=Decimal("10"),
+            )
+        )
+
+
 def test_sdk_exchange_filters_delisted_testnet_execution_markets() -> None:
     exchange = HyperliquidSdkExchange(_trading_config())
     exchange._sdk_info = _FakeInfo(
         {
             "xyz": {
                 "universe": [
+                    {"name": ""},
                     {
                         "name": "xyz:AVGO",
                         "isDelisted": True,
@@ -166,6 +203,7 @@ def test_sdk_exchange_filters_delisted_testnet_execution_markets() -> None:
         "xyz:NVDA": 3,
         "xyz:TSLA": 3,
     }
+    assert exchange._execution_universe_details((), ()) == {}
 
 
 def test_sdk_exchange_prepares_isolated_and_cross_markets_once() -> None:
@@ -199,6 +237,34 @@ def test_sdk_exchange_prepares_isolated_and_cross_markets_once() -> None:
         {"leverage": 1, "name": "xyz:CRCL", "is_cross": False},
         {"leverage": 1, "name": "xyz:NVDA", "is_cross": True},
     ]
+
+
+def test_sdk_exchange_rejects_failed_market_setup_before_submit() -> None:
+    exchange = HyperliquidSdkExchange(_trading_config())
+    exchange._execution_universe_by_dex = {"xyz": frozenset({"xyz:NVDA"})}
+    exchange._metadata_by_dex_coin = {
+        "xyz": {
+            "xyz:NVDA": exchange_module_metadata(
+                sz_decimals=3,
+                only_isolated=False,
+                margin_mode="",
+                max_leverage=20,
+            )
+        }
+    }
+    exchange._sdk_exchange = _FakeSdkExchange(leverage_error=RuntimeError("boom"))
+    exchange._sdk_exchange_perp_dexs = ("", "xyz")
+
+    result = exchange.prepare_order_market(_intent(coin="xyz:NVDA", dex="xyz"))
+
+    assert result is not None
+    assert result.status == "rejected"
+    assert result.rejection_reason == "exchange_market_setup_failed:RuntimeError"
+    assert result.raw_response["market_setup"] == {
+        "coin": "xyz:NVDA",
+        "dex": "xyz",
+        "is_cross": True,
+    }
 
 
 def test_sdk_exchange_cools_down_halted_markets_after_exchange_reject() -> None:
@@ -442,19 +508,19 @@ def test_optimizer_requires_all_promotion_gates() -> None:
     assert promoted.promoted
 
 
-def _trading_config() -> HyperliquidRuntimeConfig:
-    return HyperliquidRuntimeConfig.from_env(
-        {
-            "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "true",
-            "HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS": "0x1111111111111111111111111111111111111111",
-            "HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY": (
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-            "TORGHUT_TIGERBEETLE_ENABLED": "true",
-            "TORGHUT_TIGERBEETLE_REQUIRED": "true",
-            "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
-        }
-    )
+def _trading_config(**overrides: str) -> HyperliquidRuntimeConfig:
+    env = {
+        "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "true",
+        "HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS": "0x1111111111111111111111111111111111111111",
+        "HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY": (
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+        "TORGHUT_TIGERBEETLE_ENABLED": "true",
+        "TORGHUT_TIGERBEETLE_REQUIRED": "true",
+        "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
+    }
+    env.update(overrides)
+    return HyperliquidRuntimeConfig.from_env(env)
 
 
 def _market(coin: str, *, dex: str = "xyz") -> HyperliquidMarket:
@@ -472,15 +538,21 @@ def _market(coin: str, *, dex: str = "xyz") -> HyperliquidMarket:
     )
 
 
-def _intent(*, coin: str = "xyz:NVDA", dex: str = "xyz") -> OrderIntent:
+def _intent(
+    *,
+    coin: str = "xyz:NVDA",
+    dex: str = "xyz",
+    size: Decimal = Decimal("0.1"),
+    notional_usd: Decimal = Decimal("20"),
+) -> OrderIntent:
     return OrderIntent(
         market_id=f"hl:perp:{dex}:{coin}",
         coin=coin,
         dex=dex,
         side="buy",
-        size=Decimal("0.1"),
+        size=size,
         limit_price=Decimal("200"),
-        notional_usd=Decimal("20"),
+        notional_usd=notional_usd,
         cloid="0x1234567890abcdef1234567890abcdef",
         reduce_only=False,
         decision_id="decision",
@@ -511,8 +583,14 @@ class _FakeInfo:
 
 
 class _FakeSdkExchange:
-    def __init__(self, *, order_response: dict[str, object] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        order_response: dict[str, object] | None = None,
+        leverage_error: Exception | None = None,
+    ) -> None:
         self.leverage_updates: list[dict[str, object]] = []
+        self.leverage_error = leverage_error
         self.order_response = order_response or {
             "status": "ok",
             "response": {
@@ -524,6 +602,8 @@ class _FakeSdkExchange:
     def update_leverage(
         self, leverage: int, name: str, is_cross: bool
     ) -> dict[str, str]:
+        if self.leverage_error is not None:
+            raise self.leverage_error
         self.leverage_updates.append(
             {"leverage": leverage, "name": name, "is_cross": is_cross}
         )

@@ -25,8 +25,6 @@ def evaluate_signal_risk(
     if remaining_exposure < config.min_order_notional_usd:
         return _blocked("remaining_exposure_below_min_order_notional")
     notional = min(config.max_order_notional_usd, remaining_exposure)
-    if notional < config.min_order_notional_usd:
-        return _blocked("order_notional_below_min_order_notional")
     return RiskVerdict("allowed", "allowed", notional)
 
 
