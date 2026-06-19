@@ -93,6 +93,7 @@ def readyz(response: Response) -> dict[str, object]:
                 "ready": dependency.ready,
                 "lag_seconds": dependency.lag_seconds,
                 "reason": dependency.reason,
+                "details": dependency.details,
             }
             for dependency in dependencies
         ],

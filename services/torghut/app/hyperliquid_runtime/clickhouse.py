@@ -123,7 +123,11 @@ class ClickHouseRuntimeReader:
           funding_rate,
           open_interest_usd,
           regime,
-          source_lag_seconds
+          source_lag_seconds,
+          bid_price,
+          ask_price,
+          quote_event_ts,
+          quote_lag_seconds
         FROM {database}.hyperliquid_runtime_latest_features
         WHERE network = {network}
           AND market_id IN ({market_list})
@@ -287,6 +291,10 @@ def _feature_from_row(row: Mapping[str, object]) -> FeatureSnapshot:
         open_interest_usd=_decimal(row.get("open_interest_usd")),
         regime=_string(row.get("regime")) or "unknown",
         source_lag_seconds=int(_decimal(row.get("source_lag_seconds"))),
+        bid_price=_optional_decimal(row.get("bid_price")),
+        ask_price=_optional_decimal(row.get("ask_price")),
+        quote_event_ts=_optional_datetime(row.get("quote_event_ts")),
+        quote_lag_seconds=_optional_int(row.get("quote_lag_seconds")),
     )
 
 
@@ -330,6 +338,24 @@ def _decimal(value: object) -> Decimal:
         return Decimal(str(value))
     except (InvalidOperation, ValueError):
         return Decimal("0")
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value in (None, ""):
+        return None
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError):
+        return None
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(str(value))
+    except ValueError:
+        return None
 
 
 def _datetime(value: object) -> datetime:

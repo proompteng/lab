@@ -22,9 +22,9 @@ def evaluate_signal_risk(
     remaining_exposure = config.max_gross_exposure_usd - state.gross_exposure_usd
     if remaining_exposure <= Decimal("0"):
         return _blocked("gross_exposure_cap")
+    if remaining_exposure < config.min_order_notional_usd:
+        return _blocked("remaining_exposure_below_min_order_notional")
     notional = min(config.max_order_notional_usd, remaining_exposure)
-    if notional <= Decimal("0"):
-        return _blocked("order_notional_zero")
     return RiskVerdict("allowed", "allowed", notional)
 
 
@@ -80,10 +80,13 @@ def _limit_price(
     side: str,
     max_slippage_bps: Decimal,
 ) -> Decimal:
+    touch_price = feature.ask_price if side == "buy" else feature.bid_price
+    if touch_price is None:
+        raise ValueError("missing_executable_quote")
     multiplier = Decimal("1") + (max_slippage_bps / Decimal("10000"))
     if side == "sell":
         multiplier = Decimal("1") - (max_slippage_bps / Decimal("10000"))
-    return (feature.price * multiplier).quantize(Decimal("0.000001"))
+    return (touch_price * multiplier).quantize(Decimal("0.000001"))
 
 
 def _order_size(
@@ -112,6 +115,7 @@ def _blocked_reason(
     dependency_blockers = sorted(
         dependency.name for dependency in state.dependencies if not dependency.ready
     )
+    quote_blocker = _quote_blocked_reason(signal.feature, config)
     checks = (
         (bool(config_errors), ",".join(config_errors)),
         (not config.trading_enabled, "trading_disabled_shadow"),
@@ -126,5 +130,29 @@ def _blocked_reason(
         ),
         (signal.market_id in state.open_order_markets, "open_order_exists_for_market"),
         (state.daily_realized_pnl_usd <= -config.max_daily_loss_usd, "daily_loss_stop"),
+        (quote_blocker is not None, quote_blocker or ""),
+    )
+    return next((reason for blocked, reason in checks if blocked), None)
+
+
+def _quote_blocked_reason(
+    feature: FeatureSnapshot,
+    config: HyperliquidRuntimeConfig,
+) -> str | None:
+    bid = feature.bid_price
+    ask = feature.ask_price
+    checks = (
+        (bid is None and ask is None, "missing_executable_quote"),
+        (bid is None, "missing_bid"),
+        (ask is None, "missing_ask"),
+        (bid is not None and bid <= Decimal("0"), "non_positive_bid"),
+        (ask is not None and ask <= Decimal("0"), "non_positive_ask"),
+        (bid is not None and ask is not None and ask < bid, "crossed_quote"),
+        (feature.quote_lag_seconds is None, "missing_executable_quote_timestamp"),
+        (
+            feature.quote_lag_seconds is not None
+            and feature.quote_lag_seconds > config.signal_staleness_seconds,
+            "executable_quote_stale",
+        ),
     )
     return next((reason for blocked, reason in checks if blocked), None)
