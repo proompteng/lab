@@ -26,6 +26,7 @@ CUSTOM_RULES = (
     "torghut-wildcard-import",
     "torghut-custom-module-class",
     "torghut-test-compat-wrapper",
+    "torghut-source-string-execution",
 )
 
 _DIFF_FILE_RE = re.compile(r"^\+\+\+ b/(.+)$")

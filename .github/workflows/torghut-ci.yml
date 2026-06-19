@@ -456,6 +456,10 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen ruff check app tests scripts migrations
 
+      - name: Pylint structural hardening gate
+        working-directory: services/torghut
+        run: uv run --frozen python scripts/run_pylint_torghut_structural_gate.py
+
       - name: Pylint refactor quality gate
         working-directory: services/torghut
         shell: bash

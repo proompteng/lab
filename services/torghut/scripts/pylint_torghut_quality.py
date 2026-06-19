@@ -16,7 +16,7 @@ from pylint.lint import PyLinter
 PLUGIN_PATH = Path(__file__).resolve()
 
 GENERATED_SPLIT_NAME_RE = re.compile(
-    r"^(?:part_\d+|source_part_\d+|test_part_\d+).*\.(?:py|pyi)$"
+    r"^(?:part_\d+|source_part_\d+|source_segment_\d+|test_part_\d+).*\.(?:py|pyi)$"
 )
 PYRIGHT_PRIVATE_USAGE_SETTING = "reportPrivateUsage"
 
@@ -150,6 +150,11 @@ class TorghutQualityChecker(BaseChecker):
             "%s: %s",
             "torghut-wildcard-ruff-noqa",
             "Used when a file-level Ruff suppression keeps wildcard-import checks disabled.",
+        ),
+        "C9018": (
+            "Dynamic exec call %s; move generated source into normal modules",
+            "torghut-source-string-execution",
+            "Used when code executes source strings instead of importing normal modules.",
         ),
     }
 
@@ -288,14 +293,20 @@ class TorghutQualityChecker(BaseChecker):
         )
 
     def _check_call(self, module_node: nodes.Module, node: ast.Call) -> None:
-        if not _is_globals_update_call(node):
-            return
-        self.add_message(
-            "torghut-dynamic-globals-reexport",
-            node=module_node,
-            line=node.lineno,
-            args=("dynamic globals re-export", ast.unparse(node)),
-        )
+        if _is_globals_update_call(node):
+            self.add_message(
+                "torghut-dynamic-globals-reexport",
+                node=module_node,
+                line=node.lineno,
+                args=("dynamic globals re-export", ast.unparse(node)),
+            )
+        if _is_exec_call(node):
+            self.add_message(
+                "torghut-source-string-execution",
+                node=module_node,
+                line=node.lineno,
+                args=(ast.unparse(node),),
+            )
 
     def _check_test_wrapper(
         self, module_node: nodes.Module, path: Path, text: str
@@ -378,6 +389,10 @@ def _is_globals_update_call(node: ast.Call) -> bool:
         and isinstance(node.func.value.func, ast.Name)
         and node.func.value.func.id == "globals"
     )
+
+
+def _is_exec_call(node: ast.Call) -> bool:
+    return isinstance(node.func, ast.Name) and node.func.id == "exec"
 
 
 def _is_dead_test_compat_wrapper(path: Path, text: str) -> bool:
