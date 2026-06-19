@@ -129,6 +129,7 @@ class RiskState:
     symbol_exposure_usd_by_coin: dict[str, Decimal] = field(
         default_factory=_empty_decimal_by_coin
     )
+    collection_gross_exposure_usd: Decimal | None = None
     reject_cooldown_coins: frozenset[str] = field(default_factory=_empty_frozenset)
     halted_coins: frozenset[str] = field(default_factory=_empty_frozenset)
 

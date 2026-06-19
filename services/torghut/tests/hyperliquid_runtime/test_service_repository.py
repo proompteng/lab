@@ -311,12 +311,20 @@ def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
     risk_state = repository.risk_state(
         dependencies=(RuntimeDependencyStatus("clickhouse", True),)
     )
+    filtered_risk_state = repository.risk_state(
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+        trade_coins=("cash:AAPL",),
+        excluded_coins=("SPX",),
+    )
 
     assert signal_id
     assert decision_id
     assert order_id
     assert fill_count == 1
     assert risk_state.gross_exposure_usd == Decimal("25.5")
+    assert risk_state.collection_gross_exposure_usd == Decimal("25.5")
+    assert filtered_risk_state.gross_exposure_usd == Decimal("25.5")
+    assert filtered_risk_state.collection_gross_exposure_usd == Decimal("20")
     assert risk_state.daily_realized_pnl_usd == Decimal("-1.25")
     assert risk_state.unrealized_pnl_usd == Decimal("0.75")
     assert risk_state.daily_fees_usd == Decimal("0.01")

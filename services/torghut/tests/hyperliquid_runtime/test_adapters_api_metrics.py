@@ -679,6 +679,7 @@ def test_api_report_returns_configured_runtime_evidence(
             return {
                 "schema_version": "torghut.hyperliquid-runtime-report.v1",
                 "config": config_payload,
+                "account": [{"gross_exposure_usd": "100.59"}],
                 "positions": [],
                 "fills_by_coin": [],
                 "rejects_by_coin_reason": [],
@@ -712,6 +713,7 @@ def test_api_report_returns_configured_runtime_evidence(
     assert payload["config"]["max_order_notional_usd"] == "10"
     assert payload["config"]["max_symbol_exposure_usd"] == "25"
     assert payload["config"]["halted_cooldown_seconds"] == 120
+    assert payload["account"] == [{"gross_exposure_usd": "100.59"}]
 
 
 def test_api_run_one_cycle_success_and_failure(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -22,7 +22,12 @@ def evaluate_signal_risk(
     blocked_reason = _blocked_reason(signal, state, config, now=now)
     if blocked_reason is not None:
         return _blocked(blocked_reason)
-    remaining_exposure = config.max_gross_exposure_usd - state.gross_exposure_usd
+    cap_exposure = (
+        state.collection_gross_exposure_usd
+        if state.collection_gross_exposure_usd is not None
+        else state.gross_exposure_usd
+    )
+    remaining_exposure = config.max_gross_exposure_usd - cap_exposure
     if remaining_exposure <= Decimal("0"):
         return _blocked("gross_exposure_cap")
     if remaining_exposure < config.min_order_notional_usd:
