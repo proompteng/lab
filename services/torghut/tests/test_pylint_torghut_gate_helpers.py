@@ -38,6 +38,10 @@ def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
 
 def test_file_length_filter_carries_transitional_extracted_source_baseline() -> None:
     assert "app/trading/research_sleeves.py" not in _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
+    assert (
+        "app/trading/discovery/candidate_specs.py"
+        not in _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
+    )
 
     output = "\n".join(
         (
