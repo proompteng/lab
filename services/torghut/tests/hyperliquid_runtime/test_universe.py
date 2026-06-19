@@ -59,3 +59,32 @@ def test_selects_liquid_allowed_markets_by_volume() -> None:
         "hl:perp:cash:cash:AAPL",
     ]
     assert {market.asset_class for market in markets} == {"crypto", "stocks", "preipo"}
+
+
+def test_default_runtime_universe_excludes_crypto() -> None:
+    rows = [
+        {
+            "market_type": "perp",
+            "market_id": "hl:perp:default:BTC",
+            "coin": "BTC",
+            "dex": "default",
+            "payload": '{"dayNtlVlm":"9000000"}',
+        },
+        {
+            "market_type": "perp",
+            "market_id": "hl:perp:xyz:NVDA",
+            "coin": "NVDA",
+            "dex": "xyz",
+            "payload": '{"dayNtlVlm":"800000","markPx":"80"}',
+        },
+    ]
+
+    markets = select_runtime_markets(
+        rows,
+        market_data_network="mainnet",
+        allowed_asset_classes=("stocks", "indices", "preipo"),
+        min_day_notional_volume_usd=Decimal("100000"),
+        max_markets=10,
+    )
+
+    assert [market.market_id for market in markets] == ["hl:perp:xyz:NVDA"]
