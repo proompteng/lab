@@ -156,9 +156,7 @@ class HyperliquidRuntimeConfig:
                     _DEFAULT_ALLOWED_ASSET_CLASSES,
                 )
             ),
-            trade_coins=tuple(
-                _csv_text(source, "HYPERLIQUID_RUNTIME_TRADE_COINS", ())
-            ),
+            trade_coins=tuple(_csv_text(source, "HYPERLIQUID_RUNTIME_TRADE_COINS", ())),
             excluded_coins=tuple(
                 _csv_text(source, "HYPERLIQUID_RUNTIME_EXCLUDED_COINS", ())
             ),

@@ -251,7 +251,9 @@ def test_risk_caps_symbol_exposure_before_global_cap() -> None:
     assert not capped_verdict.allowed
     assert capped_verdict.reason == "symbol_exposure_cap"
     assert not partial_verdict.allowed
-    assert partial_verdict.reason == "symbol_remaining_exposure_below_min_order_notional"
+    assert (
+        partial_verdict.reason == "symbol_remaining_exposure_below_min_order_notional"
+    )
 
 
 def test_risk_blocks_reject_and_halted_cooldowns() -> None:
