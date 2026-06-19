@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-feed-pinned-spx-20260618a
+        proompteng.ai/config-revision: hyperliquid-feed-bbo-clickhouse-20260619a
       labels:
         app: torghut-hyperliquid-feed
     spec:
