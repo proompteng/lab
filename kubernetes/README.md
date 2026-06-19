@@ -62,8 +62,10 @@ kubectl -n metallb-system rollout status ds/speaker --timeout=300s
 
 Notes:
 
-- Edit `argocd/applications/metallb-system/ipaddresspool.yaml` to match your LAN range and avoid static IPs. Current pool: `192.168.1.100-192.168.1.149`.
-- The K3s Traefik Service (`kube-system/traefik`) is type LoadBalancer and will be Pending until MetalLB assigns an External IP. After this step it should have an IP, e.g., `192.168.1.100`.
+- Edit `argocd/applications/metallb-system/ipaddresspool.yaml` to match your LAN range and avoid static IPs. Current pools:
+  - `metallb-plex-pool`: `100.100.244.180/32`, reserved for Plex LAN access.
+  - `metallb-ip-pool`: `100.100.244.181-100.100.244.190`, shared platform services.
+- Traefik and Forgejo SSH share `100.100.244.181`; Istio ingress uses `100.100.244.182`.
 
 4. Apply the root Application (ApplicationSet) to sync the rest of the stack:
 

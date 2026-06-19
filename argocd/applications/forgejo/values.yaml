@@ -29,6 +29,7 @@ service:
     annotations:
       metallb.io/address-pool: metallb-ip-pool
       metallb.io/allow-shared-ip: ingress-edge
+      metallb.io/loadBalancerIPs: 100.100.244.181
 
 gitea:
   admin:
