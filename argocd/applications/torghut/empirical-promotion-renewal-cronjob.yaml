@@ -3,6 +3,9 @@ kind: CronJob
 metadata:
   name: torghut-empirical-promotion-renewal
   namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: empirical-promotion-renewal
 spec:
   schedule: "23 8,21 * * *"
   concurrencyPolicy: Forbid

@@ -106,6 +106,9 @@ describe('Torghut manifest scheduling', () => {
     for (const path of cronJobPaths) {
       for (const manifest of parseManifestDocuments(path)) {
         expect(manifest.kind, path).toBe('CronJob')
+        expect(getAtPath(manifest, ['metadata', 'labels']), path).toMatchObject({
+          'app.kubernetes.io/name': 'torghut',
+        })
         const spec = getAtPath(manifest, ['spec'])
         const jobSpec = getAtPath(manifest, ['spec', 'jobTemplate', 'spec'])
         expect(spec.failedJobsHistoryLimit, path).toBe(2)
