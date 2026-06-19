@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Protocol
+from typing import Protocol, cast
 
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidExecutionExchange
@@ -212,17 +212,25 @@ class HyperliquidExecutionService:
             feed_markets
         )
         fresh_features = self._fresh_features(execution_markets)
+        selected_markets, selected_features = _select_markets_with_fresh_features(
+            execution_markets, fresh_features
+        )
         feature_status = _feature_status(execution_markets, fresh_features)
         open_order_status = self._reconcile_exchange_state(
-            repository, execution_markets, observed_at
+            repository, selected_markets, observed_at
         )
         exchange_status = self._exchange.dependency_status()
         return _CycleContext(
-            markets=execution_markets,
-            features=fresh_features,
+            markets=selected_markets,
+            features=selected_features,
             dependencies=feed_status.statuses
             + (execution_status, feature_status, open_order_status, exchange_status),
-            universe_details=self._universe_details(feed_details, execution_status),
+            universe_details=self._universe_details(
+                feed_details,
+                execution_status,
+                feature_status,
+                selected_markets,
+            ),
         )
 
     def _fresh_features(
@@ -264,10 +272,22 @@ class HyperliquidExecutionService:
         self,
         feed_details: dict[str, object],
         execution_status: RuntimeDependencyStatus,
+        feature_status: RuntimeDependencyStatus,
+        selected_markets: tuple[ExecutionMarket, ...],
     ) -> dict[str, object]:
         details = dict(feed_details)
         details.update(execution_status.details)
         details.update(self._exchange.execution_metadata_details())
+        details["selected_execution_metadata"] = _string_list_detail(
+            details.get("selected")
+        )
+        details["selected"] = [market.coin for market in selected_markets]
+        details["fresh_features"] = _string_list_detail(
+            feature_status.details.get("features")
+        )
+        details["missing_fresh_features"] = _string_list_detail(
+            feature_status.details.get("missing")
+        )
         return details
 
 
@@ -317,6 +337,28 @@ class _CycleCounts:
     orders_cancelled: int = 0
 
 
+def _select_markets_with_fresh_features(
+    markets: tuple[ExecutionMarket, ...],
+    features: tuple[FeatureSnapshot, ...],
+) -> tuple[tuple[ExecutionMarket, ...], tuple[FeatureSnapshot, ...]]:
+    feature_by_market_id = {
+        feature.market_id: feature for feature in reversed(features)
+    }
+    selected_markets = tuple(
+        market for market in markets if market.market_id in feature_by_market_id
+    )
+    selected_features = tuple(
+        feature_by_market_id[market.market_id] for market in selected_markets
+    )
+    return selected_markets, selected_features
+
+
+def _string_list_detail(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in cast(list[object], value)]
+
+
 def _feature_status(
     markets: tuple[ExecutionMarket, ...],
     features: tuple[FeatureSnapshot, ...],
@@ -325,11 +367,14 @@ def _feature_status(
     missing = [
         market.coin for market in markets if market.market_id not in feature_market_ids
     ]
-    ready = bool(markets) and not missing
+    ready = bool(features)
+    reason: str | None = None
+    if not ready:
+        reason = "no_fresh_features" if markets else "no_execution_markets"
     return RuntimeDependencyStatus(
         name="hyperliquid_mainnet_features",
         ready=ready,
-        reason=None if ready else "missing_fresh_features",
+        reason=reason,
         details={
             "missing": missing,
             "features": [feature.coin for feature in features],

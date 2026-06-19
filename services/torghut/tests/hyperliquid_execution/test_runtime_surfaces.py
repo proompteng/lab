@@ -31,6 +31,8 @@ from app.hyperliquid_execution.models import (
 from app.hyperliquid_execution.repository import HyperliquidExecutionRepository
 from app.hyperliquid_execution.service import (
     HyperliquidExecutionService,
+    _feature_status,
+    _string_list_detail,
     runtime_readiness,
 )
 
@@ -280,6 +282,52 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     assert cycle_calls[0] < signal_call < cycle_calls[-1]
 
 
+def test_service_selects_only_fresh_execution_markets() -> None:
+    now = _now()
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA,xyz:MU",
+        }
+    )
+    session = _FakeSession()
+    exchange = _ServiceExchange(now)
+    service = HyperliquidExecutionService(
+        config=config,
+        feed=_PartialFeatureServiceFeed(now),
+        exchange=exchange,
+    )
+
+    result = service.run_once(session)
+
+    dependencies = {dependency.name: dependency for dependency in result.dependencies}
+    feature_dependency = dependencies["hyperliquid_mainnet_features"]
+    assert result.selected_coins == ("NVDA",)
+    assert result.signals_written == 1
+    assert result.orders_submitted == 1
+    assert feature_dependency.ready is True
+    assert feature_dependency.reason is None
+    assert feature_dependency.details["features"] == ["NVDA"]
+    assert feature_dependency.details["missing"] == ["MU"]
+    assert result.universe_details["selected"] == ["NVDA"]
+    assert result.universe_details["selected_execution_metadata"] == ["NVDA", "MU"]
+    assert result.universe_details["missing_fresh_features"] == ["MU"]
+    assert exchange.reconciled_coins == {"NVDA"}
+
+
+def test_feature_status_and_detail_helpers_report_empty_paths() -> None:
+    no_features = _feature_status((_market(),), ())
+    no_markets = _feature_status((), ())
+
+    assert no_features.ready is False
+    assert no_features.reason == "no_fresh_features"
+    assert no_markets.ready is False
+    assert no_markets.reason == "no_execution_markets"
+    assert _string_list_detail("NVDA") == []
+
+
 def test_runtime_readiness_reports_config_errors_and_dependency_blockers() -> None:
     config = HyperliquidExecutionConfig.from_env(
         {
@@ -423,9 +471,36 @@ class _ServiceFeed:
         return [_feature(event_ts=self.now)]
 
 
+class _PartialFeatureServiceFeed(_ServiceFeed):
+    def load_catalog_rows(self) -> list[dict[str, object]]:
+        return [
+            {
+                "market_id": "hl:perp:xyz:NVDA",
+                "coin": "NVDA",
+                "dex": "xyz",
+                "network": "mainnet",
+                "market_type": "perp",
+                "dayNtlVlm": "1000",
+            },
+            {
+                "market_id": "hl:perp:xyz:MU",
+                "coin": "MU",
+                "dex": "xyz",
+                "network": "mainnet",
+                "market_type": "perp",
+                "dayNtlVlm": "900",
+            },
+        ]
+
+    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
+        assert market_ids == ["hl:perp:xyz:NVDA", "hl:perp:xyz:MU"]
+        return [_feature(event_ts=self.now)]
+
+
 class _ServiceExchange:
     def __init__(self, now: datetime) -> None:
         self.now = now
+        self.reconciled_coins: set[str] = set()
 
     def filter_supported_markets(
         self,
@@ -434,7 +509,10 @@ class _ServiceExchange:
         return markets, RuntimeDependencyStatus(
             "hyperliquid_execution_metadata",
             True,
-            details={"active_execution_metadata": ["NVDA"]},
+            details={
+                "active_execution_metadata": [market.coin for market in markets],
+                "selected": [market.coin for market in markets],
+            },
         )
 
     def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
@@ -445,12 +523,15 @@ class _ServiceExchange:
         return OrderResult("cancelled", "123", {"ok": True})
 
     def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Fill]:
+        self.reconciled_coins.update(_market_id_by_coin)
         return [_fill(self.now)]
 
     def reconcile_account(self, _market_id_by_coin: dict[str, str]) -> AccountState:
+        self.reconciled_coins.update(_market_id_by_coin)
         return _account_state(self.now)
 
-    def reconcile_open_order_coins(self, _coins: frozenset[str]) -> frozenset[str]:
+    def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]:
+        self.reconciled_coins.update(coins)
         return frozenset()
 
     def dependency_status(self) -> RuntimeDependencyStatus:
@@ -459,7 +540,7 @@ class _ServiceExchange:
         )
 
     def execution_metadata_details(self) -> dict[str, object]:
-        return {"selected_execution_metadata": ["NVDA"]}
+        return {}
 
 
 class _FakeSession:
