@@ -17,6 +17,10 @@ OrderStatus = Literal[
 RiskStatus = Literal["allowed", "blocked"]
 
 
+def _empty_details() -> dict[str, object]:
+    return {}
+
+
 def _empty_payload() -> dict[str, object]:
     return {}
 
@@ -30,6 +34,7 @@ class RuntimeDependencyStatus:
     observed_at: datetime | None = None
     lag_seconds: int | None = None
     reason: str | None = None
+    details: dict[str, object] = field(default_factory=_empty_details)
 
 
 @dataclass(frozen=True)
@@ -72,6 +77,10 @@ class FeatureSnapshot:
     open_interest_usd: Decimal
     regime: str
     source_lag_seconds: int
+    bid_price: Decimal | None = None
+    ask_price: Decimal | None = None
+    quote_event_ts: datetime | None = None
+    quote_lag_seconds: int | None = None
 
 
 @dataclass(frozen=True)

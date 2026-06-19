@@ -70,6 +70,10 @@ def _feature(
         open_interest_usd=Decimal("1000000"),
         regime="trend",
         source_lag_seconds=source_lag_seconds,
+        bid_price=Decimal("199.9"),
+        ask_price=Decimal("200"),
+        quote_event_ts=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        quote_lag_seconds=5,
     )
 
 
@@ -433,15 +437,20 @@ class _FakeExchange:
         supports_markets: bool = True,
         fail_submit: bool = False,
         normalized_intent: OrderIntent | None = None,
+        normalize_error: ValueError | None = None,
+        market_setup_result: OrderResult | None = None,
         open_order_market_ids: frozenset[str] | None = None,
     ) -> None:
         self.submitted: list[OrderIntent] = []
         self.normalized_inputs: list[OrderIntent] = []
+        self.market_setup_inputs: list[OrderIntent] = []
         self.open_order_reconcile_inputs: list[dict[str, str]] = []
         self._fills = fills
         self._supports_markets = supports_markets
         self._fail_submit = fail_submit
         self._normalized_intent = normalized_intent
+        self._normalize_error = normalize_error
+        self._market_setup_result = market_setup_result
         self._open_order_market_ids = open_order_market_ids or frozenset()
 
     def filter_supported_markets(
@@ -464,6 +473,8 @@ class _FakeExchange:
 
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         self.normalized_inputs.append(intent)
+        if self._normalize_error is not None:
+            raise self._normalize_error
         if self._normalized_intent is None:
             return intent
         return replace(
@@ -472,6 +483,10 @@ class _FakeExchange:
             limit_price=self._normalized_intent.limit_price,
             notional_usd=self._normalized_intent.notional_usd,
         )
+
+    def prepare_order_market(self, intent: OrderIntent) -> OrderResult | None:
+        self.market_setup_inputs.append(intent)
+        return self._market_setup_result
 
     def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Fill]:
         if not self._fills:
@@ -574,7 +589,7 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
         decision_id="decision-id",
         limit_price=Decimal("200.3"),
         size=Decimal("0.04"),
-        notional_usd=Decimal("8.012000"),
+        notional_usd=Decimal("17.609000"),
     )
     exchange = _FakeExchange(normalized_intent=normalized_intent)
     journal = _FakeJournal()
@@ -604,6 +619,7 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     assert result.orders_submitted == 1
     assert result.blocked_decisions == 0
     assert exchange.normalized_inputs
+    assert exchange.market_setup_inputs == [exchange.submitted[0]]
     assert exchange.submitted[0].side == "buy"
     assert exchange.submitted[0].limit_price == Decimal("200.3")
     assert exchange.submitted[0].size == Decimal("0.04")
@@ -796,6 +812,84 @@ def test_runtime_service_releases_hold_when_submit_raises(
         "order_rejected",
     ]
     assert session.committed
+
+
+def test_runtime_service_rejects_invalid_normalized_order_without_submit(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(
+        fills=False,
+        normalize_error=ValueError("order_notional_below_min_order_notional"),
+    )
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert result.orders_submitted == 0
+    assert exchange.submitted == []
+    assert exchange.market_setup_inputs == []
+    assert repository.orders[0][1].status == "rejected"
+    assert repository.orders[0][1].rejection_reason == (
+        "order_intent_invalid:order_notional_below_min_order_notional"
+    )
+    assert [event.transfer_kind for event in journal.persisted] == ["order_rejected"]
+
+
+def test_runtime_service_rejects_market_setup_failure_without_submit(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    setup_result = OrderResult(
+        status="rejected",
+        exchange_order_id=None,
+        raw_response={"error": "RuntimeError"},
+        rejection_reason="exchange_market_setup_failed:RuntimeError",
+    )
+    exchange = _FakeExchange(fills=False, market_setup_result=setup_result)
+    journal = _FakeJournal()
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+    service = HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+        ),
+        clickhouse=_FakeClickHouse(),
+        exchange=exchange,
+        journal=journal,
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert result.orders_submitted == 0
+    assert exchange.market_setup_inputs
+    assert exchange.submitted == []
+    assert repository.orders[0][1].rejection_reason == (
+        "exchange_market_setup_failed:RuntimeError"
+    )
+    assert [event.transfer_kind for event in journal.persisted] == ["order_rejected"]
 
 
 def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(

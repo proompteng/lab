@@ -37,6 +37,7 @@ class HyperliquidRuntimeConfig:
     max_markets_per_cycle: int
     allowed_asset_classes: tuple[str, ...]
     max_order_notional_usd: Decimal
+    min_order_notional_usd: Decimal
     max_gross_exposure_usd: Decimal
     max_daily_loss_usd: Decimal
     max_slippage_bps: Decimal
@@ -139,6 +140,9 @@ class HyperliquidRuntimeConfig:
             max_order_notional_usd=_decimal(
                 source, "HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD", "25"
             ),
+            min_order_notional_usd=_decimal(
+                source, "HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD", "12"
+            ),
             max_gross_exposure_usd=_decimal(
                 source, "HYPERLIQUID_RUNTIME_MAX_GROSS_EXPOSURE_USD", "100"
             ),
@@ -208,6 +212,10 @@ class HyperliquidRuntimeConfig:
             errors.append("api_wallet_private_key_required_when_trading_enabled")
         if self.max_order_notional_usd <= Decimal("0"):
             errors.append("max_order_notional_usd_must_be_positive")
+        if self.min_order_notional_usd <= Decimal("0"):
+            errors.append("min_order_notional_usd_must_be_positive")
+        if self.max_order_notional_usd < self.min_order_notional_usd:
+            errors.append("max_order_notional_usd_must_cover_min_order_notional")
         if self.max_gross_exposure_usd < self.max_order_notional_usd:
             errors.append("max_gross_exposure_usd_must_cover_one_order")
         if self.max_daily_loss_usd <= Decimal("0"):

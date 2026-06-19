@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
@@ -25,11 +25,23 @@ from .models import (
 _EXECUTION_UNIVERSE_REFRESH_SECONDS = 300
 
 
+@dataclass(frozen=True)
+class _ExecutionMarketMetadata:
+    sz_decimals: int | None
+    only_isolated: bool
+    margin_mode: str
+    max_leverage: int | None
+
+
 class HyperliquidExchange(Protocol):
     """Minimal exchange surface used by the runtime service."""
 
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         """Return an exchange-compliant order intent."""
+        ...
+
+    def prepare_order_market(self, intent: OrderIntent) -> OrderResult | None:
+        """Prepare market margin/leverage before journaling a submitted hold."""
         ...
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
@@ -74,6 +86,10 @@ class ShadowHyperliquidExchange:
 
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         return intent
+
+    def prepare_order_market(self, intent: OrderIntent) -> OrderResult | None:
+        _ = intent
+        return None
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         _ = intent
@@ -146,6 +162,15 @@ class UnavailableHyperliquidExchange:
 
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         return intent
+
+    def prepare_order_market(self, intent: OrderIntent) -> OrderResult | None:
+        _ = intent
+        return OrderResult(
+            status="rejected",
+            exchange_order_id=None,
+            raw_response={"unavailable": True, "reasons": list(self._reasons)},
+            rejection_reason=",".join(self._reasons),
+        )
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         _ = intent
@@ -220,7 +245,11 @@ class HyperliquidSdkExchange:
         self._last_exchange_read_at: datetime | None = None
         self._last_execution_universe_at: datetime | None = None
         self._execution_universe_by_dex: dict[str, frozenset[str]] = {}
+        self._delisted_universe_by_dex: dict[str, frozenset[str]] = {}
+        self._halted_universe_by_dex: dict[str, set[str]] = {}
         self._sz_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+        self._metadata_by_dex_coin: dict[str, dict[str, _ExecutionMarketMetadata]] = {}
+        self._configured_market_keys: set[tuple[str, str, bool]] = set()
 
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         sz_decimals = self._sz_decimals_by_dex_coin.get(_sdk_dex(intent.dex), {}).get(
@@ -239,12 +268,45 @@ class HyperliquidSdkExchange:
         )
         if size <= Decimal("0"):
             raise ValueError("order_size_below_exchange_precision")
+        notional_usd = (price * size).quantize(Decimal("0.000001"))
+        if notional_usd < self._config.min_order_notional_usd:
+            raise ValueError("order_notional_below_min_order_notional")
         return replace(
             intent,
             size=size,
             limit_price=price,
-            notional_usd=(price * size).quantize(Decimal("0.000001")),
+            notional_usd=notional_usd,
         )
+
+    def prepare_order_market(self, intent: OrderIntent) -> OrderResult | None:
+        dex = _sdk_dex(intent.dex)
+        metadata = self._metadata_by_dex_coin.get(dex, {}).get(intent.coin)
+        is_cross = not (
+            metadata is not None
+            and (metadata.only_isolated or metadata.margin_mode == "noCross")
+        )
+        configured_key = (dex, intent.coin, is_cross)
+        if configured_key in self._configured_market_keys:
+            return None
+        try:
+            self._exchange().update_leverage(1, intent.coin, is_cross=is_cross)
+        except Exception as exc:
+            return OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={
+                    "error": type(exc).__name__,
+                    "market_setup": {
+                        "coin": intent.coin,
+                        "dex": dex or "default",
+                        "is_cross": is_cross,
+                    },
+                },
+                rejection_reason=f"exchange_market_setup_failed:{type(exc).__name__}",
+            )
+        self._configured_market_keys.add(configured_key)
+        self._last_exchange_read_at = datetime.now(timezone.utc)
+        return None
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         intent = self.normalize_order_intent(intent)
@@ -263,7 +325,12 @@ class HyperliquidSdkExchange:
             ),
         )
         self._last_exchange_read_at = datetime.now(timezone.utc)
-        return _order_result(response)
+        result = _order_result(response)
+        if _is_trading_halted(result):
+            self._halted_universe_by_dex.setdefault(_sdk_dex(intent.dex), set()).add(
+                intent.coin
+            )
+        return result
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         info = self._info()
@@ -345,8 +412,7 @@ class HyperliquidSdkExchange:
         supported = tuple(
             market
             for market in markets
-            if market.coin
-            in self._execution_universe_by_dex.get(_sdk_dex(market.dex), frozenset())
+            if market.coin in self._active_execution_coins(_sdk_dex(market.dex))
         )
         observed_at = self._last_execution_universe_at
         lag_seconds = (
@@ -354,6 +420,7 @@ class HyperliquidSdkExchange:
             if observed_at is not None
             else None
         )
+        details = self._execution_universe_details(markets, supported)
         ready = bool(supported)
         return (
             supported,
@@ -363,6 +430,7 @@ class HyperliquidSdkExchange:
                 observed_at=observed_at,
                 lag_seconds=lag_seconds,
                 reason=None if ready else "no_execution_supported_markets",
+                details=details,
             ),
         )
 
@@ -440,7 +508,9 @@ class HyperliquidSdkExchange:
         if self._execution_universe_cache_is_fresh():
             return
         by_dex: dict[str, frozenset[str]] = {}
+        delisted_by_dex: dict[str, frozenset[str]] = {}
         sz_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+        metadata_by_dex_coin: dict[str, dict[str, _ExecutionMarketMetadata]] = {}
         loaded_any_metadata = False
         for dex in _execution_metadata_dexes(
             markets,
@@ -459,28 +529,47 @@ class HyperliquidSdkExchange:
                 else None
             )
             coins: set[str] = set()
+            delisted: set[str] = set()
             sz_decimals_by_coin: dict[str, int] = {}
+            metadata_by_coin: dict[str, _ExecutionMarketMetadata] = {}
             if isinstance(universe, list):
                 for asset in cast(list[object], universe):
                     if not isinstance(asset, dict):
                         continue
                     asset_map = cast(Mapping[str, object], asset)
                     name = str(asset_map.get("name") or "").strip()
-                    if name:
-                        coins.add(name)
-                        sz_decimals = _optional_int(asset_map.get("szDecimals"))
-                        if sz_decimals is not None and sz_decimals >= 0:
-                            sz_decimals_by_coin[name] = sz_decimals
+                    if not name:
+                        continue
+                    sz_decimals = _optional_int(asset_map.get("szDecimals"))
+                    if _truthy(asset_map.get("isDelisted")):
+                        delisted.add(name)
+                        continue
+                    metadata_by_coin[name] = _ExecutionMarketMetadata(
+                        sz_decimals=sz_decimals,
+                        only_isolated=_truthy(asset_map.get("onlyIsolated")),
+                        margin_mode=str(asset_map.get("marginMode") or "").strip(),
+                        max_leverage=_optional_int(asset_map.get("maxLeverage")),
+                    )
+                    coins.add(name)
+                    if sz_decimals is not None and sz_decimals >= 0:
+                        sz_decimals_by_coin[name] = sz_decimals
             by_dex[dex] = frozenset(coins)
+            delisted_by_dex[dex] = frozenset(delisted)
             sz_decimals_by_dex_coin[dex] = sz_decimals_by_coin
+            metadata_by_dex_coin[dex] = metadata_by_coin
             loaded_any_metadata = True
         if not loaded_any_metadata:
             self._execution_universe_by_dex = by_dex
+            self._delisted_universe_by_dex = delisted_by_dex
             self._sz_decimals_by_dex_coin = sz_decimals_by_dex_coin
+            self._metadata_by_dex_coin = metadata_by_dex_coin
             return
         observed_at = datetime.now(timezone.utc)
         self._execution_universe_by_dex = by_dex
+        self._delisted_universe_by_dex = delisted_by_dex
+        self._halted_universe_by_dex = {}
         self._sz_decimals_by_dex_coin = sz_decimals_by_dex_coin
+        self._metadata_by_dex_coin = metadata_by_dex_coin
         self._last_execution_universe_at = observed_at
         self._last_exchange_read_at = observed_at
 
@@ -495,6 +584,45 @@ class HyperliquidSdkExchange:
             datetime.now(timezone.utc) - self._last_execution_universe_at
         ).total_seconds()
         return age_seconds <= max_age_seconds
+
+    def _active_execution_coins(self, dex: str) -> frozenset[str]:
+        halted = self._halted_universe_by_dex.get(dex, set())
+        if not halted:
+            return self._execution_universe_by_dex.get(dex, frozenset())
+        return frozenset(
+            coin
+            for coin in self._execution_universe_by_dex.get(dex, frozenset())
+            if coin not in halted
+        )
+
+    def _execution_universe_details(
+        self,
+        markets: tuple[HyperliquidMarket, ...],
+        supported: tuple[HyperliquidMarket, ...],
+    ) -> dict[str, object]:
+        if not markets:
+            return {}
+        supported_keys = {(_sdk_dex(market.dex), market.coin) for market in supported}
+        delisted = 0
+        halted = 0
+        missing = 0
+        for market in markets:
+            dex = _sdk_dex(market.dex)
+            if (dex, market.coin) in supported_keys:
+                continue
+            if market.coin in self._delisted_universe_by_dex.get(dex, frozenset()):
+                delisted += 1
+            elif market.coin in self._halted_universe_by_dex.get(dex, set()):
+                halted += 1
+            else:
+                missing += 1
+        return {
+            "requested": len(markets),
+            "active": len(supported),
+            "delisted": delisted,
+            "halted_cooldown": halted,
+            "missing": missing,
+        }
 
 
 def exchange_from_config(config: HyperliquidRuntimeConfig) -> HyperliquidExchange:
@@ -528,6 +656,10 @@ def _order_result(response: dict[str, object]) -> OrderResult:
         raw_response=response,
         rejection_reason=rejection_reason,
     )
+
+
+def _is_trading_halted(result: OrderResult) -> bool:
+    return (result.rejection_reason or "").strip().lower() == "trading is halted."
 
 
 def _parse_sdk_status(
@@ -728,6 +860,14 @@ def _optional_int(value: object) -> int | None:
         return int(str(value))
     except ValueError:
         return None
+
+
+def _truthy(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+    return False
 
 
 def _position_notional(

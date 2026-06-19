@@ -272,8 +272,8 @@ class HyperliquidRuntimeService:
         )
         if not verdict.allowed:
             return _CycleCounts(signals=1, decisions=1, blocked=1)
-        self._submit_allowed_order(signal, verdict, decision_id, context)
-        return _CycleCounts(signals=1, decisions=1, orders=1)
+        submitted = self._submit_allowed_order(signal, verdict, decision_id, context)
+        return _CycleCounts(signals=1, decisions=1, orders=1 if submitted else 0)
 
     def _submit_allowed_order(
         self,
@@ -281,7 +281,7 @@ class HyperliquidRuntimeService:
         verdict: RiskVerdict,
         decision_id: str,
         context: _CycleContext,
-    ) -> None:
+    ) -> bool:
         intent = build_order_intent(
             signal=signal,
             verdict=verdict,
@@ -301,7 +301,14 @@ class HyperliquidRuntimeService:
             self._journal.persist_refs(
                 context.session, self._journal.order_events(intent, result)
             )
-            return
+            return False
+        market_setup_result = self._exchange.prepare_order_market(intent)
+        if market_setup_result is not None:
+            context.repository.insert_order(intent, market_setup_result)
+            self._journal.persist_refs(
+                context.session, self._journal.order_events(intent, market_setup_result)
+            )
+            return False
         self._journal.persist_refs(
             context.session,
             self._journal.order_events(
@@ -327,6 +334,7 @@ class HyperliquidRuntimeService:
             self._journal.persist_refs(
                 context.session, self._journal.order_events(intent, result)
             )
+        return True
 
     def _write_performance(
         self,

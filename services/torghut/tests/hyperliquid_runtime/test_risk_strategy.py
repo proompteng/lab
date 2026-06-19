@@ -29,7 +29,12 @@ def _config(**overrides: object) -> HyperliquidRuntimeConfig:
     return HyperliquidRuntimeConfig.from_env(env)
 
 
-def _feature() -> FeatureSnapshot:
+def _feature(
+    *,
+    bid_price: Decimal | None = Decimal("199.9"),
+    ask_price: Decimal | None = Decimal("200"),
+    quote_lag_seconds: int | None = 5,
+) -> FeatureSnapshot:
     return FeatureSnapshot(
         market_id="hl:perp:cash:cash:AAPL",
         coin="cash:AAPL",
@@ -50,6 +55,10 @@ def _feature() -> FeatureSnapshot:
         open_interest_usd=Decimal("1000000"),
         regime="trend",
         source_lag_seconds=10,
+        bid_price=bid_price,
+        ask_price=ask_price,
+        quote_event_ts=datetime(2026, 6, 18, tzinfo=timezone.utc),
+        quote_lag_seconds=quote_lag_seconds,
     )
 
 
@@ -63,7 +72,7 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
     )
     signal = generate_signal(_feature(), parameter_version="test-v1")
     state = RiskState(
-        gross_exposure_usd=Decimal("90"),
+        gross_exposure_usd=Decimal("80"),
         daily_realized_pnl_usd=Decimal("0"),
         unrealized_pnl_usd=Decimal("0"),
         daily_fees_usd=Decimal("0"),
@@ -80,7 +89,7 @@ def test_signal_and_risk_build_tiny_ioc_intent() -> None:
     )
 
     assert verdict.allowed
-    assert verdict.order_notional_usd == Decimal("10")
+    assert verdict.order_notional_usd == Decimal("20")
     assert intent.side == "buy"
     assert intent.limit_price == Decimal("200.300000")
     assert intent.cloid.startswith("0x")
@@ -106,6 +115,76 @@ def test_risk_blocks_shadow_mode_before_order_path() -> None:
     assert not verdict.allowed
     assert verdict.reason == "trading_disabled_shadow"
     assert verdict.order_notional_usd == Decimal("0")
+
+
+def test_risk_blocks_remaining_exposure_below_min_order_notional() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
+    signal = generate_signal(_feature(), parameter_version="test-v1")
+    state = RiskState(
+        gross_exposure_usd=Decimal("90"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+    )
+
+    verdict = evaluate_signal_risk(signal, state, config)
+
+    assert not verdict.allowed
+    assert verdict.reason == "remaining_exposure_below_min_order_notional"
+
+
+def test_risk_blocks_missing_stale_or_crossed_executable_quote() -> None:
+    config = _config(
+        HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+        HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+        HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+            "0x2222222222222222222222222222222222222222222222222222222222222222"
+        ),
+    )
+    state = RiskState(
+        gross_exposure_usd=Decimal("0"),
+        daily_realized_pnl_usd=Decimal("0"),
+        unrealized_pnl_usd=Decimal("0"),
+        daily_fees_usd=Decimal("0"),
+        open_order_markets=frozenset(),
+        dependencies=(RuntimeDependencyStatus("clickhouse", True),),
+    )
+    cases = (
+        (
+            _feature(bid_price=None, ask_price=None, quote_lag_seconds=None),
+            "missing_executable_quote",
+        ),
+        (
+            _feature(
+                bid_price=Decimal("201"),
+                ask_price=Decimal("200"),
+                quote_lag_seconds=1,
+            ),
+            "crossed_quote",
+        ),
+        (
+            _feature(
+                bid_price=Decimal("199"),
+                ask_price=Decimal("200"),
+                quote_lag_seconds=999,
+            ),
+            "executable_quote_stale",
+        ),
+    )
+
+    for feature, reason in cases:
+        signal = generate_signal(feature, parameter_version="test-v1")
+        verdict = evaluate_signal_risk(signal, state, config)
+        assert not verdict.allowed
+        assert verdict.reason == reason
 
 
 def test_risk_blocks_mainnet_execution_config() -> None:

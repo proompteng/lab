@@ -95,26 +95,30 @@ data:
     CREATE VIEW torghut.hyperliquid_runtime_latest_features ON CLUSTER default
     AS
     SELECT
-      network,
-      market_id,
-      coin,
-      dex,
-      latest_event_ts AS event_ts,
-      price,
-      momentum_1m_bps,
-      momentum_3m_bps,
-      momentum_5m_bps,
-      momentum_15m_bps,
-      momentum_1h_bps,
-      volatility_bps,
-      vwap_distance_bps,
-      spread_bps,
-      book_imbalance,
-      liquidity_usd,
-      funding_rate,
-      open_interest_usd,
-      regime,
-      source_lag_seconds
+      f.network,
+      f.market_id,
+      f.coin,
+      f.dex,
+      f.latest_event_ts AS event_ts,
+      f.price,
+      f.momentum_1m_bps,
+      f.momentum_3m_bps,
+      f.momentum_5m_bps,
+      f.momentum_15m_bps,
+      f.momentum_1h_bps,
+      f.volatility_bps,
+      f.vwap_distance_bps,
+      f.spread_bps,
+      f.book_imbalance,
+      f.liquidity_usd,
+      f.funding_rate,
+      f.open_interest_usd,
+      f.regime,
+      f.source_lag_seconds,
+      b.bid_price,
+      b.ask_price,
+      b.quote_event_ts,
+      greatest(0, dateDiff('second', b.quote_event_ts, now64(3))) AS quote_lag_seconds
     FROM
     (
       SELECT
@@ -145,4 +149,27 @@ data:
         WHERE event_ts >= now() - INTERVAL 2 HOUR
       )
       GROUP BY network, market_id
-    );
+    ) AS f
+    LEFT JOIN
+    (
+      SELECT
+        network,
+        market_id,
+        argMax(
+          toFloat64OrZero(JSONExtractString(payload, 'bbo', 1, 'px')),
+          parseDateTimeBestEffort(event_ts)
+        ) AS bid_price,
+        argMax(
+          toFloat64OrZero(JSONExtractString(payload, 'bbo', 2, 'px')),
+          parseDateTimeBestEffort(event_ts)
+        ) AS ask_price,
+        max(toDateTime64(parseDateTimeBestEffort(event_ts), 3, 'UTC')) AS quote_event_ts
+      FROM torghut.hyperliquid_bbo
+      WHERE channel = 'bbo'
+        AND market_type = 'perp'
+        AND market_id IS NOT NULL
+        AND parseDateTimeBestEffort(event_ts) >= now() - INTERVAL 2 HOUR
+      GROUP BY network, market_id
+    ) AS b
+      ON f.network = b.network
+      AND f.market_id = b.market_id;
