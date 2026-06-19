@@ -5,14 +5,8 @@ import { execFileSync } from 'node:child_process'
 
 import { describe, expect, test } from 'vitest'
 
-import {
-  ALL_PI_TOOL_NAMES,
-  buildModelsJson,
-  BOUNDED_TEXT_DEFAULT_LIMIT,
-  BOUNDED_TEXT_HARD_LIMIT,
-  parseCommandList,
-  resolveConfig,
-} from './config'
+import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
+import { BOUNDED_TEXT_DEFAULT_LIMIT, BOUNDED_TEXT_HARD_LIMIT } from './bounded-text'
 import {
   isNoChecksReportedResult,
   isNoRequiredChecksResult,

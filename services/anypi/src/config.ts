@@ -2,13 +2,11 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import process from 'node:process'
 
+import { BOUNDED_TEXT_DEFAULT_LIMIT, BOUNDED_TEXT_HARD_LIMIT } from './bounded-text'
 import { resolvePromptVariant, resolveValidationPolicy } from './prompt'
 import type { AgentRunnerSpecPayload, AgentRunSpecPayload, PromptVariant, ValidationPolicy } from './types'
 
 export const ALL_PI_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const
-
-export const BOUNDED_TEXT_DEFAULT_LIMIT = 4 * 1024 * 1024 // 4 MiB
-export const BOUNDED_TEXT_HARD_LIMIT = 16 * 1024 * 1024 // 16 MiB
 
 export type AnypiConfig = {
   workspace: string

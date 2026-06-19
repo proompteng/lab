@@ -40,6 +40,7 @@ export class BoundedText {
   /**
    * Append text to the accumulator
    * Truncates the oldest content if maxSize would be exceeded
+   * When a single chunk exceeds maxSize, retains the tail of that chunk
    * @param text Text to append
    */
   append(text: string): void {
@@ -49,11 +50,15 @@ export class BoundedText {
     this.chunks.push(text)
     this.totalSize += textBytes
 
-    // Update tail with the newly appended text
-    this.tail = text
-    this.tailSize = textBytes
+    // If a single chunk exceeds maxSize, truncate it to keep the tail
+    if (textBytes > this.maxSize) {
+      this.chunks = [text]
+      this.totalSize = this.maxSize
+      // Keep the tail of the chunk (last maxSize bytes worth of characters)
+      this.chunks[0] = this.truncateTextToSize(text, this.maxSize)
+    }
 
-    // Truncate if over maxSize
+    // Truncate if still over maxSize (handles multiple chunks case)
     while (this.totalSize > this.maxSize && this.chunks.length > 1) {
       const oldest = this.chunks.shift()
       if (!oldest) break
@@ -75,11 +80,15 @@ export class BoundedText {
     this.chunks.unshift(text)
     this.totalSize += textBytes
 
-    // Update tail
-    this.tail = text
-    this.tailSize = textBytes
+    // If a single chunk exceeds maxSize, truncate it to keep the tail
+    if (textBytes > this.maxSize) {
+      this.chunks = [text]
+      this.totalSize = this.maxSize
+      // Keep the tail of the chunk (last maxSize bytes worth of characters)
+      this.chunks[0] = this.truncateTextToSize(text, this.maxSize)
+    }
 
-    // Truncate if over maxSize
+    // Truncate if still over maxSize (handles multiple chunks case)
     while (this.totalSize > this.maxSize && this.chunks.length > 1) {
       const newest = this.chunks.pop()
       if (!newest) break
@@ -92,12 +101,14 @@ export class BoundedText {
 
   /**
    * Get the current accumulated text
-   * Uses tail when available for efficiency
+   * Uses full retained text when within maxSize for accuracy
+   * Uses tail when available for efficiency when joining is needed
    */
   toString(): string {
     if (this.chunks.length === 0) return ''
     if (this.chunks.length === 1) return this.chunks[0]
-    // Only join when multiple chunks (should be rare after truncation)
+    // For multiple chunks, return the full text for accuracy
+    // Tail is handled separately via getTail() which is used for PR/status updates
     return this.chunks.join('')
   }
 
@@ -110,9 +121,18 @@ export class BoundedText {
 
   /**
    * Get the tail (last portion) of the accumulated text
-   * This is efficient and doesn't require joining all chunks
+   * When retained text is within maxSize, returns the full accumulated text
+   * When truncation has occurred, returns an efficient representation
+   * This avoids joining all chunks on every token append
    */
   getTail(): string {
+    // If text is within maxSize, return full retained text for accuracy
+    if (this.totalSize <= this.maxSize) {
+      if (this.chunks.length === 0) return ''
+      if (this.chunks.length === 1) return this.chunks[0]
+      return this.chunks.join('')
+    }
+    // When truncated, use the efficient tail
     if (this.chunks.length === 0) return ''
     if (this.chunks.length === 1) return this.chunks[0]
     return this.tail
@@ -133,6 +153,58 @@ export class BoundedText {
     this.totalSize = 0
     this.tail = ''
     this.tailSize = 0
+  }
+
+  /**
+   * Truncate text to fit within a byte size limit
+   * Keeps the tail of the text (last portion)
+   */
+  private truncateTextToSize(text: string, maxBytes: number): string {
+    // Calculate total byte size
+    const totalBytes = encodeTextLength(text)
+
+    // If already within limit, return as-is
+    if (totalBytes <= maxBytes) {
+      return text
+    }
+
+    // Find the starting index for the tail that fits
+    let byteCount = 0
+    let startIndex = 0
+
+    for (let i = text.length - 1; i >= 0; i--) {
+      const code = text.charCodeAt(i)
+      let charBytes: number
+      if (code < 0x80) {
+        charBytes = 1
+      } else if (code < 0x800) {
+        charBytes = 2
+      } else if (code < 0xd800 || code >= 0xe000) {
+        charBytes = 3
+      } else {
+        // Surrogate pair - need to skip the lead surrogate
+        if (
+          i > 0 &&
+          code >= 0xd800 &&
+          code < 0xdc00 &&
+          text.charCodeAt(i - 1) >= 0xdc00 &&
+          text.charCodeAt(i - 1) < 0xe000
+        ) {
+          i--
+          charBytes = 4
+        } else {
+          charBytes = 3
+        }
+      }
+
+      if (byteCount + charBytes > maxBytes) {
+        break
+      }
+      byteCount += charBytes
+      startIndex = i
+    }
+
+    return text.substring(startIndex)
   }
 
   /**

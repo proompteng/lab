@@ -287,7 +287,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     const boundedPiText = createBoundedText({ maxSize: config.boundedTextLimit })
     const sessionFiles: string[] = []
     const recordPiResult = async (result: Awaited<ReturnType<typeof runPiAgent>>, label?: string) => {
-      const piTextFragment = result.text
+      const piTextFragment = label ? `\n\n## ${label}\n${result.text}` : result.text
       boundedPiText.append(piTextFragment)
       status.tools = mergeTools(status.tools, result.tools)
       if (result.sessionFile) {

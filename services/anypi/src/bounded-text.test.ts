@@ -210,4 +210,73 @@ describe('BoundedText integration with AnyPi session handling', () => {
     // Oldest segments should be truncated (Segment 0 should not be visible)
     expect(tail).not.toContain('Segment 0')
   })
+
+  test('oversized single chunk is capped to maxSize with tail preserved', () => {
+    const bounded = createBoundedText({ maxSize: 100 })
+    const largeText = 'x'.repeat(500) // 500 bytes, well over 100 byte limit
+    bounded.append(largeText)
+
+    // After truncation, size should be at or below maxSize
+    expect(bounded.size()).toBeLessThanOrEqual(100)
+    // The chunk should be truncated to keep the tail (last part)
+    expect(bounded.toString()).toBe('x'.repeat(100))
+    expect(bounded.getTail()).toBe('x'.repeat(100))
+    expect(bounded.chunkCount()).toBe(1)
+  })
+
+  test('oversized single chunk in multi-chunk scenario preserves tail', () => {
+    const bounded = createBoundedText({ maxSize: 150 })
+    bounded.append('Short') // 5 bytes
+    const largeText = 'L'.repeat(200) // 200 bytes, over 150 limit
+    bounded.append(largeText)
+
+    // Large chunk should be truncated, oldest should be removed
+    expect(bounded.size()).toBeLessThanOrEqual(150)
+    // Should contain the large text tail (since it was the last chunk)
+    expect(bounded.toString()).toContain('L')
+    // Should NOT contain the short text
+    expect(bounded.toString()).not.toContain('Short')
+  })
+
+  test('getTail returns full text when retained is within maxSize', () => {
+    const bounded = createBoundedText({ maxSize: 1000 })
+    bounded.append('First chunk ')
+    bounded.append('Second chunk')
+
+    // Since total is within maxSize, getTail should return full text
+    expect(bounded.size()).toBeLessThan(1000)
+    expect(bounded.getTail()).toBe('First chunk Second chunk')
+  })
+
+  test('labeled append preserves section labels', () => {
+    const bounded = createBoundedText({ maxSize: 1000 })
+
+    // Simulate append with label (as in recordPiResult)
+    const text1 = 'First attempt response'
+    bounded.append(`\n\n## First Attempt\n${text1}`)
+
+    const text2 = 'Second attempt response'
+    bounded.append(`\n\n## Second Attempt\n${text2}`)
+
+    // Labels should be preserved
+    expect(bounded.toString()).toContain('## First Attempt')
+    expect(bounded.toString()).toContain('## Second Attempt')
+    expect(bounded.toString()).toContain(text1)
+    expect(bounded.toString()).toContain(text2)
+  })
+
+  test('labeled append truncates properly while preserving label structure', () => {
+    const bounded = createBoundedText({ maxSize: 100 })
+
+    // First append with label
+    bounded.append('\n\n## First\n' + 'A'.repeat(50))
+
+    // Second append with label - should trigger truncation
+    bounded.append('\n\n## Second\n' + 'B'.repeat(50))
+
+    // Size should be within limit
+    expect(bounded.size()).toBeLessThanOrEqual(100)
+    // Latest label and content should be preserved
+    expect(bounded.toString()).toContain('## Second')
+  })
 })
