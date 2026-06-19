@@ -643,12 +643,16 @@ jobs:
           include-hidden-files: true
 
   pytest-autoresearch-runner:
-    name: Pytest autoresearch runner
+    name: Pytest autoresearch runner ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
     needs:
       - changes
     if: ${{ needs.changes.outputs.service == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - name: Checkout
         shell: bash
@@ -695,16 +699,38 @@ jobs:
         working-directory: services/torghut
         shell: bash
         env:
-          COVERAGE_FILE: .coverage.autoresearch-runner
+          COVERAGE_FILE: .coverage.autoresearch-runner-${{ matrix.shard }}
+          SHARD_INDEX: ${{ matrix.shard }}
+          SHARD_TOTAL: 4
         run: |
           set -euo pipefail
-          collected_count="$(
+          mapfile -t TEST_NODES < <(
             uv run --frozen pytest --collect-only -q tests/autoresearch_runner |
-              awk '/^tests\/.*::/ {count += 1} END {print count + 0}'
-          )"
-          printf 'Collected %s autoresearch runner tests\n' "${collected_count}"
-          if [ "${collected_count}" -ne 185 ]; then
+              awk -v shard="${SHARD_INDEX}" -v total="${SHARD_TOTAL}" '
+                /^tests\/.*::/ {
+                  collected += 1
+                  if (((collected - 1) % total) == shard) {
+                    print
+                  }
+                }
+                END {
+                  if (collected != 185) {
+                    printf "EXPECTED_COUNT_MISMATCH:%d\n", collected
+                  }
+                }
+              '
+          )
+          last_index=$((${#TEST_NODES[@]} - 1))
+          if [ "${#TEST_NODES[@]}" -gt 0 ] && [[ "${TEST_NODES[${last_index}]}" == EXPECTED_COUNT_MISMATCH:* ]]; then
+            collected_count="${TEST_NODES[${last_index}]#EXPECTED_COUNT_MISMATCH:}"
+            unset 'TEST_NODES[${last_index}]'
             echo "Expected 185 autoresearch runner tests after split, got ${collected_count}"
+            exit 1
+          fi
+          printf 'Running %s autoresearch runner test nodes in shard %s/%s\n' \
+            "${#TEST_NODES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
+          if [ "${#TEST_NODES[@]}" -eq 0 ]; then
+            echo "No autoresearch runner test nodes selected for shard ${SHARD_INDEX}"
             exit 1
           fi
 
@@ -715,14 +741,14 @@ jobs:
             --cov-branch \
             --cov-fail-under=0 \
             --cov-report= \
-            tests/autoresearch_runner
+            "${TEST_NODES[@]}"
 
       - name: Upload coverage data
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: torghut-coverage-autoresearch-runner
-          path: services/torghut/.coverage.autoresearch-runner*
+          name: torghut-coverage-autoresearch-runner-${{ matrix.shard }}
+          path: services/torghut/.coverage.autoresearch-runner-${{ matrix.shard }}*
           if-no-files-found: error
           include-hidden-files: true
 

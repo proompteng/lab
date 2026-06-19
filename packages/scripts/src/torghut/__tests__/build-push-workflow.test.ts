@@ -246,6 +246,21 @@ describe('torghut build-push workflow', () => {
     expect(ciWorkflow).not.toContain('--workflow torghut-ci.yml')
   })
 
+  it('shards the expensive autoresearch runner tests in Torghut CI', () => {
+    const autoresearchJob = ciWorkflow.indexOf('pytest-autoresearch-runner:')
+    const nextJob = ciWorkflow.indexOf('\n  lint-and-tests:', autoresearchJob)
+    const autoresearchJobBody = ciWorkflow.slice(autoresearchJob, nextJob)
+
+    expect(autoresearchJob).toBeGreaterThan(-1)
+    expect(autoresearchJobBody).toContain('name: Pytest autoresearch runner ${{ matrix.shard }}')
+    expect(autoresearchJobBody).toContain('shard: [0, 1, 2, 3]')
+    expect(autoresearchJobBody).toContain('SHARD_TOTAL: 4')
+    expect(autoresearchJobBody).toContain('uv run --frozen pytest --collect-only -q tests/autoresearch_runner')
+    expect(autoresearchJobBody).toContain('EXPECTED_COUNT_MISMATCH:%d')
+    expect(autoresearchJobBody).toContain('name: torghut-coverage-autoresearch-runner-${{ matrix.shard }}')
+    expect(autoresearchJobBody).not.toContain('name: torghut-coverage-autoresearch-runner\n')
+  })
+
   it('keeps TA and WS stale workflow promotions path-aware so unrelated main commits do not force rebuilds', () => {
     const releaseWorkflows = [
       {

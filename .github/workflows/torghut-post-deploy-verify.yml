@@ -163,8 +163,11 @@ jobs:
             request_argocd_sync "${app}" "${EXPECTED_REVISION}"
           done
 
+          ARGO_SYNC_POLL_ATTEMPTS=150
+          ARGO_SYNC_POLL_INTERVAL_SECONDS=2
+
           for app in torghut torghut-options; do
-            for attempt in $(seq 1 60); do
+            for attempt in $(seq 1 "${ARGO_SYNC_POLL_ATTEMPTS}"); do
               STATUS="$(kubectl get application "${app}" -n argocd -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision} {.status.operationState.phase} {.status.operationState.syncResult.revision} {.status.history[-1].revision}')"
               SYNC_STATUS="$(echo "${STATUS}" | awk '{print $1}')"
               HEALTH_STATUS="$(echo "${STATUS}" | awk '{print $2}')"
@@ -210,19 +213,23 @@ jobs:
                 if [ "${HEALTH_STATUS}" = 'Healthy' ]; then
                   break
                 fi
+                if [ "${HEALTH_STATUS}" = 'Progressing' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
+                  echo "Argo application ${app} sync operation succeeded while health is Progressing; runtime checks will verify readiness"
+                  break
+                fi
                 if [ "${app}" = 'torghut' ] && [ "${HEALTH_STATUS}" = 'Degraded' ] && [ "${OPERATION_PHASE}" = 'Succeeded' ]; then
                   echo "Torghut Argo health is Degraded after sync; continuing to runtime safety checks"
                   break
                 fi
               fi
 
-              if [ "${attempt}" -eq 60 ]; then
+              if [ "${attempt}" -eq "${ARGO_SYNC_POLL_ATTEMPTS}" ]; then
                 echo "Argo application ${app} did not become Synced/Healthy with expected revision"
                 dump_argocd_app_diagnostics "${app}"
                 exit 1
               fi
               echo "Attempt ${attempt}: ${app} sync=${SYNC_STATUS} health=${HEALTH_STATUS} revision=${REVISION} desired=${DESIRED_REVISION} operation=${OPERATION_PHASE} syncResult=${SYNC_RESULT_REVISION} history=${HISTORY_REVISION}"
-              sleep 5
+              sleep "${ARGO_SYNC_POLL_INTERVAL_SECONDS}"
             done
           done
 
@@ -292,6 +299,13 @@ jobs:
 
           EVIDENCE_DIR="${RUNNER_TEMP}/torghut-post-deploy"
           mkdir -p "${EVIDENCE_DIR}"
+          HTTP_CONNECT_TIMEOUT_SECONDS=5
+          HTTP_MAX_TIME_SECONDS=15
+          JSON_EVIDENCE_ATTEMPTS=3
+          READYZ_EVIDENCE_ATTEMPTS=12
+          EVIDENCE_RETRY_INTERVAL_SECONDS=2
+          SIM_MIRROR_ATTEMPTS=12
+          SIM_MIRROR_RETRY_INTERVAL_SECONDS=5
 
           fetch_json() {
             local url="$1"
@@ -299,9 +313,9 @@ jobs:
             local label="$3"
             local status
 
-            for attempt in $(seq 1 18); do
+            for attempt in $(seq 1 "${JSON_EVIDENCE_ATTEMPTS}"); do
               status="$(
-                curl -sS --connect-timeout 10 --max-time 90 \
+                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
                   -o "${output_path}" -w '%{http_code}' "${url}" || true
               )"
               if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
@@ -311,7 +325,7 @@ jobs:
                 return 0
               fi
 
-              if [ "${attempt}" -eq 18 ]; then
+              if [ "${attempt}" -eq "${JSON_EVIDENCE_ATTEMPTS}" ]; then
                 echo "${label} did not return a parseable JSON HTTP response; status=${status:-empty}" >&2
                 head -c 1000 "${output_path}" >&2 || true
                 echo >&2
@@ -319,7 +333,7 @@ jobs:
               fi
 
               echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
-              sleep 5
+              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
             done
           }
 
@@ -330,9 +344,9 @@ jobs:
             local status
             local decision
 
-            for attempt in $(seq 1 48); do
+            for attempt in $(seq 1 "${READYZ_EVIDENCE_ATTEMPTS}"); do
               status="$(
-                curl -sS --connect-timeout 10 --max-time 90 \
+                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
                   -o "${output_path}" -w '%{http_code}' "${url}" || true
               )"
               if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
@@ -349,13 +363,13 @@ jobs:
                     return 0
                     ;;
                   retryable_database_timeout)
-                    if [ "${attempt}" -eq 48 ]; then
+                    if [ "${attempt}" -eq "${READYZ_EVIDENCE_ATTEMPTS}" ]; then
                       echo "${label} still reports a retryable database-readiness timeout after ${attempt} attempts" >&2
                       printf '%s' "${status}"
                       return 0
                     fi
                     echo "Attempt ${attempt}: ${label} database readiness timed out; retrying until readyz contract is acceptable" >&2
-                    sleep 5
+                    sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
                     continue
                     ;;
                   *)
@@ -365,7 +379,7 @@ jobs:
                 esac
               fi
 
-              if [ "${attempt}" -eq 18 ]; then
+              if [ "${attempt}" -eq "${READYZ_EVIDENCE_ATTEMPTS}" ]; then
                 if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
                   [ "${status}" != '000' ] &&
                   python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
@@ -385,7 +399,7 @@ jobs:
               else
                 echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON yet; retrying" >&2
               fi
-              sleep 5
+              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
             done
           }
 
@@ -395,9 +409,9 @@ jobs:
             local label="$3"
             local status
 
-            for attempt in $(seq 1 18); do
+            for attempt in $(seq 1 "${JSON_EVIDENCE_ATTEMPTS}"); do
               status="$(
-                curl -sS --connect-timeout 10 --max-time 90 \
+                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
                   -o "${output_path}" -w '%{http_code}' "${url}" || true
               )"
               if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
@@ -405,7 +419,7 @@ jobs:
                 return 0
               fi
 
-              if [ "${attempt}" -eq 18 ]; then
+              if [ "${attempt}" -eq "${JSON_EVIDENCE_ATTEMPTS}" ]; then
                 if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
                   [ "${status}" != '000' ] &&
                   python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
@@ -425,7 +439,7 @@ jobs:
               else
                 echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON 2xx yet; retrying" >&2
               fi
-              sleep 5
+              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
             done
           }
 
@@ -473,7 +487,7 @@ jobs:
             local status
             local output_path="${EVIDENCE_DIR}/post-deploy-evidence-validator.out"
 
-            for attempt in $(seq 1 48); do
+            for attempt in $(seq 1 "${SIM_MIRROR_ATTEMPTS}"); do
               set +e
               bun run packages/scripts/src/torghut/post-deploy-evidence.ts > "${output_path}" 2>&1
               status=$?
@@ -489,7 +503,7 @@ jobs:
                 return "${status}"
               fi
 
-              if [ "${attempt}" -eq 48 ]; then
+              if [ "${attempt}" -eq "${SIM_MIRROR_ATTEMPTS}" ]; then
                 echo "Torghut sim paper-route target mirror did not materialize after bounded retry window" >&2
                 cat "${output_path}" >&2
                 return "${status}"
@@ -504,7 +518,7 @@ jobs:
                 'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
                 "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
                 "Torghut sim /trading/proofs"
-              sleep 10
+              sleep "${SIM_MIRROR_RETRY_INTERVAL_SECONDS}"
             done
           }
 
