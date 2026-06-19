@@ -13,6 +13,7 @@ from ..market_context_domains import (
     active_market_context_mapping,
     active_market_context_reasons,
 )
+from ..market_context import market_context_status_enforced
 
 
 PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION = "torghut.profit-freshness-frontier.v1"
@@ -381,19 +382,28 @@ def market_dimension(
     hypothesis_payload: Mapping[str, Any],
     generated_at: datetime,
 ) -> dict[str, object]:
-    reasons = active_market_context_reasons(
-        [
-            *strings(market_context_status.get("blocking_reasons")),
-            *strings(market_context_status.get("reason_codes")),
-            *strings(market_context_status.get("last_risk_flags")),
-        ]
+    enforced = market_context_status_enforced(market_context_status)
+    reasons = (
+        active_market_context_reasons(
+            [
+                *strings(market_context_status.get("blocking_reasons")),
+                *strings(market_context_status.get("reason_codes")),
+                *strings(market_context_status.get("last_risk_flags")),
+            ]
+        )
+        if enforced
+        else []
     )
-    status = text(
-        mapping(market_context_status.get("health")).get("status")
-        or market_context_status.get("status")
-        or market_context_status.get("state")
-        or market_context_status.get("last_reason")
-    ).lower()
+    status = (
+        text(
+            mapping(market_context_status.get("health")).get("status")
+            or market_context_status.get("status")
+            or market_context_status.get("state")
+            or market_context_status.get("last_reason")
+        ).lower()
+        if enforced
+        else ""
+    )
     stale_domains: list[str] = []
     for domain_name, raw_domain in active_market_context_mapping(
         market_domain_states(market_context_status)
@@ -402,7 +412,7 @@ def market_dimension(
         domain_state = text(domain.get("status") or domain.get("state")).lower()
         if domain_state == "stale" or domain.get("stale") is True:
             stale_domains.append(str(domain_name))
-    if bool_value(market_context_status.get("alert_active")):
+    if enforced and bool_value(market_context_status.get("alert_active")):
         reasons.extend(
             active_market_context_reasons(
                 [
@@ -419,7 +429,7 @@ def market_dimension(
     staleness = int_value(
         market_context_status.get("last_freshness_seconds"), default=-1
     )
-    stale = (
+    stale = enforced and (
         bool(stale_domains)
         or "stale" in status
         or staleness

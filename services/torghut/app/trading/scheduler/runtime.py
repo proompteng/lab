@@ -23,7 +23,11 @@ from ..llm.dspy_programs.runtime import (
     DSPyRuntimeUnsupportedStateError,
 )
 from ..llm.guardrails import evaluate_llm_guardrails
-from ..market_context import MarketContextClient, evaluate_market_context
+from ..market_context import (
+    MarketContextClient,
+    evaluate_market_context,
+    market_context_enforced,
+)
 from ..market_context_domains import (
     active_market_context_domain_states,
     active_market_context_mapping,
@@ -226,7 +230,10 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
         )
         last_allow_llm = self.state.last_market_context_allow_llm
         last_reason = self.state.last_market_context_reason
-        alert_active = self.state.market_context_alert_active
+        enforce_market_context = market_context_enforced()
+        shadow_alert_active = self.state.market_context_alert_active
+        shadow_alert_reason = self.state.market_context_alert_reason
+        alert_active = shadow_alert_active if enforce_market_context else False
         alert_reason = self.state.market_context_alert_reason
         if alert_active:
             active_alert_reasons = active_market_context_reasons(
@@ -237,6 +244,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             else:
                 alert_active = False
                 alert_reason = None
+        elif not enforce_market_context:
+            alert_reason = None
         probe_symbol = self._market_context_probe_symbol()
         fetch_symbol = last_symbol or probe_symbol
         if fetch_symbol:
@@ -284,8 +293,12 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
                     last_risk_flags = active_market_context_reasons(bundle.risk_flags)
                     last_allow_llm = verdict.allow_llm
                     last_reason = verdict.reason
-                    alert_active = not verdict.allow_llm
+                    shadow_alert_active = not verdict.allow_llm
                     alert_reason = verdict.reason
+                    shadow_alert_reason = verdict.reason
+                    alert_active = enforce_market_context and shadow_alert_active
+                    if not alert_active:
+                        alert_reason = None
                     self.state.last_market_context_symbol = last_symbol
                     self.state.last_market_context_checked_at = last_checked_at
                     self.state.last_market_context_as_of = last_as_of
@@ -322,6 +335,8 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             "shadow_total": dict(self.state.metrics.llm_market_context_shadow_total),
             "alert_active": alert_active,
             "alert_reason": alert_reason,
+            "shadow_alert_active": shadow_alert_active,
+            "shadow_alert_reason": shadow_alert_reason,
             "health": health,
             "health_error": health_error,
             "time_source": trading_time_status(

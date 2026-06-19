@@ -68,6 +68,7 @@ class TestMarketContextClient(TestCase):
         self._original_url = config.settings.trading_market_context_url
         self._original_timeout = config.settings.trading_market_context_timeout_seconds
         self._original_required = config.settings.trading_market_context_required
+        self._original_fail_mode = config.settings.trading_market_context_fail_mode
         self._original_min_quality = config.settings.trading_market_context_min_quality
         self._original_max_staleness = (
             config.settings.trading_market_context_max_staleness_seconds
@@ -77,6 +78,7 @@ class TestMarketContextClient(TestCase):
         config.settings.trading_market_context_url = self._original_url
         config.settings.trading_market_context_timeout_seconds = self._original_timeout
         config.settings.trading_market_context_required = self._original_required
+        config.settings.trading_market_context_fail_mode = self._original_fail_mode
         config.settings.trading_market_context_min_quality = self._original_min_quality
         config.settings.trading_market_context_max_staleness_seconds = (
             self._original_max_staleness
@@ -299,6 +301,57 @@ class TestMarketContextClient(TestCase):
         )
         status = evaluate_market_context(bundle)
         self.assertFalse(status.allow_llm)
+        self.assertIn("market_context_stale", status.risk_flags)
+        self.assertIn("market_context_quality_low", status.risk_flags)
+
+    def test_evaluate_keeps_shadow_only_market_context_informational(self) -> None:
+        config.settings.trading_market_context_required = False
+        config.settings.trading_market_context_fail_mode = "shadow_only"
+        config.settings.trading_market_context_min_quality = 0.7
+        config.settings.trading_market_context_max_staleness_seconds = 30
+
+        bundle = MarketContextBundle.model_validate(
+            {
+                "contextVersion": "torghut.market-context.v1",
+                "symbol": "AAPL",
+                "asOfUtc": "2026-02-19T12:00:00Z",
+                "freshnessSeconds": 45,
+                "qualityScore": 0.4,
+                "sourceCount": 1,
+                "riskFlags": [],
+                "domains": {
+                    "technicals": {
+                        "domain": "technicals",
+                        "state": "ok",
+                        "asOf": "2026-02-19T12:00:00Z",
+                        "freshnessSeconds": 45,
+                        "maxFreshnessSeconds": 60,
+                        "sourceCount": 1,
+                        "qualityScore": 0.4,
+                        "payload": {},
+                        "citations": [],
+                        "riskFlags": [],
+                    },
+                    "regime": {
+                        "domain": "regime",
+                        "state": "ok",
+                        "asOf": "2026-02-19T12:00:00Z",
+                        "freshnessSeconds": 45,
+                        "maxFreshnessSeconds": 120,
+                        "sourceCount": 1,
+                        "qualityScore": 1,
+                        "payload": {},
+                        "citations": [],
+                        "riskFlags": [],
+                    },
+                },
+            }
+        )
+
+        status = evaluate_market_context(bundle)
+
+        self.assertTrue(status.allow_llm)
+        self.assertIsNone(status.reason)
         self.assertIn("market_context_stale", status.risk_flags)
         self.assertIn("market_context_quality_low", status.risk_flags)
 

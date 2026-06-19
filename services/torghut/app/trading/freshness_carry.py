@@ -9,6 +9,7 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from .market_context import market_context_status_enforced
 from .market_context_domains import active_market_context_reasons
 
 
@@ -281,6 +282,7 @@ def _market_context_dimension(
     market_context_status: Mapping[str, Any],
     now: datetime,
 ) -> dict[str, object]:
+    enforced = market_context_status_enforced(market_context_status)
     max_staleness = _int(
         market_context_status.get("max_staleness_seconds"),
         _MARKET_CONTEXT_DEFAULT_MAX_STALENESS_SECONDS,
@@ -289,14 +291,18 @@ def _market_context_dimension(
     last_checked_at = market_context_status.get(
         "last_checked_at"
     ) or market_context_status.get("last_as_of")
-    reasons = active_market_context_reasons(
-        [
-            *_strings(market_context_status.get("last_risk_flags")),
-            *_strings(market_context_status.get("reason_codes")),
-            *_strings(market_context_status.get("blocking_reasons")),
-        ]
+    reasons = (
+        active_market_context_reasons(
+            [
+                *_strings(market_context_status.get("last_risk_flags")),
+                *_strings(market_context_status.get("reason_codes")),
+                *_strings(market_context_status.get("blocking_reasons")),
+            ]
+        )
+        if enforced
+        else []
     )
-    if _bool(market_context_status.get("alert_active")):
+    if enforced and _bool(market_context_status.get("alert_active")):
         reasons.extend(
             active_market_context_reasons(
                 [
@@ -307,12 +313,12 @@ def _market_context_dimension(
                 ]
             )
         )
-    if market_context_status.get("health_error"):
+    if enforced and market_context_status.get("health_error"):
         reasons.append("market_context_health_error")
-    if freshness_seconds < 0:
+    if enforced and freshness_seconds < 0:
         state = "missing"
         reasons.append("market_context_freshness_missing")
-    elif freshness_seconds > max_staleness:
+    elif enforced and freshness_seconds > max_staleness:
         state = "stale"
         reasons.append("market_context_staleness_exceeded")
     elif reasons:

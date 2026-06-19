@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from dataclasses import dataclass
 from http.client import HTTPConnection, HTTPSConnection
@@ -48,6 +49,23 @@ class MarketContextStatus:
     allow_llm: bool
     reason: Optional[str]
     risk_flags: list[str]
+
+
+def market_context_enforced() -> bool:
+    return (
+        settings.trading_market_context_required
+        or settings.trading_market_context_fail_mode == "fail_closed"
+    )
+
+
+def market_context_status_enforced(status: Mapping[str, Any]) -> bool:
+    if not status:
+        return True
+    required = status.get("required")
+    fail_mode = str(status.get("fail_mode") or "").strip().lower()
+    if required is None and not fail_mode:
+        return True
+    return bool(required) or fail_mode == "fail_closed"
 
 
 class _HttpRequest:
@@ -240,7 +258,7 @@ def evaluate_market_context(
         risk_flags.append("market_context_quality_low")
         blocking_flags.append("market_context_quality_low")
 
-    if blocking_flags:
+    if blocking_flags and market_context_enforced():
         unique_blocking_flags = sorted(set(blocking_flags))
         reason = next(
             (
@@ -260,4 +278,10 @@ def evaluate_market_context(
     )
 
 
-__all__ = ["MarketContextClient", "MarketContextStatus", "evaluate_market_context"]
+__all__ = [
+    "MarketContextClient",
+    "MarketContextStatus",
+    "evaluate_market_context",
+    "market_context_enforced",
+    "market_context_status_enforced",
+]
