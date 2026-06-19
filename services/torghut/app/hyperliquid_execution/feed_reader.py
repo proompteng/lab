@@ -1,4 +1,4 @@
-"""ClickHouse read path for Hyperliquid market and signal state."""
+"""ClickHouse read path for Hyperliquid execution v2."""
 
 from __future__ import annotations
 
@@ -6,33 +6,33 @@ import base64
 import http.client
 import json
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from decimal import Decimal, InvalidOperation
-from typing import Any, Mapping, cast
+from typing import Mapping, cast
 from urllib.parse import urlencode, urlsplit
 
-from .config import HyperliquidRuntimeConfig
+from .config import HyperliquidExecutionConfig
 from .models import FeatureSnapshot, RuntimeDependencyStatus
 
 
 @dataclass(frozen=True)
-class ClickHouseStatus:
-    """Current feed and feature freshness read from ClickHouse."""
+class FeedStatus:
+    """Current mainnet feed freshness."""
 
     ready: bool
     statuses: tuple[RuntimeDependencyStatus, ...]
 
 
-class ClickHouseRuntimeReader:
+class ClickHouseFeedReader:
     """Small HTTP client for ClickHouse JSONEachRow queries."""
 
-    def __init__(self, config: HyperliquidRuntimeConfig) -> None:
+    def __init__(self, config: HyperliquidExecutionConfig) -> None:
         self._config = config
 
     def load_catalog_rows(self) -> list[dict[str, object]]:
         database = _identifier(self._config.clickhouse_database)
         network = _sql_string(self._config.market_data_network)
-        limit = max(1000, self._config.max_markets_per_cycle * 20)
+        limit = max(100, self._config.max_markets_per_cycle * 20)
         query = f"""
         WITH
           latest_catalog AS (
@@ -77,16 +77,7 @@ class ClickHouseRuntimeReader:
           COALESCE(
             NULLIF(JSONExtractString(JSONExtractRaw(a.payload, 'ctx'), 'midPx'), ''),
             JSONExtractString(c.payload, 'midPx')
-          ) AS midPx,
-          COALESCE(
-            NULLIF(JSONExtractString(JSONExtractRaw(a.payload, 'ctx'), 'openInterest'), ''),
-            JSONExtractString(c.payload, 'openInterest')
-          ) AS openInterest,
-          if(
-            JSONExtractInt(c.payload, 'maxLeverage') != 0,
-            JSONExtractInt(c.payload, 'maxLeverage'),
-            JSONExtractInt(JSONExtractRaw(c.payload, 'raw'), 'maxLeverage')
-          ) AS maxLeverage
+          ) AS midPx
         FROM latest_catalog AS c
         LEFT JOIN latest_context AS a
           ON c.market_id = a.market_id
@@ -110,23 +101,14 @@ class ClickHouseRuntimeReader:
           dex,
           event_ts,
           price,
-          momentum_1m_bps,
-          momentum_3m_bps,
           momentum_5m_bps,
-          momentum_15m_bps,
-          momentum_1h_bps,
-          volatility_bps,
-          vwap_distance_bps,
           spread_bps,
-          book_imbalance,
           liquidity_usd,
-          funding_rate,
-          open_interest_usd,
-          regime,
+          volatility_bps,
+          book_imbalance,
           source_lag_seconds,
           bid_price,
           ask_price,
-          quote_event_ts,
           quote_lag_seconds
         FROM {database}.hyperliquid_runtime_latest_features
         WHERE network = {network}
@@ -136,27 +118,7 @@ class ClickHouseRuntimeReader:
         """
         return [_feature_from_row(row) for row in self.query_json_each_row(query)]
 
-    def load_optimizer_history_summary(self) -> dict[str, object]:
-        database = _identifier(self._config.clickhouse_database)
-        network = _sql_string(self._config.market_data_network)
-        query = f"""
-        SELECT
-          count() AS feature_rows,
-          uniqExact(market_id) AS market_count,
-          min(event_ts) AS min_event_ts,
-          max(event_ts) AS max_event_ts,
-          avg(toFloat64OrZero(toString(momentum_5m_bps))) AS avg_momentum_5m_bps,
-          avg(toFloat64OrZero(toString(spread_bps))) AS avg_spread_bps,
-          sum(if(source_lag_seconds > {self._config.signal_staleness_seconds}, 1, 0))
-            AS stale_feature_rows
-        FROM {database}.hyperliquid_ta_features
-        WHERE network = {network}
-          AND event_ts >= now() - INTERVAL 24 HOUR
-        """
-        rows = self.query_json_each_row(query)
-        return rows[0] if rows else _empty_optimizer_history_summary()
-
-    def status(self) -> ClickHouseStatus:
+    def status(self) -> FeedStatus:
         database = _identifier(self._config.clickhouse_database)
         query = f"""
         SELECT
@@ -178,17 +140,15 @@ class ClickHouseRuntimeReader:
             rows = self.query_json_each_row(query, includes_format=True)
         except Exception as exc:
             reason = f"clickhouse_query_failed:{type(exc).__name__}"
-            return ClickHouseStatus(
-                ready=False,
-                statuses=(RuntimeDependencyStatus("clickhouse", False, reason=reason),),
+            return FeedStatus(
+                False, (RuntimeDependencyStatus("clickhouse", False, reason=reason),)
             )
         statuses = tuple(
             _dependency_from_row(row, self._config.dependency_staleness_seconds)
             for row in rows
         )
-        return ClickHouseStatus(
-            ready=bool(statuses) and all(status.ready for status in statuses),
-            statuses=statuses,
+        return FeedStatus(
+            bool(statuses) and all(status.ready for status in statuses), statuses
         )
 
     def query_json_each_row(
@@ -210,7 +170,7 @@ class ClickHouseRuntimeReader:
             cleaned = line.strip()
             if not cleaned:
                 continue
-            parsed: Any = json.loads(cleaned)
+            parsed = json.loads(cleaned)
             if isinstance(parsed, dict):
                 rows.append(
                     {
@@ -219,14 +179,6 @@ class ClickHouseRuntimeReader:
                     }
                 )
         return rows
-
-
-def _empty_optimizer_history_summary() -> dict[str, object]:
-    return {
-        "feature_rows": 0,
-        "market_count": 0,
-        "stale_feature_rows": 0,
-    }
 
 
 def _request_clickhouse(
@@ -271,47 +223,40 @@ def _request_clickhouse(
 
 
 def _feature_from_row(row: Mapping[str, object]) -> FeatureSnapshot:
+    payload = {str(key): value for key, value in row.items()}
     return FeatureSnapshot(
         market_id=_string(row.get("market_id")),
         coin=_string(row.get("coin")),
         dex=_string(row.get("dex")) or "default",
         event_ts=_datetime(row.get("event_ts")),
         price=_decimal(row.get("price")),
-        momentum_1m_bps=_decimal(row.get("momentum_1m_bps")),
-        momentum_3m_bps=_decimal(row.get("momentum_3m_bps")),
         momentum_5m_bps=_decimal(row.get("momentum_5m_bps")),
-        momentum_15m_bps=_decimal(row.get("momentum_15m_bps")),
-        momentum_1h_bps=_decimal(row.get("momentum_1h_bps")),
-        volatility_bps=_decimal(row.get("volatility_bps")),
-        vwap_distance_bps=_decimal(row.get("vwap_distance_bps")),
         spread_bps=_decimal(row.get("spread_bps")),
-        book_imbalance=_decimal(row.get("book_imbalance")),
         liquidity_usd=_decimal(row.get("liquidity_usd")),
-        funding_rate=_decimal(row.get("funding_rate")),
-        open_interest_usd=_decimal(row.get("open_interest_usd")),
-        regime=_string(row.get("regime")) or "unknown",
-        source_lag_seconds=int(_decimal(row.get("source_lag_seconds"))),
+        volatility_bps=_decimal(row.get("volatility_bps")),
+        book_imbalance=_decimal(row.get("book_imbalance")),
+        source_lag_seconds=_int(row.get("source_lag_seconds")),
         bid_price=_optional_decimal(row.get("bid_price")),
         ask_price=_optional_decimal(row.get("ask_price")),
-        quote_event_ts=_optional_datetime(row.get("quote_event_ts")),
         quote_lag_seconds=_optional_int(row.get("quote_lag_seconds")),
+        raw_features=payload,
     )
 
 
 def _dependency_from_row(
     row: Mapping[str, object],
-    staleness_seconds: int,
+    max_lag_seconds: int,
 ) -> RuntimeDependencyStatus:
+    name = _string(row.get("name")) or "clickhouse"
     observed_at = _optional_datetime(row.get("observed_at"))
-    lag_seconds = int(_decimal(row.get("lag_seconds")))
-    ready = observed_at is not None and 0 <= lag_seconds <= staleness_seconds
-    reason = None if ready else "stale_or_missing"
+    lag_seconds = _optional_int(row.get("lag_seconds"))
+    ready = lag_seconds is not None and lag_seconds <= max_lag_seconds
     return RuntimeDependencyStatus(
-        name=_string(row.get("name")),
+        name=name,
         ready=ready,
         observed_at=observed_at,
         lag_seconds=lag_seconds,
-        reason=reason,
+        reason=None if ready else "feed_stale_or_missing",
     )
 
 
@@ -322,7 +267,7 @@ def _identifier(value: str) -> str:
 
 
 def _sql_string(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def _string(value: object) -> str:
@@ -332,48 +277,49 @@ def _string(value: object) -> str:
 
 
 def _decimal(value: object) -> Decimal:
-    if value is None:
-        return Decimal("0")
     try:
         return Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except (InvalidOperation, TypeError, ValueError):
         return Decimal("0")
 
 
 def _optional_decimal(value: object) -> Decimal | None:
-    if value in (None, ""):
+    if value is None or value == "":
         return None
     try:
         return Decimal(str(value))
-    except (InvalidOperation, ValueError):
+    except (InvalidOperation, TypeError, ValueError):
         return None
+
+
+def _int(value: object) -> int:
+    parsed = _optional_int(value)
+    return parsed if parsed is not None else 0
 
 
 def _optional_int(value: object) -> int | None:
-    if value in (None, ""):
+    if value is None or value == "":
         return None
     try:
-        return int(str(value))
-    except ValueError:
+        return int(float(str(value)))
+    except (TypeError, ValueError):
         return None
 
 
 def _datetime(value: object) -> datetime:
     parsed = _optional_datetime(value)
     if parsed is None:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
+        raise ValueError("missing_datetime")
     return parsed
 
 
 def _optional_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
     if value is None:
         return None
-    raw = str(value).strip()
-    if not raw:
+    text = str(value).strip()
+    if not text:
         return None
-    if raw.endswith("Z"):
-        raw = f"{raw[:-1]}+00:00"
-    parsed = datetime.fromisoformat(raw)
-    if parsed.tzinfo is None:
-        return parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc)
+    normalized = text.replace("Z", "+00:00")
+    return datetime.fromisoformat(normalized)

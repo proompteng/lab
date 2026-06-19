@@ -8,7 +8,7 @@ metadata:
   labels:
     app: torghut-hyperliquid-runtime
 spec:
-  replicas: 0
+  replicas: 1
   strategy:
     type: Recreate
   selector:
@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-hard-reset-freeze-20260619
+        proompteng.ai/config-revision: hyperliquid-execution-v2-hard-reset-20260619
       labels:
         app: torghut-hyperliquid-runtime
     spec:
@@ -35,7 +35,7 @@ spec:
           imagePullPolicy: Always
           command:
             - uvicorn
-            - app.hyperliquid_runtime.api:app
+            - app.hyperliquid_execution.api:app
             - --host
             - 0.0.0.0
             - --port
@@ -53,18 +53,18 @@ spec:
                 secretKeyRef:
                   name: torghut-db-app
                   key: uri
-            - name: HYPERLIQUID_RUNTIME_CLICKHOUSE_PASSWORD
+            - name: HYPERLIQUID_EXECUTION_CLICKHOUSE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: torghut-clickhouse-auth
                   key: torghut_password
-            - name: HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS
+            - name: HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS
               valueFrom:
                 secretKeyRef:
                   name: torghut-hyperliquid-testnet
                   key: account-address
                   optional: true
-            - name: HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY
+            - name: HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
                   name: torghut-hyperliquid-testnet
