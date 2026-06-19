@@ -14,44 +14,6 @@ data:
     hs.status = "Healthy"
     hs.message = "SealedSecret health is ignored; decryption is handled by the sealed-secrets controller."
     return hs
-  resource.customizations.health.external-secrets.io_ExternalSecret: |
-    hs = {}
-    local spec = obj.spec or {}
-    local status = obj.status or {}
-    local binding = status.binding or {}
-    local bindingName = binding.name or ""
-    local syncedResourceVersion = status.syncedResourceVersion or ""
-
-    if spec.refreshPolicy == "CreatedOnce" and bindingName ~= "" and syncedResourceVersion ~= "" then
-      hs.status = "Healthy"
-      hs.message = "Created-once ExternalSecret has already created its target Secret."
-      return hs
-    end
-
-    local conditions = status.conditions or {}
-    for _, condition in ipairs(conditions) do
-      if condition.type == "Ready" then
-        if condition.status == "True" then
-          hs.status = "Healthy"
-          hs.message = condition.message or "ExternalSecret is ready."
-          return hs
-        end
-
-        if condition.status == "False" then
-          hs.status = "Degraded"
-          hs.message = condition.message or "ExternalSecret is not ready."
-          return hs
-        end
-
-        hs.status = "Progressing"
-        hs.message = condition.message or "ExternalSecret is reconciling."
-        return hs
-      end
-    end
-
-    hs.status = "Progressing"
-    hs.message = "ExternalSecret has not reported readiness."
-    return hs
   resource.customizations.health.batch_CronJob: |
     hs = {}
     local metadata = obj.metadata or {}
