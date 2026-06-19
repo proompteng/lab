@@ -53,7 +53,7 @@ data:
   TOPIC_FUNDING: "torghut.hyperliquid.funding.v1"
   TOPIC_STATUS: "torghut.hyperliquid.status.v1"
   CLICKHOUSE_ENABLED: "true"
-  CLICKHOUSE_REQUIRED_FOR_READINESS: "false"
+  CLICKHOUSE_REQUIRED_FOR_READINESS: "true"
   CLICKHOUSE_HTTP_URL: "http://torghut-clickhouse.torghut.svc.cluster.local:8123"
   CLICKHOUSE_DATABASE: "torghut"
   CLICKHOUSE_USERNAME: "torghut"

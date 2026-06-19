@@ -35,6 +35,12 @@ data class ClickHouseReadinessUpdate(
   val ready: Boolean,
   val tableFreshnessReady: Boolean = ready,
   val tableIngestLagMs: Map<String, Long?>,
+  val tableEventLagMs: Map<String, Long?>,
+)
+
+private data class ClickHouseTableFreshness(
+  val ingestLagMs: Map<String, Long?>,
+  val eventLagMs: Map<String, Long?>,
 )
 
 class ClickHouseSink(
@@ -52,6 +58,9 @@ class ClickHouseSink(
 
   @Volatile
   private var latestTableIngestLagMs: Map<String, Long?> = config.readyTables.associateWith { null }
+
+  @Volatile
+  private var latestTableEventLagMs: Map<String, Long?> = config.readyTables.associateWith { null }
 
   suspend fun enqueue(record: RoutedEnvelope) {
     if (!config.enabled) return
@@ -143,13 +152,15 @@ class ClickHouseSink(
     return runCatching {
       queryTableFreshness(observedAt)
     }.fold(
-      onSuccess = { lags ->
-        latestTableIngestLagMs = lags
-        lags.forEach { (table, lagMs) -> metrics.setClickHouseTableIngestLagMs(table, lagMs) }
-        val fresh = lags.values.all { lagMs -> lagMs != null && lagMs in 0L..config.readyMaxAgeMs }
+      onSuccess = { freshness ->
+        latestTableIngestLagMs = freshness.ingestLagMs
+        latestTableEventLagMs = freshness.eventLagMs
+        freshness.ingestLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableIngestLagMs(table, lagMs) }
+        freshness.eventLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableEventLagMs(table, lagMs) }
+        val fresh = freshness.eventLagMs.values.all { lagMs -> lagMs != null && lagMs in 0L..config.readyMaxAgeMs }
         tableFreshnessReady.set(fresh)
         lastFreshnessCheckMs.set(observedAt)
-        if (!fresh) clickHouseLogger.warn { "clickhouse table freshness stale lags_ms=$lags" }
+        if (!fresh) clickHouseLogger.warn { "clickhouse table event freshness stale lags_ms=${freshness.eventLagMs}" }
         fresh
       },
       onFailure = { error ->
@@ -161,23 +172,29 @@ class ClickHouseSink(
     )
   }
 
-  private suspend fun queryTableFreshness(observedAt: Long): Map<String, Long?> {
+  private suspend fun queryTableFreshness(observedAt: Long): ClickHouseTableFreshness {
     val database = clickHouseIdentifier(config.database)
     val tables = config.readyTables.sorted().map(::clickHouseIdentifier)
     val union =
       tables.joinToString("\nUNION ALL\n") { table ->
-        "SELECT '$table' AS table, max(parseDateTimeBestEffort(ingest_ts)) AS latest_ingest " +
+        "SELECT '$table' AS table, " +
+          "max(parseDateTimeBestEffort(ingest_ts)) AS latest_ingest, " +
+          "max(parseDateTimeBestEffort(event_ts)) AS latest_event " +
           "FROM $database.$table WHERE network = ${sqlString(network)}"
       }
     val query =
       """
-      SELECT table, if(isNull(latest_ingest), NULL, toUnixTimestamp64Milli(toDateTime64(latest_ingest, 3))) AS latest_ingest_ms
+      SELECT
+        table,
+        if(isNull(latest_ingest), NULL, toUnixTimestamp64Milli(toDateTime64(latest_ingest, 3))) AS latest_ingest_ms,
+        if(isNull(latest_event), NULL, toUnixTimestamp64Milli(toDateTime64(latest_event, 3))) AS latest_event_ms
       FROM (
       $union
       )
       FORMAT JSONEachRow
       """.trimIndent()
-    val observedRows = mutableMapOf<String, Long?>()
+    val ingestRows = mutableMapOf<String, Long?>()
+    val eventRows = mutableMapOf<String, Long?>()
     executeClickHouse(query)
       .lineSequence()
       .map { it.trim() }
@@ -186,9 +203,16 @@ class ClickHouseSink(
         val row = json.decodeFromString<JsonObject>(line)
         val table = row["table"]?.jsonPrimitive?.contentOrNull
         val latestIngestMs = row["latest_ingest_ms"]?.jsonPrimitive?.longOrNull
-        if (table != null) observedRows[table] = latestIngestMs?.takeIf { it > 0 }?.let { observedAt - it }
+        val latestEventMs = row["latest_event_ms"]?.jsonPrimitive?.longOrNull
+        if (table != null) {
+          ingestRows[table] = latestIngestMs?.takeIf { it > 0 }?.let { observedAt - it }
+          eventRows[table] = latestEventMs?.takeIf { it > 0 }?.let { observedAt - it }
+        }
       }
-    return tables.associateWith { observedRows[it] }
+    return ClickHouseTableFreshness(
+      ingestLagMs = tables.associateWith { ingestRows[it] },
+      eventLagMs = tables.associateWith { eventRows[it] },
+    )
   }
 
   private fun rowFor(record: RoutedEnvelope): JsonObject =
@@ -235,6 +259,7 @@ class ClickHouseSink(
         ready = ready,
         tableFreshnessReady = tableFreshnessReady,
         tableIngestLagMs = latestTableIngestLagMs,
+        tableEventLagMs = latestTableEventLagMs,
       ),
     )
   }

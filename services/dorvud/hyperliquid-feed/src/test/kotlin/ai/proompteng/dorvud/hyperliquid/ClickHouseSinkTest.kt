@@ -82,8 +82,8 @@ class ClickHouseSinkTest {
               respond(
                 content =
                   """
-                  {"table":"hyperliquid_candles","latest_ingest_ms":9900}
-                  {"table":"hyperliquid_raw","latest_ingest_ms":9900}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":9900}
                   """.trimIndent(),
                 status = HttpStatusCode.OK,
               )
@@ -140,8 +140,8 @@ class ClickHouseSinkTest {
               respond(
                 content =
                   """
-                  {"table":"hyperliquid_candles","latest_ingest_ms":9900}
-                  {"table":"hyperliquid_raw","latest_ingest_ms":9900}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":9900}
                   """.trimIndent(),
                 status = HttpStatusCode.OK,
               )
@@ -191,8 +191,8 @@ class ClickHouseSinkTest {
               respond(
                 content =
                   """
-                  {"table":"hyperliquid_candles","latest_ingest_ms":9900}
-                  {"table":"hyperliquid_raw","latest_ingest_ms":9900}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":9900}
                   """.trimIndent(),
                 status = HttpStatusCode.OK,
               )
@@ -242,8 +242,8 @@ class ClickHouseSinkTest {
               respond(
                 content =
                   """
-                  {"table":"hyperliquid_candles","latest_ingest_ms":7000}
-                  {"table":"hyperliquid_raw","latest_ingest_ms":7000}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":7000}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":7000}
                   """.trimIndent(),
                 status = HttpStatusCode.OK,
               )
@@ -271,13 +271,14 @@ class ClickHouseSinkTest {
 
       assertEquals(false, readySignals.last().ready)
       assertEquals(false, readySignals.last().tableFreshnessReady)
-      assertEquals(3_000, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
+      assertEquals(100, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
+      assertEquals(3_000, readySignals.last().tableEventLagMs["hyperliquid_candles"])
       job.cancelAndJoin()
       client.close()
     }
 
   @Test
-  fun `marks clickhouse ready when insert succeeds and table ingest is fresh`() =
+  fun `marks clickhouse ready when insert succeeds and table event time is fresh`() =
     runBlocking {
       val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
       val client =
@@ -289,8 +290,8 @@ class ClickHouseSinkTest {
               respond(
                 content =
                   """
-                  {"table":"hyperliquid_candles","latest_ingest_ms":9500}
-                  {"table":"hyperliquid_raw","latest_ingest_ms":9400}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9500,"latest_event_ms":9500}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9400,"latest_event_ms":9400}
                   """.trimIndent(),
                 status = HttpStatusCode.OK,
               )
@@ -319,6 +320,7 @@ class ClickHouseSinkTest {
       assertEquals(true, readySignals.last().ready)
       assertEquals(true, readySignals.last().tableFreshnessReady)
       assertEquals(500, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
+      assertEquals(500, readySignals.last().tableEventLagMs["hyperliquid_candles"])
       job.cancelAndJoin()
       client.close()
     }
