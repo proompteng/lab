@@ -8,6 +8,7 @@ import pytest
 
 from app.hyperliquid_runtime.config import HyperliquidRuntimeConfig
 from app.hyperliquid_runtime.exchange import (
+    HyperliquidSdkExchange,
     ShadowHyperliquidExchange,
     _account_state_from_payload,
     exchange_from_config,
@@ -74,6 +75,41 @@ def test_shadow_exchange_never_requires_private_keys() -> None:
         "shadow": True,
         "reason": "trading_disabled_shadow",
     }
+
+
+def test_sdk_exchange_normalizes_perp_price_and_size_precision() -> None:
+    config = HyperliquidRuntimeConfig.from_env(
+        {
+            "HYPERLIQUID_RUNTIME_TRADING_ENABLED": "true",
+            "HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS": "0x1111111111111111111111111111111111111111",
+            "HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY": (
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+            "TORGHUT_TIGERBEETLE_ENABLED": "true",
+            "TORGHUT_TIGERBEETLE_REQUIRED": "true",
+            "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
+        }
+    )
+    exchange = HyperliquidSdkExchange(config)
+    exchange._sz_decimals_by_dex_coin = {"xyz": {"xyz:SMSN": 1}}
+    intent = OrderIntent(
+        market_id="hl:perp:xyz:xyz:SMSN",
+        coin="xyz:SMSN",
+        dex="xyz",
+        side="sell",
+        size=Decimal("0.141976"),
+        limit_price=Decimal("176.080123"),
+        notional_usd=Decimal("24.992235"),
+        cloid="0x1234567890abcdef1234567890abcdef",
+        reduce_only=False,
+        decision_id="decision",
+    )
+
+    normalized = exchange.normalize_order_intent(intent)
+
+    assert normalized.limit_price == Decimal("176.09")
+    assert normalized.size == Decimal("0.1")
+    assert normalized.notional_usd == Decimal("17.609000")
 
 
 def test_user_state_payload_materializes_account_and_positions() -> None:

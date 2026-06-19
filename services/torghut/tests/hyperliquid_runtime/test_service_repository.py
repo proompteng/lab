@@ -432,13 +432,16 @@ class _FakeExchange:
         fills: bool = True,
         supports_markets: bool = True,
         fail_submit: bool = False,
+        normalized_intent: OrderIntent | None = None,
         open_order_market_ids: frozenset[str] | None = None,
     ) -> None:
         self.submitted: list[OrderIntent] = []
+        self.normalized_inputs: list[OrderIntent] = []
         self.open_order_reconcile_inputs: list[dict[str, str]] = []
         self._fills = fills
         self._supports_markets = supports_markets
         self._fail_submit = fail_submit
+        self._normalized_intent = normalized_intent
         self._open_order_market_ids = open_order_market_ids or frozenset()
 
     def filter_supported_markets(
@@ -457,6 +460,17 @@ class _FakeExchange:
                 False,
                 reason="no_execution_supported_markets",
             ),
+        )
+
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        self.normalized_inputs.append(intent)
+        if self._normalized_intent is None:
+            return intent
+        return replace(
+            intent,
+            size=self._normalized_intent.size,
+            limit_price=self._normalized_intent.limit_price,
+            notional_usd=self._normalized_intent.notional_usd,
         )
 
     def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Fill]:
@@ -555,7 +569,14 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     monkeypatch: MonkeyPatch,
 ) -> None:
     repository = _FakeRepository(_FakeSession())
-    exchange = _FakeExchange()
+    normalized_intent = replace(
+        _intent(),
+        decision_id="decision-id",
+        limit_price=Decimal("200.3"),
+        size=Decimal("0.04"),
+        notional_usd=Decimal("8.012000"),
+    )
+    exchange = _FakeExchange(normalized_intent=normalized_intent)
     journal = _FakeJournal()
     monkeypatch.setattr(
         service_module, "HyperliquidRuntimeRepository", lambda _session: repository
@@ -582,8 +603,11 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     assert result.decisions_written == 1
     assert result.orders_submitted == 1
     assert result.blocked_decisions == 0
+    assert exchange.normalized_inputs
     assert exchange.submitted[0].side == "buy"
-    assert repository.orders[0][0].decision_id == "decision-id"
+    assert exchange.submitted[0].limit_price == Decimal("200.3")
+    assert exchange.submitted[0].size == Decimal("0.04")
+    assert repository.orders[0][0] == exchange.submitted[0]
     assert repository.account_states[0].positions[0].coin == "cash:AAPL"
     assert repository.performance[0].reconciliation_status == "pass"
     assert exchange.dead_man_seconds == 60

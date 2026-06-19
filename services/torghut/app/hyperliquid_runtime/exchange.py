@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidRuntimeConfig
@@ -26,6 +27,10 @@ _EXECUTION_UNIVERSE_REFRESH_SECONDS = 300
 
 class HyperliquidExchange(Protocol):
     """Minimal exchange surface used by the runtime service."""
+
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        """Return an exchange-compliant order intent."""
+        ...
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         """Submit an IOC limit order."""
@@ -66,6 +71,9 @@ class ShadowHyperliquidExchange:
 
     def __init__(self) -> None:
         self._observed_at = datetime.now(timezone.utc)
+
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        return intent
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         _ = intent
@@ -135,6 +143,9 @@ class UnavailableHyperliquidExchange:
 
     def __init__(self, reasons: list[str]) -> None:
         self._reasons = tuple(reasons)
+
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        return intent
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
         _ = intent
@@ -209,8 +220,34 @@ class HyperliquidSdkExchange:
         self._last_exchange_read_at: datetime | None = None
         self._last_execution_universe_at: datetime | None = None
         self._execution_universe_by_dex: dict[str, frozenset[str]] = {}
+        self._sz_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        sz_decimals = self._sz_decimals_by_dex_coin.get(_sdk_dex(intent.dex), {}).get(
+            intent.coin
+        )
+        if sz_decimals is None:
+            return intent
+        price = _normalize_hyperliquid_perp_price(
+            intent.limit_price,
+            sz_decimals=sz_decimals,
+            side=intent.side,
+        )
+        size = _normalize_hyperliquid_size(
+            intent.size,
+            sz_decimals=sz_decimals,
+        )
+        if size <= Decimal("0"):
+            raise ValueError("order_size_below_exchange_precision")
+        return replace(
+            intent,
+            size=size,
+            limit_price=price,
+            notional_usd=(price * size).quantize(Decimal("0.000001")),
+        )
 
     def submit_ioc_limit(self, intent: OrderIntent) -> OrderResult:
+        intent = self.normalize_order_intent(intent)
         exchange = self._exchange()
         cloid = self._cloid(intent.cloid)
         response = cast(
@@ -403,6 +440,7 @@ class HyperliquidSdkExchange:
         if self._execution_universe_cache_is_fresh():
             return
         by_dex: dict[str, frozenset[str]] = {}
+        sz_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
         loaded_any_metadata = False
         for dex in _execution_metadata_dexes(
             markets,
@@ -421,6 +459,7 @@ class HyperliquidSdkExchange:
                 else None
             )
             coins: set[str] = set()
+            sz_decimals_by_coin: dict[str, int] = {}
             if isinstance(universe, list):
                 for asset in cast(list[object], universe):
                     if not isinstance(asset, dict):
@@ -429,13 +468,19 @@ class HyperliquidSdkExchange:
                     name = str(asset_map.get("name") or "").strip()
                     if name:
                         coins.add(name)
+                        sz_decimals = _optional_int(asset_map.get("szDecimals"))
+                        if sz_decimals is not None and sz_decimals >= 0:
+                            sz_decimals_by_coin[name] = sz_decimals
             by_dex[dex] = frozenset(coins)
+            sz_decimals_by_dex_coin[dex] = sz_decimals_by_coin
             loaded_any_metadata = True
         if not loaded_any_metadata:
             self._execution_universe_by_dex = by_dex
+            self._sz_decimals_by_dex_coin = sz_decimals_by_dex_coin
             return
         observed_at = datetime.now(timezone.utc)
         self._execution_universe_by_dex = by_dex
+        self._sz_decimals_by_dex_coin = sz_decimals_by_dex_coin
         self._last_execution_universe_at = observed_at
         self._last_exchange_read_at = observed_at
 
@@ -625,6 +670,45 @@ def _coin_dex(coin: str) -> str:
     return prefix.strip()
 
 
+def _normalize_hyperliquid_perp_price(
+    price: Decimal,
+    *,
+    sz_decimals: int,
+    side: str,
+) -> Decimal:
+    if price <= Decimal("0"):
+        raise ValueError("order_price_must_be_positive")
+    # Hyperliquid perp prices are capped at 5 significant figures and
+    # at most 6 - szDecimals fractional digits.
+    decimal_places = min(
+        max(0, 6 - sz_decimals),
+        _decimal_places_for_significant_figures(price, significant_figures=5),
+    )
+    quantum = Decimal("1").scaleb(-decimal_places)
+    rounding = ROUND_DOWN if side == "buy" else ROUND_UP
+    normalized = price.quantize(quantum, rounding=rounding)
+    if normalized <= Decimal("0"):
+        return price.quantize(quantum, rounding=ROUND_UP)
+    return normalized
+
+
+def _normalize_hyperliquid_size(
+    size: Decimal,
+    *,
+    sz_decimals: int,
+) -> Decimal:
+    quantum = Decimal("1").scaleb(-max(0, sz_decimals))
+    return size.quantize(quantum, rounding=ROUND_DOWN)
+
+
+def _decimal_places_for_significant_figures(
+    value: Decimal,
+    *,
+    significant_figures: int,
+) -> int:
+    return max(0, significant_figures - value.copy_abs().adjusted() - 1)
+
+
 def _decimal(value: object) -> Decimal:
     if value is None:
         return Decimal("0")
@@ -635,6 +719,15 @@ def _optional_decimal(value: object) -> Decimal | None:
     if value in (None, ""):
         return None
     return Decimal(str(value))
+
+
+def _optional_int(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(str(value))
+    except ValueError:
+        return None
 
 
 def _position_notional(
