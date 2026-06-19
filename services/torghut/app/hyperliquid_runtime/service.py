@@ -288,6 +288,20 @@ class HyperliquidRuntimeService:
             config=self._config,
             decision_id=decision_id,
         )
+        try:
+            intent = self._exchange.normalize_order_intent(intent)
+        except ValueError as exc:
+            result = OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"error": type(exc).__name__},
+                rejection_reason=f"order_intent_invalid:{exc}",
+            )
+            context.repository.insert_order(intent, result)
+            self._journal.persist_refs(
+                context.session, self._journal.order_events(intent, result)
+            )
+            return
         self._journal.persist_refs(
             context.session,
             self._journal.order_events(
