@@ -217,6 +217,9 @@ class _FakeSession:
         self.executed: list[tuple[str, dict[str, object] | None]] = []
         self.committed = False
         self.closed_order_rows: list[dict[str, object]] = []
+        self.symbol_exposure_rows: list[dict[str, object]] = []
+        self.reject_cooldown_rows: list[dict[str, object]] = []
+        self.halted_rows: list[dict[str, object]] = []
 
     def execute(
         self, statement: object, params: dict[str, object] | None = None
@@ -236,6 +239,12 @@ class _FakeSession:
             )
         if "SELECT DISTINCT market_id" in sql:
             return _MappingResult([{"market_id": "hl:perp:cash:cash:AAPL"}])
+        if "SUM(notional_usd) AS exposure_usd" in sql:
+            return _MappingResult(self.symbol_exposure_rows)
+        if "rejection_reason ILIKE '%could not immediately match%'" in sql:
+            return _MappingResult(self.reject_cooldown_rows)
+        if "rejection_reason = 'Trading is halted.'" in sql:
+            return _MappingResult(self.halted_rows)
         if "FROM hyperliquid_runtime_orders o" in sql:
             return _MappingResult(self.closed_order_rows)
         if "fill_summary AS" in sql:
@@ -258,6 +267,11 @@ class _FakeSession:
 
 def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
     session = _FakeSession()
+    session.symbol_exposure_rows = [
+        {"coin": "cash:AAPL", "exposure_usd": "20"},
+    ]
+    session.reject_cooldown_rows = [{"coin": "cash:TSLA"}]
+    session.halted_rows = [{"coin": "cash:AVGO"}]
     repository = HyperliquidRuntimeRepository(session)
     signal = generate_signal(_feature(), parameter_version="test-v1")
 
@@ -307,6 +321,9 @@ def test_repository_writes_runtime_tables_and_reads_risk_state() -> None:
     assert risk_state.unrealized_pnl_usd == Decimal("0.75")
     assert risk_state.daily_fees_usd == Decimal("0.01")
     assert risk_state.open_order_markets == frozenset({"hl:perp:cash:cash:AAPL"})
+    assert risk_state.symbol_exposure_usd_by_coin == {"cash:AAPL": Decimal("20")}
+    assert risk_state.reject_cooldown_coins == frozenset({"cash:TSLA"})
+    assert risk_state.halted_coins == frozenset({"cash:AVGO"})
     assert any(
         params and params.get("coin") == "cash:AAPL" for _, params in session.executed
     )
@@ -406,7 +423,10 @@ class _FakeRepository:
         return self.closed_order_releases
 
     def risk_state(
-        self, *, dependencies: tuple[RuntimeDependencyStatus, ...]
+        self,
+        *,
+        dependencies: tuple[RuntimeDependencyStatus, ...],
+        **_kwargs: object,
     ) -> RiskState:
         return RiskState(
             gross_exposure_usd=Decimal("0"),
@@ -696,6 +716,60 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
         "fill",
         "order_submitted",
     ]
+
+
+def test_runtime_service_filters_trade_coins_and_excluded_spx_before_submit(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    repository = _FakeRepository(_FakeSession())
+    exchange = _FakeExchange(fills=False)
+    journal = _FakeJournal()
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(
+        clickhouse=_FakeClickHouse(
+            features=[
+                _feature(
+                    market_id="hl:perp:xyz:xyz:NVDA",
+                    coin="xyz:NVDA",
+                    dex="xyz",
+                )
+            ],
+            catalog_rows=[
+                {
+                    "market_type": "perp",
+                    "market_id": "hl:perp:default:SPX",
+                    "coin": "SPX",
+                    "dex": "default",
+                    "payload": '{"dayNtlVlm":"9000000","markPx":"6000","openInterest":"1000000"}',
+                },
+                {
+                    "market_type": "perp",
+                    "market_id": "hl:perp:xyz:xyz:NVDA",
+                    "coin": "xyz:NVDA",
+                    "dex": "xyz",
+                    "payload": '{"dayNtlVlm":"800000","markPx":"145","openInterest":"1000000"}',
+                },
+                {
+                    "market_type": "perp",
+                    "market_id": "hl:perp:xyz:xyz:TSLA",
+                    "coin": "xyz:TSLA",
+                    "dex": "xyz",
+                    "payload": '{"dayNtlVlm":"700000","markPx":"300","openInterest":"1000000"}',
+                },
+            ],
+        ),
+        exchange=exchange,
+        journal=journal,
+        HYPERLIQUID_RUNTIME_TRADE_COINS="xyz:NVDA,xyz:AMD",
+        HYPERLIQUID_RUNTIME_EXCLUDED_COINS="SPX",
+    )
+    session = _FakeSession()
+
+    result = service.run_once(session)
+
+    assert result.markets_seen == 1
+    assert [market.coin for market in repository.markets] == ["xyz:NVDA"]
+    assert [intent.coin for intent in exchange.submitted] == ["xyz:NVDA"]
 
 
 def test_runtime_service_skips_execution_markets_without_fresh_features(

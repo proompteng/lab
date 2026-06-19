@@ -12,6 +12,9 @@ _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off"}
 _DEFAULT_ALLOWED_ASSET_CLASSES = ("stocks", "indices", "preipo")
 _VALID_ALLOWED_ASSET_CLASSES = frozenset((*_DEFAULT_ALLOWED_ASSET_CLASSES, "crypto"))
+_DEFAULT_REJECT_COOLDOWN_THRESHOLD = 3
+_DEFAULT_REJECT_COOLDOWN_WINDOW_SECONDS = 1800
+_DEFAULT_REJECT_COOLDOWN_SECONDS = 900
 
 
 @dataclass(frozen=True)
@@ -37,11 +40,17 @@ class HyperliquidRuntimeConfig:
     min_day_notional_volume_usd: Decimal
     max_markets_per_cycle: int
     allowed_asset_classes: tuple[str, ...]
+    trade_coins: tuple[str, ...]
+    excluded_coins: tuple[str, ...]
     max_order_notional_usd: Decimal
     min_order_notional_usd: Decimal
     max_gross_exposure_usd: Decimal
+    max_symbol_exposure_usd: Decimal
     max_daily_loss_usd: Decimal
     max_slippage_bps: Decimal
+    reject_cooldown_threshold: int
+    reject_cooldown_window_seconds: int
+    reject_cooldown_seconds: int
     min_order_size: Decimal
     strategy_parameter_version: str
     optimizer_enabled: bool
@@ -69,6 +78,15 @@ class HyperliquidRuntimeConfig:
         market_data_network = _text(
             source, "HYPERLIQUID_RUNTIME_MARKET_DATA_NETWORK", "mainnet"
         ).lower()
+        max_order_notional_usd = _decimal(
+            source, "HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD", "25"
+        )
+        min_order_notional_usd = _decimal(
+            source, "HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD", "12"
+        )
+        max_gross_exposure_usd = _decimal(
+            source, "HYPERLIQUID_RUNTIME_MAX_GROSS_EXPOSURE_USD", "100"
+        )
         return cls(
             enabled=_bool(source, "HYPERLIQUID_RUNTIME_ENABLED", True),
             trading_enabled=_bool(source, "HYPERLIQUID_RUNTIME_TRADING_ENABLED", False),
@@ -138,20 +156,40 @@ class HyperliquidRuntimeConfig:
                     _DEFAULT_ALLOWED_ASSET_CLASSES,
                 )
             ),
-            max_order_notional_usd=_decimal(
-                source, "HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD", "25"
+            trade_coins=tuple(
+                _csv_text(source, "HYPERLIQUID_RUNTIME_TRADE_COINS", ())
             ),
-            min_order_notional_usd=_decimal(
-                source, "HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD", "12"
+            excluded_coins=tuple(
+                _csv_text(source, "HYPERLIQUID_RUNTIME_EXCLUDED_COINS", ())
             ),
-            max_gross_exposure_usd=_decimal(
-                source, "HYPERLIQUID_RUNTIME_MAX_GROSS_EXPOSURE_USD", "100"
+            max_order_notional_usd=max_order_notional_usd,
+            min_order_notional_usd=min_order_notional_usd,
+            max_gross_exposure_usd=max_gross_exposure_usd,
+            max_symbol_exposure_usd=_decimal(
+                source,
+                "HYPERLIQUID_RUNTIME_MAX_SYMBOL_EXPOSURE_USD",
+                str(max_gross_exposure_usd),
             ),
             max_daily_loss_usd=_decimal(
                 source, "HYPERLIQUID_RUNTIME_MAX_DAILY_LOSS_USD", "25"
             ),
             max_slippage_bps=_decimal(
                 source, "HYPERLIQUID_RUNTIME_MAX_SLIPPAGE_BPS", "15"
+            ),
+            reject_cooldown_threshold=_int(
+                source,
+                "HYPERLIQUID_RUNTIME_REJECT_COOLDOWN_THRESHOLD",
+                _DEFAULT_REJECT_COOLDOWN_THRESHOLD,
+            ),
+            reject_cooldown_window_seconds=_int(
+                source,
+                "HYPERLIQUID_RUNTIME_REJECT_COOLDOWN_WINDOW_SECONDS",
+                _DEFAULT_REJECT_COOLDOWN_WINDOW_SECONDS,
+            ),
+            reject_cooldown_seconds=_int(
+                source,
+                "HYPERLIQUID_RUNTIME_REJECT_COOLDOWN_SECONDS",
+                _DEFAULT_REJECT_COOLDOWN_SECONDS,
             ),
             min_order_size=_decimal(
                 source, "HYPERLIQUID_RUNTIME_MIN_ORDER_SIZE", "0.0001"
@@ -219,10 +257,20 @@ class HyperliquidRuntimeConfig:
             errors.append("max_order_notional_usd_must_cover_min_order_notional")
         if self.max_gross_exposure_usd < self.max_order_notional_usd:
             errors.append("max_gross_exposure_usd_must_cover_one_order")
+        if self.max_symbol_exposure_usd <= Decimal("0"):
+            errors.append("max_symbol_exposure_usd_must_be_positive")
+        if self.max_symbol_exposure_usd < self.max_order_notional_usd:
+            errors.append("max_symbol_exposure_usd_must_cover_one_order")
         if self.max_daily_loss_usd <= Decimal("0"):
             errors.append("max_daily_loss_usd_must_be_positive")
         if self.max_slippage_bps <= Decimal("0"):
             errors.append("max_slippage_bps_must_be_positive")
+        if self.reject_cooldown_threshold <= 0:
+            errors.append("reject_cooldown_threshold_must_be_positive")
+        if self.reject_cooldown_window_seconds <= 0:
+            errors.append("reject_cooldown_window_seconds_must_be_positive")
+        if self.reject_cooldown_seconds <= 0:
+            errors.append("reject_cooldown_seconds_must_be_positive")
         if self.tigerbeetle_cluster_id <= 0:
             errors.append("tigerbeetle_cluster_id_must_be_positive")
         if self.optimizer_interval_seconds <= 0:
@@ -298,3 +346,14 @@ def _csv(
     if value is None:
         return list(default)
     return [part.strip().lower() for part in value.split(",") if part.strip()]
+
+
+def _csv_text(
+    env: Mapping[str, str],
+    name: str,
+    default: tuple[str, ...],
+) -> list[str]:
+    value = env.get(name)
+    if value is None:
+        return list(default)
+    return [part.strip() for part in value.split(",") if part.strip()]
