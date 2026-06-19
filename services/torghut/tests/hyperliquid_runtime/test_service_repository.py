@@ -555,6 +555,34 @@ def _journal_event(source_id: str, transfer_kind: str) -> HyperliquidJournalEven
     )
 
 
+def _patch_repository(monkeypatch: MonkeyPatch, repository: _FakeRepository) -> None:
+    monkeypatch.setattr(
+        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
+    )
+
+
+def _enabled_service(
+    *,
+    clickhouse: _FakeClickHouse | None = None,
+    exchange: _FakeExchange | None = None,
+    journal: _FakeJournal | None = None,
+    **config_overrides: str,
+) -> HyperliquidRuntimeService:
+    return HyperliquidRuntimeService(
+        config=_config(
+            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
+            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
+            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
+                "0x2222222222222222222222222222222222222222222222222222222222222222"
+            ),
+            **config_overrides,
+        ),
+        clickhouse=clickhouse if clickhouse is not None else _FakeClickHouse(),
+        exchange=exchange if exchange is not None else _FakeExchange(),
+        journal=journal if journal is not None else _FakeJournal(),
+    )
+
+
 def test_feature_readiness_allows_partial_fresh_coverage() -> None:
     status = service_module._feature_readiness_status(
         execution_markets=(
@@ -593,21 +621,8 @@ def test_runtime_service_orchestrates_signal_order_and_accounting(
     )
     exchange = _FakeExchange(normalized_intent=normalized_intent)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
-        clickhouse=_FakeClickHouse(),
-        exchange=exchange,
-        journal=journal,
-    )
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(exchange=exchange, journal=journal)
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -642,17 +657,8 @@ def test_runtime_service_skips_execution_markets_without_fresh_features(
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(
         clickhouse=_FakeClickHouse(
             features=[
                 _feature(),
@@ -725,17 +731,8 @@ def test_runtime_service_releases_reconciled_closed_orders(
     ]
     exchange = _FakeExchange(fills=False)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(
         clickhouse=_FakeClickHouse(features=[]),
         exchange=exchange,
         journal=journal,
@@ -783,21 +780,8 @@ def test_runtime_service_releases_hold_when_submit_raises(
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False, fail_submit=True)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
-        clickhouse=_FakeClickHouse(),
-        exchange=exchange,
-        journal=journal,
-    )
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(exchange=exchange, journal=journal)
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -823,21 +807,8 @@ def test_runtime_service_rejects_invalid_normalized_order_without_submit(
         normalize_error=ValueError("order_notional_below_min_order_notional"),
     )
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
-        clickhouse=_FakeClickHouse(),
-        exchange=exchange,
-        journal=journal,
-    )
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(exchange=exchange, journal=journal)
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -864,21 +835,8 @@ def test_runtime_service_rejects_market_setup_failure_without_submit(
     )
     exchange = _FakeExchange(fills=False, market_setup_result=setup_result)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
-        clickhouse=_FakeClickHouse(),
-        exchange=exchange,
-        journal=journal,
-    )
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(exchange=exchange, journal=journal)
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -898,9 +856,7 @@ def test_runtime_service_shadow_mode_does_not_submit_or_journal_orders(
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
+    _patch_repository(monkeypatch, repository)
     service = HyperliquidRuntimeService(
         config=_config(),
         clickhouse=_FakeClickHouse(),
@@ -929,21 +885,8 @@ def test_runtime_service_blocks_when_tigerbeetle_is_not_ready(
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False)
     journal = _FakeJournal(ready=False)
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
-        clickhouse=_FakeClickHouse(),
-        exchange=exchange,
-        journal=journal,
-    )
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(exchange=exchange, journal=journal)
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -963,21 +906,8 @@ def test_runtime_service_blocks_when_no_testnet_execution_markets(
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False, supports_markets=False)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
-        clickhouse=_FakeClickHouse(),
-        exchange=exchange,
-        journal=journal,
-    )
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(exchange=exchange, journal=journal)
     session = _FakeSession()
 
     result = service.run_once(session)
@@ -1004,17 +934,8 @@ def test_runtime_service_marks_missing_execution_features_not_ready(
     repository = _FakeRepository(_FakeSession())
     exchange = _FakeExchange(fills=False)
     journal = _FakeJournal()
-    monkeypatch.setattr(
-        service_module, "HyperliquidRuntimeRepository", lambda _session: repository
-    )
-    service = HyperliquidRuntimeService(
-        config=_config(
-            HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
-            HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
-            HYPERLIQUID_RUNTIME_API_WALLET_PRIVATE_KEY=(
-                "0x2222222222222222222222222222222222222222222222222222222222222222"
-            ),
-        ),
+    _patch_repository(monkeypatch, repository)
+    service = _enabled_service(
         clickhouse=_FakeClickHouse(features=[]),
         exchange=exchange,
         journal=journal,
