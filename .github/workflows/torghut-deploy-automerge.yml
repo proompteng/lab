@@ -392,7 +392,7 @@ jobs:
             'kubeconform|validate'
           )
 
-          deadline=$((SECONDS + 2700))
+          deadline=$((SECONDS + 600))
           while true; do
             check_lines="$(
               gh pr checks "${PR_NUMBER}" \
@@ -438,7 +438,7 @@ jobs:
 
             echo "Waiting for required release checks:"
             printf '%s\n' "${pending[@]}"
-            sleep 15
+            sleep 10
           done
 
       - name: Enable squash auto-merge

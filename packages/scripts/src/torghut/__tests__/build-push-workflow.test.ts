@@ -72,7 +72,8 @@ describe('torghut build-push workflow', () => {
     expect(registryWaitStep).toBeGreaterThan(buildJob)
     expect(buildStep).toBeGreaterThan(registryWaitStep)
     expect(workflow).toContain('REGISTRY_URL: https://registry.ide-newton.ts.net/v2/')
-    expect(workflow).toContain('REGISTRY_WAIT_TIMEOUT_SECONDS: 7200')
+    expect(workflow).toContain('REGISTRY_WAIT_TIMEOUT_SECONDS: 600')
+    expect(workflow).toContain('REGISTRY_WAIT_INTERVAL_SECONDS: 15')
   })
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {
@@ -253,8 +254,8 @@ describe('torghut build-push workflow', () => {
 
     expect(autoresearchJob).toBeGreaterThan(-1)
     expect(autoresearchJobBody).toContain('name: Pytest autoresearch runner ${{ matrix.shard }}')
-    expect(autoresearchJobBody).toContain('shard: [0, 1, 2, 3]')
-    expect(autoresearchJobBody).toContain('SHARD_TOTAL: 4')
+    expect(autoresearchJobBody).toContain('shard: [0, 1, 2, 3, 4, 5, 6, 7]')
+    expect(autoresearchJobBody).toContain('SHARD_TOTAL: 8')
     expect(autoresearchJobBody).toContain('uv run --frozen pytest --collect-only -q tests/autoresearch_runner')
     expect(autoresearchJobBody).toContain('EXPECTED_COUNT_MISMATCH:%d')
     expect(autoresearchJobBody).toContain('name: torghut-coverage-autoresearch-runner-${{ matrix.shard }}')
@@ -268,8 +269,8 @@ describe('torghut build-push workflow', () => {
 
     expect(pytestShardJob).toBeGreaterThan(-1)
     expect(pytestShardJobBody).toContain('name: Pytest shard ${{ matrix.shard }}')
-    expect(pytestShardJobBody).toContain('shard: [0, 1, 2, 3, 4, 5, 6, 7]')
-    expect(pytestShardJobBody).toContain('SHARD_TOTAL: 8')
+    expect(pytestShardJobBody).toContain('shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]')
+    expect(pytestShardJobBody).toContain('SHARD_TOTAL: 16')
     expect(pytestShardJobBody).toContain(
       'uv run --frozen pytest --collect-only -q tests --ignore=tests/autoresearch_runner',
     )
