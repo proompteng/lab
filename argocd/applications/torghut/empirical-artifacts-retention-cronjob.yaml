@@ -3,6 +3,9 @@ kind: CronJob
 metadata:
   name: torghut-empirical-artifacts-retention
   namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: empirical-artifacts-retention
 spec:
   schedule: "17 4 * * *"
   concurrencyPolicy: Forbid
