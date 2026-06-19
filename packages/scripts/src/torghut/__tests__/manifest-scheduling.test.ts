@@ -239,11 +239,12 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(runtimeData.HYPERLIQUID_RUNTIME_EXCLUDED_COINS).toBe('SPX')
     expect(runtimeData.HYPERLIQUID_RUNTIME_MAX_ORDER_NOTIONAL_USD).toBe('10')
+    expect(runtimeData.HYPERLIQUID_RUNTIME_MIN_ORDER_NOTIONAL_USD).toBe('9.50')
     expect(runtimeData.HYPERLIQUID_RUNTIME_MAX_SYMBOL_EXPOSURE_USD).toBe('25')
 
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-runtime-v1-20260619-equity-recovery',
+      'proompteng.ai/config-revision': 'hyperliquid-runtime-v1-20260619-equity-recovery-min-notional',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(String(runtimeContainer.image)).toMatch(/^registry\.ide-newton\.ts\.net\/lab\/torghut@sha256:[0-9a-f]{64}$/)
