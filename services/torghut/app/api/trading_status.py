@@ -79,6 +79,7 @@ from .status_helpers import (
 from .trading_misc import (
     build_consumer_evidence_receipt_projection as _build_consumer_evidence_receipt_projection,
 )
+from app.trading.market_context_domains import active_market_context_reasons
 from app.trading.submission_authority import (
     build_submission_authority_status as _build_submission_authority_status,
 )
@@ -116,6 +117,30 @@ _load_trading_status_llm_evaluation = load_trading_status_llm_evaluation
 _load_trading_status_runtime_ledger_portfolio_summary = (
     load_trading_status_runtime_ledger_portfolio_summary
 )
+
+
+def _market_context_status_for_api(status: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(status)
+    if bool(payload.get("alert_active")) or not bool(
+        payload.get("shadow_alert_active")
+    ):
+        return payload
+
+    alert_reasons = active_market_context_reasons(
+        [
+            payload.get("shadow_alert_reason")
+            or payload.get("last_reason")
+            or "market_context_alert_active"
+        ]
+    )
+    if not alert_reasons:
+        return payload
+
+    payload["alert_active"] = True
+    payload["alert_reason"] = alert_reasons[0]
+    return payload
+
+
 _load_trading_status_tca_summary = load_trading_status_tca_summary
 _load_trading_status_tigerbeetle_ledger = load_trading_status_tigerbeetle_ledger
 _load_rejected_signal_outcome_learning_summary = (
@@ -233,7 +258,9 @@ def trading_status() -> dict[str, object]:
     )
     status_observed_at = datetime.now(timezone.utc)
     status_stage_scope = "live" if settings.trading_mode == "live" else "paper"
-    market_context_status = scheduler.market_context_status()
+    market_context_status = _market_context_status_for_api(
+        scheduler.market_context_status()
+    )
     gate_hypothesis_payload = _deferred_hypothesis_payload_for_live_submission_gate()
     live_submission_gate_skip_reason = status_read_budget.skip_reason_if_unavailable(
         "live_submission_gate",
