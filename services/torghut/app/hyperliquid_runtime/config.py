@@ -10,8 +10,8 @@ from typing import Mapping
 
 _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off"}
-_DEFAULT_ALLOWED_ASSET_CLASSES = ("crypto", "stocks", "indices", "preipo")
-_VALID_ALLOWED_ASSET_CLASSES = frozenset(_DEFAULT_ALLOWED_ASSET_CLASSES)
+_DEFAULT_ALLOWED_ASSET_CLASSES = ("stocks", "indices", "preipo")
+_VALID_ALLOWED_ASSET_CLASSES = frozenset((*_DEFAULT_ALLOWED_ASSET_CLASSES, "crypto"))
 
 
 @dataclass(frozen=True)
@@ -238,7 +238,9 @@ class HyperliquidRuntimeConfig:
         if self.trading_enabled and not self.tigerbeetle_required:
             errors.append("tigerbeetle_required_when_trading_enabled")
         if not set(self.allowed_asset_classes).issubset(_VALID_ALLOWED_ASSET_CLASSES):
-            errors.append("allowed_asset_classes_must_be_crypto_stocks_indices_preipo")
+            errors.append(
+                "allowed_asset_classes_must_be_stocks_indices_preipo_or_crypto"
+            )
         return errors
 
 

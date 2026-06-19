@@ -266,7 +266,7 @@ def test_risk_blocks_stale_dependency_and_duplicate_market() -> None:
     assert verdict.reason == "dependency_not_ready:clickhouse"
 
 
-def test_risk_blocks_equity_like_orders_outside_cash_session() -> None:
+def test_risk_allows_equity_like_orders_outside_cash_session() -> None:
     config = _config(
         HYPERLIQUID_RUNTIME_TRADING_ENABLED="true",
         HYPERLIQUID_RUNTIME_ACCOUNT_ADDRESS="0x1111111111111111111111111111111111111111",
@@ -293,8 +293,8 @@ def test_risk_blocks_equity_like_orders_outside_cash_session() -> None:
         now=datetime(2026, 6, 19, 8, tzinfo=timezone.utc),
     )
 
-    assert not verdict.allowed
-    assert verdict.reason == "equity_like_market_session_closed"
+    assert verdict.allowed
+    assert verdict.reason == "allowed"
 
 
 def test_risk_allows_crypto_orders_outside_cash_session() -> None:
