@@ -36,11 +36,13 @@ data class ClickHouseReadinessUpdate(
   val tableFreshnessReady: Boolean = ready,
   val tableIngestLagMs: Map<String, Long?>,
   val tableEventLagMs: Map<String, Long?>,
+  val tableEventFutureSkewMs: Map<String, Long?>,
 )
 
 private data class ClickHouseTableFreshness(
   val ingestLagMs: Map<String, Long?>,
   val eventLagMs: Map<String, Long?>,
+  val eventFutureSkewMs: Map<String, Long?>,
 )
 
 class ClickHouseSink(
@@ -61,6 +63,9 @@ class ClickHouseSink(
 
   @Volatile
   private var latestTableEventLagMs: Map<String, Long?> = config.readyTables.associateWith { null }
+
+  @Volatile
+  private var latestTableEventFutureSkewMs: Map<String, Long?> = config.readyTables.associateWith { null }
 
   suspend fun enqueue(record: RoutedEnvelope) {
     if (!config.enabled) return
@@ -155,12 +160,19 @@ class ClickHouseSink(
       onSuccess = { freshness ->
         latestTableIngestLagMs = freshness.ingestLagMs
         latestTableEventLagMs = freshness.eventLagMs
+        latestTableEventFutureSkewMs = freshness.eventFutureSkewMs
         freshness.ingestLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableIngestLagMs(table, lagMs) }
         freshness.eventLagMs.forEach { (table, lagMs) -> metrics.setClickHouseTableEventLagMs(table, lagMs) }
-        val fresh = freshness.eventLagMs.values.all { lagMs -> lagMs != null && lagMs <= config.readyMaxAgeMs }
+        freshness.eventFutureSkewMs.forEach { (table, skewMs) -> metrics.setClickHouseTableEventFutureSkewMs(table, skewMs) }
+        val fresh = freshness.ingestLagMs.values.all { lagMs -> lagMs != null && lagMs <= config.readyMaxAgeMs }
         tableFreshnessReady.set(fresh)
         lastFreshnessCheckMs.set(observedAt)
-        if (!fresh) clickHouseLogger.warn { "clickhouse table event freshness stale lags_ms=${freshness.eventLagMs}" }
+        if (!fresh) {
+          clickHouseLogger.warn {
+            "clickhouse table ingest freshness stale ingest_lags_ms=${freshness.ingestLagMs} " +
+              "event_lags_ms=${freshness.eventLagMs}"
+          }
+        }
         fresh
       },
       onFailure = { error ->
@@ -195,6 +207,7 @@ class ClickHouseSink(
       """.trimIndent()
     val ingestRows = mutableMapOf<String, Long?>()
     val eventRows = mutableMapOf<String, Long?>()
+    val eventFutureSkewRows = mutableMapOf<String, Long?>()
     executeClickHouse(query)
       .lineSequence()
       .map { it.trim() }
@@ -207,11 +220,16 @@ class ClickHouseSink(
         if (table != null) {
           ingestRows[table] = latestIngestMs?.takeIf { it > 0 }?.let { observedAt - it }
           eventRows[table] = latestEventMs?.takeIf { it > 0 }?.let { observedAt - it }
+          eventFutureSkewRows[table] =
+            latestEventMs
+              ?.takeIf { it > 0 }
+              ?.let { eventMs -> if (eventMs > observedAt) eventMs - observedAt else 0 }
         }
       }
     return ClickHouseTableFreshness(
       ingestLagMs = tables.associateWith { ingestRows[it] },
       eventLagMs = tables.associateWith { eventRows[it] },
+      eventFutureSkewMs = tables.associateWith { eventFutureSkewRows[it] },
     )
   }
 
@@ -260,6 +278,7 @@ class ClickHouseSink(
         tableFreshnessReady = tableFreshnessReady,
         tableIngestLagMs = latestTableIngestLagMs,
         tableEventLagMs = latestTableEventLagMs,
+        tableEventFutureSkewMs = latestTableEventFutureSkewMs,
       ),
     )
   }

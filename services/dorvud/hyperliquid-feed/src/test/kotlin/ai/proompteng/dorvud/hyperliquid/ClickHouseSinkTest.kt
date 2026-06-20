@@ -230,7 +230,7 @@ class ClickHouseSinkTest {
     }
 
   @Test
-  fun `marks clickhouse not ready when inserts succeed but freshness is stale`() =
+  fun `marks clickhouse not ready when inserts succeed but ingest freshness is stale`() =
     runBlocking {
       val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
       val client =
@@ -242,8 +242,8 @@ class ClickHouseSinkTest {
               respond(
                 content =
                   """
-                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":7000}
-                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":7000}
+                  {"table":"hyperliquid_candles","latest_ingest_ms":7000,"latest_event_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":7000,"latest_event_ms":9900}
                   """.trimIndent(),
                 status = HttpStatusCode.OK,
               )
@@ -271,6 +271,54 @@ class ClickHouseSinkTest {
 
       assertEquals(false, readySignals.last().ready)
       assertEquals(false, readySignals.last().tableFreshnessReady)
+      assertEquals(3_000, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
+      assertEquals(100, readySignals.last().tableEventLagMs["hyperliquid_candles"])
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
+  fun `marks clickhouse ready when ingest is fresh even if candle event time is older`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (queryParam(request.url).startsWith("INSERT")) {
+              respond(content = "", status = HttpStatusCode.OK)
+            } else {
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_candles","latest_ingest_ms":9900,"latest_event_ms":7000}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":9900,"latest_event_ms":9900}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config = clickHouseConfig(readyMaxAgeMs = 1_000),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord())
+
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != true) {
+          delay(10)
+        }
+      }
+
+      assertEquals(true, readySignals.last().ready)
+      assertEquals(true, readySignals.last().tableFreshnessReady)
       assertEquals(100, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
       assertEquals(3_000, readySignals.last().tableEventLagMs["hyperliquid_candles"])
       job.cancelAndJoin()
@@ -368,6 +416,7 @@ class ClickHouseSinkTest {
       assertEquals(true, readySignals.last().ready)
       assertEquals(true, readySignals.last().tableFreshnessReady)
       assertEquals(-2_000, readySignals.last().tableEventLagMs["hyperliquid_candles"])
+      assertEquals(2_000, readySignals.last().tableEventFutureSkewMs["hyperliquid_candles"])
       job.cancelAndJoin()
       client.close()
     }

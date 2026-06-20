@@ -59,6 +59,7 @@ data class HyperliquidConfig(
   val dedupMaxEntries: Int,
   val readyRequiredChannels: Set<String>,
   val readyEventMaxAgeMs: Long,
+  val kafkaReadyMaxAgeMs: Long,
   val healthPort: Int,
   val metricsPort: Int,
   val kafka: KafkaProducerSettings,
@@ -139,6 +140,7 @@ data class HyperliquidConfig(
             if (unknown.isNotEmpty()) error("Unsupported HYPERLIQUID_READY_REQUIRED_CHANNELS: ${unknown.joinToString(",")}")
           }
       val readyEventMaxAgeMs = longEnv(mergedEnv, "HYPERLIQUID_READY_EVENT_MAX_AGE_MS", 180_000).coerceAtLeast(30_000)
+      val kafkaReadyMaxAgeMs = longEnv(mergedEnv, "KAFKA_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000)
 
       val maxWsConnections = intEnv(mergedEnv, "HYPERLIQUID_MAX_WS_CONNECTIONS", 8)
       val maxSubscriptionsPerConnection = intEnv(mergedEnv, "HYPERLIQUID_MAX_SUBSCRIPTIONS_PER_CONNECTION", 125)
@@ -217,6 +219,7 @@ data class HyperliquidConfig(
         dedupMaxEntries = intEnv(mergedEnv, "DEDUP_MAX_ENTRIES", 100_000),
         readyRequiredChannels = readyRequiredChannels,
         readyEventMaxAgeMs = readyEventMaxAgeMs,
+        kafkaReadyMaxAgeMs = kafkaReadyMaxAgeMs,
         healthPort = intEnv(mergedEnv, "HEALTH_PORT", 8080),
         metricsPort = intEnv(mergedEnv, "METRICS_PORT", 9090),
         kafka = kafkaSettings(mergedEnv),

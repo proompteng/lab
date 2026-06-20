@@ -56,7 +56,7 @@ class HyperliquidFeedApp(
   private val scope = CoroutineScope(Dispatchers.Default)
   private val ready = AtomicBoolean(false)
   private val wsReady = AtomicBoolean(false)
-  private val kafkaReady = AtomicBoolean(false)
+  private val kafkaReadiness = KafkaReadinessTracker(config.kafkaReadyMaxAgeMs, nowMs)
   private val clickHouseReady = AtomicBoolean(!config.clickHouse.enabled)
   private val clickHouseTableFresh = AtomicBoolean(!config.clickHouse.enabled)
   private val alive = AtomicBoolean(true)
@@ -71,6 +71,9 @@ class HyperliquidFeedApp(
 
   @Volatile
   private var clickHouseTableEventLagMs: Map<String, Long?> = config.clickHouse.readyTables.associateWith { null }
+
+  @Volatile
+  private var clickHouseTableEventFutureSkewMs: Map<String, Long?> = config.clickHouse.readyTables.associateWith { null }
 
   private val httpClient =
     HttpClient(CIO) {
@@ -100,6 +103,7 @@ class HyperliquidFeedApp(
           val observedAt = nowMs()
           clickHouseTableIngestLagMs = update.tableIngestLagMs
           clickHouseTableEventLagMs = update.tableEventLagMs
+          clickHouseTableEventFutureSkewMs = update.tableEventFutureSkewMs
           clickHouseTableFresh.set(update.tableFreshnessReady)
           if (update.ready) {
             clickHouseLastSuccessMs.set(observedAt)
@@ -138,7 +142,6 @@ class HyperliquidFeedApp(
         alive.set(false)
         markReady(false)
         wsReady.set(false)
-        kafkaReady.set(false)
         runCatching { producer.flush() }
         runCatching { producer.close() }
         runCatching { httpClient.close() }
@@ -155,17 +158,36 @@ class HyperliquidFeedApp(
 
   fun readinessInfo(): HyperliquidReadinessInfo {
     val freshness = eventFreshnessSnapshot()
+    val kafka = kafkaReadiness.snapshot()
+    val clickHouseFresh = clickHouseFresh()
+    val blockers =
+      hyperliquidReadinessBlockers(
+        wsReady = wsReady.get(),
+        kafkaReady = kafka.ready,
+        clickHouseFresh = clickHouseFresh,
+        clickHouseRequiredForReadiness = config.clickHouse.requiredForReadiness,
+        marketDataFresh = freshness.fresh,
+        catalogReady = catalogReady.get(),
+      )
     return HyperliquidReadinessInfo(
       status = if (ready.get()) "ready" else "not_ready",
       ready = ready.get(),
+      readinessBlockers = blockers,
       websocket = wsReady.get(),
-      kafka = kafkaReady.get(),
-      clickhouse = clickHouseReady.get(),
+      kafka = kafka.ready,
+      kafkaLastSuccessLagMs = kafka.lastSuccessLagMs,
+      kafkaLastFailureAgeMs = kafka.lastFailureAgeMs,
+      kafkaLastFailureReason = kafka.lastFailureReason,
+      kafkaReadyMaxAgeMs = kafka.maxSuccessAgeMs,
+      clickhouse = clickHouseFresh,
       clickhouseTableFresh = clickHouseTableFresh.get(),
       clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
       clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
+      clickhouseReadyMaxAgeMs = config.clickHouse.readyMaxAgeMs,
+      clickhouseFailureHoldMs = config.clickHouse.failureHoldMs,
       clickhouseTableIngestLagMs = clickHouseTableIngestLagMs,
       clickhouseTableEventLagMs = clickHouseTableEventLagMs,
+      clickhouseTableEventFutureSkewMs = clickHouseTableEventFutureSkewMs,
       marketDataFresh = freshness.fresh,
       marketDataLastSeenLagMs = freshness.lastSeenLagMs,
       marketDataMaxAgeMs = config.readyEventMaxAgeMs,
@@ -274,22 +296,18 @@ class HyperliquidFeedApp(
       runCatching {
         producer.send(ProducerRecord(record.topic, record.key, payload)) { _, error ->
           if (error == null) {
-            kafkaReady.set(true)
+            recordKafkaSuccess()
             metrics.kafkaProduceSuccess.increment()
             metrics.recordEvent(record.envelope.channel)
             recordMarketDataFreshness(record.envelope.channel)
           } else {
-            kafkaReady.set(false)
-            metrics.recordKafkaError(record.topic)
-            appLogger.warn(error) { "Kafka produce failed topic=${record.topic}" }
+            recordKafkaFailure(record.topic, error)
           }
           updateReady()
         }
         clickHouseSink.enqueue(record)
       }.onFailure { error ->
-        kafkaReady.set(false)
-        metrics.recordKafkaError(record.topic)
-        appLogger.warn(error) { "Kafka produce failed topic=${record.topic}" }
+        recordKafkaFailure(record.topic, error)
         updateReady()
       }
     }
@@ -325,7 +343,7 @@ class HyperliquidFeedApp(
     val isReady =
       hyperliquidReadinessReady(
         wsReady = wsReady.get(),
-        kafkaReady = kafkaReady.get(),
+        kafkaReady = kafkaReadiness.isReady(),
         clickHouseFresh = clickHouseFresh(),
         clickHouseRequiredForReadiness = config.clickHouse.requiredForReadiness,
         marketDataFresh = marketDataFresh(),
@@ -346,6 +364,26 @@ class HyperliquidFeedApp(
   }
 
   private fun eventFreshnessSnapshot(): EventFreshnessSnapshot = eventFreshness.snapshot()
+
+  private fun recordKafkaSuccess() {
+    kafkaReadiness.recordSuccess()
+    val kafka = kafkaReadiness.snapshot()
+    metrics.setKafkaLastSuccessEpochMs(kafka.lastSuccessEpochMs)
+  }
+
+  private fun recordKafkaFailure(
+    topic: String,
+    error: Throwable,
+  ) {
+    kafkaReadiness.recordFailure(error)
+    val kafka = kafkaReadiness.snapshot()
+    metrics.setKafkaLastFailureEpochMs(kafka.lastFailureEpochMs)
+    metrics.recordKafkaError(topic)
+    appLogger.warn(error) {
+      "Kafka produce failed topic=$topic kafka_ready=${kafka.ready} " +
+        "last_success_lag_ms=${kafka.lastSuccessLagMs} ready_max_age_ms=${kafka.maxSuccessAgeMs}"
+    }
+  }
 
   private fun clickHouseFresh(): Boolean {
     val fresh = clickHouseFreshAt(nowMs())
@@ -378,9 +416,23 @@ class HyperliquidFeedApp(
     ready.set(value)
     metrics.setReady(value)
     metrics.setWsConnected(wsReady.get())
-    metrics.setKafkaReady(kafkaReady.get())
-    metrics.setClickHouseReady(clickHouseFreshAt(nowMs()))
-    metrics.setMarketDataReady(eventFreshnessSnapshot().fresh)
+    val observedAt = nowMs()
+    val kafkaReady = kafkaReadiness.isReady()
+    val clickHouseFresh = clickHouseFreshAt(observedAt)
+    val marketDataFresh = eventFreshnessSnapshot().fresh
+    metrics.setKafkaReady(kafkaReady)
+    metrics.setClickHouseReady(clickHouseFresh)
+    metrics.setMarketDataReady(marketDataFresh)
+    metrics.setReadinessBlockers(
+      hyperliquidReadinessBlockers(
+        wsReady = wsReady.get(),
+        kafkaReady = kafkaReady,
+        clickHouseFresh = clickHouseFresh,
+        clickHouseRequiredForReadiness = config.clickHouse.requiredForReadiness,
+        marketDataFresh = marketDataFresh,
+        catalogReady = catalogReady.get(),
+      ),
+    )
   }
 }
 
@@ -397,6 +449,22 @@ internal fun hyperliquidReadinessReady(
     (!clickHouseRequiredForReadiness || clickHouseFresh) &&
     marketDataFresh &&
     catalogReady
+
+internal fun hyperliquidReadinessBlockers(
+  wsReady: Boolean,
+  kafkaReady: Boolean,
+  clickHouseFresh: Boolean,
+  clickHouseRequiredForReadiness: Boolean,
+  marketDataFresh: Boolean,
+  catalogReady: Boolean,
+): List<String> =
+  buildList {
+    if (!wsReady) add("websocket_not_connected")
+    if (!kafkaReady) add("kafka_no_recent_success")
+    if (clickHouseRequiredForReadiness && !clickHouseFresh) add("clickhouse_not_fresh")
+    if (!marketDataFresh) add("market_data_stale")
+    if (!catalogReady) add("catalog_not_loaded")
+  }
 
 fun main() =
   runBlocking {

@@ -19,13 +19,26 @@ class HyperliquidMetrics(
   private val subscriptionCount = AtomicInteger(0)
   private val catalogLastRefreshEpochMs = AtomicLong(0)
   private val restWeightUsed = AtomicInteger(0)
+  private val kafkaLastSuccessEpochMs = AtomicLong(0)
+  private val kafkaLastFailureEpochMs = AtomicLong(0)
   private val eventCounters = ConcurrentHashMap<String, Counter>()
   private val kafkaErrors = ConcurrentHashMap<String, Counter>()
   private val clickHouseErrors = ConcurrentHashMap<String, Counter>()
   private val dedupDrops = ConcurrentHashMap<String, Counter>()
+  private val readinessBlockers = ConcurrentHashMap<String, AtomicInteger>()
   private val eventLastSeenEpochMs = ConcurrentHashMap<String, AtomicLong>()
   private val clickHouseTableIngestLagMs = ConcurrentHashMap<String, AtomicLong>()
   private val clickHouseTableEventLagMs = ConcurrentHashMap<String, AtomicLong>()
+  private val clickHouseTableEventFutureSkewMs = ConcurrentHashMap<String, AtomicLong>()
+
+  private val knownReadinessBlockers =
+    setOf(
+      "websocket_not_connected",
+      "kafka_no_recent_success",
+      "clickhouse_not_fresh",
+      "market_data_stale",
+      "catalog_not_loaded",
+    )
 
   val reconnects: Counter = registry.counter("torghut_hyperliquid_ws_reconnects_total")
   val wsConnectSuccess: Counter = registry.counter("torghut_hyperliquid_ws_connect_success_total")
@@ -40,6 +53,14 @@ class HyperliquidMetrics(
     Gauge.builder("torghut_hyperliquid_catalog_markets", catalogMarketCount) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_subscriptions", subscriptionCount) { it.get().toDouble() }.register(registry)
     Gauge.builder("torghut_hyperliquid_rest_weight_used", restWeightUsed) { it.get().toDouble() }.register(registry)
+    Gauge
+      .builder("torghut_hyperliquid_kafka_last_success_ts_seconds", kafkaLastSuccessEpochMs) {
+        it.get().toDouble() / 1_000.0
+      }.register(registry)
+    Gauge
+      .builder("torghut_hyperliquid_kafka_last_failure_ts_seconds", kafkaLastFailureEpochMs) {
+        it.get().toDouble() / 1_000.0
+      }.register(registry)
     Gauge
       .builder("torghut_hyperliquid_catalog_last_refresh_ts_seconds", catalogLastRefreshEpochMs) {
         it.get().toDouble() / 1_000.0
@@ -63,6 +84,25 @@ class HyperliquidMetrics(
   fun setCatalogLastRefreshEpochMs(value: Long) = catalogLastRefreshEpochMs.set(value)
 
   fun setRestWeightUsed(value: Int) = restWeightUsed.set(value)
+
+  fun setKafkaLastSuccessEpochMs(value: Long?) = kafkaLastSuccessEpochMs.set(value ?: 0)
+
+  fun setKafkaLastFailureEpochMs(value: Long?) = kafkaLastFailureEpochMs.set(value ?: 0)
+
+  fun setReadinessBlockers(blockers: Collection<String>) {
+    val active = blockers.toSet()
+    (knownReadinessBlockers + active).forEach { reason ->
+      readinessBlockers
+        .computeIfAbsent(reason) {
+          val value = AtomicInteger(0)
+          Gauge
+            .builder("torghut_hyperliquid_readiness_blocked", value) { it.get().toDouble() }
+            .tag("reason", reason)
+            .register(registry)
+          value
+        }.set(if (reason in active) 1 else 0)
+    }
+  }
 
   fun recordEvent(channel: String) {
     eventCounters
@@ -131,6 +171,23 @@ class HyperliquidMetrics(
           .register(registry)
         value
       }.set(lagMs ?: -1)
+  }
+
+  fun setClickHouseTableEventFutureSkewMs(
+    table: String,
+    skewMs: Long?,
+  ) {
+    clickHouseTableEventFutureSkewMs
+      .computeIfAbsent(table) {
+        val value = AtomicLong(-1)
+        Gauge
+          .builder("torghut_hyperliquid_clickhouse_table_event_future_skew_seconds", value) {
+            val observed = it.get()
+            if (observed < 0) -1.0 else observed.toDouble() / 1_000.0
+          }.tag("table", table)
+          .register(registry)
+        value
+      }.set(skewMs ?: -1)
   }
 
   fun recordDedupDrop(channel: String) {
