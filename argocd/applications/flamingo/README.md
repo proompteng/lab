@@ -33,11 +33,15 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --enable-auto-tool-choice
 --tool-call-parser hermes
 --optimization-level 2
---numa-bind
 ```
 
 The production floor is 128K context. If this profile fails, reduce concurrency
 first. Do not restore the old model as the desired state.
+
+NUMA auto-binding is intentionally disabled on Turin. vLLM 0.23.0 cannot
+autodetect the GPU-to-NUMA topology on this node and exits during startup when
+`--numa-bind` is used. Only re-enable CPU locality after validating explicit
+`--numa-bind-nodes` values live.
 
 ## Rollout Gates
 
