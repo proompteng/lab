@@ -29,6 +29,7 @@ data class ClickHouseConfig(
   val flushMs: Long,
   val requestTimeoutMs: Long,
   val readyMaxAgeMs: Long,
+  val tableReadyMaxAgeMs: Long = readyMaxAgeMs,
   val failureHoldMs: Long,
   val enabledTables: Set<String>,
   val readyTables: Set<String> = setOf("hyperliquid_raw", "hyperliquid_candles"),
@@ -159,6 +160,9 @@ data class HyperliquidConfig(
         error("HYPERLIQUID_REST_WEIGHT_BUDGET_PER_MINUTE must be within 1..1200")
       }
 
+      val clickHouseReadyMaxAgeMs = longEnv(mergedEnv, "CLICKHOUSE_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000)
+      val clickHouseTableReadyMaxAgeMs =
+        longEnv(mergedEnv, "CLICKHOUSE_TABLE_READY_MAX_AGE_MS", 300_000).coerceAtLeast(clickHouseReadyMaxAgeMs)
       val clickHouse =
         ClickHouseConfig(
           enabled = mergedEnv["CLICKHOUSE_ENABLED"]?.toBooleanStrictOrNull() ?: true,
@@ -170,7 +174,8 @@ data class HyperliquidConfig(
           batchSize = intEnv(mergedEnv, "CLICKHOUSE_BATCH_SIZE", 250).coerceIn(1, 5000),
           flushMs = longEnv(mergedEnv, "CLICKHOUSE_FLUSH_MS", 1000).coerceAtLeast(250),
           requestTimeoutMs = longEnv(mergedEnv, "CLICKHOUSE_REQUEST_TIMEOUT_MS", 10_000).coerceAtLeast(1_000),
-          readyMaxAgeMs = longEnv(mergedEnv, "CLICKHOUSE_READY_MAX_AGE_MS", 120_000).coerceAtLeast(1_000),
+          readyMaxAgeMs = clickHouseReadyMaxAgeMs,
+          tableReadyMaxAgeMs = clickHouseTableReadyMaxAgeMs,
           failureHoldMs = longEnv(mergedEnv, "CLICKHOUSE_FAILURE_HOLD_MS", 60_000).coerceAtLeast(1_000),
           enabledTables =
             csv(mergedEnv["CLICKHOUSE_ENABLED_TABLES"] ?: supportedClickHouseTables.joinToString(","))

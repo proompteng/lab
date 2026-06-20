@@ -63,5 +63,6 @@ data:
   CLICKHOUSE_REQUEST_TIMEOUT_MS: "30000"
   CLICKHOUSE_ENABLED_TABLES: "hyperliquid_market_catalog,hyperliquid_bbo,hyperliquid_candles,hyperliquid_asset_contexts,hyperliquid_funding,hyperliquid_status"
   CLICKHOUSE_READY_TABLES: "hyperliquid_bbo,hyperliquid_candles"
-  CLICKHOUSE_READY_MAX_AGE_MS: "120000"
+  CLICKHOUSE_READY_MAX_AGE_MS: "300000"
+  CLICKHOUSE_TABLE_READY_MAX_AGE_MS: "300000"
   CLICKHOUSE_FAILURE_HOLD_MS: "60000"
