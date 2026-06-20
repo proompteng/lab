@@ -1557,6 +1557,8 @@ data:
                 LLM errors exceed 10% of trading review requests for 10 minutes. Consider forcing LLM shadow-only
                 to keep control-plane metrics stable while investigating.
               runbook_url: docs/runbooks/torghut-quant-control-plane.md
+      - name: torghut-quant-jangar.rules
+        rules:
           - alert: JangarQuantControlPlaneStreamErrors
             expr: |
               sum(rate(jangar_sse_errors_total{stream="torghut-quant"}[10m])) > 0.05
