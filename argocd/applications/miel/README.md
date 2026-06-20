@@ -35,7 +35,7 @@ Restart the deployment after updating the ConfigMap so the new environment varia
 
 - `OTEL_SERVICE_NAME=miel`
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
-- OTLP endpoints for traces (`observability-tempo-distributor`), metrics (`observability-mimir-nginx`), and logs (`observability-loki-loki-distributed-gateway`).
+- OTLP endpoints for traces (`observability-tempo-distributor`), metrics (`observability-mimir-gateway`), and logs (`observability-loki-loki-distributed-gateway`).
 
 Override these values as needed for other environments, then restart the deployment (or let Argo CD roll pods) to pick up the new telemetry configuration.
 

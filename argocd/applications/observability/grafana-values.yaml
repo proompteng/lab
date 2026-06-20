@@ -26,7 +26,7 @@ datasources:
         uid: prom
         type: prometheus
         access: proxy
-        url: http://observability-mimir-nginx.observability.svc.cluster.local/prometheus
+        url: http://observability-mimir-gateway.observability.svc.cluster.local/prometheus
         isDefault: true
       - name: Tempo
         uid: tempo

@@ -51,7 +51,7 @@ data:
 
     prometheus.remote_write "mimir" {
       endpoint {
-        url = "http://observability-mimir-nginx.observability.svc.cluster.local/api/v1/push"
+        url = "http://observability-mimir-gateway.observability.svc.cluster.local/api/v1/push"
       }
     }
 

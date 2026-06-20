@@ -61,7 +61,7 @@ Facteur boots with OpenTelemetry telemetry enabled. Traces and metrics are expor
 - `OTEL_SERVICE_NAMESPACE` (populated from the pod namespace)
 - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
 - `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces`
-- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics`
+- `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT=http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics`
 - `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://observability-loki-loki-distributed-gateway.observability.svc.cluster.local/loki/api/v1/push`
 
 When running locally, point these values at your observability environment to keep telemetry flowing. The service emits counters such as `facteur_command_events_processed_total`, `facteur_command_events_failed_total`, and `facteur_command_events_dlq_total`, and wraps the Fiber HTTP server with OTEL middleware so HTTP requests appear in traces.

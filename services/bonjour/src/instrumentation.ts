@@ -33,7 +33,7 @@ if (!isTruthy(process.env.OTEL_SDK_DISABLED)) {
     tracesProtocol === 'grpc'
       ? 'http://observability-tempo-gateway.observability.svc.cluster.local:4317'
       : 'http://observability-tempo-gateway.observability.svc.cluster.local:4318/v1/traces'
-  const defaultMetricsEndpoint = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+  const defaultMetricsEndpoint = 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics'
 
   const tracesEndpoint =
     process.env.LGTM_TEMPO_TRACES_ENDPOINT ??

@@ -205,7 +205,7 @@ describe('telemetry', () => {
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics',
+      url: 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
       headers: undefined,
       protocol: 'http/json',
     })
@@ -225,7 +225,7 @@ describe('telemetry', () => {
     })
 
     expect(metricExporterMock).toHaveBeenCalledWith({
-      url: 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics',
+      url: 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics',
       headers: expect.objectContaining({ global: 'alpha', shared: 'bravo', metric: 'delta' }),
       protocol: 'http/json',
     })

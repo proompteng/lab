@@ -38,7 +38,7 @@ Set the following environment variables before running the service. Paper-tradin
 | `OTEL_SERVICE_NAME`                   | Service name reported to OpenTelemetry/observability. | `miel`                                                                  |
 | `OTEL_EXPORTER_OTLP_PROTOCOL`         | OTLP transport protocol.                              | `http/protobuf`                                                         |
 | `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | OTLP traces endpoint (observability Tempo).           | `http://observability-tempo-distributor.observability:4318`             |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | OTLP metrics endpoint (observability Mimir).          | `http://observability-mimir-nginx.observability/otlp`                   |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | OTLP metrics endpoint (observability Mimir).          | `http://observability-mimir-gateway.observability/otlp`                   |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`    | OTLP logs endpoint (observability Loki).              | `http://observability-loki-loki-distributed-gateway.observability/otlp` |
 
 ### TigerBeetle ledger (optional)

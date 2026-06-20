@@ -6,6 +6,8 @@ resources:
   - tailscale-ingresses.yaml
   - ingressroute-grafana-k8s-private.yaml
   - graf-mimir-rules.yaml
+  - observability-alertmanager-email-externalsecret.yaml
+  - observability-mimir-rule-loader.yaml
   - graf-graf-dashboard-configmap.yaml
   - graf-bumba-dashboard-configmap.yaml
   - symphony-fleet-dashboard-configmap.yaml
