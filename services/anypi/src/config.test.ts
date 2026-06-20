@@ -200,14 +200,14 @@ describe('Anypi prompt contract', () => {
       'improve torghut diff coverage',
     )
     expect(buildCommitMessage({ implementation: { summary: 'Improve Torghut Diff Coverage' } })).toBe(
-      'feat(anypi): improve torghut diff coverage',
+      'feat: improve torghut diff coverage',
     )
     expect(buildPullRequestTitle({ implementation: { summary: 'Improve Torghut Diff Coverage' } })).toBe(
-      'feat(anypi): improve torghut diff coverage',
+      'feat: improve torghut diff coverage',
     )
   })
 
-  test('renders PR bodies from the repository template without placeholders', () => {
+  test('renders PR bodies from the repository template without runtime leakage or placeholders', () => {
     const body = renderPullRequestBody({
       runSpec: { implementation: { summary: 'Improve Anypi PR body rendering' } },
       status: {
@@ -291,10 +291,17 @@ describe('Anypi prompt contract', () => {
 
     expect(body).toContain('## Summary')
     expect(body).toContain('## Testing')
-    expect(body).toContain('Prompt variant: `repair-loop` (`0123456789abcdef`)')
+    expect(body).toContain('- Improve Anypi PR body rendering.')
+    expect(body).toContain('- Validation commands and CI status are listed below.')
     expect(body).toContain('bun run --filter @proompteng/anypi test')
     expect(body).toContain('- CI: passed: 2 passed/skipped, 0 pending, 0 failed/cancelled')
     expect(body).toContain('- [x] Testing section documents the exact validation performed.')
+    expect(body).not.toContain('Generated for')
+    expect(body).not.toContain('Prompt variant')
+    expect(body).not.toContain('Session artifact')
+    expect(body).not.toContain('anypi-eval-runner-repair-20260616')
+    expect(body).not.toContain('0123456789abcdef')
+    expect(body).not.toContain('/workspace/.anypi/sessions')
     expect(body).not.toContain('<!--')
     expect(body).not.toContain('[ ]')
     expect(body).not.toMatch(/TODO|TBD|<\.\.\.>/)
