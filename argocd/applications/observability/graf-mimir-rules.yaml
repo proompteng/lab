@@ -585,7 +585,7 @@ data:
                           service="torghut-llm-guardrails-exporter"
                         }[5m]
                       )
-                    )[1h]
+                    )[1h:5m]
                   ),
                   1
                 )
