@@ -178,6 +178,7 @@ from .lane_common import (
 from .lane_profitability_manifest import (
     build_profitability_stage_manifest as _build_profitability_stage_manifest,
 )
+from . import lane_gate_inputs as lane_gate_inputs_module
 from .lane_phase_payloads import (
     build_actuation_intent_payload as _build_actuation_intent_payload,
     build_phase_manifest as _build_phase_manifest,
@@ -279,7 +280,7 @@ from .lane_gate_inputs import (
     coerce_fragility_measurement as _coerce_fragility_measurement,
     is_more_worse_fragility as _is_more_worse_fragility,
     resolve_gate_fragility_inputs as _resolve_gate_fragility_inputs,
-    resolve_gate_forecast_metrics as _resolve_gate_forecast_metrics,
+    resolve_gate_forecast_metrics as _base_resolve_gate_forecast_metrics,
     resolve_gate_staleness_ms_p95 as _resolve_gate_staleness_ms_p95,
     to_finite_float as _to_finite_float,
     resolve_gate_llm_metrics as _resolve_gate_llm_metrics,
@@ -296,6 +297,17 @@ from .lane_run_summary import (
     evaluate_drift_promotion_gate as _evaluate_drift_promotion_gate,
     write_paper_candidate_patch as _write_paper_candidate_patch,
 )
+
+
+def _resolve_gate_forecast_metrics(*, signals: list[SignalEnvelope]) -> dict[str, str]:
+    original_router_builder = lane_gate_inputs_module.build_default_forecast_router
+    lane_gate_inputs_module.build_default_forecast_router = (
+        build_default_forecast_router
+    )
+    try:
+        return _base_resolve_gate_forecast_metrics(signals=signals)
+    finally:
+        lane_gate_inputs_module.build_default_forecast_router = original_router_builder
 
 
 def run_autonomous_lane(
