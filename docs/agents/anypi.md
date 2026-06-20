@@ -9,7 +9,7 @@ harness against the self-hosted Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:62cf896ec@sha256:d318d97629e8a1b39e05935b706dfefa8a912fb28e585a564c21c6f2da175af9`
+- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:6a8639415@sha256:7ba681e01392f0691903f2f02d37dfc3aadc7da3c968fb644af6a71c581b301c`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen36-flamingo`
 - Supported workload image platforms: `linux/amd64`, `linux/arm64`
