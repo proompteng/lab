@@ -228,11 +228,11 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('runs the Hyperliquid v2 hard-reset runtime with trading disabled', () => {
+  it('runs the Hyperliquid v2 hard-reset runtime with capped testnet trading enabled', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(Object.keys(runtimeData).some((key) => key.startsWith('HYPERLIQUID_RUNTIME_'))).toBe(false)
-    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADING_ENABLED).toBe('false')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADING_ENABLED).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MARKET_DATA_NETWORK).toBe('mainnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXECUTION_NETWORK).toBe('testnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe(
@@ -251,7 +251,7 @@ describe('Torghut manifest scheduling', () => {
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-hard-reset-20260619',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-activation-20260620',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')
@@ -333,7 +333,7 @@ describe('Torghut manifest scheduling', () => {
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh check')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh create')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
-    expect(readme).toContain('HYPERLIQUID_EXECUTION_TRADING_ENABLED=false')
+    expect(readme).toContain('HYPERLIQUID_EXECUTION_TRADING_ENABLED=true')
     expect(readme).toContain('ORDER_POLICY=maker_ttl')
     expect(readme).toContain('MAKER_TIF=Alo')
     expect(readme).toContain('SPX')

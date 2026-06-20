@@ -16,8 +16,9 @@ V2 contract:
 - Caps are intentionally small: `$10` max order notional, `$25` max symbol exposure, and `$100` max gross exposure.
 - `sample_ready=false` until at least 40 v2 fills exist.
 
-Trading remains disabled in the hard-reset migration PR with `HYPERLIQUID_EXECUTION_TRADING_ENABLED=false`. Enable it
-only in the separate activation PR after `/readyz`, `/report`, DB migration, and account checks pass.
+Trading is enabled for capped testnet execution with `HYPERLIQUID_EXECUTION_TRADING_ENABLED=true` after the v2 runtime
+passed `/readyz`, `/report`, DB migration, and account checks. Keep execution on testnet unless a separate mainnet
+execution plan is explicitly approved.
 
 To authorize execution, create and authorize a Hyperliquid testnet API/agent wallet for the dedicated testnet account.
 Store the main account address and authorized API wallet private key in the 1Password item `hyperliquid-testnet` in the
