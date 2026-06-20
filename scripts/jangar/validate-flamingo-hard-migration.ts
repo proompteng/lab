@@ -2,7 +2,7 @@
 
 import { readFile } from 'node:fs/promises'
 
-const requiredTerms = ['unsloth/Qwen3.6-35B-A3B-NVFP4', 'qwen36-flamingo', 'qwen3_xml']
+const requiredTerms = ['unsloth/Qwen3.6-35B-A3B-NVFP4', 'qwen36-flamingo', 'qwen3', 'qwen3_coder']
 const forbiddenTerms = [
   'Qwen/Qwen3-Coder-Next-FP8',
   'qwen3-coder-flamingo',

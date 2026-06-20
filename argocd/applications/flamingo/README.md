@@ -30,8 +30,9 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --max-num-seqs 128
 --max-num-batched-tokens 16384
 --enable-prefix-caching
+--reasoning-parser qwen3
 --enable-auto-tool-choice
---tool-call-parser qwen3_xml
+--tool-call-parser qwen3_coder
 --optimization-level 2
 ```
 
@@ -43,8 +44,11 @@ autodetect the GPU-to-NUMA topology on this node and exits during startup when
 `--numa-bind` is used. Only re-enable CPU locality after validating explicit
 `--numa-bind-nodes` values live.
 
-The active tool parser is `qwen3_xml`. This model emits Qwen XML tool-call
-markup, and that parser converts it into OpenAI-compatible `tool_calls`.
+The active reasoning parser is `qwen3`, so reasoning text is returned through
+the OpenAI-compatible reasoning field instead of being mixed into normal
+assistant content. The active tool parser is `qwen3_coder`, which is the vLLM
+Qwen3.5/Qwen3.6 recipe recommendation for automatic tool calling.
+Reference: <https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3.5.html>
 
 ## Rollout Gates
 
@@ -139,6 +143,8 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
 ```
 
 Expected: `tool_calls` is a non-empty array and arguments include `7` and `35`.
+If this returns only prose or raw XML, do not accept the rollout; fix the
+generic vLLM serving flags or image first.
 
 ## Pi And AnyPi Contract
 
