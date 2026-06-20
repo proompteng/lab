@@ -210,6 +210,7 @@ class HyperliquidExecutionRepository:
             or "alo" in normalized
             or "minimum value" in normalized
             or "minimum order" in normalized
+            or "insufficient margin" in normalized
         )
         if halted:
             self._set_cooldown(
@@ -235,6 +236,7 @@ class HyperliquidExecutionRepository:
                         OR rejection_reason ILIKE '%ALO%'
                         OR rejection_reason ILIKE '%minimum value%'
                         OR rejection_reason ILIKE '%minimum order%'
+                        OR rejection_reason ILIKE '%insufficient margin%'
                       )
                       AND created_at >= now() - (:window_seconds * interval '1 second')
                     """

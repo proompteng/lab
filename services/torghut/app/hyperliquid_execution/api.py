@@ -164,6 +164,7 @@ def _config_payload() -> dict[str, object]:
     config = runtime_state.config
     return {
         "trading_enabled": config.trading_enabled,
+        "allow_short_entries": config.allow_short_entries,
         "market_data_network": config.market_data_network,
         "execution_network": config.execution_network,
         "trade_coins": list(config.trade_coins),

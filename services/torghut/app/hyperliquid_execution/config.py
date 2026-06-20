@@ -32,6 +32,7 @@ class HyperliquidExecutionConfig:
 
     enabled: bool
     trading_enabled: bool
+    allow_short_entries: bool
     market_data_network: str
     execution_network: str
     exchange_api_url: str
@@ -83,6 +84,7 @@ class HyperliquidExecutionConfig:
         return cls(
             enabled=_bool(source, "ENABLED", True),
             trading_enabled=_bool(source, "TRADING_ENABLED", False),
+            allow_short_entries=_bool(source, "ALLOW_SHORT_ENTRIES", False),
             market_data_network=_text(source, "MARKET_DATA_NETWORK", "mainnet").lower(),
             execution_network=_text(source, "EXECUTION_NETWORK", "testnet").lower(),
             exchange_api_url=_text(

@@ -33,6 +33,12 @@ def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     assert config.execution_network == "testnet"
     assert config.trade_coins == ("xyz:NVDA", "xyz:AMD")
     assert config.excluded_coins == ("SPX",)
+    assert config.allow_short_entries is False
+
+    short_config = HyperliquidExecutionConfig.from_env(
+        {"HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true"}
+    )
+    assert short_config.allow_short_entries is True
 
 
 def test_config_reports_all_strict_contract_blockers() -> None:
