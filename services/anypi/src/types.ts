@@ -124,6 +124,7 @@ export type AnypiStatus = {
   promptVariant: PromptVariant
   promptHash: string
   tools: string[]
+  requiredTools: string[]
   sessionFile?: string
   sessionFiles?: string[]
   commit?: string

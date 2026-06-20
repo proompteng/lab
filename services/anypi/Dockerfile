@@ -8,6 +8,7 @@ ARG UV_VERSION=0.11.14
 ARG GH_VERSION=2.94.0
 ARG HELM_VERSION=3.18.6
 ARG KUSTOMIZE_VERSION=5.8.1
+ARG MISE_VERSION=2026.6.11
 ARG LAB_GIT_SHA=dev
 
 FROM node:${NODE_VERSION}-bookworm-slim AS node-runtime
@@ -29,11 +30,16 @@ ARG UV_VERSION
 ARG GH_VERSION
 ARG HELM_VERSION
 ARG KUSTOMIZE_VERSION
+ARG MISE_VERSION
 ENV NODE_ENV=production \
   WORKSPACE=/workspace \
   WORKTREE=/workspace/lab \
   GIT_TERMINAL_PROMPT=0 \
   BUN_INSTALL=/usr/local \
+  MISE_DATA_DIR=/usr/local/share/mise \
+  MISE_CACHE_DIR=/usr/local/share/mise/cache \
+  MISE_CONFIG_DIR=/usr/local/etc/mise \
+  MISE_YES=1 \
   ANYPI_WORKSPACE=/workspace \
   ANYPI_WORKTREE=/workspace/lab \
   ANYPI_AGENT_DIR=/workspace/.anypi
@@ -64,10 +70,12 @@ RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERS
 RUN set -eux; \
   arch="$(dpkg --print-architecture)"; \
   case "${arch}" in \
-    amd64) tool_arch=amd64 ;; \
-    arm64) tool_arch=arm64 ;; \
+    amd64) tool_arch=amd64; mise_arch=x64 ;; \
+    arm64) tool_arch=arm64; mise_arch=arm64 ;; \
     *) echo "unsupported architecture: ${arch}" >&2; exit 1 ;; \
   esac; \
+  curl -fsSL "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-${mise_arch}" -o /usr/local/bin/mise; \
+  chmod +x /usr/local/bin/mise; \
   curl -fsSL "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${tool_arch}.tar.gz" -o /tmp/helm.tar.gz; \
   tar -xzf /tmp/helm.tar.gz -C /tmp; \
   mv "/tmp/linux-${tool_arch}/helm" /usr/local/bin/helm; \
@@ -79,10 +87,12 @@ RUN set -eux; \
     -o /tmp/kustomize.tar.gz; \
   tar -xzf /tmp/kustomize.tar.gz -C /usr/local/bin kustomize; \
   rm -rf /tmp/gh.tar.gz /tmp/helm.tar.gz /tmp/kustomize.tar.gz "/tmp/gh_${GH_VERSION}_linux_${tool_arch}" "/tmp/linux-${tool_arch}"; \
+  mise --version; \
   gh --version; \
   gh pr checks --help | grep -- '--json'; \
   helm version --short; \
-  kustomize version
+  kustomize version; \
+  mise exec helm@3 -- helm version --short
 
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules

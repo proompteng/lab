@@ -29,6 +29,9 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 
 - `ANYPI_TOOLS=all` enables the full built-in coding tool set: `read`, `bash`,
   `edit`, `write`, `grep`, `find`, `ls`.
+- `ANYPI_REQUIRED_TOOLS` is checked before clone/model work. The default image
+  contract includes `bash`, `bun`, `git`, `gh`, `jq`, `node`, `python3`, `uv`,
+  `mise`, `helm`, and `kustomize`.
 - `ANYPI_MODEL=qwen36-flamingo` targets the Qwen3.6 NVFP4 Flamingo endpoint.
 - `ANYPI_CONTEXT_WINDOW=98304` and `ANYPI_MAX_TOKENS=32768` fit inside the
   current 128K production serving profile.
@@ -69,7 +72,8 @@ runner config and logs, not in the model-facing behavioral contract.
 
 Status evidence is written to `/workspace/.agent/status.json`: model,
 providerModel, thinkingLevel, contextWindow, maxTokens, promptVariant,
-promptHash, validations, CI result, session files, commit, and pull request.
+promptHash, requiredTools, validations, CI result, session files, commit, and
+pull request.
 
 ## AgentRun Example
 

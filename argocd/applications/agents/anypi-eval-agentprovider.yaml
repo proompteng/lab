@@ -21,6 +21,7 @@ spec:
     ANYPI_CONTEXT_WINDOW: "98304"
     ANYPI_MAX_TOKENS: "32768"
     ANYPI_TOOLS: all
+    ANYPI_REQUIRED_TOOLS: bash,bun,git,gh,jq,node,python3,uv,mise,helm,kustomize
     ANYPI_WORKSPACE: /workspace
     ANYPI_WORKTREE: /workspace/lab
     ANYPI_AGENT_DIR: /workspace/.anypi

@@ -6,6 +6,19 @@ import { resolvePromptVariant, resolveValidationPolicy } from './prompt'
 import type { AgentRunnerSpecPayload, AgentRunSpecPayload, PromptVariant, ValidationPolicy } from './types'
 
 export const ALL_PI_TOOL_NAMES = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls'] as const
+export const DEFAULT_REQUIRED_RUNTIME_TOOLS = [
+  'bash',
+  'bun',
+  'git',
+  'gh',
+  'jq',
+  'node',
+  'python3',
+  'uv',
+  'mise',
+  'helm',
+  'kustomize',
+] as const
 
 export type AnypiConfig = {
   workspace: string
@@ -30,6 +43,7 @@ export type AnypiConfig = {
   contextWindow: number
   maxTokens: number
   tools: string[]
+  requiredTools: string[]
   allowNoVcs: boolean
   validationCommands: string[]
   validationPolicy: ValidationPolicy
@@ -68,6 +82,15 @@ const parseTools = (raw: string | undefined): string[] => {
     .map((tool) => tool.trim())
     .filter(Boolean)
   return tools.length > 0 ? [...new Set(tools)] : [...ALL_PI_TOOL_NAMES]
+}
+
+const parseRequiredTools = (raw: string | undefined): string[] => {
+  if (!raw?.trim()) return [...DEFAULT_REQUIRED_RUNTIME_TOOLS]
+  const tools = raw
+    .split(/[\s,]+/)
+    .map((tool) => tool.trim())
+    .filter(Boolean)
+  return tools.length > 0 ? [...new Set(tools)] : [...DEFAULT_REQUIRED_RUNTIME_TOOLS]
 }
 
 export const parseCommandList = (raw: string | undefined): string[] => {
@@ -120,6 +143,7 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     contextWindow: readNumber(env, 'ANYPI_CONTEXT_WINDOW', 98304),
     maxTokens: readNumber(env, 'ANYPI_MAX_TOKENS', 32768),
     tools: parseTools(env.ANYPI_TOOLS),
+    requiredTools: parseRequiredTools(env.ANYPI_REQUIRED_TOOLS),
     allowNoVcs: readBoolean(env, 'ANYPI_ALLOW_NO_VCS', false),
     validationCommands: parseCommandList(env.ANYPI_VALIDATION_COMMANDS),
     validationPolicy: resolveValidationPolicy(env.ANYPI_VALIDATION_POLICY),
