@@ -240,7 +240,7 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXCLUDED_COINS).toBe('SPX')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('10')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('9.50')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('10')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBe('25')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBe('100')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_POLICY).toBe('maker_ttl')

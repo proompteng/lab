@@ -128,7 +128,7 @@ class HyperliquidExecutionConfig:
                 source, "MIN_DAY_NOTIONAL_VOLUME_USD", "0"
             ),
             max_order_notional_usd=max_order_notional_usd,
-            min_order_notional_usd=_decimal(source, "MIN_ORDER_NOTIONAL_USD", "9.50"),
+            min_order_notional_usd=_decimal(source, "MIN_ORDER_NOTIONAL_USD", "10"),
             max_symbol_exposure_usd=max_symbol_exposure_usd,
             max_gross_exposure_usd=max_gross_exposure_usd,
             max_daily_loss_usd=_decimal(source, "MAX_DAILY_LOSS_USD", "25"),

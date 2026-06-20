@@ -208,6 +208,8 @@ class HyperliquidExecutionRepository:
             "could not immediately match" in normalized
             or "immediately match" in normalized
             or "alo" in normalized
+            or "minimum value" in normalized
+            or "minimum order" in normalized
         )
         if halted:
             self._set_cooldown(
@@ -231,6 +233,8 @@ class HyperliquidExecutionRepository:
                         rejection_reason ILIKE '%could not immediately match%'
                         OR rejection_reason ILIKE '%immediately match%'
                         OR rejection_reason ILIKE '%ALO%'
+                        OR rejection_reason ILIKE '%minimum value%'
+                        OR rejection_reason ILIKE '%minimum order%'
                       )
                       AND created_at >= now() - (:window_seconds * interval '1 second')
                     """

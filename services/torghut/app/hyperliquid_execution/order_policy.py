@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_UP
 
 from .config import HyperliquidExecutionConfig
 from .models import OrderIntent, RiskVerdict, Signal
@@ -61,7 +61,7 @@ def deterministic_cloid(*, signal_id: str, market_id: str, side: str) -> str:
 def _order_size(notional: Decimal, price: Decimal, min_order_size: Decimal) -> Decimal:
     if price <= Decimal("0"):
         raise ValueError("feature_price_must_be_positive")
-    size = (notional / price).quantize(min_order_size, rounding=ROUND_DOWN)
+    size = (notional / price).quantize(min_order_size, rounding=ROUND_UP)
     if size < min_order_size:
         raise ValueError("order_size_below_minimum")
     return size

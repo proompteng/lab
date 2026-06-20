@@ -256,6 +256,16 @@ class HyperliquidSdkExecutionExchange:
             size = intent.size.quantize(quant, rounding=ROUND_DOWN)
         price = _normalize_price(intent.limit_price, side=intent.side)
         notional_usd = (price * size).quantize(Decimal("0.000001"))
+        if (
+            notional_usd < self._config.min_order_notional_usd
+            and size_decimals is not None
+        ):
+            quant = Decimal("1").scaleb(-size_decimals)
+            size = (self._config.min_order_notional_usd / price).quantize(
+                quant,
+                rounding=ROUND_UP,
+            )
+            notional_usd = (price * size).quantize(Decimal("0.000001"))
         if size <= Decimal("0"):
             raise ValueError("order_size_below_exchange_precision")
         if notional_usd < self._config.min_order_notional_usd:

@@ -246,6 +246,23 @@ def test_repository_writes_runtime_evidence_and_report_rows() -> None:
     )
 
 
+def test_repository_cooldowns_repeated_minimum_value_rejects() -> None:
+    session = _FakeSession(reject_count=3)
+    repo = HyperliquidExecutionRepository(session)
+
+    repo.update_reject_cooldown(
+        coin="NVDA",
+        rejection_reason="Order must have minimum value of $10. asset=750014",
+        config=HyperliquidExecutionConfig.from_env({}),
+    )
+
+    assert any("minimum value" in sql for sql, _ in session.calls)
+    assert any(
+        params and params.get("reason") == "symbol_reject_cooldown"
+        for _, params in session.calls
+    )
+
+
 def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
