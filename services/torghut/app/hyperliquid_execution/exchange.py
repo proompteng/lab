@@ -236,9 +236,22 @@ class HyperliquidSdkExecutionExchange:
                 ),
                 positions=(),
             )
-        raw_state = cast(dict[str, object], self._info().user_state(account))
+        info = self._info()
+        raw_states = {
+            dex: cast(dict[str, object], info.user_state(account, dex=dex))
+            for dex in self._known_dexes()
+        }
+        try:
+            spot_state = cast(dict[str, object], info.spot_user_state(account))
+        except Exception:
+            spot_state = {}
         self._last_read_at = observed_at
-        return _account_state_from_payload(raw_state, market_id_by_coin, observed_at)
+        return _account_state_from_payloads(
+            raw_states,
+            spot_state,
+            market_id_by_coin,
+            observed_at,
+        )
 
     def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]:
         account = self._config.account_address
@@ -528,6 +541,52 @@ def _account_state_from_payload(
     )
 
 
+def _account_state_from_payloads(
+    dex_payloads: Mapping[str, Mapping[str, object]],
+    spot_payload: Mapping[str, object],
+    market_id_by_coin: dict[str, str],
+    observed_at: datetime,
+) -> AccountState:
+    account_value_usd = Decimal("0")
+    withdrawable_usd = Decimal("0")
+    gross_exposure_usd = Decimal("0")
+    positions: list[PositionSnapshot] = []
+    raw_dex_payloads: dict[str, object] = {}
+
+    for dex, payload in dex_payloads.items():
+        dex_state = _account_state_from_payload(
+            payload,
+            market_id_by_coin,
+            observed_at,
+        )
+        account_value_usd += dex_state.account.account_value_usd
+        withdrawable_usd += dex_state.account.withdrawable_usd
+        gross_exposure_usd += dex_state.account.gross_exposure_usd
+        positions.extend(dex_state.positions)
+        raw_dex_payloads[dex or "default"] = dex_state.account.raw_payload
+
+    spot_usdc_total = _spot_usdc_total(spot_payload)
+    spot_usdc_available = _spot_usdc_available_after_maintenance(spot_payload)
+    account_value_usd = max(account_value_usd, spot_usdc_total)
+    withdrawable_usd = max(withdrawable_usd, spot_usdc_available)
+
+    return AccountState(
+        account=AccountSnapshot(
+            observed_at=observed_at,
+            account_value_usd=account_value_usd.quantize(Decimal("0.000001")),
+            withdrawable_usd=withdrawable_usd.quantize(Decimal("0.000001")),
+            gross_exposure_usd=gross_exposure_usd.quantize(Decimal("0.000001")),
+            raw_payload={
+                "dexStates": raw_dex_payloads,
+                "spotUserState": {
+                    str(key): value for key, value in spot_payload.items()
+                },
+            },
+        ),
+        positions=tuple(positions),
+    )
+
+
 def _raw_account_exposure_usd(
     payload: Mapping[str, object],
     selected_positions: list[PositionSnapshot],
@@ -571,6 +630,46 @@ def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:
     size = _decimal(position.get("szi"))
     entry_price = _optional_decimal(position.get("entryPx")) or Decimal("0")
     return abs(size * entry_price).quantize(Decimal("0.000001"))
+
+
+def _spot_usdc_total(payload: Mapping[str, object]) -> Decimal:
+    for balance in _spot_usdc_balances(payload):
+        return _decimal(balance.get("total"))
+    return Decimal("0")
+
+
+def _spot_usdc_available_after_maintenance(payload: Mapping[str, object]) -> Decimal:
+    raw_available = payload.get("tokenToAvailableAfterMaintenance")
+    if isinstance(raw_available, list):
+        for item in cast(list[object], raw_available):
+            if not isinstance(item, list):
+                continue
+            parts = cast(list[object], item)
+            if len(parts) < 2:
+                continue
+            token, available = parts[0], parts[1]
+            if str(token) == "0":
+                return _decimal(available)
+    for balance in _spot_usdc_balances(payload):
+        return max(
+            Decimal("0"),
+            _decimal(balance.get("total")) - _decimal(balance.get("hold")),
+        )
+    return Decimal("0")
+
+
+def _spot_usdc_balances(payload: Mapping[str, object]) -> list[Mapping[str, object]]:
+    balances = payload.get("balances")
+    if not isinstance(balances, list):
+        return []
+    usdc_balances: list[Mapping[str, object]] = []
+    for balance in cast(list[object], balances):
+        if not isinstance(balance, dict):
+            continue
+        balance_map = cast(Mapping[str, object], balance)
+        if str(balance_map.get("coin") or "").strip().upper() == "USDC":
+            usdc_balances.append(balance_map)
+    return usdc_balances
 
 
 def _normalize_price(price: Decimal, *, side: str) -> Decimal:
