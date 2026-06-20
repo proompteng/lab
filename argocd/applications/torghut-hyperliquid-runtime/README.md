@@ -14,6 +14,7 @@ V2 contract:
 - `SPX` is excluded.
 - Strategy entry is maker-first only: `ORDER_POLICY=maker_ttl`, `MAKER_TIF=Alo`, and `MAKER_TTL_SECONDS=45`.
 - Strategy entry requires edge to clear `max(MIN_EDGE_BPS=3, spread_bps + COST_BUFFER_BPS=2)`.
+- Signal freshness allows the same `180s` quote window used by runtime dependency readiness.
 - Short entries are disabled in the proving lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=false`.
 - Caps are intentionally small: `$10` max order notional, `$25` max symbol exposure, and `$100` max gross exposure.
 - `sample_ready=false` until at least 40 v2 fills exist.

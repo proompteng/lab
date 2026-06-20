@@ -17,7 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-execution-v2-edge-20260620
+        proompteng.ai/config-revision: hyperliquid-execution-v2-staleness-20260620
       labels:
         app: torghut-hyperliquid-runtime
     spec:
