@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { applyRunnerArtifacts, loadRunnerSpec, loadRunSpec, resolveConfig, type AnypiConfig } from './config'
 import { createLogger } from './logger'
 import { runPiAgent } from './pi-session'
+import { verifyRequiredRuntimeTools } from './runtime-preflight'
 import {
   buildAgentPrompt,
   buildCiRepairPrompt,
@@ -172,6 +173,7 @@ const baseStatus = (
   promptVariant: config.promptVariant,
   promptHash: hashSystemPrompt(config.promptVariant),
   tools: [],
+  requiredTools: config.requiredTools,
   validations: [],
   validationPlan,
   agentAttempts: 0,
@@ -280,6 +282,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
     if (runSpec.systemPrompt && !config.allowSystemPromptOverride) {
       await logger.info('run systemPrompt ignored because ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE is false')
     }
+    await verifyRequiredRuntimeTools(config.requiredTools, config.workspace, logger.info)
     await prepareRepository(config, git, logger.info)
     await waitForModelEndpoint(config, logger.info)
     const prompt = buildAgentPrompt(runSpec, config.worktree)

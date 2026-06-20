@@ -5,7 +5,13 @@ import { execFileSync } from 'node:child_process'
 
 import { describe, expect, test } from 'vitest'
 
-import { ALL_PI_TOOL_NAMES, buildModelsJson, parseCommandList, resolveConfig } from './config'
+import {
+  ALL_PI_TOOL_NAMES,
+  DEFAULT_REQUIRED_RUNTIME_TOOLS,
+  buildModelsJson,
+  parseCommandList,
+  resolveConfig,
+} from './config'
 import {
   isNoChecksReportedResult,
   isNoRequiredChecksResult,
@@ -33,6 +39,7 @@ import {
   resolveAttemptSessionDir,
   resolveEffectiveSystemPrompt,
 } from './pi-session'
+import { checkRuntimeTool, verifyRequiredRuntimeTools } from './runtime-preflight'
 import {
   buildCommitMessage,
   buildPullRequestTitle,
@@ -55,6 +62,7 @@ describe('Anypi config', () => {
     expect(config.contextWindow).toBe(98304)
     expect(config.maxTokens).toBe(32768)
     expect(config.tools).toEqual([...ALL_PI_TOOL_NAMES])
+    expect(config.requiredTools).toEqual([...DEFAULT_REQUIRED_RUNTIME_TOOLS])
     expect(config.validationPolicy).toBe('append')
     expect(config.noChangeRepairAttempts).toBe(2)
     expect(config.validationRepairAttempts).toBe(2)
@@ -85,6 +93,23 @@ describe('Anypi config', () => {
   test('parses validation commands from newline text or JSON', () => {
     expect(parseCommandList('git diff --check\nbun test')).toEqual(['git diff --check', 'bun test'])
     expect(parseCommandList('["git diff --check","bun test"]')).toEqual(['git diff --check', 'bun test'])
+  })
+
+  test('allows provider config to override required runtime tools', () => {
+    expect(resolveConfig({ ANYPI_REQUIRED_TOOLS: 'git,gh bun' }).requiredTools).toEqual(['git', 'gh', 'bun'])
+  })
+
+  test('checks required runtime tools before model work', async () => {
+    await expect(checkRuntimeTool('sh', process.cwd())).resolves.toMatchObject({ tool: 'sh', ok: true })
+
+    const logs: string[] = []
+    await expect(
+      verifyRequiredRuntimeTools(['sh', 'definitely-missing-anypi-tool'], process.cwd(), async (message) => {
+        logs.push(message)
+      }),
+    ).rejects.toThrow(/runtime preflight failed: missing required tools: definitely-missing-anypi-tool/)
+    expect(logs.some((line) => line.startsWith('runtime tool ready: sh'))).toBe(true)
+    expect(logs.some((line) => line.startsWith('runtime tool missing: definitely-missing-anypi-tool'))).toBe(true)
   })
 
   test('normalizes prompt variants and validation policy from env', () => {
@@ -200,6 +225,7 @@ describe('Anypi prompt contract', () => {
         promptVariant: 'repair-loop',
         promptHash: '0123456789abcdef',
         tools: ['bash', 'edit'],
+        requiredTools: ['bash', 'bun', 'git'],
         sessionFile: '/workspace/.anypi/sessions/initial/session.json',
         validations: [
           {

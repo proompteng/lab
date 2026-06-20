@@ -9,7 +9,7 @@ harness against the self-hosted Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990`
+- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:62cf896ec@sha256:d318d97629e8a1b39e05935b706dfefa8a912fb28e585a564c21c6f2da175af9`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen36-flamingo`
 - Supported workload image platforms: `linux/amd64`, `linux/arm64`
@@ -29,6 +29,9 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 
 - `ANYPI_TOOLS=all` enables the full built-in coding tool set: `read`, `bash`,
   `edit`, `write`, `grep`, `find`, `ls`.
+- `ANYPI_REQUIRED_TOOLS` is checked before clone/model work. The default image
+  contract includes `bash`, `bun`, `git`, `gh`, `jq`, `node`, `python3`, `uv`,
+  `mise`, `helm`, and `kustomize`.
 - `ANYPI_MODEL=qwen36-flamingo` targets the Qwen3.6 NVFP4 Flamingo endpoint.
 - `ANYPI_CONTEXT_WINDOW=98304` and `ANYPI_MAX_TOKENS=32768` fit inside the
   current 128K production serving profile.
@@ -69,7 +72,8 @@ runner config and logs, not in the model-facing behavioral contract.
 
 Status evidence is written to `/workspace/.agent/status.json`: model,
 providerModel, thinkingLevel, contextWindow, maxTokens, promptVariant,
-promptHash, validations, CI result, session files, commit, and pull request.
+promptHash, requiredTools, validations, CI result, session files, commit, and
+pull request.
 
 ## AgentRun Example
 
