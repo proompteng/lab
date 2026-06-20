@@ -83,7 +83,6 @@ args:
   - hermes
   - --optimization-level
   - "2"
-  - --numa-bind
 ```
 
 Add the parallelism flags for the shape under test.

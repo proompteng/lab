@@ -64,7 +64,6 @@ spec:
             - hermes
             - --optimization-level
             - "2"
-            - --numa-bind
           env:
             - name: HF_HOME
               value: /models/huggingface
