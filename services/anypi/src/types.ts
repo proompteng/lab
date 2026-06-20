@@ -117,6 +117,9 @@ export type AnypiStatus = {
   worktree?: string
   model: string
   providerModel: string
+  thinkingLevel: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  contextWindow: number
+  maxTokens: number
   piPromptTimeoutSeconds: number
   promptVariant: PromptVariant
   promptHash: string
