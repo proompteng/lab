@@ -132,6 +132,10 @@ export const resolveValidationPlan = (
 export const resolveValidationCommands = (runSpec: AgentRunSpecPayload, configuredCommands: string[]) =>
   resolveValidationPlan(runSpec, configuredCommands, 'override').commands
 
+const REPO_TOOLING_RULES = `- Use existing repository scripts, package-manager commands, and test/build configs before adding new tooling.
+- Do not add package.json, tsconfig, test config, or local wrapper config solely to make a validation command runnable.
+- Add or change tooling config only when the requested product change truly requires it.`
+
 export const buildAgentPrompt = (runSpec: AgentRunSpecPayload, worktree: string) => {
   const task = resolveTaskPrompt(runSpec)
   const parameters = runSpec.parameters ?? {}
@@ -143,6 +147,7 @@ Head branch: ${runSpec.vcs?.headBranch ?? runSpec.head ?? parameters.head ?? 'co
 ${goal ? `Goal: ${goal}\n` : ''}
 Task rules:
 - Use repository instructions and existing patterns.
+${REPO_TOOLING_RULES}
 - Implement the requested change directly.
 - Add or update tests when behavior changes.
 - Run the checks required for the files you touched.
@@ -186,7 +191,8 @@ Repair attempt: ${input.attempt} of ${input.maxAttempts}
 
 Fix the repository so every validation command passes. Preserve the requested feature work, do not remove or weaken
 tests to make the suite pass, and run the failing command(s) again before stopping. Leave the final code changes in the
-worktree.
+worktree. Use existing repository tooling first; do not add package or test/build config only to make the validation
+command runnable.
 
 Failures:
 ${failures.map(formatValidationResult).join('\n\n')}`
@@ -200,7 +206,8 @@ Repair attempt: ${input.attempt} of ${input.maxAttempts}
 
 The task requires a real implementation. Continue from the repository state now: inspect the requested files, edit
 source and tests, run relevant validation, and leave the final changes in the worktree. Do not stop with only analysis
-or a summary.`
+or a summary. Use existing repository tooling first; do not add package or test/build config only to create a place for
+the change.`
 
 export const buildCiRepairPrompt = (input: {
   attempt: number
@@ -225,6 +232,8 @@ const SYSTEM_PROMPTS: Record<PromptVariant, string> = {
 
 Rules:
 - Inspect repository instructions and relevant files before editing.
+- Use existing repository scripts, package-manager commands, and test/build configs before adding new tooling.
+- Do not add package.json, tsconfig, test config, or local wrapper config solely to make a validation command runnable.
 - Keep the solution focused, production-quality, and no broader than the task.
 - Add or update tests for changed behavior.
 - Run the checks required for touched files; fix failures and rerun them.
@@ -236,6 +245,8 @@ Rules:
 
 Rules:
 - Inspect repository instructions and relevant files before editing.
+- Use existing repository scripts, package-manager commands, and test/build configs before adding new tooling.
+- Do not add package.json, tsconfig, test config, or local wrapper config solely to make a validation command runnable.
 - Keep the solution focused, production-quality, and no broader than the task.
 - Add or update tests for changed behavior.
 - Run the checks required for touched files; fix failures and rerun them.
@@ -248,6 +259,8 @@ Rules:
 
 Rules:
 - Inspect repository instructions and relevant files before editing.
+- Use existing repository scripts, package-manager commands, and test/build configs before adding new tooling.
+- Do not add package.json, tsconfig, test config, or local wrapper config solely to make a validation command runnable.
 - Keep the solution focused, production-quality, and no broader than the task.
 - Add or update tests for changed behavior.
 - Run the checks required for touched files; fix failures and rerun them.
@@ -262,6 +275,8 @@ Rules:
 Rules:
 - Inspect repository instructions and relevant files before editing.
 - Follow AGENTS.md and existing code patterns for every file you touch.
+- Use existing repository scripts, package-manager commands, and test/build configs before adding new tooling.
+- Do not add package.json, tsconfig, test config, or local wrapper config solely to make a validation command runnable.
 - Keep the solution focused, production-quality, and no broader than the task.
 - Add or update tests for changed behavior.
 - Run the checks required for touched files; fix failures and rerun them.
