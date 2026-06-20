@@ -98,6 +98,7 @@
     "atlas:search": "bun run packages/scripts/src/atlas/search.ts",
     "atlas:code-search": "bun run packages/scripts/src/atlas/code-search.ts",
     "atlas:backfill-chunk-embeddings": "bun run packages/scripts/src/atlas/backfill-chunk-embeddings.ts",
+    "lint:flamingo-hard-migration": "bun run scripts/jangar/validate-flamingo-hard-migration.ts",
     "format:check": "bunx oxfmt --check ."
   },
   "dependencies": {

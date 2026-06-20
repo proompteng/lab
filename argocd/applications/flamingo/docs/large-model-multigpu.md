@@ -1,6 +1,6 @@
 # Large Model Multi-GPU Scaling
 
-This runbook describes how to run one large model replica across two or four
+This runbook describes how to run one Flamingo model replica across two or four
 NVIDIA RTX PRO 6000 Blackwell GPUs on `turin`. It is for model parallelism, not
 for serving multiple independent replicas.
 
@@ -27,8 +27,7 @@ Reasoning:
 - Pipeline parallelism splits model layers across GPUs and is the safer first
   test on non-NVLink cards.
 - Tensor parallelism can improve compute utilization, but it communicates every
-  layer and can bottleneck or hang on PCIe/NCCL/P2P issues. Benchmark it only
-  after the pipeline-parallel shape passes smoke and load tests.
+  layer and can bottleneck or hang on PCIe/NCCL/P2P issues.
 
 ## Preflight
 
@@ -50,72 +49,71 @@ kubectl -n gpu-operator exec ds/turin-nvidia-device-plugin -- nvidia-smi -L
 kubectl -n gpu-operator exec ds/turin-nvidia-device-plugin -- nvidia-smi topo -m
 ```
 
-Expected for the target shape:
-
-- `nvidia.com/gpu` allocatable equals the intended GPU count.
-- No other workload has allocated GPUs on `turin`.
-- `nvidia-smi -L` lists the intended number of RTX PRO 6000 Blackwell GPUs.
-- `nvidia-smi topo -m` shows GPU-to-GPU connectivity as `PIX`, `PXB`, `NODE`, or
-  `SYS`, not `N/A`.
-- Power and thermals are stable under a GPU stress test before a long model
-  load. Three or four Max-Q cards are a chassis, airflow, and PSU decision, not
-  only a Kubernetes decision.
-
 Stop if any gate is red. Fix hardware, firmware, Talos, NVIDIA runtime, or
 device-plugin visibility first.
+
+## Common vLLM Arguments
+
+Every multi-GPU candidate keeps the Qwen3.6 hard-migration target:
+
+```yaml
+args:
+  - --host
+  - 0.0.0.0
+  - --port
+  - "8000"
+  - --model
+  - unsloth/Qwen3.6-35B-A3B-NVFP4
+  - --served-model-name
+  - qwen36-flamingo
+  - --trust-remote-code
+  - --dtype
+  - bfloat16
+  - --max-model-len
+  - "131072"
+  - --gpu-memory-utilization
+  - "0.94"
+  - --max-num-seqs
+  - "128"
+  - --max-num-batched-tokens
+  - "32768"
+  - --enable-prefix-caching
+  - --enable-auto-tool-choice
+  - --tool-call-parser
+  - hermes
+  - --optimization-level
+  - "2"
+  - --numa-bind
+```
+
+Add the parallelism flags for the shape under test.
 
 ## Two GPUs
 
 Use this when `turin` has at least two free allocatable GPUs for `flamingo`.
 
-Manifest delta:
+First candidate:
 
 ```yaml
-spec:
-  template:
-    spec:
-      containers:
-        - name: vllm
-          args:
-            - --host
-            - 0.0.0.0
-            - --port
-            - "8000"
-            - --model
-            - Qwen/Qwen3-Coder-Next-FP8
-            - --served-model-name
-            - qwen3-coder-flamingo
-            - --pipeline-parallel-size
-            - "2"
-            - --tensor-parallel-size
-            - "1"
-            - --max-model-len
-            - "32768"
-            - --gpu-memory-utilization
-            - "0.90"
-            - --enable-prefix-caching
-            - --enable-auto-tool-choice
-            - --tool-call-parser
-            - qwen3_coder
-          env:
-            - name: CUDA_DEVICE_ORDER
-              value: PCI_BUS_ID
-            - name: NCCL_DEBUG
-              value: INFO
-          resources:
-            requests:
-              cpu: "32"
-              memory: 256Gi
-              nvidia.com/gpu: "2"
-            limits:
-              cpu: "96"
-              memory: 384Gi
-              nvidia.com/gpu: "2"
-      volumes:
-        - name: shm
-          emptyDir:
-            medium: Memory
-            sizeLimit: 32Gi
+args:
+  - --pipeline-parallel-size
+  - "2"
+  - --tensor-parallel-size
+  - "1"
+resources:
+  requests:
+    cpu: "32"
+    memory: 256Gi
+    nvidia.com/gpu: "2"
+  limits:
+    cpu: "96"
+    memory: 384Gi
+    nvidia.com/gpu: "2"
+volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 32Gi
 ```
 
 Benchmark this tensor-parallel alternative only after the pipeline-parallel
@@ -129,60 +127,32 @@ args:
   - "1"
 ```
 
-Keep the pod resource request at `nvidia.com/gpu: "2"` for both tests.
-
 ## Four GPUs
 
 Use this when `turin` has at least four free allocatable GPUs for `flamingo`.
 
-Manifest delta:
+First candidate:
 
 ```yaml
-spec:
-  template:
-    spec:
-      containers:
-        - name: vllm
-          args:
-            - --host
-            - 0.0.0.0
-            - --port
-            - "8000"
-            - --model
-            - Qwen/Qwen3-Coder-Next-FP8
-            - --served-model-name
-            - qwen3-coder-flamingo
-            - --pipeline-parallel-size
-            - "4"
-            - --tensor-parallel-size
-            - "1"
-            - --max-model-len
-            - "32768"
-            - --gpu-memory-utilization
-            - "0.90"
-            - --enable-prefix-caching
-            - --enable-auto-tool-choice
-            - --tool-call-parser
-            - qwen3_coder
-          env:
-            - name: CUDA_DEVICE_ORDER
-              value: PCI_BUS_ID
-            - name: NCCL_DEBUG
-              value: INFO
-          resources:
-            requests:
-              cpu: "64"
-              memory: 384Gi
-              nvidia.com/gpu: "4"
-            limits:
-              cpu: "128"
-              memory: 768Gi
-              nvidia.com/gpu: "4"
-      volumes:
-        - name: shm
-          emptyDir:
-            medium: Memory
-            sizeLimit: 64Gi
+args:
+  - --pipeline-parallel-size
+  - "4"
+  - --tensor-parallel-size
+  - "1"
+resources:
+  requests:
+    cpu: "64"
+    memory: 384Gi
+    nvidia.com/gpu: "4"
+  limits:
+    cpu: "128"
+    memory: 768Gi
+    nvidia.com/gpu: "4"
+volumes:
+  - name: shm
+    emptyDir:
+      medium: Memory
+      sizeLimit: 64Gi
 ```
 
 Benchmark these alternatives after the `PP=4` shape works:
@@ -212,8 +182,8 @@ The total GPU request must equal `tensor_parallel_size * pipeline_parallel_size`
 Render and inspect before Argo sync:
 
 ```bash
-kustomize build argocd/applications/flamingo > /tmp/flamingo-render.yaml
-rg -n -- '--pipeline-parallel-size|--tensor-parallel-size|nvidia.com/gpu|sizeLimit' /tmp/flamingo-render.yaml
+mise exec helm@3 -- kustomize build --enable-helm argocd/applications/flamingo > /tmp/flamingo-render.yaml
+rg -n -- '--pipeline-parallel-size|--tensor-parallel-size|nvidia.com/gpu|sizeLimit|qwen36-flamingo' /tmp/flamingo-render.yaml
 ```
 
 Sync through Argo CD after the diff is reviewed:
@@ -256,7 +226,7 @@ kubectl -n flamingo run flamingo-chat-smoke \
   --command -- sh -c '
     curl -fsS http://flamingo.flamingo.svc.cluster.local/v1/chat/completions \
       -H "Content-Type: application/json" \
-      -d "{\"model\":\"qwen3-coder-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"max_tokens\":8}"
+      -d "{\"model\":\"qwen36-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"max_tokens\":8,\"temperature\":0}"
   '
 ```
 
@@ -266,7 +236,7 @@ Tool-call smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen3-coder-flamingo",
+    "model": "qwen36-flamingo",
     "messages": [{"role": "user", "content": "Call get_repo_status for lab."}],
     "tools": [{
       "type": "function",
@@ -281,7 +251,8 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
       }
     }],
     "tool_choice": "auto",
-    "max_tokens": 128
+    "max_tokens": 128,
+    "temperature": 0
   }' | jq '.choices[0].message.tool_calls'
 ```
 
@@ -294,11 +265,11 @@ Record each run before changing the next variable.
 
 | Run | GPUs | TP | PP | Max model length | GPU memory utilization | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `2g-pp2` | 2 | 1 | 2 | `32768` | `0.90` | First 2-GPU candidate |
-| `2g-tp2` | 2 | 2 | 1 | `32768` | `0.90` | Compare throughput and NCCL stability |
-| `4g-pp4` | 4 | 1 | 4 | `32768` | `0.90` | First 4-GPU candidate |
-| `4g-tp2-pp2` | 4 | 2 | 2 | `32768` | `0.90` | Balanced hybrid candidate |
-| `4g-tp4` | 4 | 4 | 1 | `32768` | `0.90` | Highest PCIe/NCCL risk |
+| `2g-pp2` | 2 | 1 | 2 | `131072` | `0.94` | First 2-GPU candidate |
+| `2g-tp2` | 2 | 2 | 1 | `131072` | `0.94` | Compare throughput and NCCL stability |
+| `4g-pp4` | 4 | 1 | 4 | `131072` | `0.94` | First 4-GPU candidate |
+| `4g-tp2-pp2` | 4 | 2 | 2 | `131072` | `0.94` | Balanced hybrid candidate |
+| `4g-tp4` | 4 | 4 | 1 | `131072` | `0.94` | Highest PCIe/NCCL risk |
 
 Capture:
 
@@ -317,29 +288,17 @@ Capture:
   `nvidia.com/gpu` request.
 - If workers hang during startup, capture `NCCL_DEBUG=INFO` logs and compare
   `nvidia-smi topo -m` against the preflight output.
-- After a shape is stable, reduce `NCCL_DEBUG` to `WARN` or remove the override
-  before leaving the workload in steady state.
 - If a tensor-parallel test hangs, roll back to the last pipeline-parallel
   candidate before changing driver, kernel, or IOMMU settings.
-- If a pipeline-parallel test is stable but slow, tune
-  `--max-num-seqs`, `--max-num-batched-tokens`, and
-  `--enable-chunked-prefill` before switching to tensor parallelism.
-- If the model OOMs, reduce `--max-model-len` first, then lower
-  `--gpu-memory-utilization`. Do not raise GPU memory utilization above `0.92`
-  without measuring fragmentation and restart behavior.
+- If a pipeline-parallel test is stable but slow, tune `--max-num-seqs`,
+  `--max-num-batched-tokens`, MTP, and KV-cache dtype before switching to full
+  tensor parallelism.
 
 ## Source Notes
 
 - vLLM documents tensor and pipeline parallelism for one model replica and
-  explicitly recommends pipeline parallelism on non-NVLink GPUs when applicable:
+  recommends pipeline parallelism on non-NVLink GPUs when applicable:
   <https://docs.vllm.ai/en/v0.20.1/serving/parallelism_scaling/>
-- A public RTX 6000 Pro Blackwell vLLM writeup uses
-  `--pipeline-parallel-size 4 --tensor-parallel-size 1` for a four-GPU PCIe
-  configuration:
-  <https://petronellatech.com/hardware/rtx-6000-pro-blackwell-multi-gpu-vllm/>
 - SGLang exposes tensor parallelism through `--tp` and data parallelism through
   `--dp`; use `--tp` for one sharded model, not `--dp`:
   <https://sgl-project.github.io/advanced_features/server_arguments.html>
-- llama.cpp can split one model across GPUs with split modes, but this app keeps
-  vLLM as the production OpenAI-compatible server:
-  <https://github.com/ggml-org/llama.cpp/blob/master/docs/multi-gpu.md>

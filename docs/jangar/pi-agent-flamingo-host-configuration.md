@@ -1,7 +1,7 @@
 # Pi Agent Flamingo Host Configuration
 
-Use this when running a host-side Pi/agent harness against the Turin Blackwell
-GPU pod.
+Use this when running a host-side Pi or agent harness against the Turin
+Blackwell GPU pod.
 
 ## Endpoint
 
@@ -26,8 +26,8 @@ aliases if the local harness supports either spelling.
 export OPENAI_API_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 export OPENAI_BASE_URL=http://flamingo.ide-newton.ts.net/v1
 export OPENAI_API_KEY=flamingo-local
-export OPENAI_COMPLETION_MODEL=qwen3-coder-flamingo
-export OPENAI_MODEL=qwen3-coder-flamingo
+export OPENAI_COMPLETION_MODEL=qwen36-flamingo
+export OPENAI_MODEL=qwen36-flamingo
 ```
 
 Do not move embeddings to Flamingo in this step. If the harness uses embedding
@@ -47,7 +47,7 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/models
 
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
-  -d '{"model":"qwen3-coder-flamingo","messages":[{"role":"user","content":"Reply with exactly: flamingo-ready"}],"max_tokens":16,"temperature":0}'
+  -d '{"model":"qwen36-flamingo","messages":[{"role":"user","content":"Reply with exactly: flamingo-ready"}],"max_tokens":16,"temperature":0}'
 ```
 
 Tool-call smoke:
@@ -56,7 +56,7 @@ Tool-call smoke:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "qwen3-coder-flamingo",
+    "model": "qwen36-flamingo",
     "messages": [{"role": "user", "content": "Use the provided tool to add 7 and 35. Do not answer directly."}],
     "tools": [{
       "type": "function",
@@ -87,14 +87,14 @@ Expected tool-call result:
 
 ## Client Context Budget
 
-Keep Pi's `models.json` budget below the vLLM server rung. Do not set the Pi
-client window to the exact native Qwen3-Coder-Next ceiling.
+Keep Pi's `models.json` budget below the vLLM server context. The current
+production target is 128K server context.
 
-| vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` |
-| ---------------------- | -----------------: | -------------: |
-| `262144`               |           `245760` |         `8192` |
-| `131072`               |           `114688` |         `8192` |
-| `65536`                |            `57344` |         `8192` |
+| vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` | Status |
+| ---------------------- | -----------------: | -------------: | ------ |
+| `131072`               |            `98304` |        `32768` | Current |
+| `196608`               |           `163840` |        `32768` | Candidate |
+| `262144`               |           `229376` |        `32768` | Candidate |
 
 Compaction must stay explicit in `settings.json` for Flamingo host runs:
 
@@ -114,7 +114,8 @@ Pi needs a local provider entry because Flamingo is a private OpenAI-compatible
 endpoint, not a built-in Pi model. Keep this customization minimal:
 
 - required: one `flamingo` provider in `~/.pi/agent/models.json`
-- required: default Pi model set to `qwen3-coder-flamingo`
+- required: default Pi model set to `qwen36-flamingo`
+- required: Qwen chat-template thinking compatibility
 - required: explicit compaction settings in `~/.pi/agent/settings.json`
 - not required: custom Pi code, extra provider plugins, model aliases, or moving
   embeddings off Saigak
@@ -129,17 +130,20 @@ For this host, the permanent local Pi config should look like this:
       "api": "openai-completions",
       "apiKey": "flamingo-local",
       "compat": {
+        "supportsStore": false,
         "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "qwen-chat-template"
       },
       "models": [
         {
-          "id": "qwen3-coder-flamingo",
-          "name": "Qwen3 Coder Flamingo",
-          "reasoning": false,
+          "id": "qwen36-flamingo",
+          "name": "Qwen3.6 Flamingo",
+          "reasoning": true,
           "input": ["text"],
-          "contextWindow": 245760,
-          "maxTokens": 8192,
+          "contextWindow": 98304,
+          "maxTokens": 32768,
           "cost": {
             "input": 0,
             "output": 0,
@@ -153,14 +157,14 @@ For this host, the permanent local Pi config should look like this:
 }
 ```
 
-`~/.pi/agent/settings.json` should keep Flamingo as the default and make
-compaction explicit:
+`~/.pi/agent/settings.json` should keep Flamingo as the default and enable
+medium thinking:
 
 ```json
 {
   "defaultProvider": "flamingo",
-  "defaultModel": "qwen3-coder-flamingo",
-  "defaultThinkingLevel": "off",
+  "defaultModel": "qwen36-flamingo",
+  "defaultThinkingLevel": "medium",
   "compaction": {
     "enabled": true,
     "reserveTokens": 16384,
@@ -183,13 +187,13 @@ jq '.providers | with_entries(.value |= {
 
 PI_SKIP_VERSION_CHECK=1 PI_TELEMETRY=0 \
 pi --no-tools --no-session \
-  -p "Reply with exactly: host-pi-flamingo-262k-ready"
+  -p "Reply with exactly: host-pi-flamingo-ready"
 ```
 
 The smoke should return:
 
 ```text
-host-pi-flamingo-262k-ready
+host-pi-flamingo-ready
 ```
 
 ## Pi Binary Smoke
@@ -204,8 +208,8 @@ PI_TMP_DIR="$(mktemp -d /tmp/pi-flamingo-smoke.XXXXXX)"
 cat > "$PI_TMP_DIR/settings.json" <<'JSON'
 {
   "defaultProvider": "flamingo",
-  "defaultModel": "qwen3-coder-flamingo",
-  "defaultThinkingLevel": "off",
+  "defaultModel": "qwen36-flamingo",
+  "defaultThinkingLevel": "medium",
   "quietStartup": true,
   "enableInstallTelemetry": false,
   "compaction": {
@@ -224,17 +228,20 @@ cat > "$PI_TMP_DIR/models.json" <<'JSON'
       "api": "openai-completions",
       "apiKey": "flamingo-local",
       "compat": {
+        "supportsStore": false,
         "supportsDeveloperRole": false,
-        "supportsReasoningEffort": false
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "qwen-chat-template"
       },
       "models": [
         {
-          "id": "qwen3-coder-flamingo",
-          "name": "Qwen3 Coder Flamingo",
-          "reasoning": false,
+          "id": "qwen36-flamingo",
+          "name": "Qwen3.6 Flamingo",
+          "reasoning": true,
           "input": ["text"],
-          "contextWindow": 245760,
-          "maxTokens": 8192,
+          "contextWindow": 98304,
+          "maxTokens": 32768,
           "cost": {
             "input": 0,
             "output": 0,
@@ -252,7 +259,7 @@ PI_CODING_AGENT_DIR="$PI_TMP_DIR" \
 PI_SKIP_VERSION_CHECK=1 \
 PI_TELEMETRY=0 \
 pi --provider flamingo \
-  --model qwen3-coder-flamingo \
+  --model qwen36-flamingo \
   --no-tools \
   --no-session \
   -p "Reply with exactly: pi-flamingo-ready"
@@ -275,29 +282,9 @@ overflow recovery.
 bun run scripts/jangar/validate-pi-flamingo-compaction.ts
 ```
 
-While the live server is still on the old 32K rung, run the reduced smoke
-against the same code path:
+## Failure Handling
 
-```bash
-PI_FLAMINGO_SERVER_CONTEXT=32768 \
-PI_FLAMINGO_CLIENT_CONTEXT=24576 \
-PI_FLAMINGO_MAX_TOKENS=2048 \
-PI_FLAMINGO_COMPACTION_RESERVE=8192 \
-PI_FLAMINGO_KEEP_RECENT=4000 \
-PI_FLAMINGO_PROMPT_CHARS=90000 \
-bun run scripts/jangar/validate-pi-flamingo-compaction.ts
-```
-
-## Rollback
-
-For completion rollback to Saigak/Jangar-compatible routing:
-
-```bash
-export OPENAI_API_BASE_URL=http://saigak.saigak.svc.cluster.local:11434/v1
-export OPENAI_BASE_URL=http://saigak.saigak.svc.cluster.local:11434/v1
-export OPENAI_COMPLETION_MODEL=qwen3-main-saigak:30b-a3b
-export OPENAI_MODEL=qwen3-main-saigak:30b-a3b
-```
-
-Rollback if Flamingo is not reachable, tool calls are not structured, or the
-GPU pod is restarting under agent load.
+Do not restore an old model alias in host Pi config. If Flamingo is not
+reachable, tool calls are not structured, or the GPU pod is restarting under
+agent load, fix the Flamingo serving profile or switch the Flamingo server
+runtime for the same Qwen3.6 model.

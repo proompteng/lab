@@ -47,11 +47,15 @@ function parseInteger(name: string, fallback: number): number {
 
 function defaultClientContext(serverContext: number): number {
   if (serverContext >= 262144) {
-    return 245760
+    return 229376
+  }
+
+  if (serverContext >= 196608) {
+    return 163840
   }
 
   if (serverContext >= 131072) {
-    return 114688
+    return 98304
   }
 
   if (serverContext >= 65536) {
@@ -216,9 +220,9 @@ function printHelp(): void {
 
 Environment:
   PI_FLAMINGO_BASE_URL             OpenAI-compatible base URL (default: http://flamingo.ide-newton.ts.net/v1)
-  PI_FLAMINGO_MODEL                Model id (default: qwen3-coder-flamingo)
+  PI_FLAMINGO_MODEL                Model id (default: qwen36-flamingo)
   PI_FLAMINGO_API_KEY              Provider API key (default: flamingo-local)
-  PI_FLAMINGO_SERVER_CONTEXT       Expected vLLM max_model_len (default: 262144)
+  PI_FLAMINGO_SERVER_CONTEXT       Expected vLLM max_model_len (default: 131072)
   PI_FLAMINGO_CLIENT_CONTEXT       Pi models.json contextWindow (default follows rollout table)
   PI_FLAMINGO_MAX_TOKENS           Pi models.json maxTokens (default: 8192 for 64K+, else 2048)
   PI_FLAMINGO_COMPACTION_RESERVE   Pi compaction reserveTokens (default: 16384)
@@ -241,11 +245,11 @@ async function main(): Promise<void> {
 
   const baseUrl = process.env.PI_FLAMINGO_BASE_URL ?? 'http://flamingo.ide-newton.ts.net/v1'
   const provider = process.env.PI_FLAMINGO_PROVIDER ?? 'flamingo'
-  const model = process.env.PI_FLAMINGO_MODEL ?? 'qwen3-coder-flamingo'
+  const model = process.env.PI_FLAMINGO_MODEL ?? 'qwen36-flamingo'
   const apiKey = process.env.PI_FLAMINGO_API_KEY ?? 'flamingo-local'
-  const serverContext = parseInteger('PI_FLAMINGO_SERVER_CONTEXT', 262144)
+  const serverContext = parseInteger('PI_FLAMINGO_SERVER_CONTEXT', 131072)
   const clientContext = parseInteger('PI_FLAMINGO_CLIENT_CONTEXT', defaultClientContext(serverContext))
-  const maxTokens = parseInteger('PI_FLAMINGO_MAX_TOKENS', serverContext >= 65536 ? 8192 : 2048)
+  const maxTokens = parseInteger('PI_FLAMINGO_MAX_TOKENS', serverContext >= 131072 ? 32768 : 2048)
   const reserveTokens = parseInteger('PI_FLAMINGO_COMPACTION_RESERVE', 16384)
   const keepRecentTokens = parseInteger('PI_FLAMINGO_KEEP_RECENT', 20000)
   const threshold = clientContext - reserveTokens
@@ -285,7 +289,7 @@ async function main(): Promise<void> {
         {
           defaultProvider: provider,
           defaultModel: model,
-          defaultThinkingLevel: 'off',
+          defaultThinkingLevel: 'medium',
           quietStartup: true,
           enableInstallTelemetry: false,
           compaction: {
@@ -309,14 +313,17 @@ async function main(): Promise<void> {
               api: 'openai-completions',
               apiKey,
               compat: {
+                supportsStore: false,
                 supportsDeveloperRole: false,
                 supportsReasoningEffort: false,
+                maxTokensField: 'max_tokens',
+                thinkingFormat: 'qwen-chat-template',
               },
               models: [
                 {
                   id: model,
-                  name: 'Qwen3 Coder Flamingo',
-                  reasoning: false,
+                  name: 'Qwen3.6 Flamingo',
+                  reasoning: true,
                   input: ['text'],
                   contextWindow: clientContext,
                   maxTokens,

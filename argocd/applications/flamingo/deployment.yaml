@@ -44,19 +44,27 @@ spec:
             - --port
             - "8000"
             - --model
-            - Qwen/Qwen3-Coder-Next-FP8
+            - unsloth/Qwen3.6-35B-A3B-NVFP4
             - --served-model-name
-            - qwen3-coder-flamingo
+            - qwen36-flamingo
+            - --trust-remote-code
+            - --dtype
+            - bfloat16
             - --max-model-len
-            - "262144"
+            - "131072"
             - --gpu-memory-utilization
-            - "0.92"
+            - "0.94"
             - --max-num-seqs
-            - "256"
+            - "128"
+            - --max-num-batched-tokens
+            - "16384"
             - --enable-prefix-caching
             - --enable-auto-tool-choice
             - --tool-call-parser
-            - qwen3_coder
+            - hermes
+            - --optimization-level
+            - "2"
+            - --numa-bind
           env:
             - name: HF_HOME
               value: /models/huggingface

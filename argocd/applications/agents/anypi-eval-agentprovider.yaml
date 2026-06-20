@@ -8,14 +8,16 @@ spec:
     type: exec
   envTemplate:
     ANYPI_PROVIDER: flamingo
-    ANYPI_MODEL: qwen3-coder-flamingo
+    ANYPI_MODEL: qwen36-flamingo
     ANYPI_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     ANYPI_API_KEY: flamingo-local
     ANYPI_MODEL_READY_TIMEOUT_SECONDS: "1800"
     ANYPI_PI_PROMPT_TIMEOUT_SECONDS: "1800"
     ANYPI_PROMPT_VARIANT: "{{parameters.promptVariant}}"
     ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE: "false"
-    ANYPI_THINKING_LEVEL: "off"
+    ANYPI_THINKING_LEVEL: "medium"
+    ANYPI_CONTEXT_WINDOW: "98304"
+    ANYPI_MAX_TOKENS: "32768"
     ANYPI_TOOLS: all
     ANYPI_WORKSPACE: /workspace
     ANYPI_WORKTREE: /workspace/lab

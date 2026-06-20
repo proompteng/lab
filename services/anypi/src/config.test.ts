@@ -45,13 +45,15 @@ describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
     const config = resolveConfig({})
     expect(config.provider).toBe('flamingo')
-    expect(config.model).toBe('qwen3-coder-flamingo')
+    expect(config.model).toBe('qwen36-flamingo')
     expect(config.baseUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1')
     expect(config.modelReadyTimeoutSeconds).toBe(1800)
     expect(config.piPromptTimeoutSeconds).toBe(1800)
     expect(config.promptVariant).toBe('minimal')
     expect(config.allowSystemPromptOverride).toBe(false)
-    expect(config.thinkingLevel).toBe('off')
+    expect(config.thinkingLevel).toBe('medium')
+    expect(config.contextWindow).toBe(98304)
+    expect(config.maxTokens).toBe(32768)
     expect(config.tools).toEqual([...ALL_PI_TOOL_NAMES])
     expect(config.validationPolicy).toBe('append')
     expect(config.noChangeRepairAttempts).toBe(2)
@@ -68,10 +70,13 @@ describe('Anypi config', () => {
           api: 'openai-completions',
           baseUrl: 'http://flamingo.flamingo.svc.cluster.local/v1',
           compat: {
+            supportsStore: false,
             supportsDeveloperRole: false,
             supportsReasoningEffort: false,
+            maxTokensField: 'max_tokens',
+            thinkingFormat: 'qwen-chat-template',
           },
-          models: [{ id: 'qwen3-coder-flamingo', reasoning: false }],
+          models: [{ id: 'qwen36-flamingo', reasoning: true, contextWindow: 98304, maxTokens: 32768 }],
         },
       },
     })
@@ -180,8 +185,11 @@ describe('Anypi prompt contract', () => {
         startedAt: '2026-06-16T00:00:00.000Z',
         runName: 'anypi-eval-runner-repair-20260616',
         namespace: 'agents',
-        model: 'qwen3-coder-flamingo',
-        providerModel: 'flamingo/qwen3-coder-flamingo',
+        model: 'qwen36-flamingo',
+        providerModel: 'flamingo/qwen36-flamingo',
+        thinkingLevel: 'medium',
+        contextWindow: 98304,
+        maxTokens: 32768,
         piPromptTimeoutSeconds: 1800,
         promptVariant: 'repair-loop',
         promptHash: '0123456789abcdef',
