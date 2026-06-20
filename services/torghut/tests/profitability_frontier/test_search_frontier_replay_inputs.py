@@ -17,6 +17,8 @@ from tests.profitability_frontier.search_frontier_base import (
     yaml,
 )
 
+import scripts.consistent_profitability_frontier.replay_data as replay_data
+
 
 class TestSearchFrontierReplayInputs(SearchConsistentProfitabilityFrontierTestCaseBase):
     def test_resolve_frontier_replay_windows_keeps_second_oos_independent(
@@ -48,7 +50,7 @@ class TestSearchFrontierReplayInputs(SearchConsistentProfitabilityFrontierTestCa
             args.second_oos_days = 2
 
             with patch(
-                "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                "scripts.consistent_profitability_frontier.workflow_setup._resolve_recent_trading_days",
                 side_effect=RuntimeError("stop-after-recent-days"),
             ) as resolve_recent:
                 with self.assertRaisesRegex(RuntimeError, "stop-after-recent-days"):
@@ -458,7 +460,9 @@ class TestSearchFrontierReplayInputs(SearchConsistentProfitabilityFrontierTestCa
         for returned, reason in invalid_returns:
             with self.subTest(reason=reason):
                 with patch.object(
-                    frontier, "apply_candidate_to_configmap", return_value=returned
+                    replay_data,
+                    "apply_candidate_to_configmap",
+                    return_value=returned,
                 ):
                     with self.assertRaisesRegex(ValueError, reason):
                         frontier.apply_candidate_to_configmap_with_overrides(

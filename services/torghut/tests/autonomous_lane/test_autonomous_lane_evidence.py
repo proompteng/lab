@@ -201,7 +201,7 @@ class TestAutonomousLaneEvidence(AutonomousLaneTestCaseBase):
         )
 
         with patch(
-            "app.trading.autonomy.lane.build_default_forecast_router",
+            "app.trading.autonomy.lane_gate_inputs.build_default_forecast_router",
             return_value=authoritative_router,
         ):
             metrics = _resolve_gate_forecast_metrics(signals=signals)

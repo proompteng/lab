@@ -76,11 +76,11 @@ class TestAutonomousLanePhaseA(AutonomousLaneTestCaseBase):
         )
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch(
-                "app.trading.autonomy.lane.evaluate_gate_matrix",
+                "app.trading.autonomy.lane_candidate_phase_execution.evaluate_gate_matrix",
                 return_value=forced_gate,
             ):
                 with patch(
-                    "app.trading.autonomy.lane.build_promotion_recommendation",
+                    "app.trading.autonomy.lane_gate_spec_phase.build_promotion_recommendation",
                     return_value=PromotionRecommendation(
                         action="hold",
                         requested_mode="paper",

@@ -15,6 +15,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     runner,
     sys,
 )
+from scripts.whitepaper_autoresearch_runner import proposal_building
+from scripts.whitepaper_autoresearch_runner import proposal_training
 
 
 class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -54,10 +56,17 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                 steps=2,
             )
 
-        with patch.object(
-            runner,
-            "train_mlx_ranker",
-            side_effect=capture_train_mlx_ranker,
+        with (
+            patch.object(
+                proposal_building,
+                "train_mlx_ranker",
+                side_effect=capture_train_mlx_ranker,
+            ),
+            patch.object(
+                proposal_training,
+                "train_mlx_ranker",
+                side_effect=capture_train_mlx_ranker,
+            ),
         ):
             runner._pre_replay_proposal_model_and_rows(
                 specs=specs,

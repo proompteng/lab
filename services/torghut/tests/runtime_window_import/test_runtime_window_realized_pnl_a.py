@@ -84,7 +84,7 @@ class TestRuntimeWindowImportRealizedPnlA(RuntimeWindowImportTestCaseBase):
                 ),
             ),
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                 return_value=_FakeSession(),
             ),
             patch.dict("os.environ", {}, clear=True),

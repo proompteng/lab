@@ -10,9 +10,10 @@ from unittest.mock import patch
 
 import scripts.compile_whitepaper_claims as claim_compiler_script
 import scripts.run_whitepaper_autoresearch_profit_target as runner
+from scripts.whitepaper_autoresearch_runner import replay_execution
+from scripts.whitepaper_autoresearch_runner import replay_shards
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
-    _FakeSigalrmSignal,
 )
 
 
@@ -722,9 +723,21 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
             args.real_replay_shard_timeout_seconds = 7
             args.real_replay_shard_workers = 1
             args.real_replay_failed_spec_retries = 0
-            with (
-                patch.object(runner, "signal", _FakeSigalrmSignal()),
-                patch.object(runner, "_run_real_replay", side_effect=fake_replay),
+
+            def fake_replay_once(
+                args: Namespace,
+                *,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+                timeout_seconds: int,
+            ) -> runner.EpochReplayResult:
+                _ = timeout_seconds
+                return fake_replay(args, output_dir=output_dir, specs=specs)
+
+            with patch.object(
+                replay_shards,
+                "_run_real_replay_once_with_optional_timeout",
+                side_effect=fake_replay_once,
             ):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,
@@ -774,9 +787,9 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
             )
 
             with (
-                patch.object(runner, "signal", object()),
+                patch.object(replay_execution, "signal", object()),
                 patch.object(
-                    runner,
+                    replay_execution,
                     "_run_real_replay_once_in_child_process",
                     return_value=runner.EpochReplayResult(
                         evidence_bundles=(bundle,),

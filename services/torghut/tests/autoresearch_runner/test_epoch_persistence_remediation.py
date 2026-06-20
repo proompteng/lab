@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 import scripts.train_mlx_autoresearch_ranker as ranker_trainer
+from scripts.whitepaper_autoresearch_runner import replay_shards
+from scripts.whitepaper_autoresearch_runner import run_reporting
 from app.models import (
     AutoresearchCandidateSpec,
     AutoresearchEpoch,
@@ -94,7 +96,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
             TemporaryDirectory() as tmpdir,
             _compact_recent_whitepaper_sources(4),
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -152,7 +154,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             for epoch_id in ("epoch-repeat-1", "epoch-repeat-2"):
@@ -210,7 +212,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             runner._persist_epoch_ledgers(
@@ -300,7 +302,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             runner._persist_epoch_ledgers(
@@ -359,7 +361,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             runner._persist_epoch_ledgers(
@@ -395,7 +397,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         with (
             TemporaryDirectory() as tmpdir,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=RuntimeError("db offline"),
             ),
         ):
@@ -491,12 +493,12 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
                 ),
             ),
             patch.object(
-                runner,
-                "_run_real_replay",
+                replay_shards,
+                "_run_real_replay_once_with_optional_timeout",
                 side_effect=RuntimeError("forced replay failure"),
             ),
             patch.object(
-                runner,
+                run_reporting,
                 "_collect_partial_real_replay",
                 return_value=runner.EpochReplayResult(
                     evidence_bundles=(

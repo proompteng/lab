@@ -302,7 +302,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -353,7 +353,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -490,7 +490,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
 
     def test_feedback_evidence_persisted_loader_reports_unavailable_store(self) -> None:
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=RuntimeError("db unavailable"),
         ):
             loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
@@ -521,7 +521,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -638,7 +638,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -822,7 +822,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):

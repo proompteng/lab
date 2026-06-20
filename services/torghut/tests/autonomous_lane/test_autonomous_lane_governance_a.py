@@ -424,7 +424,7 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
             self.assertTrue(actuation_payload["confirmation_phrase_required"])
 
     @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_rollback_readiness",
         return_value=RollbackReadinessResult(
             ready=False,
             reasons=["rollback_checks_missing_or_failed"],
@@ -475,7 +475,7 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
             )
 
     @patch(
-        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_promotion_prerequisites",
         return_value=PromotionPrerequisiteResult(
             allowed=False,
             reasons=["profitability_stage_manifest_stage_chain_not_passed"],
@@ -490,7 +490,7 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
         ),
     )
     @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_rollback_readiness",
         return_value=RollbackReadinessResult(
             ready=True,
             reasons=[],
@@ -538,7 +538,7 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
             )
 
     @patch(
-        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_promotion_prerequisites",
     )
     def test_lane_forces_profitability_stage_manifest_requirement_for_policy_check(
         self,
@@ -619,11 +619,11 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
         self.assertIn("alphaReadiness", candidate_state_payload)
 
     @patch(
-        "app.trading.autonomy.lane.hypothesis_registry_requires_dependency_capability",
+        "app.trading.autonomy.lane_gate_spec_phase.hypothesis_registry_requires_dependency_capability",
         return_value=True,
     )
     @patch(
-        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_promotion_prerequisites",
     )
     def test_lane_keeps_jangar_policy_targets_when_registry_requires_quorum(
         self,
@@ -698,7 +698,7 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
         },
     )
     @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_rollback_readiness",
         return_value=RollbackReadinessResult(
             ready=True,
             reasons=[],
@@ -741,10 +741,10 @@ class TestAutonomousLaneGovernanceA(AutonomousLaneTestCaseBase):
             self.assertIsNone(result.paper_patch_path)
 
     @patch(
-        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_promotion_prerequisites",
     )
     @patch(
-        "app.trading.autonomy.lane._resolve_paper_patch_path",
+        "app.trading.autonomy.lane_gate_spec_phase._resolve_paper_patch_path",
     )
     def test_resolve_paper_patch_path_before_promotion_prerequisites(
         self,
