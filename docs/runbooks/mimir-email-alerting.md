@@ -14,6 +14,8 @@ GitOps source:
 ## Secret Contract
 
 The Kubernetes Secret is `observability/observability-alertmanager-email`, created by External Secrets from `ClusterSecretStore/onepassword-infra`.
+The same ExternalSecret renders `alertmanager_fallback_config.yaml`, which is mounted into Mimir Alertmanager at `/configs/alertmanager_fallback_config.yaml`.
+Do not put `${...}` placeholders in `alertmanager.fallbackConfig`; Mimir expands environment variables in its main config, not in the mounted fallback Alertmanager config file.
 
 Required 1Password fields in item `infra/resend`:
 
@@ -66,11 +68,12 @@ kubectl --context galactic-tailscale -n observability get externalsecret observa
 kubectl --context galactic-tailscale -n observability get secret observability-alertmanager-email
 ```
 
-Confirm Alertmanager fallback config contains the email receiver:
+Confirm the Secret-rendered Alertmanager fallback config contains the email receiver and file-backed SMTP password path:
 
 ```bash
-kubectl --context galactic-tailscale -n observability get cm \
-  observability-mimir-alertmanager-fallback-config -o yaml
+kubectl --context galactic-tailscale -n observability get secret \
+  observability-alertmanager-email \
+  -o go-template='{{ index .data "alertmanager_fallback_config.yaml" | base64decode }}'
 ```
 
 Confirm rule groups were uploaded:
@@ -85,7 +88,7 @@ kubectl --context galactic-tailscale -n observability exec deploy/observability-
 
 ## Synthetic Email Test
 
-Send a temporary synthetic alert to Alertmanager:
+Send a temporary synthetic alert to Alertmanager. Keep it active for longer than the critical route `group_wait` before resolving it.
 
 ```bash
 kubectl --context galactic-tailscale -n observability exec deploy/observability-grafana -- sh -lc '
@@ -110,7 +113,7 @@ JSON
 wget --header="Content-Type: application/json" \
   --post-file=/tmp/test-alert.json \
   -qO- \
-  http://observability-mimir-alertmanager.observability.svc.cluster.local:8080/alertmanager/api/v2/alerts
+  http://observability-mimir-gateway.observability.svc.cluster.local/alertmanager/api/v2/alerts
 '
 ```
 
@@ -122,3 +125,11 @@ After delivery is confirmed, silence or let the synthetic alert resolve by not r
 2. If rule upload fails, inspect the PostSync Job logs and verify the Mimir gateway service exists.
 3. If alerts evaluate but email does not send, check `observability-mimir-alertmanager-0` logs for SMTP authentication or recipient errors.
 4. If metrics are missing, verify workloads write to `observability-mimir-gateway`, not the retired `observability-mimir-nginx` service name.
+
+## References
+
+- [Grafana Mimir configuration parameters](https://grafana.com/docs/mimir/latest/configure/configuration-parameters/)
+- [Grafana Mimir distributed Helm chart configuration](https://grafana.com/docs/helm-charts/mimir-distributed/latest/run-production-environment-with-helm/configuration-with-helm/)
+- [Prometheus Alertmanager configuration](https://prometheus.io/docs/alerting/latest/configuration/)
+- [External Secrets templating](https://external-secrets.io/latest/guides/templating/)
+- [Resend SMTP integration](https://resend.com/docs/send-with-smtp)

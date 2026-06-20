@@ -117,53 +117,13 @@ alertmanager:
   replicas: 1
   zoneAwareReplication:
     enabled: false
-  env:
-    - name: OBS_ALERT_SMTP_PASSWORD
-      valueFrom:
-        secretKeyRef:
-          name: observability-alertmanager-email
-          key: smtp-password
-    - name: OBS_ALERT_SMTP_FROM
-      valueFrom:
-        secretKeyRef:
-          name: observability-alertmanager-email
-          key: smtp-from
-    - name: OBS_ALERT_EMAIL_TO
-      valueFrom:
-        secretKeyRef:
-          name: observability-alertmanager-email
-          key: email-to
   fallbackConfig: |
-    global:
-      resolve_timeout: 5m
-      smtp_smarthost: smtp.resend.com:587
-      smtp_from: ${OBS_ALERT_SMTP_FROM}
-      smtp_auth_username: resend
-      smtp_auth_password: ${OBS_ALERT_SMTP_PASSWORD}
-      smtp_require_tls: true
+    # Real fallback config is rendered by External Secrets into the
+    # observability-alertmanager-email Secret and mounted over this file.
     route:
       receiver: default-receiver
-      group_by: [alertname, namespace, service, severity]
-      group_wait: 30s
-      group_interval: 5m
-      repeat_interval: 4h
-      routes:
-        - receiver: critical-email
-          matchers:
-            - severity = "critical"
-            - notify = "email"
-          group_wait: 10s
-          group_interval: 2m
-          repeat_interval: 1h
-          continue: false
     receivers:
       - name: default-receiver
-      - name: critical-email
-        email_configs:
-          - to: ${OBS_ALERT_EMAIL_TO}
-            send_resolved: true
-            headers:
-              subject: '[lab] {{ .CommonLabels.alertname }}'
   persistence:
     enabled: true
     storageClass: rook-ceph-block
