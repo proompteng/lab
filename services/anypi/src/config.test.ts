@@ -133,6 +133,8 @@ describe('Anypi prompt contract', () => {
       '/workspace/lab',
     )
     expect(prompt).toContain('Use repository instructions and existing patterns')
+    expect(prompt).toContain('Use existing repository scripts, package-manager commands, and test/build configs')
+    expect(prompt).toContain('Do not add package.json, tsconfig, test config, or local wrapper config solely')
     expect(prompt).toContain('Do not edit generated files or lockfiles')
     expect(prompt).toContain('Refactor code and add tests.')
     expect(prompt).toContain('Leave the final changes in the worktree')
@@ -142,6 +144,8 @@ describe('Anypi prompt contract', () => {
   test('keeps the default system prompt simple and repo-focused', () => {
     const prompt = buildSystemPrompt('minimal')
     expect(prompt).toContain('Act as a coding agent inside an existing repository')
+    expect(prompt).toContain('Use existing repository scripts, package-manager commands, and test/build configs')
+    expect(prompt).toContain('Do not add package.json, tsconfig, test config, or local wrapper config solely')
     expect(prompt).toContain('Run the checks required for touched files')
     expect(prompt).toContain('Do not edit generated files or lockfiles')
     expect(prompt).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|provider|Flamingo/)
@@ -153,6 +157,8 @@ describe('Anypi prompt contract', () => {
     expect(buildSystemPrompt('repair-loop')).toContain('fix the root cause')
     expect(buildSystemPrompt('strict-repo')).toContain('Follow AGENTS.md')
     for (const variant of ['minimal', 'finish-gated', 'repair-loop', 'strict-repo'] as const) {
+      expect(buildSystemPrompt(variant)).toContain('Use existing repository scripts')
+      expect(buildSystemPrompt(variant)).toContain('Do not add package.json, tsconfig')
       expect(buildSystemPrompt(variant)).not.toMatch(/Anypi|YOLO|Kubernetes|Pi SDK|provider|Flamingo/)
     }
   })
