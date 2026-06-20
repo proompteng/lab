@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import inspect
 import re
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from dataclasses import asdict, is_dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol, cast
 from uuid import UUID
@@ -37,7 +37,7 @@ class OrderFirewallViolation(PermissionError):
     """Raised when broker mutation methods are called outside OrderFirewall."""
 
 
-class _TradingClientLike(Protocol):
+class _ReadOnlyTradingClientLike(Protocol):
     def get_account(self) -> Any: ...
 
     def get_all_positions(self) -> Iterable[Any]: ...
@@ -46,6 +46,20 @@ class _TradingClientLike(Protocol):
 
     def get_order_by_id(self, order_id: str) -> Any: ...
 
+
+class _AssetLookupTradingClientLike(Protocol):
+    def get_asset(self, symbol_or_asset_id: str) -> Any: ...
+
+
+class _ClientOrderLookupTradingClientLike(Protocol):
+    def get_order_by_client_order_id(self, client_order_id: str) -> Any: ...
+
+
+class _LegacyClientOrderLookupTradingClientLike(Protocol):
+    def get_order_by_client_id(self, client_order_id: str) -> Any: ...
+
+
+class _TradingClientLike(_ReadOnlyTradingClientLike, Protocol):
     def submit_order(self, _order_data: Any, /) -> Any: ...
 
     def cancel_order_by_id(self, order_id: str) -> Any: ...
@@ -57,21 +71,44 @@ class _StockDataClientLike(Protocol):
     def get_stock_bars(self, _request_params: StockBarsRequest, /) -> Any: ...
 
 
-class _TradingMutationGuardProxy:
-    """Expose non-mutating trading methods while blocking direct order mutations."""
+class _ReadOnlyTradingClient:
+    """Named Alpaca trading reads exposed outside the firewall boundary."""
 
-    _blocked_methods = frozenset(
-        {"submit_order", "cancel_order_by_id", "cancel_orders"}
-    )
-
-    def __init__(self, trading_client: _TradingClientLike) -> None:
+    def __init__(self, trading_client: _ReadOnlyTradingClientLike) -> None:
         self._trading_client = trading_client
 
-    def __getattr__(self, name: str) -> Any:
-        attr = getattr(self._trading_client, name)
-        if name in self._blocked_methods and callable(attr):
-            raise OrderFirewallViolation("order_firewall_boundary_violation")
-        return attr
+    def get_account(self) -> Any:
+        return self._trading_client.get_account()
+
+    def get_all_positions(self) -> Iterable[Any]:
+        return self._trading_client.get_all_positions()
+
+    def get_orders(self, filter: Any | None = None) -> Iterable[Any]:
+        return self._trading_client.get_orders(filter)
+
+    def get_order_by_id(self, order_id: str) -> Any:
+        return self._trading_client.get_order_by_id(order_id)
+
+    def get_asset(self, symbol_or_asset_id: str) -> Any | None:
+        if not hasattr(self._trading_client, "get_asset"):
+            return None
+        asset_client = cast(_AssetLookupTradingClientLike, self._trading_client)
+        return asset_client.get_asset(symbol_or_asset_id)
+
+    def get_order_by_client_order_id(self, client_order_id: str) -> Any | None:
+        if hasattr(self._trading_client, "get_order_by_client_order_id"):
+            order_client = cast(
+                _ClientOrderLookupTradingClientLike,
+                self._trading_client,
+            )
+            return order_client.get_order_by_client_order_id(client_order_id)
+        if hasattr(self._trading_client, "get_order_by_client_id"):
+            legacy_order_client = cast(
+                _LegacyClientOrderLookupTradingClientLike,
+                self._trading_client,
+            )
+            return legacy_order_client.get_order_by_client_id(client_order_id)
+        return None
 
 
 class TorghutAlpacaClient:
@@ -102,7 +139,9 @@ class TorghutAlpacaClient:
             url_override=base,
         )
         self._trading = raw_trading_client
-        self.trading = _TradingMutationGuardProxy(raw_trading_client)
+        self.trading: _ReadOnlyTradingClient = _ReadOnlyTradingClient(
+            raw_trading_client
+        )
 
         # Market Data v2 (stocks).
         self.data: _StockDataClientLike = data_client or StockHistoricalDataClient(
@@ -114,17 +153,12 @@ class TorghutAlpacaClient:
 
     # ------------------- Trading helpers -------------------
     def get_account(self) -> Dict[str, Any]:
-        account = self._trading.get_account()
+        account = self.trading.get_account()
         return self._model_to_dict(account)
 
     def get_asset(self, symbol_or_asset_id: str) -> Dict[str, Any] | None:
-        getter = cast(
-            Callable[[str], Any] | None, getattr(self._trading, "get_asset", None)
-        )
-        if getter is None:
-            return None
         try:
-            asset = getter(symbol_or_asset_id)
+            asset = self.trading.get_asset(symbol_or_asset_id)
         except APIError as exc:
             status_code = getattr(exc, "status_code", None)
             if isinstance(status_code, int) and status_code == 404:
@@ -135,47 +169,36 @@ class TorghutAlpacaClient:
         return self._model_to_dict(asset)
 
     def list_positions(self) -> List[Dict[str, Any]]:
-        positions = self._trading.get_all_positions()
+        positions = self.trading.get_all_positions()
         return [self._model_to_dict(pos) for pos in positions]
 
     def list_open_orders(self) -> List[Dict[str, Any]]:
         request = GetOrdersRequest(status=QueryOrderStatus.OPEN)
-        orders = self._trading.get_orders(request)
+        orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
     def list_orders(self, status: str = "all") -> List[Dict[str, Any]]:
         status_value = QueryOrderStatus(status.lower())
         request = GetOrdersRequest(status=status_value)
-        orders = self._trading.get_orders(request)
+        orders = self.trading.get_orders(request)
         return [self._model_to_dict(order) for order in orders]
 
     def get_order(self, alpaca_order_id: str) -> Dict[str, Any]:
-        order = self._trading.get_order_by_id(alpaca_order_id)
+        order = self.trading.get_order_by_id(alpaca_order_id)
         return self._model_to_dict(order)
 
     def get_order_by_client_order_id(
         self, client_order_id: str
     ) -> Dict[str, Any] | None:
-        # alpaca-py renamed this helper across versions.
-        getter = cast(
-            Callable[[str], Any] | None,
-            getattr(self._trading, "get_order_by_client_order_id", None),
-        )
-        if getter is None:
-            getter = cast(
-                Callable[[str], Any] | None,
-                getattr(self._trading, "get_order_by_client_id", None),
-            )
-        if getter is None:
-            return None
-
         try:
-            order = getter(client_order_id)
+            order = self.trading.get_order_by_client_order_id(client_order_id)
         except APIError as exc:
             status_code = getattr(exc, "status_code", None)
             if isinstance(status_code, int) and status_code == 404:
                 return None
             raise
+        if order is None:
+            return None
 
         return self._model_to_dict(order)
 

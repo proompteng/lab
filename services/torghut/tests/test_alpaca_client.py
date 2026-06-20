@@ -106,6 +106,12 @@ class TestAlpacaClient(TestCase):
         self.assertEqual(orders[0]["id"], "order-1")
         self.assertIsInstance(orders[0]["uuid_id"], str)
 
+        all_orders = client.list_orders()
+        self.assertEqual(all_orders[0]["symbol"], "AAPL")
+
+        order = client.get_order("order-abc")
+        self.assertEqual(order["id"], "order-abc")
+
         firewall = OrderFirewall(client)
         submitted = firewall.submit_order(
             symbol="AAPL",
@@ -178,6 +184,24 @@ class TestAlpacaClient(TestCase):
         self.assertEqual(order["id"], "order-xyz")
         self.assertEqual(order["client_order_id"], "client-123")
 
+    def test_get_order_by_client_order_id_prefers_named_lookup(self) -> None:
+        class TradingClientWithClientOrderId(DummyTradingClient):
+            def get_order_by_client_order_id(self, client_id: str) -> DummyModel:
+                return DummyModel(id="order-named", client_order_id=client_id)
+
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=TradingClientWithClientOrderId(),
+            data_client=DummyDataClient(),
+        )
+
+        order = client.get_order_by_client_order_id("client-456")
+        assert order is not None
+        self.assertEqual(order["id"], "order-named")
+        self.assertEqual(order["client_order_id"], "client-456")
+
     def test_get_order_by_client_order_id_returns_none_when_unavailable(self) -> None:
         client = TorghutAlpacaClient(
             api_key="k",
@@ -188,6 +212,35 @@ class TestAlpacaClient(TestCase):
         )
 
         self.assertIsNone(client.get_order_by_client_order_id("client-123"))
+
+    def test_get_asset_returns_model_when_read_surface_supports_lookup(self) -> None:
+        class TradingClientWithAssetLookup(DummyTradingClient):
+            def get_asset(self, symbol_or_asset_id: str) -> DummyModel:
+                return DummyModel(symbol=symbol_or_asset_id, tradable=True)
+
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=TradingClientWithAssetLookup(),
+            data_client=DummyDataClient(),
+        )
+
+        asset = client.get_asset("AAPL")
+        assert asset is not None
+        self.assertEqual(asset["symbol"], "AAPL")
+        self.assertTrue(asset["tradable"])
+
+    def test_get_asset_returns_none_when_lookup_unavailable(self) -> None:
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=DummyTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        self.assertIsNone(client.get_asset("AAPL"))
 
     def test_mutating_methods_require_firewall_boundary(self) -> None:
         client = TorghutAlpacaClient(
@@ -207,7 +260,7 @@ class TestAlpacaClient(TestCase):
                 firewall_token=cast(OrderFirewallToken, object()),
             )
 
-    def test_raw_trading_client_proxy_blocks_mutations(self) -> None:
+    def test_read_only_trading_client_does_not_expose_mutations(self) -> None:
         client = TorghutAlpacaClient(
             api_key="k",
             secret_key="s",
@@ -219,14 +272,18 @@ class TestAlpacaClient(TestCase):
         account = client.trading.get_account()
         self.assertEqual(account.model_dump()["equity"], "10000")
 
-        with self.assertRaises(OrderFirewallViolation):
-            client.trading.submit_order(object())
+        self.assertFalse(hasattr(client.trading, "submit_order"))
+        self.assertFalse(hasattr(client.trading, "cancel_order_by_id"))
+        self.assertFalse(hasattr(client.trading, "cancel_orders"))
 
-        with self.assertRaises(OrderFirewallViolation):
-            client.trading.cancel_order_by_id("order-1")
+        with self.assertRaises(AttributeError):
+            getattr(client.trading, "submit_order")
 
-        with self.assertRaises(OrderFirewallViolation):
-            client.trading.cancel_orders()
+        with self.assertRaises(AttributeError):
+            getattr(client.trading, "cancel_order_by_id")
+
+        with self.assertRaises(AttributeError):
+            getattr(client.trading, "cancel_orders")
 
     def test_market_data_uses_data_endpoint_by_default(self) -> None:
         with patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client:
