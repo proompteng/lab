@@ -824,6 +824,8 @@
           "additionalProperties": false
         },
         "agentRunRetentionSeconds": { "type": "integer", "minimum": 0 },
+        "agentRunRetentionMaxDeletesPerNamespace": { "type": "integer", "minimum": 0 },
+        "agentRunRetentionZeroTtlMaxSeconds": { "type": "integer", "minimum": 0 },
         "agentRunArtifacts": {
           "type": "object",
           "properties": {

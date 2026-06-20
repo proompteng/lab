@@ -10,7 +10,7 @@ describe('agents controller agent-run reconciler', () => {
     nowIso: () => '2026-05-18T14:00:00.000Z',
     isKubeNotFoundError: () => false,
     resolveJobImage: () => 'registry.example/runner:latest',
-    resolveAgentRunRetentionSeconds: () => 0,
+    getAgentRunRetentionDecision: () => ({ eligible: false }),
     getPrimitivesStore: async () => null,
     getTemporalClient: async () => ({}),
     reconcileWorkflowRun: vi.fn(),

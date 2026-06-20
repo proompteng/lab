@@ -9,6 +9,8 @@ import {
   recordAgentQueueDepth,
   recordAgentRateLimitRejection,
   recordAgentRunOutcome,
+  recordAgentRunRetentionDeleteErrors,
+  recordAgentRunRetentionDeletes,
   recordAgentRunResyncAdoptions,
   recordAgentRunUntouchedBacklog,
   recordAgentRunUntouchedOldestAgeSeconds,
@@ -624,8 +626,130 @@ const parseAgentRunRetentionSeconds = () => {
 
 const resolveAgentRunRetentionSeconds = (spec: Record<string, unknown>) => {
   const override = parseOptionalNumber(spec.ttlSecondsAfterFinished)
-  if (override !== undefined && override >= 0) return Math.floor(override)
+  if (override !== undefined && override > 0) return Math.floor(override)
+  if (override === 0) return resolveAgentsControllerBehaviorConfig(process.env).agentRunRetentionZeroTtlMaxSeconds
   return parseAgentRunRetentionSeconds()
+}
+
+const TERMINAL_AGENTRUN_PHASES = new Set(['Succeeded', 'Failed', 'Cancelled'])
+const AGENTRUN_RETAIN_ANNOTATION = 'agents.proompteng.ai/retain'
+
+const parseTimestampMs = (value: unknown) => {
+  const timestamp = asString(value)
+  if (!timestamp) return null
+  const parsed = Date.parse(timestamp)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+const getAgentRunTerminalTimestampMs = (agentRun: Record<string, unknown>) =>
+  parseTimestampMs(readNested(agentRun, ['status', 'finishedAt'])) ??
+  parseTimestampMs(readNested(agentRun, ['status', 'updatedAt'])) ??
+  parseTimestampMs(readNested(agentRun, ['metadata', 'creationTimestamp']))
+
+const isAgentRunRetainAnnotated = (agentRun: Record<string, unknown>) => {
+  const annotation = asString(readNested(agentRun, ['metadata', 'annotations', AGENTRUN_RETAIN_ANNOTATION]))
+  return ['1', 'true', 'yes', 'y', 'on', 'keep', 'forever'].includes(annotation?.trim().toLowerCase() ?? '')
+}
+
+const getAgentRunRetentionDecision = (agentRun: Record<string, unknown>, nowMs: number = Date.now()) => {
+  const metadata = asRecord(agentRun.metadata) ?? {}
+  const status = asRecord(agentRun.status) ?? {}
+  const spec = asRecord(agentRun.spec) ?? {}
+  const phase = asString(status.phase)
+  const templateAnnotation = asString(
+    readNested(metadata, ['annotations', 'agents.proompteng.ai/template']),
+  )?.toLowerCase()
+  const isTemplate = templateAnnotation === 'true' || phase === 'Template'
+  if (isTemplate || !phase || !TERMINAL_AGENTRUN_PHASES.has(phase) || metadata.deletionTimestamp) {
+    return { eligible: false, reason: 'not_terminal' }
+  }
+  if (isAgentRunRetainAnnotated(agentRun)) {
+    return { eligible: false, reason: 'retained' }
+  }
+
+  const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
+  if (retentionSeconds <= 0) return { eligible: false, reason: 'disabled' }
+
+  const terminalAtMs = getAgentRunTerminalTimestampMs(agentRun)
+  if (terminalAtMs === null) return { eligible: false, reason: 'missing_terminal_time' }
+
+  const ageSeconds = Math.max(0, Math.floor((nowMs - terminalAtMs) / 1000))
+  if (ageSeconds < retentionSeconds) {
+    return { eligible: false, reason: 'retained_until_ttl', ageSeconds, retentionSeconds, phase }
+  }
+
+  return { eligible: true, reason: 'expired', ageSeconds, retentionSeconds, phase }
+}
+
+const sweepExpiredAgentRunsForNamespace = async (
+  kube: ReturnType<typeof createKubernetesClient>,
+  namespace: string,
+  runs: Record<string, unknown>[],
+  nowMs: number,
+  reason: 'periodic' | 'watch_restart' | 'manual',
+) => {
+  const maxDeletes = resolveAgentsControllerBehaviorConfig(process.env).agentRunRetentionMaxDeletesPerNamespace
+  if (maxDeletes <= 0) return { runs, deleted: 0, errors: 0, eligibleRemaining: 0 }
+
+  const retainedRuns: Record<string, unknown>[] = []
+  let deleted = 0
+  let errors = 0
+  let eligibleRemaining = 0
+
+  for (const run of runs) {
+    const name = asString(readNested(run, ['metadata', 'name']))
+    if (!name) {
+      retainedRuns.push(run)
+      continue
+    }
+
+    const decision = getAgentRunRetentionDecision(run, nowMs)
+    if (!decision.eligible) {
+      retainedRuns.push(run)
+      continue
+    }
+
+    if (deleted >= maxDeletes) {
+      eligibleRemaining += 1
+      retainedRuns.push(run)
+      continue
+    }
+
+    try {
+      await kube.delete(RESOURCE_MAP.AgentRun, name, namespace, { wait: false })
+      deleted += 1
+      logAgentsControllerDebug('agentrun_retention_deleted', {
+        namespace,
+        runName: name,
+        reason,
+        phase: asString(readNested(run, ['status', 'phase'])) ?? 'unknown',
+      })
+    } catch (error) {
+      errors += 1
+      retainedRuns.push(run)
+      logAgentsControllerWarn('agentrun_retention_delete_failed', {
+        namespace,
+        runName: name,
+        reason,
+        ...toLogError(error),
+      })
+    }
+  }
+
+  recordAgentRunRetentionDeletes(deleted, { namespace, reason })
+  recordAgentRunRetentionDeleteErrors(errors, { namespace, reason })
+  if (deleted > 0 || errors > 0 || eligibleRemaining > 0) {
+    logAgentsControllerInfo('agentrun_retention_sweep_completed', {
+      namespace,
+      reason,
+      deleted,
+      errors,
+      eligibleRemaining,
+      maxDeletes,
+    })
+  }
+
+  return { runs: retainedRuns, deleted, errors, eligibleRemaining }
 }
 
 const resetControllerRateState = () => {
@@ -680,12 +804,19 @@ const resyncAgentRunsForNamespace = async (
   reason: 'periodic' | 'watch_restart' | 'manual',
 ) => {
   const nsState = ensureNamespaceState(state, namespace)
-  const runList = listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace))
+  const now = Date.now()
+  const retentionSweep = await sweepExpiredAgentRunsForNamespace(
+    kube,
+    namespace,
+    listItems(await kube.list(RESOURCE_MAP.AgentRun, namespace)),
+    now,
+    reason,
+  )
+  const runList = retentionSweep.runs
   const refreshedRuns = new Map<string, Record<string, unknown>>()
   const candidateRuns: Array<{ run: Record<string, unknown>; reasons: string[] }> = []
   let untouchedRunCount = 0
   let oldestUntouchedAgeSeconds: number | null = null
-  const now = Date.now()
 
   for (const run of runList) {
     const name = asString(readNested(run, ['metadata', 'name']))
@@ -901,7 +1032,7 @@ const { reconcileAgentRun } = createAgentRunReconciler({
   nowIso,
   isKubeNotFoundError,
   resolveJobImage,
-  resolveAgentRunRetentionSeconds,
+  getAgentRunRetentionDecision,
   getPrimitivesStore,
   getTemporalClient,
   reconcileWorkflowRun,
@@ -1482,6 +1613,7 @@ export const __test = {
   resolveJobImage,
   resolveVcsContext,
   shouldDependencyEventTriggerFullReconcile,
+  getAgentRunRetentionDecision,
   getAgentRunUntouchedReasons,
   resyncAgentRunsForNamespace,
   startNamespaceWatches,

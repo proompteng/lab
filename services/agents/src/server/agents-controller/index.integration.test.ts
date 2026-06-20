@@ -11,6 +11,8 @@ const metricsMocks = vi.hoisted(() => ({
   recordRuntimeDebrisDeletedPods: vi.fn(),
   recordRuntimeDebrisDeleteErrors: vi.fn(),
   recordRuntimeDebrisOrphanPods: vi.fn(),
+  recordAgentRunRetentionDeleteErrors: vi.fn(),
+  recordAgentRunRetentionDeletes: vi.fn(),
   recordAgentConcurrency: vi.fn(),
   recordAgentQueueDepth: vi.fn(),
   recordAgentRateLimitRejection: vi.fn(),
@@ -132,6 +134,16 @@ const findCondition = (status: Record<string, unknown>, type: string) => {
   return conditions.find((condition) => (condition as Record<string, unknown>).type === type) as
     | Record<string, unknown>
     | undefined
+}
+
+const getAppliedJobContainerResources = (apply: ReturnType<typeof vi.fn>) => {
+  const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+  const job = appliedResources.find((resource) => resource.kind === 'Job')
+  const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
+  const template = (jobSpec.template ?? {}) as Record<string, unknown>
+  const podSpec = (template.spec ?? {}) as Record<string, unknown>
+  const containers = (podSpec.containers ?? []) as Record<string, unknown>[]
+  return containers[0]?.resources
 }
 
 const canonicalizeForJsonHash = (value: unknown): unknown => {
@@ -440,6 +452,171 @@ describe('agents controller startup', () => {
       if (previousMaxDeletes === undefined)
         delete process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE
       else process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
+  })
+
+  it('sweeps expired terminal AgentRuns during controller resync with a delete budget', async () => {
+    stopAgentsController()
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    const previousZeroTtlRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = '2'
+
+    try {
+      const oldFinishedAt = new Date(Date.now() - 120_000).toISOString()
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const run = (name: string, ttlSecondsAfterFinished?: number) =>
+        buildAgentRun({
+          metadata: {
+            name,
+            namespace: 'agents',
+            generation: 1,
+            creationTimestamp: oldFinishedAt,
+            finalizers: [finalizer],
+          },
+          spec: {
+            agentRef: { name: 'agent-1' },
+            implementationSpecRef: { name: 'impl-1' },
+            runtime: { type: 'job', config: {} },
+            workload: { image: defaultRunnerImage },
+            ...(ttlSecondsAfterFinished !== undefined ? { ttlSecondsAfterFinished } : {}),
+          },
+          status: { phase: 'Failed', finishedAt: oldFinishedAt, observedGeneration: 1 },
+        })
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) {
+            return { items: [run('run-zero-ttl', 0), run('run-default-ttl'), run('run-over-budget')] }
+          }
+          if (resource === 'pods' || resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).toHaveBeenCalledTimes(2)
+      expect(deleteMock).toHaveBeenNthCalledWith(1, RESOURCE_MAP.AgentRun, 'run-zero-ttl', 'agents', { wait: false })
+      expect(deleteMock).toHaveBeenNthCalledWith(2, RESOURCE_MAP.AgentRun, 'run-default-ttl', 'agents', {
+        wait: false,
+      })
+      const retainedRuns = Array.from(
+        ((state.namespaces as Map<string, { runs: Map<string, unknown> }>).get('agents')?.runs ?? new Map()).keys(),
+      )
+      expect(retainedRuns).toEqual(['run-over-budget'])
+    } finally {
+      if (previousRetention === undefined) delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      if (previousZeroTtlRetention === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = previousZeroTtlRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
+  })
+
+  it('uses status.updatedAt as terminal retention time when finishedAt is missing', async () => {
+    stopAgentsController()
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = '10'
+
+    try {
+      const oldUpdatedAt = new Date(Date.now() - 120_000).toISOString()
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const agentRun = buildAgentRun({
+        metadata: {
+          name: 'run-no-finished-at',
+          namespace: 'agents',
+          generation: 1,
+          creationTimestamp: oldUpdatedAt,
+          finalizers: [finalizer],
+        },
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: defaultRunnerImage },
+          ttlSecondsAfterFinished: 60,
+        },
+        status: { phase: 'Failed', updatedAt: oldUpdatedAt, observedGeneration: 1 },
+      })
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) return { items: [agentRun] }
+          if (resource === 'pods' || resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-no-finished-at', 'agents', { wait: false })
+    } finally {
+      if (previousRetention === undefined) delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
+  })
+
+  it('keeps explicitly retained terminal AgentRuns during retention sweep', async () => {
+    stopAgentsController()
+    const previousZeroTtlRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = '10'
+
+    try {
+      const oldFinishedAt = new Date(Date.now() - 120_000).toISOString()
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const agentRun = buildAgentRun({
+        metadata: {
+          name: 'run-retained',
+          namespace: 'agents',
+          generation: 1,
+          creationTimestamp: oldFinishedAt,
+          finalizers: [finalizer],
+          annotations: { 'agents.proompteng.ai/retain': 'true' },
+        },
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: defaultRunnerImage },
+          ttlSecondsAfterFinished: 0,
+        },
+        status: { phase: 'Succeeded', finishedAt: oldFinishedAt, observedGeneration: 1 },
+      })
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) return { items: [agentRun] }
+          if (resource === 'pods' || resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).not.toHaveBeenCalled()
+    } finally {
+      if (previousZeroTtlRetention === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = previousZeroTtlRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
     }
   })
 
@@ -948,6 +1125,179 @@ describe('agents controller reconcileAgentRun', () => {
         limits: {
           memory: '8Gi',
           'ephemeral-storage': '16Gi',
+        },
+      })
+    } finally {
+      if (previousResources === undefined) {
+        delete process.env.AGENTS_AGENT_RUNNER_RESOURCES
+      } else {
+        process.env.AGENTS_AGENT_RUNNER_RESOURCES = previousResources
+      }
+    }
+  })
+
+  it('applies runtime config runner resources over configured defaults', async () => {
+    const previousResources = process.env.AGENTS_AGENT_RUNNER_RESOURCES
+    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({
+      requests: {
+        cpu: '1',
+        memory: '2Gi',
+        'ephemeral-storage': '8Gi',
+      },
+      limits: {
+        memory: '8Gi',
+        'ephemeral-storage': '16Gi',
+      },
+    })
+
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: {
+            type: 'job',
+            config: {
+              resources: {
+                requests: { cpu: '2', memory: '6Gi' },
+                limits: { cpu: '6', memory: '12Gi' },
+              },
+            },
+          },
+          workload: { image: defaultRunnerImage },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      expect(getAppliedJobContainerResources(apply)).toEqual({
+        requests: {
+          cpu: '2',
+          memory: '6Gi',
+          'ephemeral-storage': '8Gi',
+        },
+        limits: {
+          cpu: '6',
+          memory: '12Gi',
+          'ephemeral-storage': '16Gi',
+        },
+      })
+    } finally {
+      if (previousResources === undefined) {
+        delete process.env.AGENTS_AGENT_RUNNER_RESOURCES
+      } else {
+        process.env.AGENTS_AGENT_RUNNER_RESOURCES = previousResources
+      }
+    }
+  })
+
+  it('merges provider, runtime config, and AgentRun workload resources by precedence', async () => {
+    const previousResources = process.env.AGENTS_AGENT_RUNNER_RESOURCES
+    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({
+      requests: {
+        cpu: '1',
+        memory: '2Gi',
+        'ephemeral-storage': '8Gi',
+      },
+      limits: {
+        memory: '8Gi',
+        'ephemeral-storage': '16Gi',
+      },
+    })
+
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: {
+                binary: '/usr/local/bin/agent-runner',
+                workload: {
+                  resources: {
+                    requests: { cpu: '3', memory: '6Gi' },
+                    limits: { memory: '14Gi', 'ephemeral-storage': '20Gi' },
+                  },
+                },
+              },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: {
+            type: 'job',
+            config: {
+              resources: {
+                requests: { memory: '8Gi' },
+                limits: { cpu: '6' },
+              },
+            },
+          },
+          workload: {
+            image: defaultRunnerImage,
+            resources: {
+              requests: { memory: '10Gi' },
+              limits: { memory: '20Gi' },
+            },
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      expect(getAppliedJobContainerResources(apply)).toEqual({
+        requests: {
+          cpu: '3',
+          memory: '10Gi',
+          'ephemeral-storage': '8Gi',
+        },
+        limits: {
+          cpu: '6',
+          memory: '20Gi',
+          'ephemeral-storage': '20Gi',
         },
       })
     } finally {

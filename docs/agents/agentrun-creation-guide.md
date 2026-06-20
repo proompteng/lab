@@ -82,6 +82,9 @@ Notes:
   secret such as `alpaca-mcp` in `spec.secrets`; the secret must provide `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
   Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
+- The controller also runs a bounded namespace retention sweep. `ttlSecondsAfterFinished: 0` disables normal per-run TTL,
+  but production can still apply `controller.agentRunRetentionZeroTtlMaxSeconds` as a safety cap for old terminal runs.
+  Use annotation `agents.proompteng.ai/retain: "true"` only for rare terminal runs that must be retained beyond that cap.
 - `goal` is a top-level `AgentRun.spec` object. Use `goal.objective` for the persistent Codex goal and optional
   `goal.tokenBudget` for an explicit positive token budget. Do not encode the first-class goal as
   `parameters.prompt`.
@@ -298,6 +301,18 @@ Use per-run image pinning only when:
 
 - you are running a controlled canary/debug experiment, and
 - you have verified the exact image is compatible with the configured agent provider/runtime.
+
+## Runner Resource Selection
+
+Resource resolution order for Job containers (lowest to highest precedence):
+
+1. chart/controller defaults from `controller.defaultWorkload.resources` / `AGENTS_AGENT_RUNNER_RESOURCES`
+2. `AgentProvider.spec.workload.resources`
+3. `AgentRun.spec.runtime.config.resources`
+4. `AgentRun.spec.workload.resources` or workflow step `workload.resources`
+
+Use `spec.workload.resources` for normal per-run sizing. `spec.runtime.config.resources` is accepted for runtime-level
+submissions and is overridden by explicit workload resources.
 
 ## Verify The Run Is Using The Spec Text
 
