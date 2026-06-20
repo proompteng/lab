@@ -68,12 +68,14 @@ kubectl --context galactic-tailscale -n observability get externalsecret observa
 kubectl --context galactic-tailscale -n observability get secret observability-alertmanager-email
 ```
 
-Confirm the Secret-rendered Alertmanager fallback config contains the email receiver and file-backed SMTP password path:
+Confirm the Secret-rendered Alertmanager fallback config contains the email receiver. Do not print the SMTP
+password value in normal operations.
 
 ```bash
 kubectl --context galactic-tailscale -n observability get secret \
   observability-alertmanager-email \
-  -o go-template='{{ index .data "alertmanager_fallback_config.yaml" | base64decode }}'
+  -o go-template='{{ index .data "alertmanager_fallback_config.yaml" | base64decode }}' | \
+  grep -E 'critical-email|smtp_smarthost|smtp_auth_username'
 ```
 
 Confirm rule groups were uploaded:
@@ -122,9 +124,10 @@ After delivery is confirmed, silence or let the synthetic alert resolve by not r
 ## Troubleshooting
 
 1. If `observability-alertmanager-email` is missing, verify the `observability` namespace has label `external-secrets.proompteng.ai/enabled: "true"` and the 1Password item fields exist.
-2. If rule upload fails, inspect the PostSync Job logs and verify the Mimir gateway service exists.
-3. If alerts evaluate but email does not send, check `observability-mimir-alertmanager-0` logs for SMTP authentication or recipient errors.
-4. If metrics are missing, verify workloads write to `observability-mimir-gateway`, not the retired `observability-mimir-nginx` service name.
+2. If Alertmanager returns `406 Not initializing the Alertmanager`, check `observability-mimir-alertmanager-0` logs for fallback config parse errors. Mimir tenant configs reject `smtp_auth_password_file`; the password must be rendered into the Secret-backed config file as `smtp_auth_password`.
+3. If rule upload fails, inspect the PostSync Job logs and verify the Mimir gateway service exists.
+4. If alerts evaluate but email does not send, check `observability-mimir-alertmanager-0` logs for SMTP authentication or recipient errors.
+5. If metrics are missing, verify workloads write to `observability-mimir-gateway`, not the retired `observability-mimir-nginx` service name.
 
 ## References
 
