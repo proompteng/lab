@@ -35,6 +35,7 @@ import {
   resolveValidationPlan,
 } from './prompt'
 import {
+  formatToolExecutionSummary,
   isBenignAssistantContinuationError,
   resolveAttemptSessionDir,
   resolveEffectiveSystemPrompt,
@@ -136,6 +137,28 @@ describe('Anypi config', () => {
   test('recognizes the narrow assistant continuation terminal error', () => {
     expect(isBenignAssistantContinuationError(new Error('Cannot continue from message role: assistant'))).toBe(true)
     expect(isBenignAssistantContinuationError(new Error('rate limit'))).toBe(false)
+  })
+
+  test('summarizes tool calls with useful redacted context for runner logs', () => {
+    expect(
+      formatToolExecutionSummary('bash', {
+        command: 'GH_TOKEN=ghp_1234567890123456789012345678901234567890 gh pr checks 123 --watch',
+        timeout: 120,
+      }),
+    ).toBe('command="GH_TOKEN=<redacted> gh pr checks 123 --watch" timeout=120')
+
+    expect(formatToolExecutionSummary('write', { path: 'tmp/result.txt', content: 'secret body' })).toBe(
+      'path="tmp/result.txt" contentChars=11',
+    )
+    expect(formatToolExecutionSummary('edit', { path: 'src/file.ts', edits: [{ oldText: 'a', newText: 'b' }] })).toBe(
+      'path="src/file.ts" edits=1',
+    )
+    expect(formatToolExecutionSummary('grep', { pattern: 'ANYPI_REQUIRED_TOOLS', path: 'argocd' })).toBe(
+      'pattern="ANYPI_REQUIRED_TOOLS" path="argocd"',
+    )
+    expect(formatToolExecutionSummary('custom_tool', { token: 'abc123', action: 'inspect' })).toBe(
+      'token=<redacted> action="inspect"',
+    )
   })
 })
 

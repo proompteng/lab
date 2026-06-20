@@ -14,6 +14,7 @@ export const DEFAULT_REQUIRED_RUNTIME_TOOLS = [
   'jq',
   'node',
   'python3',
+  'rg',
   'uv',
   'mise',
   'helm',

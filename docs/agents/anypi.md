@@ -9,7 +9,7 @@ harness against the self-hosted Flamingo model.
 - Agent: `anypi-agent`
 - Binary: `/usr/local/bin/anypi-runner`
 - Runtime type: `job`
-- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:6a8639415@sha256:7ba681e01392f0691903f2f02d37dfc3aadc7da3c968fb644af6a71c581b301c`
+- Default provider workload image: `registry.ide-newton.ts.net/lab/anypi:85953dd7a@sha256:362b1416b62d6e5461b1ea4214d156edef7e425066c3f886c268650863c7a764`
 - Default model endpoint: `http://flamingo.flamingo.svc.cluster.local/v1`
 - Default model: `qwen36-flamingo`
 - Supported workload image platforms: `linux/amd64`, `linux/arm64`
@@ -30,8 +30,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
 - `ANYPI_TOOLS=all` enables the full built-in coding tool set: `read`, `bash`,
   `edit`, `write`, `grep`, `find`, `ls`.
 - `ANYPI_REQUIRED_TOOLS` is checked before clone/model work. The default image
-  contract includes `bash`, `bun`, `git`, `gh`, `jq`, `node`, `python3`, `uv`,
-  `mise`, `helm`, and `kustomize`.
+  contract includes `bash`, `bun`, `git`, `gh`, `jq`, `node`, `python3`, `rg`,
+  `uv`, `mise`, `helm`, and `kustomize`.
 - `ANYPI_MODEL=qwen36-flamingo` targets the Qwen3.6 NVFP4 Flamingo endpoint.
 - `ANYPI_CONTEXT_WINDOW=98304` and `ANYPI_MAX_TOKENS=32768` fit inside the
   current 128K production serving profile.

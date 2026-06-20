@@ -62,7 +62,8 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
     jq \
     openssh-client \
     python3 \
-    python3-pip; \
+    python3-pip \
+    ripgrep; \
   rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}"
@@ -90,6 +91,7 @@ RUN set -eux; \
   mise --version; \
   gh --version; \
   gh pr checks --help | grep -- '--json'; \
+  rg --version; \
   helm version --short; \
   kustomize version; \
   mise exec helm@3 -- helm version --short
