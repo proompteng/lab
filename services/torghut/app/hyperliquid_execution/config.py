@@ -66,6 +66,7 @@ class HyperliquidExecutionConfig:
     min_order_size: Decimal
     min_edge_bps: Decimal
     cost_buffer_bps: Decimal
+    maintenance_reduce_only_close_enabled: bool
     metrics_namespace: str
     old_env_names: tuple[str, ...] = ()
 
@@ -146,6 +147,9 @@ class HyperliquidExecutionConfig:
             min_order_size=_decimal(source, "MIN_ORDER_SIZE", "0.0001"),
             min_edge_bps=_decimal(source, "MIN_EDGE_BPS", "5"),
             cost_buffer_bps=_decimal(source, "COST_BUFFER_BPS", "2"),
+            maintenance_reduce_only_close_enabled=_bool(
+                source, "MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED", False
+            ),
             metrics_namespace=_text(
                 source,
                 "METRICS_NAMESPACE",

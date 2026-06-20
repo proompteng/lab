@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol, cast
 
@@ -104,6 +104,7 @@ class HyperliquidExecutionService:
 
         repository.insert_performance_snapshot(observed_at=started_at)
         finished_at = datetime.now(timezone.utc)
+        universe_details = _cycle_universe_details(context.universe_details, counts)
         result = CycleResult(
             observed_at=finished_at,
             markets_seen=len(context.markets),
@@ -112,7 +113,7 @@ class HyperliquidExecutionService:
             orders_submitted=counts.orders_submitted,
             orders_cancelled=counts.orders_cancelled,
             dependencies=context.dependencies,
-            universe_details=context.universe_details,
+            universe_details=universe_details,
         )
         repository.insert_cycle(self._cycle_record(cycle_id, started_at, result))
         session.commit()
@@ -152,6 +153,7 @@ class HyperliquidExecutionService:
             counts.signals_written += 1
             verdict = evaluate_signal_risk(signal, context.risk_state, self._config)
             if not verdict.allowed:
+                counts.record_risk_block(signal.coin, verdict.reason)
                 continue
             try:
                 intent = build_maker_order_intent(
@@ -162,7 +164,8 @@ class HyperliquidExecutionService:
                     now=context.started_at,
                 )
                 result = self._exchange.submit_maker_order(intent)
-            except Exception:
+            except Exception as exc:
+                counts.record_order_error(type(exc).__name__)
                 continue
             repository.insert_order(intent, result)
             repository.update_reject_cooldown(
@@ -330,11 +333,36 @@ class _FeatureProcessingContext:
     risk_state: RiskState
 
 
+def _empty_counts() -> dict[str, int]:
+    return {}
+
+
+def _empty_nested_counts() -> dict[str, dict[str, int]]:
+    return {}
+
+
 @dataclass
 class _CycleCounts:
     signals_written: int = 0
     orders_submitted: int = 0
     orders_cancelled: int = 0
+    risk_blocks_by_reason: dict[str, int] = field(default_factory=_empty_counts)
+    risk_blocks_by_coin: dict[str, dict[str, int]] = field(
+        default_factory=_empty_nested_counts
+    )
+    order_errors_by_type: dict[str, int] = field(default_factory=_empty_counts)
+
+    def record_risk_block(self, coin: str, reason: str) -> None:
+        self.risk_blocks_by_reason[reason] = (
+            self.risk_blocks_by_reason.get(reason, 0) + 1
+        )
+        coin_blocks = self.risk_blocks_by_coin.setdefault(coin, {})
+        coin_blocks[reason] = coin_blocks.get(reason, 0) + 1
+
+    def record_order_error(self, error_type: str) -> None:
+        self.order_errors_by_type[error_type] = (
+            self.order_errors_by_type.get(error_type, 0) + 1
+        )
 
 
 def _select_markets_with_fresh_features(
@@ -357,6 +385,27 @@ def _string_list_detail(value: object) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in cast(list[object], value)]
+
+
+def _cycle_universe_details(
+    universe_details: dict[str, object],
+    counts: _CycleCounts,
+) -> dict[str, object]:
+    details = dict(universe_details)
+    if counts.risk_blocks_by_reason:
+        details["risk_blocks_by_reason"] = dict(
+            sorted(counts.risk_blocks_by_reason.items())
+        )
+    if counts.risk_blocks_by_coin:
+        details["risk_blocks_by_coin"] = {
+            coin: dict(sorted(reason_counts.items()))
+            for coin, reason_counts in sorted(counts.risk_blocks_by_coin.items())
+        }
+    if counts.order_errors_by_type:
+        details["order_errors_by_type"] = dict(
+            sorted(counts.order_errors_by_type.items())
+        )
+    return details
 
 
 def _feature_status(

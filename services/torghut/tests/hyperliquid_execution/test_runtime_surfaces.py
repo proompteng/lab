@@ -89,6 +89,8 @@ def test_api_readiness_metrics_report_and_cycle_paths(monkeypatch: Any) -> None:
         report = api.report()
         assert report["schema_version"] == "torghut.hyperliquid-execution-report.v2"
         assert report["runtime"]["selected_coins"] == ["NVDA"]
+        assert report["config"]["signal_staleness_seconds"] == 120
+        assert report["config"]["min_edge_bps"] == "5"
         assert session.closed
 
         service = _SingleCycleService(cycle)
@@ -236,6 +238,8 @@ def test_repository_writes_runtime_evidence_and_report_rows() -> None:
     assert risk.symbol_exposure_usd_by_coin["NVDA"] == Decimal("25")
     assert risk.cooldown_reason_by_coin["NVDA"] == "symbol_reject_cooldown"
     assert report["runtime"]["selected_coins"] == ["NVDA"]
+    assert report["external_account_positions"][0]["coin"] == "SPX"
+    assert report["external_account_positions"][0]["notional_usd"] == "99.32"
     assert any(
         params and params.get("reason") == "symbol_reject_cooldown"
         for _, params in session.calls
@@ -336,6 +340,33 @@ def test_service_selects_only_fresh_execution_markets() -> None:
     assert result.universe_details["selected_execution_metadata"] == ["NVDA", "MU"]
     assert result.universe_details["missing_fresh_features"] == ["MU"]
     assert exchange.reconciled_coins == {"NVDA"}
+
+
+def test_service_reports_blocked_signal_reasons() -> None:
+    now = _now()
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+        }
+    )
+    session = _FakeSession()
+    service = HyperliquidExecutionService(
+        config=config,
+        feed=_SellServiceFeed(now),
+        exchange=_ServiceExchange(now),
+    )
+
+    result = service.run_once(session)
+
+    assert result.orders_submitted == 0
+    assert result.universe_details["risk_blocks_by_reason"] == {
+        "short_entries_disabled": 1
+    }
+    assert result.universe_details["risk_blocks_by_coin"] == {
+        "NVDA": {"short_entries_disabled": 1}
+    }
 
 
 def test_feature_status_and_detail_helpers_report_empty_paths() -> None:
@@ -490,6 +521,11 @@ class _ServiceFeed:
 
     def load_feature_rows(self, _market_ids: list[str]) -> list[FeatureSnapshot]:
         return [_feature(event_ts=self.now)]
+
+
+class _SellServiceFeed(_ServiceFeed):
+    def load_feature_rows(self, _market_ids: list[str]) -> list[FeatureSnapshot]:
+        return [_feature(event_ts=self.now, momentum_5m_bps=Decimal("-20"))]
 
 
 class _PartialFeatureServiceFeed(_ServiceFeed):
@@ -653,6 +689,31 @@ class _FakeSession:
                     "net_pnl_after_fees_usd": "0.50",
                 }
             ]
+        if (
+            "FROM hyperliquid_execution_account_snapshots" in sql
+            and "raw_payload" in sql
+        ):
+            return [
+                {
+                    "observed_at": str(_now()),
+                    "account_value_usd": "1000",
+                    "withdrawable_usd": "900",
+                    "gross_exposure_usd": "99.32",
+                    "raw_payload": {
+                        "assetPositions": [
+                            {
+                                "position": {
+                                    "coin": "SPX",
+                                    "szi": "275.2",
+                                    "entryPx": "0.36091",
+                                    "positionValue": "99.32",
+                                    "unrealizedPnl": "-0.1",
+                                }
+                            }
+                        ]
+                    },
+                }
+            ]
         return [{"coin": "NVDA", "value": Decimal("1"), "observed_at": _now()}]
 
 
@@ -691,14 +752,18 @@ def _market() -> ExecutionMarket:
     )
 
 
-def _feature(*, event_ts: datetime | None = None) -> FeatureSnapshot:
+def _feature(
+    *,
+    event_ts: datetime | None = None,
+    momentum_5m_bps: Decimal = Decimal("20"),
+) -> FeatureSnapshot:
     return FeatureSnapshot(
         market_id="hl:perp:xyz:NVDA",
         coin="NVDA",
         dex="xyz",
         event_ts=event_ts or _now(),
         price=Decimal("100"),
-        momentum_5m_bps=Decimal("20"),
+        momentum_5m_bps=momentum_5m_bps,
         spread_bps=Decimal("1"),
         liquidity_usd=Decimal("100000"),
         volatility_bps=Decimal("12"),

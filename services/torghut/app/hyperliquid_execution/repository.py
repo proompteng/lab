@@ -710,21 +710,7 @@ class HyperliquidExecutionRepository:
                 LIMIT 100
                 """
             ),
-            "external_account_positions": self._query_rows(
-                """
-                SELECT
-                  observed_at::text,
-                  coin,
-                  size::text,
-                  entry_price::text,
-                  notional_usd::text,
-                  unrealized_pnl_usd::text
-                FROM hyperliquid_execution_positions
-                WHERE execution_network = 'testnet'
-                ORDER BY coin
-                LIMIT 100
-                """
-            ),
+            "external_account_positions": self._raw_account_positions(),
             "open_orders": self._query_rows(
                 """
                 SELECT
@@ -951,6 +937,38 @@ class HyperliquidExecutionRepository:
             for row in rows
         ]
 
+    def _raw_account_positions(self) -> list[dict[str, object]]:
+        rows = self._query_rows(_latest_account_snapshot_query())
+        if not rows:
+            return []
+        observed_at = rows[0].get("observed_at")
+        payload = _mapping_payload(rows[0].get("raw_payload"))
+        raw_positions = payload.get("assetPositions")
+        if not isinstance(raw_positions, list):
+            return []
+        positions: list[dict[str, object]] = []
+        for item in cast(list[object], raw_positions):
+            if not isinstance(item, dict):
+                continue
+            position = _mapping_payload(
+                cast(Mapping[str, object], item).get("position")
+            )
+            coin = _optional_text(position.get("coin"))
+            if coin is None:
+                continue
+            positions.append(
+                {
+                    "observed_at": observed_at,
+                    "coin": coin,
+                    "size": str(position.get("szi") or "0"),
+                    "entry_price": _optional_text(position.get("entryPx")),
+                    "notional_usd": str(_position_exposure_usd(position)),
+                    "unrealized_pnl_usd": str(position.get("unrealizedPnl") or "0"),
+                    "source": "exchange_raw_account",
+                }
+            )
+        return sorted(positions, key=lambda row: str(row["coin"]))
+
 
 def _dependency_payload(dependency: RuntimeDependencyStatus) -> dict[str, object]:
     return {
@@ -986,3 +1004,43 @@ def _json_safe(value: object) -> object:
     if isinstance(value, (datetime, Decimal)):
         return str(value)
     return value
+
+
+def _latest_account_snapshot_query() -> str:
+    return """
+    SELECT
+      observed_at::text,
+      raw_payload
+    FROM hyperliquid_execution_account_snapshots
+    WHERE execution_network = 'testnet'
+    ORDER BY observed_at DESC
+    LIMIT 1
+    """
+
+
+def _mapping_payload(value: object) -> Mapping[str, object]:
+    if isinstance(value, dict):
+        return cast(Mapping[str, object], value)
+    if isinstance(value, str):
+        try:
+            loaded = json.loads(value)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(loaded, dict):
+            return cast(Mapping[str, object], loaded)
+    return {}
+
+
+def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:
+    position_value = _optional_decimal(position.get("positionValue"))
+    if position_value is not None:
+        return abs(position_value)
+    size = _optional_decimal(position.get("szi")) or Decimal("0")
+    entry_price = _optional_decimal(position.get("entryPx")) or Decimal("0")
+    return abs(size * entry_price)
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if value is None or value == "":
+        return None
+    return Decimal(str(value))
