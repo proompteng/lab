@@ -232,7 +232,7 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "'http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence?target_limit=5'",
+            "'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=auto&limit=5'",
             args,
         )
         self.assertIn(
@@ -248,17 +248,17 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             args,
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             args,
         )
         self.assertNotIn(
             "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-evidence",
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=auto&limit=20",
             args,
         )
         self.assertIn("--runtime-window-target-plan-exclusive", args)

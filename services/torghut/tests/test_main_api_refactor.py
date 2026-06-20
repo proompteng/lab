@@ -33,7 +33,6 @@ def test_main_exports_fastapi_app_with_routes() -> None:
         "/trading/status": {"GET"},
         "/trading/health": {"GET"},
         "/trading/proofs": {"GET"},
-        "/trading/paper-route-evidence": {"GET"},
         "/trading/profitability/runtime": {"GET"},
         "/whitepapers/status": {"GET"},
         "/whitepapers/search": {"GET"},
@@ -94,9 +93,6 @@ def test_main_runtime_value_falls_back_to_common_default() -> None:
 
 
 def test_proof_request_value_helpers_live_with_proofs_api() -> None:
-    assert proofs_api._paper_route_target_plan_audit_mode_value("deferred") is False
-    assert proofs_api._paper_route_target_plan_audit_mode_value("full") is True
-    assert proofs_api._paper_route_target_plan_audit_mode_value("off") is None
     assert proofs_api._proof_kind_value("runtime_window") == "runtime_window"
     assert proofs_api._proof_window_value("next") == "next"
     assert proofs_api._proof_window_value("latest_closed") == "latest_closed"

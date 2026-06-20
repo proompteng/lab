@@ -129,12 +129,12 @@ from ..trading.paper_route_target_plan import (
     mapping_items as _shared_mapping_items,
     paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
 )
-from ..trading.paper_route_evidence import (
-    DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
-    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+from ..trading.proofs.schemas import (
+    DEFAULT_PROOFS_LIMIT as DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    DEFAULT_PROOFS_LOOKBACK_HOURS as DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    MAX_PROOFS_LIMIT as MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    MAX_PROOFS_LOOKBACK_HOURS as MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
+    PROOFS_RUNTIME_ACCOUNT_LABEL as PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
 )
 from ..trading.proofs.service import build_proofs_payload
 from ..trading.proofs.schemas import ProofKind, ProofWindowSelector

@@ -47,7 +47,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             "3",
             "--persist-snapshot",
             "--target-plan-readback-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--target-plan-readback-timeout-seconds",
             "2",
             "--require-target-plan-readback-clean",
@@ -73,7 +73,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
         self.assertTrue(args.persist_snapshot)
         self.assertEqual(
             args.target_plan_readback_url,
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
         )
         self.assertEqual(args.target_plan_readback_timeout_seconds, 2)
         self.assertTrue(args.require_target_plan_readback_clean)
@@ -317,7 +317,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             return_value=FakeHttpResponse(target_plan),
         ):
             readback = flatten_script.read_target_plan_clean_window_readback(
-                url="http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+                url="http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
                 account_label="TORGHUT_SIM",
                 snapshot_id="snapshot-1",
                 timeout_seconds=2,
@@ -367,7 +367,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             return_value=FakeHttpResponse(target_plan),
         ):
             readback = flatten_script.read_target_plan_clean_window_readback(
-                url="http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+                url="http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
                 account_label="TORGHUT_SIM",
                 snapshot_id="post-close-snapshot",
                 snapshot_as_of="2026-06-05T20:09:35+00:00",
@@ -596,7 +596,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             "paper",
             "--persist-snapshot",
             "--target-plan-readback-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--require-target-plan-readback-clean",
             "--json",
         ]
@@ -679,7 +679,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             "paper",
             "--persist-snapshot",
             "--target-plan-readback-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--require-target-plan-readback-clean",
             "--allow-pending-clean-window-baseline-readback",
             "--json",
@@ -758,7 +758,7 @@ class TestFlattenPaperAccountTargetPlanReadback(_TestFlattenPaperAccountPosition
             "paper",
             "--persist-snapshot",
             "--target-plan-readback-url",
-            "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan",
+            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
             "--require-target-plan-readback-clean",
             "--allow-pending-clean-window-baseline-readback",
             "--json",

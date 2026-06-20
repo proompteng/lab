@@ -160,7 +160,7 @@ def test_scheduler_uses_local_gate_for_canonical_proofs_url_on_current_service(
     monkeypatch.setenv("POD_NAMESPACE", "torghut")
 
     assert SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
-        "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+        "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
     )
     assert SimpleTradingPipeline._paper_route_target_plan_url_points_to_current_service(
         "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
@@ -223,9 +223,7 @@ def test_target_plan_fetch_error_reserves_configured_paper_account(
     try:
         settings.trading_mode = "paper"
         settings.trading_simple_paper_route_probe_enabled = True
-        settings.trading_paper_route_target_plan_url = (
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
-        )
+        settings.trading_paper_route_target_plan_url = "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
         now = datetime(2026, 6, 1, 18, 0, tzinfo=timezone.utc)
         pipeline = object.__new__(SimpleTradingPipeline)
         pipeline.account_label = "TORGHUT_SIM"

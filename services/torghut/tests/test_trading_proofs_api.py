@@ -56,17 +56,11 @@ def test_trading_proofs_endpoint_uses_canonical_contract() -> None:
     )
 
 
-def test_deprecated_paper_route_endpoints_return_proof_payload() -> None:
+def test_paper_route_proof_endpoints_are_removed() -> None:
     client = TestClient(app)
     with patch("app.api.proofs._build_trading_proofs_payload", return_value=_payload()):
         evidence = client.get("/trading/paper-route-evidence?target_limit=1")
         target_plan = client.get("/trading/paper-route-target-plan")
 
-    assert evidence.status_code == 200
-    assert target_plan.status_code == 200
-    assert evidence.json()["schema_version"] == "torghut.proofs.v1"
-    assert target_plan.json()["schema_version"] == "torghut.proofs.v1"
-    assert evidence.json()["deprecated_endpoint"] is True
-    assert target_plan.json()["deprecated_endpoint"] is True
-    assert evidence.json()["replacement_endpoint"] == "/trading/proofs"
-    assert target_plan.json()["replacement_endpoint"] == "/trading/proofs"
+    assert evidence.status_code == 404
+    assert target_plan.status_code == 404

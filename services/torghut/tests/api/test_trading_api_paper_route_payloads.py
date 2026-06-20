@@ -443,14 +443,15 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
         with patch("app.api.proofs.HTTPConnection", http_error_connection):
             self.assertEqual(
                 _fetch_paper_route_target_plan_url(
-                    "http://torghut.example/plan?mode=paper",
+                    "http://torghut.example/trading/proofs?kind=runtime_window",
                     timeout_seconds=0,
                 ),
                 {"load_error": "paper_route_target_plan_http_status:503"},
             )
         self.assertEqual(http_error_connection.instances[0].hostname, "torghut.example")
         self.assertEqual(
-            http_error_connection.instances[0].request_path, "/plan?mode=paper"
+            http_error_connection.instances[0].request_path,
+            "/trading/proofs?kind=runtime_window",
         )
         self.assertEqual(
             http_error_connection.instances[0].request_headers["Host"],
@@ -468,7 +469,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             patch("app.api.proofs.time.sleep") as sleep,
         ):
             failed_retry = _fetch_paper_route_target_plan_url(
-                "http://torghut.example",
+                "http://torghut.example/trading/proofs?kind=runtime_window",
                 timeout_seconds=1,
                 attempts=2,
                 retry_backoff_seconds=0,
@@ -537,7 +538,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
         FlakyConnection.instances = []
         with patch("app.api.proofs.HTTPConnection", FlakyConnection):
             app_retried_plan = _fetch_paper_route_target_plan_url(
-                "http://torghut.example",
+                "http://torghut.example/trading/proofs?kind=runtime_window",
                 timeout_seconds=1,
                 attempts=2,
                 retry_backoff_seconds=0,
@@ -554,7 +555,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             FlakyConnection,
         ):
             retried_plan = shared_fetch_paper_route_target_plan_url(
-                "http://torghut.example",
+                "http://torghut.example/trading/proofs?kind=runtime_window",
                 timeout_seconds=1,
                 attempts=2,
                 retry_backoff_seconds=0,
@@ -581,7 +582,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
             fake_connection = connection_class(200, raw)
             with patch("app.api.proofs.HTTPConnection", fake_connection):
                 result = _fetch_paper_route_target_plan_url(
-                    "http://torghut.example",
+                    "http://torghut.example/trading/proofs?kind=runtime_window",
                     timeout_seconds=1,
                 )
             self.assertTrue(str(result["load_error"]).startswith(expected))
@@ -602,7 +603,7 @@ class TestTradingApiPaperRoutePayloads(TradingApiTestCaseBase):
         )
         with patch("app.api.proofs.HTTPConnection", success_connection):
             plan = _fetch_paper_route_target_plan_url(
-                "http://torghut.example",
+                "http://torghut.example/trading/proofs?kind=runtime_window",
                 timeout_seconds=3,
             )
         self.assertEqual(plan["source"], "external_paper_route_target_plan")

@@ -79,6 +79,13 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             ),
             {"load_error": "paper_route_target_plan_invalid_host"},
         )
+        self.assertEqual(
+            shared_fetch_paper_route_target_plan_url(
+                "http://torghut.example/trading/paper-route-target-plan",
+                timeout_seconds=1,
+            ),
+            {"load_error": "paper_route_target_plan_invalid_path"},
+        )
 
         http_error_connection = connection_class(503, b"{}")
         with patch(
@@ -87,14 +94,15 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         ):
             self.assertEqual(
                 shared_fetch_paper_route_target_plan_url(
-                    "http://torghut.example/plan?mode=paper",
+                    "http://torghut.example/trading/proofs?kind=runtime_window",
                     timeout_seconds=0,
                 ),
                 {"load_error": "paper_route_target_plan_http_status:503"},
             )
         self.assertEqual(http_error_connection.instances[0].hostname, "torghut.example")
         self.assertEqual(
-            http_error_connection.instances[0].request_path, "/plan?mode=paper"
+            http_error_connection.instances[0].request_path,
+            "/trading/proofs?kind=runtime_window",
         )
         self.assertEqual(
             http_error_connection.instances[0].request_headers["Host"],
@@ -113,7 +121,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         ):
             self.assertEqual(
                 shared_fetch_paper_route_target_plan_url(
-                    "http://torghut.example/plan?mode=paper",
+                    "http://torghut.example/trading/proofs?kind=runtime_window",
                     timeout_seconds=0,
                     attempts=2,
                     retry_backoff_seconds=0,
@@ -145,7 +153,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 fake_connection,
             ):
                 result = shared_fetch_paper_route_target_plan_url(
-                    "http://torghut.example",
+                    "http://torghut.example/trading/proofs?kind=runtime_window",
                     timeout_seconds=1,
                 )
             self.assertTrue(str(result["load_error"]).startswith(expected))
@@ -177,7 +185,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             success_connection,
         ):
             plan = shared_fetch_paper_route_target_plan_url(
-                "http://torghut.example",
+                "http://torghut.example/trading/proofs?kind=runtime_window",
                 timeout_seconds=3,
             )
         self.assertEqual(plan["source"], "external_paper_route_target_plan")
@@ -193,7 +201,9 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
             settings.trading_paper_route_target_plan_url = "  "
             self.assertEqual(_load_external_paper_route_target_plan(), {})
 
-            settings.trading_paper_route_target_plan_url = "http://torghut.example/plan"
+            settings.trading_paper_route_target_plan_url = (
+                "http://torghut.example/trading/proofs?kind=runtime_window"
+            )
             settings.trading_paper_route_target_plan_timeout_seconds = 7
             with patch(
                 "app.api.proofs._fetch_paper_route_target_plan_url",
@@ -202,7 +212,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
                 plan = _load_external_paper_route_target_plan()
             self.assertEqual(plan["targets"][0]["candidate_id"], "candidate")
             fetch.assert_called_once_with(
-                "http://torghut.example/plan",
+                "http://torghut.example/trading/proofs?kind=runtime_window",
                 timeout_seconds=7,
                 attempts=3,
                 retry_backoff_seconds=0.25,
@@ -216,7 +226,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         original_cache = proofs_api._paper_route_target_plan_success_cache
         proofs_api._paper_route_target_plan_success_cache = None
         try:
-            settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/paper-route-target-plan"
+            settings.trading_paper_route_target_plan_url = "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
             with (
                 patch.dict(
                     os.environ,
@@ -237,7 +247,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         self.assertEqual(plan["load_error"], "paper_route_target_plan_self_reference")
 
     def test_paper_route_target_plan_self_reference_requires_host(self) -> None:
-        parsed = urlsplit("/trading/paper-route-target-plan")
+        parsed = urlsplit("/trading/proofs?kind=runtime_window&window=next&limit=20")
 
         self.assertFalse(proofs_api._paper_route_target_plan_url_points_to_self(parsed))
 
@@ -245,7 +255,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         self,
     ) -> None:
         parsed = urlsplit(
-            "http://route-sim.proof-ns.svc.cluster.local/trading/paper-route-target-plan"
+            "http://route-sim.proof-ns.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
         )
 
         with patch.dict(
@@ -263,7 +273,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         self,
     ) -> None:
         parsed = urlsplit(
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
         )
 
         with patch.dict(
@@ -282,7 +292,7 @@ class TestTradingApiPaperRouteExternal(TradingApiTestCaseBase):
         self,
     ) -> None:
         parsed = urlsplit(
-            "http://torghut.torghut.svc.cluster.local/trading/paper-route-target-plan"
+            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20"
         )
 
         with patch.dict(

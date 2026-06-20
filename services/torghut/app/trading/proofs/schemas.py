@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, TypedDict
 
 PROOFS_SCHEMA_VERSION = "torghut.proofs.v1"
 DEFAULT_PROOFS_LIMIT = 20
@@ -131,5 +131,3 @@ class ProofsPayload(TypedDict):
     proofs: list[ProofPayload]
     summary: ProofSummaryPayload
     promotion_authority: PromotionAuthorityPayload
-    deprecated_endpoint: NotRequired[bool]
-    replacement_endpoint: NotRequired[str]
