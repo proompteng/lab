@@ -122,3 +122,13 @@ patches:
         name: observability-loki-loki-distributed-querier
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: StatefulSet
+      name: observability-mimir-alertmanager
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/4
+        value:
+          name: alertmanager-fallback-config
+          secret:
+            secretName: observability-alertmanager-email
