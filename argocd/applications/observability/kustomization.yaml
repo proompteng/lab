@@ -126,6 +126,9 @@ patches:
       kind: StatefulSet
       name: observability-mimir-alertmanager
     patch: |-
+      - op: add
+        path: /spec/template/metadata/annotations/observability.proompteng.ai~1alertmanager-fallback-config-revision
+        value: "2026-06-20-1"
       - op: replace
         path: /spec/template/spec/volumes/4
         value:
