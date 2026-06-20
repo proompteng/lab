@@ -80,7 +80,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
             patch.object(settings, "trading_allow_shorts", True),
         ):
@@ -217,7 +216,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(
                 signal,
@@ -326,7 +324,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             stop_decisions = engine.evaluate(
@@ -410,7 +407,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             engine.observe_signal(unstable_quote)
             decisions = engine.evaluate(candidate_signal, [strategy], positions=[])
@@ -452,7 +448,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(
                 signal,
@@ -507,7 +502,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(
                 signal,
@@ -580,7 +574,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             decisions = engine.evaluate(
@@ -659,7 +652,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             decisions = engine.evaluate(
@@ -724,7 +716,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             decisions = engine.evaluate(
@@ -794,7 +785,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             decisions = engine.evaluate(
@@ -869,7 +859,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             decisions = engine.evaluate(
@@ -963,7 +952,6 @@ class TestDecisionEnginePositions(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
         ):
             initial_decisions = engine.evaluate(

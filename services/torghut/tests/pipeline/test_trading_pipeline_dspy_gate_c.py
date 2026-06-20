@@ -39,7 +39,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
@@ -66,7 +65,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -177,7 +176,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
             ]
@@ -232,7 +231,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
@@ -255,7 +253,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -357,7 +355,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
             ]
@@ -402,7 +400,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_simulation_enabled": config.settings.trading_simulation_enabled,
             "trading_allow_shorts": config.settings.trading_allow_shorts,
@@ -432,7 +429,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simulation_enabled = True
         config.settings.trading_allow_shorts = True
@@ -589,7 +586,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
             ]
@@ -651,7 +648,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -674,7 +670,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -746,7 +742,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -787,7 +783,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         original = {
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
-            "trading_live_enabled": config.settings.trading_live_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
@@ -798,7 +793,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         }
         config.settings.trading_enabled = True
         config.settings.trading_mode = "live"
-        config.settings.trading_live_enabled = True
+        config.settings.trading_mode = "live"
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
@@ -882,7 +877,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
-            config.settings.trading_live_enabled = original["trading_live_enabled"]
+            config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
             ]

@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import tempfile
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
+from typing import Any, Iterable, cast
 from unittest import TestCase
 
 from app.models import Strategy
@@ -14,6 +16,7 @@ from app.trading.evaluation import (
     run_walk_forward,
     write_walk_forward_results,
 )
+from app.trading.models import SignalEnvelope, StrategyDecision
 
 
 class TestWalkForwardHarness(TestCase):
@@ -80,3 +83,109 @@ class TestWalkForwardHarness(TestCase):
                 fold_payload["metrics"]["regime"]["label"],
                 "vol=high|trend=up|liq=liquid",
             )
+
+    def test_walkforward_position_snapshot_ignores_malformed_prior_rows(
+        self,
+    ) -> None:
+        class EdgeDecisionEngine:
+            def evaluate(
+                self,
+                signal: SignalEnvelope,
+                strategies: Iterable[Strategy],
+                *,
+                positions: list[dict[str, Any]] | None = None,
+            ) -> list[StrategyDecision]:
+                del strategies
+                if positions is not None and not positions:
+                    positions.extend(
+                        [
+                            {"symbol": "MSFT", "qty": "99", "side": "long"},
+                            {"symbol": signal.symbol, "qty": None, "side": "long"},
+                            {"symbol": signal.symbol, "qty": "bad", "side": "long"},
+                            {
+                                "symbol": signal.symbol,
+                                "quantity": "2",
+                                "side": "short",
+                            },
+                        ]
+                    )
+
+                event_ts = signal.event_ts
+                timeframe = signal.timeframe or "1Min"
+                return [
+                    StrategyDecision(
+                        strategy_id="edge",
+                        symbol=" ",
+                        event_ts=event_ts,
+                        timeframe=timeframe,
+                        action="buy",
+                        qty=Decimal("1"),
+                    ),
+                    StrategyDecision(
+                        strategy_id="edge",
+                        symbol=signal.symbol,
+                        event_ts=event_ts,
+                        timeframe=timeframe,
+                        action="buy",
+                        qty=Decimal("3"),
+                    ),
+                    StrategyDecision(
+                        strategy_id="edge",
+                        symbol=signal.symbol,
+                        event_ts=event_ts,
+                        timeframe=timeframe,
+                        action="buy",
+                        qty=Decimal("1"),
+                        params={"price": "bad"},
+                    ),
+                    StrategyDecision(
+                        strategy_id="edge",
+                        symbol=signal.symbol,
+                        event_ts=event_ts,
+                        timeframe=timeframe,
+                        action="sell",
+                        qty=Decimal("2"),
+                    ),
+                ]
+
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=2)
+        signal = SignalEnvelope(
+            event_ts=start + timedelta(minutes=1),
+            ingest_ts=start + timedelta(minutes=1),
+            symbol="AAPL",
+            timeframe="1Min",
+            payload={
+                "macd": {"macd": "0.2", "signal": "0.1"},
+                "rsi14": "50",
+            },
+        )
+        strategy = Strategy(
+            name="wf-edge",
+            description=None,
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=None,
+            max_position_pct_equity=None,
+            max_notional_per_trade=None,
+        )
+
+        results = run_walk_forward(
+            [
+                generate_walk_forward_folds(
+                    start,
+                    end,
+                    train_window=timedelta(minutes=1),
+                    test_window=timedelta(minutes=1),
+                    step=timedelta(minutes=1),
+                )[0]
+            ],
+            strategies=[strategy],
+            signal_source=FixtureSignalSource(signals=[signal]),
+            decision_engine=cast(DecisionEngine, EdgeDecisionEngine()),
+        )
+
+        fold_result = results.folds[0]
+        self.assertEqual(fold_result.signals_count, 1)
+        self.assertEqual(len(fold_result.decisions), 4)

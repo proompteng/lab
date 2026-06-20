@@ -100,7 +100,6 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
         autonomy_configmap_payload = {
             "data": {
                 "TRADING_STRATEGY_RUNTIME_MODE": "scheduler_v3",
-                "TRADING_STRATEGY_SCHEDULER_ENABLED": "true",
             }
         }
         ta_configmap_payload = {
@@ -151,7 +150,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
             report["torghut_service"]["trading_config"]["strategy_runtime_active"]
         )
 
-    def test_runtime_verify_rejects_scheduler_runtime_disabled(self) -> None:
+    def test_runtime_verify_uses_scheduler_runtime_without_migration_flag(self) -> None:
         manifest = {
             "window": {
                 "start": "2026-03-06T14:30:00Z",
@@ -187,10 +186,6 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                                     {
                                         "name": "TRADING_STRATEGY_RUNTIME_MODE",
                                         "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "false",
                                     },
                                     {
                                         "name": "TRADING_SIGNAL_TABLE",
@@ -276,7 +271,7 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
             report = _runtime_verify(resources=resources, manifest=manifest)
 
         self.assertEqual(report["runtime_state"], "not_ready")
-        self.assertFalse(
+        self.assertTrue(
             report["torghut_service"]["trading_config"]["strategy_runtime_active"]
         )
 
@@ -316,10 +311,6 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                                     {
                                         "name": "TRADING_STRATEGY_RUNTIME_MODE",
                                         "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
                                     },
                                     {
                                         "name": "TRADING_SIGNAL_TABLE",
@@ -446,10 +437,6 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                                         "value": "scheduler_v3",
                                     },
                                     {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
                                         "name": "TRADING_SIGNAL_TABLE",
                                         "value": "torghut_sim_sim_2026_03_06_open_hour.ta_signals",
                                     },
@@ -572,10 +559,6 @@ class TestStartHistoricalSimulationRuntimeVerifyB(
                                     {
                                         "name": "TRADING_STRATEGY_RUNTIME_MODE",
                                         "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
                                     },
                                     {
                                         "name": "TRADING_SIGNAL_TABLE",

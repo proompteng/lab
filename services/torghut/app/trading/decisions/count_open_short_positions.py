@@ -6,7 +6,6 @@ import re
 from decimal import Decimal
 from typing import Any, Optional, cast
 
-from ...config import settings
 from ..features import (
     SignalFeatures as SignalFeatures,
     extract_signal_features as extract_signal_features,
@@ -111,12 +110,7 @@ def _coerce_timeframe(value: str) -> Optional[str]:
 
 
 def _runtime_enabled() -> bool:
-    mode = settings.trading_strategy_runtime_mode
-    if mode == "plugin_v3":
-        return True
-    if mode == "scheduler_v3":
-        return settings.trading_strategy_scheduler_enabled
-    return False
+    return True
 
 
 __all__ = [

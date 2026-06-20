@@ -59,13 +59,13 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         ):
             Settings(TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS=0)
 
-    def test_rejects_static_universe_when_trading_enabled_in_legacy_mode(self) -> None:
-        with self.assertRaises(ValidationError):
-            Settings(
-                TRADING_ENABLED=True,
-                TRADING_UNIVERSE_SOURCE="static",
-                DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            )
+    def test_allows_static_universe_when_trading_enabled(self) -> None:
+        settings = Settings(
+            TRADING_ENABLED=True,
+            TRADING_UNIVERSE_SOURCE="static",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        self.assertEqual(settings.trading_universe_source, "static")
 
     def test_allows_static_universe_when_simple_pipeline_is_live(self) -> None:
         settings = Settings(
@@ -83,36 +83,31 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
-            TRADING_LIVE_ENABLED=False,
+            TRADING_MODE="paper",
             TRADING_UNIVERSE_SOURCE="static",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(settings.trading_universe_source, "static")
 
-    def test_deprecated_live_enabled_sets_trading_mode_when_mode_not_provided(
-        self,
-    ) -> None:
+    def test_trading_mode_accepts_live(self) -> None:
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
-            TRADING_LIVE_ENABLED=True,
+            TRADING_MODE="live",
             TRADING_UNIVERSE_SOURCE="jangar",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(settings.trading_mode, "live")
-        self.assertTrue(settings.trading_live_enabled)
 
-    def test_trading_mode_wins_when_deprecated_live_enabled_conflicts(self) -> None:
+    def test_trading_mode_accepts_paper(self) -> None:
         settings = Settings(
             TRADING_MODE="paper",
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="static",
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(settings.trading_mode, "paper")
-        self.assertFalse(settings.trading_live_enabled)
 
     def test_rejects_strict_veto_with_pass_through_fail_mode(self) -> None:
         with self.assertRaises(ValidationError):
@@ -145,7 +140,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
-            TRADING_LIVE_ENABLED=False,
+            TRADING_MODE="paper",
             TRADING_UNIVERSE_SOURCE="static",
             TRADING_HYPOTHESIS_REGISTRY_PATH=" config/trading/hypotheses ",
             TRADING_JANGAR_CONTROL_PLANE_STATUS_URL=" https://jangar.example/status ",
@@ -176,7 +171,7 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         settings = Settings(
             TRADING_ENABLED=False,
             TRADING_AUTONOMY_ENABLED=False,
-            TRADING_LIVE_ENABLED=False,
+            TRADING_MODE="paper",
             TRADING_UNIVERSE_SOURCE="static",
             TRADING_FORECAST_REGISTRY_MANIFEST_PATH=" config/forecast/registry.json ",
             TRADING_FORECAST_REGISTRY_MANIFEST_URL=" https://registry.example/forecast.json ",
@@ -200,7 +195,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_allows_configured_live_pass_through_with_explicit_approval(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_FAIL_MODE="pass_through",
             LLM_FAIL_MODE_ENFORCEMENT="configured",
@@ -214,7 +208,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         with self.assertRaises(ValidationError):
             Settings(
                 TRADING_MODE="live",
-                TRADING_LIVE_ENABLED=True,
                 TRADING_UNIVERSE_SOURCE="jangar",
                 LLM_FAIL_MODE="pass_through",
                 LLM_FAIL_MODE_ENFORCEMENT="configured",
@@ -224,7 +217,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_allows_live_fail_open_with_explicit_approval(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_FAIL_MODE="pass_through",
             LLM_FAIL_MODE_ENFORCEMENT="configured",
@@ -240,7 +232,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         with self.assertRaises(ValidationError):
             Settings(
                 TRADING_MODE="live",
-                TRADING_LIVE_ENABLED=True,
                 TRADING_UNIVERSE_SOURCE="jangar",
                 LLM_ROLLOUT_STAGE="stage2",
                 LLM_FAIL_MODE="veto",
@@ -253,7 +244,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         with self.assertRaises(ValidationError):
             Settings(
                 TRADING_MODE="live",
-                TRADING_LIVE_ENABLED=True,
                 TRADING_UNIVERSE_SOURCE="jangar",
                 LLM_ROLLOUT_STAGE="stage1",
                 LLM_FAIL_MODE="veto",
@@ -265,7 +255,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_stage1_live_fail_open_with_explicit_approval_is_allowed(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_ROLLOUT_STAGE="stage1_shadow_pilot",
             LLM_FAIL_MODE="veto",
@@ -297,7 +286,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_live_dspy_runtime_gate_blocks_invalid_hash(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="z" * 64,
@@ -310,7 +298,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_live_dspy_runtime_gate_blocks_bootstrap_artifact_hash(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH=DSPyReviewRuntime.bootstrap_artifact_hash(),
@@ -325,7 +312,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     ) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -341,7 +327,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_live_dspy_runtime_gate_blocks_without_jangar_base_url(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -354,7 +339,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_live_dspy_runtime_gate_blocks_invalid_jangar_base_url(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -370,7 +354,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     ) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -386,7 +369,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     ) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -400,7 +382,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
 
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -416,7 +397,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     ) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -437,7 +417,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
 
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -461,7 +440,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     ) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -488,7 +466,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
     def test_dspy_cutover_migration_guard_passes_with_strict_controls(self) -> None:
         settings = Settings(
             TRADING_MODE="live",
-            TRADING_LIVE_ENABLED=True,
             TRADING_UNIVERSE_SOURCE="jangar",
             LLM_DSPY_RUNTIME_MODE="active",
             LLM_DSPY_ARTIFACT_HASH="a" * 64,
@@ -513,7 +490,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(settings.trading_strategy_runtime_mode, "scheduler_v3")
-        self.assertFalse(settings.trading_strategy_scheduler_enabled)
 
     def test_allocator_regime_maps_are_normalized(self) -> None:
         settings = Settings(
@@ -537,8 +513,8 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             TRADING_ENABLED=False,
             TRADING_ALLOCATOR_STRATEGY_NOTIONAL_CAPS={" momentum ": 1500.0},
             TRADING_ALLOCATOR_SYMBOL_NOTIONAL_CAPS={" aapl ": 2000.0},
-            TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS={" msft ": " MegaCap "},
-            TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS={" MegaCap ": 3000.0},
+            TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS={" msft ": " MegaCap "},
+            TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS={" MegaCap ": 3000.0},
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(
@@ -583,31 +559,51 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             model_fields,
         )
 
-    def test_legacy_allocator_aliases_are_supported(self) -> None:
+    def test_removed_allocator_aliases_do_not_populate_canonical_fields(self) -> None:
         settings = Settings(
             TRADING_UNIVERSE_SOURCE="static",
             TRADING_ENABLED=False,
             TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS={" msft ": " MegaCap "},
-            TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS={" MegaCap ": 3000.0},
+            TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS={" MegaCap ": 3000.0},
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(
             settings.trading_allocator_symbol_correlation_groups,
-            {"MSFT": "megacap"},
+            {},
         )
         self.assertEqual(
             settings.trading_allocator_correlation_group_caps,
-            {"megacap": 3000.0},
+            {},
         )
 
-    def test_legacy_allocator_aliases_with_equivalent_values_pass(self) -> None:
+    def test_removed_allocator_alias_environment_is_ignored(self) -> None:
         with patch.dict(
             os.environ,
             {
-                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS": '{" MSFT ": " MegaCap "}',
                 "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS": '{"msft":"megacap"}',
-                "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS": '{" MegaCap ": 3000}',
                 "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS": '{"MEGACAP":3000}',
+                "TRADING_ENABLED": "false",
+                "TRADING_UNIVERSE_SOURCE": "static",
+                "DB_DSN": "postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+            },
+            clear=False,
+        ):
+            settings = Settings()
+            self.assertEqual(
+                settings.trading_allocator_symbol_correlation_groups,
+                {},
+            )
+            self.assertEqual(
+                settings.trading_allocator_correlation_group_caps,
+                {},
+            )
+
+    def test_allocator_canonical_environment_populates_fields(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS": '{"MSFT": "megacap"}',
+                "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS": '{"MEGACAP":3000}',
                 "TRADING_ENABLED": "false",
                 "TRADING_UNIVERSE_SOURCE": "static",
                 "DB_DSN": "postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
@@ -623,21 +619,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
                 settings.trading_allocator_correlation_group_caps,
                 {"megacap": 3000.0},
             )
-
-    def test_allocator_alias_environment_conflict_raises(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS": '{"MSFT": "megacap"}',
-                "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS": '{"AAPL": "growth"}',
-                "TRADING_ENABLED": "false",
-                "TRADING_UNIVERSE_SOURCE": "static",
-                "DB_DSN": "postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            },
-            clear=False,
-        ):
-            with self.assertRaises(ValueError):
-                Settings()
 
     def test_runtime_uncertainty_degrade_regime_maps_are_normalized(self) -> None:
         settings = Settings(

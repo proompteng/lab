@@ -348,8 +348,7 @@ spec:
                         .name == "TRADING_SIMULATION_RUN_ID" or
                         .name == "TRADING_SIMULATION_WINDOW_END" or
                         .name == "TRADING_SIMULATION_WINDOW_START" or
-                        .name == "TRADING_STRATEGY_RUNTIME_MODE" or
-                        .name == "TRADING_STRATEGY_SCHEDULER_ENABLED")
+                        .name == "TRADING_STRATEGY_RUNTIME_MODE")
                   - group: flink.apache.org
                     kind: FlinkDeployment
                     namespace: torghut

@@ -71,6 +71,7 @@ class TestDecisionEngineCore(TestCase):
                 "window_size": "1m",
                 "macd": {"macd": Decimal("2.0"), "signal": Decimal("0.5")},
                 "rsi14": Decimal("20"),
+                "price": Decimal("100"),
             },
         )
         decisions = engine.evaluate(signal, [strategy])
@@ -164,7 +165,9 @@ class TestDecisionEngineCore(TestCase):
             Decimal("0.81"),
         )
 
-    def test_legacy_buy_supports_fractional_equity_qty_when_enabled(self) -> None:
+    def test_scheduler_macd_rsi_buy_supports_fractional_equity_qty_when_enabled(
+        self,
+    ) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_allow_shorts = settings.trading_allow_shorts
         settings.trading_fractional_equities_enabled = True
@@ -200,7 +203,9 @@ class TestDecisionEngineCore(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_allow_shorts = original_allow_shorts
 
-    def test_legacy_sell_without_inventory_defaults_to_integer_qty(self) -> None:
+    def test_scheduler_macd_rsi_sell_without_inventory_defaults_to_integer_qty(
+        self,
+    ) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_allow_shorts = settings.trading_allow_shorts
         settings.trading_fractional_equities_enabled = True
@@ -239,13 +244,15 @@ class TestDecisionEngineCore(TestCase):
             self.assertFalse(quantity_resolution.get("fractional_allowed"))
             self.assertEqual(
                 quantity_resolution.get("reason"),
-                "sell_inventory_unknown_integer_only",
+                "sell_short_increasing_integer_only",
             )
         finally:
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_allow_shorts = original_allow_shorts
 
-    def test_legacy_sell_without_inventory_below_one_share_is_skipped(self) -> None:
+    def test_scheduler_macd_rsi_sell_without_inventory_below_one_share_is_skipped(
+        self,
+    ) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_allow_shorts = settings.trading_allow_shorts
         settings.trading_fractional_equities_enabled = True
@@ -280,7 +287,7 @@ class TestDecisionEngineCore(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_allow_shorts = original_allow_shorts
 
-    def test_legacy_buy_at_symbol_cap_is_skipped(self) -> None:
+    def test_scheduler_macd_rsi_buy_at_symbol_cap_is_skipped(self) -> None:
         original_max_pct = settings.trading_max_position_pct_equity
         settings.trading_max_position_pct_equity = 0.08
         try:
@@ -317,7 +324,7 @@ class TestDecisionEngineCore(TestCase):
         finally:
             settings.trading_max_position_pct_equity = original_max_pct
 
-    def test_legacy_sell_reducing_long_can_remain_fractional(self) -> None:
+    def test_scheduler_macd_rsi_sell_reducing_long_can_remain_fractional(self) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_allow_shorts = settings.trading_allow_shorts
         settings.trading_fractional_equities_enabled = True
@@ -381,7 +388,6 @@ class TestDecisionEngineCore(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(signal, [strategy])
             telemetry = engine.consume_runtime_telemetry()
@@ -451,7 +457,6 @@ class TestDecisionEngineCore(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(
                 signal, [buy_strategy, sell_strategy, off_timeframe_strategy]
@@ -521,7 +526,6 @@ class TestDecisionEngineCore(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(signal, [strategy])
 
@@ -587,7 +591,6 @@ class TestDecisionEngineCore(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_fractional_equities_enabled", True),
             patch.object(settings, "trading_allow_shorts", True),
         ):
@@ -627,7 +630,6 @@ class TestDecisionEngineCore(TestCase):
         )
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
             patch.object(settings, "trading_max_position_pct_equity", 0.08),
         ):
             decisions = engine.evaluate(
@@ -639,7 +641,7 @@ class TestDecisionEngineCore(TestCase):
 
         self.assertEqual(decisions, [])
 
-    def test_legacy_buy_clips_to_residual_symbol_capacity(self) -> None:
+    def test_scheduler_macd_rsi_buy_clips_to_residual_symbol_capacity(self) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
         original_max_pct = settings.trading_max_position_pct_equity
         settings.trading_fractional_equities_enabled = True
@@ -684,7 +686,7 @@ class TestDecisionEngineCore(TestCase):
             settings.trading_fractional_equities_enabled = original_fractional
             settings.trading_max_position_pct_equity = original_max_pct
 
-    def test_legacy_buy_skips_when_residual_symbol_capacity_is_below_min_qty(
+    def test_scheduler_macd_rsi_buy_skips_when_residual_symbol_capacity_is_below_min_qty(
         self,
     ) -> None:
         original_fractional = settings.trading_fractional_equities_enabled
@@ -759,7 +761,6 @@ class TestDecisionEngineCore(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(
                 signal,
@@ -853,7 +854,6 @@ class TestDecisionEngineCore(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(
                 signal, [buy_strategy, sell_strategy], positions=[]
@@ -911,7 +911,6 @@ class TestDecisionEngineCore(TestCase):
 
         with (
             patch.object(settings, "trading_strategy_runtime_mode", "scheduler_v3"),
-            patch.object(settings, "trading_strategy_scheduler_enabled", True),
         ):
             decisions = engine.evaluate(signal, [strategy], positions=[])
 

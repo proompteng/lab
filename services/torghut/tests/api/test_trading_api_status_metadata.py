@@ -714,7 +714,6 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             "llm_enabled": settings.llm_enabled,
             "llm_rollout_stage": settings.llm_rollout_stage,
             "trading_mode": settings.trading_mode,
-            "trading_live_enabled": settings.trading_live_enabled,
             "llm_fail_mode": settings.llm_fail_mode,
             "llm_fail_mode_enforcement": settings.llm_fail_mode_enforcement,
             "llm_fail_open_live_approved": settings.llm_fail_open_live_approved,
@@ -728,7 +727,7 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
         settings.llm_rollout_stage = "stage3"
         settings.llm_shadow_mode = False
         settings.trading_mode = "live"
-        settings.trading_live_enabled = True
+        settings.trading_mode = "live"
         settings.llm_fail_mode = "pass_through"
         settings.llm_fail_mode_enforcement = "configured"
         settings.llm_fail_open_live_approved = True
@@ -764,7 +763,7 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
             settings.llm_enabled = original["llm_enabled"]
             settings.llm_rollout_stage = original["llm_rollout_stage"]
             settings.trading_mode = original["trading_mode"]
-            settings.trading_live_enabled = original["trading_live_enabled"]
+            settings.trading_mode = original["trading_mode"]
             settings.llm_fail_mode = original["llm_fail_mode"]
             settings.llm_fail_mode_enforcement = original["llm_fail_mode_enforcement"]
             settings.llm_fail_open_live_approved = original[

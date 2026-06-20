@@ -405,19 +405,12 @@ class TradingScheduler(TradingSchedulerGovernanceMixin):
             base_url=lane.base_url,
         )
         order_firewall = OrderFirewall(alpaca_client)
-        pipeline_cls: type[TradingPipeline] = TradingPipeline
-        if settings.trading_pipeline_mode == "simple":
-            execution_adapter = build_execution_adapter(
-                alpaca_client=alpaca_client, order_firewall=order_firewall
-            )
-            pipeline_cls = SimpleTradingPipeline
-        else:
-            execution_adapter = build_execution_adapter(
-                alpaca_client=alpaca_client, order_firewall=order_firewall
-            )
+        execution_adapter = build_execution_adapter(
+            alpaca_client=alpaca_client, order_firewall=order_firewall
+        )
         executor = OrderExecutor()
         executor.prime_shorting_metadata_cache(alpaca_client)
-        return pipeline_cls(
+        return SimpleTradingPipeline(
             alpaca_client=alpaca_client,
             order_firewall=order_firewall,
             ingestor=ClickHouseSignalIngestor(account_label=lane.label),

@@ -121,7 +121,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
         try:
             settings.trading_enabled = True
             settings.trading_mode = "live"
-            settings.trading_pipeline_mode = "legacy"
+            settings.trading_pipeline_mode = "simple"
             settings.trading_autonomy_enabled = False
             settings.trading_autonomy_allow_live_promotion = False
             settings.trading_kill_switch_enabled = True
@@ -176,11 +176,8 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             payload = response.json()
             gate = payload["live_submission_gate"]
             self.assertFalse(gate["allowed"])
-            self.assertEqual(gate["reason"], "critical_toggle_parity_diverged")
-            self.assertIn(
-                "critical_toggle_parity_diverged",
-                gate["blocked_reasons"],
-            )
+            self.assertEqual(gate["reason"], "kill_switch_enabled")
+            self.assertIn("kill_switch_enabled", gate["blocked_reasons"])
             self.assertEqual(gate["critical_toggle_parity"]["status"], "diverged")
         finally:
             settings.trading_enabled = original["trading_enabled"]
@@ -209,6 +206,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
         }
         try:
             settings.trading_enabled = True
@@ -216,6 +214,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             settings.trading_autonomy_enabled = False
             settings.trading_autonomy_allow_live_promotion = True
             settings.trading_kill_switch_enabled = False
+            settings.trading_simple_submit_enabled = True
 
             scheduler = TradingScheduler()
             app.state.trading_scheduler = scheduler
@@ -305,6 +304,9 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             ]
             settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
+            ]
+            settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
             ]
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):

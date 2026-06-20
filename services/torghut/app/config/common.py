@@ -23,7 +23,6 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "trading_crypto_live_enabled": "torghut_trading_crypto_live_enabled",
     "trading_order_feed_enabled": "torghut_trading_order_feed_enabled",
     "trading_multi_account_enabled": "torghut_trading_multi_account_enabled",
-    "trading_strategy_scheduler_enabled": "torghut_trading_strategy_scheduler_enabled",
     "trading_feature_quality_enabled": "torghut_trading_feature_quality_enabled",
     "trading_autonomy_enabled": "torghut_trading_autonomy_enabled",
     "trading_autonomy_allow_live_promotion": "torghut_trading_autonomy_allow_live_promotion",

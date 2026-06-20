@@ -204,8 +204,7 @@ This script intentionally keeps defaults conservative and does not automate dest
 - **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
   trading first and keep it paused until verification passes.
   - set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml`
-  - keep `TRADING_LIVE_ENABLED=false` (safety backstop)
-  - do not change `TRADING_MODE` defaults during replay/recovery
+  - keep `TRADING_MODE=paper` unless the recovery explicitly requires live mode
 - **Unique consumer group required (hard requirement):** every replay/backfill must use a **new** `TA_GROUP_ID`
   (consumer-group isolation). Never reuse an old replay group id.
 - **GitOps-first:** prefer changing manifests under `argocd/applications/torghut/**` and syncing via Argo CD.

@@ -356,18 +356,13 @@ def _runtime_trading_config(
 ) -> dict[str, bool]:
     pipeline_mode = _env_value(env_by_name, "TRADING_PIPELINE_MODE")
     runtime_mode = _env_value(env_by_name, "TRADING_STRATEGY_RUNTIME_MODE")
-    scheduler_enabled = (
-        _env_value(env_by_name, "TRADING_STRATEGY_SCHEDULER_ENABLED") == "true"
-    )
-    strategy_runtime_active = runtime_mode == "plugin_v3" or (
-        runtime_mode == "scheduler_v3" and scheduler_enabled
-    )
+    strategy_runtime_active = runtime_mode == "scheduler_v3"
     simple_pipeline = pipeline_mode == "simple"
     return {
         "trading_enabled": _env_value(env_by_name, "TRADING_ENABLED") == "true",
         "simulation_enabled": _env_value(env_by_name, "TRADING_SIMULATION_ENABLED")
         == "true",
-        "strategy_runtime_mode": runtime_mode in {"plugin_v3", "scheduler_v3"},
+        "strategy_runtime_mode": runtime_mode == "scheduler_v3",
         "strategy_runtime_active": strategy_runtime_active,
         "signal_table": _env_value(env_by_name, "TRADING_SIGNAL_TABLE")
         == _as_text(_resource_attr(ctx.resources, "clickhouse_signal_table")),

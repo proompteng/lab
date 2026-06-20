@@ -143,10 +143,6 @@ class TestStartHistoricalSimulationRuntimeVerifyA(
                                         "value": "scheduler_v3",
                                     },
                                     {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
-                                    },
-                                    {
                                         "name": "TRADING_SIGNAL_TABLE",
                                         "value": resources.clickhouse_signal_table,
                                     },
@@ -285,10 +281,6 @@ class TestStartHistoricalSimulationRuntimeVerifyA(
                                     {
                                         "name": "TRADING_STRATEGY_RUNTIME_MODE",
                                         "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
                                     },
                                     {
                                         "name": "TRADING_SIGNAL_TABLE",
@@ -431,10 +423,6 @@ class TestStartHistoricalSimulationRuntimeVerifyA(
                                     {
                                         "name": "TRADING_STRATEGY_RUNTIME_MODE",
                                         "value": "scheduler_v3",
-                                    },
-                                    {
-                                        "name": "TRADING_STRATEGY_SCHEDULER_ENABLED",
-                                        "value": "true",
                                     },
                                     {
                                         "name": "TRADING_SIGNAL_TABLE",

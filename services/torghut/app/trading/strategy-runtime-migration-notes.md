@@ -1,29 +1,22 @@
-# Strategy Runtime Migration Notes (Scheduler V3)
+# Strategy Runtime Contract (Scheduler V3)
 
 ## Overview
 
-This migration introduces deterministic scheduler-integrated strategy execution with three layers:
+Torghut uses deterministic scheduler-integrated strategy execution with three layers:
 
 - `StrategyRegistry`: resolves strategy plugins by `strategy_type` + `version`, and tracks circuit/degraded state.
 - `StrategyRuntime`: evaluates all enabled strategies with per-plugin isolation.
 - `IntentAggregator`: resolves conflicting intents deterministically at symbol+horizon scope.
 
-## Runtime Flags
+## Runtime Settings
 
-Use these environment variables to control rollout:
+The scheduler v3 runtime is the only supported strategy runtime:
 
-- `TRADING_STRATEGY_RUNTIME_MODE=legacy|plugin_v3|scheduler_v3`
-- `TRADING_STRATEGY_SCHEDULER_ENABLED=true|false`
+- `TRADING_STRATEGY_RUNTIME_MODE=scheduler_v3`
 - `TRADING_STRATEGY_RUNTIME_CIRCUIT_ERRORS=<int>`
 - `TRADING_STRATEGY_RUNTIME_CIRCUIT_COOLDOWN_SECONDS=<int>`
 
-Recommended staged rollout:
-
-1. Set `TRADING_STRATEGY_RUNTIME_MODE=scheduler_v3`
-2. Keep `TRADING_STRATEGY_SCHEDULER_ENABLED=false` to verify configuration without behavioral change.
-3. Enable `TRADING_STRATEGY_SCHEDULER_ENABLED=true`.
-4. Monitor runtime metrics (`strategy_*`, `intent_conflict_total`, fallback counters).
-5. Legacy fallback remains deterministic when scheduler runtime emits no intents/errors.
+Monitor runtime metrics (`strategy_*`, `intent_conflict_total`, fallback counters) after deployment.
 
 ## Safety Semantics
 
@@ -31,7 +24,6 @@ Risk and kill-switch behavior is unchanged:
 
 - `TRADING_KILL_SWITCH_ENABLED` is still enforced before order submission.
 - Runtime failures are isolated per plugin; scheduler cycle continues and commits ingest cursor.
-- Legacy fallback is available to avoid decision stalls during migration.
 
 ## Deterministic Replay
 

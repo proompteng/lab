@@ -293,9 +293,8 @@ def budget_exhausted_live_submission_gate_payload(
     quant_health_status: Mapping[str, Any],
 ) -> dict[str, object]:
     simple_lane_blockers = [reason]
-    if settings.trading_pipeline_mode == "simple":
-        if not settings.trading_simple_submit_enabled:
-            simple_lane_blockers.append("simple_submit_disabled")
+    if not settings.trading_simple_submit_enabled:
+        simple_lane_blockers.append("simple_submit_disabled")
     return {
         "allowed": False,
         "reason": reason,

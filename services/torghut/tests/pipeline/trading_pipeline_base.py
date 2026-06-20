@@ -137,7 +137,7 @@ class TradingPipelineTestCaseBase(TestCase):
             for name in (
                 "trading_enabled",
                 "trading_mode",
-                "trading_live_enabled",
+                "trading_mode",
                 "trading_autonomy_allow_live_promotion",
                 "trading_kill_switch_enabled",
                 "trading_universe_source",
@@ -401,7 +401,7 @@ class TradingPipelineTestCaseBase(TestCase):
 
         config.settings.trading_enabled = True
         config.settings.trading_mode = "paper"
-        config.settings.trading_live_enabled = False
+        config.settings.trading_mode = "paper"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_fractional_equities_enabled = True

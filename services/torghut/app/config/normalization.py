@@ -1,7 +1,5 @@
 """Settings normalization and validation mixins."""
 
-import json
-import os
 from typing import Literal, Optional, cast
 from urllib.parse import urlsplit
 
@@ -89,54 +87,6 @@ class SettingsNormalizationMixin(
                 raise ValueError(f"{name}[{key}] must be >= 0")
 
     def _apply_trading_defaults(self) -> None:
-        mode_explicit = "trading_mode" in self.model_fields_set
-        deprecated_live_explicit = "trading_live_enabled" in self.model_fields_set
-        if not mode_explicit and deprecated_live_explicit:
-            self.trading_mode = "live" if self.trading_live_enabled else "paper"
-        elif (
-            mode_explicit
-            and deprecated_live_explicit
-            and self.trading_live_enabled != (self.trading_mode == "live")
-        ):
-            logger.warning(
-                "Ignoring deprecated TRADING_LIVE_ENABLED because TRADING_MODE is set."
-            )
-        self.trading_live_enabled = self.trading_mode == "live"
-
-        crypto_explicit = "trading_crypto_enabled" in self.model_fields_set
-        deprecated_ws_explicit = "trading_ws_crypto_enabled" in self.model_fields_set
-        deprecated_universe_explicit = (
-            "trading_universe_crypto_enabled" in self.model_fields_set
-        )
-        if not crypto_explicit and (
-            deprecated_ws_explicit or deprecated_universe_explicit
-        ):
-            ws_enabled = (
-                self.trading_ws_crypto_enabled if deprecated_ws_explicit else True
-            )
-            universe_enabled = (
-                self.trading_universe_crypto_enabled
-                if deprecated_universe_explicit
-                else True
-            )
-            self.trading_crypto_enabled = bool(ws_enabled and universe_enabled)
-        elif crypto_explicit and (
-            (
-                deprecated_ws_explicit
-                and self.trading_ws_crypto_enabled != self.trading_crypto_enabled
-            )
-            or (
-                deprecated_universe_explicit
-                and self.trading_universe_crypto_enabled != self.trading_crypto_enabled
-            )
-        ):
-            logger.warning(
-                "Ignoring deprecated TRADING_WS_CRYPTO_ENABLED/TRADING_UNIVERSE_CRYPTO_ENABLED "
-                "because TRADING_CRYPTO_ENABLED is set."
-            )
-        self.trading_ws_crypto_enabled = self.trading_crypto_enabled
-        self.trading_universe_crypto_enabled = self.trading_crypto_enabled
-
         if "trading_account_label" not in self.model_fields_set:
             self.trading_account_label = self.trading_mode
 
@@ -304,69 +254,6 @@ class SettingsNormalizationMixin(
             normalized_correlation_caps[normalized_key] = value
         self.trading_allocator_correlation_group_caps = normalized_correlation_caps
 
-    @staticmethod
-    def _normalize_allocator_alias_payload(
-        raw: str,
-        *,
-        mode: str,
-    ) -> dict[str, str | float]:
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError("allocator alias payload must be valid JSON") from exc
-        if not isinstance(parsed, dict):
-            raise ValueError("allocator alias payload must be a JSON object")
-
-        parsed_map = cast(dict[object, object], parsed)
-
-        if mode == "correlation_symbol_groups":
-            normalized: dict[str, str | float] = {}
-            for key, value in parsed_map.items():
-                normalized_key = str(key).strip().upper()
-                normalized_value = str(value).strip().lower()
-                if not normalized_key or not normalized_value:
-                    continue
-                normalized[normalized_key] = normalized_value
-            return normalized
-
-        if mode == "correlation_group_caps":
-            normalized: dict[str, str | float] = {}
-            for key, value in parsed_map.items():
-                normalized_key = str(key).strip().lower()
-                if not normalized_key:
-                    continue
-                normalized[normalized_key] = float(str(value))
-            return normalized
-
-        raise ValueError(f"unknown allocator alias normalization mode: {mode}")
-
-    def _validate_allocator_alias_environment_parity(self) -> None:
-        alias_pairs: tuple[tuple[str, str, str], ...] = (
-            (
-                "TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS",
-                "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS",
-                "correlation_symbol_groups",
-            ),
-            (
-                "TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS",
-                "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
-                "correlation_group_caps",
-            ),
-        )
-        for canonical_env, legacy_env, mode in alias_pairs:
-            canonical_raw = os.environ.get(canonical_env)
-            legacy_raw = os.environ.get(legacy_env)
-            if canonical_raw is None or legacy_raw is None:
-                continue
-            canonical = self._normalize_allocator_alias_payload(
-                canonical_raw, mode=mode
-            )
-            legacy = self._normalize_allocator_alias_payload(legacy_raw, mode=mode)
-            if canonical != legacy:
-                raise ValueError(
-                    f"{canonical_env} and {legacy_env} differ; set only one canonical form"
-                )
-
     def _normalize_runtime_regime_confidence_thresholds_by_entropy_band(self) -> None:
         normalized: dict[str, tuple[float, float]] = {}
         for (
@@ -441,16 +328,9 @@ class SettingsNormalizationMixin(
         )
         if not trading_active:
             return
-        if self.trading_universe_source == "jangar":
+        if self.trading_universe_source in {"jangar", "static"}:
             return
-        if (
-            self.trading_pipeline_mode == "simple"
-            and self.trading_universe_source == "static"
-        ):
-            return
-        raise ValueError(
-            "TRADING_UNIVERSE_SOURCE must be 'jangar' unless TRADING_PIPELINE_MODE=simple"
-        )
+        raise ValueError("TRADING_UNIVERSE_SOURCE must be 'jangar' or 'static'")
 
     def _validate_allocator_scalar_settings(self) -> None:
         checks: list[tuple[float | None, str]] = [

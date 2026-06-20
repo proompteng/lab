@@ -119,7 +119,6 @@ def test_configure_replay_settings_enables_bounded_paper_route_probe() -> None:
         )
 
         assert config.settings.trading_mode == "paper"
-        assert config.settings.trading_live_enabled is False
         assert config.settings.trading_simple_paper_route_probe_enabled is True
         assert config.settings.trading_simple_paper_route_probe_max_notional == 25.0
     finally:

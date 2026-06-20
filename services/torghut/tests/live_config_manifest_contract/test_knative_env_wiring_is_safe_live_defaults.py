@@ -36,7 +36,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(settings.trading_mode, "live")
         self.assertEqual(settings.trading_pipeline_mode, "simple")
         self.assertEqual(settings.trading_universe_source, "static")
-        self.assertEqual(env.get("TRADING_STRATEGY_SCHEDULER_ENABLED"), "true")
+        self.assertNotIn("TRADING_STRATEGY_SCHEDULER_ENABLED", env)
         self.assertFalse(settings.trading_autonomy_enabled)
         self.assertFalse(settings.trading_autonomy_allow_live_promotion)
         self.assertFalse(settings.trading_evidence_continuity_enabled)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import Any, cast
 from urllib.request import Request
 
 from tests.config.support import (
@@ -132,8 +133,8 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
         self.assertTrue(settings.trading_emergency_stop_enabled)
         self.assertFalse(settings.trading_execution_prefer_limit)
         self.assertTrue(settings.trading_multi_account_enabled)
-        self.assertTrue(settings.trading_ws_crypto_enabled)
-        self.assertTrue(settings.trading_universe_crypto_enabled)
+        self.assertTrue(settings.trading_crypto_enabled)
+        self.assertTrue(settings.trading_crypto_enabled)
         self.assertTrue(settings.trading_crypto_enabled)
         self.assertTrue(settings.trading_crypto_live_enabled)
         self.assertFalse(settings.llm_enabled)
@@ -143,7 +144,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             "http://feature-flags.feature-flags.svc.cluster.local:8013",
         )
 
-    def test_deprecated_live_enabled_is_derived_from_trading_mode(self) -> None:
+    def test_trading_mode_is_canonical_live_state(self) -> None:
         settings = Settings(
             TRADING_MODE="paper",
             TRADING_AUTONOMY_ENABLED=False,
@@ -152,7 +153,23 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
         )
         self.assertEqual(settings.trading_mode, "paper")
-        self.assertFalse(settings.trading_live_enabled)
+
+    def test_trading_active_rejects_unknown_universe_source(self) -> None:
+        settings = Settings(
+            TRADING_MODE="paper",
+            TRADING_ENABLED=False,
+            TRADING_AUTONOMY_ENABLED=False,
+            TRADING_UNIVERSE_SOURCE="static",
+            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
+        )
+        settings.trading_enabled = True
+        settings.trading_universe_source = cast(Any, "legacy")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "TRADING_UNIVERSE_SOURCE must be 'jangar' or 'static'",
+        ):
+            settings.model_post_init(None)
 
     def test_feature_flags_use_flipt_evaluate_contract(self) -> None:
         requests: list[dict[str, object]] = []
@@ -271,9 +288,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
         control_fields = {
             "trading_feature_flags_enabled",
             "log_access_log",
-            "trading_live_enabled",
-            "trading_ws_crypto_enabled",
-            "trading_universe_crypto_enabled",
+            "trading_mode",
             "trading_lean_backtest_enabled",
             "trading_lean_shadow_execution_enabled",
             "trading_lean_strategy_shadow_enabled",
