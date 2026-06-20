@@ -78,9 +78,11 @@ args:
   - --max-num-batched-tokens
   - "32768"
   - --enable-prefix-caching
+  - --reasoning-parser
+  - qwen3
   - --enable-auto-tool-choice
   - --tool-call-parser
-  - qwen3_xml
+  - qwen3_coder
   - --optimization-level
   - "2"
 ```
