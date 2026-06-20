@@ -143,11 +143,34 @@ def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None
     dependency = exchange.dependency_status()
 
     assert fills[0].notional_usd == Decimal("10.000000")
-    assert account.account.gross_exposure_usd == Decimal("20.000000")
+    assert account.account.gross_exposure_usd == Decimal("30.000000")
     assert [position.coin for position in account.positions] == ["NVDA"]
     assert open_coins == frozenset({"NVDA"})
     assert dependency.ready is True
     assert exchange.execution_metadata_details()
+
+
+def test_exchange_reconciles_unified_account_spot_and_perp_dex_state() -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=_FakeSdk(),
+        info=_UnifiedAccountInfo(),
+    )
+    exchange.filter_supported_markets((_market("AMD", "xyz"),))
+
+    account = exchange.reconcile_account({"AMD": "hl:perp:xyz:AMD"})
+
+    assert account.account.account_value_usd == Decimal("997.945380")
+    assert account.account.withdrawable_usd == Decimal("987.602738")
+    assert account.account.gross_exposure_usd == Decimal("10.024656")
+    assert [position.coin for position in account.positions] == ["AMD"]
+    assert "spotUserState" in account.account.raw_payload
+    assert "xyz" in account.account.raw_payload["dexStates"]
 
 
 def test_exchange_rejects_non_alo_missing_key_and_local_cancel() -> None:
@@ -249,25 +272,87 @@ class _FakeInfo:
             {"coin": "BTC", "px": "100", "sz": "1"},
         ]
 
-    def user_state(self, _account: str) -> dict[str, object]:
-        return {
-            "marginSummary": {"accountValue": "1000"},
-            "withdrawable": "900",
-            "assetPositions": [
-                {
-                    "position": {
-                        "coin": "NVDA",
-                        "szi": "0.1",
-                        "entryPx": "100",
-                        "unrealizedPnl": "0.25",
-                    }
+    def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
+        if dex == "xyz":
+            return {
+                "marginSummary": {
+                    "accountValue": "1000",
+                    "totalNtlPos": "20",
                 },
-                {"position": {"coin": "BTC", "szi": "1", "entryPx": "10"}},
-            ],
+                "withdrawable": "900",
+                "assetPositions": [
+                    {
+                        "position": {
+                            "coin": "NVDA",
+                            "szi": "0.1",
+                            "entryPx": "100",
+                            "positionValue": "20",
+                            "unrealizedPnl": "0.25",
+                        }
+                    },
+                    {"position": {"coin": "BTC", "szi": "1", "entryPx": "10"}},
+                ],
+            }
+        return {
+            "marginSummary": {"accountValue": "0", "totalNtlPos": "0"},
+            "withdrawable": "0",
+            "assetPositions": [],
         }
+
+    def spot_user_state(self, _account: str) -> dict[str, object]:
+        return {"balances": [], "tokenToAvailableAfterMaintenance": []}
 
     def open_orders(self, _account: str, *, dex: str = "") -> list[dict[str, object]]:
         return [{"coin": "NVDA"}] if dex == "xyz" else [{"coin": "BTC"}]
+
+
+class _UnifiedAccountInfo(_FakeInfo):
+    def meta(self, *, dex: str = "") -> dict[str, object]:
+        if dex == "xyz":
+            return {"universe": [{"name": "AMD", "szDecimals": 3}]}
+        return {"universe": []}
+
+    def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
+        if dex == "xyz":
+            return {
+                "marginSummary": {
+                    "accountValue": "10.342642",
+                    "totalNtlPos": "10.024656",
+                },
+                "withdrawable": "0.102402",
+                "assetPositions": [
+                    {
+                        "position": {
+                            "coin": "AMD",
+                            "szi": "0.0186",
+                            "entryPx": "538.96",
+                            "positionValue": "10.024656",
+                            "unrealizedPnl": "0",
+                        }
+                    }
+                ],
+            }
+        return {
+            "marginSummary": {
+                "accountValue": "0",
+                "totalNtlPos": "0",
+            },
+            "withdrawable": "0",
+            "assetPositions": [],
+        }
+
+    def spot_user_state(self, _account: str) -> dict[str, object]:
+        return {
+            "balances": [
+                {
+                    "coin": "USDC",
+                    "token": 0,
+                    "total": "997.94538",
+                    "hold": "10.342642",
+                }
+            ],
+            "tokenToAvailableAfterMaintenance": [[0, "987.602738"]],
+        }
 
 
 class _FakeExchange(HyperliquidSdkExecutionExchange):
