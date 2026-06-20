@@ -204,6 +204,24 @@ def test_maker_order_policy_uses_alo_bid_ask_and_ttl() -> None:
     assert buy_intent.expires_at.timestamp() - now.timestamp() == 45
 
 
+def test_maker_order_policy_rounds_size_up_to_clear_min_notional() -> None:
+    config = HyperliquidExecutionConfig.from_env({})
+    signal = generate_signal(
+        _feature(momentum=Decimal("12"), bid=Decimal("99.99"), ask=Decimal("100")),
+        config,
+    )
+
+    intent = build_maker_order_intent(
+        signal=signal,
+        verdict=evaluate_signal_risk(signal, _risk_state(), config),
+        config=config,
+        signal_id="signal-buy",
+    )
+
+    assert intent.notional_usd >= config.min_order_notional_usd
+    assert intent.size == Decimal("0.1001")
+
+
 def test_maker_order_policy_rejects_blocked_or_unusable_quotes() -> None:
     config = HyperliquidExecutionConfig.from_env({})
     high_floor_config = HyperliquidExecutionConfig.from_env(

@@ -45,6 +45,39 @@ def test_exchange_submits_alo_maker_order() -> None:
     assert sdk.orders[0]["limit_px"] == 10.0
 
 
+def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> None:
+    sdk = _FakeSdk()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=sdk,
+    )
+    exchange.filter_supported_markets((_market("NVDA", "xyz"),))
+    intent = OrderIntent(
+        market_id="hl:perp:xyz:NVDA",
+        coin="NVDA",
+        dex="xyz",
+        side="buy",
+        size=Decimal("0.1999"),
+        limit_price=Decimal("50"),
+        notional_usd=Decimal("9.995"),
+        cloid="0xabc",
+        tif="Alo",
+        reduce_only=False,
+        signal_id="signal",
+        expires_at=datetime.now(timezone.utc),
+    )
+
+    result = exchange.submit_maker_order(intent)
+
+    assert result.status == "accepted"
+    assert sdk.orders[0]["sz"] == 0.2
+
+
 def test_exchange_cancels_by_oid() -> None:
     sdk = _FakeSdk()
     exchange = _FakeExchange(
