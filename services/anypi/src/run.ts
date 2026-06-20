@@ -57,13 +57,13 @@ const writeStatus = async (path: string, status: AnypiStatus) => {
 
 export const buildCommitMessage = (runSpec: AgentRunSpecPayload) => {
   const summary = runSpec.implementation?.summary?.trim() || runSpec.issueTitle?.trim() || runSpec.agentRun?.name
-  return `feat(anypi): ${normalizeConventionalSummary(summary, 'implement agent task')}`
+  return `feat: ${normalizeConventionalSummary(summary, 'implement agent task')}`
 }
 
 export const buildPullRequestTitle = (runSpec: AgentRunSpecPayload) => {
   const title =
     process.env.VCS_PR_TITLE_TEMPLATE?.trim() || runSpec.issueTitle?.trim() || runSpec.implementation?.summary?.trim()
-  return `feat(anypi): ${normalizeConventionalSummary(title, 'apply autonomous agent changes')}`
+  return `feat: ${normalizeConventionalSummary(title, 'apply autonomous agent changes')}`
 }
 
 const DEFAULT_PULL_REQUEST_HEADINGS = [
@@ -94,6 +94,14 @@ const validationSummary = (status: AnypiStatus) => {
   return `${validations || '- N/A'}\n- CI: ${ci}`
 }
 
+const pullRequestSummary = (runSpec: AgentRunSpecPayload) => {
+  const rawSummary = runSpec.implementation?.summary?.trim() || runSpec.issueTitle?.trim()
+  const summary = rawSummary
+    ? rawSummary.replace(/\s+/g, ' ').replace(/[.。]+$/g, '')
+    : 'Implemented the requested repository changes'
+  return [`- ${summary}.`, '- Validation commands and CI status are listed below.'].join('\n')
+}
+
 export const renderPullRequestBody = (input: {
   runSpec: AgentRunSpecPayload
   status: AnypiStatus
@@ -102,14 +110,7 @@ export const renderPullRequestBody = (input: {
   template?: string
 }) => {
   const sections = new Map([
-    [
-      'summary',
-      [
-        `- Generated for ${input.status.namespace ?? 'agents'}/${input.status.runName ?? 'unknown'}.`,
-        `- Prompt variant: \`${input.status.promptVariant}\` (\`${input.status.promptHash}\`).`,
-        `- Session artifact: \`${input.status.sessionFile ?? 'N/A'}\`.`,
-      ].join('\n'),
-    ],
+    ['summary', pullRequestSummary(input.runSpec)],
     ['related issues', 'None'],
     ['testing', validationSummary(input.status)],
     ['screenshots (if applicable)', 'N/A'],
