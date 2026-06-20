@@ -31,7 +31,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --max-num-batched-tokens 16384
 --enable-prefix-caching
 --enable-auto-tool-choice
---tool-call-parser hermes
+--tool-call-parser qwen3_xml
 --optimization-level 2
 ```
 
@@ -42,6 +42,9 @@ NUMA auto-binding is intentionally disabled on Turin. vLLM 0.23.0 cannot
 autodetect the GPU-to-NUMA topology on this node and exits during startup when
 `--numa-bind` is used. Only re-enable CPU locality after validating explicit
 `--numa-bind-nodes` values live.
+
+The active tool parser is `qwen3_xml`. This model emits Qwen XML tool-call
+markup, and that parser converts it into OpenAI-compatible `tool_calls`.
 
 ## Rollout Gates
 

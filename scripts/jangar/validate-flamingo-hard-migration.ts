@@ -2,8 +2,13 @@
 
 import { readFile } from 'node:fs/promises'
 
-const requiredTerms = ['unsloth/Qwen3.6-35B-A3B-NVFP4', 'qwen36-flamingo']
-const forbiddenTerms = ['Qwen/Qwen3-Coder-Next-FP8', 'qwen3-coder-flamingo', 'Qwen/Qwen3-Coder-30B-A3B-Instruct']
+const requiredTerms = ['unsloth/Qwen3.6-35B-A3B-NVFP4', 'qwen36-flamingo', 'qwen3_xml']
+const forbiddenTerms = [
+  'Qwen/Qwen3-Coder-Next-FP8',
+  'qwen3-coder-flamingo',
+  'Qwen/Qwen3-Coder-30B-A3B-Instruct',
+  'hermes',
+]
 
 const targetFiles = [
   'argocd/applications/flamingo/deployment.yaml',
@@ -27,7 +32,7 @@ for (const file of targetFiles) {
 
   for (const term of forbiddenTerms) {
     if (content.includes(term)) {
-      failures.push(`${file}: still contains forbidden old Flamingo model term "${term}"`)
+      failures.push(`${file}: still contains forbidden Flamingo migration term "${term}"`)
     }
   }
 }

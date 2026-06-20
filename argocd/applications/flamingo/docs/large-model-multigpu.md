@@ -80,7 +80,7 @@ args:
   - --enable-prefix-caching
   - --enable-auto-tool-choice
   - --tool-call-parser
-  - hermes
+  - qwen3_xml
   - --optimization-level
   - "2"
 ```
