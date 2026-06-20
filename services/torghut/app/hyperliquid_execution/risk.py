@@ -46,6 +46,10 @@ def _blocked_reason(
         (not state.trading_enabled, "trading_disabled"),
         (signal.action == "hold", f"hold:{signal.reason}"),
         (
+            signal.action == "sell" and not config.allow_short_entries,
+            "short_entries_disabled",
+        ),
+        (
             signal.feature.source_lag_seconds > config.signal_staleness_seconds,
             "stale_features",
         ),

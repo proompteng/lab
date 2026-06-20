@@ -13,6 +13,7 @@ V2 contract:
   `xyz:NVDA,xyz:AMD,xyz:AVGO,xyz:MRVL,xyz:INTC,xyz:MU,xyz:WDC,xyz:SNDK,xyz:ARM,xyz:LITE`.
 - `SPX` is excluded.
 - Strategy entry is maker-first only: `ORDER_POLICY=maker_ttl`, `MAKER_TIF=Alo`, and `MAKER_TTL_SECONDS=45`.
+- Short entries are disabled in the proving lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=false`.
 - Caps are intentionally small: `$10` max order notional, `$25` max symbol exposure, and `$100` max gross exposure.
 - `sample_ready=false` until at least 40 v2 fills exist.
 

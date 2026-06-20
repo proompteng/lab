@@ -168,8 +168,25 @@ def test_risk_blocks_disabled_stale_open_order_caps_cooldown_and_missing_quotes(
     assert not evaluate_signal_risk(stale_signal, base_state, config).allowed
 
 
-def test_maker_order_policy_uses_alo_bid_ask_and_ttl() -> None:
+def test_risk_blocks_short_entries_by_default() -> None:
     config = HyperliquidExecutionConfig.from_env({})
+    short_config = HyperliquidExecutionConfig.from_env(
+        {"HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true"}
+    )
+    state = _risk_state()
+    sell_signal = generate_signal(_feature(momentum=Decimal("-12")), config)
+
+    blocked = evaluate_signal_risk(sell_signal, state, config)
+    allowed = evaluate_signal_risk(sell_signal, state, short_config)
+
+    assert blocked.reason == "short_entries_disabled"
+    assert allowed.allowed
+
+
+def test_maker_order_policy_uses_alo_bid_ask_and_ttl() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {"HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true"}
+    )
     now = datetime(2026, 6, 19, tzinfo=timezone.utc)
     buy_signal = generate_signal(
         _feature(momentum=Decimal("12"), bid=Decimal("10"), ask=Decimal("10.02")),

@@ -233,6 +233,7 @@ describe('Torghut manifest scheduling', () => {
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(Object.keys(runtimeData).some((key) => key.startsWith('HYPERLIQUID_RUNTIME_'))).toBe(false)
     expect(runtimeData.HYPERLIQUID_EXECUTION_TRADING_ENABLED).toBe('true')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES).toBe('false')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MARKET_DATA_NETWORK).toBe('mainnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXECUTION_NETWORK).toBe('testnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe(

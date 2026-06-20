@@ -246,21 +246,25 @@ def test_repository_writes_runtime_evidence_and_report_rows() -> None:
     )
 
 
-def test_repository_cooldowns_repeated_minimum_value_rejects() -> None:
-    session = _FakeSession(reject_count=3)
-    repo = HyperliquidExecutionRepository(session)
+def test_repository_cooldowns_repeated_broker_rejects() -> None:
+    for rejection_reason, expected_sql in (
+        ("Order must have minimum value of $10. asset=750014", "minimum value"),
+        ("Insufficient margin to place order. asset=750002", "insufficient margin"),
+    ):
+        session = _FakeSession(reject_count=3)
+        repo = HyperliquidExecutionRepository(session)
 
-    repo.update_reject_cooldown(
-        coin="NVDA",
-        rejection_reason="Order must have minimum value of $10. asset=750014",
-        config=HyperliquidExecutionConfig.from_env({}),
-    )
+        repo.update_reject_cooldown(
+            coin="NVDA",
+            rejection_reason=rejection_reason,
+            config=HyperliquidExecutionConfig.from_env({}),
+        )
 
-    assert any("minimum value" in sql for sql, _ in session.calls)
-    assert any(
-        params and params.get("reason") == "symbol_reject_cooldown"
-        for _, params in session.calls
-    )
+        assert any(expected_sql in sql for sql, _ in session.calls)
+        assert any(
+            params and params.get("reason") == "symbol_reject_cooldown"
+            for _, params in session.calls
+        )
 
 
 def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
