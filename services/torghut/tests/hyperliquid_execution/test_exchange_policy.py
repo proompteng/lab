@@ -143,7 +143,8 @@ def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None
     dependency = exchange.dependency_status()
 
     assert fills[0].notional_usd == Decimal("10.000000")
-    assert account.account.gross_exposure_usd == Decimal("10.000000")
+    assert account.account.gross_exposure_usd == Decimal("20.000000")
+    assert [position.coin for position in account.positions] == ["NVDA"]
     assert open_coins == frozenset({"NVDA"})
     assert dependency.ready is True
     assert exchange.execution_metadata_details()
@@ -171,10 +172,32 @@ def test_exchange_rejects_non_alo_missing_key_and_local_cancel() -> None:
     assert local_cancel.rejection_reason == "missing_exchange_order_id"
 
 
+def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
+    sdk = _FakeSdk()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=sdk,
+    )
+
+    result = exchange.close_position_reduce_only(
+        "SPX", size=Decimal("275.2"), slippage=Decimal("0.02")
+    )
+
+    assert result.status == "filled"
+    assert result.exchange_order_id == "789"
+    assert sdk.market_closes == [("SPX", 275.2, 0.02)]
+
+
 class _FakeSdk:
     def __init__(self) -> None:
         self.orders: list[dict[str, Any]] = []
         self.cancels: list[tuple[str, int]] = []
+        self.market_closes: list[tuple[str, float | None, float]] = []
         self.next_order_response: dict[str, object] = {
             "response": {"data": {"statuses": [{"resting": {"oid": 123}}]}}
         }
@@ -186,6 +209,16 @@ class _FakeSdk:
     def cancel(self, name: str, oid: int) -> dict[str, object]:
         self.cancels.append((name, oid))
         return {"status": "ok"}
+
+    def market_close(
+        self,
+        coin: str,
+        *,
+        sz: float | None = None,
+        slippage: float = 0.05,
+    ) -> dict[str, object]:
+        self.market_closes.append((coin, sz, slippage))
+        return {"response": {"data": {"statuses": [{"filled": {"oid": 789}}]}}}
 
 
 class _FakeInfo:

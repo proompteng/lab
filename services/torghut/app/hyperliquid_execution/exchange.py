@@ -181,6 +181,35 @@ class HyperliquidSdkExecutionExchange:
             raw_response=response,
         )
 
+    def close_position_reduce_only(
+        self,
+        coin: str,
+        *,
+        size: Decimal | None = None,
+        slippage: Decimal = Decimal("0.05"),
+    ) -> OrderResult:
+        if not self._config.api_wallet_private_key:
+            return OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"error": "api_wallet_private_key_missing"},
+                rejection_reason="api_wallet_private_key_missing",
+            )
+        response = self._exchange().market_close(
+            coin,
+            sz=float(size) if size is not None else None,
+            slippage=float(slippage),
+        )
+        self._last_read_at = datetime.now(timezone.utc)
+        if not isinstance(response, dict):
+            return OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"response": response},
+                rejection_reason="no_position_found",
+            )
+        return _order_result(cast(dict[str, object], response))
+
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         account = self._config.account_address
         if account is None:
@@ -471,9 +500,7 @@ def _account_state_from_payload(
                 continue
             size = _decimal(position_map.get("szi"))
             entry_price = _optional_decimal(position_map.get("entryPx"))
-            notional_usd = abs(size * (entry_price or Decimal("0"))).quantize(
-                Decimal("0.000001")
-            )
+            notional_usd = _position_exposure_usd(position_map)
             positions.append(
                 PositionSnapshot(
                     market_id=market_id_by_coin[coin],
@@ -488,18 +515,62 @@ def _account_state_from_payload(
                     },
                 )
             )
+    raw_exposure_usd = _raw_account_exposure_usd(payload, positions)
     return AccountState(
         account=AccountSnapshot(
             observed_at=observed_at,
             account_value_usd=_decimal(margin_map.get("accountValue")),
             withdrawable_usd=_decimal(payload.get("withdrawable")),
-            gross_exposure_usd=sum(
-                (position.notional_usd for position in positions), Decimal("0")
-            ),
+            gross_exposure_usd=raw_exposure_usd,
             raw_payload={str(key): value for key, value in payload.items()},
         ),
         positions=tuple(positions),
     )
+
+
+def _raw_account_exposure_usd(
+    payload: Mapping[str, object],
+    selected_positions: list[PositionSnapshot],
+) -> Decimal:
+    margin = payload.get("marginSummary")
+    margin_map: Mapping[str, object] = (
+        cast(Mapping[str, object], margin) if isinstance(margin, dict) else {}
+    )
+    cross_margin = payload.get("crossMarginSummary")
+    cross_margin_map: Mapping[str, object] = (
+        cast(Mapping[str, object], cross_margin)
+        if isinstance(cross_margin, dict)
+        else {}
+    )
+    raw_positions = payload.get("assetPositions")
+    raw_position_exposure = Decimal("0")
+    if isinstance(raw_positions, list):
+        for item in cast(list[object], raw_positions):
+            if not isinstance(item, dict):
+                continue
+            position = cast(Mapping[str, object], item).get("position")
+            if isinstance(position, dict):
+                raw_position_exposure += _position_exposure_usd(
+                    cast(Mapping[str, object], position)
+                )
+    selected_exposure = sum(
+        (position.notional_usd for position in selected_positions), Decimal("0")
+    )
+    return max(
+        selected_exposure,
+        raw_position_exposure,
+        _decimal(margin_map.get("totalNtlPos")),
+        _decimal(cross_margin_map.get("totalNtlPos")),
+    ).quantize(Decimal("0.000001"))
+
+
+def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:
+    position_value = _optional_decimal(position.get("positionValue"))
+    if position_value is not None:
+        return abs(position_value).quantize(Decimal("0.000001"))
+    size = _decimal(position.get("szi"))
+    entry_price = _optional_decimal(position.get("entryPx")) or Decimal("0")
+    return abs(size * entry_price).quantize(Decimal("0.000001"))
 
 
 def _normalize_price(price: Decimal, *, side: str) -> Decimal:
