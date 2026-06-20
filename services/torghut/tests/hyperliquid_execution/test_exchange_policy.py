@@ -173,6 +173,39 @@ def test_exchange_reconciles_unified_account_spot_and_perp_dex_state() -> None:
     assert "xyz" in account.account.raw_payload["dexStates"]
 
 
+def test_exchange_reconciles_spot_state_fallback_paths() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+        }
+    )
+
+    failing_spot = _FakeExchange(config, sdk=_FakeSdk(), info=_FailingSpotInfo())
+    failing_spot.filter_supported_markets((_market("AMD", "xyz"),))
+    failing_account = failing_spot.reconcile_account({"AMD": "hl:perp:xyz:AMD"})
+
+    malformed_spot = _FakeExchange(config, sdk=_FakeSdk(), info=_MalformedSpotInfo())
+    malformed_spot.filter_supported_markets((_market("AMD", "xyz"),))
+    malformed_account = malformed_spot.reconcile_account({"AMD": "hl:perp:xyz:AMD"})
+
+    missing_balances = _FakeExchange(
+        config, sdk=_FakeSdk(), info=_MissingSpotBalancesInfo()
+    )
+    missing_balances.filter_supported_markets((_market("AMD", "xyz"),))
+    missing_balance_account = missing_balances.reconcile_account(
+        {"AMD": "hl:perp:xyz:AMD"}
+    )
+
+    assert failing_account.account.account_value_usd == Decimal("10.342642")
+    assert failing_account.account.withdrawable_usd == Decimal("0.102402")
+    assert failing_account.account.raw_payload["spotUserState"] == {}
+    assert malformed_account.account.account_value_usd == Decimal("13.500000")
+    assert malformed_account.account.withdrawable_usd == Decimal("10.250000")
+    assert missing_balance_account.account.account_value_usd == Decimal("10.342642")
+    assert missing_balance_account.account.withdrawable_usd == Decimal("0.102402")
+
+
 def test_exchange_rejects_non_alo_missing_key_and_local_cancel() -> None:
     exchange = _FakeExchange(HyperliquidExecutionConfig.from_env({}), sdk=_FakeSdk())
 
@@ -353,6 +386,32 @@ class _UnifiedAccountInfo(_FakeInfo):
             ],
             "tokenToAvailableAfterMaintenance": [[0, "987.602738"]],
         }
+
+
+class _FailingSpotInfo(_UnifiedAccountInfo):
+    def spot_user_state(self, _account: str) -> dict[str, object]:
+        raise RuntimeError("spot_down")
+
+
+class _MalformedSpotInfo(_UnifiedAccountInfo):
+    def spot_user_state(self, _account: str) -> dict[str, object]:
+        return {
+            "balances": [
+                "bad-balance-row",
+                {"coin": "BTC", "total": "100", "hold": "0"},
+                {"coin": "USDC", "total": "13.5", "hold": "3.25"},
+            ],
+            "tokenToAvailableAfterMaintenance": [
+                "bad-available-row",
+                [0],
+                [1, "99"],
+            ],
+        }
+
+
+class _MissingSpotBalancesInfo(_UnifiedAccountInfo):
+    def spot_user_state(self, _account: str) -> dict[str, object]:
+        return {"balances": "not-a-list", "tokenToAvailableAfterMaintenance": []}
 
 
 class _FakeExchange(HyperliquidSdkExecutionExchange):
