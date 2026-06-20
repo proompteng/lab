@@ -5,6 +5,8 @@ export type AgentsMetricsSink = {
   recordAgentQueueDepth?: (depth: number, attributes?: MetricsAttributes) => void
   recordAgentRateLimitRejection?: (scope: string, attributes?: MetricsAttributes) => void
   recordAgentRunOutcome?: (outcome: string, attributes?: MetricsAttributes) => void
+  recordAgentRunRetentionDeleteErrors?: (count: number, attributes?: MetricsAttributes) => void
+  recordAgentRunRetentionDeletes?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunResyncAdoptions?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedBacklog?: (count: number, attributes?: MetricsAttributes) => void
   recordAgentRunUntouchedOldestAgeSeconds?: (ageSeconds: number, attributes?: MetricsAttributes) => void
@@ -55,6 +57,14 @@ const METRICS = {
   agentRunOutcomes: {
     name: 'agents_agent_run_outcomes_total',
     help: 'Count of AgentRun terminal outcomes by phase.',
+  },
+  agentRunRetentionDeletes: {
+    name: 'agents_agentrun_retention_deletes_total',
+    help: 'Count of terminal AgentRuns deleted by retention cleanup.',
+  },
+  agentRunRetentionDeleteErrors: {
+    name: 'agents_agentrun_retention_delete_errors_total',
+    help: 'Count of terminal AgentRun retention cleanup delete errors.',
   },
   agentRunResyncAdoptions: {
     name: 'agents_agentrun_resync_adoptions_total',
@@ -194,6 +204,18 @@ export const recordAgentConcurrency = (count: number, attributes?: MetricsAttrib
 export const recordAgentRunOutcome = (outcome: string, attributes?: MetricsAttributes) => {
   recordCounter(METRICS.agentRunOutcomes, 1, { outcome, ...attributes })
   externalMetricsSink.recordAgentRunOutcome?.(outcome, attributes)
+}
+
+export const recordAgentRunRetentionDeletes = (count: number, attributes?: MetricsAttributes) => {
+  if (count <= 0) return
+  recordCounter(METRICS.agentRunRetentionDeletes, count, attributes)
+  externalMetricsSink.recordAgentRunRetentionDeletes?.(count, attributes)
+}
+
+export const recordAgentRunRetentionDeleteErrors = (count: number, attributes?: MetricsAttributes) => {
+  if (count <= 0) return
+  recordCounter(METRICS.agentRunRetentionDeleteErrors, count, attributes)
+  externalMetricsSink.recordAgentRunRetentionDeleteErrors?.(count, attributes)
 }
 
 export const recordAgentRunResyncAdoptions = (count: number, attributes?: MetricsAttributes) => {

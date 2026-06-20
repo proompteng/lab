@@ -11,6 +11,8 @@ const metricsMocks = vi.hoisted(() => ({
   recordRuntimeDebrisDeletedPods: vi.fn(),
   recordRuntimeDebrisDeleteErrors: vi.fn(),
   recordRuntimeDebrisOrphanPods: vi.fn(),
+  recordAgentRunRetentionDeleteErrors: vi.fn(),
+  recordAgentRunRetentionDeletes: vi.fn(),
   recordAgentConcurrency: vi.fn(),
   recordAgentQueueDepth: vi.fn(),
   recordAgentRateLimitRejection: vi.fn(),
@@ -450,6 +452,171 @@ describe('agents controller startup', () => {
       if (previousMaxDeletes === undefined)
         delete process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE
       else process.env.AGENTS_CONTROLLER_RUNTIME_DEBRIS_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
+  })
+
+  it('sweeps expired terminal AgentRuns during controller resync with a delete budget', async () => {
+    stopAgentsController()
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    const previousZeroTtlRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = '2'
+
+    try {
+      const oldFinishedAt = new Date(Date.now() - 120_000).toISOString()
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const run = (name: string, ttlSecondsAfterFinished?: number) =>
+        buildAgentRun({
+          metadata: {
+            name,
+            namespace: 'agents',
+            generation: 1,
+            creationTimestamp: oldFinishedAt,
+            finalizers: [finalizer],
+          },
+          spec: {
+            agentRef: { name: 'agent-1' },
+            implementationSpecRef: { name: 'impl-1' },
+            runtime: { type: 'job', config: {} },
+            workload: { image: defaultRunnerImage },
+            ...(ttlSecondsAfterFinished !== undefined ? { ttlSecondsAfterFinished } : {}),
+          },
+          status: { phase: 'Failed', finishedAt: oldFinishedAt, observedGeneration: 1 },
+        })
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) {
+            return { items: [run('run-zero-ttl', 0), run('run-default-ttl'), run('run-over-budget')] }
+          }
+          if (resource === 'pods' || resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).toHaveBeenCalledTimes(2)
+      expect(deleteMock).toHaveBeenNthCalledWith(1, RESOURCE_MAP.AgentRun, 'run-zero-ttl', 'agents', { wait: false })
+      expect(deleteMock).toHaveBeenNthCalledWith(2, RESOURCE_MAP.AgentRun, 'run-default-ttl', 'agents', {
+        wait: false,
+      })
+      const retainedRuns = Array.from(
+        ((state.namespaces as Map<string, { runs: Map<string, unknown> }>).get('agents')?.runs ?? new Map()).keys(),
+      )
+      expect(retainedRuns).toEqual(['run-over-budget'])
+    } finally {
+      if (previousRetention === undefined) delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      if (previousZeroTtlRetention === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = previousZeroTtlRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
+  })
+
+  it('uses status.updatedAt as terminal retention time when finishedAt is missing', async () => {
+    stopAgentsController()
+    const previousRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = '10'
+
+    try {
+      const oldUpdatedAt = new Date(Date.now() - 120_000).toISOString()
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const agentRun = buildAgentRun({
+        metadata: {
+          name: 'run-no-finished-at',
+          namespace: 'agents',
+          generation: 1,
+          creationTimestamp: oldUpdatedAt,
+          finalizers: [finalizer],
+        },
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: defaultRunnerImage },
+          ttlSecondsAfterFinished: 60,
+        },
+        status: { phase: 'Failed', updatedAt: oldUpdatedAt, observedGeneration: 1 },
+      })
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) return { items: [agentRun] }
+          if (resource === 'pods' || resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).toHaveBeenCalledWith(RESOURCE_MAP.AgentRun, 'run-no-finished-at', 'agents', { wait: false })
+    } finally {
+      if (previousRetention === undefined) delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS = previousRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
+    }
+  })
+
+  it('keeps explicitly retained terminal AgentRuns during retention sweep', async () => {
+    stopAgentsController()
+    const previousZeroTtlRetention = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+    const previousMaxDeletes = process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = '60'
+    process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = '10'
+
+    try {
+      const oldFinishedAt = new Date(Date.now() - 120_000).toISOString()
+      const state = { namespaces: new Map() }
+      const deleteMock = vi.fn(async () => ({}))
+      const agentRun = buildAgentRun({
+        metadata: {
+          name: 'run-retained',
+          namespace: 'agents',
+          generation: 1,
+          creationTimestamp: oldFinishedAt,
+          finalizers: [finalizer],
+          annotations: { 'agents.proompteng.ai/retain': 'true' },
+        },
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: { type: 'job', config: {} },
+          workload: { image: defaultRunnerImage },
+          ttlSecondsAfterFinished: 0,
+        },
+        status: { phase: 'Succeeded', finishedAt: oldFinishedAt, observedGeneration: 1 },
+      })
+      const kube = buildKube({
+        delete: deleteMock,
+        list: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.AgentRun) return { items: [agentRun] }
+          if (resource === 'pods' || resource === 'jobs') return { items: [] }
+          return { items: [] }
+        }),
+      })
+
+      await __test.resyncAgentRunsForNamespace(kube as never, 'agents', state as never, defaultConcurrency, 'manual')
+
+      expect(deleteMock).not.toHaveBeenCalled()
+    } finally {
+      if (previousZeroTtlRetention === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS = previousZeroTtlRetention
+      if (previousMaxDeletes === undefined)
+        delete process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+      else process.env.AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE = previousMaxDeletes
     }
   })
 

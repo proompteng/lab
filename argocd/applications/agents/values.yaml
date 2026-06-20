@@ -124,6 +124,8 @@ controller:
   queue:
     perRepo: 200
   agentRunRetentionSeconds: 604800
+  agentRunRetentionMaxDeletesPerNamespace: 250
+  agentRunRetentionZeroTtlMaxSeconds: 604800
   jobTtlSeconds: 86400
   jobTtlSecondsAfterFinished: 86400
   runtimeDebrisCleanup:

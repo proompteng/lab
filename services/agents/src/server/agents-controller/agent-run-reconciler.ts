@@ -79,7 +79,7 @@ type AgentRunReconcilerDependencies = {
   nowIso: () => string
   isKubeNotFoundError: (error: unknown) => boolean
   resolveJobImage: (workload: Record<string, unknown>, provider?: Record<string, unknown> | null) => string | null
-  resolveAgentRunRetentionSeconds: (spec: Record<string, unknown>) => number
+  getAgentRunRetentionDecision: (agentRun: Record<string, unknown>) => { eligible: boolean }
   getPrimitivesStore: () => Promise<AgentsPrimitivesStoreRef | null>
   getTemporalClient: () => Promise<unknown>
   reconcileWorkflowRun: (
@@ -169,7 +169,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
     nowIso,
     isKubeNotFoundError,
     resolveJobImage,
-    resolveAgentRunRetentionSeconds,
+    getAgentRunRetentionDecision,
     getPrimitivesStore,
     getTemporalClient,
     reconcileWorkflowRun,
@@ -401,17 +401,11 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
         }
       }
 
-      const retentionSeconds = resolveAgentRunRetentionSeconds(spec)
-      if (retentionSeconds > 0 && finishedAt) {
-        const finishedAtMs = Date.parse(finishedAt)
-        if (!Number.isNaN(finishedAtMs)) {
-          const expiresAtMs = finishedAtMs + retentionSeconds * 1000
-          if (Date.now() >= expiresAtMs) {
-            // Use non-blocking delete to avoid stalling the namespace reconcile queue on finalizers.
-            await kube.delete(RESOURCE_MAP.AgentRun, name, namespace, { wait: false })
-            return
-          }
-        }
+      const retention = getAgentRunRetentionDecision(agentRun)
+      if (retention.eligible) {
+        // Use non-blocking delete to avoid stalling the namespace reconcile queue on finalizers.
+        await kube.delete(RESOURCE_MAP.AgentRun, name, namespace, { wait: false })
+        return
       }
       return
     }

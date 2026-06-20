@@ -82,6 +82,9 @@ Notes:
   secret such as `alpaca-mcp` in `spec.secrets`; the secret must provide `ALPACA_API_KEY` and `ALPACA_SECRET_KEY`.
 - `ttlSecondsAfterFinished` is a top-level `AgentRun.spec` field (see `charts/agents/crds/agents.proompteng.ai_agentruns.yaml`).
   Do not put TTL under `spec.runtime.config` unless a specific runtime explicitly documents it.
+- The controller also runs a bounded namespace retention sweep. `ttlSecondsAfterFinished: 0` disables normal per-run TTL,
+  but production can still apply `controller.agentRunRetentionZeroTtlMaxSeconds` as a safety cap for old terminal runs.
+  Use annotation `agents.proompteng.ai/retain: "true"` only for rare terminal runs that must be retained beyond that cap.
 - `goal` is a top-level `AgentRun.spec` object. Use `goal.objective` for the persistent Codex goal and optional
   `goal.tokenBudget` for an explicit positive token budget. Do not encode the first-class goal as
   `parameters.prompt`.

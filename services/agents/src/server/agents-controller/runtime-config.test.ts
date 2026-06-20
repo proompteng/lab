@@ -76,4 +76,24 @@ describe('Agents controller runtime config', () => {
       orphanPodRetentionSeconds: 3600,
     })
   })
+
+  it('reads AgentRun retention cleanup knobs with safe defaults', () => {
+    expect(resolveAgentsControllerBehaviorConfig({})).toMatchObject({
+      agentRunRetentionMaxDeletesPerNamespace: 100,
+      agentRunRetentionSeconds: null,
+      agentRunRetentionZeroTtlMaxSeconds: 0,
+    })
+
+    expect(
+      resolveAgentsControllerBehaviorConfig({
+        AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS: '604800',
+        AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE: '250',
+        AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS: '604800',
+      }),
+    ).toMatchObject({
+      agentRunRetentionMaxDeletesPerNamespace: 250,
+      agentRunRetentionSeconds: 604800,
+      agentRunRetentionZeroTtlMaxSeconds: 604800,
+    })
+  })
 })

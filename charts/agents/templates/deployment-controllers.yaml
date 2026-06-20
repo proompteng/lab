@@ -327,6 +327,10 @@ spec:
               value: {{ .Values.controller.rate.cluster | default 600 | quote }}
             - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_SECONDS
               value: {{ .Values.controller.agentRunRetentionSeconds | default 2592000 | quote }}
+            - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_MAX_DELETES_PER_NAMESPACE
+              value: {{ .Values.controller.agentRunRetentionMaxDeletesPerNamespace | default 100 | quote }}
+            - name: AGENTS_CONTROLLER_AGENTRUN_RETENTION_ZERO_TTL_MAX_SECONDS
+              value: {{ .Values.controller.agentRunRetentionZeroTtlMaxSeconds | default 0 | quote }}
             {{- $runtimeDebrisCleanup := .Values.controller.runtimeDebrisCleanup | default dict }}
             - name: AGENTS_CONTROLLER_RUNTIME_DEBRIS_CLEANUP_MODE
               value: {{ $runtimeDebrisCleanup.mode | default "disabled" | quote }}

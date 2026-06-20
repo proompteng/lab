@@ -310,6 +310,11 @@ controller:
       maxAttempts: 5
   # Default AgentRun retention window (seconds). 30 days when unset.
   agentRunRetentionSeconds: 2592000
+  # Maximum terminal AgentRuns to delete per namespace during each resync.
+  agentRunRetentionMaxDeletesPerNamespace: 100
+  # Safety cap for terminal runs that set ttlSecondsAfterFinished: 0.
+  # 0 preserves historical "disable retention" behavior unless the deployment overrides it.
+  agentRunRetentionZeroTtlMaxSeconds: 0
   agentRunArtifacts:
     max: 50
     strict: false
