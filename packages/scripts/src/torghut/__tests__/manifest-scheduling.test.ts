@@ -170,6 +170,8 @@ describe('Torghut manifest scheduling', () => {
     expect(data.CLICKHOUSE_ENABLED).toBe('true')
     expect(data.CLICKHOUSE_REQUIRED_FOR_READINESS).toBe('true')
     expect(data.KAFKA_READY_MAX_AGE_MS).toBe('120000')
+    expect(data.CLICKHOUSE_READY_MAX_AGE_MS).toBe('300000')
+    expect(data.CLICKHOUSE_TABLE_READY_MAX_AGE_MS).toBe('300000')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     const feedContainer = getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0])
@@ -192,7 +194,7 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-nonblocking-publish-20260619a')
+    ).toBe('hyperliquid-feed-clickhouse-catchup-window-20260620a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {

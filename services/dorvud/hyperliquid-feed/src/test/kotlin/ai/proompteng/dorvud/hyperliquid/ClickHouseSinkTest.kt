@@ -278,6 +278,53 @@ class ClickHouseSinkTest {
     }
 
   @Test
+  fun `keeps clickhouse ready when table ingest lag is within the table catchup window`() =
+    runBlocking {
+      val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
+      val client =
+        HttpClient(
+          MockEngine { request ->
+            if (queryParam(request.url).startsWith("INSERT")) {
+              respond(content = "", status = HttpStatusCode.OK)
+            } else {
+              respond(
+                content =
+                  """
+                  {"table":"hyperliquid_candles","latest_ingest_ms":7000,"latest_event_ms":9900}
+                  {"table":"hyperliquid_raw","latest_ingest_ms":7000,"latest_event_ms":9900}
+                  """.trimIndent(),
+                status = HttpStatusCode.OK,
+              )
+            }
+          },
+        )
+      val sink =
+        ClickHouseSink(
+          config = clickHouseConfig(readyMaxAgeMs = 1_000, tableReadyMaxAgeMs = 5_000),
+          httpClient = client,
+          metrics = HyperliquidMetrics(SimpleMeterRegistry()),
+          json = Json,
+          nowMs = { 10_000 },
+          onReady = { readySignals += it },
+        )
+      val job = sink.start(this)
+
+      sink.enqueue(candleRecord())
+
+      withTimeout(1_000) {
+        while (readySignals.lastOrNull()?.ready != true) {
+          delay(10)
+        }
+      }
+
+      assertEquals(true, readySignals.last().ready)
+      assertEquals(true, readySignals.last().tableFreshnessReady)
+      assertEquals(3_000, readySignals.last().tableIngestLagMs["hyperliquid_candles"])
+      job.cancelAndJoin()
+      client.close()
+    }
+
+  @Test
   fun `marks clickhouse ready when ingest is fresh even if candle event time is older`() =
     runBlocking {
       val readySignals = mutableListOf<ClickHouseReadinessUpdate>()
@@ -469,6 +516,7 @@ class ClickHouseSinkTest {
 
   private fun clickHouseConfig(
     readyMaxAgeMs: Long,
+    tableReadyMaxAgeMs: Long = readyMaxAgeMs,
     batchSize: Int = 1,
     flushMs: Long = 1,
     requestTimeoutMs: Long = 1_000,
@@ -486,6 +534,7 @@ class ClickHouseSinkTest {
       flushMs = flushMs,
       requestTimeoutMs = requestTimeoutMs,
       readyMaxAgeMs = readyMaxAgeMs,
+      tableReadyMaxAgeMs = tableReadyMaxAgeMs,
       failureHoldMs = 1_000,
       enabledTables = enabledTables,
       readyTables = readyTables,

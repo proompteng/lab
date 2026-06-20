@@ -184,6 +184,7 @@ class HyperliquidFeedApp(
       clickhouseLastSuccessLagMs = clickHouseLastSuccessLagMs(),
       clickhouseLastFailureAgeMs = clickHouseLastFailureAgeMs(),
       clickhouseReadyMaxAgeMs = config.clickHouse.readyMaxAgeMs,
+      clickhouseTableReadyMaxAgeMs = config.clickHouse.tableReadyMaxAgeMs,
       clickhouseFailureHoldMs = config.clickHouse.failureHoldMs,
       clickhouseTableIngestLagMs = clickHouseTableIngestLagMs,
       clickhouseTableEventLagMs = clickHouseTableEventLagMs,

@@ -38,6 +38,7 @@ data class HyperliquidReadinessInfo(
   val clickhouseLastSuccessLagMs: Long?,
   val clickhouseLastFailureAgeMs: Long?,
   val clickhouseReadyMaxAgeMs: Long,
+  val clickhouseTableReadyMaxAgeMs: Long,
   val clickhouseFailureHoldMs: Long,
   val clickhouseTableIngestLagMs: Map<String, Long?>,
   val clickhouseTableEventLagMs: Map<String, Long?>,

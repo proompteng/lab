@@ -48,6 +48,7 @@ class HyperliquidConfigTest {
         mapOf(
           "KAFKA_SASL_PASSWORD" to "secret",
           "CLICKHOUSE_READY_MAX_AGE_MS" to "90000",
+          "CLICKHOUSE_TABLE_READY_MAX_AGE_MS" to "300000",
           "CLICKHOUSE_FAILURE_HOLD_MS" to "45000",
           "CLICKHOUSE_REQUEST_TIMEOUT_MS" to "7000",
           "CLICKHOUSE_REQUIRED_FOR_READINESS" to "false",
@@ -61,6 +62,7 @@ class HyperliquidConfigTest {
       )
 
     assertEquals(90_000, config.clickHouse.readyMaxAgeMs)
+    assertEquals(300_000, config.clickHouse.tableReadyMaxAgeMs)
     assertEquals(45_000, config.clickHouse.failureHoldMs)
     assertEquals(7_000, config.clickHouse.requestTimeoutMs)
     assertFalse(config.clickHouse.requiredForReadiness)
@@ -70,6 +72,20 @@ class HyperliquidConfigTest {
     assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
     assertEquals(120_000, config.readyEventMaxAgeMs)
     assertEquals(180_000, config.kafkaReadyMaxAgeMs)
+  }
+
+  @Test
+  fun `defaults clickhouse table freshness to a wider catchup window`() {
+    val config =
+      HyperliquidConfig.fromEnv(
+        mapOf(
+          "KAFKA_SASL_PASSWORD" to "secret",
+          "CLICKHOUSE_PASSWORD" to "secret",
+        ),
+      )
+
+    assertEquals(120_000, config.clickHouse.readyMaxAgeMs)
+    assertEquals(300_000, config.clickHouse.tableReadyMaxAgeMs)
   }
 
   @Test
