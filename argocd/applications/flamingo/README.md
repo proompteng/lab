@@ -103,7 +103,7 @@ kubectl -n flamingo run flamingo-smoke \
     curl -fsS http://flamingo.flamingo.svc.cluster.local/v1/models &&
     curl -fsS http://flamingo.flamingo.svc.cluster.local/v1/chat/completions \
       -H "Content-Type: application/json" \
-      -d "{\"model\":\"qwen36-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"max_tokens\":8,\"temperature\":0}"
+      -d "{\"model\":\"qwen36-flamingo\",\"messages\":[{\"role\":\"user\",\"content\":\"Return only the word ready.\"}],\"chat_template_kwargs\":{\"enable_thinking\":false},\"max_tokens\":16,\"temperature\":0}"
   '
 ```
 
@@ -111,6 +111,10 @@ Tailnet:
 
 ```bash
 curl -fsS http://flamingo.ide-newton.ts.net/v1/models
+curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen36-flamingo","messages":[{"role":"user","content":"Say flamingo-ok."}],"chat_template_kwargs":{"enable_thinking":false},"max_tokens":16,"temperature":0}' \
+  | jq -e '.choices[0].message.content | contains("flamingo-ok")'
 ```
 
 Tool-call smoke:
@@ -126,13 +130,15 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
       "function": {
         "name": "add",
         "description": "Add two integers.",
+        "strict": true,
         "parameters": {
           "type": "object",
           "properties": {
             "a": {"type": "integer"},
             "b": {"type": "integer"}
           },
-          "required": ["a", "b"]
+          "required": ["a", "b"],
+          "additionalProperties": false
         }
       }
     }],
