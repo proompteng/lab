@@ -246,7 +246,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
             session.commit()
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             sources = runner._load_sources_from_db(["paper-completed", "paper-running"])

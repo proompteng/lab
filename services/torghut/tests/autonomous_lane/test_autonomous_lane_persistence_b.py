@@ -29,7 +29,7 @@ from tests.autonomous_lane.autonomous_lane_support import (
 
 class TestAutonomousLanePersistenceB(AutonomousLaneTestCaseBase):
     @patch(
-        "app.trading.autonomy.lane.evaluate_promotion_prerequisites",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_promotion_prerequisites",
         return_value=PromotionPrerequisiteResult(
             allowed=True,
             reasons=[],
@@ -42,7 +42,7 @@ class TestAutonomousLanePersistenceB(AutonomousLaneTestCaseBase):
         ),
     )
     @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_rollback_readiness",
         return_value=RollbackReadinessResult(
             ready=True,
             reasons=[],
@@ -51,7 +51,7 @@ class TestAutonomousLanePersistenceB(AutonomousLaneTestCaseBase):
         ),
     )
     @patch(
-        "app.trading.autonomy.lane.evaluate_gate_matrix",
+        "app.trading.autonomy.lane_candidate_phase_execution.evaluate_gate_matrix",
         return_value=GateEvaluationReport(
             policy_version="v3-gates-1",
             promotion_target="paper",
@@ -77,7 +77,7 @@ class TestAutonomousLanePersistenceB(AutonomousLaneTestCaseBase):
         ),
     )
     @patch(
-        "app.trading.autonomy.lane.build_promotion_recommendation",
+        "app.trading.autonomy.lane_gate_spec_phase.build_promotion_recommendation",
         return_value=PromotionRecommendation(
             action="promote",
             requested_mode="paper",
@@ -870,11 +870,11 @@ class TestAutonomousLanePersistenceB(AutonomousLaneTestCaseBase):
                 code_version="test-sha",
             )
             with patch(
-                "app.trading.autonomy.lane.evaluate_gate_matrix",
+                "app.trading.autonomy.lane_candidate_phase_execution.evaluate_gate_matrix",
                 return_value=forced_gate,
             ):
                 with patch(
-                    "app.trading.autonomy.lane.build_promotion_recommendation",
+                    "app.trading.autonomy.lane_gate_spec_phase.build_promotion_recommendation",
                     return_value=PromotionRecommendation(
                         action="promote",
                         requested_mode="paper",

@@ -12,6 +12,7 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     patch,
     runner,
 )
+from scripts.whitepaper_autoresearch_runner import replay_shards
 
 
 class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -51,7 +52,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args.real_replay_retry_timeout_seconds = 0
             args.real_replay_retry_max_frontier_candidates_per_spec = 2
             with patch.object(
-                runner, "_execute_real_replay_shard", side_effect=fake_execute
+                replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
                     runner._retry_real_replay_failed_shard_specs(
@@ -114,7 +115,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args = self._args(Path(tmpdir) / "epoch")
             args.real_replay_failed_spec_retries = 2
             with patch.object(
-                runner, "_execute_real_replay_shard", side_effect=fake_execute
+                replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
                     runner._retry_real_replay_failed_shard_specs(
@@ -280,8 +281,10 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 return list(cast(Sequence[_FakeFuture], list(futures)))[::-1]
 
             with (
-                patch.object(runner, "ProcessPoolExecutor", _FakeExecutor),
-                patch.object(runner, "as_completed", side_effect=fake_as_completed),
+                patch.object(replay_shards, "ProcessPoolExecutor", _FakeExecutor),
+                patch.object(
+                    replay_shards, "as_completed", side_effect=fake_as_completed
+                ),
             ):
                 result = runner._run_real_replay_shards(
                     args=args,
@@ -294,7 +297,10 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         self.assertEqual(workers_seen, [2])
         self.assertEqual(len(submitted), 3)
         self.assertTrue(
-            all(fn is runner._execute_real_replay_shard for fn, _plan in submitted)
+            all(
+                fn is replay_shards._execute_real_replay_shard
+                for fn, _plan in submitted
+            )
         )
         self.assertEqual(
             [item["shard_index"] for item in result.replay_results],

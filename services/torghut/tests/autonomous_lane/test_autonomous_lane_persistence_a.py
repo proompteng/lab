@@ -87,7 +87,7 @@ class TestAutonomousLanePersistenceA(AutonomousLaneTestCaseBase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch(
-                "app.trading.autonomy.lane._build_candidate_state_payload",
+                "app.trading.autonomy.lane_candidate_phase_execution._build_candidate_state_payload",
                 side_effect=invalid_candidate_state,
             ):
                 output_dir = Path(tmpdir) / "lane-invalid-readiness"
@@ -158,7 +158,7 @@ class TestAutonomousLanePersistenceA(AutonomousLaneTestCaseBase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch(
-                "app.trading.autonomy.lane._build_candidate_state_payload",
+                "app.trading.autonomy.lane_candidate_phase_execution._build_candidate_state_payload",
                 side_effect=malformed_candidate_state,
             ):
                 output_dir = Path(tmpdir) / "lane-malformed-readiness"
@@ -228,7 +228,7 @@ class TestAutonomousLanePersistenceA(AutonomousLaneTestCaseBase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch(
-                "app.trading.autonomy.lane._build_candidate_state_payload",
+                "app.trading.autonomy.lane_candidate_phase_execution._build_candidate_state_payload",
                 side_effect=stale_candidate_state,
             ):
                 output_dir = Path(tmpdir) / "lane-stale-readiness"
@@ -289,7 +289,7 @@ class TestAutonomousLanePersistenceA(AutonomousLaneTestCaseBase):
             self.assertIn("- head: agentruns/notes-check", note_body)
 
     @patch(
-        "app.trading.autonomy.lane.evaluate_rollback_readiness",
+        "app.trading.autonomy.lane_gate_spec_phase.evaluate_rollback_readiness",
         return_value=RollbackReadinessResult(
             ready=False,
             reasons=["rollback_checks_missing_or_failed"],

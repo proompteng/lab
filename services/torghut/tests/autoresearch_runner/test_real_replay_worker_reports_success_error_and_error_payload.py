@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 import scripts.compile_whitepaper_claims as claim_compiler_script
 import scripts.run_whitepaper_autoresearch_profit_target as runner
+from scripts.whitepaper_autoresearch_runner import replay_execution
+from scripts.whitepaper_autoresearch_runner import replay_shards
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
-    _FakeSigalrmSignal,
 )
 
 
@@ -38,13 +39,15 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             replay_results=({"status": "ok"},),
         )
         success_queue = CaptureQueue()
-        with patch.object(runner, "_run_real_replay", return_value=expected):
+        with patch.object(replay_execution, "_run_real_replay", return_value=expected):
             runner._real_replay_worker(success_queue, args, "worker-output", (spec,))
         self.assertEqual(success_queue.items, [("ok", expected)])
 
         error_queue = CaptureQueue()
         with patch.object(
-            runner, "_run_real_replay", side_effect=ValueError("worker-failed")
+            replay_execution,
+            "_run_real_replay",
+            side_effect=ValueError("worker-failed"),
         ):
             runner._real_replay_worker(error_queue, args, "worker-output", (spec,))
         self.assertEqual(error_queue.items[0][0], "error")
@@ -52,7 +55,9 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
 
         payload_queue = CaptureQueue(fail_error_put=True)
         with patch.object(
-            runner, "_run_real_replay", side_effect=ValueError("worker-failed")
+            replay_execution,
+            "_run_real_replay",
+            side_effect=ValueError("worker-failed"),
         ):
             runner._real_replay_worker(payload_queue, args, "worker-output", (spec,))
         self.assertEqual(
@@ -357,9 +362,21 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args.real_replay_failed_spec_retries = 1
             args.real_replay_retry_timeout_seconds = 11
             args.real_replay_retry_max_frontier_candidates_per_spec = 1
-            with (
-                patch.object(runner, "signal", _FakeSigalrmSignal()),
-                patch.object(runner, "_run_real_replay", side_effect=fake_replay),
+
+            def fake_replay_once(
+                args: Namespace,
+                *,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+                timeout_seconds: int,
+            ) -> runner.EpochReplayResult:
+                _ = timeout_seconds
+                return fake_replay(args, output_dir=output_dir, specs=specs)
+
+            with patch.object(
+                replay_shards,
+                "_run_real_replay_once_with_optional_timeout",
+                side_effect=fake_replay_once,
             ):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,
@@ -448,7 +465,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args.real_replay_retry_timeout_seconds = 0
             args.real_replay_retry_max_frontier_candidates_per_spec = 2
             with patch.object(
-                runner, "_execute_real_replay_shard", side_effect=fake_execute
+                replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
                     runner._retry_real_replay_failed_shard_specs(
@@ -511,7 +528,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args = self._args(Path(tmpdir) / "epoch")
             args.real_replay_failed_spec_retries = 2
             with patch.object(
-                runner, "_execute_real_replay_shard", side_effect=fake_execute
+                replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
                     runner._retry_real_replay_failed_shard_specs(
@@ -677,8 +694,10 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 return list(cast(Sequence[_FakeFuture], list(futures)))[::-1]
 
             with (
-                patch.object(runner, "ProcessPoolExecutor", _FakeExecutor),
-                patch.object(runner, "as_completed", side_effect=fake_as_completed),
+                patch.object(replay_shards, "ProcessPoolExecutor", _FakeExecutor),
+                patch.object(
+                    replay_shards, "as_completed", side_effect=fake_as_completed
+                ),
             ):
                 result = runner._run_real_replay_shards(
                     args=args,
@@ -691,7 +710,10 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         self.assertEqual(workers_seen, [2])
         self.assertEqual(len(submitted), 3)
         self.assertTrue(
-            all(fn is runner._execute_real_replay_shard for fn, _plan in submitted)
+            all(
+                fn is replay_shards._execute_real_replay_shard
+                for fn, _plan in submitted
+            )
         )
         self.assertEqual(
             [item["shard_index"] for item in result.replay_results],

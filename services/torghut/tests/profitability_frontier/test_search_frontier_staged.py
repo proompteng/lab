@@ -130,18 +130,18 @@ class TestSearchFrontierStaged(SearchConsistentProfitabilityFrontierTestCaseBase
 
             with (
                 patch(
-                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    "scripts.consistent_profitability_frontier.workflow_setup._resolve_recent_trading_days",
                     return_value=recent_days,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    "scripts.consistent_profitability_frontier.workflow_setup.build_dataset_snapshot_receipt",
                     return_value=snapshot_receipt,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                    "scripts.consistent_profitability_frontier.workflow_setup.ensure_fresh_snapshot"
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    "scripts.consistent_profitability_frontier.workflow_orchestration.run_replay",
                     side_effect=fake_run_replay,
                 ),
             ):
@@ -296,18 +296,18 @@ class TestSearchFrontierStaged(SearchConsistentProfitabilityFrontierTestCaseBase
 
             with (
                 patch(
-                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    "scripts.consistent_profitability_frontier.workflow_setup._resolve_recent_trading_days",
                     return_value=recent_days,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    "scripts.consistent_profitability_frontier.workflow_setup.build_dataset_snapshot_receipt",
                     return_value=snapshot_receipt,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                    "scripts.consistent_profitability_frontier.workflow_setup.ensure_fresh_snapshot"
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    "scripts.consistent_profitability_frontier.workflow_orchestration.run_replay",
                     side_effect=fake_run_replay,
                 ),
             ):
@@ -449,18 +449,18 @@ class TestSearchFrontierStaged(SearchConsistentProfitabilityFrontierTestCaseBase
 
             with (
                 patch(
-                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    "scripts.consistent_profitability_frontier.workflow_setup._resolve_recent_trading_days",
                     return_value=recent_days,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    "scripts.consistent_profitability_frontier.workflow_setup.build_dataset_snapshot_receipt",
                     return_value=snapshot_receipt,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                    "scripts.consistent_profitability_frontier.workflow_setup.ensure_fresh_snapshot"
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    "scripts.consistent_profitability_frontier.workflow_orchestration.run_replay",
                     side_effect=fake_run_replay,
                 ),
             ):
@@ -541,18 +541,18 @@ class TestSearchFrontierStaged(SearchConsistentProfitabilityFrontierTestCaseBase
 
             with (
                 patch(
-                    "scripts.search_consistent_profitability_frontier._resolve_recent_trading_days",
+                    "scripts.consistent_profitability_frontier.workflow_setup._resolve_recent_trading_days",
                     return_value=recent_days,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.build_dataset_snapshot_receipt",
+                    "scripts.consistent_profitability_frontier.workflow_setup.build_dataset_snapshot_receipt",
                     return_value=snapshot_receipt,
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.ensure_fresh_snapshot"
+                    "scripts.consistent_profitability_frontier.workflow_setup.ensure_fresh_snapshot"
                 ),
                 patch(
-                    "scripts.search_consistent_profitability_frontier.run_replay",
+                    "scripts.consistent_profitability_frontier.workflow_orchestration.run_replay",
                     side_effect=fake_run_replay,
                 ),
             ):

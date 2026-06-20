@@ -155,7 +155,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     return_value={"run_id": "run-ledger-artifact"},
                 ) as persist_windows,
                 patch(
-                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                     return_value=fake_session,
                 ),
                 patch("builtins.print"),
@@ -310,7 +310,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 return_value={"run_id": "run-durable-ledger"},
             ) as persist_windows,
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                 return_value=fake_session,
             ),
             patch("builtins.print"),
@@ -446,7 +446,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 return_value={"run_id": "run-source-ledger"},
             ) as persist_windows,
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                 return_value=fake_session,
             ),
             patch("builtins.print"),
@@ -618,7 +618,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                 return_value={"run_id": "run-observed-clean"},
             ) as persist_windows,
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                 return_value=fake_session,
             ),
             patch("builtins.print"),
@@ -744,7 +744,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     return_value={"run_id": "run-depth"},
                 ) as persist_windows,
                 patch(
-                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                     return_value=fake_session,
                 ),
                 patch("builtins.print"),
@@ -847,7 +847,7 @@ class TestRuntimeWindowImportMainB(RuntimeWindowImportTestCaseBase):
                     return_value={"run_id": "run-report-pnl"},
                 ) as persist_windows,
                 patch(
-                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                     return_value=fake_session,
                 ),
                 patch("builtins.print"),

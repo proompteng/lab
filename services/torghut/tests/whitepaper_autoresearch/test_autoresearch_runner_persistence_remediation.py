@@ -20,6 +20,7 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     runner,
     select,
 )
+from scripts.whitepaper_autoresearch_runner import replay_execution, run_reporting
 
 
 class TestAutoresearchRunnerPersistenceRemediation(
@@ -216,7 +217,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
             TemporaryDirectory() as tmpdir,
             _compact_recent_whitepaper_sources(4),
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -274,7 +275,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             for epoch_id in ("epoch-repeat-1", "epoch-repeat-2"):
@@ -332,7 +333,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             runner._persist_epoch_ledgers(
@@ -422,7 +423,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             runner._persist_epoch_ledgers(
@@ -481,7 +482,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
         completed_at = datetime(2026, 5, 8, 17, 1, 0)
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
             runner._persist_epoch_ledgers(
@@ -542,7 +543,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -595,7 +596,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
         with (
             TemporaryDirectory() as tmpdir,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=RuntimeError("db offline"),
             ),
         ):
@@ -691,12 +692,12 @@ class TestAutoresearchRunnerPersistenceRemediation(
                 ),
             ),
             patch.object(
-                runner,
+                replay_execution,
                 "_run_real_replay",
                 side_effect=RuntimeError("forced replay failure"),
             ),
             patch.object(
-                runner,
+                run_reporting,
                 "_collect_partial_real_replay",
                 return_value=runner.EpochReplayResult(
                     evidence_bundles=(

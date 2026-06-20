@@ -1,4 +1,4 @@
-"""Run Torghut's file-length gate with the current extracted-source allowlist."""
+"""Run Torghut's file-length gate."""
 
 from __future__ import annotations
 
@@ -17,14 +17,6 @@ _PYLINT_MESSAGE_RE = re.compile(
 _PYLINT_FILE_LENGTH_RE = re.compile(
     r"Too many lines in module \((?P<actual>\d+)/(?P<limit>\d+)\)"
 )
-# PR 10945 turned these generated payloads into real modules. Later cleanup PRs
-# should split them; until then, keep the gate blocking every other long file.
-_TRANSITIONAL_EXTRACTED_SOURCE_PATHS = {
-    "app/trading/autonomy/lane.py",
-    "scripts/import_hypothesis_runtime_windows.py",
-    "scripts/run_whitepaper_autoresearch_profit_target.py",
-    "scripts/search_consistent_profitability_frontier.py",
-}
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -37,7 +29,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("files", nargs="+", help="Paths to pass to Pylint")
     args = parser.parse_args(argv)
 
-    extracted_paths = _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
     pylint_output = _run(
         [
             sys.executable,
@@ -51,9 +42,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         check=False,
     )
     ignored_explicit_all_paths: set[str] = set()
-    messages = _filter_legacy_extracted_messages(
+    messages = _filter_file_length_messages(
         pylint_output.stdout,
-        extracted_paths=extracted_paths,
         module_root=Path.cwd(),
         ignored_explicit_all_paths=ignored_explicit_all_paths,
     )
@@ -62,11 +52,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         for message in messages:
             print(message)
         return 16
-    if extracted_paths:
-        print(
-            "Ignored legacy source-segment length debt for: "
-            + ", ".join(sorted(extracted_paths))
-        )
     if ignored_explicit_all_paths:
         print(
             "Ignored explicit __all__ declaration lines for: "
@@ -76,10 +61,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 0
 
 
-def _filter_legacy_extracted_messages(
+def _filter_file_length_messages(
     output: str,
     *,
-    extracted_paths: set[str],
     module_root: Path | None = None,
     ignored_explicit_all_paths: set[str] | None = None,
 ) -> list[str]:
@@ -91,8 +75,6 @@ def _filter_legacy_extracted_messages(
         if match.group("code") != "C0302":
             continue
         path = match.group("path")
-        if path in extracted_paths:
-            continue
         if module_root is not None and _fits_after_explicit_all_declarations(
             line,
             path=path,

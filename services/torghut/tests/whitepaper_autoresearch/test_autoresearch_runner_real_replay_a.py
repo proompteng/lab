@@ -7,11 +7,12 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Sequence,
     TemporaryDirectory,
     WhitepaperAutoresearchRunnerTestCaseBase,
-    _FakeSigalrmSignal,
     claim_compiler_script,
     patch,
     runner,
 )
+from scripts.whitepaper_autoresearch_runner import replay_execution
+from scripts.whitepaper_autoresearch_runner import replay_shards
 
 
 class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -63,9 +64,21 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             args.real_replay_shard_timeout_seconds = 7
             args.real_replay_shard_workers = 1
             args.real_replay_failed_spec_retries = 0
-            with (
-                patch.object(runner, "signal", _FakeSigalrmSignal()),
-                patch.object(runner, "_run_real_replay", side_effect=fake_replay),
+
+            def fake_replay_once(
+                args: Namespace,
+                *,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+                timeout_seconds: int,
+            ) -> runner.EpochReplayResult:
+                _ = timeout_seconds
+                return fake_replay(args, output_dir=output_dir, specs=specs)
+
+            with patch.object(
+                replay_shards,
+                "_run_real_replay_once_with_optional_timeout",
+                side_effect=fake_replay_once,
             ):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,
@@ -115,9 +128,9 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             )
 
             with (
-                patch.object(runner, "signal", object()),
+                patch.object(replay_execution, "signal", object()),
                 patch.object(
-                    runner,
+                    replay_execution,
                     "_run_real_replay_once_in_child_process",
                     return_value=runner.EpochReplayResult(
                         evidence_bundles=(bundle,),
@@ -237,13 +250,15 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             replay_results=({"status": "ok"},),
         )
         success_queue = CaptureQueue()
-        with patch.object(runner, "_run_real_replay", return_value=expected):
+        with patch.object(replay_execution, "_run_real_replay", return_value=expected):
             runner._real_replay_worker(success_queue, args, "worker-output", (spec,))
         self.assertEqual(success_queue.items, [("ok", expected)])
 
         error_queue = CaptureQueue()
         with patch.object(
-            runner, "_run_real_replay", side_effect=ValueError("worker-failed")
+            replay_execution,
+            "_run_real_replay",
+            side_effect=ValueError("worker-failed"),
         ):
             runner._real_replay_worker(error_queue, args, "worker-output", (spec,))
         self.assertEqual(error_queue.items[0][0], "error")
@@ -251,7 +266,9 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
 
         payload_queue = CaptureQueue(fail_error_put=True)
         with patch.object(
-            runner, "_run_real_replay", side_effect=ValueError("worker-failed")
+            replay_execution,
+            "_run_real_replay",
+            side_effect=ValueError("worker-failed"),
         ):
             runner._real_replay_worker(payload_queue, args, "worker-output", (spec,))
         self.assertEqual(
@@ -556,9 +573,21 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             args.real_replay_failed_spec_retries = 1
             args.real_replay_retry_timeout_seconds = 11
             args.real_replay_retry_max_frontier_candidates_per_spec = 1
-            with (
-                patch.object(runner, "signal", _FakeSigalrmSignal()),
-                patch.object(runner, "_run_real_replay", side_effect=fake_replay),
+
+            def fake_replay_once(
+                args: Namespace,
+                *,
+                output_dir: Path,
+                specs: Sequence[runner.CandidateSpec],
+                timeout_seconds: int,
+            ) -> runner.EpochReplayResult:
+                _ = timeout_seconds
+                return fake_replay(args, output_dir=output_dir, specs=specs)
+
+            with patch.object(
+                replay_shards,
+                "_run_real_replay_once_with_optional_timeout",
+                side_effect=fake_replay_once,
             ):
                 result = runner._run_replay_with_optional_timeout(
                     args=args,

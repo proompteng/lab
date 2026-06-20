@@ -89,7 +89,7 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                     ),
                 ),
                 patch(
-                    "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                    "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                     return_value=_FakeSession(),
                 ),
                 patch.dict("os.environ", {}, clear=True),
@@ -162,7 +162,7 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                 return_value={"run_id": "run-1"},
             ) as persist_windows,
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                 return_value=fake_session,
             ),
             patch("builtins.print"),
@@ -454,7 +454,7 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                 return_value={"run_id": "run-probation"},
             ) as persist_windows,
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
                 return_value=fake_session,
             ),
             patch("builtins.print"),
@@ -532,7 +532,7 @@ class TestRuntimeWindowImportMainA(RuntimeWindowImportTestCaseBase):
                 "scripts.import_hypothesis_runtime_windows.persist_observed_runtime_windows",
             ) as persist_windows,
             patch(
-                "scripts.import_hypothesis_runtime_windows.SessionLocal",
+                "scripts.hypothesis_runtime_window_import.cli_parsing.SessionLocal",
             ) as session_local,
             patch("builtins.print") as print_mock,
         ):

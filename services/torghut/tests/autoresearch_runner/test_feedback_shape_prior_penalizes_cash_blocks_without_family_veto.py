@@ -169,7 +169,7 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):

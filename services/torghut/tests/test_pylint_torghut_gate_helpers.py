@@ -4,8 +4,7 @@ import subprocess
 
 from scripts import run_pylint_torghut_file_length_gate as file_length_gate
 from scripts.run_pylint_torghut_file_length_gate import (
-    _TRANSITIONAL_EXTRACTED_SOURCE_PATHS,
-    _filter_legacy_extracted_messages,
+    _filter_file_length_messages,
 )
 from scripts.run_pylint_torghut_quality_diff_gate import _source_literal_lines
 
@@ -18,7 +17,7 @@ def test_source_literal_lines_decodes_generated_payload_lines() -> None:
     assert lines == {"def hidden() -> int:", "return 42"}
 
 
-def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
+def test_file_length_filter_blocks_every_long_module() -> None:
     output = "\n".join(
         (
             "app/trading/autonomy/lane.py:1:0: C0302: Too many lines in module (8088/1000) (too-many-lines)",
@@ -26,23 +25,17 @@ def test_file_length_filter_ignores_only_extracted_source_paths() -> None:
         )
     )
 
-    messages = _filter_legacy_extracted_messages(
+    messages = _filter_file_length_messages(
         output,
-        extracted_paths={"app/trading/autonomy/lane.py"},
     )
 
     assert messages == [
-        "app/trading/new_long_module.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)"
+        "app/trading/autonomy/lane.py:1:0: C0302: Too many lines in module (8088/1000) (too-many-lines)",
+        "app/trading/new_long_module.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)",
     ]
 
 
-def test_file_length_filter_carries_transitional_extracted_source_baseline() -> None:
-    assert "app/trading/research_sleeves.py" not in _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
-    assert (
-        "app/trading/discovery/candidate_specs.py"
-        not in _TRANSITIONAL_EXTRACTED_SOURCE_PATHS
-    )
-
+def test_file_length_filter_no_longer_carries_transitional_baseline() -> None:
     output = "\n".join(
         (
             "scripts/run_whitepaper_autoresearch_profit_target.py:1:0: C0302: Too many lines in module (13541/1000) (too-many-lines)",
@@ -50,13 +43,11 @@ def test_file_length_filter_carries_transitional_extracted_source_baseline() -> 
         )
     )
 
-    messages = _filter_legacy_extracted_messages(
-        output,
-        extracted_paths=_TRANSITIONAL_EXTRACTED_SOURCE_PATHS,
-    )
+    messages = _filter_file_length_messages(output)
 
     assert messages == [
-        "scripts/new_long_tool.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)"
+        "scripts/run_whitepaper_autoresearch_profit_target.py:1:0: C0302: Too many lines in module (13541/1000) (too-many-lines)",
+        "scripts/new_long_tool.py:1:0: C0302: Too many lines in module (1200/1000) (too-many-lines)",
     ]
 
 
@@ -81,9 +72,8 @@ def test_file_length_filter_ignores_static_explicit_all_declarations(tmp_path) -
     )
 
     ignored_paths: set[str] = set()
-    messages = _filter_legacy_extracted_messages(
+    messages = _filter_file_length_messages(
         output,
-        extracted_paths=set(),
         module_root=tmp_path,
         ignored_explicit_all_paths=ignored_paths,
     )
@@ -110,9 +100,8 @@ def test_file_length_filter_keeps_dynamic_all_declarations(tmp_path) -> None:
         "C0302: Too many lines in module (3/2) (too-many-lines)"
     )
 
-    messages = _filter_legacy_extracted_messages(
+    messages = _filter_file_length_messages(
         output,
-        extracted_paths=set(),
         module_root=tmp_path,
     )
 
@@ -122,15 +111,14 @@ def test_file_length_filter_keeps_dynamic_all_declarations(tmp_path) -> None:
 def test_file_length_filter_ignores_non_length_pylint_messages() -> None:
     output = "app/trading/noisy.py:1:0: F0001: No module named app/trading/noisy.py"
 
-    messages = _filter_legacy_extracted_messages(
+    messages = _filter_file_length_messages(
         output,
-        extracted_paths=set(),
     )
 
     assert messages == []
 
 
-def test_file_length_main_uses_transitional_extracted_source_baseline(
+def test_file_length_main_blocks_legacy_extracted_source_debt(
     monkeypatch,
     capsys,
 ) -> None:
@@ -156,5 +144,5 @@ def test_file_length_main_uses_transitional_extracted_source_baseline(
         ]
     )
 
-    assert result == 0
-    assert "No blocking Pylint file-length violations." in capsys.readouterr().out
+    assert result == 16
+    assert "Pylint file-length violations:" in capsys.readouterr().out

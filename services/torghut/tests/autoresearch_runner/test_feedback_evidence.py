@@ -12,6 +12,8 @@ from unittest.mock import patch
 from sqlalchemy.orm import Session
 
 import scripts.run_whitepaper_autoresearch_profit_target as runner
+from scripts.whitepaper_autoresearch_runner import proposal_building
+from scripts.whitepaper_autoresearch_runner import proposal_training
 from app.models import (
     AutoresearchCandidateSpec,
     AutoresearchEpoch,
@@ -61,10 +63,17 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
                 steps=2,
             )
 
-        with patch.object(
-            runner,
-            "train_mlx_ranker",
-            side_effect=capture_train_mlx_ranker,
+        with (
+            patch.object(
+                proposal_building,
+                "train_mlx_ranker",
+                side_effect=capture_train_mlx_ranker,
+            ),
+            patch.object(
+                proposal_training,
+                "train_mlx_ranker",
+                side_effect=capture_train_mlx_ranker,
+            ),
         ):
             runner._pre_replay_proposal_model_and_rows(
                 specs=specs,
@@ -421,7 +430,7 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -472,7 +481,7 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -609,7 +618,7 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
 
     def test_feedback_evidence_persisted_loader_reports_unavailable_store(self) -> None:
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+            "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=RuntimeError("db unavailable"),
         ):
             loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
@@ -640,7 +649,7 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
@@ -757,7 +766,7 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
         with (
             Session(self.engine) as session,
             patch(
-                "scripts.run_whitepaper_autoresearch_profit_target.SessionLocal",
+                "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
                 side_effect=lambda: Session(self.engine),
             ),
         ):
