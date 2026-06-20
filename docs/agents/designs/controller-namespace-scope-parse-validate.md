@@ -51,10 +51,10 @@ Support exactly:
 
 ## Config Mapping
 
-| Helm value              | Env var                               | Intended behavior                              |
-| ----------------------- | ------------------------------------- | ---------------------------------------------- |
+| Helm value              | Env var                        | Intended behavior                              |
+| ----------------------- | ------------------------------ | ---------------------------------------------- |
 | `controller.namespaces` | `AGENTS_CONTROLLER_NAMESPACES` | Canonical scope for agents reconciliation.     |
-| `controller.namespaces` | `AGENTS_PRIMITIVES_NAMESPACES`        | Canonical scope for primitives reconciliation. |
+| `controller.namespaces` | `AGENTS_PRIMITIVES_NAMESPACES` | Canonical scope for primitives reconciliation. |
 
 ## Rollout Plan
 

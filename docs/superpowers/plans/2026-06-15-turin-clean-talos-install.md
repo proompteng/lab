@@ -52,6 +52,7 @@
 ### Task 1: Confirm Maintenance-Mode Hardware Inventory
 
 **Files:**
+
 - Read: `devices/turin/docs/cluster-join-plan.md`
 - Read: `argocd/applications/rook-ceph/cluster-values.yaml`
 
@@ -114,6 +115,7 @@ If this file points at any raw `/dev/nvmeXn1` path or the Kingston by-id path, s
 ### Task 2: Confirm Existing Cluster Control Plane Before Join
 
 **Files:**
+
 - Read: `docs/runbooks/galactic-kubernetes-access.md`
 - Read: `devices/galactic/docs/add-control-plane-node.md`
 
@@ -177,6 +179,7 @@ no Ceph purge or Rook storage manifest change is made in this phase
 ### Task 3: Clean the Local Install Inputs Before Any Apply
 
 **Files:**
+
 - Modify after approval: `devices/turin/manifests/hostname.patch.yaml`
 - Remove after approval: `devices/turin/manifests/tailscale-lan-policy-route.patch.yaml`
 - Review: `devices/turin/manifests/tailscale-dns.patch.yaml`
@@ -273,6 +276,7 @@ machine:
 ### Task 4: Validate Talos Config Locally and Against Maintenance API
 
 **Files:**
+
 - Read without printing: `devices/turin/controlplane.yaml`
 - Read: `devices/turin/manifests/installer-image.tailscale-nvidia-lts.patch.yaml`
 - Read: `devices/turin/manifests/install-orico-13cbmek6hew8cn2x9akw.patch.yaml`
@@ -336,6 +340,7 @@ If dry-run fails, stop. Do not switch to another NIC, do not route-patch the liv
 ### Task 5: Apply the Clean Install Once
 
 **Files:**
+
 - Apply from: `devices/turin/controlplane.yaml`
 - Apply patches listed in Task 4 only
 
@@ -389,6 +394,7 @@ If the apply command fails, stop and capture the exact error. Do not retry with 
 ### Task 6: Monitor First Boot Without Mutating
 
 **Files:**
+
 - Use Talos client config: `devices/turin/talosconfig`
 
 - [ ] **Step 1: Watch local Talos state on the LAN address**
@@ -434,6 +440,7 @@ kubelet is running or the logs provide the first concrete blocker
 ### Task 7: Validate Join, Tailscale, and Node IP Selection
 
 **Files:**
+
 - Read: `devices/turin/manifests/etcd-lan-subnet.patch.yaml`
 - Read: `devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml`
 
@@ -494,6 +501,7 @@ logs show login/control-plane success without accepting DNS from Tailscale
 ### Task 8: Validate NVIDIA Host Support Before GPU Operator Work
 
 **Files:**
+
 - Read: `devices/turin/docs/nvidia-gpu-on-talos.md`
 - Read: `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml`
 
@@ -534,6 +542,7 @@ Do not deploy or modify GPU Operator manifests until the host driver evidence is
 ### Task 9: Keep Ceph Adoption Separate After OS Install
 
 **Files:**
+
 - Read: `docs/runbooks/rook-ceph-on-talos.md`
 - Read: `argocd/applications/rook-ceph/cluster-values.yaml`
 

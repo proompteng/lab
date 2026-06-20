@@ -20,6 +20,7 @@
 ## Task 1: Confirm Baseline And Protect Serving Path
 
 **Files:**
+
 - Read: `argocd/applications/registry/deployment.yaml`
 - Read: `argocd/applications/registry/pvc.yaml`
 - Read: `argocd/applications/registry/registry-gc-cronjob.yaml`
@@ -78,6 +79,7 @@ curl returns {}
 ## Task 2: Remove Suspended GC Resources From The Argo App
 
 **Files:**
+
 - Modify: `argocd/applications/registry/kustomization.yaml`
 - Delete: `argocd/applications/registry/registry-gc-cronjob.yaml`
 - Delete: `argocd/applications/registry/registry-gc-rbac.yaml`
@@ -135,13 +137,14 @@ rm 'argocd/applications/registry/registry-gc-rbac.yaml'
 ## Task 3: Add Manual Registry GC Runbook
 
 **Files:**
+
 - Create: `docs/registry/manual-garbage-collection.md`
 
 - [ ] **Step 1: Write the manual maintenance runbook**
 
 Create `docs/registry/manual-garbage-collection.md` with:
 
-```markdown
+````markdown
 # Registry Manual Garbage Collection
 
 The `registry` Argo CD app intentionally does not include a suspended garbage-collection CronJob.
@@ -163,6 +166,7 @@ kubectl --context galactic-tailscale -n registry get deploy/registry pod,pvc,end
 kubectl --context galactic-tailscale -n registry get events --sort-by=.lastTimestamp | tail -40
 curl -k -fsS -m 10 https://registry.ide-newton.ts.net/v2/
 ```
+````
 
 Required state:
 
@@ -249,7 +253,8 @@ Required state:
 - Registry endpoint has a ready address.
 - `/v2/` returns `{}`.
 - Argo app remains `Synced/Healthy`.
-```
+
+````
 
 ## Task 4: Validate Render And GitOps Diff Locally
 
@@ -263,7 +268,7 @@ Run:
 
 ```bash
 mise exec helm@3 -- kustomize build --enable-helm argocd/applications/registry > /tmp/registry-render.yaml
-```
+````
 
 Expected:
 
@@ -321,6 +326,7 @@ command exits 0
 ## Task 5: PR, Merge, And Rollout Validation
 
 **Files:**
+
 - Commit: `argocd/applications/registry/kustomization.yaml`
 - Commit deletion: `argocd/applications/registry/registry-gc-cronjob.yaml`
 - Commit deletion: `argocd/applications/registry/registry-gc-rbac.yaml`

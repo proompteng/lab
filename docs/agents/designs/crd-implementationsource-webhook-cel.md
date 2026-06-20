@@ -40,8 +40,8 @@ x-kubernetes-validations:
 
 ## Config Mapping
 
-| Helm value / env var                                      | Effect                 | Behavior                                                                      |
-| --------------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
+| Helm value / env var                               | Effect                 | Behavior                                                                      |
+| -------------------------------------------------- | ---------------------- | ----------------------------------------------------------------------------- |
 | `controller.enabled` / `AGENTS_CONTROLLER_ENABLED` | toggles reconciliation | CEL rules validate at API server on apply, independent of controller runtime. |
 
 ## Rollout Plan

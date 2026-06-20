@@ -96,14 +96,14 @@ Verified live result on 2026-05-13:
 
 ## Deliverable Map
 
-| Requirement                              | Evidence                                                 |
-| ---------------------------------------- | -------------------------------------------------------- |
-| Working product URL or runnable artifact | `https://sag.proompteng.ai`; `services/sag`              |
+| Requirement                              | Evidence                                                                                                  |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Working product URL or runnable artifact | `https://sag.proompteng.ai`; `services/sag`                                                               |
 | Source code                              | `services/sag`, `argocd/sag`, `packages/scripts/src/sag`; PRs `#6452`, `#6453`, `#6454`, `#6455`, `#6456` |
-| PRD, 1-2 pages                           | `docs/secure-action-gateway/prd-submission.md`           |
-| TDD, 1-2 pages                           | `docs/secure-action-gateway/tdd-submission.md`           |
-| 2-5 minute walkthrough                   | `docs/secure-action-gateway/panel-presentation.md`       |
-| Authorship/build note                    | See below                                                |
+| PRD, 1-2 pages                           | `docs/secure-action-gateway/prd-submission.md`                                                            |
+| TDD, 1-2 pages                           | `docs/secure-action-gateway/tdd-submission.md`                                                            |
+| 2-5 minute walkthrough                   | `docs/secure-action-gateway/panel-presentation.md`                                                        |
+| Authorship/build note                    | See below                                                                                                 |
 
 ## Authorship / Build Note
 

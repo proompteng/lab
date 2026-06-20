@@ -9,6 +9,11 @@ image:
 controllers:
   image:
     repository: agents-controller
+  enabled: true
+  replicaCount: 2
+  env:
+    vars:
+      AGENTS_MIGRATIONS: 'auto'
 
 grpc:
   enabled: false
@@ -27,13 +32,6 @@ resources:
   requests:
     cpu: 100m
     memory: 256Mi
-
-controllers:
-  enabled: true
-  replicaCount: 2
-  env:
-    vars:
-      AGENTS_MIGRATIONS: 'auto'
 
 controller:
   leaderElection:

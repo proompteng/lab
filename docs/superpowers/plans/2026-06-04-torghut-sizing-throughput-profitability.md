@@ -146,6 +146,7 @@
 ### Task 1: Finish Stale Exit Retry Rollout
 
 **Files:**
+
 - Modified: `services/torghut/app/trading/scheduler/simple_pipeline.py`
 - Modified: `services/torghut/tests/test_trading_pipeline.py`
 
@@ -192,6 +193,7 @@ Expected after controlled flatten/import readiness: at least one fresh target-so
 ### Task 3: Fail Closed On Unaudited Target-Notional Source Submissions
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/scheduler/simple_pipeline.py`
 - Test: `services/torghut/tests/test_trading_pipeline.py`
 
@@ -223,6 +225,7 @@ Observed: full `tests/test_simple_pipeline.py` passed; focused materialized targ
 ### Task 4: Flatten The Account Without Polluting Proof
 
 **Files:**
+
 - Operational: `services/torghut/scripts/flatten_paper_account_positions.py`
 
 - [ ] **Step 1: Wait for the proof window or configured exit**
@@ -238,6 +241,7 @@ Expected DB readback: latest `position_snapshots.positions` is an empty array or
 ### Task 5: Import June 4 Runtime-Ledger Window
 
 **Files:**
+
 - Operational: `services/torghut/scripts/renew_latest_empirical_promotion_jobs.py`
 
 - [ ] **Step 1: Wait for import readiness**
@@ -299,6 +303,7 @@ Keep `repair_only` and `zero_notional` until closed-window source evidence, TCA,
 ### Task 7: Scale From Runtime-Ledger Expectancy
 
 **Files:**
+
 - Modify if needed: `services/torghut/app/trading/risk.py`
 - Modify if needed: `services/torghut/app/trading/proof_floor.py`
 - Test if modified: `services/torghut/tests/test_profitability_proof_floor.py`

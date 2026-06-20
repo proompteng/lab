@@ -24,6 +24,7 @@
 ## Task 1: Wire Synthesis App Ownership And Secret Reflection
 
 **Files:**
+
 - Modify: `argocd/applications/synthesis/kustomization.yaml`
 - Modify: `argocd/applications/synthesis/synthesis-env-sealedsecret.yaml`
 - Create: `argocd/applications/synthesis/agents-domain/kustomization.yaml`
@@ -53,9 +54,9 @@ spec:
   template:
     metadata:
       annotations:
-        reflector.v1.k8s.emberstack.com/reflection-allowed: "true"
+        reflector.v1.k8s.emberstack.com/reflection-allowed: 'true'
         reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces: agents
-        reflector.v1.k8s.emberstack.com/reflection-auto-enabled: "true"
+        reflector.v1.k8s.emberstack.com/reflection-auto-enabled: 'true'
         reflector.v1.k8s.emberstack.com/reflection-auto-namespaces: agents
       creationTimestamp: null
       name: synthesis-env
@@ -110,6 +111,7 @@ git commit -m "feat(synthesis): wire agentrun resources into gitops app"
 ## Task 2: Add The Synthesis Codex Provider
 
 **Files:**
+
 - Create: `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-agentprovider.yaml`
 
 - [ ] **Step 1: Create the AgentProvider**
@@ -145,10 +147,10 @@ spec:
       key: SYNTHESIS_API_TOKEN
   envTemplate:
     CODEX_LOG_LEVEL: info
-    AGENT_RUN_NAME: "{{agentRun.name}}"
-    AGENT_RUN_NAMESPACE: "{{agentRun.namespace}}"
+    AGENT_RUN_NAME: '{{agentRun.name}}'
+    AGENT_RUN_NAMESPACE: '{{agentRun.namespace}}'
     CODEX_CONFIG: /root/.codex/config.toml
-    CODEX_MAX_SESSION_ATTEMPTS: "3"
+    CODEX_MAX_SESSION_ATTEMPTS: '3'
     CODEX_MODEL: gpt-5.5
     CODEX_MODEL_FALLBACKS: gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
     HOME: /root
@@ -300,6 +302,7 @@ git commit -m "feat(synthesis): add deep alpha codex provider"
 ## Task 3: Add Agent Policy And Research Prompt
 
 **Files:**
+
 - Create: `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-agent.yaml`
 - Create: `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-implspec.yaml`
 
@@ -430,6 +433,7 @@ git commit -m "feat(synthesis): add deep alpha research agent"
 ## Task 4: Add AgentRun Template And Every-3-Hour Schedule
 
 **Files:**
+
 - Create: `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-agentrun-template.yaml`
 - Create: `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-schedule.yaml`
 
@@ -443,7 +447,7 @@ kind: AgentRun
 metadata:
   name: synthesis-deep-alpha-template
   annotations:
-    agents.proompteng.ai/template: "true"
+    agents.proompteng.ai/template: 'true'
 spec:
   agentRef:
     name: synthesis-deep-alpha-agent
@@ -468,7 +472,7 @@ spec:
   workload:
     resources:
       requests:
-        cpu: "1"
+        cpu: '1'
         memory: 2Gi
         ephemeral-storage: 4Gi
       limits:
@@ -489,7 +493,7 @@ metadata:
     app.kubernetes.io/part-of: synthesis
     app.kubernetes.io/component: deep-alpha-agentrun
 spec:
-  cron: "0 */6 * * *"
+  cron: '0 */6 * * *'
   timezone: America/Los_Angeles
   targetRef:
     apiVersion: agents.proompteng.ai/v1alpha1
@@ -519,6 +523,7 @@ git commit -m "feat(synthesis): schedule deep alpha agentrun"
 ## Task 5: Local Validation
 
 **Files:**
+
 - Validate: `argocd/applications/synthesis/**`
 
 - [ ] **Step 1: Render the app**
@@ -581,6 +586,7 @@ Expected: exits `0`.
 ## Task 6: Pull Request And CI
 
 **Files:**
+
 - Use: `.github/PULL_REQUEST_TEMPLATE.md`
 
 - [ ] **Step 1: Create the branch from fresh main before final implementation**
@@ -670,6 +676,7 @@ Expected: all required checks pass.
 ## Task 7: GitOps Rollout Verification
 
 **Files:**
+
 - Verify live cluster state only.
 
 - [ ] **Step 1: Merge after green checks**
@@ -742,6 +749,7 @@ Expected: generateName starts with `synthesis-deep-alpha-every-3h-`, implementat
 ## Task 8: Manual End-To-End Smoke
 
 **Files:**
+
 - Verify live cluster state and Synthesis output.
 
 - [ ] **Step 1: Trigger the schedule runner once**
@@ -820,6 +828,7 @@ Expected: artifact list includes `synthesis-deep-alpha-report`, `runner-log`, an
 ## Task 9: Rollback And Brake Procedure
 
 **Files:**
+
 - Modify only if rollback is needed: `argocd/applications/synthesis/kustomization.yaml`
 - Modify only if rollback is needed: `argocd/applications/synthesis/agents-domain/synthesis-deep-alpha-schedule.yaml`
 

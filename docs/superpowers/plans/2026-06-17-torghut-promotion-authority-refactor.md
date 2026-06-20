@@ -80,6 +80,7 @@ The system needs a single source of truth:
 ### Task 1: Add Canonical Promotion Authority Model
 
 **Files:**
+
 - Create: `services/torghut/app/trading/promotion_authority.py`
 - Create: `services/torghut/tests/trading/test_promotion_authority.py`
 
@@ -334,6 +335,7 @@ git commit -m "refactor(torghut): add canonical promotion authority"
 ### Task 2: Refactor Runtime Authority Verifier To Emit Canonical Fields
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/runtime_authority_verifier_modules/shared_context.py`
 - Test: `services/torghut/tests/verify_trading_readiness/test_ready_paper_status_passes_strict_gate.py`
 
@@ -426,6 +428,7 @@ git commit -m "refactor(torghut): canonicalize runtime authority payload"
 ### Task 3: Refactor Import Plan Source Collection And Paper Probation Targets
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/submission_council_modules/import_plan.py`
 - Test: `services/torghut/tests/submission_council/test_source_collection_candidates.py`
 - Test: `services/torghut/tests/submission_council/test_paper_probation_import_plan.py`
@@ -564,6 +567,7 @@ git commit -m "refactor(torghut): normalize import plan promotion authority"
 ### Task 4: Refactor Target Plan Materialization Producers
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/paper_route_target_plan_modules/materialization.py`
 - Modify: `services/torghut/app/trading/paper_route_target_plan_modules/target_plan.py`
 - Modify: `services/torghut/app/trading/proofs/targets.py`
@@ -695,6 +699,7 @@ git commit -m "refactor(torghut): canonicalize paper target authority"
 ### Task 5: Refactor Scheduler Consumers To Stop Reading Legacy Boolean Soup
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/scheduler/target_plan_helpers_modules/bounded_collection.py`
 - Modify: `services/torghut/app/trading/scheduler/source_collection_modules/decision_helpers.py`
 - Modify: `services/torghut/app/trading/scheduler/source_collection_modules/decision_lineage.py`
@@ -825,6 +830,7 @@ git commit -m "refactor(torghut): consume canonical promotion authority"
 ### Task 6: Refactor Runtime Window Import Blocking Reasons
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/runtime_window_import_modules/common.py`
 - Modify: `services/torghut/app/trading/runtime_window_import_modules/persistence_materialization.py`
 - Test: `services/torghut/tests/run_empirical_promotion_jobs/test_runtime_window_import_a.py`
@@ -932,6 +938,7 @@ git commit -m "refactor(torghut): simplify runtime import authority blockers"
 ### Task 7: Add Static Guard Against Reintroducing Ambiguous Promotion Checks
 
 **Files:**
+
 - Modify: `services/torghut/tests/test_promotion_authority_static_contract.py`
 
 - [ ] **Step 1: Add static contract test**
@@ -1026,6 +1033,7 @@ git commit -m "test(torghut): guard promotion authority compatibility boundary"
 ### Task 8: Update API Evidence And Operator Vocabulary
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/revenue_repair_modules/evidence_summaries.py`
 - Modify: `services/torghut/app/trading/proofs/targets.py`
 - Modify: `docs/torghut/trading/promotion-authority.md`
@@ -1103,6 +1111,7 @@ git commit -m "docs(torghut): define promotion authority vocabulary"
 ### Task 9: Full Validation And PR Rollout
 
 **Files:**
+
 - No new code files; validation only.
 
 - [ ] **Step 1: Run focused promotion authority tests**

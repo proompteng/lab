@@ -44,8 +44,8 @@ The controllers deployment supports an “auth secret” for agentctl gRPC authe
 
 ## Config Mapping
 
-| Helm value                        | Env var                                           | Intended behavior                           |
-| --------------------------------- | ------------------------------------------------- | ------------------------------------------- |
+| Helm value                        | Env var                                    | Intended behavior                           |
+| --------------------------------- | ------------------------------------------ | ------------------------------------------- |
 | `controller.authSecret.name`      | `AGENTS_CONTROLLER_AUTH_SECRET_NAME`       | Enables auth secret loading when non-empty. |
 | `controller.authSecret.key`       | `AGENTS_CONTROLLER_AUTH_SECRET_KEY`        | Secret data key to read.                    |
 | `controller.authSecret.mountPath` | `AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH` | Directory path for mounted secret file.     |

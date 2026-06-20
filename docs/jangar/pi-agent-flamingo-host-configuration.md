@@ -90,9 +90,9 @@ Expected tool-call result:
 Keep Pi's `models.json` budget below the vLLM server context. The current
 production target is 128K server context.
 
-| vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` | Status |
-| ---------------------- | -----------------: | -------------: | ------ |
-| `131072`               |            `98304` |        `32768` | Current |
+| vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` | Status    |
+| ---------------------- | -----------------: | -------------: | --------- |
+| `131072`               |            `98304` |        `32768` | Current   |
 | `196608`               |           `163840` |        `32768` | Candidate |
 | `262144`               |           `229376` |        `32768` | Candidate |
 

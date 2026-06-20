@@ -114,6 +114,7 @@
 ## Task 1: Install Pylint and Record the Starting Debt Inventory
 
 **Files:**
+
 - Modify: `services/torghut/pyproject.toml`
 - Modify: `services/torghut/uv.lock`
 - Create: `docs/torghut/tech-debt/file-length-inventory-2026-06-12.md`
@@ -191,31 +192,31 @@ Starting count above target: 141 Python files.
 
 Top priority files:
 
-| Lines | File | Tranche |
-| ---: | --- | --- |
-| 25175 | `services/torghut/tests/test_trading_pipeline.py` | Scheduler tests |
-| 13613 | `services/torghut/tests/test_run_whitepaper_autoresearch_profit_target.py` | Whitepaper autoresearch tests |
-| 13153 | `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py` | Whitepaper autoresearch script |
-| 11503 | `services/torghut/tests/test_import_hypothesis_runtime_windows.py` | Runtime-window import tests |
-| 10695 | `services/torghut/tests/test_trading_api.py` | API tests |
-| 9942 | `services/torghut/tests/test_start_historical_simulation.py` | Historical simulation tests |
-| 8303 | `services/torghut/scripts/start_historical_simulation.py` | Historical simulation script |
-| 7851 | `services/torghut/scripts/import_hypothesis_runtime_windows.py` | Runtime-window import script |
-| 7621 | `services/torghut/scripts/search_consistent_profitability_frontier.py` | Profitability frontier script |
-| 7424 | `services/torghut/tests/test_search_consistent_profitability_frontier.py` | Profitability frontier tests |
-| 7415 | `services/torghut/app/trading/autonomy/lane.py` | Autonomy runtime |
-| 7271 | `services/torghut/app/trading/discovery/candidate_specs.py` | Candidate spec compiler |
-| 7242 | `services/torghut/tests/test_submission_council.py` | Submission council tests |
-| 6657 | `services/torghut/tests/test_strategy_runtime.py` | Strategy runtime tests |
-| 6425 | `services/torghut/app/trading/autonomy/policy_checks.py` | Policy checks |
-| 6070 | `services/torghut/tests/test_policy_checks.py` | Policy checks tests |
-| 5595 | `services/torghut/tests/test_decisions.py` | Decision tests |
-| 5528 | `services/torghut/tests/test_run_empirical_promotion_jobs.py` | Empirical jobs tests |
-| 5254 | `services/torghut/app/trading/research_sleeves.py` | Research sleeves |
-| 5223 | `services/torghut/tests/test_order_feed.py` | Order-feed tests |
-| 5160 | `services/torghut/app/trading/submission_council.py` | Submission council |
-| 5116 | `services/torghut/app/trading/scheduler/pipeline.py` | Scheduler pipeline |
-| 5003 | `services/torghut/app/whitepapers/workflow.py` | Whitepaper workflow |
+| Lines | File                                                                       | Tranche                        |
+| ----: | -------------------------------------------------------------------------- | ------------------------------ |
+| 25175 | `services/torghut/tests/test_trading_pipeline.py`                          | Scheduler tests                |
+| 13613 | `services/torghut/tests/test_run_whitepaper_autoresearch_profit_target.py` | Whitepaper autoresearch tests  |
+| 13153 | `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py`    | Whitepaper autoresearch script |
+| 11503 | `services/torghut/tests/test_import_hypothesis_runtime_windows.py`         | Runtime-window import tests    |
+| 10695 | `services/torghut/tests/test_trading_api.py`                               | API tests                      |
+|  9942 | `services/torghut/tests/test_start_historical_simulation.py`               | Historical simulation tests    |
+|  8303 | `services/torghut/scripts/start_historical_simulation.py`                  | Historical simulation script   |
+|  7851 | `services/torghut/scripts/import_hypothesis_runtime_windows.py`            | Runtime-window import script   |
+|  7621 | `services/torghut/scripts/search_consistent_profitability_frontier.py`     | Profitability frontier script  |
+|  7424 | `services/torghut/tests/test_search_consistent_profitability_frontier.py`  | Profitability frontier tests   |
+|  7415 | `services/torghut/app/trading/autonomy/lane.py`                            | Autonomy runtime               |
+|  7271 | `services/torghut/app/trading/discovery/candidate_specs.py`                | Candidate spec compiler        |
+|  7242 | `services/torghut/tests/test_submission_council.py`                        | Submission council tests       |
+|  6657 | `services/torghut/tests/test_strategy_runtime.py`                          | Strategy runtime tests         |
+|  6425 | `services/torghut/app/trading/autonomy/policy_checks.py`                   | Policy checks                  |
+|  6070 | `services/torghut/tests/test_policy_checks.py`                             | Policy checks tests            |
+|  5595 | `services/torghut/tests/test_decisions.py`                                 | Decision tests                 |
+|  5528 | `services/torghut/tests/test_run_empirical_promotion_jobs.py`              | Empirical jobs tests           |
+|  5254 | `services/torghut/app/trading/research_sleeves.py`                         | Research sleeves               |
+|  5223 | `services/torghut/tests/test_order_feed.py`                                | Order-feed tests               |
+|  5160 | `services/torghut/app/trading/submission_council.py`                       | Submission council             |
+|  5116 | `services/torghut/app/trading/scheduler/pipeline.py`                       | Scheduler pipeline             |
+|  5003 | `services/torghut/app/whitepapers/workflow.py`                             | Whitepaper workflow            |
 
 Final acceptance: zero scoped Python files over 1000 lines and no inline `too-many-lines` suppressions.
 ```
@@ -224,7 +225,7 @@ Final acceptance: zero scoped Python files over 1000 lines and no inline `too-ma
 
 Add this section to `services/torghut/README.md` after the type-checking section:
 
-```markdown
+````markdown
 ## Pylint file-length guard
 
 Torghut enforces Pylint `too-many-lines / C0302` as the hard module-size gate.
@@ -233,10 +234,12 @@ Torghut enforces Pylint `too-many-lines / C0302` as the hard module-size gate.
 cd services/torghut
 uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
 ```
+````
 
 The limit is configured in `[tool.pylint.format]` as `max-module-lines = 1000`.
 Do not suppress `too-many-lines`; split the module by responsibility instead.
-```
+
+````
 
 - [ ] **Step 6: Verify dependency installation**
 
@@ -246,7 +249,7 @@ Run:
 cd services/torghut
 uv sync --frozen --extra dev
 uv run --frozen pylint --version
-```
+````
 
 Expected: Pylint prints a `4.x` version.
 
@@ -262,6 +265,7 @@ git commit -m "chore(torghut): add pylint file length guard"
 ## Task 2: Add CI Gates Without Hiding the Existing Debt
 
 **Files:**
+
 - Modify: `.github/workflows/torghut-ci.yml`
 - Modify: `services/torghut/README.md`
 
@@ -270,24 +274,24 @@ git commit -m "chore(torghut): add pylint file length guard"
 Add this after the Ruff step in `static-guards`:
 
 ```yaml
-      - name: File length inventory
-        working-directory: services/torghut
-        run: |
-          set -euo pipefail
-          uv run --frozen python - <<'PY'
-          from pathlib import Path
+- name: File length inventory
+  working-directory: services/torghut
+  run: |
+    set -euo pipefail
+    uv run --frozen python - <<'PY'
+    from pathlib import Path
 
-          roots = [Path("app"), Path("scripts"), Path("tests"), Path("migrations")]
-          oversized = []
-          for root in roots:
-              for path in root.rglob("*.py"):
-                  lines = path.read_text(encoding="utf-8").count("\n") + 1
-                  if lines > 1000:
-                      oversized.append((lines, path.as_posix()))
-          for lines, path in sorted(oversized, reverse=True)[:40]:
-              print(f"{lines:6d} {path}")
-          print(f"oversized_python_files={len(oversized)}")
-          PY
+    roots = [Path("app"), Path("scripts"), Path("tests"), Path("migrations")]
+    oversized = []
+    for root in roots:
+        for path in root.rglob("*.py"):
+            lines = path.read_text(encoding="utf-8").count("\n") + 1
+            if lines > 1000:
+                oversized.append((lines, path.as_posix()))
+    for lines, path in sorted(oversized, reverse=True)[:40]:
+        print(f"{lines:6d} {path}")
+    print(f"oversized_python_files={len(oversized)}")
+    PY
 ```
 
 Expected: CI logs the top oversized files but does not pass off the debt as fixed.
@@ -297,9 +301,9 @@ Expected: CI logs the top oversized files but does not pass off the debt as fixe
 Add this step immediately after the inventory step, but do not push it as required on `main` until Task 9 is complete:
 
 ```yaml
-      - name: Pylint file length
-        working-directory: services/torghut
-        run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
+- name: Pylint file length
+  working-directory: services/torghut
+  run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
 ```
 
 Expected before refactors: fails with `C0302` messages.
@@ -309,9 +313,9 @@ Expected before refactors: fails with `C0302` messages.
 Add this non-blocking step to `quality-signals`:
 
 ```yaml
-      - name: Pylint design scan (non-blocking)
-        working-directory: services/torghut
-        run: uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n --exit-zero
+- name: Pylint design scan (non-blocking)
+  working-directory: services/torghut
+  run: uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n --exit-zero
 ```
 
 Expected: CI exposes function-level complexity hotspots while the file-length cleanup proceeds.
@@ -341,6 +345,7 @@ git commit -m "ci(torghut): surface pylint file length debt"
 ## Task 3: Protect Public API and Compatibility Before Moving Code
 
 **Files:**
+
 - Modify: `services/torghut/tests/test_main_api_refactor.py`
 - Modify: `services/torghut/tests/test_trading_api.py`
 - Modify: `services/torghut/tests/test_whitepaper_api.py`
@@ -409,6 +414,7 @@ git commit -m "test(torghut): lock main api compatibility"
 ## Task 4: Shrink `app/main.py` Into App Assembly Only
 
 **Files:**
+
 - Create: `services/torghut/app/api/app_factory.py`
 - Create: `services/torghut/app/api/auth.py`
 - Create: `services/torghut/app/api/env.py`
@@ -668,6 +674,7 @@ git commit -m "refactor(torghut): split app assembly from main"
 ## Task 5: Split Giant API Tests by Endpoint Family
 
 **Files:**
+
 - Modify: `services/torghut/tests/test_trading_api.py`
 - Create: `services/torghut/tests/api/test_trading_status_api.py`
 - Create: `services/torghut/tests/api/test_trading_health_api.py`
@@ -762,6 +769,7 @@ git commit -m "test(torghut): split trading api tests by endpoint"
 ## Task 6: Split Whitepaper Autoresearch Script and Tests
 
 **Files:**
+
 - Modify: `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py`
 - Create: `services/torghut/scripts/whitepaper_autoresearch/__init__.py`
 - Create: `services/torghut/scripts/whitepaper_autoresearch/cli.py`
@@ -928,6 +936,7 @@ git commit -m "refactor(torghut): modularize whitepaper autoresearch runner"
 ## Task 7: Split Runtime-Window Import Script and Tests
 
 **Files:**
+
 - Modify: `services/torghut/scripts/import_hypothesis_runtime_windows.py`
 - Create: `services/torghut/scripts/runtime_window_import/__init__.py`
 - Create: `services/torghut/scripts/runtime_window_import/cli.py`
@@ -1095,6 +1104,7 @@ git commit -m "refactor(torghut): modularize runtime window import"
 ## Task 8: Split Historical Simulation and Profitability Frontier Scripts
 
 **Files:**
+
 - Modify: `services/torghut/scripts/start_historical_simulation.py`
 - Modify: `services/torghut/scripts/search_consistent_profitability_frontier.py`
 - Create: `services/torghut/scripts/historical_simulation/`
@@ -1188,6 +1198,7 @@ git commit -m "refactor(torghut): modularize simulation frontier scripts"
 ## Task 9: Modularize App Runtime Hotspots
 
 **Files:**
+
 - Convert: `services/torghut/app/trading/submission_council.py`
 - Convert: `services/torghut/app/trading/discovery/candidate_specs.py`
 - Convert: `services/torghut/app/trading/research_sleeves.py`
@@ -1329,6 +1340,7 @@ git commit -m "refactor(torghut): modularize trading runtime hotspots"
 ## Task 10: Split Scheduler, Whitepaper Workflow, and Remaining Oversized Files
 
 **Files:**
+
 - Modify: `services/torghut/app/trading/scheduler/pipeline.py`
 - Modify: `services/torghut/app/trading/scheduler/simple_pipeline.py`
 - Modify: `services/torghut/app/whitepapers/workflow.py`
@@ -1418,6 +1430,7 @@ git commit -m "refactor(torghut): finish oversized module split"
 ## Task 11: Flip Pylint to Strict Blocking
 
 **Files:**
+
 - Modify: `.github/workflows/torghut-ci.yml`
 - Modify: `services/torghut/README.md`
 - Modify: `docs/torghut/tech-debt/file-length-inventory-2026-06-12.md`
@@ -1438,9 +1451,9 @@ Expected: exit code `0`.
 Ensure `.github/workflows/torghut-ci.yml` has this blocking step in `static-guards`:
 
 ```yaml
-      - name: Pylint file length
-        working-directory: services/torghut
-        run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
+- name: Pylint file length
+  working-directory: services/torghut
+  run: uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
 ```
 
 - [ ] **Step 3: Add blocking design gate for app and scripts**
@@ -1448,9 +1461,9 @@ Ensure `.github/workflows/torghut-ci.yml` has this blocking step in `static-guar
 Add this after the file-length step:
 
 ```yaml
-      - name: Pylint design complexity
-        working-directory: services/torghut
-        run: uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n
+- name: Pylint design complexity
+  working-directory: services/torghut
+  run: uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n
 ```
 
 If this fails on remaining complex functions, split those functions before committing this step.
@@ -1463,7 +1476,7 @@ Delete the earlier non-blocking `Pylint design scan (non-blocking)` step from `q
 
 Append to `docs/torghut/tech-debt/file-length-inventory-2026-06-12.md`:
 
-```markdown
+````markdown
 ## Closure
 
 Final check:
@@ -1472,9 +1485,11 @@ Final check:
 cd services/torghut
 uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
 ```
+````
 
 Result: passed with zero `C0302` violations.
-```
+
+````
 
 - [ ] **Step 6: Commit strict gate**
 
@@ -1483,11 +1498,12 @@ Run:
 ```bash
 git add .github/workflows/torghut-ci.yml services/torghut/README.md docs/torghut/tech-debt/file-length-inventory-2026-06-12.md
 git commit -m "ci(torghut): enforce strict pylint size gates"
-```
+````
 
 ## Task 12: Full Local and Remote Validation
 
 **Files:**
+
 - No new files.
 - Validate all files changed by Tasks 1 through 11.
 

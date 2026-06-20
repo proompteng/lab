@@ -2,15 +2,13 @@
 
 ## [0.11.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.10.0...temporal-bun-sdk-v0.11.0) (2026-05-15)
 
-
 ### Features
 
-* **temporal-bun-sdk:** refresh temporal api protos ([#6715](https://github.com/proompteng/lab/issues/6715)) ([ff98e82](https://github.com/proompteng/lab/commit/ff98e82146135c9a592eee4c3676da47c2e83477))
-
+- **temporal-bun-sdk:** refresh temporal api protos ([#6715](https://github.com/proompteng/lab/issues/6715)) ([ff98e82](https://github.com/proompteng/lab/commit/ff98e82146135c9a592eee4c3676da47c2e83477))
 
 ### Bug Fixes
 
-* **temporal-bun-sdk:** harden readiness docs and soak budget ([#6704](https://github.com/proompteng/lab/issues/6704)) ([4947b00](https://github.com/proompteng/lab/commit/4947b00e52c41dc0822db45bc45ed44dc696dad7))
+- **temporal-bun-sdk:** harden readiness docs and soak budget ([#6704](https://github.com/proompteng/lab/issues/6704)) ([4947b00](https://github.com/proompteng/lab/commit/4947b00e52c41dc0822db45bc45ed44dc696dad7))
 
 ## [0.10.0](https://github.com/proompteng/lab/compare/temporal-bun-sdk-v0.9.0...temporal-bun-sdk-v0.10.0) (2026-05-07)
 

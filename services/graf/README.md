@@ -12,17 +12,17 @@ This Quarkus/Kotlin microservice implements the persistence layer described in [
 
 ## Environment
 
-| Variable                          | Purpose                                                                                                              |
-| --------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `NEO4J_URI`                       | Bolt/Neo4j URI (e.g. `bolt://graf-neo4j.graf.svc.cluster.local:7687`).                                               |
-| `NEO4J_USER`                      | Username (defaults to `neo4j`).                                                                                      |
-| `NEO4J_PASSWORD`                  | Password (required unless `NEO4J_AUTH` is supplied).                                                                 |
-| `NEO4J_AUTH`                      | Combined credentials (`neo4j/<password>`) emitted by the Helm chart Secret; overrides `NEO4J_USER`/`NEO4J_PASSWORD`. |
-| `NEO4J_DATABASE`                  | Database name (defaults to `neo4j`).                                                                                 |
-| `QUARKUS_HTTP_PORT` / `PORT`      | HTTP port (defaults to `8080`; Quarkus reads both).                                                                  |
-| `QUARKUS_HTTP_CORS_*`             | CORS toggles injected via `graf-quarkus-config`.                                                                     |
-| `GRAF_API_BEARER_TOKENS`          | Comma/space-delimited bearer tokens for `/v1/**`.                                                                    |
-| `TEMPORAL_*`, `AGENTS_*`, `AGENTS_ARTIFACTS_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for AgentRun + artifact requirements. |
+| Variable                                       | Purpose                                                                                                              |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `NEO4J_URI`                                    | Bolt/Neo4j URI (e.g. `bolt://graf-neo4j.graf.svc.cluster.local:7687`).                                               |
+| `NEO4J_USER`                                   | Username (defaults to `neo4j`).                                                                                      |
+| `NEO4J_PASSWORD`                               | Password (required unless `NEO4J_AUTH` is supplied).                                                                 |
+| `NEO4J_AUTH`                                   | Combined credentials (`neo4j/<password>`) emitted by the Helm chart Secret; overrides `NEO4J_USER`/`NEO4J_PASSWORD`. |
+| `NEO4J_DATABASE`                               | Database name (defaults to `neo4j`).                                                                                 |
+| `QUARKUS_HTTP_PORT` / `PORT`                   | HTTP port (defaults to `8080`; Quarkus reads both).                                                                  |
+| `QUARKUS_HTTP_CORS_*`                          | CORS toggles injected via `graf-quarkus-config`.                                                                     |
+| `GRAF_API_BEARER_TOKENS`                       | Comma/space-delimited bearer tokens for `/v1/**`.                                                                    |
+| `TEMPORAL_*`, `AGENTS_*`, `AGENTS_ARTIFACTS_*` | See [docs/graf-codex-research.md](../../docs/graf-codex-research.md) for AgentRun + artifact requirements.           |
 
 ## AutoResearch configuration
 

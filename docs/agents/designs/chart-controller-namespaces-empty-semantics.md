@@ -42,8 +42,8 @@ Controllers reconcile CRDs in a set of namespaces. The chart exposes `controller
 
 ## Config Mapping
 
-| Helm value                            | Env var                                                                 | Intended behavior                                   |
-| ------------------------------------- | ----------------------------------------------------------------------- | --------------------------------------------------- |
+| Helm value                            | Env var                                                          | Intended behavior                                   |
+| ------------------------------------- | ---------------------------------------------------------------- | --------------------------------------------------- |
 | `controller.namespaces: [\"agents\"]` | `AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]`                      | Reconcile only `agents` namespace resources.        |
 | omitted                               | `AGENTS_CONTROLLER_NAMESPACES=[\"agents\"]` (templated fallback) | Reconcile the release namespace resources.          |
 | `controller.namespaces: [\"*\"]`      | `AGENTS_CONTROLLER_NAMESPACES=[\"*\"]`                           | (When clusterScoped=true) reconcile all namespaces. |

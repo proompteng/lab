@@ -23,43 +23,43 @@ Make Torghut enforce Pylint module-size rules in CI and remove the oversized-fil
 
 ## Work Breakdown
 
-| Tranche | Status | Scope | Required result |
-| --- | --- | --- | --- |
-| 1 | Complete | Add Pylint dependency/config/docs/inventory | Pylint installed and runnable, inventory committed |
-| 2 | Complete | CI visibility and final gate scaffold | CI logs current debt and has ready blocking Pylint step |
-| 3 | Complete | `app.main` compatibility tests | Legacy patch/import targets protected before extraction |
-| 4 | Complete | `app/main.py` app assembly split | `app.main` becomes thin assembly + compatibility module |
-| 5 | Complete | API tests split | `test_trading_api.py` split below 1000 lines |
-| 6 | Complete | Whitepaper autoresearch script/tests | Runner package + tests below 1000 lines |
-| 7 | Complete | Runtime-window import script/tests | Import package + tests below 1000 lines |
-| 8 | Complete | Historical simulation and frontier scripts/tests | Script packages + tests below 1000 lines |
-| 9 | Complete | Trading runtime hotspots | `submission_council`, `candidate_specs`, `research_sleeves`, `policy_checks` modularized |
-| 10 | Complete | Scheduler, whitepaper workflow, remaining files | Every remaining scoped Python file below 1000 lines |
-| 11 | Blocked for design | Strict CI flip | Blocking file-length gate is ready; design gate still has legacy findings |
-| 12 | In progress | Full validation + PR | Local size/static/test checks green; design gate not green |
+| Tranche | Status             | Scope                                            | Required result                                                                          |
+| ------- | ------------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| 1       | Complete           | Add Pylint dependency/config/docs/inventory      | Pylint installed and runnable, inventory committed                                       |
+| 2       | Complete           | CI visibility and final gate scaffold            | CI logs current debt and has ready blocking Pylint step                                  |
+| 3       | Complete           | `app.main` compatibility tests                   | Legacy patch/import targets protected before extraction                                  |
+| 4       | Complete           | `app/main.py` app assembly split                 | `app.main` becomes thin assembly + compatibility module                                  |
+| 5       | Complete           | API tests split                                  | `test_trading_api.py` split below 1000 lines                                             |
+| 6       | Complete           | Whitepaper autoresearch script/tests             | Runner package + tests below 1000 lines                                                  |
+| 7       | Complete           | Runtime-window import script/tests               | Import package + tests below 1000 lines                                                  |
+| 8       | Complete           | Historical simulation and frontier scripts/tests | Script packages + tests below 1000 lines                                                 |
+| 9       | Complete           | Trading runtime hotspots                         | `submission_council`, `candidate_specs`, `research_sleeves`, `policy_checks` modularized |
+| 10      | Complete           | Scheduler, whitepaper workflow, remaining files  | Every remaining scoped Python file below 1000 lines                                      |
+| 11      | Blocked for design | Strict CI flip                                   | Blocking file-length gate is ready; design gate still has legacy findings                |
+| 12      | In progress        | Full validation + PR                             | Local size/static/test checks green; design gate not green                               |
 
 ## Current Largest Scoped Files
 
 Inventory command last run locally on 2026-06-12 after the full split. Current scoped total: `565286` Python lines
 across `1526` files in `app`, `scripts`, `tests`, and `migrations`. No scoped Python file is over `1000` lines.
 
-| Lines | File |
-| ---: | --- |
-| 999 | `services/torghut/tests/profitability_frontier/test_search_frontier_ledger_args.py` |
-| 999 | `services/torghut/tests/policy_checks/test_policy_checks_manifest_b.py` |
-| 993 | `services/torghut/tests/test_evidence_epochs.py` |
-| 993 | `services/torghut/app/options_lane/repository.py` |
-| 992 | `services/torghut/app/trading/evidence_clock_arbiter.py` |
-| 986 | `services/torghut/app/trading/forecasting.py` |
-| 985 | `services/torghut/app/trading/routeability_repair_acceptance.py` |
-| 984 | `services/torghut/scripts/inspect_hpairs_runtime_evidence.py` |
-| 984 | `services/torghut/app/trading/discovery/autoresearch_notebooks.py` |
-| 983 | `services/torghut/tests/test_execution_adapters.py` |
-| 983 | `services/torghut/tests/decisions/test_decision_engine_overlays.py` |
-| 981 | `services/torghut/tests/historical_simulation/test_start_historical_simulation_lifecycle_c.py` |
-| 975 | `services/torghut/tests/test_session_context.py` |
-| 974 | `services/torghut/tests/whitepaper_autoresearch/test_autoresearch_runner_sources_replay.py` |
-| 967 | `services/torghut/tests/decisions/test_decision_engine_positions.py` |
+| Lines | File                                                                                           |
+| ----: | ---------------------------------------------------------------------------------------------- |
+|   999 | `services/torghut/tests/profitability_frontier/test_search_frontier_ledger_args.py`            |
+|   999 | `services/torghut/tests/policy_checks/test_policy_checks_manifest_b.py`                        |
+|   993 | `services/torghut/tests/test_evidence_epochs.py`                                               |
+|   993 | `services/torghut/app/options_lane/repository.py`                                              |
+|   992 | `services/torghut/app/trading/evidence_clock_arbiter.py`                                       |
+|   986 | `services/torghut/app/trading/forecasting.py`                                                  |
+|   985 | `services/torghut/app/trading/routeability_repair_acceptance.py`                               |
+|   984 | `services/torghut/scripts/inspect_hpairs_runtime_evidence.py`                                  |
+|   984 | `services/torghut/app/trading/discovery/autoresearch_notebooks.py`                             |
+|   983 | `services/torghut/tests/test_execution_adapters.py`                                            |
+|   983 | `services/torghut/tests/decisions/test_decision_engine_overlays.py`                            |
+|   981 | `services/torghut/tests/historical_simulation/test_start_historical_simulation_lifecycle_c.py` |
+|   975 | `services/torghut/tests/test_session_context.py`                                               |
+|   974 | `services/torghut/tests/whitepaper_autoresearch/test_autoresearch_runner_sources_replay.py`    |
+|   967 | `services/torghut/tests/decisions/test_decision_engine_positions.py`                           |
 
 ## First-Tranche Evidence
 

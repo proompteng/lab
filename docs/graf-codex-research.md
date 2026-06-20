@@ -8,25 +8,25 @@
 
 Set the following secrets/configmaps for the Knative Graf service:
 
-| Env var                                 | Description                                                                                | Default                                  |
-| --------------------------------------- | ------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `TEMPORAL_ADDRESS`                      | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required                                 |
-| `TEMPORAL_NAMESPACE`                    | Namespace Graf worker should use.                                                          | `default`                                |
-| `TEMPORAL_TASK_QUEUE`                   | Task queue the Codex research workflow listens on.                                         | `graf-codex-research`                    |
-| `TEMPORAL_IDENTITY`                     | Worker identity string sent to Temporal.                                                   | `graf`                                   |
-| `AGENTS_BASE_URL`                       | Agents control-plane URL.                                                                  | `http://agents.agents.svc.cluster.local` |
-| `AGENTS_NAMESPACE`                      | Namespace where Graf AgentRuns are created.                                                | `agents`                                 |
-| `AGENTS_GRAF_AGENT_NAME`                | Agent resource Graf submits against.                                                       | `graf-codex-agent`                       |
-| `AGENTS_SERVICE_ACCOUNT_NAME`           | ServiceAccount used by the runner Job.                                                     | `agents-sa`                              |
-| `AGENTS_SECRET_BINDING_REF`             | SecretBinding required by Agents admission.                                                | `codex-github-token`                     |
-| `AGENTS_RUN_SECRETS`                    | Comma-separated secrets requested by the run.                                              | `github-token,codex-auth,graf-api,...`   |
-| `AGENTS_RUN_POLL_TIMEOUT_SECONDS`       | Maximum wait for AgentRun completion.                                                      | `7200`                                   |
-| `AGENTS_ARTIFACTS_ENDPOINT`             | S3-compatible artifact endpoint used by the Agents runner and Graf downloader.             | required                                 |
-| `AGENTS_ARTIFACTS_BUCKET`               | Agents-owned bucket where the runner uploads Graf artifacts.                               | `agents-artifacts`                      |
-| `AGENTS_ARTIFACTS_ACCESS_KEY_ID`        | Access key for Graf to download runner artifacts.                                          | required                                 |
-| `AGENTS_ARTIFACTS_SECRET_ACCESS_KEY`    | Secret key for Graf to download runner artifacts.                                          | required                                 |
-| `AGENTS_ARTIFACTS_REGION`               | Optional region hint.                                                                      | _unset_                                  |
-| `AGENTS_ARTIFACTS_SECURE`               | `true/false` toggle when `AGENTS_ARTIFACTS_ENDPOINT` omits the scheme.                     | `true`                                   |
+| Env var                              | Description                                                                                | Default                                  |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `TEMPORAL_ADDRESS`                   | gRPC endpoint for Temporal frontend (`temporal-frontend.temporal.svc.cluster.local:7233`). | required                                 |
+| `TEMPORAL_NAMESPACE`                 | Namespace Graf worker should use.                                                          | `default`                                |
+| `TEMPORAL_TASK_QUEUE`                | Task queue the Codex research workflow listens on.                                         | `graf-codex-research`                    |
+| `TEMPORAL_IDENTITY`                  | Worker identity string sent to Temporal.                                                   | `graf`                                   |
+| `AGENTS_BASE_URL`                    | Agents control-plane URL.                                                                  | `http://agents.agents.svc.cluster.local` |
+| `AGENTS_NAMESPACE`                   | Namespace where Graf AgentRuns are created.                                                | `agents`                                 |
+| `AGENTS_GRAF_AGENT_NAME`             | Agent resource Graf submits against.                                                       | `graf-codex-agent`                       |
+| `AGENTS_SERVICE_ACCOUNT_NAME`        | ServiceAccount used by the runner Job.                                                     | `agents-sa`                              |
+| `AGENTS_SECRET_BINDING_REF`          | SecretBinding required by Agents admission.                                                | `codex-github-token`                     |
+| `AGENTS_RUN_SECRETS`                 | Comma-separated secrets requested by the run.                                              | `github-token,codex-auth,graf-api,...`   |
+| `AGENTS_RUN_POLL_TIMEOUT_SECONDS`    | Maximum wait for AgentRun completion.                                                      | `7200`                                   |
+| `AGENTS_ARTIFACTS_ENDPOINT`          | S3-compatible artifact endpoint used by the Agents runner and Graf downloader.             | required                                 |
+| `AGENTS_ARTIFACTS_BUCKET`            | Agents-owned bucket where the runner uploads Graf artifacts.                               | `agents-artifacts`                       |
+| `AGENTS_ARTIFACTS_ACCESS_KEY_ID`     | Access key for Graf to download runner artifacts.                                          | required                                 |
+| `AGENTS_ARTIFACTS_SECRET_ACCESS_KEY` | Secret key for Graf to download runner artifacts.                                          | required                                 |
+| `AGENTS_ARTIFACTS_REGION`            | Optional region hint.                                                                      | _unset_                                  |
+| `AGENTS_ARTIFACTS_SECURE`            | `true/false` toggle when `AGENTS_ARTIFACTS_ENDPOINT` omits the scheme.                     | `true`                                   |
 
 Graf no longer creates or polls Argo Workflows for Codex research. Artifact upload and download now use the Agents artifact contract end to end.
 

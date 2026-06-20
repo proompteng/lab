@@ -31,11 +31,11 @@ Kubernetes minor versions as part of this runbook.
 
 Read-only checks after the Ryzen window on 2026-06-19 showed this state:
 
-| Kubernetes node        | IP              | Talos | Kubernetes | Role          | Upgrade action |
-| ---------------------- | --------------- | ----- | ---------- | ------------- | -------------- |
-| `talos-192-168-1-194`  | `100.100.244.141` | `v1.13.4` | Ready | control plane | Complete; validate only |
-| `talos-192-168-1-85`   | `100.100.244.142` | `v1.12.4` | Ready | control plane, OSD host | Pending; upgrade only after Altra gates pass |
-| `turin`                | `100.100.244.171` | `v1.13.4` | Ready | control plane, OSD host | Already at target; validate only |
+| Kubernetes node       | IP                | Talos     | Kubernetes | Role                    | Upgrade action                               |
+| --------------------- | ----------------- | --------- | ---------- | ----------------------- | -------------------------------------------- |
+| `talos-192-168-1-194` | `100.100.244.141` | `v1.13.4` | Ready      | control plane           | Complete; validate only                      |
+| `talos-192-168-1-85`  | `100.100.244.142` | `v1.12.4` | Ready      | control plane, OSD host | Pending; upgrade only after Altra gates pass |
+| `turin`               | `100.100.244.171` | `v1.13.4` | Ready      | control plane, OSD host | Already at target; validate only             |
 
 Current Altra gates:
 
@@ -101,11 +101,11 @@ default image.
 Use custom Image Factory installer images when the node has required system
 extensions:
 
-| Node profile | Source schematic | Required extensions | Target image form |
-| ------------ | ---------------- | ------------------- | ----------------- |
-| Ryzen / `talos-192-168-1-194` | `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` | Kata Containers, glibc, Tailscale, AMD GPU, AMD ucode | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
-| Altra / `talos-192-168-1-85` | `devices/altra/manifests/altra-tailscale-schematic.yaml` | Tailscale | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
-| Turin / `turin` | `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml` | Tailscale, NVIDIA open LTS kernel modules, NVIDIA toolkit LTS | already `v1.13.4` |
+| Node profile                  | Source schematic                                                | Required extensions                                           | Target image form                                          |
+| ----------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------- |
+| Ryzen / `talos-192-168-1-194` | `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml`        | Kata Containers, glibc, Tailscale, AMD GPU, AMD ucode         | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
+| Altra / `talos-192-168-1-85`  | `devices/altra/manifests/altra-tailscale-schematic.yaml`        | Tailscale                                                     | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
+| Turin / `turin`               | `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml` | Tailscale, NVIDIA open LTS kernel modules, NVIDIA toolkit LTS | already `v1.13.4`                                          |
 
 Do not downgrade Altra or Ryzen to a vanilla installer image. Altra depends on
 node-level Tailscale, and Ryzen depends on Kata Containers, glibc, Tailscale,

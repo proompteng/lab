@@ -21,7 +21,7 @@ oversized drawdowns, one-off best days, hidden leverage, negative cash, syntheti
   stress testing, but its generated rollouts are research/stress inputs. They must not become promotion authority
   without real replay and shadow evidence.
 - `A novel approach to trading strategy parameter optimization using double out-of-sample data and walk-forward
-  techniques` (2026-02-11, <https://arxiv.org/abs/2602.10785>) supports walk-forward parameter search, independent
+techniques` (2026-02-11, <https://arxiv.org/abs/2602.10785>) supports walk-forward parameter search, independent
   out-of-sample evaluation, conservative fees, and cost sensitivity. Torghut promotion should therefore use post-cost
   net PnL and should not promote from a single optimized in-sample window.
 - `Stochastic Price Dynamics in Response to Order Flow Imbalance` (2025-05-23,
@@ -42,29 +42,29 @@ oversized drawdowns, one-off best days, hidden leverage, negative cash, syntheti
 
 The active `$500/day` program should use these default promotion gates:
 
-| Gate | Value | Rationale |
-| --- | ---: | --- |
-| `target_net_pnl_per_day` | `500` | Objective is post-cost daily portfolio net PnL, not cumulative paper PnL. |
-| `min_profit_factor` | `1.50` | Provides a loss cushion after slippage/fees and prevents barely-positive churn from passing. |
-| `min_active_day_ratio` | `0.90` | Avoids candidates that hit the target by trading only one or two lucky days. |
-| `min_positive_day_ratio` | `0.60` | Allows down days while requiring repeatability across the window. |
-| `max_best_day_share` | `0.25` | Prevents a single best day from explaining most of the edge. |
-| `max_cluster_contribution_share` | `0.40` | Prevents one mechanism or cluster from dominating portfolio proof. |
-| `max_single_symbol_contribution_share` | `0.35` | Prevents a single ticker from carrying portfolio promotion. |
-| `max_worst_day_loss_pct_equity` | `0.05` | Normal worst-day loss cap. |
-| `extended_max_worst_day_loss_pct_equity` | `0.08` | Allowed only when total net PnL covers drawdown by at least `3.00x`. |
-| `max_drawdown_pct_equity` | `0.08` | Normal max drawdown cap. |
-| `extended_max_drawdown_pct_equity` | `0.12` | Allowed only when total net PnL covers drawdown by at least `3.00x`. |
-| `min_total_net_pnl_to_drawdown_ratio` | `3.00` | Return-adjusted exception for good candidates with tolerable drawdown. |
-| `max_worst_day_loss` | `999999999` | Absolute cap disabled by default; percentage-of-equity gate is canonical. |
-| `max_drawdown` | `999999999` | Absolute cap disabled by default; percentage-of-equity gate is canonical. |
-| `max_gross_exposure_pct_equity` | `1.0` | No hidden leverage for promotion. |
-| `min_cash` | `0` | Negative cash blocks promotion. |
-| `max_negative_cash_observation_count` | `0` | Any negative-cash observation blocks promotion. |
-| `min_avg_filled_notional_per_day` | `300000` | Requires enough executable activity to make `$500/day` plausible after costs. |
-| `min_regime_slice_pass_rate` | `0.45` | Keeps regime dependence visible instead of averaging it away. |
-| `shadow_parity_status` | `within_budget` | Runtime path must match replay budget before promotion. |
-| `executable_replay_passed` | `true` | Candidate must produce executable replay proof. |
+| Gate                                     |           Value | Rationale                                                                                    |
+| ---------------------------------------- | --------------: | -------------------------------------------------------------------------------------------- |
+| `target_net_pnl_per_day`                 |           `500` | Objective is post-cost daily portfolio net PnL, not cumulative paper PnL.                    |
+| `min_profit_factor`                      |          `1.50` | Provides a loss cushion after slippage/fees and prevents barely-positive churn from passing. |
+| `min_active_day_ratio`                   |          `0.90` | Avoids candidates that hit the target by trading only one or two lucky days.                 |
+| `min_positive_day_ratio`                 |          `0.60` | Allows down days while requiring repeatability across the window.                            |
+| `max_best_day_share`                     |          `0.25` | Prevents a single best day from explaining most of the edge.                                 |
+| `max_cluster_contribution_share`         |          `0.40` | Prevents one mechanism or cluster from dominating portfolio proof.                           |
+| `max_single_symbol_contribution_share`   |          `0.35` | Prevents a single ticker from carrying portfolio promotion.                                  |
+| `max_worst_day_loss_pct_equity`          |          `0.05` | Normal worst-day loss cap.                                                                   |
+| `extended_max_worst_day_loss_pct_equity` |          `0.08` | Allowed only when total net PnL covers drawdown by at least `3.00x`.                         |
+| `max_drawdown_pct_equity`                |          `0.08` | Normal max drawdown cap.                                                                     |
+| `extended_max_drawdown_pct_equity`       |          `0.12` | Allowed only when total net PnL covers drawdown by at least `3.00x`.                         |
+| `min_total_net_pnl_to_drawdown_ratio`    |          `3.00` | Return-adjusted exception for good candidates with tolerable drawdown.                       |
+| `max_worst_day_loss`                     |     `999999999` | Absolute cap disabled by default; percentage-of-equity gate is canonical.                    |
+| `max_drawdown`                           |     `999999999` | Absolute cap disabled by default; percentage-of-equity gate is canonical.                    |
+| `max_gross_exposure_pct_equity`          |           `1.0` | No hidden leverage for promotion.                                                            |
+| `min_cash`                               |             `0` | Negative cash blocks promotion.                                                              |
+| `max_negative_cash_observation_count`    |             `0` | Any negative-cash observation blocks promotion.                                              |
+| `min_avg_filled_notional_per_day`        |        `300000` | Requires enough executable activity to make `$500/day` plausible after costs.                |
+| `min_regime_slice_pass_rate`             |          `0.45` | Keeps regime dependence visible instead of averaging it away.                                |
+| `shadow_parity_status`                   | `within_budget` | Runtime path must match replay budget before promotion.                                      |
+| `executable_replay_passed`               |          `true` | Candidate must produce executable replay proof.                                              |
 
 ## Next harness gates
 

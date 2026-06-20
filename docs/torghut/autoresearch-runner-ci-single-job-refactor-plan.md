@@ -92,6 +92,7 @@ When a test appears to match two groups above, place it in the file named by the
 ## Task 1: Create Shared Test Package
 
 **Files:**
+
 - Create: `services/torghut/tests/autoresearch_runner/__init__.py`
 - Create: `services/torghut/tests/autoresearch_runner/helpers.py`
 
@@ -142,6 +143,7 @@ True
 ## Task 2: Split The Monolithic Test File
 
 **Files:**
+
 - Create all `services/torghut/tests/autoresearch_runner/test_*.py` files listed in the Files section.
 - Delete: `services/torghut/tests/test_run_whitepaper_autoresearch_profit_target.py`
 
@@ -215,6 +217,7 @@ Expected output:
 ## Task 3: Collapse CI To One Autoresearch Job
 
 **Files:**
+
 - Modify: `.github/workflows/torghut-ci.yml`
 
 - [ ] **Step 1: Exclude the new package from normal pytest shards**
@@ -238,22 +241,22 @@ This prevents duplicate execution in the normal 4-file pytest shard matrix.
 In `pytest-autoresearch-runner`, delete this matrix block:
 
 ```yaml
-    strategy:
-      fail-fast: false
-      matrix:
-        slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+strategy:
+  fail-fast: false
+  matrix:
+    slice: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
 ```
 
 Change:
 
 ```yaml
-    name: Pytest autoresearch runner ${{ matrix.slice }}
+name: Pytest autoresearch runner ${{ matrix.slice }}
 ```
 
 to:
 
 ```yaml
-    name: Pytest autoresearch runner
+name: Pytest autoresearch runner
 ```
 
 - [ ] **Step 3: Run autoresearch tests in one job with local xdist**
@@ -261,31 +264,31 @@ to:
 Replace the `Pytest autoresearch runner coverage` step body with:
 
 ```yaml
-      - name: Pytest autoresearch runner coverage
-        working-directory: services/torghut
-        shell: bash
-        env:
-          COVERAGE_FILE: .coverage.autoresearch-runner
-        run: |
-          set -euo pipefail
-          collected_count="$(
-            uv run --frozen pytest --collect-only -q tests/autoresearch_runner |
-              awk '/^tests\/.*::/ {count += 1} END {print count + 0}'
-          )"
-          printf 'Collected %s autoresearch runner tests\n' "${collected_count}"
-          if [ "${collected_count}" -ne 185 ]; then
-            echo "Expected 185 autoresearch runner tests after split, got ${collected_count}"
-            exit 1
-          fi
+- name: Pytest autoresearch runner coverage
+  working-directory: services/torghut
+  shell: bash
+  env:
+    COVERAGE_FILE: .coverage.autoresearch-runner
+  run: |
+    set -euo pipefail
+    collected_count="$(
+      uv run --frozen pytest --collect-only -q tests/autoresearch_runner |
+        awk '/^tests\/.*::/ {count += 1} END {print count + 0}'
+    )"
+    printf 'Collected %s autoresearch runner tests\n' "${collected_count}"
+    if [ "${collected_count}" -ne 185 ]; then
+      echo "Expected 185 autoresearch runner tests after split, got ${collected_count}"
+      exit 1
+    fi
 
-          uv run --frozen pytest \
-            -n auto \
-            --dist=worksteal \
-            --cov \
-            --cov-branch \
-            --cov-fail-under=0 \
-            --cov-report= \
-            tests/autoresearch_runner
+    uv run --frozen pytest \
+      -n auto \
+      --dist=worksteal \
+      --cov \
+      --cov-branch \
+      --cov-fail-under=0 \
+      --cov-report= \
+      tests/autoresearch_runner
 ```
 
 Keep the job id `pytest-autoresearch-runner` so the aggregate `lint-and-tests` dependency does not need a semantic rename.
@@ -295,15 +298,15 @@ Keep the job id `pytest-autoresearch-runner` so the aggregate `lint-and-tests` d
 Change the autoresearch coverage upload from:
 
 ```yaml
-          name: torghut-coverage-autoresearch-runner-${{ matrix.slice }}
-          path: services/torghut/.coverage.autoresearch-runner-${{ matrix.slice }}*
+name: torghut-coverage-autoresearch-runner-${{ matrix.slice }}
+path: services/torghut/.coverage.autoresearch-runner-${{ matrix.slice }}*
 ```
 
 to:
 
 ```yaml
-          name: torghut-coverage-autoresearch-runner
-          path: services/torghut/.coverage.autoresearch-runner*
+name: torghut-coverage-autoresearch-runner
+path: services/torghut/.coverage.autoresearch-runner*
 ```
 
 The aggregate coverage job already downloads `torghut-coverage-*`, so it will continue to pick up this artifact.
@@ -311,6 +314,7 @@ The aggregate coverage job already downloads `torghut-coverage-*`, so it will co
 ## Task 4: Local Validation
 
 **Files:**
+
 - Validate: `.github/workflows/torghut-ci.yml`
 - Validate: `services/torghut/tests/autoresearch_runner/*.py`
 
@@ -388,6 +392,7 @@ Expected:
 ## Task 5: Pull Request
 
 **Files:**
+
 - Modify: `.github/workflows/torghut-ci.yml`
 - Add/Delete: autoresearch test files listed above.
 
@@ -486,6 +491,7 @@ printf 'PR %s: %s\n' "${pr_number}" "${pr_url}"
 ## Task 6: CI Acceptance
 
 **Files:**
+
 - Validate remote GitHub checks only.
 
 - [ ] **Step 1: Watch PR checks**

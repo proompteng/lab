@@ -93,6 +93,7 @@ The response preserves the old `workflowName` JSON field as a compatibility alia
 ## Codex Task Ingestion
 
 GitHub issue implementation runs no longer transit Facteur. Froussard submits those AgentRuns directly to the Agents service; Facteur remains responsible for Discord/domain command events on `/events`.
+
 - **Storage**: Facteur writes `codex_kb.ideas`, `codex_kb.tasks`, and `codex_kb.task_runs`.
 - **Runtime**: Facteur submits an Agents `AgentRun` and stores the returned AgentRun identity.
 - **Idempotency**: repeated `delivery_id` values return the existing result.

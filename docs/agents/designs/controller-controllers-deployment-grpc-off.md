@@ -44,10 +44,10 @@ This doc defines the intended behavior and introduces a controlled enablement pa
 
 ## Config Mapping
 
-| Helm value                                | Env var                | Intended behavior                              |
-| ----------------------------------------- | ---------------------- | ---------------------------------------------- |
+| Helm value                                 | Env var                 | Intended behavior                              |
+| ------------------------------------------ | ----------------------- | ---------------------------------------------- |
 | `controllers.env.vars.AGENTS_GRPC_ENABLED` | `AGENTS_GRPC_ENABLED`   | Explicit opt-in for controllers gRPC server.   |
-| (unset)                                   | `AGENTS_GRPC_ENABLED=0` | Default: controllers do not start gRPC server. |
+| (unset)                                    | `AGENTS_GRPC_ENABLED=0` | Default: controllers do not start gRPC server. |
 
 ## Rollout Plan
 

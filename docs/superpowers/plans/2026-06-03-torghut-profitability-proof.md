@@ -13,6 +13,7 @@
 ### Task 1: Remove False SIM Audit Blocker
 
 **Files:**
+
 - Modify: `services/torghut/app/main.py`
 - Modify: `services/torghut/tests/test_trading_api.py`
 
@@ -24,6 +25,7 @@
 ### Task 2: Runtime Window Collection Readiness
 
 **Files:**
+
 - Inspect: `services/torghut/app/trading/paper_route_evidence.py`
 - Inspect: `services/torghut/scripts/renew_latest_empirical_promotion_jobs.py`
 - Inspect: `argocd/applications/torghut/*paper*runtime*`
@@ -36,6 +38,7 @@
 ### Task 3: Post-Session Import And Proof Packet
 
 **Files:**
+
 - Inspect: `services/torghut/scripts/renew_latest_empirical_promotion_jobs.py`
 - Inspect: `services/torghut/scripts/assemble_runtime_ledger_proof_packet.py`
 
@@ -47,6 +50,7 @@
 ### Task 4: Promotion And Live Verification
 
 **Files:**
+
 - Modify only the files required by the blocker found in Task 3.
 
 - [ ] Run `uv sync --frozen --extra dev`.

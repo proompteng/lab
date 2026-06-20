@@ -54,8 +54,8 @@ Introduce `spec.providerConfig` as a `oneOf` in a future CRD version once schema
 
 ## Config Mapping
 
-| Helm value / env var                                            | Effect                       | Behavior                                                  |
-| --------------------------------------------------------------- | ---------------------------- | --------------------------------------------------------- |
+| Helm value / env var                                     | Effect                       | Behavior                                                  |
+| -------------------------------------------------------- | ---------------------------- | --------------------------------------------------------- |
 | `controller.enabled` / `AGENTS_CONTROLLER_ENABLED`       | toggles Agent reconciliation | Validation is only enforced when controllers are running. |
 | `controller.namespaces` / `AGENTS_CONTROLLER_NAMESPACES` | scope                        | Determines where Agent config validation applies.         |
 

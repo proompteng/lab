@@ -29,10 +29,10 @@ Sources:
 
 ## Competitive Map
 
-| Category                  | Examples                    | Strength                         | Gap SAG Targets                                      |
-| ------------------------- | --------------------------- | -------------------------------- | ---------------------------------------------------- |
+| Category                  | Examples                     | Strength                         | Gap SAG Targets                                      |
+| ------------------------- | ---------------------------- | -------------------------------- | ---------------------------------------------------- |
 | Agent frameworks          | OpenAI Agents SDK, LangGraph | developer control, orchestration | not an enterprise authority boundary by themselves   |
-| AI gateways               | Cloudflare AI Gateway        | model traffic logging, policies  | not focused on internal database/API action release   |
+| AI gateways               | Cloudflare AI Gateway        | model traffic logging, policies  | not focused on internal database/API action release  |
 | RPA / agentic automation  | UiPath                       | workflow execution, enterprise   | workflow-first, not action-authority-first           |
 | iPaaS                     | Workato                      | connector breadth                | connector execution, not agent-specific governance   |
 | API gateways              | Kong, Envoy, Apigee          | API traffic policy               | do not understand agent intent and approval context  |

@@ -20,17 +20,17 @@
 The Hyperliquid lane is public market data only. It intentionally excludes user addresses,
 private keys, signed exchange actions, and order placement.
 
-| Topic                                  | Purpose                                      | Partitions | RF  | Retention | Compression | Cleanup        |
-| -------------------------------------- | -------------------------------------------- | ---------- | --- | --------- | ----------- | -------------- |
-| `torghut.hyperliquid.raw.v1`           | Raw websocket frames for replay/debug        | 6          | 3   | 7d        | lz4         | delete         |
-| `torghut.hyperliquid.markets.v1`       | Perp/spot catalog and canonical market IDs   | 6          | 3   | 30d       | lz4         | compact,delete |
-| `torghut.hyperliquid.trades.v1`        | Public trade stream                          | 12         | 3   | 35d       | lz4         | delete         |
-| `torghut.hyperliquid.books.l2.v1`      | L2 book snapshots                            | 12         | 3   | 7d        | lz4         | delete         |
-| `torghut.hyperliquid.bbo.v1`           | Best bid/offer updates                       | 12         | 3   | 35d       | lz4         | delete         |
-| `torghut.hyperliquid.candles.v1`       | Public candle stream                         | 12         | 3   | 35d       | lz4         | delete         |
-| `torghut.hyperliquid.asset-ctx.v1`     | Public market contexts, mids, and asset ctxs | 6          | 3   | 35d       | lz4         | delete         |
-| `torghut.hyperliquid.funding.v1`       | Funding and predicted funding snapshots      | 6          | 3   | 35d       | lz4         | delete         |
-| `torghut.hyperliquid.status.v1`        | Feed status and unknown public channels      | 6          | 3   | 7d        | lz4         | compact,delete |
+| Topic                              | Purpose                                      | Partitions | RF  | Retention | Compression | Cleanup        |
+| ---------------------------------- | -------------------------------------------- | ---------- | --- | --------- | ----------- | -------------- |
+| `torghut.hyperliquid.raw.v1`       | Raw websocket frames for replay/debug        | 6          | 3   | 7d        | lz4         | delete         |
+| `torghut.hyperliquid.markets.v1`   | Perp/spot catalog and canonical market IDs   | 6          | 3   | 30d       | lz4         | compact,delete |
+| `torghut.hyperliquid.trades.v1`    | Public trade stream                          | 12         | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.books.l2.v1`  | L2 book snapshots                            | 12         | 3   | 7d        | lz4         | delete         |
+| `torghut.hyperliquid.bbo.v1`       | Best bid/offer updates                       | 12         | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.candles.v1`   | Public candle stream                         | 12         | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.asset-ctx.v1` | Public market contexts, mids, and asset ctxs | 6          | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.funding.v1`   | Funding and predicted funding snapshots      | 6          | 3   | 35d       | lz4         | delete         |
+| `torghut.hyperliquid.status.v1`    | Feed status and unknown public channels      | 6          | 3   | 7d        | lz4         | compact,delete |
 
 Hyperliquid market IDs:
 
