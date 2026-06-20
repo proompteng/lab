@@ -6,6 +6,7 @@ on:
       - 'apps/**'
       - 'packages/**'
       - 'services/**'
+      - 'scripts/**'
 
 permissions:
   contents: read
