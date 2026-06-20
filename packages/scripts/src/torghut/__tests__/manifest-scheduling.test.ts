@@ -169,6 +169,7 @@ describe('Torghut manifest scheduling', () => {
     expect(data.CLICKHOUSE_REQUEST_TIMEOUT_MS).toBe('30000')
     expect(data.CLICKHOUSE_ENABLED).toBe('true')
     expect(data.CLICKHOUSE_REQUIRED_FOR_READINESS).toBe('true')
+    expect(data.KAFKA_READY_MAX_AGE_MS).toBe('120000')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     const feedContainer = getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0])
@@ -252,7 +253,7 @@ describe('Torghut manifest scheduling', () => {
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-activation-20260620',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-no-short-entries-20260620',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')

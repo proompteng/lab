@@ -56,6 +56,7 @@ class HyperliquidConfigTest {
           "CLICKHOUSE_FRESHNESS_CHECK_MS" to "5000",
           "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,candle",
           "HYPERLIQUID_READY_EVENT_MAX_AGE_MS" to "120000",
+          "KAFKA_READY_MAX_AGE_MS" to "180000",
         ),
       )
 
@@ -68,6 +69,7 @@ class HyperliquidConfigTest {
     assertEquals(5_000, config.clickHouse.freshnessCheckMs)
     assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
     assertEquals(120_000, config.readyEventMaxAgeMs)
+    assertEquals(180_000, config.kafkaReadyMaxAgeMs)
   }
 
   @Test
