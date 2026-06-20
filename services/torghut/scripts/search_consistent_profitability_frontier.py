@@ -69,6 +69,7 @@ from app.trading.reporting import (
     summarize_replay_profitability,
 )
 import scripts.local_intraday_tsmom_replay as replay_mod
+import scripts.consistent_profitability_frontier.replay_data as replay_data_module
 from scripts.local_intraday_tsmom_replay import run_replay
 from scripts.search_profitability_frontier import (
     _SWEEP_SCHEMA_VERSION,
@@ -232,7 +233,7 @@ from scripts.consistent_profitability_frontier.replay_data import (
     _replay_tape_trading_days,
     _build_replay_tape_snapshot_receipt,
     _replay_tape_row_days,
-    apply_candidate_to_configmap_with_overrides,
+    apply_candidate_to_configmap_with_overrides as _base_apply_candidate_to_configmap_with_overrides,
 )
 
 from scripts.consistent_profitability_frontier.scoring_ranking import (
@@ -273,6 +274,29 @@ from scripts.consistent_profitability_frontier.candidate_repairs import (
     _generate_consistency_repair_children,
     _selected_normalization_regime,
 )
+
+
+def apply_candidate_to_configmap_with_overrides(
+    *,
+    configmap_payload: Mapping[str, Any],
+    strategy_name: str,
+    candidate_params: Mapping[str, Any],
+    strategy_overrides: Mapping[str, Any],
+    disable_other_strategies: bool,
+) -> dict[str, Any]:
+    original_apply_candidate = replay_data_module.apply_candidate_to_configmap
+    replay_data_module.apply_candidate_to_configmap = apply_candidate_to_configmap
+    try:
+        return _base_apply_candidate_to_configmap_with_overrides(
+            configmap_payload=configmap_payload,
+            strategy_name=strategy_name,
+            candidate_params=candidate_params,
+            strategy_overrides=strategy_overrides,
+            disable_other_strategies=disable_other_strategies,
+        )
+    finally:
+        replay_data_module.apply_candidate_to_configmap = original_apply_candidate
+
 
 _LOCAL_ONLY_OVERRIDE_KEYS = frozenset({"normalization_regime"})
 
