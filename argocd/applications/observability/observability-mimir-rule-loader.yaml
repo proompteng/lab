@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: observability-mimir-rule-loader
+  namespace: observability
+data:
+  load-rules.sh: |
+    #!/bin/sh
+    set -eu
+
+    rules_file="${RULES_FILE:-/rules/graf-rules.yaml}"
+    tenant="${MIMIR_TENANT_ID:-anonymous}"
+    ruler_url="${MIMIR_RULER_URL:-http://observability-mimir-gateway.observability.svc.cluster.local/prometheus/config/v1/rules/lab}"
+    workdir="$(mktemp -d)"
+    desired_groups="${workdir}/desired-groups.txt"
+    current_rules="${workdir}/current-rules.yaml"
+    current_groups="${workdir}/current-groups.txt"
+    response_body="${workdir}/response.txt"
+
+    awk -v dir="${workdir}" -v desired="${desired_groups}" '
+      /^  - name: / {
+        if (out != "") {
+          close(out)
+        }
+        group = $0
+        sub(/^  - name: /, "", group)
+        safe = group
+        gsub(/[^A-Za-z0-9_.-]/, "-", safe)
+        out = dir "/" safe ".yaml"
+        print group >> desired
+        print substr($0, 5) > out
+        next
+      }
+      out != "" && /^    / {
+        print substr($0, 5) >> out
+        next
+      }
+      out != "" && NF == 0 {
+        print "" >> out
+      }
+    ' "${rules_file}"
+
+    if [ ! -s "${desired_groups}" ]; then
+      echo "no Mimir rule groups found in ${rules_file}" >&2
+      exit 1
+    fi
+
+    get_code="$(
+      curl -sS -o "${current_rules}" -w "%{http_code}" \
+        -H "X-Scope-OrgID: ${tenant}" \
+        "${ruler_url}" || true
+    )"
+    if [ "${get_code}" = "200" ]; then
+      awk '/^  - name: / { sub(/^  - name: /, ""); print }' "${current_rules}" > "${current_groups}"
+      while IFS= read -r group; do
+        if ! grep -Fxq "${group}" "${desired_groups}"; then
+          echo "deleting stale Mimir rule group ${group}"
+          delete_code="$(
+            curl -sS -o "${response_body}" -w "%{http_code}" \
+              -X DELETE \
+              -H "X-Scope-OrgID: ${tenant}" \
+              "${ruler_url}/${group}" || true
+          )"
+          case "${delete_code}" in
+            200|202|204|404) ;;
+            *)
+              echo "failed to delete stale Mimir rule group ${group}: HTTP ${delete_code}" >&2
+              cat "${response_body}" >&2
+              exit 1
+              ;;
+          esac
+        fi
+      done < "${current_groups}"
+    elif [ "${get_code}" != "404" ]; then
+      echo "failed to read current Mimir rules: HTTP ${get_code}" >&2
+      cat "${current_rules}" >&2
+      exit 1
+    fi
+
+    while IFS= read -r group; do
+      group_file="${workdir}/${group}.yaml"
+      if [ ! -f "${group_file}" ]; then
+        safe="$(printf "%s" "${group}" | tr -c 'A-Za-z0-9_.-' '-')"
+        group_file="${workdir}/${safe}.yaml"
+      fi
+      echo "uploading Mimir rule group ${group}"
+      post_code="$(
+        curl -sS -o "${response_body}" -w "%{http_code}" \
+          -X POST \
+          -H "X-Scope-OrgID: ${tenant}" \
+          -H "Content-Type: application/yaml" \
+          --data-binary "@${group_file}" \
+          "${ruler_url}" || true
+      )"
+      case "${post_code}" in
+        200|202) ;;
+        *)
+          echo "failed to upload Mimir rule group ${group}: HTTP ${post_code}" >&2
+          cat "${response_body}" >&2
+          exit 1
+          ;;
+      esac
+    done < "${desired_groups}"
+
+    echo "uploaded $(wc -l < "${desired_groups}") Mimir rule groups"
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: observability-mimir-rule-loader
+  namespace: observability
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: observability-mimir-rule-loader
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: load-rules
+          image: curlimages/curl:8.11.1
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - /scripts/load-rules.sh
+          env:
+            - name: MIMIR_TENANT_ID
+              value: anonymous
+            - name: MIMIR_RULER_URL
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/prometheus/config/v1/rules/lab
+          volumeMounts:
+            - name: rules
+              mountPath: /rules
+              readOnly: true
+            - name: loader
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: rules
+          configMap:
+            name: graf-mimir-rules
+            items:
+              - key: graf-rules.yaml
+                path: graf-rules.yaml
+        - name: loader
+          configMap:
+            name: observability-mimir-rule-loader
+            defaultMode: 0555

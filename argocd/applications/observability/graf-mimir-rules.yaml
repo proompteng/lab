@@ -1715,3 +1715,170 @@ data:
                 Batch runs are reporting market-closed skips during expected market-open windows.
                 Validate Torghut trading status probe semantics and pre-open probe contracts.
               runbook_url: docs/runbooks/torghut-market-context-ingest.md
+      - name: kafka-critical-service.rules
+        rules:
+          - alert: KafkaBrokerUnavailable
+            expr: |
+              sum(
+                kube_pod_status_ready{
+                  namespace="kafka",
+                  condition="true",
+                  pod=~"kafka-pool-b-[0-9]+"
+                }
+              ) < 3
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka broker pool has unavailable brokers
+              description: |
+                Fewer than three broker-only pool-b Kafka pods are ready for 5 minutes.
+                Producers with min.insync.replicas=2 can fail when more than one broker is unavailable.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaBrokerPVCFreeLowCritical
+            expr: |
+              (
+                kubelet_volume_stats_available_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+                /
+                kubelet_volume_stats_capacity_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+              ) < 0.10
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka broker PVC free space is critically low
+              description: A broker-only pool-b Kafka PVC has less than 10% free capacity for 10 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaBrokerPVCFreeLowWarning
+            expr: |
+              (
+                kubelet_volume_stats_available_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+                /
+                kubelet_volume_stats_capacity_bytes{
+                  namespace="kafka",
+                  persistentvolumeclaim=~"data-kafka-pool-b-.*"
+                }
+              ) < 0.25
+            for: 30m
+            labels:
+              severity: warning
+              team: platform
+              service: kafka
+            annotations:
+              summary: Kafka broker PVC free space is low
+              description: A broker-only pool-b Kafka PVC has less than 25% free capacity for 30 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaUnderReplicatedPartitions
+            expr: |
+              (
+                sum(kafka_server_replicamanager_underreplicatedpartitions) or vector(0)
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka has under-replicated partitions
+              description: Kafka reports under-replicated partitions for 5 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaUnderMinIsrPartitions
+            expr: |
+              (
+                sum(kafka_server_replicamanager_underminisrpartitioncount) or vector(0)
+              ) > 0
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka
+              notify: email
+            annotations:
+              summary: Kafka has partitions below minimum ISR
+              description: Kafka reports partitions below min.insync.replicas for 5 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaBrokerRestarts
+            expr: |
+              sum(
+                increase(
+                  kube_pod_container_status_restarts_total{
+                    namespace="kafka",
+                    pod=~"kafka-pool-b-[0-9]+"
+                  }[15m]
+                )
+              ) > 0
+            for: 5m
+            labels:
+              severity: warning
+              team: platform
+              service: kafka
+            annotations:
+              summary: Kafka broker container restarted
+              description: One or more pool-b broker containers restarted in the last 15 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: TorghutHyperliquidFeedUnavailable
+            expr: |
+              sum(
+                kube_deployment_status_replicas_available{
+                  namespace="torghut",
+                  deployment="torghut-hyperliquid-feed"
+                }
+              ) < 1
+            for: 5m
+            labels:
+              severity: critical
+              team: platform
+              service: torghut-hyperliquid-feed
+              notify: email
+            annotations:
+              summary: Torghut Hyperliquid feed is unavailable
+              description: The torghut-hyperliquid-feed deployment has no available replicas for 5 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: KafkaDependentDeploymentUnavailable
+            expr: |
+              kube_deployment_status_replicas_available{
+                namespace="torghut",
+                deployment=~"torghut-ws|torghut-ws-options|torghut-ta|torghut-options-ta|torghut-options-catalog|torghut-options-enricher"
+              } < 1
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: kafka-dependent
+              notify: email
+            annotations:
+              summary: Kafka-dependent deployment is unavailable
+              description: A Torghut Kafka producer or consumer deployment has no available replicas for 10 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md
+          - alert: CriticalArgoApplicationDegraded
+            expr: |
+              argocd_app_info{
+                name=~"kafka|torghut|torghut-hyperliquid-feed|torghut-options|posthog|froussard|observability",
+                health_status!="Healthy"
+              } == 1
+            for: 10m
+            labels:
+              severity: critical
+              team: platform
+              service: argocd
+              notify: email
+            annotations:
+              summary: Critical Argo CD application is degraded
+              description: A critical Kafka, dependent-service, or observability Argo CD application is not Healthy for 10 minutes.
+              runbook_url: docs/incidents/2026-06-20-kafka-broker-disk-full-and-service-recovery.md

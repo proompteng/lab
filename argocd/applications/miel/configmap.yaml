@@ -17,7 +17,7 @@ data:
   OTEL_SERVICE_NAME: "miel"
   OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf"
   OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://observability-tempo-distributor.observability:4318"
-  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://observability-mimir-nginx.observability/otlp"
+  OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://observability-mimir-gateway.observability/otlp"
   OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: "http://observability-loki-loki-distributed-gateway.observability/otlp"
   TIGERBEETLE_ENABLED: "false"
   TIGERBEETLE_ADDRESSES: ""

@@ -37,7 +37,7 @@ This design is intentionally **generic to Mimir** and is not coupled to any spec
   - `observability-mimir-alertmanager-fallback-config` only contains defaults and `default-receiver`.
 - `observability` namespace has `rook-ceph-rgw-loki` and `observability-grafana` secrets, but no Discord alert secret yet.
 - Public route exists:
-  - `observability-mimir-tailscale` routes to `observability-mimir-nginx` with `/alertmanager` path.
+  - `observability-mimir-tailscale` routes to `observability-mimir-gateway` with `/alertmanager` path.
 - Mimir Helm chart values currently match expected env injection shape: `alertmanager.env` and `alertmanager.extraEnvFrom` are available, **not** `alertmanager.extraEnv`.
 
 ## Requirements

@@ -42,7 +42,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: observability-mimir-nginx
+                name: observability-mimir-gateway
                 port:
                   number: 80
 ---

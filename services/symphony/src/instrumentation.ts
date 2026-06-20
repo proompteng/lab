@@ -54,7 +54,7 @@ type TelemetryState = {
 }
 
 const DEFAULT_TRACES_ENDPOINT = 'http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces'
-const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-nginx.observability.svc.cluster.local/otlp/v1/metrics'
+const DEFAULT_METRICS_ENDPOINT = 'http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics'
 
 const globalState = globalThis as typeof globalThis & {
   __symphonyTelemetry?: TelemetryState
