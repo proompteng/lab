@@ -13,12 +13,13 @@ import signal
 import socket
 import subprocess
 import time as monotonic_time
+from contextlib import contextmanager
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Iterator, Mapping, Sequence, cast
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
@@ -121,6 +122,13 @@ from app.whitepapers.claim_compiler import (
 import scripts.local_intraday_tsmom_replay as replay_mod
 import scripts.materialize_replay_tape as replay_materializer
 import scripts.run_strategy_factory_v2 as strategy_factory_runner
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io_module
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources_module
+import scripts.whitepaper_autoresearch_runner.preview_narrowing as preview_narrowing_module
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building_module
+import scripts.whitepaper_autoresearch_runner.proposal_training as proposal_training_module
+import scripts.whitepaper_autoresearch_runner.replay_execution as replay_execution_module
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards_module
 
 from scripts.whitepaper_autoresearch_runner.candidate_board_fields import (
     _candidate_board_score_rows as _candidate_board_score_rows,
@@ -248,7 +256,6 @@ from scripts.whitepaper_autoresearch_runner.artifact_io import (
     _write_json,
     _write_jsonl,
     _write_failure_summary,
-    _current_code_commit,
     _resolved_clickhouse_password,
     _clickhouse_host_requires_dns_preflight,
     _clickhouse_endpoint_preflight_failure,
@@ -275,15 +282,10 @@ from scripts.whitepaper_autoresearch_runner.rejected_signal_feedback import (
 )
 
 from scripts.whitepaper_autoresearch_runner.persisted_feedback_sources import (
-    _load_recent_persisted_feedback_evidence_bundles,
-    _load_autoresearch_feedback_evidence_bundles,
     _program_claim_type,
     _program_research_source_to_whitepaper_source,
     _program_whitepaper_sources,
     _dedupe_whitepaper_sources,
-    _load_sources_from_db,
-    _persist_vnext_specs,
-    _persist_epoch_ledgers,
 )
 
 from scripts.whitepaper_autoresearch_runner.oracle_policy import (
@@ -297,7 +299,6 @@ from scripts.whitepaper_autoresearch_runner.oracle_policy import (
 )
 
 from scripts.whitepaper_autoresearch_runner.proposal_training import (
-    _proposal_model_and_rows,
     _candidate_quality_gate_failures,
     _false_positive_table,
     _replay_diagnostic_proposal_rows,
@@ -382,7 +383,6 @@ from scripts.whitepaper_autoresearch_runner.feedback_bundle_builders import (
 )
 
 from scripts.whitepaper_autoresearch_runner.proposal_building import (
-    _pre_replay_proposal_model_and_rows,
     _proposal_score_confidence,
     _selection_reason_blocks_replay,
 )
@@ -392,7 +392,6 @@ from scripts.whitepaper_autoresearch_runner.candidate_identity import (
 
 from scripts.whitepaper_autoresearch_runner.preview_narrowing import (
     _candidate_selection_for_direct_replay,
-    _apply_fast_replay_preview_narrowing,
     _resolved_fast_replay_preview_top_k,
     _resolved_fast_replay_exact_candidate_cap,
 )
@@ -424,29 +423,17 @@ from scripts.whitepaper_autoresearch_runner.replay_execution import (
     _synthetic_net_for_spec,
     _synthetic_symbol_contribution_shares,
     _synthetic_candidate_payload,
-    _run_synthetic_replay,
-    _run_real_replay,
-    _real_replay_result_from_factory_payload,
     _dedupe_replay_evidence,
     _candidate_spec_id_from_experiment_result_path,
-    _collect_partial_real_replay,
-    _run_real_replay_once_with_optional_timeout,
-    _real_replay_worker,
-    _terminate_process,
-    _run_real_replay_once_in_child_process,
 )
 
 from scripts.whitepaper_autoresearch_runner.replay_shards import (
-    _run_replay_with_optional_timeout,
     _build_real_replay_shards,
-    _execute_real_replay_shard,
     _failed_shard_spec_ids,
     _evidenced_spec_ids,
-    _retry_real_replay_failed_shard_specs,
     _replay_shard_frontier_candidate_budget,
     _bounded_real_replay_shard_workers,
     _bounded_real_replay_shard_timeout_seconds,
-    _run_real_replay_shards,
     _load_epoch_program,
     _resolved_staged_train_screen_multiplier,
     _resolved_program_family_int_arg,
@@ -640,6 +627,245 @@ _EXACT_REPLAY_LEDGER_SCHEMA_VERSIONS = frozenset(
 )
 
 _EXACT_REPLAY_RUNTIME_LEDGER_PNL_SOURCE = "exact_replay_runtime_ledger"
+
+_BASE_CURRENT_CODE_COMMIT = artifact_io_module._current_code_commit
+_BASE_RUN_SYNTHETIC_REPLAY = replay_execution_module._run_synthetic_replay
+_BASE_RUN_REAL_REPLAY = replay_execution_module._run_real_replay
+_BASE_REAL_REPLAY_RESULT_FROM_FACTORY_PAYLOAD = (
+    replay_execution_module._real_replay_result_from_factory_payload
+)
+_BASE_COLLECT_PARTIAL_REAL_REPLAY = replay_execution_module._collect_partial_real_replay
+_BASE_REAL_REPLAY_WORKER = replay_execution_module._real_replay_worker
+_BASE_TERMINATE_PROCESS = replay_execution_module._terminate_process
+_BASE_RUN_REAL_REPLAY_ONCE_WITH_OPTIONAL_TIMEOUT = (
+    replay_execution_module._run_real_replay_once_with_optional_timeout
+)
+_BASE_RUN_REAL_REPLAY_ONCE_IN_CHILD_PROCESS = (
+    replay_execution_module._run_real_replay_once_in_child_process
+)
+_BASE_APPLY_FAST_REPLAY_PREVIEW_NARROWING = (
+    preview_narrowing_module._apply_fast_replay_preview_narrowing
+)
+_BASE_EXECUTE_REAL_REPLAY_SHARD = replay_shards_module._execute_real_replay_shard
+_BASE_RETRY_REAL_REPLAY_FAILED_SHARD_SPECS = (
+    replay_shards_module._retry_real_replay_failed_shard_specs
+)
+_BASE_RUN_REAL_REPLAY_SHARDS = replay_shards_module._run_real_replay_shards
+_BASE_RUN_REPLAY_WITH_OPTIONAL_TIMEOUT = (
+    replay_shards_module._run_replay_with_optional_timeout
+)
+
+
+@contextmanager
+def _temporary_module_attr(module: Any, name: str, value: Any) -> Iterator[None]:
+    original = getattr(module, name)
+    setattr(module, name, value)
+    try:
+        yield
+    finally:
+        setattr(module, name, original)
+
+
+def _current_code_commit() -> str:
+    with _temporary_module_attr(artifact_io_module, "__file__", __file__):
+        return _BASE_CURRENT_CODE_COMMIT()
+
+
+def _load_recent_persisted_feedback_evidence_bundles(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        persisted_feedback_sources_module, "SessionLocal", SessionLocal
+    ):
+        return persisted_feedback_sources_module._load_recent_persisted_feedback_evidence_bundles(
+            *args, **kwargs
+        )
+
+
+def _load_autoresearch_feedback_evidence_bundles(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        persisted_feedback_sources_module, "SessionLocal", SessionLocal
+    ):
+        return persisted_feedback_sources_module._load_autoresearch_feedback_evidence_bundles(
+            *args, **kwargs
+        )
+
+
+def _load_sources_from_db(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        persisted_feedback_sources_module, "SessionLocal", SessionLocal
+    ):
+        return persisted_feedback_sources_module._load_sources_from_db(*args, **kwargs)
+
+
+def _persist_vnext_specs(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        persisted_feedback_sources_module, "SessionLocal", SessionLocal
+    ):
+        return persisted_feedback_sources_module._persist_vnext_specs(*args, **kwargs)
+
+
+def _persist_epoch_ledgers(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        persisted_feedback_sources_module, "SessionLocal", SessionLocal
+    ):
+        return persisted_feedback_sources_module._persist_epoch_ledgers(*args, **kwargs)
+
+
+def _pre_replay_proposal_model_and_rows(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        proposal_building_module, "train_mlx_ranker", train_mlx_ranker
+    ):
+        return proposal_building_module._pre_replay_proposal_model_and_rows(
+            *args, **kwargs
+        )
+
+
+def _proposal_model_and_rows(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        proposal_training_module, "train_mlx_ranker", train_mlx_ranker
+    ):
+        return proposal_training_module._proposal_model_and_rows(*args, **kwargs)
+
+
+def _run_synthetic_replay(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        replay_execution_module, "_current_code_commit", _current_code_commit
+    ):
+        return _BASE_RUN_SYNTHETIC_REPLAY(*args, **kwargs)
+
+
+def _run_real_replay(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        replay_execution_module, "_current_code_commit", _current_code_commit
+    ):
+        return _BASE_RUN_REAL_REPLAY(*args, **kwargs)
+
+
+def _real_replay_result_from_factory_payload(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        replay_execution_module, "_current_code_commit", _current_code_commit
+    ):
+        return _BASE_REAL_REPLAY_RESULT_FROM_FACTORY_PAYLOAD(*args, **kwargs)
+
+
+def _collect_partial_real_replay(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        replay_execution_module,
+        "_real_replay_result_from_factory_payload",
+        _real_replay_result_from_factory_payload,
+    ):
+        return _BASE_COLLECT_PARTIAL_REAL_REPLAY(*args, **kwargs)
+
+
+def _run_real_replay_once_with_optional_timeout(*args: Any, **kwargs: Any) -> Any:
+    with (
+        _temporary_module_attr(replay_execution_module, "signal", signal),
+        _temporary_module_attr(
+            replay_execution_module, "_run_real_replay", _run_real_replay
+        ),
+        _temporary_module_attr(
+            replay_execution_module,
+            "_run_real_replay_once_in_child_process",
+            _run_real_replay_once_in_child_process,
+        ),
+    ):
+        return _BASE_RUN_REAL_REPLAY_ONCE_WITH_OPTIONAL_TIMEOUT(*args, **kwargs)
+
+
+def _real_replay_worker(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        replay_execution_module, "_run_real_replay", _run_real_replay
+    ):
+        return _BASE_REAL_REPLAY_WORKER(*args, **kwargs)
+
+
+def _terminate_process(*args: Any, **kwargs: Any) -> Any:
+    return _BASE_TERMINATE_PROCESS(*args, **kwargs)
+
+
+def _run_real_replay_once_in_child_process(*args: Any, **kwargs: Any) -> Any:
+    with (
+        _temporary_module_attr(
+            replay_execution_module, "_real_replay_worker", _real_replay_worker
+        ),
+        _temporary_module_attr(
+            replay_execution_module, "_terminate_process", _terminate_process
+        ),
+        _temporary_module_attr(
+            replay_execution_module, "multiprocessing", multiprocessing
+        ),
+        _temporary_module_attr(replay_execution_module, "queue", queue),
+        _temporary_module_attr(
+            replay_execution_module, "monotonic_time", monotonic_time
+        ),
+    ):
+        return _BASE_RUN_REAL_REPLAY_ONCE_IN_CHILD_PROCESS(*args, **kwargs)
+
+
+def _execute_real_replay_shard(*args: Any, **kwargs: Any) -> Any:
+    with (
+        _temporary_module_attr(
+            replay_shards_module,
+            "_run_real_replay_once_with_optional_timeout",
+            _run_real_replay_once_with_optional_timeout,
+        ),
+        _temporary_module_attr(
+            replay_shards_module,
+            "_collect_partial_real_replay",
+            _collect_partial_real_replay,
+        ),
+    ):
+        return _BASE_EXECUTE_REAL_REPLAY_SHARD(*args, **kwargs)
+
+
+def _retry_real_replay_failed_shard_specs(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        replay_shards_module, "_execute_real_replay_shard", _execute_real_replay_shard
+    ):
+        return _BASE_RETRY_REAL_REPLAY_FAILED_SHARD_SPECS(*args, **kwargs)
+
+
+def _run_real_replay_shards(*args: Any, **kwargs: Any) -> Any:
+    with (
+        _temporary_module_attr(
+            replay_shards_module,
+            "_execute_real_replay_shard",
+            _execute_real_replay_shard,
+        ),
+        _temporary_module_attr(
+            replay_shards_module,
+            "_retry_real_replay_failed_shard_specs",
+            _retry_real_replay_failed_shard_specs,
+        ),
+        _temporary_module_attr(
+            replay_shards_module, "ProcessPoolExecutor", ProcessPoolExecutor
+        ),
+        _temporary_module_attr(replay_shards_module, "as_completed", as_completed),
+    ):
+        return _BASE_RUN_REAL_REPLAY_SHARDS(*args, **kwargs)
+
+
+def _run_replay_with_optional_timeout(*args: Any, **kwargs: Any) -> Any:
+    with (
+        _temporary_module_attr(
+            replay_shards_module, "_run_synthetic_replay", _run_synthetic_replay
+        ),
+        _temporary_module_attr(
+            replay_shards_module,
+            "_run_real_replay_once_with_optional_timeout",
+            _run_real_replay_once_with_optional_timeout,
+        ),
+        _temporary_module_attr(
+            replay_shards_module, "_run_real_replay_shards", _run_real_replay_shards
+        ),
+    ):
+        return _BASE_RUN_REPLAY_WITH_OPTIONAL_TIMEOUT(*args, **kwargs)
+
+
+def _apply_fast_replay_preview_narrowing(*args: Any, **kwargs: Any) -> Any:
+    with _temporary_module_attr(
+        preview_narrowing_module, "build_fast_replay_preview", build_fast_replay_preview
+    ):
+        return _BASE_APPLY_FAST_REPLAY_PREVIEW_NARROWING(*args, **kwargs)
 
 
 def _select_candidate_specs_for_replay(

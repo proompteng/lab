@@ -49,6 +49,8 @@ from app.trading.runtime_window_import import (
     resolve_hypothesis_manifest,
 )
 
+import scripts.hypothesis_runtime_window_import.cli_parsing as runtime_window_cli_parsing_module
+
 from scripts.hypothesis_runtime_window_import.common import (
     _runtime_source_row_symbol as _runtime_source_row_symbol,
     _execution_signed_qty as _execution_signed_qty,
@@ -284,7 +286,6 @@ from scripts.hypothesis_runtime_window_import.cli_parsing import (
     _parse_args,
     _sqlalchemy_dsn,
     _target_persistence_dsn,
-    _persistence_session,
     _flag,
     _load_json_artifact,
 )
@@ -341,6 +342,17 @@ _SOURCE_RUNTIME_LEDGER_COLUMNS = (
     "pnl_basis",
     "payload_json",
 )
+
+
+@contextmanager
+def _persistence_session(args: argparse.Namespace) -> Iterator[Session]:
+    original_session_local = runtime_window_cli_parsing_module.SessionLocal
+    runtime_window_cli_parsing_module.SessionLocal = SessionLocal
+    try:
+        with runtime_window_cli_parsing_module._persistence_session(args) as session:
+            yield session
+    finally:
+        runtime_window_cli_parsing_module.SessionLocal = original_session_local
 
 
 def _query_timestamps(
