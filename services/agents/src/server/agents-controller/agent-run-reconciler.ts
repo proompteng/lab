@@ -1112,6 +1112,7 @@ export const createAgentRunReconciler = (deps: AgentRunReconcilerDependencies) =
             runtimeType,
             {
               vcs: vcsResolution,
+              runtimeConfig,
               parameters: resolvedParameters,
               systemPrompt: systemPromptResolution.systemPrompt,
               systemPromptHash: systemPromptResolution.systemPromptHash,

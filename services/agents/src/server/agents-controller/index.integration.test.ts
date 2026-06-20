@@ -134,6 +134,16 @@ const findCondition = (status: Record<string, unknown>, type: string) => {
     | undefined
 }
 
+const getAppliedJobContainerResources = (apply: ReturnType<typeof vi.fn>) => {
+  const appliedResources = apply.mock.calls.map((call) => call[0]) as Record<string, unknown>[]
+  const job = appliedResources.find((resource) => resource.kind === 'Job')
+  const jobSpec = (job?.spec ?? {}) as Record<string, unknown>
+  const template = (jobSpec.template ?? {}) as Record<string, unknown>
+  const podSpec = (template.spec ?? {}) as Record<string, unknown>
+  const containers = (podSpec.containers ?? []) as Record<string, unknown>[]
+  return containers[0]?.resources
+}
+
 const canonicalizeForJsonHash = (value: unknown): unknown => {
   if (value == null) return null
   if (Array.isArray(value)) return value.map((entry) => canonicalizeForJsonHash(entry))
@@ -948,6 +958,179 @@ describe('agents controller reconcileAgentRun', () => {
         limits: {
           memory: '8Gi',
           'ephemeral-storage': '16Gi',
+        },
+      })
+    } finally {
+      if (previousResources === undefined) {
+        delete process.env.AGENTS_AGENT_RUNNER_RESOURCES
+      } else {
+        process.env.AGENTS_AGENT_RUNNER_RESOURCES = previousResources
+      }
+    }
+  })
+
+  it('applies runtime config runner resources over configured defaults', async () => {
+    const previousResources = process.env.AGENTS_AGENT_RUNNER_RESOURCES
+    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({
+      requests: {
+        cpu: '1',
+        memory: '2Gi',
+        'ephemeral-storage': '8Gi',
+      },
+      limits: {
+        memory: '8Gi',
+        'ephemeral-storage': '16Gi',
+      },
+    })
+
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return { metadata: { name: 'provider-1' }, spec: { binary: '/usr/local/bin/agent-runner' } }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: {
+            type: 'job',
+            config: {
+              resources: {
+                requests: { cpu: '2', memory: '6Gi' },
+                limits: { cpu: '6', memory: '12Gi' },
+              },
+            },
+          },
+          workload: { image: defaultRunnerImage },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      expect(getAppliedJobContainerResources(apply)).toEqual({
+        requests: {
+          cpu: '2',
+          memory: '6Gi',
+          'ephemeral-storage': '8Gi',
+        },
+        limits: {
+          cpu: '6',
+          memory: '12Gi',
+          'ephemeral-storage': '16Gi',
+        },
+      })
+    } finally {
+      if (previousResources === undefined) {
+        delete process.env.AGENTS_AGENT_RUNNER_RESOURCES
+      } else {
+        process.env.AGENTS_AGENT_RUNNER_RESOURCES = previousResources
+      }
+    }
+  })
+
+  it('merges provider, runtime config, and AgentRun workload resources by precedence', async () => {
+    const previousResources = process.env.AGENTS_AGENT_RUNNER_RESOURCES
+    process.env.AGENTS_AGENT_RUNNER_RESOURCES = JSON.stringify({
+      requests: {
+        cpu: '1',
+        memory: '2Gi',
+        'ephemeral-storage': '8Gi',
+      },
+      limits: {
+        memory: '8Gi',
+        'ephemeral-storage': '16Gi',
+      },
+    })
+
+    try {
+      const apply = vi.fn(async (resource: Record<string, unknown>) => {
+        const metadata = (resource.metadata ?? {}) as Record<string, unknown>
+        const uid = metadata.uid ?? `uid-${String(resource.kind ?? 'resource').toLowerCase()}`
+        return { ...resource, metadata: { ...metadata, uid } }
+      })
+      const kube = buildKube({
+        apply,
+        get: vi.fn(async (resource: string) => {
+          if (resource === RESOURCE_MAP.Agent) {
+            return {
+              metadata: { name: 'agent-1' },
+              spec: { providerRef: { name: 'provider-1' }, defaults: { systemPrompt: 'default-agent-prompt' } },
+            }
+          }
+          if (resource === RESOURCE_MAP.AgentProvider) {
+            return {
+              metadata: { name: 'provider-1' },
+              spec: {
+                binary: '/usr/local/bin/agent-runner',
+                workload: {
+                  resources: {
+                    requests: { cpu: '3', memory: '6Gi' },
+                    limits: { memory: '14Gi', 'ephemeral-storage': '20Gi' },
+                  },
+                },
+              },
+            }
+          }
+          if (resource === RESOURCE_MAP.ImplementationSpec) {
+            return { metadata: { name: 'impl-1' }, spec: { text: 'demo' } }
+          }
+          return null
+        }),
+      })
+      const agentRun = buildAgentRun({
+        spec: {
+          agentRef: { name: 'agent-1' },
+          implementationSpecRef: { name: 'impl-1' },
+          runtime: {
+            type: 'job',
+            config: {
+              resources: {
+                requests: { memory: '8Gi' },
+                limits: { cpu: '6' },
+              },
+            },
+          },
+          workload: {
+            image: defaultRunnerImage,
+            resources: {
+              requests: { memory: '10Gi' },
+              limits: { memory: '20Gi' },
+            },
+          },
+        },
+      })
+
+      await __test.reconcileAgentRun(kube as never, agentRun, 'agents', [], [], defaultConcurrency, buildInFlight(), 0)
+
+      expect(getAppliedJobContainerResources(apply)).toEqual({
+        requests: {
+          cpu: '3',
+          memory: '10Gi',
+          'ephemeral-storage': '8Gi',
+        },
+        limits: {
+          cpu: '6',
+          memory: '20Gi',
+          'ephemeral-storage': '20Gi',
         },
       })
     } finally {

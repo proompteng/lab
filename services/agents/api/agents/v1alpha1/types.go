@@ -329,6 +329,8 @@ type AgentProviderSpec struct {
 type AgentProviderWorkloadSpec struct {
 	// Image is the default runner image for AgentRuns that omit spec.workload.image.
 	Image string `json:"image,omitempty"`
+	// Resources are provider-owned default resource requirements for AgentRun Jobs.
+	Resources *WorkloadResources `json:"resources,omitempty"`
 }
 
 type AgentProviderHealthSpec struct {

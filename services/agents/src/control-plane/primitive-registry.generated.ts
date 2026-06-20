@@ -353,6 +353,24 @@ export const controlPlanePrimitiveRegistry = [
                   description: 'Image is the default runner image for AgentRuns that omit spec.workload.image.',
                   type: 'string',
                 },
+                resources: {
+                  description: 'Resources are provider-owned default resource requirements for AgentRun Jobs.',
+                  properties: {
+                    limits: {
+                      additionalProperties: {
+                        type: 'string',
+                      },
+                      type: 'object',
+                    },
+                    requests: {
+                      additionalProperties: {
+                        type: 'string',
+                      },
+                      type: 'object',
+                    },
+                  },
+                  type: 'object',
+                },
               },
               type: 'object',
             },

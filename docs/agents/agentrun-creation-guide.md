@@ -299,6 +299,18 @@ Use per-run image pinning only when:
 - you are running a controlled canary/debug experiment, and
 - you have verified the exact image is compatible with the configured agent provider/runtime.
 
+## Runner Resource Selection
+
+Resource resolution order for Job containers (lowest to highest precedence):
+
+1. chart/controller defaults from `controller.defaultWorkload.resources` / `AGENTS_AGENT_RUNNER_RESOURCES`
+2. `AgentProvider.spec.workload.resources`
+3. `AgentRun.spec.runtime.config.resources`
+4. `AgentRun.spec.workload.resources` or workflow step `workload.resources`
+
+Use `spec.workload.resources` for normal per-run sizing. `spec.runtime.config.resources` is accepted for runtime-level
+submissions and is overridden by explicit workload resources.
+
 ## Verify The Run Is Using The Spec Text
 
 After `kubectl apply`:

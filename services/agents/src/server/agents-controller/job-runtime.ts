@@ -116,18 +116,27 @@ const normalizeResourceQuantityMap = (value: unknown) => {
   )
 }
 
-const buildJobResources = (workload: Record<string, unknown>) => {
+const buildJobResources = (
+  workload: Record<string, unknown>,
+  provider: Record<string, unknown>,
+  runtimeConfig: Record<string, unknown>,
+) => {
   const defaultResources = resolveAgentRunnerDefaultsConfig(process.env).resources ?? {}
-  const resources = asRecord(workload.resources) ?? {}
-  const workloadRequests = asRecord(resources.requests) ?? {}
-  const workloadLimits = asRecord(resources.limits) ?? {}
+  const providerWorkload = asRecord(readNested(provider, ['spec', 'workload'])) ?? {}
+  const providerResources = asRecord(providerWorkload.resources) ?? {}
+  const runtimeResources = asRecord(runtimeConfig.resources) ?? {}
+  const workloadResources = asRecord(workload.resources) ?? {}
   const requests = {
     ...normalizeResourceQuantityMap(readNested(defaultResources, ['requests'])),
-    ...normalizeResourceQuantityMap(workloadRequests),
+    ...normalizeResourceQuantityMap(readNested(providerResources, ['requests'])),
+    ...normalizeResourceQuantityMap(readNested(runtimeResources, ['requests'])),
+    ...normalizeResourceQuantityMap(readNested(workloadResources, ['requests'])),
   }
   const limits = {
     ...normalizeResourceQuantityMap(readNested(defaultResources, ['limits'])),
-    ...normalizeResourceQuantityMap(workloadLimits),
+    ...normalizeResourceQuantityMap(readNested(providerResources, ['limits'])),
+    ...normalizeResourceQuantityMap(readNested(runtimeResources, ['limits'])),
+    ...normalizeResourceQuantityMap(readNested(workloadResources, ['limits'])),
   }
   return {
     ...(Object.keys(requests).length > 0 ? { requests } : {}),
@@ -921,7 +930,7 @@ export const submitJobRun = async (
             : []),
         ],
         envFrom: envFrom.length > 0 ? envFrom : undefined,
-        resources: buildJobResources(workload),
+        resources: buildJobResources(workload, provider, runtimeConfig),
         volumeMounts: [...volumeMounts, ...configVolumeMounts],
         terminationMessagePath: '/workspace/.agent/status.json',
         terminationMessagePolicy: 'File',
