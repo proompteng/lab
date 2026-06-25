@@ -899,6 +899,3 @@ def _append_degradation_issue(
             actual_degradation=value,
             maximum_degradation=maximum,
         )
-
-
-__all__: tuple[str, ...] = ()

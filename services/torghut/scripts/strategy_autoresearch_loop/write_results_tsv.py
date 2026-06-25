@@ -635,6 +635,3 @@ def _portfolio_evidence_bundles_from_results(
             seen_bundle_ids.add(bundle.evidence_bundle_id)
             bundles.append(bundle)
     return tuple(bundles)
-
-
-__all__: tuple[str, ...] = ()

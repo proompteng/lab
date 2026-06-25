@@ -718,6 +718,3 @@ class TradingSchedulerGovernanceLifecycleMethods(
         metrics.evidence_continuity_last_success_ts_seconds = (
             report.checked_at.timestamp()
         )
-
-
-__all__: tuple[str, ...] = ()

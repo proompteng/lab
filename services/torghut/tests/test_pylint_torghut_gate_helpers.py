@@ -51,50 +51,20 @@ def test_file_length_filter_no_longer_carries_transitional_baseline() -> None:
     ]
 
 
-def test_file_length_filter_ignores_static_explicit_all_declarations(tmp_path) -> None:
-    module_path = tmp_path / "app" / "trading" / "exports.py"
-    module_path.parent.mkdir(parents=True)
-    module_path.write_text(
-        "\n".join(
-            (
-                "value = 1",
-                "",
-                "__all__ = (",
-                '    "value",',
-                ")",
-            )
-        ),
-        encoding="utf-8",
-    )
+def test_file_length_filter_counts_static_explicit_all_declarations() -> None:
     output = (
         "app/trading/exports.py:1:0: "
         "C0302: Too many lines in module (5/2) (too-many-lines)"
     )
 
-    ignored_paths: set[str] = set()
     messages = _filter_file_length_messages(
         output,
-        module_root=tmp_path,
-        ignored_explicit_all_paths=ignored_paths,
     )
 
-    assert messages == []
-    assert ignored_paths == {"app/trading/exports.py"}
+    assert messages == [output]
 
 
-def test_file_length_filter_keeps_dynamic_all_declarations(tmp_path) -> None:
-    module_path = tmp_path / "app" / "trading" / "dynamic_exports.py"
-    module_path.parent.mkdir(parents=True)
-    module_path.write_text(
-        "\n".join(
-            (
-                "value = 1",
-                "",
-                "__all__ = [name for name in globals()]",
-            )
-        ),
-        encoding="utf-8",
-    )
+def test_file_length_filter_counts_dynamic_all_declarations() -> None:
     output = (
         "app/trading/dynamic_exports.py:1:0: "
         "C0302: Too many lines in module (3/2) (too-many-lines)"
@@ -102,7 +72,6 @@ def test_file_length_filter_keeps_dynamic_all_declarations(tmp_path) -> None:
 
     messages = _filter_file_length_messages(
         output,
-        module_root=tmp_path,
     )
 
     assert messages == [output]

@@ -493,6 +493,3 @@ def _missing_requirement_categories(blockers: Sequence[str]) -> dict[str, bool]:
         "source_offsets": RUNTIME_LEDGER_SOURCE_OFFSETS_MISSING_BLOCKER in blocker_set,
         "tca_cost_rows": AUTHORITY_EXPLICIT_COSTS_BLOCKER in blocker_set,
     }
-
-
-__all__: tuple[str, ...] = ()

@@ -485,6 +485,3 @@ def _extract_evidence_authority_payload(payload: dict[str, Any]) -> dict[str, An
         if nested_contract:
             return nested_contract
     return {}
-
-
-__all__: tuple[str, ...] = ()

@@ -875,6 +875,3 @@ def evaluate_rationale_evidence(
         reasons.append("promotion_rationale_missing")
         details.append({"reason": "promotion_rationale_missing"})
     return reasons, details
-
-
-__all__: tuple[str, ...] = ()

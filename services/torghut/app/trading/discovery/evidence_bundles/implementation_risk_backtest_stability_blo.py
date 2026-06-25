@@ -712,6 +712,3 @@ def conformal_tail_risk_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         if _int(scorecard.get("model_family_robustness_family_count")) < 2:
             blockers.append("model_family_robustness_family_count_below_min")
     return blockers
-
-
-__all__: tuple[str, ...] = ()

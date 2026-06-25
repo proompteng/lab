@@ -699,6 +699,3 @@ def evaluate_expert_router_registry_evidence(
         mismatch_reason="expert_router_registry_artifact_hash_mismatch",
     )
     return evaluation.result()
-
-
-__all__: tuple[str, ...] = ()

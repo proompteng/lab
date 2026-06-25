@@ -186,6 +186,3 @@ def evaluate_trading_health_payload_bounded(
 
     _cache_completed_trading_health_surface_payload(cache_key, payload, status_code)
     return payload, status_code
-
-
-__all__: tuple[str, ...] = ()

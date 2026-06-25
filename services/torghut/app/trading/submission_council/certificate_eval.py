@@ -512,6 +512,3 @@ def attach_lineage_refs(
         attached_rows.append(evaluated_row)
 
     return attached_rows
-
-
-__all__: tuple[str, ...] = ()

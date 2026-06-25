@@ -949,6 +949,3 @@ def _runtime_ledger_proof_packet_check_payload(
         observed,
         _proof_packet_expected(),
     )
-
-
-__all__: tuple[str, ...] = ()

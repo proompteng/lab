@@ -663,6 +663,3 @@ def _write_history_jsonl(path: Path, history: list[dict[str, Any]]) -> None:
 
 def _sanitize_tsv_field(value: Any) -> str:
     return str(value).replace("\t", " ").replace("\n", " ").strip()
-
-
-__all__: tuple[str, ...] = ()

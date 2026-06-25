@@ -39,6 +39,7 @@ def test_structural_gate_includes_final_hardening_rules() -> None:
         "torghut-custom-module-class",
         "torghut-test-compat-wrapper",
         "torghut-source-string-execution",
+        "torghut-empty-all",
     }
 
     assert expected_rules <= set(STRICT_STRUCTURAL_RULES)

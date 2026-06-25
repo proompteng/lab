@@ -412,6 +412,3 @@ def build_profit_live_controls(state: object) -> dict[str, object]:
         "rollback_ready": rollback_ready,
         "deployer_approved": False,
     }
-
-
-__all__: tuple[str, ...] = ()

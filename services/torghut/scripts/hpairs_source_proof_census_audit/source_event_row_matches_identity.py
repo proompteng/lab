@@ -672,6 +672,3 @@ def _daily_payload(
         ),
         "blockers": sorted(str(item) for item in _sequence(ledger.get("blockers"))),
     }
-
-
-__all__: tuple[str, ...] = ()

@@ -689,6 +689,3 @@ class TradingSchedulerGovernanceDecisionMethods(
         self.state.last_autonomy_promotion_eligible = None
         self.state.last_autonomy_recommendation_trace_id = None
         self.state.last_autonomy_throughput = None
-
-
-__all__: tuple[str, ...] = ()

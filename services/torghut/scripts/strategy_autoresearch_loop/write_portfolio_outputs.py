@@ -623,6 +623,3 @@ def _persist_run_outputs(
         encoding="utf-8",
     )
     return summary
-
-
-__all__: tuple[str, ...] = ()

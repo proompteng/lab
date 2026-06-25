@@ -375,6 +375,3 @@ def _persist_strategy_factory_results(
             )
         )
         session.commit()
-
-
-__all__: tuple[str, ...] = ()

@@ -905,6 +905,3 @@ def append_benchmark_parity_evidence_reasons(
                 "artifact_ref": str(parity_path),
             }
         )
-
-
-__all__: tuple[str, ...] = ()

@@ -30,6 +30,7 @@ PLUGIN_ENABLES = ",".join(
         "torghut-test-compat-wrapper",
         "torghut-source-string-execution",
         "torghut-shadowed-all",
+        "torghut-empty-all",
     )
 )
 
@@ -154,6 +155,28 @@ def test_torghut_pylint_quality_plugin_rejects_refactor_slop(
     output = result.output
     missing = sorted(symbol for symbol in expected_symbols if symbol not in output)
     assert not missing, output
+
+
+def test_torghut_pylint_quality_plugin_rejects_empty_all(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "empty_exports.py"
+    module_path.write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "__all__: list[str] = []",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_quality_pylint(module_path)
+
+    assert result.returncode != 0
+    assert "torghut-empty-all" in result.output
 
 
 def test_torghut_pylint_quality_plugin_rejects_source_segment_names(
