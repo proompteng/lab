@@ -65,6 +65,8 @@ class LoopProofSummary:
 
     query_errors: Sequence[str]
     market_lag_seconds: int | None
+    feature_source_lag_seconds: int | None
+    feature_quote_lag_seconds: int | None
     account_lag_seconds: int | None
     market_data_fresh: bool
     account_fresh: bool
@@ -174,15 +176,31 @@ def _proof_summary(
     rows: LoopStatusRows, options: LoopStatusOptions
 ) -> LoopProofSummary:
     latest_feature_at = _datetime_value(rows.latest_signal.get("feature_event_ts"))
+    feature_source_lag_seconds = _optional_int(
+        rows.latest_signal.get("feature_source_lag_seconds")
+    )
+    feature_quote_lag_seconds = _optional_int(
+        rows.latest_signal.get("feature_quote_lag_seconds")
+    )
     latest_account_at = _datetime_value(rows.latest_account.get("observed_at"))
     market_lag_seconds = _age_seconds(options.generated_at, latest_feature_at)
     account_lag_seconds = _age_seconds(options.generated_at, latest_account_at)
     raw_exchange_positions = _raw_account_positions(rows.latest_account)
     unexpected_live_orders = _int(rows.unexpected_live_alpaca.get("orders_24h"))
     unexpected_live_events = _int(rows.unexpected_live_alpaca.get("events_24h"))
-    market_data_fresh = _fresh_enough(
-        market_lag_seconds,
-        threshold_seconds=options.freshness_threshold_seconds,
+    market_data_fresh = (
+        _fresh_enough(
+            market_lag_seconds,
+            threshold_seconds=options.freshness_threshold_seconds,
+        )
+        and _fresh_enough(
+            feature_source_lag_seconds,
+            threshold_seconds=options.freshness_threshold_seconds,
+        )
+        and _fresh_enough(
+            feature_quote_lag_seconds,
+            threshold_seconds=options.freshness_threshold_seconds,
+        )
     )
     account_fresh = _fresh_enough(
         account_lag_seconds,
@@ -191,6 +209,8 @@ def _proof_summary(
     return LoopProofSummary(
         query_errors=tuple(rows.query_errors),
         market_lag_seconds=market_lag_seconds,
+        feature_source_lag_seconds=feature_source_lag_seconds,
+        feature_quote_lag_seconds=feature_quote_lag_seconds,
         account_lag_seconds=account_lag_seconds,
         market_data_fresh=market_data_fresh,
         account_fresh=account_fresh,
@@ -202,7 +222,8 @@ def _proof_summary(
         position_count=len(rows.positions),
         raw_exchange_positions=tuple(raw_exchange_positions),
         positions_reconciled=account_fresh
-        and len(rows.positions) == len(raw_exchange_positions),
+        and _position_coin_set(rows.positions)
+        == _position_coin_set(raw_exchange_positions),
         stale_open_order_count=len(rows.stale_open_orders),
         unexpected_live_orders=unexpected_live_orders,
         unexpected_live_events=unexpected_live_events,
@@ -239,6 +260,8 @@ def _market_data_payload(
             _datetime_value(rows.latest_signal.get("feature_event_ts"))
         ),
         "lag_seconds": summary.market_lag_seconds,
+        "source_lag_seconds": summary.feature_source_lag_seconds,
+        "quote_lag_seconds": summary.feature_quote_lag_seconds,
         "freshness_threshold_seconds": options.freshness_threshold_seconds,
         "selected_symbol": selected_symbols[0] if selected_symbols else None,
     }
@@ -426,16 +449,10 @@ def _raw_account_positions(
     account_row: Mapping[str, object],
 ) -> list[dict[str, object]]:
     payload = _mapping_payload(account_row.get("raw_payload"))
-    raw_positions = payload.get("assetPositions")
-    if not isinstance(raw_positions, list):
-        return []
+    raw_positions = _account_position_rows(payload)
     positions: list[dict[str, object]] = []
-    for raw_position in cast(list[object], raw_positions):
-        if not isinstance(raw_position, Mapping):
-            continue
-        position = _mapping_payload(
-            cast(Mapping[str, object], raw_position).get("position")
-        )
+    for raw_position in raw_positions:
+        position = _mapping_payload(raw_position.get("position"))
         coin = _optional_text(position.get("coin"))
         if coin is None:
             continue
@@ -450,6 +467,36 @@ def _raw_account_positions(
             }
         )
     return sorted(positions, key=lambda item: str(item["coin"]))
+
+
+def _account_position_rows(
+    payload: Mapping[str, object],
+) -> list[Mapping[str, object]]:
+    rows: list[Mapping[str, object]] = []
+    _extend_position_rows(rows, payload.get("assetPositions"))
+    dex_states = payload.get("dexStates")
+    if isinstance(dex_states, Mapping):
+        for raw_state in cast(Mapping[object, object], dex_states).values():
+            state = _mapping_payload(raw_state)
+            _extend_position_rows(rows, state.get("assetPositions"))
+    clearinghouse_state = _mapping_payload(payload.get("clearinghouseState"))
+    _extend_position_rows(rows, clearinghouse_state.get("assetPositions"))
+    return rows
+
+
+def _extend_position_rows(rows: list[Mapping[str, object]], value: object) -> None:
+    if not isinstance(value, list):
+        return
+    for raw_position in cast(list[object], value):
+        if not isinstance(raw_position, Mapping):
+            continue
+        rows.append(cast(Mapping[str, object], raw_position))
+
+
+def _position_coin_set(rows: Sequence[Mapping[str, object]]) -> set[str]:
+    return {
+        coin for row in rows if (coin := _optional_text(row.get("coin"))) is not None
+    }
 
 
 def _mapping_payload(value: object) -> Mapping[str, object]:
@@ -511,6 +558,15 @@ def _int(value: object) -> int:
         return 0
 
 
+def _optional_int(value: object) -> int | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(Decimal(str(value)))
+    except Exception:
+        return None
+
+
 def _optional_text(value: object) -> str | None:
     if value is None:
         return None
@@ -566,6 +622,8 @@ _LATEST_SIGNAL_SQL = """
 SELECT
   generated_at,
   feature_event_ts,
+  features ->> 'source_lag_seconds' AS feature_source_lag_seconds,
+  features ->> 'quote_lag_seconds' AS feature_quote_lag_seconds,
   coin,
   action,
   edge_bps::text,

@@ -9,13 +9,13 @@ V2 contract:
 - Market data network is `mainnet`.
 - Execution network is `testnet`.
 - Runtime env names use `HYPERLIQUID_EXECUTION_*`; old `HYPERLIQUID_RUNTIME_*` names are rejected by config validation.
-- The configured execution universe is
-  `xyz:NVDA,xyz:AMD,xyz:AVGO,xyz:MRVL,xyz:INTC,xyz:MU,xyz:WDC,xyz:SNDK,xyz:ARM,xyz:LITE`.
+- The configured execution universe is `BNB,ZRO,PAXG,AERO,XMR`; all are default Hyperliquid testnet markets with
+  mainnet feature rows.
 - `SPX` is excluded.
 - Strategy entry uses bounded testnet IOC execution for the restore lane: `ORDER_POLICY=marketable_ioc`, `MAKER_TIF=Ioc`,
   and `MAKER_TTL_SECONDS=10`.
 - Strategy entry requires edge to clear `max(MIN_EDGE_BPS=3, spread_bps + COST_BUFFER_BPS=2)`.
-- Signal freshness allows the same `180s` quote window used by runtime dependency readiness.
+- Signal freshness allows the same `180s` source and quote-lag window used by runtime dependency readiness.
 - Short entries are disabled in the restore lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=false`; entries remain
   bounded by the same per-order, per-symbol, gross exposure, cooldown, and single-open-order controls.
 - Caps are intentionally small: `$10` max order notional, `$25` max symbol exposure, and `$100` max gross exposure.
