@@ -306,34 +306,6 @@ def main_runtime_value(name: str, default: object | None = None) -> Any:
     return globals().get(name, default)
 
 
-__all__ = (
-    "logger",
-    "BUILD_VERSION",
-    "BUILD_COMMIT",
-    "BUILD_IMAGE_DIGEST",
-    "BUILD_SOURCE_CI_REF",
-    "BUILD_MANIFEST_COMMIT",
-    "BUILD_MANIFEST_IMAGE_DIGEST",
-    "BUILD_ARGO_SYNC_REVISION",
-    "BUILD_ARGO_HEALTH",
-    "RUNTIME_PROFITABILITY_LOOKBACK_HOURS",
-    "RUNTIME_PROFITABILITY_SCHEMA_VERSION",
-    "PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS",
-    "CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE",
-    "LEAN_LANE_MANAGER",
-    "WHITEPAPER_WORKFLOW",
-    "retryable_tca_recompute_error",
-    "ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
-    "TRADING_STATUS_READ_BUDGET_SECONDS",
-    "PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS",
-    "PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK",
-    "PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL",
-    "shared_mapping_items",
-    "shared_paper_route_target_plan_from_payload",
-    "main_runtime_value",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS",

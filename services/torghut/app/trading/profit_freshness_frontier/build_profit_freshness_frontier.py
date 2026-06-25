@@ -255,10 +255,4 @@ def build_profit_freshness_frontier(
     }
 
 
-__all__ = [
-    "PROFIT_FRESHNESS_FRONTIER_SCHEMA_VERSION",
-    "build_profit_freshness_frontier",
-]
-
-
 __all__ = ("build_profit_freshness_frontier",)

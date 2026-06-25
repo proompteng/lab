@@ -260,26 +260,6 @@ def _commit_consumer(consumer: Any) -> bool:
         return False
 
 
-__all__ = [
-    "NormalizedOrderEvent",
-    "NormalizationResult",
-    "OrderFeedIngestor",
-    "EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION",
-    "HISTORICAL_ORDER_EVENT_SOURCE_WINDOW_REVISION",
-    "ORDER_FEED_SOURCE_REVISION",
-    "normalize_order_feed_record",
-    "persist_order_event",
-    "apply_order_event_to_execution",
-    "backfill_order_feed_events_from_executions",
-    "backfill_order_feed_source_windows",
-    "link_order_events_to_execution",
-    "repair_order_feed_execution_links",
-    "repair_order_feed_execution_states",
-    "repair_order_feed_fill_deltas",
-    "latest_order_event_for_execution",
-]
-
-
 # Public aliases used by split-module consumers.
 commit_consumer = _commit_consumer
 consumer_commit_enabled = _consumer_commit_enabled

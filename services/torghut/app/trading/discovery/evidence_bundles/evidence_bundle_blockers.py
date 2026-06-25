@@ -173,12 +173,6 @@ def evidence_bundle_is_valid(bundle: CandidateEvidenceBundle) -> bool:
     return not evidence_bundle_blockers(bundle)
 
 
-__all__ = (
-    "evidence_bundle_blockers",
-    "evidence_bundle_is_valid",
-)
-
-
 # Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS",

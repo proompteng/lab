@@ -179,11 +179,6 @@ class TradingSchedulerGovernanceMixinContract(Protocol):
 
 resolve_autonomy_artifact_root = _resolve_autonomy_artifact_root
 
-__all__ = (
-    "logger",
-    "resolve_autonomy_artifact_root",
-)
-
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (

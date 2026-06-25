@@ -702,32 +702,6 @@ def _authority_scope_rows(
     )
 
 
-__all__ = (
-    "SCHEMA_VERSION",
-    "AUTHORITY_CANDIDATE_READY",
-    "NO_SOURCE_ACTIVITY",
-    "LIFECYCLE_MISSING",
-    "ECONOMICS_MISSING",
-    "SOURCE_REFS_MISSING",
-    "OPEN_POSITIONS",
-    "AUTHORITY_DISTRIBUTION_MISSING",
-    "CANDIDATE_CONFIG_MISMATCH_BLOCKER",
-    "SOURCE_ACCOUNT_ALIAS_ONLY_SOURCE_PROOF_BLOCKER",
-    "SOURCE_ACCOUNT_CANONICAL_REF_MISMATCH_BLOCKER",
-    "LADDER_PASS",
-    "LADDER_MISSING",
-    "LADDER_BLOCKED",
-    "SUBMITTED_ORDERS_MISSING_BLOCKER",
-    "CensusIdentity",
-    "CensusSourceRows",
-    "parse_args",
-    "build_source_proof_census",
-    "census_json",
-    "load_fixture_rows",
-    "load_dsn_rows",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "AUTHORITY_BEST_DAY_CONCENTRATION_BLOCKER",

@@ -89,9 +89,6 @@ def _qualified_table_name(table: str) -> str:
     return f"{safe_database}.{safe_table}"
 
 
-__all__ = ["ClickHouseSignalIngestor", "SignalBatch"]
-
-
 # Public aliases used by split-module consumers.
 attach_simulation_context_payload = _attach_simulation_context
 qualified_table_name = _qualified_table_name
