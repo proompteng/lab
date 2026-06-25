@@ -42,21 +42,13 @@ class _ReadOnlyTradingClientLike(Protocol):
 
     def get_all_positions(self) -> Iterable[Any]: ...
 
+    def get_asset(self, symbol_or_asset_id: str) -> Any: ...
+
     def get_orders(self, filter: Any | None = None) -> Iterable[Any]: ...
 
     def get_order_by_id(self, order_id: str) -> Any: ...
 
-
-class _AssetLookupTradingClientLike(Protocol):
-    def get_asset(self, symbol_or_asset_id: str) -> Any: ...
-
-
-class _ClientOrderLookupTradingClientLike(Protocol):
-    def get_order_by_client_order_id(self, client_order_id: str) -> Any: ...
-
-
-class _LegacyClientOrderLookupTradingClientLike(Protocol):
-    def get_order_by_client_id(self, client_order_id: str) -> Any: ...
+    def get_order_by_client_id(self, client_id: str) -> Any: ...
 
 
 class _TradingClientLike(_ReadOnlyTradingClientLike, Protocol):
@@ -89,26 +81,11 @@ class _ReadOnlyTradingClient:
     def get_order_by_id(self, order_id: str) -> Any:
         return self._trading_client.get_order_by_id(order_id)
 
-    def get_asset(self, symbol_or_asset_id: str) -> Any | None:
-        if not hasattr(self._trading_client, "get_asset"):
-            return None
-        asset_client = cast(_AssetLookupTradingClientLike, self._trading_client)
-        return asset_client.get_asset(symbol_or_asset_id)
+    def get_asset(self, symbol_or_asset_id: str) -> Any:
+        return self._trading_client.get_asset(symbol_or_asset_id)
 
-    def get_order_by_client_order_id(self, client_order_id: str) -> Any | None:
-        if hasattr(self._trading_client, "get_order_by_client_order_id"):
-            order_client = cast(
-                _ClientOrderLookupTradingClientLike,
-                self._trading_client,
-            )
-            return order_client.get_order_by_client_order_id(client_order_id)
-        if hasattr(self._trading_client, "get_order_by_client_id"):
-            legacy_order_client = cast(
-                _LegacyClientOrderLookupTradingClientLike,
-                self._trading_client,
-            )
-            return legacy_order_client.get_order_by_client_id(client_order_id)
-        return None
+    def get_order_by_client_id(self, client_id: str) -> Any:
+        return self._trading_client.get_order_by_client_id(client_id)
 
 
 class TorghutAlpacaClient:
@@ -191,7 +168,7 @@ class TorghutAlpacaClient:
         self, client_order_id: str
     ) -> Dict[str, Any] | None:
         try:
-            order = self.trading.get_order_by_client_order_id(client_order_id)
+            order = self.trading.get_order_by_client_id(client_order_id)
         except APIError as exc:
             status_code = getattr(exc, "status_code", None)
             if isinstance(status_code, int) and status_code == 404:

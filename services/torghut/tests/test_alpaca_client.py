@@ -39,11 +39,17 @@ class DummyTradingClient:
     def get_all_positions(self) -> list[DummyModel]:
         return [DummyModel(symbol="AAPL", qty="1")]
 
+    def get_asset(self, symbol_or_asset_id: str) -> DummyModel:
+        return DummyModel(symbol=symbol_or_asset_id, tradable=True)
+
     def get_orders(self, filter: GetOrdersRequest | None = None) -> list[DummyModel]:
         return [DummyModel(id="order-1", symbol="AAPL", uuid_id=uuid.uuid4())]
 
     def get_order_by_id(self, order_id: str) -> DummyModel:
         return DummyModel(id=order_id, symbol="AAPL")
+
+    def get_order_by_client_id(self, client_id: str) -> DummyModel:
+        return DummyModel(id="order-xyz", client_order_id=client_id)
 
     def submit_order(self, order_data: Any) -> DummyModel:
         return DummyModel(
@@ -166,16 +172,12 @@ class TestAlpacaClient(TestCase):
         with self.assertRaisesRegex(TypeError, "Unsupported model type"):
             client.get_account()
 
-    def test_get_order_by_client_order_id_falls_back_to_client_id(self) -> None:
-        class TradingClientWithClientId(DummyTradingClient):
-            def get_order_by_client_id(self, client_id: str) -> DummyModel:
-                return DummyModel(id="order-xyz", client_order_id=client_id)
-
+    def test_get_order_by_client_order_id_uses_alpaca_client_id_lookup(self) -> None:
         client = TorghutAlpacaClient(
             api_key="k",
             secret_key="s",
             base_url="https://paper-api.alpaca.markets",
-            trading_client=TradingClientWithClientId(),
+            trading_client=DummyTradingClient(),
             data_client=DummyDataClient(),
         )
 
@@ -184,45 +186,12 @@ class TestAlpacaClient(TestCase):
         self.assertEqual(order["id"], "order-xyz")
         self.assertEqual(order["client_order_id"], "client-123")
 
-    def test_get_order_by_client_order_id_prefers_named_lookup(self) -> None:
-        class TradingClientWithClientOrderId(DummyTradingClient):
-            def get_order_by_client_order_id(self, client_id: str) -> DummyModel:
-                return DummyModel(id="order-named", client_order_id=client_id)
-
-        client = TorghutAlpacaClient(
-            api_key="k",
-            secret_key="s",
-            base_url="https://paper-api.alpaca.markets",
-            trading_client=TradingClientWithClientOrderId(),
-            data_client=DummyDataClient(),
-        )
-
-        order = client.get_order_by_client_order_id("client-456")
-        assert order is not None
-        self.assertEqual(order["id"], "order-named")
-        self.assertEqual(order["client_order_id"], "client-456")
-
-    def test_get_order_by_client_order_id_returns_none_when_unavailable(self) -> None:
+    def test_get_asset_returns_model_from_read_surface(self) -> None:
         client = TorghutAlpacaClient(
             api_key="k",
             secret_key="s",
             base_url="https://paper-api.alpaca.markets",
             trading_client=DummyTradingClient(),
-            data_client=DummyDataClient(),
-        )
-
-        self.assertIsNone(client.get_order_by_client_order_id("client-123"))
-
-    def test_get_asset_returns_model_when_read_surface_supports_lookup(self) -> None:
-        class TradingClientWithAssetLookup(DummyTradingClient):
-            def get_asset(self, symbol_or_asset_id: str) -> DummyModel:
-                return DummyModel(symbol=symbol_or_asset_id, tradable=True)
-
-        client = TorghutAlpacaClient(
-            api_key="k",
-            secret_key="s",
-            base_url="https://paper-api.alpaca.markets",
-            trading_client=TradingClientWithAssetLookup(),
             data_client=DummyDataClient(),
         )
 
@@ -230,17 +199,6 @@ class TestAlpacaClient(TestCase):
         assert asset is not None
         self.assertEqual(asset["symbol"], "AAPL")
         self.assertTrue(asset["tradable"])
-
-    def test_get_asset_returns_none_when_lookup_unavailable(self) -> None:
-        client = TorghutAlpacaClient(
-            api_key="k",
-            secret_key="s",
-            base_url="https://paper-api.alpaca.markets",
-            trading_client=DummyTradingClient(),
-            data_client=DummyDataClient(),
-        )
-
-        self.assertIsNone(client.get_asset("AAPL"))
 
     def test_mutating_methods_require_firewall_boundary(self) -> None:
         client = TorghutAlpacaClient(

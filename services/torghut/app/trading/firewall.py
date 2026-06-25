@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
+from typing import Any, Protocol
 
 from ..alpaca_client import OrderFirewallToken
 from ..config import settings
@@ -120,56 +119,25 @@ class OrderFirewall:
         return self._client.cancel_order(alpaca_order_id, firewall_token=self._token)
 
     def cancel_all_orders(self) -> list[dict[str, Any]]:
-        orders = self._client.cancel_all_orders(firewall_token=self._token)
-        return _normalize_mapping_list(orders)
+        return self._client.cancel_all_orders(firewall_token=self._token)
 
     def get_order_by_client_order_id(
         self, client_order_id: str
     ) -> dict[str, Any] | None:
         # Reads are always allowed; this is used for idempotency backfills.
-        order = self._client.get_order_by_client_order_id(client_order_id)
-        return _normalize_mapping(order)
+        return self._client.get_order_by_client_order_id(client_order_id)
 
     def get_order(self, alpaca_order_id: str) -> dict[str, Any]:
-        order = self._client.get_order(alpaca_order_id)
-        normalized = _normalize_mapping(order)
-        if normalized is None:
-            return {}
-        return normalized
+        return self._client.get_order(alpaca_order_id)
 
     def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
-        result = self._client.list_orders(status=status)
-        return _normalize_mapping_list(result)
+        return self._client.list_orders(status=status)
 
     def list_positions(self) -> list[dict[str, Any]] | None:
-        result = self._client.list_positions()
-        if result is None:
-            return None
-        return _normalize_mapping_list(result)
+        return self._client.list_positions()
 
     def get_account(self) -> dict[str, Any] | None:
-        result = self._client.get_account()
-        return _normalize_mapping(result)
+        return self._client.get_account()
 
     def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None:
-        result = self._client.get_asset(symbol_or_asset_id)
-        return _normalize_mapping(result)
-
-
-def _normalize_mapping(value: object) -> dict[str, Any] | None:
-    if not isinstance(value, Mapping):
-        return None
-    mapping = cast(Mapping[object, Any], value)
-    return {str(key): item for key, item in mapping.items()}
-
-
-def _normalize_mapping_list(value: object) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    items = cast(list[object], value)
-    for item in items:
-        mapping = _normalize_mapping(item)
-        if mapping is not None:
-            normalized.append(mapping)
-    return normalized
+        return self._client.get_asset(symbol_or_asset_id)
