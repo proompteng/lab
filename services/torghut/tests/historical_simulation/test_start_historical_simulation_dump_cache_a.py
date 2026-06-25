@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from tests.historical_simulation.start_historical_simulation_base import (
     Any,
     KafkaRuntimeConfig,
@@ -179,9 +181,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             }
         )
         dump_bytes = f"{dump_line}\n".encode("utf-8")
-        dump_sha256 = historical_simulation_startup.hashlib.sha256(
-            dump_bytes
-        ).hexdigest()
+        dump_sha256 = hashlib.sha256(dump_bytes).hexdigest()
         cache_artifact_path = (
             "s3://argo-workflows/torghut-simulation-cache/cache-key/source-dump.ndjson"
         )
@@ -294,9 +294,7 @@ class TestStartHistoricalSimulationDumpCacheA(StartHistoricalSimulationTestCaseB
             }
         )
         dump_bytes = f"{dump_line}\n".encode("utf-8")
-        dump_sha256 = historical_simulation_startup.hashlib.sha256(
-            dump_bytes
-        ).hexdigest()
+        dump_sha256 = hashlib.sha256(dump_bytes).hexdigest()
         manifest = {
             "dataset_id": resources.dataset_id,
             "dataset_snapshot_ref": "dataset-a@snapshot-1",
