@@ -41,7 +41,16 @@ from ..simulation_progress import active_simulation_runtime_context
 from ..simulation import resolve_market_context_as_of
 from ..time_source import trading_time_status
 from ..universe import UniverseResolver
-from .governance import TradingSchedulerGovernanceMixin
+from .governance.governance_mixin_decision_methods import (
+    TradingSchedulerGovernanceDecisionMethods,
+)
+from .governance.governance_mixin_lifecycle_methods import (
+    TradingSchedulerGovernanceLifecycleMethods,
+)
+from .governance.governance_mixin_runtime_methods import (
+    TradingSchedulerGovernanceRuntimeMethods,
+)
+from .governance.shared_context import TradingSchedulerGovernanceMixinFields
 from .pipeline import TradingPipeline
 from .simple_pipeline import SimpleTradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
@@ -50,7 +59,12 @@ from .state import TradingState
 logger = logging.getLogger(__name__)
 
 
-class TradingScheduler(TradingSchedulerGovernanceMixin):
+class TradingScheduler(
+    TradingSchedulerGovernanceMixinFields,
+    TradingSchedulerGovernanceLifecycleMethods,
+    TradingSchedulerGovernanceDecisionMethods,
+    TradingSchedulerGovernanceRuntimeMethods,
+):
     def __init__(self) -> None:
         self.state = TradingState()
         self._task: Optional[asyncio.Task[None]] = None

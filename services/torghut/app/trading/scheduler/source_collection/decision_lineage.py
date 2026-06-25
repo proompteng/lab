@@ -36,8 +36,6 @@ from ..target_plan_helpers import (
     target_symbols as _target_symbols,
     target_truthy as _target_truthy,
 )
-from .source_decisions import SimplePipelineSourceCollectionDecisionMixin
-from .target_plan_fetch import SimplePipelineSourceCollectionTargetPlanMixin
 
 if TYPE_CHECKING:
     from .collection_types import (
@@ -456,16 +454,6 @@ class SimplePipelineSourceCollectionLineageMixin(SourceCollectionRuntimeMixin):
         return decision.model_copy(update={"params": params})
 
 
-class SimplePipelineSourceCollectionMixin(
-    SimplePipelineSourceCollectionTargetPlanMixin,
-    SimplePipelineSourceCollectionDecisionMixin,
-    SimplePipelineSourceCollectionLineageMixin,
-    object,
-):
-    pass
-
-
 __all__ = [
     "SimplePipelineSourceCollectionLineageMixin",
-    "SimplePipelineSourceCollectionMixin",
 ]
