@@ -6,10 +6,18 @@ from tests.portfolio_optimizer.support import (
     ProfitTargetOraclePolicy,
     _TestPortfolioOptimizerBase,
     _executable_scorecard_fields,
+    candidate_passes_minimums,
+    capital_safety_rejection,
+    edge_risk_gross_exposure_budget_weights,
     evidence_bundle_blockers,
     evidence_bundle_from_frontier_candidate,
+    exact_replay_ledger_artifact_refs,
+    exact_replay_ledger_fill_count,
+    exact_replay_ledger_row_count,
+    gross_exposure_allocation_priority,
+    negative_cash_observation_count,
     optimize_portfolio_candidate,
-    portfolio_optimizer_module,
+    oracle_blocker_count,
 )
 
 
@@ -38,17 +46,17 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
         )
 
         self.assertEqual(
-            portfolio_optimizer_module._exact_replay_ledger_artifact_refs(bundle),
+            exact_replay_ledger_artifact_refs(bundle),
             [
                 "s3://proof/exact-ledger.json",
             ],
         )
         self.assertEqual(
-            portfolio_optimizer_module._exact_replay_ledger_row_count(bundle),
+            exact_replay_ledger_row_count(bundle),
             7,
         )
         self.assertEqual(
-            portfolio_optimizer_module._exact_replay_ledger_fill_count(bundle),
+            exact_replay_ledger_fill_count(bundle),
             6,
         )
 
@@ -75,7 +83,7 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
         )
 
         self.assertEqual(
-            portfolio_optimizer_module._exact_replay_ledger_artifact_refs(bundle),
+            exact_replay_ledger_artifact_refs(bundle),
             [],
         )
         self.assertNotIn(
@@ -83,11 +91,11 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
             bundle.replay_artifact_refs,
         )
         self.assertEqual(
-            portfolio_optimizer_module._exact_replay_ledger_row_count(bundle),
+            exact_replay_ledger_row_count(bundle),
             0,
         )
         self.assertEqual(
-            portfolio_optimizer_module._exact_replay_ledger_fill_count(bundle),
+            exact_replay_ledger_fill_count(bundle),
             0,
         )
 
@@ -136,11 +144,11 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
         self,
     ) -> None:
         self.assertEqual(
-            portfolio_optimizer_module._oracle_blocker_count({}),
+            oracle_blocker_count({}),
             Decimal("0"),
         )
         self.assertEqual(
-            portfolio_optimizer_module._oracle_blocker_count(
+            oracle_blocker_count(
                 {"profit_target_oracle": {"blockers": "missing_daily_net"}}
             ),
             Decimal("0"),
@@ -174,13 +182,13 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
             )
 
         self.assertEqual(
-            portfolio_optimizer_module._gross_exposure_allocation_priority(
+            gross_exposure_allocation_priority(
                 bundle("negative-edge", net_pnl_per_day="-1")
             ),
             Decimal("0"),
         )
         self.assertEqual(
-            portfolio_optimizer_module._gross_exposure_allocation_priority(
+            gross_exposure_allocation_priority(
                 bundle("inactive", net_pnl_per_day="100", active_day_ratio="0")
             ),
             Decimal("0"),
@@ -189,13 +197,11 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
     def test_edge_risk_gross_exposure_budget_weights_covers_saturation_and_noop(
         self,
     ) -> None:
-        saturated_weights = (
-            portfolio_optimizer_module._edge_risk_gross_exposure_budget_weights(
-                (Decimal("0.1"), Decimal("1.0")),
-                (Decimal("100"), Decimal("1")),
-                max_gross_exposure_pct_equity=Decimal("0.6"),
-                equal_scale=Decimal("0.6") / Decimal("1.1"),
-            )
+        saturated_weights = edge_risk_gross_exposure_budget_weights(
+            (Decimal("0.1"), Decimal("1.0")),
+            (Decimal("100"), Decimal("1")),
+            max_gross_exposure_pct_equity=Decimal("0.6"),
+            equal_scale=Decimal("0.6") / Decimal("1.1"),
         )
 
         self.assertIsNotNone(saturated_weights)
@@ -209,7 +215,7 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
         )
 
         self.assertIsNone(
-            portfolio_optimizer_module._edge_risk_gross_exposure_budget_weights(
+            edge_risk_gross_exposure_budget_weights(
                 (Decimal("0.25"), Decimal("0.75")),
                 (Decimal("1"), Decimal("3")),
                 max_gross_exposure_pct_equity=Decimal("0.5"),
@@ -256,31 +262,23 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
         zero_pnl = bundle("zero-pnl", {"net_pnl_per_day": "0"})
 
         self.assertEqual(
-            portfolio_optimizer_module._negative_cash_observation_count(
-                malformed_count
-            ),
+            negative_cash_observation_count(malformed_count),
             0,
         )
         self.assertEqual(
-            portfolio_optimizer_module._capital_safety_rejection(max_gross)["reason"],
+            capital_safety_rejection(max_gross)["reason"],
             "frontier_capital_violation",
         )
         self.assertEqual(
-            portfolio_optimizer_module._capital_safety_rejection(min_cash)["reason"],
+            capital_safety_rejection(min_cash)["reason"],
             "frontier_negative_cash",
         )
         self.assertEqual(
-            portfolio_optimizer_module._capital_safety_rejection(
-                observed_negative_cash
-            )["reason"],
+            capital_safety_rejection(observed_negative_cash)["reason"],
             "frontier_negative_cash_observed",
         )
-        self.assertFalse(
-            portfolio_optimizer_module._candidate_passes_minimums(max_gross)
-        )
-        self.assertFalse(
-            portfolio_optimizer_module._candidate_passes_minimums(zero_pnl)
-        )
+        self.assertFalse(candidate_passes_minimums(max_gross))
+        self.assertFalse(candidate_passes_minimums(zero_pnl))
 
     def test_capital_safety_rejection_uses_oracle_policy(self) -> None:
         def bundle(
@@ -331,32 +329,22 @@ class TestExactReplayLedgerHelpersAcceptExactReplayRefsAndCounts(
         )
 
         self.assertEqual(
-            portfolio_optimizer_module._capital_safety_rejection(
-                gross, oracle_policy=strict_policy
-            )["reason"],
+            capital_safety_rejection(gross, oracle_policy=strict_policy)["reason"],
             "frontier_capital_violation",
         )
         self.assertEqual(
-            portfolio_optimizer_module._capital_safety_rejection(
-                cash, oracle_policy=strict_policy
-            )["reason"],
+            capital_safety_rejection(cash, oracle_policy=strict_policy)["reason"],
             "frontier_negative_cash",
         )
         self.assertEqual(
-            portfolio_optimizer_module._capital_safety_rejection(
-                negative_cash, oracle_policy=strict_policy
-            )["reason"],
+            capital_safety_rejection(negative_cash, oracle_policy=strict_policy)[
+                "reason"
+            ],
             "frontier_negative_cash_observed",
         )
-        self.assertIsNone(
-            portfolio_optimizer_module._capital_safety_rejection(
-                gross, oracle_policy=relaxed_policy
-            )
-        )
+        self.assertIsNone(capital_safety_rejection(gross, oracle_policy=relaxed_policy))
         self.assertTrue(
-            portfolio_optimizer_module._candidate_passes_minimums(
-                negative_cash, oracle_policy=relaxed_policy
-            )
+            candidate_passes_minimums(negative_cash, oracle_policy=relaxed_policy)
         )
 
     def test_portfolio_uses_gross_exposure_budget_for_reported_low_gross_sleeves(

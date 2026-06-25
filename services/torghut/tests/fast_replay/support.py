@@ -17,6 +17,26 @@ from app.trading.discovery.fast_replay import (
     FAST_REPLAY_PROOF_SEMANTICS_LABEL,
     build_fast_replay_preview,
 )
+from app.trading.discovery.fast_replay.extract_price import (
+    extract_microprice_bias_bps,
+    extract_ofi_memory_regime_score,
+    extract_ofi_pressure,
+    extract_price,
+    extract_quote_depth_imbalance,
+    extract_spread_bps,
+    extract_volume,
+    float_or_none,
+    mapping,
+)
+from app.trading.discovery.fast_replay.frontier_selection_blockers_for_row import (
+    candidate_direction,
+    candidate_symbols,
+)
+from app.trading.discovery.fast_replay.preview_rank_key import (
+    preview_rank_key,
+    row_with_rank_and_selection,
+    select_frontier_buckets,
+)
 from app.trading.discovery.replay_tape import (
     build_source_query_digest,
     load_replay_tape,
@@ -154,11 +174,25 @@ __all__: tuple[str, ...] = (
     "ast",
     "build_fast_replay_preview",
     "build_source_query_digest",
+    "candidate_direction",
+    "candidate_symbols",
     "date",
     "datetime",
+    "extract_microprice_bias_bps",
+    "extract_ofi_memory_regime_score",
+    "extract_ofi_pressure",
+    "extract_price",
+    "extract_quote_depth_imbalance",
+    "extract_spread_bps",
+    "extract_volume",
     "fast_replay",
+    "float_or_none",
     "load_replay_tape",
+    "mapping",
     "materialize_signal_tape",
+    "preview_rank_key",
+    "row_with_rank_and_selection",
+    "select_frontier_buckets",
     "timedelta",
     "timezone",
 )

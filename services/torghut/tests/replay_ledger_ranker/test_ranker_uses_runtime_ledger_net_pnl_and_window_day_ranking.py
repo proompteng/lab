@@ -10,15 +10,30 @@ from tests.replay_ledger_ranker.support import (
     _with_execution_quality,
     _with_lob_reality_gap_evidence,
     _with_microstructure_stress_evidence,
+    best_day_share,
     build_replay_ledger_ranking_report,
+    daily_bucket_ranges,
     datetime,
+    dedupe,
+    dedupe_source_papers,
     default_replay_ledger_ranking_policy,
+    event_type,
+    fill_notional,
     json,
+    lob_reality_gap_stress_summary,
+    lob_signal_rows,
+    microstructure_stress_summary,
+    parse_window_datetime,
+    positive_decimal,
+    profit_factor,
     pytest,
     rank_replay_ledger_files,
     rank_replay_ledger_payload,
     ranker,
+    safe_divide,
+    stress_penalty_bps,
     timezone,
+    utc,
 )
 
 
@@ -410,7 +425,7 @@ def test_ranker_discounts_microstructure_fragile_candidates(
 
 
 def test_lob_reality_gap_summary_fails_closed_without_signal_rows() -> None:
-    summary = ranker._lob_reality_gap_stress_summary(
+    summary = lob_reality_gap_stress_summary(
         [{"symbol": "NVDA", "executed_at": "bad-date"}]
     )
 
@@ -423,7 +438,7 @@ def test_lob_reality_gap_summary_fails_closed_without_signal_rows() -> None:
 
 
 def test_microstructure_stress_summary_fails_closed_without_signal_rows() -> None:
-    summary = ranker._microstructure_stress_summary(
+    summary = microstructure_stress_summary(
         [{"symbol": "NVDA", "executed_at": "bad-date"}]
     )
 
@@ -446,14 +461,14 @@ def test_microstructure_stress_summary_fails_closed_without_signal_rows() -> Non
 
 
 def test_microstructure_helpers_cover_nested_penalties_and_source_dedupe() -> None:
-    assert ranker._stress_penalty_bps(
+    assert stress_penalty_bps(
         {"ranking_features": {"replay_rank_penalty_bps": "-7"}}
     ) == Decimal("0")
-    assert ranker._stress_penalty_bps(
+    assert stress_penalty_bps(
         {"ranking_features": {"replay_rank_penalty_bps": "12.5"}}
     ) == Decimal("12.5")
 
-    papers = ranker._dedupe_source_papers(
+    papers = dedupe_source_papers(
         (
             "not-a-paper-list",
             [{"source_id": ""}, "not-a-paper", {"source_id": "paper-a"}],
@@ -465,7 +480,7 @@ def test_microstructure_helpers_cover_nested_penalties_and_source_dedupe() -> No
 
 
 def test_lob_signal_rows_use_fallback_timestamps_and_ingest_fields() -> None:
-    signals = ranker._lob_signal_rows(
+    signals = lob_signal_rows(
         [
             {
                 "symbol": "NVDA",
@@ -738,13 +753,13 @@ def test_ranker_flags_missing_equity_and_supports_helper_edge_cases() -> None:
     )
 
     assert "start_equity_missing_for_exposure_check" in ranking.promotion_blockers
-    assert ranker._daily_bucket_ranges(
+    assert daily_bucket_ranges(
         datetime(2026, 5, 18, 14, 30, tzinfo=timezone.utc),
         datetime(2026, 5, 18, 15, 0, tzinfo=timezone.utc),
     )[0][0] == datetime(2026, 5, 18, 14, 30, tzinfo=timezone.utc)
-    assert ranker._parse_window_datetime("") is None
-    assert ranker._parse_window_datetime("bad-date") is None
-    assert ranker._parse_window_datetime("2026-05-18T14:30:00Z") == datetime(
+    assert parse_window_datetime("") is None
+    assert parse_window_datetime("bad-date") is None
+    assert parse_window_datetime("2026-05-18T14:30:00Z") == datetime(
         2026,
         5,
         18,
@@ -752,7 +767,7 @@ def test_ranker_flags_missing_equity_and_supports_helper_edge_cases() -> None:
         30,
         tzinfo=timezone.utc,
     )
-    assert ranker._utc(datetime(2026, 5, 18, 14, 30)) == datetime(
+    assert utc(datetime(2026, 5, 18, 14, 30)) == datetime(
         2026,
         5,
         18,
@@ -760,19 +775,17 @@ def test_ranker_flags_missing_equity_and_supports_helper_edge_cases() -> None:
         30,
         tzinfo=timezone.utc,
     )
-    assert ranker._best_day_share(
-        {"2026-05-18": Decimal("-1")}, Decimal("-1")
-    ) == Decimal("1")
-    assert ranker._profit_factor(
+    assert best_day_share({"2026-05-18": Decimal("-1")}, Decimal("-1")) == Decimal("1")
+    assert profit_factor(
         {"2026-05-18": Decimal("3"), "2026-05-19": Decimal("-2")}
     ) == Decimal("1.5")
-    assert ranker._fill_notional({"filled_notional": "123.45"}) == Decimal("123.45")
-    assert ranker._fill_notional({"filled_qty": "0", "avg_fill_price": "100"}) is None
-    assert ranker._event_type({"event_type": "filled"}) == "fill"
-    assert ranker._event_type({"event_type": "trade_decision"}) == "decision"
-    assert ranker._event_type({"event_type": "submitted"}) == "order_submitted"
-    assert ranker._event_type({"filled_qty": "1"}) == "fill"
-    assert ranker._positive_decimal("0") is None
-    assert ranker._positive_decimal("not-decimal") is None
-    assert ranker._safe_divide(Decimal("1"), Decimal("0")) == Decimal("0")
-    assert ranker._dedupe(["a", "a", "b"]) == ["a", "b"]
+    assert fill_notional({"filled_notional": "123.45"}) == Decimal("123.45")
+    assert fill_notional({"filled_qty": "0", "avg_fill_price": "100"}) is None
+    assert event_type({"event_type": "filled"}) == "fill"
+    assert event_type({"event_type": "trade_decision"}) == "decision"
+    assert event_type({"event_type": "submitted"}) == "order_submitted"
+    assert event_type({"filled_qty": "1"}) == "fill"
+    assert positive_decimal("0") is None
+    assert positive_decimal("not-decimal") is None
+    assert safe_divide(Decimal("1"), Decimal("0")) == Decimal("0")
+    assert dedupe(["a", "a", "b"]) == ["a", "b"]

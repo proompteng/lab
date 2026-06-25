@@ -6,10 +6,10 @@ from tests.portfolio_optimizer.support import (
     ProfitTargetOraclePolicy,
     _TestPortfolioOptimizerBase,
     _executable_scorecard_fields,
+    daily_net,
     evidence_bundle_from_frontier_candidate,
     optimize_portfolio_candidate,
     portfolio_candidate_from_payload,
-    portfolio_optimizer_module,
 )
 
 
@@ -604,7 +604,7 @@ class TestPortfolioAllowsResearchCandidatesPendingValidationContract(
             portfolio_size_max=1,
         )
 
-        self.assertEqual(portfolio_optimizer_module._daily_net(bundle), {})
+        self.assertEqual(daily_net(bundle), {})
         self.assertIsNotNone(portfolio)
         assert portfolio is not None
         scorecard = portfolio.objective_scorecard

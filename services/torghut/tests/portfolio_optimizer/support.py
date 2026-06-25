@@ -15,6 +15,20 @@ from app.trading.discovery.portfolio_candidates import (
     portfolio_candidate_from_payload,
 )
 from app.trading.discovery.portfolio_optimizer import optimize_portfolio_candidate
+from app.trading.discovery.portfolio_optimizer.portfolio_trading_day_count import (
+    oracle_blocker_count,
+)
+from app.trading.discovery.portfolio_optimizer.shared_context import (
+    _edge_risk_gross_exposure_budget_weights as edge_risk_gross_exposure_budget_weights,
+    _gross_exposure_allocation_priority as gross_exposure_allocation_priority,
+    candidate_passes_minimums,
+    capital_safety_rejection,
+    daily_net,
+    exact_replay_ledger_artifact_refs,
+    exact_replay_ledger_fill_count,
+    exact_replay_ledger_row_count,
+    negative_cash_observation_count,
+)
 from app.trading.discovery.profit_target_oracle import ProfitTargetOraclePolicy
 
 
@@ -109,10 +123,20 @@ __all__: tuple[str, ...] = (
     "TestCase",
     "_TestPortfolioOptimizerBase",
     "_executable_scorecard_fields",
+    "candidate_passes_minimums",
+    "capital_safety_rejection",
+    "daily_net",
+    "edge_risk_gross_exposure_budget_weights",
     "evidence_bundle_blockers",
     "evidence_bundle_from_frontier_candidate",
     "evidence_bundle_from_payload",
+    "exact_replay_ledger_artifact_refs",
+    "exact_replay_ledger_fill_count",
+    "exact_replay_ledger_row_count",
+    "gross_exposure_allocation_priority",
+    "negative_cash_observation_count",
     "optimize_portfolio_candidate",
+    "oracle_blocker_count",
     "portfolio_candidate_from_payload",
     "portfolio_optimizer_module",
 )
