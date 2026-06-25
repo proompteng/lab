@@ -94,6 +94,8 @@ class LoopProofSummary:
     """Reduced proof facts that decide restored versus blocked."""
 
     query_errors: Sequence[str]
+    market_feature_at: datetime | None
+    market_selected_symbol: str | None
     market_lag_seconds: int | None
     feature_source_lag_seconds: int | None
     feature_quote_lag_seconds: int | None
@@ -212,7 +214,10 @@ def assemble_trading_loop_status(
         "status": "restored" if restored else "blocked",
         "blocker_reasons": blockers,
         "runtime": _runtime_payload(rows, options, summary),
+        "operator_approval": _operator_approval_payload(),
+        "proof_trading": _proof_trading_payload(),
         "market_data": _market_data_payload(rows, options, summary),
+        "algorithm": _algorithm_payload(rows, summary),
         "alpha_model": alpha_model_payload(rows, summary),
         "risk_forecast": risk_forecast_payload(rows, summary),
         "portfolio_target": portfolio_target_payload(rows, summary),
@@ -239,13 +244,10 @@ def assemble_trading_loop_status(
 def _proof_summary(
     rows: LoopStatusRows, options: LoopStatusOptions
 ) -> LoopProofSummary:
-    latest_feature_at = _datetime_value(rows.latest_signal.get("feature_event_ts"))
-    feature_source_lag_seconds = _optional_int(
-        rows.latest_signal.get("feature_source_lag_seconds")
-    )
-    feature_quote_lag_seconds = _optional_int(
-        rows.latest_signal.get("feature_quote_lag_seconds")
-    )
+    market_source = _market_data_source(rows)
+    latest_feature_at = _datetime_value(market_source.get("feature_event_ts"))
+    feature_source_lag_seconds = _optional_int(market_source.get("source_lag_seconds"))
+    feature_quote_lag_seconds = _optional_int(market_source.get("quote_lag_seconds"))
     latest_account_at = _datetime_value(rows.latest_account.get("observed_at"))
     market_lag_seconds = _age_seconds(options.generated_at, latest_feature_at)
     account_lag_seconds = _age_seconds(options.generated_at, latest_account_at)
@@ -284,6 +286,8 @@ def _proof_summary(
     )
     return LoopProofSummary(
         query_errors=tuple(rows.query_errors),
+        market_feature_at=latest_feature_at,
+        market_selected_symbol=_optional_text(market_source.get("selected_symbol")),
         market_lag_seconds=market_lag_seconds,
         feature_source_lag_seconds=feature_source_lag_seconds,
         feature_quote_lag_seconds=feature_quote_lag_seconds,
@@ -339,22 +343,55 @@ def _runtime_payload(
     }
 
 
+def _operator_approval_payload() -> dict[str, object]:
+    return {
+        "scope": "testnet_only",
+        "live_capital_approved": False,
+        "reason": "operator_approved_testnet_proof_trading_only",
+    }
+
+
+def _proof_trading_payload() -> dict[str, object]:
+    return {
+        "allowed": True,
+        "lane": "hyperliquid_testnet",
+        "reason": "testnet_proof_trading_operator_approved",
+    }
+
+
 def _market_data_payload(
     rows: LoopStatusRows,
     options: LoopStatusOptions,
     summary: LoopProofSummary,
 ) -> dict[str, object]:
-    selected_symbols = _selected_symbols(rows)
     return {
         "fresh": summary.market_data_fresh,
-        "latest_feature_at": _iso(
-            _datetime_value(rows.latest_signal.get("feature_event_ts"))
-        ),
+        "latest_feature_at": _iso(summary.market_feature_at),
         "lag_seconds": summary.market_lag_seconds,
         "source_lag_seconds": summary.feature_source_lag_seconds,
         "quote_lag_seconds": summary.feature_quote_lag_seconds,
         "freshness_threshold_seconds": options.freshness_threshold_seconds,
-        "selected_symbol": selected_symbols[0] if selected_symbols else None,
+        "selected_symbol": summary.market_selected_symbol,
+    }
+
+
+def _algorithm_payload(
+    rows: LoopStatusRows,
+    summary: LoopProofSummary,
+) -> dict[str, object]:
+    return {
+        "name": "generic_multifactor_apm_v1",
+        "run_id": _optional_text(rows.latest_forecast.get("run_id"))
+        or _optional_text(rows.latest_execution_intent.get("run_id"))
+        or _optional_text(rows.latest_multifactor_run.get("id")),
+        "asset_key": _optional_text(rows.latest_execution_intent.get("asset_key"))
+        or _optional_text(rows.latest_factor_snapshot.get("asset_key")),
+        "factor_snapshot_present": summary.factor_snapshot_present,
+        "forecast_present": summary.alpha_forecast_present,
+        "risk_present": summary.risk_forecast_present,
+        "target_present": summary.portfolio_target_present,
+        "intent_present": summary.execution_intent_present,
+        "latest_order_id": _optional_text(rows.latest_order.get("exchange_order_id")),
     }
 
 
@@ -540,6 +577,34 @@ def _blockers(
     if summary.unexpected_live_total > 0:
         blockers.append("unexpected_live_alpaca_orders_present")
     return blockers
+
+
+def _market_data_source(rows: LoopStatusRows) -> dict[str, object]:
+    if rows.latest_execution_intent and rows.latest_factor_snapshot:
+        latest_feature_at = rows.latest_factor_snapshot.get(
+            "source_event_at"
+        ) or rows.latest_signal.get("feature_event_ts")
+        return {
+            "feature_event_ts": latest_feature_at,
+            "source_lag_seconds": rows.latest_factor_snapshot.get("source_lag_seconds"),
+            "quote_lag_seconds": rows.latest_factor_snapshot.get("quote_lag_seconds"),
+            "selected_symbol": _optional_text(rows.latest_factor_snapshot.get("symbol"))
+            or _symbol_from_asset_key(rows.latest_factor_snapshot.get("asset_key")),
+        }
+    selected_symbols = _selected_symbols(rows)
+    return {
+        "feature_event_ts": rows.latest_signal.get("feature_event_ts"),
+        "source_lag_seconds": rows.latest_signal.get("feature_source_lag_seconds"),
+        "quote_lag_seconds": rows.latest_signal.get("feature_quote_lag_seconds"),
+        "selected_symbol": selected_symbols[0] if selected_symbols else None,
+    }
+
+
+def _symbol_from_asset_key(value: object) -> str | None:
+    text = _optional_text(value)
+    if text is None:
+        return None
+    return text.rsplit(":", maxsplit=1)[-1]
 
 
 def _latest_fill_payload(row: Mapping[str, object]) -> dict[str, object]:
