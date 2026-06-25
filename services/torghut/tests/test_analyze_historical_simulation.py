@@ -10,9 +10,9 @@ from typing import Any, cast
 from unittest import TestCase
 from unittest.mock import patch
 
-from scripts.analyze_historical_simulation import (
+from scripts.historical_simulation_analysis.report_builder import _build_report
+from scripts.historical_simulation_analysis.report_helpers import (
     _build_last_price_map,
-    _build_report,
     _extract_run_scope_decisions,
     _fifo_trade_pnl,
     _query_rows,
