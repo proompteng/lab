@@ -261,7 +261,6 @@ ALPACA_HEALTH_STATE: dict[str, object] = {}
 _PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = 600
 _PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK = Lock()
 _PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL = "TORGHUT_SIM"
-paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
 ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS = _ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS
 TRADING_STATUS_READ_BUDGET_SECONDS = _TRADING_STATUS_READ_BUDGET_SECONDS
 PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS = (
@@ -420,7 +419,6 @@ __all__: tuple[str, ...] = (
     "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
     "_TRADING_STATUS_READ_BUDGET_SECONDS",
     "_ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS",
-    "paper_route_target_plan_success_cache",
     "_retryable_tca_recompute_error",
     "_shared_mapping_items",
     "_shared_paper_route_target_plan_from_payload",
@@ -508,7 +506,6 @@ __all__: tuple[str, ...] = (
     "logging",
     "main_runtime_value",
     "os",
-    "paper_route_target_plan_success_cache",
     "persist_evidence_epoch",
     "ping",
     "refresh_execution_tca_metrics",
