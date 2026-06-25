@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
+from app.trading.multifactor.contracts import PortfolioTarget, RiskForecast
 from app.trading.multifactor.cost_model import estimate_transaction_cost
 from app.trading.multifactor.portfolio_construction import (
     PortfolioCostInput,
@@ -27,50 +29,19 @@ def evaluate_signal_risk(
 ) -> RiskVerdict:
     """Block stale, duplicate, over-cap, disabled, and excluded orders."""
 
+    multifactor = _multifactor_controls(signal, state, config)
     reason = _blocked_reason(signal, state, config)
     if reason is not None:
-        return RiskVerdict("blocked", reason, Decimal("0"))
+        return _blocked_verdict(reason, multifactor)
     remaining_gross = config.max_gross_exposure_usd - state.gross_exposure_usd
     if remaining_gross < config.min_order_notional_usd:
-        return RiskVerdict("blocked", "gross_exposure_cap", Decimal("0"))
+        return _blocked_verdict("gross_exposure_cap", multifactor)
     symbol_exposure = state.symbol_exposure_usd_by_coin.get(signal.coin, Decimal("0"))
     remaining_symbol = config.max_symbol_exposure_usd - symbol_exposure
     if remaining_symbol < config.min_order_notional_usd:
-        return RiskVerdict("blocked", "symbol_exposure_cap", Decimal("0"))
-    if signal.factor_vector is not None and signal.alpha_forecast is not None:
-        risk_forecast = build_risk_forecast(
-            vector=signal.factor_vector,
-            forecast=signal.alpha_forecast,
-            exposure=RiskExposureState(
-                gross_exposure_usd=state.gross_exposure_usd,
-                symbol_exposure_usd=symbol_exposure,
-                daily_realized_pnl_usd=state.daily_realized_pnl_usd,
-            ),
-            limits=RiskLimits(
-                max_gross_exposure_usd=config.max_gross_exposure_usd,
-                max_symbol_exposure_usd=config.max_symbol_exposure_usd,
-                max_daily_loss_usd=config.max_daily_loss_usd,
-            ),
-        )
-        expected_cost_bps = estimate_transaction_cost(
-            signal.factor_vector,
-            cost_buffer_bps=config.cost_buffer_bps,
-            participation_rate=Decimal("0.001"),
-        )
-        portfolio_target = build_portfolio_target(
-            forecast=signal.alpha_forecast,
-            risk=risk_forecast,
-            costs=PortfolioCostInput(
-                expected_cost_bps=expected_cost_bps,
-                min_edge_bps=config.min_edge_bps,
-            ),
-            limits=PortfolioLimits(
-                min_order_notional_usd=config.min_order_notional_usd,
-                max_order_notional_usd=config.max_order_notional_usd,
-                max_gross_exposure_usd=config.max_gross_exposure_usd,
-                max_symbol_exposure_usd=config.max_symbol_exposure_usd,
-            ),
-        )
+        return _blocked_verdict("symbol_exposure_cap", multifactor)
+    if multifactor is not None:
+        risk_forecast, portfolio_target = multifactor
         if not portfolio_target.executable:
             return RiskVerdict(
                 "blocked",
@@ -104,6 +75,74 @@ def evaluate_signal_risk(
         config.max_order_notional_usd, remaining_gross, remaining_symbol
     )
     return RiskVerdict("allowed", "allowed", order_notional)
+
+
+def _multifactor_controls(
+    signal: Signal,
+    state: RiskState,
+    config: HyperliquidExecutionConfig,
+) -> tuple[RiskForecast, PortfolioTarget] | None:
+    if signal.factor_vector is None or signal.alpha_forecast is None:
+        return None
+    symbol_exposure = state.symbol_exposure_usd_by_coin.get(signal.coin, Decimal("0"))
+    risk_forecast = build_risk_forecast(
+        vector=signal.factor_vector,
+        forecast=signal.alpha_forecast,
+        exposure=RiskExposureState(
+            gross_exposure_usd=state.gross_exposure_usd,
+            symbol_exposure_usd=symbol_exposure,
+            daily_realized_pnl_usd=state.daily_realized_pnl_usd,
+        ),
+        limits=RiskLimits(
+            max_gross_exposure_usd=config.max_gross_exposure_usd,
+            max_symbol_exposure_usd=config.max_symbol_exposure_usd,
+            max_daily_loss_usd=config.max_daily_loss_usd,
+        ),
+    )
+    expected_cost_bps = estimate_transaction_cost(
+        signal.factor_vector,
+        cost_buffer_bps=config.cost_buffer_bps,
+        participation_rate=Decimal("0.001"),
+    )
+    portfolio_target = build_portfolio_target(
+        forecast=signal.alpha_forecast,
+        risk=risk_forecast,
+        costs=PortfolioCostInput(
+            expected_cost_bps=expected_cost_bps,
+            min_edge_bps=config.min_edge_bps,
+        ),
+        limits=PortfolioLimits(
+            min_order_notional_usd=config.min_order_notional_usd,
+            max_order_notional_usd=config.max_order_notional_usd,
+            max_gross_exposure_usd=config.max_gross_exposure_usd,
+            max_symbol_exposure_usd=config.max_symbol_exposure_usd,
+        ),
+    )
+    return risk_forecast, portfolio_target
+
+
+def _blocked_verdict(
+    reason: str,
+    multifactor: tuple[RiskForecast, PortfolioTarget] | None,
+) -> RiskVerdict:
+    if multifactor is None:
+        return RiskVerdict("blocked", reason, Decimal("0"))
+    risk_forecast, portfolio_target = multifactor
+    blocked_target = portfolio_target
+    if getattr(portfolio_target, "clip_reason", None) is None:
+        blocked_target = replace(
+            portfolio_target,
+            target_notional_usd=Decimal("0"),
+            delta_notional_usd=Decimal("0"),
+            clip_reason=reason,
+        )
+    return RiskVerdict(
+        "blocked",
+        reason,
+        Decimal("0"),
+        risk_forecast,
+        blocked_target,
+    )
 
 
 def _blocked_reason(

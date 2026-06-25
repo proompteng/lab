@@ -91,25 +91,29 @@ class _MaintenanceExchange:
                 withdrawable_usd=Decimal("899.1"),
                 gross_exposure_usd=Decimal("99.094016"),
                 raw_payload={
-                    "assetPositions": [
-                        {
-                            "position": {
-                                "coin": "SPX",
-                                "szi": "275.2",
-                                "entryPx": "0.36221",
-                                "positionValue": "99.094016",
-                                "unrealizedPnl": "-0.58",
-                            }
-                        },
-                        {
-                            "position": {
-                                "coin": "NVDA",
-                                "szi": "0.1",
-                                "entryPx": "100",
-                                "positionValue": "10",
-                            }
-                        },
-                    ]
+                    "dexStates": {
+                        "default": {
+                            "assetPositions": [
+                                {
+                                    "position": {
+                                        "coin": "SPX",
+                                        "szi": "275.2",
+                                        "entryPx": "0.36221",
+                                        "positionValue": "99.094016",
+                                        "unrealizedPnl": "-0.58",
+                                    }
+                                },
+                                {
+                                    "position": {
+                                        "coin": "NVDA",
+                                        "szi": "0.1",
+                                        "entryPx": "100",
+                                        "positionValue": "10",
+                                    }
+                                },
+                            ]
+                        }
+                    }
                 },
             ),
             positions=(),

@@ -9,6 +9,23 @@ from decimal import Decimal
 from typing import Any, cast
 
 LATEST_MULTIFACTOR_RUN_SQL = """
+WITH proof AS (
+  SELECT run_id
+  FROM multifactor_execution_intents
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+fallback AS (
+  SELECT id AS run_id
+  FROM multifactor_runs
+  ORDER BY finished_at DESC
+  LIMIT 1
+),
+selected AS (
+  SELECT run_id FROM proof
+  UNION ALL
+  SELECT run_id FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+)
 SELECT
   id::text,
   lane,
@@ -19,14 +36,31 @@ SELECT
   blockers,
   selected_assets
 FROM multifactor_runs
-ORDER BY finished_at DESC
+JOIN selected ON multifactor_runs.id = selected.run_id
 LIMIT 1
 """
 
 LATEST_FACTOR_SNAPSHOT_SQL = """
+WITH proof AS (
+  SELECT run_id, asset_key
+  FROM multifactor_execution_intents
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+fallback AS (
+  SELECT run_id, asset_key
+  FROM multifactor_factor_snapshots
+  ORDER BY observed_at DESC
+  LIMIT 1
+),
+selected AS (
+  SELECT run_id, asset_key FROM proof
+  UNION ALL
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+)
 SELECT
-  run_id::text,
-  asset_key,
+  snapshots.run_id::text,
+  snapshots.asset_key,
   venue,
   symbol,
   market_id,
@@ -37,15 +71,34 @@ SELECT
   source_lag_seconds,
   quote_lag_seconds,
   freshness_blocker
-FROM multifactor_factor_snapshots
-ORDER BY observed_at DESC
+FROM multifactor_factor_snapshots snapshots
+JOIN selected
+  ON snapshots.run_id = selected.run_id
+ AND snapshots.asset_key = selected.asset_key
 LIMIT 1
 """
 
 LATEST_FORECAST_SQL = """
+WITH proof AS (
+  SELECT run_id, asset_key
+  FROM multifactor_execution_intents
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+fallback AS (
+  SELECT run_id, asset_key
+  FROM multifactor_forecasts
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+selected AS (
+  SELECT run_id, asset_key FROM proof
+  UNION ALL
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+)
 SELECT
-  run_id::text,
-  asset_key,
+  forecasts.run_id::text,
+  forecasts.asset_key,
   model_id,
   horizon_seconds,
   score::text,
@@ -54,30 +107,68 @@ SELECT
   expected_return_bps::text,
   direction,
   blocker
-FROM multifactor_forecasts
-ORDER BY updated_at DESC
+FROM multifactor_forecasts forecasts
+JOIN selected
+  ON forecasts.run_id = selected.run_id
+ AND forecasts.asset_key = selected.asset_key
 LIMIT 1
 """
 
 LATEST_RISK_FORECAST_SQL = """
+WITH proof AS (
+  SELECT run_id, asset_key
+  FROM multifactor_execution_intents
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+fallback AS (
+  SELECT run_id, asset_key
+  FROM multifactor_risk_forecasts
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+selected AS (
+  SELECT run_id, asset_key FROM proof
+  UNION ALL
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+)
 SELECT
-  run_id::text,
-  asset_key,
+  risk.run_id::text,
+  risk.asset_key,
   active_risk_bps::text,
   gross_exposure_usd::text,
   symbol_exposure_usd::text,
   liquidity_capacity_usd::text,
   concentration_bps::text,
   blocker
-FROM multifactor_risk_forecasts
-ORDER BY updated_at DESC
+FROM multifactor_risk_forecasts risk
+JOIN selected
+  ON risk.run_id = selected.run_id
+ AND risk.asset_key = selected.asset_key
 LIMIT 1
 """
 
 LATEST_PORTFOLIO_TARGET_SQL = """
+WITH proof AS (
+  SELECT run_id, asset_key
+  FROM multifactor_execution_intents
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+fallback AS (
+  SELECT run_id, asset_key
+  FROM multifactor_portfolio_targets
+  ORDER BY updated_at DESC
+  LIMIT 1
+),
+selected AS (
+  SELECT run_id, asset_key FROM proof
+  UNION ALL
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+)
 SELECT
-  run_id::text,
-  asset_key,
+  targets.run_id::text,
+  targets.asset_key,
   direction,
   current_notional_usd::text,
   target_notional_usd::text,
@@ -87,8 +178,10 @@ SELECT
   active_risk_bps::text,
   risk_buffer_bps::text,
   clip_reason
-FROM multifactor_portfolio_targets
-ORDER BY updated_at DESC
+FROM multifactor_portfolio_targets targets
+JOIN selected
+  ON targets.run_id = selected.run_id
+ AND targets.asset_key = selected.asset_key
 LIMIT 1
 """
 
@@ -128,7 +221,7 @@ LIMIT 1
 def alpha_model_payload(rows: Any, summary: Any) -> dict[str, object]:
     return {
         "present": summary.multifactor_run_present and summary.alpha_forecast_present,
-        "run_id": _optional_text(rows.latest_multifactor_run.get("id")),
+        "run_id": _optional_text(rows.latest_forecast.get("run_id")),
         "model_id": _optional_text(rows.latest_forecast.get("model_id")),
         "factor_snapshot_present": summary.factor_snapshot_present,
         "forecast_present": summary.alpha_forecast_present,

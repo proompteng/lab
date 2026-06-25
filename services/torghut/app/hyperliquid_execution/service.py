@@ -193,6 +193,7 @@ class HyperliquidExecutionService:
                 config=self._config,
             )
             counts.orders_submitted += 1
+            break
 
     def _cycle_record(
         self,
