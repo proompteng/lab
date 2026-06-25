@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -20,101 +19,30 @@ from ..evidence_contracts import (
 )
 from ..features import SignalFeatures, extract_signal_features
 from ..models import SignalEnvelope, StrategyDecision
-
-
-def _bootstrap_helpers() -> Any:
-    return importlib.import_module(f"{__package__}.bootstrap_mean_samples")
-
-
-def _calibration_helpers() -> Any:
-    return importlib.import_module(
-        f"{__package__}.build_simulation_calibration_report_v1"
-    )
-
-
-def _decimal(value: Any) -> Decimal | None:
-    return _bootstrap_helpers()._decimal(value)
-
-
-def _as_dict(value: Any) -> dict[str, Any]:
-    return _bootstrap_helpers()._as_dict(value)
-
-
-def _as_int(value: Any) -> int | None:
-    return _bootstrap_helpers()._as_int(value)
-
-
-def _report_fold_net_pnls(report_payload: dict[str, Any]) -> list[Decimal]:
-    return _bootstrap_helpers()._report_fold_net_pnls(report_payload)
-
-
-def _decimal_mean(values: list[Decimal]) -> Decimal:
-    return _bootstrap_helpers()._decimal_mean(values)
-
-
-def _decimal_std(values: list[Decimal], mean: Decimal) -> Decimal:
-    return _bootstrap_helpers()._decimal_std(values, mean)
-
-
-def _reproducibility_payload(hashes: dict[str, str]) -> dict[str, object]:
-    return _bootstrap_helpers()._reproducibility_payload(hashes)
-
-
-def _safe_ratio(numerator: Decimal, denominator: Decimal) -> Decimal:
-    return _bootstrap_helpers()._safe_ratio(numerator, denominator)
-
-
-def _extract_report_slices(report_payload: dict[str, Any]) -> dict[str, dict[str, str]]:
-    return _calibration_helpers()._extract_report_slices(report_payload)
-
-
-def _empty_slice_metrics() -> dict[str, str]:
-    return _calibration_helpers().empty_slice_metrics()
-
-
-def _slice_deltas(
-    candidate: dict[str, str],
-    baseline: dict[str, str],
-) -> dict[str, str]:
-    return _calibration_helpers().slice_deltas(candidate, baseline)
-
-
-def _benchmark_summary(benchmark: Any) -> dict[str, Decimal]:
-    return _calibration_helpers().benchmark_summary(benchmark)
-
-
-def _confidence_summary(
-    confidence_values: list[Decimal], net_pnl: Decimal
-) -> dict[str, object]:
-    return _calibration_helpers().confidence_summary(confidence_values, net_pnl)
-
-
-def _significance_summary(benchmark: Any) -> dict[str, object]:
-    return _calibration_helpers().significance_summary(benchmark)
-
-
-def _validate_profitability_schema_versions(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers().validate_profitability_schema_versions(*args, **kwargs)
-
-
-def _validate_profitability_risk_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers().validate_profitability_risk_metrics(*args, **kwargs)
-
-
-def _validate_profitability_cost_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers().validate_profitability_cost_metrics(*args, **kwargs)
-
-
-def _validate_profitability_confidence_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers().validate_profitability_confidence_metrics(*args, **kwargs)
-
-
-def _validate_profitability_significance_metrics(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers().validate_profitability_significance_metrics(*args, **kwargs)
-
-
-def _validate_profitability_reproducibility(*args: Any, **kwargs: Any) -> None:
-    _calibration_helpers().validate_profitability_reproducibility(*args, **kwargs)
+from .numeric_helpers import (
+    as_dict as _as_dict,
+    as_int as _as_int,
+    decimal as _decimal,
+    decimal_mean as _decimal_mean,
+    decimal_std as _decimal_std,
+    report_fold_net_pnls as _report_fold_net_pnls,
+    reproducibility_payload as _reproducibility_payload,
+    safe_ratio as _safe_ratio,
+)
+from .profitability_metrics_helpers import (
+    benchmark_summary as _benchmark_summary,
+    confidence_summary as _confidence_summary,
+    empty_slice_metrics as _empty_slice_metrics,
+    extract_report_slices as _extract_report_slices,
+    significance_summary as _significance_summary,
+    slice_deltas as _slice_deltas,
+    validate_profitability_confidence_metrics as _validate_profitability_confidence_metrics,
+    validate_profitability_cost_metrics as _validate_profitability_cost_metrics,
+    validate_profitability_reproducibility as _validate_profitability_reproducibility,
+    validate_profitability_risk_metrics as _validate_profitability_risk_metrics,
+    validate_profitability_schema_versions as _validate_profitability_schema_versions,
+    validate_profitability_significance_metrics as _validate_profitability_significance_metrics,
+)
 
 
 class SignalSource(Protocol):
@@ -884,8 +812,6 @@ __all__: tuple[str, ...] = (
     "_as_dict",
     "_as_int",
     "_benchmark_summary",
-    "_bootstrap_helpers",
-    "_calibration_helpers",
     "_confidence_summary",
     "_decimal",
     "_decimal_mean",
@@ -922,7 +848,6 @@ __all__: tuple[str, ...] = (
     "fold_regime_payload",
     "generate_walk_forward_folds",
     "hashlib",
-    "importlib",
     "json",
     "run_walk_forward",
     "timedelta",

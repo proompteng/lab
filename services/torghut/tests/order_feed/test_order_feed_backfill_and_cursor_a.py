@@ -18,7 +18,6 @@ from tests.order_feed.support import (
     datetime,
     func,
     order_feed_module,
-    order_feed_repair_module,
     patch,
     repair_order_feed_execution_links,
     repair_order_feed_execution_states,
@@ -266,9 +265,8 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
                 order_id="race-order",
                 client_order_id="race-client",
             )
-            with patch.object(
-                order_feed_repair_module,
-                "latest_order_event_for_execution",
+            with patch(
+                "app.trading.order_feed.repair_order_feed_execution_links.latest_order_event_for_execution",
                 return_value=ExecutionOrderEvent(
                     event_fingerprint="race-existing",
                     source_topic="torghut.trade-updates.v2",
@@ -299,9 +297,8 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
                 )
             )
             session.commit()
-            with patch.object(
-                order_feed_repair_module,
-                "_stable_execution_source_offset",
+            with patch(
+                "app.trading.order_feed.repair_order_feed_execution_links._stable_execution_source_offset",
                 return_value=77,
             ):
                 collision_result = backfill_order_feed_events_from_executions(

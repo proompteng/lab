@@ -147,7 +147,6 @@ class ClickHouseSignalIngestor(
     _ClickHouseSignalIngestorCoreMethods,
     _ClickHouseSignalIngestorMarketMethods,
     _ClickHouseSignalIngestorPersistenceMethods,
-    object,
 ):
     pass
 

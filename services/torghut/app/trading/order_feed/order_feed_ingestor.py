@@ -7,13 +7,12 @@ from typing import Any, Callable, cast
 
 from sqlalchemy.orm import Session
 
-from ...config import Settings, settings
+from ...config import settings
 from ...models import (
     Execution,
     ExecutionOrderEvent,
     OrderFeedSourceWindow,
 )
-from ..tigerbeetle_client import TigerBeetleClientProtocol
 from . import shared_context as _shared_context
 from .shared_context import (
     AccountAliasResolution as _AccountAliasResolution,
@@ -48,8 +47,6 @@ from .shared_context import (
     logger,
     normalize_order_feed_record,
 )
-
-_TigerBeetleClientFactory = Callable[[Settings], TigerBeetleClientProtocol]
 
 
 class OrderFeedIngestor:
@@ -120,36 +117,13 @@ class OrderFeedIngestor:
         if not settings.tigerbeetle_enabled or not settings.tigerbeetle_journal_enabled:
             return
         try:
-            client = self._reconciliation_client_override()
-            if client is None:
-                _shared_context.reconcile_tigerbeetle_transfers(session)
-            else:
-                _shared_context.reconcile_tigerbeetle_transfers(session, client=client)
+            _shared_context.reconcile_tigerbeetle_transfers(session)
         except Exception as exc:
             if settings.tigerbeetle_reconcile_required:
                 raise
             logger.warning(
                 "TigerBeetle reconciliation failed after order-feed ingest: %s", exc
             )
-
-    @staticmethod
-    def _reconciliation_client_override() -> TigerBeetleClientProtocol | None:
-        import importlib
-
-        from ..tigerbeetle_client import (
-            create_tigerbeetle_client as default_create_tigerbeetle_client,
-        )
-
-        public_factory = cast(
-            _TigerBeetleClientFactory,
-            getattr(
-                importlib.import_module("app.trading.tigerbeetle_reconcile"),
-                "create_tigerbeetle_client",
-            ),
-        )
-        if public_factory is default_create_tigerbeetle_client:
-            return None
-        return public_factory(settings)
 
     @staticmethod
     def _new_counters() -> dict[str, int]:

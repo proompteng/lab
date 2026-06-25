@@ -9,7 +9,6 @@ from .retry_decisions import SimplePipelinePaperRouteProbeRetryDecisionMixin
 class SimplePipelinePaperRouteProbeMixin(
     SimplePipelinePaperRouteProbeRetryDecisionMixin,
     SimplePipelinePaperRouteProbeProcessingMixin,
-    object,
 ):
     pass
 

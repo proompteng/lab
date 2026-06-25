@@ -48,7 +48,6 @@ class WhitepaperWorkflowService(
     _WhitepaperWorkflowVerdictMethods,
     _WhitepaperWorkflowRolloutMethods,
     _WhitepaperWorkflowApiMethods,
-    object,
 ):
     pass
 
