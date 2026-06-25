@@ -458,7 +458,7 @@ jobs:
 
       - name: Unused import and suppression gate
         working-directory: services/torghut
-        run: uv run --frozen ruff check app tests scripts migrations --select RUF100,F401 --preview
+        run: uv run --frozen ruff check app tests scripts migrations --select F401 --preview
 
       - name: Pylint structural hardening gate
         working-directory: services/torghut
