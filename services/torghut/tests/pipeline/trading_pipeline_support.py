@@ -382,6 +382,14 @@ class FakeAlpacaClient:
     def get_account(self) -> dict[str, str]:
         return {"equity": "10000", "cash": "10000", "buying_power": "10000"}
 
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, str | bool]:
+        return {
+            "symbol": symbol_or_asset_id,
+            "tradable": True,
+            "shortable": True,
+            "easy_to_borrow": True,
+        }
+
     def list_positions(self) -> list[dict[str, str]]:
         return []
 
@@ -396,7 +404,7 @@ class FakeAlpacaClient:
         time_in_force: str | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
-        extra_params: dict[str, str] | None = None,
+        extra_params: dict[str, Any] | None = None,
         firewall_token: object | None = None,
     ) -> dict[str, str]:
         if isinstance(request, OrderSubmission):
@@ -482,7 +490,7 @@ class RejectingAlpacaClient(FakeAlpacaClient):
         time_in_force: str | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
-        extra_params: dict[str, str] | None = None,
+        extra_params: dict[str, Any] | None = None,
         firewall_token: object | None = None,
     ) -> dict[str, str]:
         self.submit_calls += 1

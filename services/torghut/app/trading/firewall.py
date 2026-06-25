@@ -5,9 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Optional, cast
+from typing import Any, Protocol, cast
 
-from ..alpaca_client import OrderFirewallToken, TorghutAlpacaClient
+from ..alpaca_client import OrderFirewallToken
 from ..config import settings
 
 logger = logging.getLogger(__name__)
@@ -23,10 +23,50 @@ class OrderFirewallStatus:
     reason: str
 
 
+class _OrderFirewallBrokerClient(Protocol):
+    """Broker methods the order firewall is allowed to call."""
+
+    def submit_order(
+        self,
+        *,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str,
+        time_in_force: str,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        extra_params: dict[str, Any] | None = None,
+        firewall_token: OrderFirewallToken,
+    ) -> dict[str, Any]: ...
+
+    def cancel_order(
+        self, alpaca_order_id: str, *, firewall_token: OrderFirewallToken
+    ) -> bool: ...
+
+    def cancel_all_orders(
+        self, *, firewall_token: OrderFirewallToken
+    ) -> list[dict[str, Any]]: ...
+
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict[str, Any] | None: ...
+
+    def get_order(self, alpaca_order_id: str) -> dict[str, Any]: ...
+
+    def list_orders(self, status: str = "all") -> list[dict[str, Any]]: ...
+
+    def list_positions(self) -> list[dict[str, Any]] | None: ...
+
+    def get_account(self) -> dict[str, Any] | None: ...
+
+    def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None: ...
+
+
 class OrderFirewall:
     """Single audited gateway for order submission/cancellation."""
 
-    def __init__(self, client: TorghutAlpacaClient) -> None:
+    def __init__(self, client: _OrderFirewallBrokerClient) -> None:
         self._client = client
         self._token = OrderFirewallToken()
 
@@ -57,9 +97,9 @@ class OrderFirewall:
         qty: float,
         order_type: str,
         time_in_force: str,
-        limit_price: Optional[float] = None,
-        stop_price: Optional[float] = None,
-        extra_params: Optional[dict[str, Any]] = None,
+        limit_price: float | None = None,
+        stop_price: float | None = None,
+        extra_params: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         status = self.status()
         if status.kill_switch_enabled:
@@ -98,33 +138,21 @@ class OrderFirewall:
         return normalized
 
     def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
-        lister = getattr(self._client, "list_orders", None)
-        if not callable(lister):
-            return []
-        result = lister(status=status)
+        result = self._client.list_orders(status=status)
         return _normalize_mapping_list(result)
 
     def list_positions(self) -> list[dict[str, Any]] | None:
-        lister = getattr(self._client, "list_positions", None)
-        if not callable(lister):
-            return None
-        result = lister()
+        result = self._client.list_positions()
         if result is None:
             return None
         return _normalize_mapping_list(result)
 
     def get_account(self) -> dict[str, Any] | None:
-        getter = getattr(self._client, "get_account", None)
-        if not callable(getter):
-            return None
-        result = getter()
+        result = self._client.get_account()
         return _normalize_mapping(result)
 
     def get_asset(self, symbol_or_asset_id: str) -> dict[str, Any] | None:
-        getter = getattr(self._client, "get_asset", None)
-        if not callable(getter):
-            return None
-        result = getter(symbol_or_asset_id)
+        result = self._client.get_asset(symbol_or_asset_id)
         return _normalize_mapping(result)
 
 
