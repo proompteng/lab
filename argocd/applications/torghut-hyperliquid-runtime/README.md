@@ -12,11 +12,12 @@ V2 contract:
 - The configured execution universe is
   `xyz:NVDA,xyz:AMD,xyz:AVGO,xyz:MRVL,xyz:INTC,xyz:MU,xyz:WDC,xyz:SNDK,xyz:ARM,xyz:LITE`.
 - `SPX` is excluded.
-- Strategy entry is maker-first only: `ORDER_POLICY=maker_ttl`, `MAKER_TIF=Alo`, and `MAKER_TTL_SECONDS=45`.
+- Strategy entry uses bounded testnet IOC execution for the restore lane: `ORDER_POLICY=marketable_ioc`, `MAKER_TIF=Ioc`,
+  and `MAKER_TTL_SECONDS=10`.
 - Strategy entry requires edge to clear `max(MIN_EDGE_BPS=3, spread_bps + COST_BUFFER_BPS=2)`.
 - Signal freshness allows the same `180s` quote window used by runtime dependency readiness.
-- Short entries are enabled in the proving lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=true`; entries remain
-  bounded by the same per-order, per-symbol, gross exposure, cooldown, and maker-only controls.
+- Short entries are disabled in the restore lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=false`; entries remain
+  bounded by the same per-order, per-symbol, gross exposure, cooldown, and single-open-order controls.
 - Caps are intentionally small: `$10` max order notional, `$25` max symbol exposure, and `$100` max gross exposure.
 - `sample_ready=false` until at least 40 v2 fills exist.
 
@@ -45,5 +46,6 @@ Acceptance checks:
 - `kubectl -n argocd get application torghut-hyperliquid-runtime`
 - `kubectl -n torghut rollout status deploy/torghut-hyperliquid-runtime --timeout=180s`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/readyz`
+- `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/trading/loop/status`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/report`
 - `kubectl -n torghut exec deploy/torghut-hyperliquid-runtime -- curl -fsS localhost:8182/metrics`

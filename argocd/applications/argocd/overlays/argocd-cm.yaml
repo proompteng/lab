@@ -22,12 +22,6 @@ data:
     local status = obj.status or {}
     local active = status.active or {}
 
-    if spec.suspend == true then
-      hs.status = "Suspended"
-      hs.message = "CronJob is suspended."
-      return hs
-    end
-
     if metadata.namespace == "torghut" and labels["app.kubernetes.io/name"] == "torghut" then
       if #active > 0 then
         hs.status = "Progressing"
@@ -37,6 +31,12 @@ data:
 
       hs.status = "Healthy"
       hs.message = "Torghut CronJob schedule is reconciled; scheduled job results are monitored outside Argo app health."
+      return hs
+    end
+
+    if spec.suspend == true then
+      hs.status = "Suspended"
+      hs.message = "CronJob is suspended."
       return hs
     end
 
