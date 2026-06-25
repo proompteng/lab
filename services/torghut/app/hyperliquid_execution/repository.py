@@ -23,6 +23,7 @@ from .models import (
     RuntimeDependencyStatus,
     Signal,
 )
+from .multifactor_repository import MultifactorExecutionRepository
 from .reporting import build_operational_report, build_performance_metrics
 
 
@@ -31,6 +32,7 @@ class HyperliquidExecutionRepository:
 
     def __init__(self, session: Any) -> None:
         self._session = session
+        self._multifactor = MultifactorExecutionRepository(session)
 
     def upsert_markets(self, markets: Iterable[ExecutionMarket]) -> None:
         for market in markets:
@@ -117,6 +119,11 @@ class HyperliquidExecutionRepository:
                 "features": json.dumps(signal.feature.raw_features, sort_keys=True),
             },
         )
+        self._multifactor.insert_signal(
+            run_id=cycle_id,
+            signal_id=signal_id,
+            signal=signal,
+        )
         return signal_id
 
     def insert_order(self, intent: OrderIntent, result: OrderResult) -> str:
@@ -193,6 +200,24 @@ class HyperliquidExecutionRepository:
             },
         )
         return order_id
+
+    def insert_multifactor_execution_intent(
+        self,
+        *,
+        run_id: str,
+        intent: OrderIntent,
+        result: OrderResult,
+        verdict: Any,
+    ) -> None:
+        self._multifactor.insert_execution_intent(
+            run_id=run_id,
+            intent=intent,
+            result=result,
+            verdict=verdict,
+        )
+
+    def insert_multifactor_risk_and_target(self, *, run_id: str, verdict: Any) -> None:
+        self._multifactor.insert_risk_and_target(run_id=run_id, verdict=verdict)
 
     def update_reject_cooldown(
         self,
@@ -605,6 +630,17 @@ class HyperliquidExecutionRepository:
             {"id": str(uuid.uuid4()), "observed_at": observed_at, **metrics},
         )
 
+    def insert_multifactor_attribution_snapshot(
+        self,
+        *,
+        run_id: str,
+        observed_at: datetime,
+    ) -> None:
+        self._multifactor.insert_attribution_snapshot(
+            run_id=run_id,
+            observed_at=observed_at,
+        )
+
     def insert_cycle(self, record: CycleRecord) -> None:
         self._session.execute(
             text(
@@ -669,6 +705,7 @@ class HyperliquidExecutionRepository:
                 "error": record.error,
             },
         )
+        self._multifactor.insert_cycle(record)
 
     def operational_report(
         self,

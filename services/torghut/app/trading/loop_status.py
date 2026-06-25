@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any, Protocol, cast
@@ -12,10 +12,29 @@ from typing import Any, Protocol, cast
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.trading.multifactor.status_payloads import (
+    LATEST_ATTRIBUTION_SQL,
+    LATEST_EXECUTION_INTENT_SQL,
+    LATEST_FACTOR_SNAPSHOT_SQL,
+    LATEST_FORECAST_SQL,
+    LATEST_MULTIFACTOR_RUN_SQL,
+    LATEST_PORTFOLIO_TARGET_SQL,
+    LATEST_RISK_FORECAST_SQL,
+    alpha_model_payload,
+    attribution_payload,
+    execution_intent_payload,
+    portfolio_target_payload,
+    risk_forecast_payload,
+)
+
 SCHEMA_VERSION = "torghut.trading-loop-status.v1"
 DEFAULT_FRESHNESS_THRESHOLD_SECONDS = 180
 DEFAULT_ACCOUNT_FRESHNESS_SECONDS = 300
 DEFAULT_MIN_RECENT_FILLS = 3
+
+
+def _empty_mapping() -> Mapping[str, object]:
+    return {}
 
 
 class QuerySession(Protocol):
@@ -45,6 +64,17 @@ class LoopStatusRows:
     stale_open_orders: Sequence[Mapping[str, object]]
     unexpected_live_alpaca: Mapping[str, object]
     query_errors: Sequence[str]
+    latest_multifactor_run: Mapping[str, object] = field(default_factory=_empty_mapping)
+    latest_factor_snapshot: Mapping[str, object] = field(default_factory=_empty_mapping)
+    latest_forecast: Mapping[str, object] = field(default_factory=_empty_mapping)
+    latest_risk_forecast: Mapping[str, object] = field(default_factory=_empty_mapping)
+    latest_portfolio_target: Mapping[str, object] = field(
+        default_factory=_empty_mapping
+    )
+    latest_execution_intent: Mapping[str, object] = field(
+        default_factory=_empty_mapping
+    )
+    latest_attribution: Mapping[str, object] = field(default_factory=_empty_mapping)
 
 
 @dataclass(frozen=True)
@@ -79,6 +109,14 @@ class LoopProofSummary:
     stale_open_order_count: int
     unexpected_live_orders: int
     unexpected_live_events: int
+    multifactor_run_present: bool
+    factor_snapshot_present: bool
+    alpha_forecast_present: bool
+    risk_forecast_present: bool
+    portfolio_target_present: bool
+    execution_intent_present: bool
+    alpha_edge_above_cost: bool
+    target_notional_positive: bool
 
     @property
     def unexpected_live_total(self) -> int:
@@ -131,6 +169,27 @@ def load_trading_loop_status_rows(session: QuerySession) -> LoopStatusRows:
             errors,
         ),
         query_errors=tuple(errors),
+        latest_multifactor_run=_safe_one(
+            session, "latest_multifactor_run", LATEST_MULTIFACTOR_RUN_SQL, errors
+        ),
+        latest_factor_snapshot=_safe_one(
+            session, "latest_factor_snapshot", LATEST_FACTOR_SNAPSHOT_SQL, errors
+        ),
+        latest_forecast=_safe_one(
+            session, "latest_forecast", LATEST_FORECAST_SQL, errors
+        ),
+        latest_risk_forecast=_safe_one(
+            session, "latest_risk_forecast", LATEST_RISK_FORECAST_SQL, errors
+        ),
+        latest_portfolio_target=_safe_one(
+            session, "latest_portfolio_target", LATEST_PORTFOLIO_TARGET_SQL, errors
+        ),
+        latest_execution_intent=_safe_one(
+            session, "latest_execution_intent", LATEST_EXECUTION_INTENT_SQL, errors
+        ),
+        latest_attribution=_safe_one(
+            session, "latest_attribution", LATEST_ATTRIBUTION_SQL, errors
+        ),
     )
 
 
@@ -154,12 +213,17 @@ def assemble_trading_loop_status(
         "blocker_reasons": blockers,
         "runtime": _runtime_payload(rows, options, summary),
         "market_data": _market_data_payload(rows, options, summary),
+        "alpha_model": alpha_model_payload(rows, summary),
+        "risk_forecast": risk_forecast_payload(rows, summary),
+        "portfolio_target": portfolio_target_payload(rows, summary),
+        "execution_intent": execution_intent_payload(rows, summary),
         "decision": _decision_payload(rows),
         "submitted_order": _submitted_order_payload(rows, summary),
         "exchange_order_state": _exchange_order_state_payload(rows, summary),
         "fills": _fills_payload(rows, options, summary),
         "position": _position_payload(rows, options, summary),
         "pnl_snapshot": dict(rows.performance),
+        "attribution": attribution_payload(rows),
         "database": _database_payload(rows, summary),
         "stale_open_orders": _stale_open_orders_payload(rows, summary),
         "alpaca_guard": _alpaca_guard_payload(summary),
@@ -188,6 +252,18 @@ def _proof_summary(
     raw_exchange_positions = _raw_account_positions(rows.latest_account)
     unexpected_live_orders = _int(rows.unexpected_live_alpaca.get("orders_24h"))
     unexpected_live_events = _int(rows.unexpected_live_alpaca.get("events_24h"))
+    expected_return_bps = _optional_decimal(
+        rows.latest_forecast.get("expected_return_bps")
+    )
+    expected_cost_bps = _optional_decimal(
+        rows.latest_portfolio_target.get("expected_cost_bps")
+    )
+    risk_buffer_bps = _optional_decimal(
+        rows.latest_portfolio_target.get("risk_buffer_bps")
+    )
+    target_notional_usd = _optional_decimal(
+        rows.latest_portfolio_target.get("target_notional_usd")
+    )
     market_data_fresh = (
         _fresh_enough(
             market_lag_seconds,
@@ -227,6 +303,21 @@ def _proof_summary(
         stale_open_order_count=len(rows.stale_open_orders),
         unexpected_live_orders=unexpected_live_orders,
         unexpected_live_events=unexpected_live_events,
+        multifactor_run_present=bool(rows.latest_multifactor_run),
+        factor_snapshot_present=bool(rows.latest_factor_snapshot),
+        alpha_forecast_present=bool(rows.latest_forecast),
+        risk_forecast_present=bool(rows.latest_risk_forecast),
+        portfolio_target_present=bool(rows.latest_portfolio_target),
+        execution_intent_present=bool(rows.latest_execution_intent),
+        alpha_edge_above_cost=(
+            expected_return_bps is not None
+            and expected_cost_bps is not None
+            and risk_buffer_bps is not None
+            and abs(expected_return_bps) > expected_cost_bps + risk_buffer_bps
+        ),
+        target_notional_positive=(
+            target_notional_usd is not None and target_notional_usd > Decimal("0")
+        ),
     )
 
 
@@ -350,6 +441,12 @@ def _database_payload(
         "fills_24h": summary.recent_fill_count,
         "account_snapshots_24h": _int(rows.counts_24h.get("account_snapshots_24h")),
         "positions_current": summary.position_count,
+        "multifactor_run_present": summary.multifactor_run_present,
+        "multifactor_factor_snapshot_present": summary.factor_snapshot_present,
+        "multifactor_forecast_present": summary.alpha_forecast_present,
+        "multifactor_risk_forecast_present": summary.risk_forecast_present,
+        "multifactor_portfolio_target_present": summary.portfolio_target_present,
+        "multifactor_execution_intent_present": summary.execution_intent_present,
     }
 
 
@@ -412,6 +509,22 @@ def _blockers(
     blockers = list(summary.query_errors)
     if not summary.market_data_fresh:
         blockers.append("hyperliquid_market_data_not_fresh")
+    if not summary.multifactor_run_present:
+        blockers.append("multifactor_run_missing")
+    if not summary.factor_snapshot_present:
+        blockers.append("multifactor_factor_snapshot_missing")
+    if not summary.alpha_forecast_present:
+        blockers.append("multifactor_alpha_forecast_missing")
+    if not summary.risk_forecast_present:
+        blockers.append("multifactor_risk_forecast_missing")
+    if not summary.portfolio_target_present:
+        blockers.append("multifactor_portfolio_target_missing")
+    if not summary.execution_intent_present:
+        blockers.append("multifactor_execution_intent_missing")
+    if not summary.alpha_edge_above_cost:
+        blockers.append("multifactor_expected_edge_not_above_cost")
+    if not summary.target_notional_positive:
+        blockers.append("multifactor_target_notional_not_positive")
     if not summary.latest_order_present:
         blockers.append("hyperliquid_order_submission_missing")
     if not summary.exchange_ack_seen:
@@ -563,6 +676,15 @@ def _optional_int(value: object) -> int | None:
         return None
     try:
         return int(Decimal(str(value)))
+    except Exception:
+        return None
+
+
+def _optional_decimal(value: object) -> Decimal | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return Decimal(str(value))
     except Exception:
         return None
 
@@ -763,7 +885,6 @@ SELECT
    WHERE COALESCE(event_ts, created_at) >= now() - interval '24 hours'
      AND alpaca_account_label ILIKE '%live%')::int AS events_24h
 """
-
 
 __all__ = (
     "DEFAULT_ACCOUNT_FRESHNESS_SECONDS",

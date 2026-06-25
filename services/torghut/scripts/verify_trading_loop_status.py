@@ -59,6 +59,46 @@ def evaluate_loop_status(
         "market_data_not_fresh",
         failures,
     )
+    alpha_model = _mapping(payload.get("alpha_model"))
+    _require(
+        alpha_model.get("present") is True, "multifactor_alpha_model_missing", failures
+    )
+    _require(
+        alpha_model.get("factor_snapshot_present") is True,
+        "multifactor_factor_snapshot_missing",
+        failures,
+    )
+    _require(
+        alpha_model.get("forecast_present") is True,
+        "multifactor_forecast_missing",
+        failures,
+    )
+    _require(
+        alpha_model.get("expected_edge_above_cost") is True,
+        "multifactor_expected_edge_not_above_cost",
+        failures,
+    )
+    _require(
+        _mapping(payload.get("risk_forecast")).get("present") is True,
+        "multifactor_risk_forecast_missing",
+        failures,
+    )
+    portfolio_target = _mapping(payload.get("portfolio_target"))
+    _require(
+        portfolio_target.get("present") is True,
+        "multifactor_portfolio_target_missing",
+        failures,
+    )
+    _require(
+        portfolio_target.get("target_notional_positive") is True,
+        "multifactor_target_notional_not_positive",
+        failures,
+    )
+    _require(
+        _mapping(payload.get("execution_intent")).get("present") is True,
+        "multifactor_execution_intent_missing",
+        failures,
+    )
     _require(
         _mapping(payload.get("submitted_order")).get("present") is True,
         "submitted_order_missing",
