@@ -9,10 +9,10 @@ from tests.profitability_proof_floor.support import (
     _healthy_hypothesis_payload,
     _healthy_market_context,
     _healthy_quant_evidence,
-    _route_universe_adverse_slippage_clear,
     _simple_lane_status,
     build_profitability_proof_floor_receipt,
     cast,
+    route_universe_adverse_slippage_clear,
     timedelta,
 )
 
@@ -395,7 +395,7 @@ def test_route_universe_adverse_slippage_clear_fails_closed() -> None:
 
     for case_name, symbol_routes, route_filter_enabled in cases:
         assert (
-            _route_universe_adverse_slippage_clear(
+            route_universe_adverse_slippage_clear(
                 symbol_routes,
                 route_filter_enabled=route_filter_enabled,
                 aggregate_tca_reason="execution_tca_slippage_guardrail_exceeded",

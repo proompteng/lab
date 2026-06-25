@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 from app.trading.proof_floor import (
-    _route_universe_adverse_slippage_clear,
     build_profitability_proof_floor_receipt,
+    route_universe_adverse_slippage_clear,
 )
 
 
@@ -107,11 +107,11 @@ __all__: tuple[str, ...] = (
     "_healthy_hypothesis_payload",
     "_healthy_market_context",
     "_healthy_quant_evidence",
-    "_route_universe_adverse_slippage_clear",
     "_simple_lane_status",
     "build_profitability_proof_floor_receipt",
     "cast",
     "datetime",
+    "route_universe_adverse_slippage_clear",
     "timedelta",
     "timezone",
 )
