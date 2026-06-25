@@ -81,6 +81,12 @@ spec:
                     argocd.argoproj.io/sync-wave: "-1"
                   automation: manual
                   enabled: "true"
+                  ignoreDifferences:
+                    - kind: Secret
+                      name: rook-ceph-object-user-objectstore-loki
+                      namespace: rook-ceph
+                      jsonPointers:
+                        - /data
                 - name: local-path
                   path: argocd/applications/local-path
                   namespace: local-path-storage
