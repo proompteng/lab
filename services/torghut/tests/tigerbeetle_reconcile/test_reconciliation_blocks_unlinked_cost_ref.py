@@ -28,16 +28,16 @@ from tests.tigerbeetle_reconcile.support import (
     TigerBeetleTransferSpec,
     _TestTigerBeetleReconcileBase,
     _add_ref,
-    _archived_runtime_ledger_amount_micros,
-    _attr,
-    _cost_amount_micros,
-    _execution_amount_micros,
-    _expected_source_amount_micros,
-    _payload_int,
-    _runtime_ledger_amount_micros,
+    archived_runtime_ledger_amount_micros,
+    attr,
+    cost_amount_micros,
+    execution_amount_micros,
+    expected_source_amount_micros,
+    payload_int,
+    runtime_ledger_amount_micros,
     _settings,
-    _usd_to_micros,
-    _uuid_or_none,
+    usd_to_micros,
+    uuid_or_none,
     datetime,
     latest_tigerbeetle_reconciliation_payload,
     reconcile_tigerbeetle_transfers,
@@ -348,29 +348,29 @@ class TestReconciliationBlocksUnlinkedCostRef(_TestTigerBeetleReconcileBase):
             },
         )
 
-    def test_attr_helper_supports_mapping_and_transfer_id_fallbacks(self) -> None:
-        self.assertEqual(_attr({"transfer_id": 44}, "id"), 44)
-        self.assertEqual(_attr(type("TransferId", (), {"transfer_id": 45})(), "id"), 45)
+    def testattr_helper_supports_mapping_and_transfer_id_fallbacks(self) -> None:
+        self.assertEqual(attr({"transfer_id": 44}, "id"), 44)
+        self.assertEqual(attr(type("TransferId", (), {"transfer_id": 45})(), "id"), 45)
         with self.assertRaises(AttributeError):
-            _attr(object(), "id")
+            attr(object(), "id")
 
     def test_source_amount_helpers_handle_invalid_and_zero_values(self) -> None:
-        self.assertEqual(_payload_int({"value": "42"}, "value"), 42)
-        self.assertEqual(_payload_int({"value": object()}, "value"), 0)
-        self.assertEqual(_payload_int({}, "value"), 0)
-        self.assertIsNone(_uuid_or_none(None))
-        self.assertIsNone(_uuid_or_none("not-a-uuid"))
+        self.assertEqual(payload_int({"value": "42"}, "value"), 42)
+        self.assertEqual(payload_int({"value": object()}, "value"), 0)
+        self.assertEqual(payload_int({}, "value"), 0)
+        self.assertIsNone(uuid_or_none(None))
+        self.assertIsNone(uuid_or_none("not-a-uuid"))
         self.assertEqual(
-            str(_uuid_or_none("6f767a53-6b44-428a-bd85-2f662642f637:revision")),
+            str(uuid_or_none("6f767a53-6b44-428a-bd85-2f662642f637:revision")),
             "6f767a53-6b44-428a-bd85-2f662642f637",
         )
-        self.assertIsNone(_usd_to_micros(None))
-        self.assertIsNone(_usd_to_micros(Decimal("0")))
-        self.assertIsNone(_usd_to_micros(Decimal("0.0000001")))
-        self.assertEqual(_usd_to_micros(Decimal("-1.25")), Decimal("1250000"))
-        self.assertIsNone(_execution_amount_micros(None))
-        self.assertIsNone(_cost_amount_micros(None))
-        self.assertIsNone(_runtime_ledger_amount_micros(None))
+        self.assertIsNone(usd_to_micros(None))
+        self.assertIsNone(usd_to_micros(Decimal("0")))
+        self.assertIsNone(usd_to_micros(Decimal("0.0000001")))
+        self.assertEqual(usd_to_micros(Decimal("-1.25")), Decimal("1250000"))
+        self.assertIsNone(execution_amount_micros(None))
+        self.assertIsNone(cost_amount_micros(None))
+        self.assertIsNone(runtime_ledger_amount_micros(None))
         archived_ref = TigerBeetleTransferRef(
             cluster_id=2001,
             transfer_id="9001",
@@ -383,12 +383,12 @@ class TestReconciliationBlocksUnlinkedCostRef(_TestTigerBeetleReconcileBase):
             source_id="6f767a53-6b44-428a-bd85-2f662642f637",
             payload_json={},
         )
-        self.assertIsNone(_archived_runtime_ledger_amount_micros(archived_ref))
+        self.assertIsNone(archived_runtime_ledger_amount_micros(archived_ref))
         archived_ref.payload_json = {"amount_source": object()}
-        self.assertIsNone(_archived_runtime_ledger_amount_micros(archived_ref))
+        self.assertIsNone(archived_runtime_ledger_amount_micros(archived_ref))
         archived_ref.payload_json = {"amount_source": "-1.25"}
         self.assertEqual(
-            _archived_runtime_ledger_amount_micros(archived_ref),
+            archived_runtime_ledger_amount_micros(archived_ref),
             Decimal("1250000"),
         )
 
@@ -510,14 +510,14 @@ class TestReconciliationBlocksUnlinkedCostRef(_TestTigerBeetleReconcileBase):
             )
 
             self.assertEqual(
-                _expected_source_amount_micros(session, cost_ref), Decimal("750000")
+                expected_source_amount_micros(session, cost_ref), Decimal("750000")
             )
             self.assertEqual(
-                _expected_source_amount_micros(session, archived_cost_ref),
+                expected_source_amount_micros(session, archived_cost_ref),
                 Decimal("250000"),
             )
             self.assertEqual(
-                _expected_source_amount_micros(session, runtime_ref), Decimal("500000")
+                expected_source_amount_micros(session, runtime_ref), Decimal("500000")
             )
-            self.assertIsNone(_expected_source_amount_micros(session, unknown_ref))
-            self.assertIsNone(_expected_source_amount_micros(session, invalid_ref))
+            self.assertIsNone(expected_source_amount_micros(session, unknown_ref))
+            self.assertIsNone(expected_source_amount_micros(session, invalid_ref))

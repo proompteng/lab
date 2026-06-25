@@ -30,13 +30,13 @@ from tests.tigerbeetle_reconcile.support import (
     _TestTigerBeetleReconcileBase,
     _add_account_refs_for_plan,
     _add_ref,
-    _payload_string_list,
+    payload_string_list,
     _runtime_bucket,
-    _runtime_ledger_payload_account_ids,
+    runtime_ledger_payload_account_ids,
     _settings,
-    _stable_ref_archives_event_transfer,
+    stable_ref_archives_event_transfer,
     _transfer,
-    _usd_to_micros,
+    usd_to_micros,
     build_order_event_transfer_plan,
     build_runtime_ledger_bucket_transfer_plan,
     datetime,
@@ -140,8 +140,8 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
             self.assertIn(BLOCKER_AMOUNT_MISMATCH, payload["blockers"])
 
     def test_source_amount_micros_rounds_real_broker_notional(self) -> None:
-        self.assertEqual(_usd_to_micros(Decimal("1.0000004")), Decimal("1000000"))
-        self.assertEqual(_usd_to_micros(Decimal("1.0000005")), Decimal("1000001"))
+        self.assertEqual(usd_to_micros(Decimal("1.0000004")), Decimal("1000000"))
+        self.assertEqual(usd_to_micros(Decimal("1.0000005")), Decimal("1000001"))
 
     def test_reconciliation_blocks_source_amount_mismatch(self) -> None:
         with Session(self.engine) as session:
@@ -513,7 +513,7 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
                 payload_json={"source": SOURCE_TYPE_EXECUTION_ORDER_EVENT},
             )
 
-            self.assertFalse(_stable_ref_archives_event_transfer(ref, event))
+            self.assertFalse(stable_ref_archives_event_transfer(ref, event))
 
     def test_stable_order_event_archive_rejects_malformed_stable_payload(self) -> None:
         with Session(self.engine) as session:
@@ -575,7 +575,7 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
                 payload_json={**payload_json, **stable_payload},
             )
 
-            self.assertFalse(_stable_ref_archives_event_transfer(ref, event))
+            self.assertFalse(stable_ref_archives_event_transfer(ref, event))
 
     def test_reconciliation_blocks_order_event_ref_when_core_transfer_changes(
         self,
@@ -652,11 +652,11 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
         self,
     ) -> None:
         self.assertEqual(
-            _payload_string_list({"account_ids": ["11", None, 12]}, "account_ids"),
+            payload_string_list({"account_ids": ["11", None, 12]}, "account_ids"),
             ["11", "12"],
         )
         self.assertEqual(
-            _payload_string_list({"account_ids": "11"}, "account_ids"), ["11"]
+            payload_string_list({"account_ids": "11"}, "account_ids"), ["11"]
         )
 
         ref = TigerBeetleTransferRef(
@@ -676,7 +676,7 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
             },
         )
 
-        self.assertEqual(_runtime_ledger_payload_account_ids(ref), ["11", "12"])
+        self.assertEqual(runtime_ledger_payload_account_ids(ref), ["11", "12"])
 
     def test_reconciliation_accepts_signed_runtime_ledger_profit_and_loss_refs(
         self,
