@@ -28,6 +28,7 @@ const createFixture = () => {
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const hyperliquidRuntimeManifestPath = join(dir, 'hyperliquid-runtime-deployment.yaml')
   const hyperliquidRuntimeMigrationManifestPath = join(dir, 'hyperliquid-runtime-db-migrations-job.yaml')
+  const hyperliquidProofVerifierManifestPath = join(dir, 'hyperliquid-runtime-proof-verifier-cronjob.yaml')
   const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
   const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
@@ -188,6 +189,21 @@ spec:
 `,
     'utf8',
   )
+  writeFileSync(
+    hyperliquidProofVerifierManifestPath,
+    `apiVersion: batch/v1
+kind: CronJob
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: verify
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+`,
+    'utf8',
+  )
   return {
     dir,
     serviceManifestPath,
@@ -210,6 +226,7 @@ spec:
     tigerBeetleSmokeManifestPath,
     hyperliquidRuntimeManifestPath,
     hyperliquidRuntimeMigrationManifestPath,
+    hyperliquidProofVerifierManifestPath,
     optionsCatalogManifestPath,
     optionsEnricherManifestPath,
   }
@@ -246,6 +263,7 @@ const updateOptionsForFixture = (
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
   hyperliquidRuntimeManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeManifestPath),
   hyperliquidRuntimeMigrationManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeMigrationManifestPath),
+  hyperliquidProofVerifierManifestPath: relative(repoRoot, fixture.hyperliquidProofVerifierManifestPath),
   optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
   optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
   ...overrides,
@@ -327,6 +345,7 @@ describe('update-manifests', () => {
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const hyperliquidRuntimeManifest = readFileSync(fixture.hyperliquidRuntimeManifestPath, 'utf8')
     const hyperliquidRuntimeMigrationManifest = readFileSync(fixture.hyperliquidRuntimeMigrationManifestPath, 'utf8')
+    const hyperliquidProofVerifierManifest = readFileSync(fixture.hyperliquidProofVerifierManifestPath, 'utf8')
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
@@ -379,6 +398,9 @@ describe('update-manifests', () => {
     expect(empiricalPromotionRenewalManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeMigrationManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    expect(hyperliquidProofVerifierManifest).toContain(
+      'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+    )
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -390,7 +412,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(22)
+    expect(result.changedPaths.length).toBe(23)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -412,7 +434,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(20)
+    expect(result.changedPaths.length).toBe(21)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

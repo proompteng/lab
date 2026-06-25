@@ -37,6 +37,8 @@ const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbe
 const defaultHyperliquidRuntimeManifestPath = 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
 const defaultHyperliquidRuntimeMigrationManifestPath =
   'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
+const defaultHyperliquidProofVerifierManifestPath =
+  'argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 const defaultRequiredImagePlatforms = 'linux/amd64,linux/arm64'
@@ -69,6 +71,7 @@ type UpdateManifestsOptions = {
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
+  hyperliquidProofVerifierManifestPath?: string
   includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -102,6 +105,7 @@ type CliOptions = {
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
+  hyperliquidProofVerifierManifestPath?: string
   includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -388,6 +392,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.hyperliquidRuntimeMigrationManifestPath ?? defaultHyperliquidRuntimeMigrationManifestPath,
     'torghut-hyperliquid-runtime-db-migrations image reference',
   )
+  const hyperliquidProofVerifier = updateImageOnlyManifest(
+    options,
+    options.hyperliquidProofVerifierManifestPath ?? defaultHyperliquidProofVerifierManifestPath,
+    'torghut-hyperliquid-runtime-proof-verifier image reference',
+  )
   const includeOptionsManifests = options.includeOptionsManifests ?? true
   const optionalResults = includeOptionsManifests
     ? [
@@ -430,6 +439,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     tigerBeetleSmoke,
     hyperliquidRuntime,
     hyperliquidRuntimeMigration,
+    hyperliquidProofVerifier,
     ...optionalResults,
   ]
     .filter((entry) => entry.changed)
@@ -477,6 +487,7 @@ Options:
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
   --hyperliquid-runtime-migration-manifest-path <path>
+  --hyperliquid-proof-verifier-manifest-path <path>
   --include-options-manifests
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
@@ -582,6 +593,9 @@ Options:
         break
       case '--hyperliquid-runtime-migration-manifest-path':
         options.hyperliquidRuntimeMigrationManifestPath = value
+        break
+      case '--hyperliquid-proof-verifier-manifest-path':
+        options.hyperliquidProofVerifierManifestPath = value
         break
       case '--include-options-manifests':
         options.includeOptionsManifests = true
