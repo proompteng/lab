@@ -42,7 +42,6 @@ from .shared_context import (
     mapping as _mapping,
     resolve_program_path as _resolve_program_path,
     resolve_seed_sweep_path as _resolve_seed_sweep_path,
-    stable_value_key as _stable_value_key,
     string as _string,
     string_list as _string_list,
 )
@@ -930,7 +929,6 @@ __all__: tuple[str, ...] = (
     "_resolve_program_path",
     "_resolve_seed_sweep_path",
     "_resolved_mutation_values",
-    "_stable_value_key",
     "_string",
     "_string_list",
     "annotations",
