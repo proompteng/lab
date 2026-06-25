@@ -28,6 +28,10 @@ from tests.autoresearch_runner.helpers import (
     _CHIP_UNIVERSE,
     _source_jsonl_payload,
 )
+import app.trading.discovery.whitepaper_candidate_compiler as whitepaper_candidate_compiler
+import app.whitepapers.claim_compiler as claim_compiler
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
 
 
 class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
@@ -40,22 +44,24 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
         args.program = Path(
             "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
         )
-        program = runner._load_epoch_program(args)
-        sources = runner._program_whitepaper_sources(program)
+        program = replay_shards._load_epoch_program(args)
+        sources = persisted_feedback_sources._program_whitepaper_sources(program)
         failures: dict[str, list[dict[str, object]]] = {}
         compiled_source_count = 0
 
         for source in sources:
-            cards = runner.compile_sources_to_hypothesis_cards([source])
+            cards = claim_compiler.compile_sources_to_hypothesis_cards([source])
             if not cards:
                 continue
             compiled_source_count += 1
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                target_net_pnl_per_day=Decimal("500"),
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
-                universe_symbols=("NVDA",),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    target_net_pnl_per_day=Decimal("500"),
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                    universe_symbols=("NVDA",),
+                )
             )
             missing_feature_blockers = [
                 blocker.to_payload()
@@ -351,7 +357,7 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
                     "--no-persist-results",
                 ],
             ):
-                parsed = runner._parse_args()
+                parsed = cli_parsing._parse_args()
 
         self.assertEqual(parsed.output_dir, output_dir)
         self.assertEqual(parsed.epoch_id, "whitepaper-autoresearch-cli-epoch")
@@ -423,13 +429,13 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
         self,
     ) -> None:
         with patch.dict("os.environ", {"TORGHUT_TEST_CLICKHOUSE_PASSWORD": "from-env"}):
-            resolved = runner._resolved_clickhouse_password(
+            resolved = artifact_io._resolved_clickhouse_password(
                 Namespace(
                     clickhouse_password="",
                     clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
                 )
             )
-            direct = runner._resolved_clickhouse_password(
+            direct = artifact_io._resolved_clickhouse_password(
                 Namespace(
                     clickhouse_password="direct",
                     clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",

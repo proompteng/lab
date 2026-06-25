@@ -37,6 +37,7 @@ from app.trading.models import SignalEnvelope
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
 
 
 class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
@@ -381,7 +382,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 return_value=coverage,
             ) as fetch:
                 updated_args, receipt = (
-                    runner._maybe_preflight_materialized_replay_tape_window(
+                    queue_metadata._maybe_preflight_materialized_replay_tape_window(
                         args=args,
                         output_dir=output_dir,
                     )
@@ -460,7 +461,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_real_replay"
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -471,7 +472,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_replay_tape_path"
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -482,7 +483,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_full_window_start_date"
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -502,15 +503,17 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             args.full_window_start_date = "2026-02-23"
             args.symbols = "NVDA"
             with patch.object(
-                runner,
+                preview_narrowing,
                 "build_fast_replay_preview",
                 return_value=UnknownPreview(),
             ):
-                narrowed, updated = runner._apply_fast_replay_preview_narrowing(
-                    args=args,
-                    output_dir=output_dir,
-                    specs=[spec],
-                    candidate_selection=selection,
+                narrowed, updated = (
+                    preview_narrowing._apply_fast_replay_preview_narrowing(
+                        args=args,
+                        output_dir=output_dir,
+                        specs=[spec],
+                        candidate_selection=selection,
+                    )
                 )
 
         self.assertEqual(
@@ -687,7 +690,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 args: Namespace,
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 del args
                 captured_spec_ids.extend(spec.candidate_spec_id for spec in specs)
                 bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
@@ -708,7 +711,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                     dataset_snapshot_id="snap-direct",
                     result_path=str(output_dir / "direct-a.json"),
                 )
-                return runner.EpochReplayResult(
+                return replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "ok"},),
                 )

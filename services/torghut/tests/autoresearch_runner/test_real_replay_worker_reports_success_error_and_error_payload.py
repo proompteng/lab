@@ -20,6 +20,8 @@ from scripts.whitepaper_autoresearch_runner import replay_shards
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import app.trading.discovery.whitepaper_candidate_compiler as whitepaper_candidate_compiler
+import app.whitepapers.claim_compiler as claim_compiler
 
 
 class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
@@ -40,7 +42,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
 
         args = self._args(Path("unused"))
         spec = self._candidate_spec("spec-worker")
-        expected = runner.EpochReplayResult(
+        expected = replay_models.EpochReplayResult(
             evidence_bundles=(),
             replay_results=({"status": "ok"},),
         )
@@ -166,7 +168,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             output_dir = Path(tmpdir) / "epoch"
             args = self._args(output_dir)
             spec = self._candidate_spec("spec-child-ok")
-            expected = runner.EpochReplayResult(
+            expected = replay_models.EpochReplayResult(
                 evidence_bundles=(),
                 replay_results=({"status": "ok"},),
             )
@@ -319,12 +321,14 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:3]
             calls: list[tuple[list[str], int, int, int]] = []
@@ -334,7 +338,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 *,
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 spec_ids = [spec.candidate_spec_id for spec in specs]
                 calls.append(
                     (
@@ -359,7 +363,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                     dataset_snapshot_id="snap-shard",
                     result_path=str(output_dir / f"{spec_ids[0]}.json"),
                 )
-                return runner.EpochReplayResult(
+                return replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "ok", "spec_ids": spec_ids},),
                 )
@@ -379,7 +383,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
                 timeout_seconds: int,
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 _ = timeout_seconds
                 return fake_replay(args, output_dir=output_dir, specs=specs)
 
@@ -388,7 +392,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 "_run_real_replay_once_with_optional_timeout",
                 side_effect=fake_replay_once,
             ):
-                result = runner._run_replay_with_optional_timeout(
+                result = replay_shards._run_replay_with_optional_timeout(
                     args=args,
                     output_dir=output_dir,
                     specs=specs,
@@ -458,7 +462,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
-                result=runner.EpochReplayResult(
+                result=replay_models.EpochReplayResult(
                     evidence_bundles=(),
                     replay_results=(),
                 ),
@@ -528,7 +532,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
-                result=runner.EpochReplayResult(
+                result=replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "ok"},),
                 ),
@@ -569,12 +573,14 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:3]
             args = self._args(output_dir)
@@ -614,12 +620,14 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:8]
             args = self._args(output_dir)
@@ -646,12 +654,14 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:3]
             args = self._args(output_dir)
@@ -688,7 +698,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                             candidate_spec_ids=tuple(
                                 spec.candidate_spec_id for spec in plan.specs
                             ),
-                            result=runner.EpochReplayResult(
+                            result=replay_models.EpochReplayResult(
                                 evidence_bundles=(),
                                 replay_results=(
                                     {
@@ -736,12 +746,14 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:6]
             args = self._args(output_dir)
@@ -777,12 +789,14 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:4]
             args = self._args(output_dir)
@@ -815,7 +829,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 args: Namespace,
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 spec = specs[0]
                 bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec.candidate_spec_id,
@@ -837,7 +851,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                     dataset_snapshot_id="snap-incomplete",
                     result_path=str(output_dir / "incomplete.json"),
                 )
-                return runner.EpochReplayResult(
+                return replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "partial_replay_shards_interrupted"},),
                     incomplete=True,

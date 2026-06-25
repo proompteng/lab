@@ -8,8 +8,10 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Path,
     WhitepaperAutoresearchRunnerTestCaseBase,
     replace,
-    runner,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.candidate_board_summaries as candidate_board_summaries
+import scripts.whitepaper_autoresearch_runner.common as runner_common
 
 
 class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -87,7 +89,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-pass-board",
             output_dir=Path("/tmp/epoch-market-limit-pass-board"),
             target=Decimal("500"),
@@ -169,7 +171,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-queue-survival-board",
             output_dir=Path("/tmp/epoch-queue-survival-board"),
             target=Decimal("500"),
@@ -229,7 +231,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             },
         )
 
-        summary = runner._candidate_board_queue_position_survival_summary(
+        summary = candidate_board_summaries._candidate_board_queue_position_survival_summary(
             spec,
             {
                 "queue_position_survival_fill_curve_evidence_present": True,
@@ -307,7 +309,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-missing-artifact-ref-board",
             output_dir=Path("/tmp/epoch-market-limit-missing-artifact-ref-board"),
             target=Decimal("500"),
@@ -403,7 +405,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-route-bool-board",
             output_dir=Path("/tmp/epoch-market-limit-route-bool-board"),
             target=Decimal("500"),
@@ -486,7 +488,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-route-artifact-board",
             output_dir=Path("/tmp/epoch-market-limit-route-artifact-board"),
             target=Decimal("500"),
@@ -594,7 +596,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-candidate-board-split",
             output_dir=Path("/tmp/epoch-candidate-board-split"),
             target=Decimal("500"),
@@ -699,7 +701,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-alpha-decay-missing-stress",
             output_dir=Path("/tmp/epoch-alpha-decay-missing-stress"),
             target=Decimal("500"),
@@ -793,17 +795,19 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             proof_handoff["zero_authoritative_daily_pnl_until_materialized"]
         )
         self.assertEqual(
-            runner._candidate_board_runtime_ledger_required_materialized_artifacts({}),
+            runner_common._candidate_board_runtime_ledger_required_materialized_artifacts(
+                {}
+            ),
             [],
         )
         self.assertEqual(
-            runner._candidate_board_runtime_ledger_required_materialized_artifacts(
+            runner_common._candidate_board_runtime_ledger_required_materialized_artifacts(
                 {"required_materialized_artifacts": "runtime-ledger/string.json"}
             ),
             ["runtime-ledger/string.json"],
         )
         self.assertEqual(
-            runner._candidate_board_runtime_ledger_required_materialized_artifacts(
+            runner_common._candidate_board_runtime_ledger_required_materialized_artifacts(
                 {
                     "required_materialized_artifacts": [
                         {"path": "runtime-ledger/path.json"},

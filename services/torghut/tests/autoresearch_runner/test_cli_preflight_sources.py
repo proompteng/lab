@@ -3,6 +3,7 @@ from __future__ import annotations
 import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
 import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
 import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.runtime_closure as runtime_closure
 import socket
 
 import json
@@ -19,6 +20,9 @@ from tests.autoresearch_runner.helpers import (
     _CHIP_UNIVERSE,
     _compact_recent_whitepaper_sources,
 )
+import app.whitepapers.claim_compiler as claim_compiler
+import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
 
 
 class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
@@ -33,7 +37,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
                     tmpdir,
                 ],
             ):
-                args = runner._parse_args()
+                args = cli_parsing._parse_args()
 
         self.assertEqual(args.target_net_pnl_per_day, "500")
         self.assertEqual(args.epoch_id, "")
@@ -67,7 +71,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
                     ],
                 ),
             ):
-                args = runner._parse_args()
+                args = cli_parsing._parse_args()
 
         self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
         self.assertEqual(args.clickhouse_username, "reader")
@@ -95,7 +99,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
                     ],
                 ),
             ):
-                args = runner._parse_args()
+                args = cli_parsing._parse_args()
 
         self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
 
@@ -112,7 +116,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=socket.gaierror("not known"),
         ):
-            failure = runner._clickhouse_endpoint_preflight_failure(args)
+            failure = artifact_io._clickhouse_endpoint_preflight_failure(args)
 
         self.assertIn("clickhouse_endpoint_unreachable", failure)
         self.assertIn("TA_CLICKHOUSE_URL", failure)
@@ -129,7 +133,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("non-cluster endpoints are replay-checked"),
         ):
-            failure = runner._clickhouse_endpoint_preflight_failure(args)
+            failure = artifact_io._clickhouse_endpoint_preflight_failure(args)
 
         self.assertEqual(failure, "")
 
@@ -145,7 +149,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("replay tape should bypass DNS preflight"),
         ):
-            failure = runner._clickhouse_endpoint_preflight_failure(args)
+            failure = artifact_io._clickhouse_endpoint_preflight_failure(args)
 
         self.assertEqual(failure, "")
 
@@ -273,7 +277,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
                         tmpdir,
                     ],
                 ):
-                    args = runner._parse_args()
+                    args = cli_parsing._parse_args()
 
         self.assertEqual(args.strategy_configmap, Path("/etc/torghut/strategies.yaml"))
 
@@ -606,7 +610,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
                     ),
                 ) as optimizer_mock,
                 patch.object(
-                    runner,
+                    runtime_closure,
                     "_runtime_closure_payload",
                     side_effect=AssertionError(
                         "selection-only must not build runtime closure"
@@ -708,8 +712,8 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             args.program = Path(
                 "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             )
-            program = runner._load_epoch_program(args)
-            sources = runner._program_whitepaper_sources(program)
+            program = replay_shards._load_epoch_program(args)
+            sources = persisted_feedback_sources._program_whitepaper_sources(program)
 
         source_ids = {source.run_id for source in sources}
         self.assertIn("weighted_microprice_momentum_2026", source_ids)
@@ -748,7 +752,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
         self.assertIn("feature_recipe", claim_types)
         self.assertIn("validation_requirement", claim_types)
         self.assertTrue(
-            runner.compile_sources_to_hypothesis_cards([weighted_microprice])
+            claim_compiler.compile_sources_to_hypothesis_cards([weighted_microprice])
         )
 
         impact_source = next(
@@ -763,7 +767,9 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
         self.assertIn("risk_constraint", impact_claim_types)
         self.assertIn("route_tca", impact_source.claims[0]["data_requirements"])
         self.assertEqual(impact_source.claims[0]["horizon_scope"], "intraday_execution")
-        self.assertTrue(runner.compile_sources_to_hypothesis_cards([impact_source]))
+        self.assertTrue(
+            claim_compiler.compile_sources_to_hypothesis_cards([impact_source])
+        )
 
         latent_regime_source = next(
             source
@@ -817,7 +823,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             source for source in sources if source.run_id == "retail_limit_orders_2025"
         )
         self.assertTrue(
-            runner.compile_sources_to_hypothesis_cards([retail_limit_source])
+            claim_compiler.compile_sources_to_hypothesis_cards([retail_limit_source])
         )
         self.assertIn(
             "order_type_ablation", retail_limit_source.claims[0]["data_requirements"]
@@ -831,7 +837,9 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             for source in sources
             if source.run_id == "intraday_ofi_news_dynamics_2025"
         )
-        self.assertTrue(runner.compile_sources_to_hypothesis_cards([ofi_news_source]))
+        self.assertTrue(
+            claim_compiler.compile_sources_to_hypothesis_cards([ofi_news_source])
+        )
         self.assertIn(
             "price_flow_impact", ofi_news_source.claims[0]["data_requirements"]
         )
@@ -843,7 +851,9 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
             for source in sources
             if source.run_id == "order_flow_filtration_2025"
         )
-        self.assertTrue(runner.compile_sources_to_hypothesis_cards([filtration_source]))
+        self.assertTrue(
+            claim_compiler.compile_sources_to_hypothesis_cards([filtration_source])
+        )
         self.assertIn(
             "filtered_orderbook_imbalance",
             filtration_source.claims[0]["data_requirements"],

@@ -13,12 +13,15 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
     _CHIP_UNIVERSE,
     _authoritative_exact_replay_ledger_rows,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.common as runner_common
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
+import scripts.whitepaper_autoresearch_runner.runtime_closure as runtime_closure
 
 
 class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
@@ -30,7 +33,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             args.program = Path(
                 "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             )
-            program = runner._load_epoch_program(args)
+            program = replay_shards._load_epoch_program(args)
 
         manifest = mlx_snapshot.MlxSnapshotManifest(
             snapshot_id="mlx-snap-test",
@@ -65,11 +68,13 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             optimizer_report={},
         )
 
-        runtime_program = runner._runtime_closure_program_for_candidate(
-            program=program,
-            manifest=manifest,
-            portfolio=portfolio,
-            oracle_candidate_found=False,
+        runtime_program = (
+            candidate_board_payloads._runtime_closure_program_for_candidate(
+                program=program,
+                manifest=manifest,
+                portfolio=portfolio,
+                oracle_candidate_found=False,
+            )
         )
 
         self.assertFalse(runtime_program.runtime_closure_policy.execute_parity_replay)
@@ -84,7 +89,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 "config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml"
             )
             args.replay_mode = "real"
-            program = runner._load_epoch_program(args)
+            program = replay_shards._load_epoch_program(args)
 
         manifest = mlx_snapshot.MlxSnapshotManifest(
             snapshot_id="mlx-snap-test",
@@ -130,11 +135,13 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             optimizer_report={},
         )
 
-        runtime_program = runner._runtime_closure_program_for_candidate(
-            program=program,
-            manifest=manifest,
-            portfolio=portfolio,
-            oracle_candidate_found=False,
+        runtime_program = (
+            candidate_board_payloads._runtime_closure_program_for_candidate(
+                program=program,
+                manifest=manifest,
+                portfolio=portfolio,
+                oracle_candidate_found=False,
+            )
         )
 
         self.assertTrue(runtime_program.runtime_closure_policy.execute_parity_replay)
@@ -143,18 +150,22 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
     def test_runtime_closure_exact_replay_ledger_rejects_summary_counts_without_rows(
         self,
     ) -> None:
-        self.assertIsNone(runner._runtime_closure_ledger_datetime(None))
-        self.assertIsNone(runner._runtime_closure_ledger_datetime("not-a-date"))
+        self.assertIsNone(runtime_closure._runtime_closure_ledger_datetime(None))
+        self.assertIsNone(
+            runtime_closure._runtime_closure_ledger_datetime("not-a-date")
+        )
         self.assertEqual(
-            runner._runtime_closure_ledger_datetime("2026-05-20T14:00:00"),
+            runtime_closure._runtime_closure_ledger_datetime("2026-05-20T14:00:00"),
             datetime(2026, 5, 20, 14, tzinfo=timezone.utc),
         )
         self.assertEqual(
-            runner._runtime_closure_ledger_datetime("2026-05-20T14:00:00-04:00"),
+            runtime_closure._runtime_closure_ledger_datetime(
+                "2026-05-20T14:00:00-04:00"
+            ),
             datetime(2026, 5, 20, 18, tzinfo=timezone.utc),
         )
         self.assertIsNone(
-            runner._runtime_closure_exact_replay_bucket(
+            runtime_closure._runtime_closure_exact_replay_bucket(
                 ledger={"window_start": "2026-05-20", "window_end": "2026-05-19"},
                 rows=_authoritative_exact_replay_ledger_rows(),
             )
@@ -164,7 +175,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             return_value=[],
         ):
             self.assertIsNone(
-                runner._runtime_closure_exact_replay_bucket(
+                runtime_closure._runtime_closure_exact_replay_bucket(
                     ledger={
                         "window_start": "2026-05-20",
                         "window_end": "2026-05-20",
@@ -188,7 +199,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
 
             self.assertEqual(
-                runner._runtime_closure_exact_replay_ledger_update(
+                runtime_closure._runtime_closure_exact_replay_ledger_update(
                     {"exact_replay_ledger_artifact_path": str(artifact_path)}
                 ),
                 {},
@@ -208,7 +219,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
 
             self.assertEqual(
-                runner._runtime_closure_exact_replay_ledger_update(
+                runtime_closure._runtime_closure_exact_replay_ledger_update(
                     {"exact_replay_ledger_artifact_path": str(artifact_path)}
                 ),
                 {},
@@ -229,7 +240,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
 
             self.assertEqual(
-                runner._runtime_closure_exact_replay_ledger_update(
+                runtime_closure._runtime_closure_exact_replay_ledger_update(
                     {"exact_replay_ledger_artifact_path": str(artifact_path)}
                 ),
                 {},
@@ -249,7 +260,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
 
             self.assertEqual(
-                runner._runtime_closure_exact_replay_ledger_update(
+                runtime_closure._runtime_closure_exact_replay_ledger_update(
                     {"exact_replay_ledger_artifact_path": str(artifact_path)}
                 ),
                 {},
@@ -272,7 +283,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
 
             self.assertEqual(
-                runner._runtime_closure_exact_replay_ledger_update(
+                runtime_closure._runtime_closure_exact_replay_ledger_update(
                     {"exact_replay_ledger_artifact_path": str(artifact_path)}
                 ),
                 {},
@@ -294,7 +305,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
 
             self.assertEqual(
-                runner._runtime_closure_exact_replay_ledger_update(
+                runtime_closure._runtime_closure_exact_replay_ledger_update(
                     {"exact_replay_ledger_artifact_path": str(artifact_path)}
                 ),
                 {},
@@ -315,7 +326,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 encoding="utf-8",
             )
 
-            update = runner._runtime_closure_exact_replay_ledger_update(
+            update = runtime_closure._runtime_closure_exact_replay_ledger_update(
                 {"exact_replay_ledger_artifact_path": str(artifact_path)}
             )
 
@@ -527,7 +538,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 optimizer_report={},
             )
 
-            updated = runner._portfolio_with_runtime_closure_proof(
+            updated = candidate_board_payloads._portfolio_with_runtime_closure_proof(
                 portfolio=portfolio,
                 runtime_closure={
                     "status": "ready_for_promotion_review",
@@ -696,7 +707,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             invalid_json_path = Path(tmpdir) / "invalid.json"
             invalid_json_path.write_text("{", encoding="utf-8")
             args = self._args(Path(tmpdir) / "epoch")
-            program = runner._load_epoch_program(args)
+            program = replay_shards._load_epoch_program(args)
 
         portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
@@ -734,19 +745,24 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             manifest_hash="hash",
         )
 
-        self.assertEqual(runner._oracle_blockers({}), frozenset())
-        self.assertEqual(runner._load_json_mapping_artifact(invalid_json_path), {})
+        self.assertEqual(runner_common._oracle_blockers({}), frozenset())
         self.assertEqual(
-            runner._runtime_report_summary_int(
+            runtime_closure._load_json_mapping_artifact(invalid_json_path), {}
+        )
+        self.assertEqual(
+            runtime_closure._runtime_report_summary_int(
                 {"summary": {"filled_count": "bad"}}, "filled_count", default=7
             ),
             7,
         )
-        self.assertEqual(runner._runtime_report_int("bad", default=11), 11)
+        self.assertEqual(runtime_closure._runtime_report_int("bad", default=11), 11)
         self.assertEqual(
-            runner._portfolio_executable_max_notional(portfolio), Decimal("50000")
+            runtime_closure._portfolio_executable_max_notional(portfolio),
+            Decimal("50000"),
         )
-        self.assertFalse(runner._portfolio_needs_runtime_closure_proof(portfolio))
+        self.assertFalse(
+            runtime_closure._portfolio_needs_runtime_closure_proof(portfolio)
+        )
         market_impact_only_portfolio = replace(
             portfolio,
             objective_scorecard={
@@ -766,10 +782,12 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             },
         )
         self.assertTrue(
-            runner._portfolio_needs_runtime_closure_proof(market_impact_only_portfolio)
+            runtime_closure._portfolio_needs_runtime_closure_proof(
+                market_impact_only_portfolio
+            )
         )
         self.assertIs(
-            runner._runtime_closure_program_for_candidate(
+            candidate_board_payloads._runtime_closure_program_for_candidate(
                 program=program,
                 manifest=manifest,
                 portfolio=None,
@@ -794,8 +812,10 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            default_marker_update = runner._runtime_closure_market_impact_stress_update(
-                {"market_impact_stress_report_path": str(default_marker_path)}
+            default_marker_update = (
+                runtime_closure._runtime_closure_market_impact_stress_update(
+                    {"market_impact_stress_report_path": str(default_marker_path)}
+                )
             )
             self.assertEqual(
                 default_marker_update["market_impact_stress_source_markers"],
@@ -837,7 +857,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 encoding="utf-8",
             )
             component_marker_update = (
-                runner._runtime_closure_market_impact_stress_update(
+                runtime_closure._runtime_closure_market_impact_stress_update(
                     {"market_impact_stress_report_path": str(component_marker_path)}
                 )
             )

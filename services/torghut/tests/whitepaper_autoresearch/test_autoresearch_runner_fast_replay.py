@@ -17,7 +17,6 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     fast_replay,
     materialize_signal_tape,
     replace,
-    runner,
     timezone,
 )
 
@@ -105,7 +104,7 @@ class TestAutoresearchRunnerFastReplay(WhitepaperAutoresearchRunnerTestCaseBase)
                 ValueError,
                 "replay_tape_cache_identity_mismatch:.*feature_schema_hash",
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -185,7 +184,7 @@ class TestAutoresearchRunnerFastReplay(WhitepaperAutoresearchRunnerTestCaseBase)
             }
 
             narrowed_specs, updated_selection = (
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],

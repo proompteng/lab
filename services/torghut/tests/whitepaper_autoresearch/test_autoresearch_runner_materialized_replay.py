@@ -26,6 +26,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     runner,
     timezone,
 )
+import scripts.whitepaper_autoresearch_runner.preview_narrowing as preview_narrowing
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
 
 
 class TestAutoresearchRunnerMaterializedReplay(
@@ -231,7 +233,7 @@ class TestAutoresearchRunnerMaterializedReplay(
                 return_value=coverage,
             ) as fetch:
                 updated_args, receipt = (
-                    runner._maybe_preflight_materialized_replay_tape_window(
+                    queue_metadata._maybe_preflight_materialized_replay_tape_window(
                         args=args,
                         output_dir=output_dir,
                     )
@@ -310,7 +312,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_real_replay"
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -321,7 +323,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_replay_tape_path"
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -332,7 +334,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             with self.assertRaisesRegex(
                 ValueError, "fast_replay_preview_requires_full_window_start_date"
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -352,15 +354,17 @@ class TestAutoresearchRunnerMaterializedReplay(
             args.full_window_start_date = "2026-02-23"
             args.symbols = "NVDA"
             with patch.object(
-                runner,
+                preview_narrowing,
                 "build_fast_replay_preview",
                 return_value=UnknownPreview(),
             ):
-                narrowed, updated = runner._apply_fast_replay_preview_narrowing(
-                    args=args,
-                    output_dir=output_dir,
-                    specs=[spec],
-                    candidate_selection=selection,
+                narrowed, updated = (
+                    preview_narrowing._apply_fast_replay_preview_narrowing(
+                        args=args,
+                        output_dir=output_dir,
+                        specs=[spec],
+                        candidate_selection=selection,
+                    )
                 )
 
         self.assertEqual(
@@ -533,7 +537,7 @@ class TestAutoresearchRunnerMaterializedReplay(
                 args: Namespace,
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 del args
                 captured_spec_ids.extend(spec.candidate_spec_id for spec in specs)
                 bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
@@ -554,7 +558,7 @@ class TestAutoresearchRunnerMaterializedReplay(
                     dataset_snapshot_id="snap-direct",
                     result_path=str(output_dir / "direct-a.json"),
                 )
-                return runner.EpochReplayResult(
+                return replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "ok"},),
                 )

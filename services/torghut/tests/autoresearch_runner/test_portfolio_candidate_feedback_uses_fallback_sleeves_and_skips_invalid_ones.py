@@ -24,7 +24,6 @@ from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from app.models import (
     AutoresearchEpoch,
     AutoresearchPortfolioCandidate,
@@ -32,6 +31,7 @@ from app.models import (
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
@@ -317,7 +317,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
     def test_oracle_policy_from_args_carries_full_promotion_risk_parameters(
         self,
     ) -> None:
-        policy = runner._oracle_policy_from_args(
+        policy = oracle_policy._oracle_policy_from_args(
             Namespace(
                 min_profit_factor="1.65",
                 max_worst_day_loss="999999999",
@@ -587,7 +587,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             original_spec.candidate_spec_id,
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(drifted_spec,),
             proposal_rows=rows,
             top_k=1,

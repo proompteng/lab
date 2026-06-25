@@ -310,7 +310,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             }
 
             narrowed_specs, updated_selection = (
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=specs,
@@ -624,7 +624,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
                 ValueError,
                 "replay_tape_cache_identity_mismatch:.*feature_schema_hash",
             ):
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],
@@ -704,7 +704,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             }
 
             narrowed_specs, updated_selection = (
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=[spec],

@@ -16,8 +16,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     TemporaryDirectory,
     WhitepaperAutoresearchRunnerTestCaseBase,
     replace,
-    runner,
 )
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -148,7 +148,7 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
     def test_oracle_policy_from_args_carries_full_promotion_risk_parameters(
         self,
     ) -> None:
-        policy = runner._oracle_policy_from_args(
+        policy = oracle_policy._oracle_policy_from_args(
             Namespace(
                 min_profit_factor="1.65",
                 max_worst_day_loss="999999999",
@@ -418,7 +418,7 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
             original_spec.candidate_spec_id,
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(drifted_spec,),
             proposal_rows=rows,
             top_k=1,

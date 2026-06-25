@@ -18,12 +18,14 @@ from unittest.mock import patch
 
 
 import scripts.compile_whitepaper_claims as claim_compiler_script
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from scripts.whitepaper_autoresearch_runner import replay_execution
 from scripts.whitepaper_autoresearch_runner import replay_shards
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import app.trading.discovery.whitepaper_candidate_compiler as whitepaper_candidate_compiler
+import app.whitepapers.claim_compiler as claim_compiler
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
 
 
 class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
@@ -49,8 +51,10 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 encoding="utf-8",
             )
 
-            with patch.object(runner, "_current_code_commit", return_value="abc123"):
-                replay = runner._real_replay_result_from_factory_payload(
+            with patch.object(
+                replay_execution, "_current_code_commit", return_value="abc123"
+            ):
+                replay = replay_execution._real_replay_result_from_factory_payload(
                     {
                         "experiments": [
                             {
@@ -105,7 +109,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 encoding="utf-8",
             )
 
-            replay = runner._real_replay_result_from_factory_payload(
+            replay = replay_execution._real_replay_result_from_factory_payload(
                 {
                     "experiments": [
                         {
@@ -160,7 +164,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 encoding="utf-8",
             )
 
-            replay = runner._real_replay_result_from_factory_payload(
+            replay = replay_execution._real_replay_result_from_factory_payload(
                 {
                     "experiments": [
                         {
@@ -230,7 +234,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 "run_strategy_factory_v2",
                 return_value=factory_payload,
             ):
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     self._args(output_dir), output_dir=output_dir
                 )
 
@@ -263,7 +267,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 ),
                 encoding="utf-8",
             )
-            result = runner._real_replay_result_from_factory_payload(
+            result = replay_execution._real_replay_result_from_factory_payload(
                 {
                     "experiments": [
                         {
@@ -339,17 +343,19 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.replay_tape_path = output_dir / "tape.jsonl"
                 args.replay_tape_manifest = output_dir / "tape.manifest.json"
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -409,17 +415,19 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.max_candidates = 24
                 args.max_total_frontier_candidates = 11
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -462,18 +470,20 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.max_candidates = 24
                 args.max_frontier_candidates_per_spec = 64
                 args.max_total_frontier_candidates = 8
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:8],
@@ -518,18 +528,20 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.max_candidates = 24
                 args.max_frontier_candidates_per_spec = 8
                 args.max_total_frontier_candidates = 0
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -606,12 +618,14 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.staged_train_screen_multiplier = 3
@@ -624,7 +638,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 args.loss_repair_candidates = 1
                 args.consistency_repair_iterations = 1
                 args.consistency_repair_candidates = 2
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -653,7 +667,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
         self,
     ) -> None:
         args = self._args(Path("/tmp/epoch"))
-        program = runner._load_epoch_program(args)
+        program = replay_shards._load_epoch_program(args)
         controls = replay_shards._resolved_real_replay_frontier_controls(args, program)
 
         self.assertEqual(
@@ -688,12 +702,14 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:3]
             calls: list[list[str]] = []
@@ -703,7 +719,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 *,
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 spec_ids = [spec.candidate_spec_id for spec in specs]
                 calls.append(spec_ids)
                 if len(calls) == 2:
@@ -721,7 +737,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                     dataset_snapshot_id="snap-shard",
                     result_path=str(output_dir / f"{spec_ids[0]}.json"),
                 )
-                return runner.EpochReplayResult(
+                return replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "ok", "spec_ids": spec_ids},),
                 )
@@ -739,7 +755,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
                 timeout_seconds: int,
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 _ = timeout_seconds
                 return fake_replay(args, output_dir=output_dir, specs=specs)
 
@@ -748,7 +764,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 "_run_real_replay_once_with_optional_timeout",
                 side_effect=fake_replay_once,
             ):
-                result = runner._run_replay_with_optional_timeout(
+                result = replay_shards._run_replay_with_optional_timeout(
                     args=args,
                     output_dir=output_dir,
                     specs=specs,
@@ -800,7 +816,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 patch.object(
                     replay_execution,
                     "_run_real_replay_once_in_child_process",
-                    return_value=runner.EpochReplayResult(
+                    return_value=replay_models.EpochReplayResult(
                         evidence_bundles=(bundle,),
                         replay_results=({"status": "ok"},),
                     ),

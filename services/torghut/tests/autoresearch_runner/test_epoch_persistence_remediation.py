@@ -32,6 +32,7 @@ from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
     _compact_recent_whitepaper_sources,
 )
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
 
 
 class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCase):
@@ -506,7 +507,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
             patch.object(
                 run_reporting,
                 "_collect_partial_real_replay",
-                return_value=runner.EpochReplayResult(
+                return_value=replay_models.EpochReplayResult(
                     evidence_bundles=(
                         evidence_bundles.evidence_bundle_from_frontier_candidate(
                             candidate_spec_id="spec-partial",
