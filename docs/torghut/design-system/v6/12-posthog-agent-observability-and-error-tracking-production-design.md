@@ -188,7 +188,7 @@ If token usage is absent, emit `usage_available=false` and avoid null-heavy payl
 
 1. Keep Flipt for safety-critical runtime controls initially:
    - `trading_enabled`,
-   - `trading_live_enabled`,
+   - `TRADING_MODE` for paper/live lane selection,
    - kill-switch and emergency-stop controls,
    - live-promotion controls.
 2. Use PostHog flags first for non-critical behavior and experiments.

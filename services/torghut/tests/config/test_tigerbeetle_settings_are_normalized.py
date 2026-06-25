@@ -109,6 +109,24 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
         )
         self.assertEqual(settings.trading_mode, "paper")
 
+    def test_deprecated_trading_config_aliases_are_not_settings_fields(self) -> None:
+        deprecated_fields = {
+            "trading_live_enabled",
+            "trading_ws_crypto_enabled",
+            "trading_universe_crypto_enabled",
+            "trading_allocator_correlation_group_notional_caps",
+        }
+        deprecated_aliases = {
+            "TRADING_LIVE_ENABLED",
+            "TRADING_WS_CRYPTO_ENABLED",
+            "TRADING_UNIVERSE_CRYPTO_ENABLED",
+            "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS",
+        }
+
+        self.assertTrue(deprecated_fields.isdisjoint(Settings.model_fields))
+        aliases = {str(field.alias) for field in Settings.model_fields.values()}
+        self.assertTrue(deprecated_aliases.isdisjoint(aliases))
+
     def test_rejects_strict_veto_with_pass_through_fail_mode(self) -> None:
         with self.assertRaises(ValidationError):
             Settings(
