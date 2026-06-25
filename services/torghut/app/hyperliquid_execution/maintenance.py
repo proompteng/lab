@@ -145,10 +145,24 @@ def _requested_symbols(
 
 
 def _raw_position_rows(account: AccountState) -> list[dict[str, object]]:
-    raw_positions = account.account.raw_payload.get("assetPositions")
-    if not isinstance(raw_positions, list):
-        return []
     rows: list[dict[str, object]] = []
+    _append_raw_position_rows(rows, account.account.raw_payload)
+    return sorted(rows, key=lambda row: str(row["coin"]))
+
+
+def _append_raw_position_rows(
+    rows: list[dict[str, object]],
+    payload: Mapping[str, object],
+) -> None:
+    dex_states = payload.get("dexStates")
+    if isinstance(dex_states, dict):
+        for dex_payload in cast(Mapping[str, object], dex_states).values():
+            if isinstance(dex_payload, dict):
+                _append_raw_position_rows(rows, cast(Mapping[str, object], dex_payload))
+
+    raw_positions = payload.get("assetPositions")
+    if not isinstance(raw_positions, list):
+        return
     for item in cast(list[object], raw_positions):
         if not isinstance(item, dict):
             continue
@@ -170,7 +184,6 @@ def _raw_position_rows(account: AccountState) -> list[dict[str, object]]:
                 "unrealized_pnl_usd": str(position_map.get("unrealizedPnl") or "0"),
             }
         )
-    return sorted(rows, key=lambda row: str(row["coin"]))
 
 
 def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:

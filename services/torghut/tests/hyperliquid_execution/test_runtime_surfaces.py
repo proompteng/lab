@@ -308,6 +308,31 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     assert cycle_calls[0] < signal_call < cycle_calls[-1]
 
 
+def test_service_cycle_submits_at_most_one_order() -> None:
+    now = _now()
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA,xyz:MU",
+        }
+    )
+    session = _FakeSession()
+    exchange = _ServiceExchange(now)
+    service = HyperliquidExecutionService(
+        config=config,
+        feed=_TwoExecutableServiceFeed(now),
+        exchange=exchange,
+    )
+
+    result = service.run_once(session)
+
+    assert result.signals_written == 1
+    assert result.orders_submitted == 1
+    assert exchange.submitted_coins == ["NVDA"]
+
+
 def test_service_selects_only_fresh_execution_markets() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
@@ -556,10 +581,24 @@ class _PartialFeatureServiceFeed(_ServiceFeed):
         return [_feature(event_ts=self.now)]
 
 
+class _TwoExecutableServiceFeed(_PartialFeatureServiceFeed):
+    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
+        assert market_ids == ["hl:perp:xyz:NVDA", "hl:perp:xyz:MU"]
+        return [
+            _feature(event_ts=self.now),
+            _feature(
+                event_ts=self.now,
+                market_id="hl:perp:xyz:MU",
+                coin="MU",
+            ),
+        ]
+
+
 class _ServiceExchange:
     def __init__(self, now: datetime) -> None:
         self.now = now
         self.reconciled_coins: set[str] = set()
+        self.submitted_coins: list[str] = []
 
     def filter_supported_markets(
         self,
@@ -576,6 +615,7 @@ class _ServiceExchange:
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:
         assert intent.tif == "Ioc"
+        self.submitted_coins.append(intent.coin)
         return OrderResult("filled", "456", {"filled": {"oid": 456}})
 
     def cancel_order(self, _order: Any) -> OrderResult:
@@ -758,10 +798,12 @@ def _feature(
     *,
     event_ts: datetime | None = None,
     momentum_5m_bps: Decimal = Decimal("20"),
+    market_id: str = "hl:perp:xyz:NVDA",
+    coin: str = "NVDA",
 ) -> FeatureSnapshot:
     return FeatureSnapshot(
-        market_id="hl:perp:xyz:NVDA",
-        coin="NVDA",
+        market_id=market_id,
+        coin=coin,
         dex="xyz",
         event_ts=event_ts or _now(),
         price=Decimal("100"),

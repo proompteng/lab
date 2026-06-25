@@ -183,6 +183,10 @@ def test_risk_blocks_short_entries_by_default() -> None:
     allowed = evaluate_signal_risk(sell_signal, state, short_config)
 
     assert blocked.reason == "short_entries_disabled"
+    assert blocked.risk_forecast is not None
+    assert blocked.portfolio_target is not None
+    assert blocked.portfolio_target.clip_reason == "short_entries_disabled"
+    assert blocked.portfolio_target.target_notional_usd == Decimal("0")
     assert allowed.allowed
 
 
