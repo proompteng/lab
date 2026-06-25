@@ -7,7 +7,6 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: empirical-promotion-renewal
 spec:
-  suspend: true
   schedule: "23 8,21 * * *"
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
