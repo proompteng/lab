@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.mlx_training_data as mlx_training_data
+import app.trading.discovery.profit_target_oracle as profit_target_oracle
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import scripts.whitepaper_autoresearch_runner.feedback_bundle_builders as feedback_bundle_builders
+import socket
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Any,
     Decimal,
@@ -25,8 +32,8 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             self._candidate_spec("spec-low"),
             self._candidate_spec("spec-high"),
         ]
-        evidence_bundles = [
-            runner.evidence_bundle_from_frontier_candidate(
+        candidate_evidence_bundles = [
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=specs[0].candidate_spec_id,
                 candidate={
                     "candidate_id": "candidate-low",
@@ -35,7 +42,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                 dataset_snapshot_id="snapshot",
                 result_path="/tmp/low.json",
             ),
-            runner.evidence_bundle_from_frontier_candidate(
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=specs[1].candidate_spec_id,
                 candidate={
                     "candidate_id": "candidate-high",
@@ -46,7 +53,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             ),
         ]
         captured_backend_preferences: list[str] = []
-        real_train_mlx_ranker = runner.train_mlx_ranker
+        real_train_mlx_ranker = mlx_training_data.train_mlx_ranker
 
         def capture_train_mlx_ranker(rows: Sequence[Any], **kwargs: Any) -> Any:
             captured_backend_preferences.append(str(kwargs.get("backend_preference")))
@@ -68,15 +75,15 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                 side_effect=capture_train_mlx_ranker,
             ),
         ):
-            runner._pre_replay_proposal_model_and_rows(
+            proposal_building._pre_replay_proposal_model_and_rows(
                 specs=specs,
                 feedback_evidence_bundles=(),
-                oracle_policy=runner.ProfitTargetOraclePolicy(),
+                oracle_policy=profit_target_oracle.ProfitTargetOraclePolicy(),
                 ranker_backend_preference="torch-cuda",
             )
-            runner._proposal_model_and_rows(
+            proposal_training._proposal_model_and_rows(
                 specs=specs,
-                evidence_bundles=evidence_bundles,
+                evidence_bundles=candidate_evidence_bundles,
                 replay_selection_by_spec=None,
                 ranker_backend_preference="cuda",
             )
@@ -113,7 +120,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                 "mechanism_overlay_ids": ["rankic_factor_acceptance_harness"]
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-factor-acceptance",
             candidate_id="candidate-factor-acceptance",
@@ -217,7 +224,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             },
         )
 
-        candidate = runner._candidate_payload_with_feedback_metadata(
+        candidate = candidate_prior_scoring._candidate_payload_with_feedback_metadata(
             spec=spec,
             candidate={
                 "candidate_id": "candidate-prevclose",
@@ -269,7 +276,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             },
         )
 
-        candidate = runner._candidate_payload_with_feedback_metadata(
+        candidate = candidate_prior_scoring._candidate_payload_with_feedback_metadata(
             spec=spec,
             candidate={
                 "candidate_id": "candidate-validation-contract",
@@ -282,7 +289,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                 },
             },
         )
-        bundle = runner.evidence_bundle_from_frontier_candidate(
+        bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate=candidate,
             dataset_snapshot_id="historical-market-replay-2026-05-18",
@@ -328,7 +335,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                 "synthetic_evidence_policy": "validation_only_not_promotion_proof",
             },
         )
-        candidate = runner._candidate_payload_with_feedback_metadata(
+        candidate = candidate_prior_scoring._candidate_payload_with_feedback_metadata(
             spec=spec,
             candidate={
                 "candidate_id": "candidate-synthetic-contract",
@@ -336,7 +343,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             },
         )
 
-        bundle = runner.evidence_bundle_from_frontier_candidate(
+        bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate=candidate,
             dataset_snapshot_id="synthetic-recent-whitepaper-2025-2026",
@@ -414,11 +421,11 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
         )
 
         self.assertGreater(
-            runner._pre_replay_candidate_score(paper_spec),
-            runner._pre_replay_candidate_score(control_spec),
+            candidate_prior_scoring._pre_replay_candidate_score(paper_spec),
+            candidate_prior_scoring._pre_replay_candidate_score(control_spec),
         )
 
-        prior_bundle = runner._pre_replay_prior_bundle(paper_spec)
+        prior_bundle = feedback_bundle_builders._pre_replay_prior_bundle(paper_spec)
         self.assertFalse(prior_bundle.promotion_readiness["promotable"])
         self.assertIn(
             "runtime_replay_required", prior_bundle.promotion_readiness["blockers"]
@@ -428,7 +435,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             prior_bundle.promotion_readiness["blockers"],
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(control_spec, paper_spec),
         )
         row_by_spec = {row["candidate_spec_id"]: row for row in rows}
@@ -604,8 +611,8 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
         )
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
-            side_effect=runner.socket.gaierror("not known"),
+            "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
+            side_effect=socket.gaierror("not known"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)
 
@@ -621,7 +628,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
         )
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("non-cluster endpoints are replay-checked"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)
@@ -637,7 +644,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
         )
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("replay tape should bypass DNS preflight"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.profit_target_oracle as profit_target_oracle
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import scripts.whitepaper_autoresearch_runner.feedback_blocking_rules as feedback_blocking_rules
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Any,
     Decimal,
@@ -31,9 +38,9 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
                 },
             },
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=failed_spec.candidate_spec_id,
-            candidate=runner._candidate_payload_with_feedback_metadata(
+            candidate=candidate_prior_scoring._candidate_payload_with_feedback_metadata(
                 spec=failed_spec,
                 candidate={
                     "candidate_id": "cand-terminal-risk-feedback",
@@ -57,7 +64,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://terminal-risk",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(matching_risk_probe,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -89,7 +96,9 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
         )
 
     def test_terminal_risk_profile_block_covers_capital_paths(self) -> None:
-        self.assertFalse(runner._feedback_risk_profile_has_terminal_block({}))
+        self.assertFalse(
+            feedback_blocking_rules._feedback_risk_profile_has_terminal_block({})
+        )
 
         penalty_scorecard = {
             "profit_target_oracle": {
@@ -101,7 +110,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             "best_day_share": "0.25",
         }
         self.assertTrue(
-            runner._feedback_risk_profile_has_terminal_block(
+            feedback_blocking_rules._feedback_risk_profile_has_terminal_block(
                 {
                     **penalty_scorecard,
                     "max_gross_exposure_pct_equity": "1.01",
@@ -109,7 +118,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             )
         )
         self.assertTrue(
-            runner._feedback_risk_profile_has_terminal_block(
+            feedback_blocking_rules._feedback_risk_profile_has_terminal_block(
                 {
                     **penalty_scorecard,
                     "min_cash": "-0.01",
@@ -117,7 +126,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             )
         )
         self.assertTrue(
-            runner._feedback_risk_profile_has_terminal_block(
+            feedback_blocking_rules._feedback_risk_profile_has_terminal_block(
                 {
                     **penalty_scorecard,
                     "negative_cash_observation_count": "1",
@@ -128,7 +137,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
     def test_feedback_risk_profile_uses_oracle_policy_and_allows_down_days(
         self,
     ) -> None:
-        policy = runner.ProfitTargetOraclePolicy(
+        policy = profit_target_oracle.ProfitTargetOraclePolicy(
             min_active_day_ratio=Decimal("0.90"),
             min_positive_day_ratio=Decimal("0.60"),
             max_best_day_share=Decimal("0.25"),
@@ -157,16 +166,22 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
         }
 
         self.assertFalse(
-            runner._feedback_risk_profile_has_penalty(scorecard, oracle_policy=policy)
-        )
-        self.assertFalse(runner._feedback_is_blocked(scorecard, oracle_policy=policy))
-        self.assertFalse(
-            runner._feedback_family_prior_has_hard_block(
+            feedback_blocking_rules._feedback_risk_profile_has_penalty(
                 scorecard, oracle_policy=policy
             )
         )
         self.assertFalse(
-            runner._feedback_risk_profile_has_terminal_block(
+            feedback_blocking_rules._feedback_is_blocked(
+                scorecard, oracle_policy=policy
+            )
+        )
+        self.assertFalse(
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
+                scorecard, oracle_policy=policy
+            )
+        )
+        self.assertFalse(
+            feedback_blocking_rules._feedback_risk_profile_has_terminal_block(
                 {
                     **scorecard,
                     "profit_target_oracle": {
@@ -184,10 +199,12 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             max_negative_cash_observation_count=0,
         )
         self.assertTrue(
-            runner._feedback_is_blocked(scorecard, oracle_policy=strict_policy)
+            feedback_blocking_rules._feedback_is_blocked(
+                scorecard, oracle_policy=strict_policy
+            )
         )
         self.assertTrue(
-            runner._feedback_risk_profile_has_penalty(
+            feedback_blocking_rules._feedback_risk_profile_has_penalty(
                 {
                     "active_day_ratio": "1",
                     "positive_day_ratio": "1",
@@ -207,9 +224,9 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             hypothesis_id="hyp-spec-shape-cash-probe",
             hard_vetoes={"required_min_daily_notional": "400000"},
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=failed_spec.candidate_spec_id,
-            candidate=runner._candidate_payload_with_feedback_metadata(
+            candidate=candidate_prior_scoring._candidate_payload_with_feedback_metadata(
                 spec=failed_spec,
                 candidate={
                     "candidate_id": "cand-shape-cash-source",
@@ -226,7 +243,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://shape-cash",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(same_shape_probe,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -246,9 +263,12 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
                 "universe_symbols": "NVDA",
             },
         )
-        self.assertEqual(runner._candidate_spec_universe_key(invalid_universe_spec), "")
+        self.assertEqual(
+            candidate_prior_scoring._candidate_spec_universe_key(invalid_universe_spec),
+            "",
+        )
         self.assertTrue(
-            runner._feedback_scorecard_has_hard_veto(
+            feedback_blocking_rules._feedback_scorecard_has_hard_veto(
                 {
                     "profit_target_oracle": {
                         "blockers": ["positive_day_ratio_below_oracle"]
@@ -257,11 +277,15 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             )
         )
         self.assertTrue(
-            runner._feedback_scorecard_has_hard_veto({"oracle_passed": False})
+            feedback_blocking_rules._feedback_scorecard_has_hard_veto(
+                {"oracle_passed": False}
+            )
         )
-        self.assertFalse(runner._feedback_daily_net_has_loss({"daily_net": "bad"}))
+        self.assertFalse(
+            feedback_blocking_rules._feedback_daily_net_has_loss({"daily_net": "bad"})
+        )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block(
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
                 {
                     "profit_target_oracle": {
                         "blockers": ["active_day_ratio_below_oracle"]
@@ -270,13 +294,17 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             )
         )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block({"positive_day_ratio": "0.5"})
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
+                {"positive_day_ratio": "0.5"}
+            )
         )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block({"best_day_share": "0.51"})
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
+                {"best_day_share": "0.51"}
+            )
         )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block(
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
                 {
                     "active_day_ratio": "1",
                     "positive_day_ratio": "1",
@@ -296,11 +324,15 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             {"max_single_symbol_contribution_share": "0.36"},
             {"max_cluster_contribution_share": "0.41"},
         ):
-            self.assertTrue(runner._feedback_risk_profile_has_penalty(scorecard))
-        self.assertEqual(runner._feedback_risk_profile_key_from_scorecard({}), "")
+            self.assertTrue(
+                feedback_blocking_rules._feedback_risk_profile_has_penalty(scorecard)
+            )
+        self.assertEqual(
+            feedback_blocking_rules._feedback_risk_profile_key_from_scorecard({}), ""
+        )
 
         spec = self._candidate_spec("spec-empty-risk-key")
-        orphan_bundle = runner.evidence_bundle_from_frontier_candidate(
+        orphan_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-unmatched-risk-feedback",
             candidate={
                 "candidate_id": "cand-unmatched-risk-feedback",
@@ -309,7 +341,7 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
             dataset_snapshot_id="snap-empty-risk-key",
             result_path="feedback://empty-risk-key",
         )
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,),
             feedback_evidence_bundles=(orphan_bundle,),
         )
@@ -358,15 +390,15 @@ class TestAutoresearchRunnerSelectionC(WhitepaperAutoresearchRunnerTestCaseBase)
         scorecard = replay.evidence_bundles[0].objective_scorecard
         self.assertEqual(
             scorecard["feedback_shape_key"],
-            runner._candidate_spec_feedback_shape_key(spec),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(spec),
         )
         self.assertEqual(
             scorecard["feedback_risk_profile_key"],
-            runner._candidate_spec_feedback_risk_profile_key(spec),
+            candidate_prior_scoring._candidate_spec_feedback_risk_profile_key(spec),
         )
         self.assertEqual(
             scorecard["execution_signature"],
-            runner._candidate_spec_execution_signature(spec),
+            candidate_identity._candidate_spec_execution_signature(spec),
         )
 
     def test_current_code_commit_uses_git_when_env_commit_is_missing(self) -> None:

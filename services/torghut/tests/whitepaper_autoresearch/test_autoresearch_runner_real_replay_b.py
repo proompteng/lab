@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+from app.trading.discovery.candidate_specs import CandidateSpec
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Any,
     Namespace,
@@ -23,8 +27,8 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         calls: list[tuple[int, int, int]] = []
 
         def fake_execute(
-            plan: runner._ReplayShardPlan,
-        ) -> runner._ReplayShardOutcome:
+            plan: replay_models._ReplayShardPlan,
+        ) -> replay_models._ReplayShardOutcome:
             calls.append(
                 (
                     plan.shard_index,
@@ -32,7 +36,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                     int(plan.args.max_total_frontier_candidates),
                 )
             )
-            return runner._ReplayShardOutcome(
+            return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
                 result=runner.EpochReplayResult(
@@ -55,7 +59,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
-                    runner._retry_real_replay_failed_shard_specs(
+                    replay_shards._retry_real_replay_failed_shard_specs(
                         args=args,
                         output_dir=Path(tmpdir) / "epoch",
                         specs=(spec,),
@@ -86,10 +90,10 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         calls: list[int] = []
 
         def fake_execute(
-            plan: runner._ReplayShardPlan,
-        ) -> runner._ReplayShardOutcome:
+            plan: replay_models._ReplayShardPlan,
+        ) -> replay_models._ReplayShardOutcome:
             calls.append(plan.shard_index)
-            bundle = runner.evidence_bundle_from_frontier_candidate(
+            bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=spec.candidate_spec_id,
                 candidate={
                     "candidate_id": "cand-retry-completes",
@@ -102,7 +106,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 dataset_snapshot_id="snap-retry-completes",
                 result_path="feedback://retry-completes",
             )
-            return runner._ReplayShardOutcome(
+            return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
                 result=runner.EpochReplayResult(
@@ -118,7 +122,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
-                    runner._retry_real_replay_failed_shard_specs(
+                    replay_shards._retry_real_replay_failed_shard_specs(
                         args=args,
                         output_dir=Path(tmpdir) / "epoch",
                         specs=(spec,),
@@ -160,7 +164,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args.max_frontier_candidates_per_spec = 2
             args.max_total_frontier_candidates = 5
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -205,7 +209,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args.max_frontier_candidates_per_spec = 64
             args.max_total_frontier_candidates = 8
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -234,13 +238,13 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args = self._args(output_dir)
             args.real_replay_shard_workers = 8
             workers_seen: list[int] = []
-            submitted: list[tuple[Any, runner._ReplayShardPlan]] = []
+            submitted: list[tuple[Any, replay_models._ReplayShardPlan]] = []
 
             class _FakeFuture:
-                def __init__(self, outcome: runner._ReplayShardOutcome) -> None:
+                def __init__(self, outcome: replay_models._ReplayShardOutcome) -> None:
                     self._outcome = outcome
 
-                def result(self) -> runner._ReplayShardOutcome:
+                def result(self) -> replay_models._ReplayShardOutcome:
                     return self._outcome
 
             class _FakeExecutor:
@@ -256,11 +260,11 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 def submit(
                     self,
                     fn: Any,
-                    plan: runner._ReplayShardPlan,
+                    plan: replay_models._ReplayShardPlan,
                 ) -> _FakeFuture:
                     submitted.append((fn, plan))
                     return _FakeFuture(
-                        runner._ReplayShardOutcome(
+                        replay_models._ReplayShardOutcome(
                             shard_index=plan.shard_index,
                             candidate_spec_ids=tuple(
                                 spec.candidate_spec_id for spec in plan.specs
@@ -286,7 +290,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                     replay_shards, "as_completed", side_effect=fake_as_completed
                 ),
             ):
-                result = runner._run_real_replay_shards(
+                result = replay_shards._run_real_replay_shards(
                     args=args,
                     output_dir=output_dir,
                     specs=specs,
@@ -327,7 +331,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args.real_replay_shard_workers = 8
             args.real_replay_max_parallel_frontier_candidates = 10
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -336,12 +340,15 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             )
 
         self.assertEqual(
-            [runner._replay_shard_frontier_candidate_budget(plan) for plan in plans],
+            [
+                replay_shards._replay_shard_frontier_candidate_budget(plan)
+                for plan in plans
+            ],
             [8, 8, 8],
         )
         self.assertEqual([plan.timeout_seconds for plan in plans], [900, 900, 900])
         self.assertEqual(
-            runner._bounded_real_replay_shard_workers(args=args, plans=plans),
+            replay_shards._bounded_real_replay_shard_workers(args=args, plans=plans),
             1,
         )
 
@@ -365,7 +372,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             args.real_replay_shard_workers = 8
             args.real_replay_max_parallel_frontier_candidates = 99
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -374,7 +381,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             )
 
         self.assertEqual(
-            runner._bounded_real_replay_shard_workers(args=args, plans=plans),
+            replay_shards._bounded_real_replay_shard_workers(args=args, plans=plans),
             2,
         )
 
@@ -388,10 +395,10 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 *,
                 args: Namespace,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 spec = specs[0]
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec.candidate_spec_id,
                     candidate={
                         "candidate_id": "cand-incomplete",

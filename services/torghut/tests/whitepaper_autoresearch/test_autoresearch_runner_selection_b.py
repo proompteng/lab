@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Any,
     Decimal,
@@ -15,7 +20,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
         self,
     ) -> None:
         spec = self._candidate_spec("spec-no-activity-feedback")
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-no-activity-feedback",
@@ -36,7 +41,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://no-activity",
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -116,9 +121,9 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
                 },
             },
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=source_spec.candidate_spec_id,
-            candidate=runner._candidate_payload_with_feedback_metadata(
+            candidate=candidate_prior_scoring._candidate_payload_with_feedback_metadata(
                 spec=source_spec,
                 candidate={
                     "candidate_id": "cand-fn-rescue-negative-source",
@@ -138,7 +143,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://fn-rescue-negative",
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(probe_spec,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -191,7 +196,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
                 "max_position_pct_equity": "4",
             },
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=source_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-reaudit-source",
@@ -210,7 +215,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://reaudit",
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(blocked_spec, capital_unsafe_spec),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -296,7 +301,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
         self,
     ) -> None:
         spec = self._candidate_spec("spec-positive-blocked-feedback")
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-positive-blocked-feedback",
@@ -320,7 +325,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://positive-blocked",
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -413,14 +418,14 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
     ) -> None:
         source_spec = self._candidate_spec("spec-positive-signature-source")
         matching_spec = self._candidate_spec("spec-positive-signature-match")
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=source_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-positive-signature-source",
                 "family_template_id": source_spec.family_template_id,
                 "runtime_family": source_spec.runtime_family,
                 "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "execution_signature": runner._candidate_spec_execution_signature(
+                "execution_signature": candidate_identity._candidate_spec_execution_signature(
                     source_spec
                 ),
                 "objective_scorecard": {
@@ -438,7 +443,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://positive-signature",
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(matching_spec,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -495,26 +500,32 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             selection_mode="continuation",
         )
         self.assertNotEqual(
-            runner._candidate_spec_execution_signature(failed_spec),
-            runner._candidate_spec_execution_signature(same_shape_probe),
+            candidate_identity._candidate_spec_execution_signature(failed_spec),
+            candidate_identity._candidate_spec_execution_signature(same_shape_probe),
         )
         self.assertEqual(
-            runner._candidate_spec_feedback_shape_key(failed_spec),
-            runner._candidate_spec_feedback_shape_key(same_shape_probe),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(failed_spec),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(
+                same_shape_probe
+            ),
         )
         self.assertNotEqual(
-            runner._candidate_spec_feedback_shape_key(failed_spec),
-            runner._candidate_spec_feedback_shape_key(different_shape_same_risk_probe),
-        )
-        self.assertEqual(
-            runner._candidate_spec_feedback_risk_profile_key(failed_spec),
-            runner._candidate_spec_feedback_risk_profile_key(
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(failed_spec),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(
                 different_shape_same_risk_probe
             ),
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        self.assertEqual(
+            candidate_prior_scoring._candidate_spec_feedback_risk_profile_key(
+                failed_spec
+            ),
+            candidate_prior_scoring._candidate_spec_feedback_risk_profile_key(
+                different_shape_same_risk_probe
+            ),
+        )
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=failed_spec.candidate_spec_id,
-            candidate=runner._candidate_payload_with_feedback_metadata(
+            candidate=candidate_prior_scoring._candidate_payload_with_feedback_metadata(
                 spec=failed_spec,
                 candidate={
                     "candidate_id": "cand-daily-coverage-source",
@@ -535,7 +546,7 @@ class TestAutoresearchRunnerSelectionB(WhitepaperAutoresearchRunnerTestCaseBase)
             result_path="feedback://daily-coverage",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(same_shape_probe, different_shape_same_risk_probe, clean_probe),
             feedback_evidence_bundles=(feedback_bundle,),
         )

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.preview_narrowing as preview_narrowing
+import scripts.whitepaper_autoresearch_runner.queue_metadata as queue_metadata
+
 from dataclasses import replace
 import json
 from datetime import date, datetime, timezone
@@ -63,7 +67,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             args.replay_tape_preview_top_k = 1
             args.symbols = "NVDA"
             args.replay_tape_dataset_snapshot_ref = "preview-snapshot"
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
@@ -96,17 +100,21 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
                 symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 27),
-                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                source_query_digest=queue_metadata._materialized_replay_tape_source_query_digest(
                     args=args,
                     symbols=requested_symbols,
                     start_date=date(2026, 2, 23),
                     end_date=date(2026, 2, 27),
                 ),
-                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                feature_schema_hash=queue_metadata._materialized_replay_tape_feature_schema_hash(
                     args
                 ),
-                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
-                strategy_family=runner._materialized_replay_tape_strategy_family(args),
+                cost_model_hash=queue_metadata._materialized_replay_tape_cost_model_hash(
+                    args
+                ),
+                strategy_family=queue_metadata._materialized_replay_tape_strategy_family(
+                    args
+                ),
             )
 
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
@@ -247,18 +255,24 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             args.replay_tape_exact_candidate_cap = 99
             args.replay_tape_dataset_snapshot_ref = "frontier-preview"
             args.allow_unsafe_replay_tape_exact_cap_override = True
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
-            source_query_digest = runner._materialized_replay_tape_source_query_digest(
-                args=args,
-                symbols=requested_symbols,
-                start_date=date(2026, 2, 23),
-                end_date=date(2026, 2, 23),
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
+            source_query_digest = (
+                queue_metadata._materialized_replay_tape_source_query_digest(
+                    args=args,
+                    symbols=requested_symbols,
+                    start_date=date(2026, 2, 23),
+                    end_date=date(2026, 2, 23),
+                )
             )
-            feature_schema_hash = runner._materialized_replay_tape_feature_schema_hash(
+            feature_schema_hash = (
+                queue_metadata._materialized_replay_tape_feature_schema_hash(args)
+            )
+            cost_model_hash = queue_metadata._materialized_replay_tape_cost_model_hash(
                 args
             )
-            cost_model_hash = runner._materialized_replay_tape_cost_model_hash(args)
-            strategy_family = runner._materialized_replay_tape_strategy_family(args)
+            strategy_family = queue_metadata._materialized_replay_tape_strategy_family(
+                args
+            )
             materialize_signal_tape(
                 rows=rows,
                 tape_path=tape_path,
@@ -543,7 +557,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             args.replay_tape_path = tape_path
             args.replay_tape_preview_top_k = 2
             args.replay_tape_dataset_snapshot_ref = "frontier-preview"
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
@@ -578,15 +592,19 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
                 symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
-                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                source_query_digest=queue_metadata._materialized_replay_tape_source_query_digest(
                     args=args,
                     symbols=requested_symbols,
                     start_date=date(2026, 2, 23),
                     end_date=date(2026, 2, 23),
                 ),
                 feature_schema_hash="stale-feature-schema",
-                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
-                strategy_family=runner._materialized_replay_tape_strategy_family(args),
+                cost_model_hash=queue_metadata._materialized_replay_tape_cost_model_hash(
+                    args
+                ),
+                strategy_family=queue_metadata._materialized_replay_tape_strategy_family(
+                    args
+                ),
             )
             spec = self._candidate_spec("spec-frontier-0")
             candidate_selection = {
@@ -639,7 +657,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             args.replay_tape_path = tape_path
             args.replay_tape_preview_top_k = 1
             args.replay_tape_dataset_snapshot_ref = "blocked-preview"
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=rows,
                 tape_path=tape_path,
@@ -647,17 +665,21 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
                 symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 23),
-                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                source_query_digest=queue_metadata._materialized_replay_tape_source_query_digest(
                     args=args,
                     symbols=requested_symbols,
                     start_date=date(2026, 2, 23),
                     end_date=date(2026, 2, 23),
                 ),
-                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                feature_schema_hash=queue_metadata._materialized_replay_tape_feature_schema_hash(
                     args
                 ),
-                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
-                strategy_family=runner._materialized_replay_tape_strategy_family(args),
+                cost_model_hash=queue_metadata._materialized_replay_tape_cost_model_hash(
+                    args
+                ),
+                strategy_family=queue_metadata._materialized_replay_tape_strategy_family(
+                    args
+                ),
             )
             base_spec = self._candidate_spec("spec-lineage-blocked")
             spec = replace(
@@ -796,7 +818,7 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             },
         ]
 
-        queue_payload = runner._bounded_sim_target_queue_metadata(
+        queue_payload = queue_metadata._bounded_sim_target_queue_metadata(
             preview_rows=duplicate_rows,
             replay_tape_manifest=manifest,
             exact_replay_candidate_cap=6,
@@ -850,34 +872,42 @@ class TestAutoresearchRunnerReplayTapePreview(AutoresearchRunnerTestCase):
             args.full_window_start_date = "2026-02-23"
             args.full_window_end_date = "2026-02-27"
 
-            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertEqual(
+                preview_narrowing._resolved_fast_replay_preview_top_k(args), 0
+            )
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))
 
             args.staged_replay_frontier_default = True
             args.disable_staged_replay_frontier = True
-            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertEqual(
+                preview_narrowing._resolved_fast_replay_preview_top_k(args), 0
+            )
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))
 
             args.disable_staged_replay_frontier = False
             args.replay_mode = "synthetic"
-            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertEqual(
+                preview_narrowing._resolved_fast_replay_preview_top_k(args), 0
+            )
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))
 
             args.replay_mode = "real"
             args.replay_tape_path = None
-            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 0)
+            self.assertEqual(
+                preview_narrowing._resolved_fast_replay_preview_top_k(args), 0
+            )
 
             args.selection_only = True
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))
 
             args.selection_only = False
             args.replay_tape_path = Path(tmpdir) / "provided-tape.jsonl"
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))
 
             args.replay_tape_path = None
             args.full_window_start_date = ""
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))
 
             args.full_window_start_date = "2026-02-23"
             args.full_window_end_date = ""
-            self.assertFalse(runner._auto_materialize_staged_replay_tape(args))
+            self.assertFalse(queue_metadata._auto_materialize_staged_replay_tape(args))

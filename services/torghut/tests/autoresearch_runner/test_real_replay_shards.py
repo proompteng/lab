@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+from app.trading.discovery.candidate_specs import CandidateSpec
+import multiprocessing
+import queue
+import scripts.run_strategy_factory_v2 as strategy_factory_runner
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import time as monotonic_time
+
 import json
 from argparse import Namespace
 from pathlib import Path
@@ -59,15 +68,15 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
         scorecard = replay.evidence_bundles[0].objective_scorecard
         self.assertEqual(
             scorecard["feedback_shape_key"],
-            runner._candidate_spec_feedback_shape_key(spec),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(spec),
         )
         self.assertEqual(
             scorecard["feedback_risk_profile_key"],
-            runner._candidate_spec_feedback_risk_profile_key(spec),
+            candidate_prior_scoring._candidate_spec_feedback_risk_profile_key(spec),
         )
         self.assertEqual(
             scorecard["execution_signature"],
-            runner._candidate_spec_execution_signature(spec),
+            candidate_identity._candidate_spec_execution_signature(spec),
         )
 
     def test_real_replay_evidence_promotes_summary_activity_counts(self) -> None:
@@ -217,7 +226,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
             }
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2",
                 return_value=factory_payload,
             ):
@@ -275,7 +284,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
         self.assertEqual(scorecard["runtime_strategy_name"], spec.runtime_strategy_name)
         self.assertEqual(
             scorecard["execution_signature"],
-            runner._candidate_spec_execution_signature(spec),
+            candidate_identity._candidate_spec_execution_signature(spec),
         )
 
     def test_real_replay_uses_spec_universe_instead_of_global_symbols(self) -> None:
@@ -325,7 +334,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -395,7 +404,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -448,7 +457,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -504,7 +513,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -592,7 +601,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -645,10 +654,10 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
     ) -> None:
         args = self._args(Path("/tmp/epoch"))
         program = runner._load_epoch_program(args)
-        controls = runner._resolved_real_replay_frontier_controls(args, program)
+        controls = replay_shards._resolved_real_replay_frontier_controls(args, program)
 
         self.assertEqual(
-            runner._resolved_staged_train_screen_multiplier(args, program),
+            replay_shards._resolved_staged_train_screen_multiplier(args, program),
             3,
         )
         self.assertEqual(controls["symbol_prune_iterations"], 1)
@@ -663,11 +672,11 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
         args.staged_train_screen_multiplier = 4
         args.symbol_prune_candidates = 5
         args.capture_positive_rejected_full_window_ledgers = 6
-        override_controls = runner._resolved_real_replay_frontier_controls(
+        override_controls = replay_shards._resolved_real_replay_frontier_controls(
             args, program
         )
         self.assertEqual(
-            runner._resolved_staged_train_screen_multiplier(args, program),
+            replay_shards._resolved_staged_train_screen_multiplier(args, program),
             4,
         )
         self.assertEqual(override_controls["symbol_prune_candidates"], 5)
@@ -693,13 +702,13 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 _args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 spec_ids = [spec.candidate_spec_id for spec in specs]
                 calls.append(spec_ids)
                 if len(calls) == 2:
                     raise TimeoutError("real_replay_timeout_seconds:7")
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec_ids[0],
                     candidate={
                         "candidate_id": f"cand-{spec_ids[0]}",
@@ -728,7 +737,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                 args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
                 timeout_seconds: int,
             ) -> runner.EpochReplayResult:
                 _ = timeout_seconds
@@ -772,7 +781,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
             args = self._args(output_dir)
             args.replay_mode = "real"
             spec = self._candidate_spec("spec-no-sigalrm")
-            bundle = runner.evidence_bundle_from_frontier_candidate(
+            bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=spec.candidate_spec_id,
                 candidate={
                     "candidate_id": "candidate-no-sigalrm",
@@ -797,7 +806,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
                     ),
                 ) as child_replay,
             ):
-                result = runner._run_real_replay_once_with_optional_timeout(
+                result = replay_execution._run_real_replay_once_with_optional_timeout(
                     args=args,
                     output_dir=output_dir,
                     specs=(spec,),
@@ -820,7 +829,7 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
             joined = False
 
             def get(self, *, timeout: float) -> Any:
-                raise runner.queue.Empty
+                raise queue.Empty
 
             def close(self) -> None:
                 self.closed = True
@@ -866,18 +875,16 @@ class TestAutoresearchRunnerRealReplayShards(AutoresearchRunnerTestCase):
 
             with (
                 patch.object(
-                    runner.multiprocessing,
+                    multiprocessing,
                     "get_context",
                     return_value=fake_context,
                 ),
-                patch.object(
-                    runner.monotonic_time, "monotonic", side_effect=[0.0, 0.0, 8.0]
-                ),
+                patch.object(monotonic_time, "monotonic", side_effect=[0.0, 0.0, 8.0]),
             ):
                 with self.assertRaisesRegex(
                     TimeoutError, "real_replay_timeout_seconds:7"
                 ):
-                    runner._run_real_replay_once_in_child_process(
+                    replay_execution._run_real_replay_once_in_child_process(
                         args=args,
                         output_dir=output_dir,
                         specs=(spec,),

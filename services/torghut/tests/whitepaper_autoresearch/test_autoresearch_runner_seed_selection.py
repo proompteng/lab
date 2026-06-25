@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.queue_metadata as queue_metadata
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
     Path,
@@ -336,14 +341,14 @@ class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBa
                     side_effect=AssertionError("selection-only must not persist specs"),
                 ) as persist_mock,
                 patch.object(
-                    runner,
+                    persisted_feedback_sources,
                     "_persist_epoch_ledgers",
                     side_effect=AssertionError(
                         "selection-only must not persist epoch ledgers"
                     ),
                 ) as ledger_mock,
                 patch.object(
-                    runner,
+                    portfolio_optimizer,
                     "optimize_portfolio_candidate",
                     side_effect=AssertionError(
                         "selection-only must not optimize a portfolio"
@@ -466,7 +471,7 @@ class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBa
             args.replay_tape_preview_top_k = 1
             args.symbols = "NVDA"
             args.replay_tape_dataset_snapshot_ref = "preview-snapshot"
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
@@ -499,17 +504,21 @@ class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBa
                 symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 27),
-                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                source_query_digest=queue_metadata._materialized_replay_tape_source_query_digest(
                     args=args,
                     symbols=requested_symbols,
                     start_date=date(2026, 2, 23),
                     end_date=date(2026, 2, 27),
                 ),
-                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                feature_schema_hash=queue_metadata._materialized_replay_tape_feature_schema_hash(
                     args
                 ),
-                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
-                strategy_family=runner._materialized_replay_tape_strategy_family(args),
+                cost_model_hash=queue_metadata._materialized_replay_tape_cost_model_hash(
+                    args
+                ),
+                strategy_family=queue_metadata._materialized_replay_tape_strategy_family(
+                    args
+                ),
             )
 
             payload = runner.run_whitepaper_autoresearch_profit_target(args)
@@ -650,18 +659,24 @@ class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBa
             args.replay_tape_exact_candidate_cap = 99
             args.replay_tape_dataset_snapshot_ref = "frontier-preview"
             args.allow_unsafe_replay_tape_exact_cap_override = True
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
-            source_query_digest = runner._materialized_replay_tape_source_query_digest(
-                args=args,
-                symbols=requested_symbols,
-                start_date=date(2026, 2, 23),
-                end_date=date(2026, 2, 23),
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
+            source_query_digest = (
+                queue_metadata._materialized_replay_tape_source_query_digest(
+                    args=args,
+                    symbols=requested_symbols,
+                    start_date=date(2026, 2, 23),
+                    end_date=date(2026, 2, 23),
+                )
             )
-            feature_schema_hash = runner._materialized_replay_tape_feature_schema_hash(
+            feature_schema_hash = (
+                queue_metadata._materialized_replay_tape_feature_schema_hash(args)
+            )
+            cost_model_hash = queue_metadata._materialized_replay_tape_cost_model_hash(
                 args
             )
-            cost_model_hash = runner._materialized_replay_tape_cost_model_hash(args)
-            strategy_family = runner._materialized_replay_tape_strategy_family(args)
+            strategy_family = queue_metadata._materialized_replay_tape_strategy_family(
+                args
+            )
             materialize_signal_tape(
                 rows=rows,
                 tape_path=tape_path,

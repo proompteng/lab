@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import app.trading.discovery.mlx_snapshot as mlx_snapshot
+import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
+import app.trading.discovery.profit_target_oracle as profit_target_oracle
+
 from dataclasses import replace
 import json
 from datetime import datetime, timezone
@@ -28,7 +32,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             )
             program = runner._load_epoch_program(args)
 
-        manifest = runner.MlxSnapshotManifest(
+        manifest = mlx_snapshot.MlxSnapshotManifest(
             snapshot_id="mlx-snap-test",
             created_at="2026-05-06T00:00:00+00:00",
             source_window_start="",
@@ -47,7 +51,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             tensor_bundle_paths={},
             manifest_hash="hash",
         )
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-test",
             source_candidate_ids=("candidate-test",),
@@ -82,7 +86,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             args.replay_mode = "real"
             program = runner._load_epoch_program(args)
 
-        manifest = runner.MlxSnapshotManifest(
+        manifest = mlx_snapshot.MlxSnapshotManifest(
             snapshot_id="mlx-snap-test",
             created_at="2026-05-06T00:00:00+00:00",
             source_window_start="2026-03-20",
@@ -101,7 +105,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             tensor_bundle_paths={},
             manifest_hash="hash",
         )
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-test",
             source_candidate_ids=("candidate-test",),
@@ -462,7 +466,9 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 + "\n",
                 encoding="utf-8",
             )
-            policy = runner.ProfitTargetOraclePolicy(min_observed_trading_days=2)
+            policy = profit_target_oracle.ProfitTargetOraclePolicy(
+                min_observed_trading_days=2
+            )
             scorecard: dict[str, object] = {
                 "net_pnl_per_day": "620",
                 "portfolio_post_cost_net_pnl_per_day": "620",
@@ -487,17 +493,19 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
                 "executable_replay_account_buying_power": "0",
                 "executable_replay_max_notional_per_trade": "0",
             }
-            scorecard["profit_target_oracle"] = runner.evaluate_profit_target_oracle(
-                scorecard,
-                target_net_pnl_per_day=Decimal("500"),
-                policy=policy,
+            scorecard["profit_target_oracle"] = (
+                profit_target_oracle.evaluate_profit_target_oracle(
+                    scorecard,
+                    target_net_pnl_per_day=Decimal("500"),
+                    policy=policy,
+                )
             )
             scorecard["oracle_passed"] = False
             self.assertIn(
                 "market_impact_stress_artifact_present_failed",
                 scorecard["profit_target_oracle"]["blockers"],
             )
-            portfolio = runner.PortfolioCandidateSpec(
+            portfolio = portfolio_optimizer.PortfolioCandidateSpec(
                 schema_version="torghut.portfolio-candidate-spec.v1",
                 portfolio_candidate_id="portfolio-test",
                 source_candidate_ids=("candidate-test",),
@@ -690,7 +698,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             args = self._args(Path(tmpdir) / "epoch")
             program = runner._load_epoch_program(args)
 
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-test",
             source_candidate_ids=("candidate-test",),
@@ -706,7 +714,7 @@ class TestAutoresearchRunnerRuntimeClosure(AutoresearchRunnerTestCase):
             objective_scorecard={"target_met": True, "oracle_passed": True},
             optimizer_report={},
         )
-        manifest = runner.MlxSnapshotManifest(
+        manifest = mlx_snapshot.MlxSnapshotManifest(
             snapshot_id="mlx-snap-test",
             created_at="2026-05-06T00:00:00+00:00",
             source_window_start="2026-03-20",

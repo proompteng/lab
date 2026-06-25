@@ -251,6 +251,16 @@ def test_flatten_package_does_not_patch_through_public_script_shim() -> None:
     assert shim_backchannel_paths == []
 
 
+def test_whitepaper_autoresearch_entrypoint_exports_only_cli_surface() -> None:
+    module = importlib.import_module(
+        "scripts.run_whitepaper_autoresearch_profit_target"
+    )
+
+    assert module.__all__ == ("main", "run_whitepaper_autoresearch_profit_target")
+    assert "Any" not in module.__all__
+    assert "_candidate_board_payload" not in module.__all__
+
+
 def test_historical_simulation_startup_module_entrypoint_exits_with_cli_status(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

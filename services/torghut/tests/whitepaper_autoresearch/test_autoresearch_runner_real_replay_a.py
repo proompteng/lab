@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+from app.trading.discovery.candidate_specs import CandidateSpec
+import multiprocessing
+import queue
+import time as monotonic_time
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Any,
     Namespace,
@@ -34,13 +40,13 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 _args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 spec_ids = [spec.candidate_spec_id for spec in specs]
                 calls.append(spec_ids)
                 if len(calls) == 2:
                     raise TimeoutError("real_replay_timeout_seconds:7")
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec_ids[0],
                     candidate={
                         "candidate_id": f"cand-{spec_ids[0]}",
@@ -69,7 +75,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
                 timeout_seconds: int,
             ) -> runner.EpochReplayResult:
                 _ = timeout_seconds
@@ -113,7 +119,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             args = self._args(output_dir)
             args.replay_mode = "real"
             spec = self._candidate_spec("spec-no-sigalrm")
-            bundle = runner.evidence_bundle_from_frontier_candidate(
+            bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=spec.candidate_spec_id,
                 candidate={
                     "candidate_id": "candidate-no-sigalrm",
@@ -138,7 +144,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                     ),
                 ) as child_replay,
             ):
-                result = runner._run_real_replay_once_with_optional_timeout(
+                result = replay_execution._run_real_replay_once_with_optional_timeout(
                     args=args,
                     output_dir=output_dir,
                     specs=(spec,),
@@ -161,7 +167,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             joined = False
 
             def get(self, *, timeout: float) -> Any:
-                raise runner.queue.Empty
+                raise queue.Empty
 
             def close(self) -> None:
                 self.closed = True
@@ -207,18 +213,16 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
 
             with (
                 patch.object(
-                    runner.multiprocessing,
+                    multiprocessing,
                     "get_context",
                     return_value=fake_context,
                 ),
-                patch.object(
-                    runner.monotonic_time, "monotonic", side_effect=[0.0, 0.0, 8.0]
-                ),
+                patch.object(monotonic_time, "monotonic", side_effect=[0.0, 0.0, 8.0]),
             ):
                 with self.assertRaisesRegex(
                     TimeoutError, "real_replay_timeout_seconds:7"
                 ):
-                    runner._run_real_replay_once_in_child_process(
+                    replay_execution._run_real_replay_once_in_child_process(
                         args=args,
                         output_dir=output_dir,
                         specs=(spec,),
@@ -251,7 +255,9 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
         )
         success_queue = CaptureQueue()
         with patch.object(replay_execution, "_run_real_replay", return_value=expected):
-            runner._real_replay_worker(success_queue, args, "worker-output", (spec,))
+            replay_execution._real_replay_worker(
+                success_queue, args, "worker-output", (spec,)
+            )
         self.assertEqual(success_queue.items, [("ok", expected)])
 
         error_queue = CaptureQueue()
@@ -260,7 +266,9 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             "_run_real_replay",
             side_effect=ValueError("worker-failed"),
         ):
-            runner._real_replay_worker(error_queue, args, "worker-output", (spec,))
+            replay_execution._real_replay_worker(
+                error_queue, args, "worker-output", (spec,)
+            )
         self.assertEqual(error_queue.items[0][0], "error")
         self.assertIsInstance(error_queue.items[0][1], ValueError)
 
@@ -270,7 +278,9 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             "_run_real_replay",
             side_effect=ValueError("worker-failed"),
         ):
-            runner._real_replay_worker(payload_queue, args, "worker-output", (spec,))
+            replay_execution._real_replay_worker(
+                payload_queue, args, "worker-output", (spec,)
+            )
         self.assertEqual(
             payload_queue.items,
             [("error_payload", ("ValueError", "worker-failed"))],
@@ -287,7 +297,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 self.terminated = True
 
         inactive = InactiveProcess()
-        runner._terminate_process(inactive)
+        replay_execution._terminate_process(inactive)
         self.assertFalse(inactive.terminated)
 
         class StubbornProcess:
@@ -309,7 +319,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 self.join_calls += 1
 
         stubborn = StubbornProcess()
-        runner._terminate_process(stubborn)
+        replay_execution._terminate_process(stubborn)
         self.assertTrue(stubborn.terminated)
         self.assertTrue(stubborn.killed)
         self.assertEqual(stubborn.join_calls, 2)
@@ -374,9 +384,9 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             fake_context = FakeContext(fake_queue, fake_process)
 
             with patch.object(
-                runner.multiprocessing, "get_context", return_value=fake_context
+                multiprocessing, "get_context", return_value=fake_context
             ):
-                result = runner._run_real_replay_once_in_child_process(
+                result = replay_execution._run_real_replay_once_in_child_process(
                     args=args,
                     output_dir=output_dir,
                     specs=(spec,),
@@ -442,13 +452,13 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 with (
                     self.subTest(status=item[0]),
                     patch.object(
-                        runner.multiprocessing,
+                        multiprocessing,
                         "get_context",
                         return_value=fake_context,
                     ),
                     self.assertRaises(expected_error),
                 ):
-                    runner._run_real_replay_once_in_child_process(
+                    replay_execution._run_real_replay_once_in_child_process(
                         args=args,
                         output_dir=output_dir,
                         specs=(spec,),
@@ -465,7 +475,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             joined = False
 
             def get(self, *, timeout: float) -> Any:
-                raise runner.queue.Empty
+                raise queue.Empty
 
             def close(self) -> None:
                 self.closed = True
@@ -499,14 +509,12 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
             fake_context = FakeContext()
 
             with (
-                patch.object(
-                    runner.multiprocessing, "get_context", return_value=fake_context
-                ),
+                patch.object(multiprocessing, "get_context", return_value=fake_context),
                 self.assertRaisesRegex(
                     RuntimeError, "real_replay_worker_exited_without_result"
                 ),
             ):
-                runner._run_real_replay_once_in_child_process(
+                replay_execution._run_real_replay_once_in_child_process(
                     args=args,
                     output_dir=output_dir,
                     specs=(spec,),
@@ -534,7 +542,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 spec_ids = [spec.candidate_spec_id for spec in specs]
                 calls.append(
@@ -547,7 +555,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 )
                 if len(calls) == 2:
                     raise TimeoutError("real_replay_timeout_seconds:7")
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec_ids[0],
                     candidate={
                         "candidate_id": f"cand-{spec_ids[0]}",
@@ -578,7 +586,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
                 args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
                 timeout_seconds: int,
             ) -> runner.EpochReplayResult:
                 _ = timeout_seconds
@@ -613,7 +621,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
 
     def test_failed_shard_retry_skips_malformed_and_unknown_spec_ids(self) -> None:
         self.assertEqual(
-            runner._failed_shard_spec_ids(
+            replay_shards._failed_shard_spec_ids(
                 (
                     {"candidate_spec_ids": "spec-not-a-list"},
                     {"candidate_spec_ids": ["spec-a", "", "spec-a", "spec-b"]},
@@ -625,7 +633,7 @@ class TestAutoresearchRunnerRealReplayA(WhitepaperAutoresearchRunnerTestCaseBase
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             evidence, replay_results, failures, summary = (
-                runner._retry_real_replay_failed_shard_specs(
+                replay_shards._retry_real_replay_failed_shard_specs(
                     args=args,
                     output_dir=Path(tmpdir) / "epoch",
                     specs=(self._candidate_spec("spec-known"),),

@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import scripts.whitepaper_autoresearch_runner.next_epoch_planning as next_epoch_planning
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
+
 import json
 from argparse import Namespace
 from decimal import Decimal
@@ -290,7 +294,9 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
             "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
-            sources = runner._load_sources_from_db(["paper-completed", "paper-running"])
+            sources = persisted_feedback_sources._load_sources_from_db(
+                ["paper-completed", "paper-running"]
+            )
 
         self.assertEqual([source.run_id for source in sources], ["paper-completed"])
 
@@ -359,7 +365,7 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
         self.assertEqual(parsed.symbols, ",".join(_CHIP_UNIVERSE))
         self.assertEqual(
             parsed.max_frontier_candidates_per_spec,
-            runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+            cli_parsing._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
         )
         self.assertEqual(parsed.max_total_frontier_candidates, 7)
         self.assertEqual(parsed.staged_train_screen_multiplier, 4)
@@ -375,15 +381,15 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(
             parsed.real_replay_shard_timeout_seconds,
-            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            cli_parsing._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
         self.assertEqual(
             parsed.real_replay_shard_workers,
-            runner._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+            cli_parsing._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
         )
         self.assertEqual(
             parsed.real_replay_max_parallel_frontier_candidates,
-            runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+            cli_parsing._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
         )
         self.assertEqual(parsed.replay_tape_path, Path(tmpdir) / "tape.jsonl")
         self.assertEqual(
@@ -405,7 +411,7 @@ class TestCompiledProgramResearchSourcesHaveNoMissingFeatureAliases(
         self.assertFalse(parsed.persist_results)
 
     def test_decimal_arg_or_default_uses_explicit_cli_override(self) -> None:
-        value = runner._decimal_arg_or_default(
+        value = next_epoch_planning._decimal_arg_or_default(
             Namespace(min_daily_net_pnl="-125.50"),
             "min_daily_net_pnl",
             Decimal("-350"),

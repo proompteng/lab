@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+from app.trading.discovery.candidate_specs import CandidateSpec
+import multiprocessing
+import queue
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
+
 from argparse import Namespace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -40,7 +46,9 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         )
         success_queue = CaptureQueue()
         with patch.object(replay_execution, "_run_real_replay", return_value=expected):
-            runner._real_replay_worker(success_queue, args, "worker-output", (spec,))
+            replay_execution._real_replay_worker(
+                success_queue, args, "worker-output", (spec,)
+            )
         self.assertEqual(success_queue.items, [("ok", expected)])
 
         error_queue = CaptureQueue()
@@ -49,7 +57,9 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             "_run_real_replay",
             side_effect=ValueError("worker-failed"),
         ):
-            runner._real_replay_worker(error_queue, args, "worker-output", (spec,))
+            replay_execution._real_replay_worker(
+                error_queue, args, "worker-output", (spec,)
+            )
         self.assertEqual(error_queue.items[0][0], "error")
         self.assertIsInstance(error_queue.items[0][1], ValueError)
 
@@ -59,7 +69,9 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             "_run_real_replay",
             side_effect=ValueError("worker-failed"),
         ):
-            runner._real_replay_worker(payload_queue, args, "worker-output", (spec,))
+            replay_execution._real_replay_worker(
+                payload_queue, args, "worker-output", (spec,)
+            )
         self.assertEqual(
             payload_queue.items,
             [("error_payload", ("ValueError", "worker-failed"))],
@@ -76,7 +88,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 self.terminated = True
 
         inactive = InactiveProcess()
-        runner._terminate_process(inactive)
+        replay_execution._terminate_process(inactive)
         self.assertFalse(inactive.terminated)
 
         class StubbornProcess:
@@ -98,7 +110,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 self.join_calls += 1
 
         stubborn = StubbornProcess()
-        runner._terminate_process(stubborn)
+        replay_execution._terminate_process(stubborn)
         self.assertTrue(stubborn.terminated)
         self.assertTrue(stubborn.killed)
         self.assertEqual(stubborn.join_calls, 2)
@@ -163,9 +175,9 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             fake_context = FakeContext(fake_queue, fake_process)
 
             with patch.object(
-                runner.multiprocessing, "get_context", return_value=fake_context
+                multiprocessing, "get_context", return_value=fake_context
             ):
-                result = runner._run_real_replay_once_in_child_process(
+                result = replay_execution._run_real_replay_once_in_child_process(
                     args=args,
                     output_dir=output_dir,
                     specs=(spec,),
@@ -231,13 +243,13 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 with (
                     self.subTest(status=item[0]),
                     patch.object(
-                        runner.multiprocessing,
+                        multiprocessing,
                         "get_context",
                         return_value=fake_context,
                     ),
                     self.assertRaises(expected_error),
                 ):
-                    runner._run_real_replay_once_in_child_process(
+                    replay_execution._run_real_replay_once_in_child_process(
                         args=args,
                         output_dir=output_dir,
                         specs=(spec,),
@@ -254,7 +266,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             joined = False
 
             def get(self, *, timeout: float) -> Any:
-                raise runner.queue.Empty
+                raise queue.Empty
 
             def close(self) -> None:
                 self.closed = True
@@ -288,14 +300,12 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             fake_context = FakeContext()
 
             with (
-                patch.object(
-                    runner.multiprocessing, "get_context", return_value=fake_context
-                ),
+                patch.object(multiprocessing, "get_context", return_value=fake_context),
                 self.assertRaisesRegex(
                     RuntimeError, "real_replay_worker_exited_without_result"
                 ),
             ):
-                runner._run_real_replay_once_in_child_process(
+                replay_execution._run_real_replay_once_in_child_process(
                     args=args,
                     output_dir=output_dir,
                     specs=(spec,),
@@ -323,7 +333,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 spec_ids = [spec.candidate_spec_id for spec in specs]
                 calls.append(
@@ -336,7 +346,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 )
                 if len(calls) == 2:
                     raise TimeoutError("real_replay_timeout_seconds:7")
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec_ids[0],
                     candidate={
                         "candidate_id": f"cand-{spec_ids[0]}",
@@ -367,7 +377,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 args: Namespace,
                 *,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
                 timeout_seconds: int,
             ) -> runner.EpochReplayResult:
                 _ = timeout_seconds
@@ -402,7 +412,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
 
     def test_failed_shard_retry_skips_malformed_and_unknown_spec_ids(self) -> None:
         self.assertEqual(
-            runner._failed_shard_spec_ids(
+            replay_shards._failed_shard_spec_ids(
                 (
                     {"candidate_spec_ids": "spec-not-a-list"},
                     {"candidate_spec_ids": ["spec-a", "", "spec-a", "spec-b"]},
@@ -414,7 +424,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         with TemporaryDirectory() as tmpdir:
             args = self._args(Path(tmpdir) / "epoch")
             evidence, replay_results, failures, summary = (
-                runner._retry_real_replay_failed_shard_specs(
+                replay_shards._retry_real_replay_failed_shard_specs(
                     args=args,
                     output_dir=Path(tmpdir) / "epoch",
                     specs=(self._candidate_spec("spec-known"),),
@@ -436,8 +446,8 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         calls: list[tuple[int, int, int]] = []
 
         def fake_execute(
-            plan: runner._ReplayShardPlan,
-        ) -> runner._ReplayShardOutcome:
+            plan: replay_models._ReplayShardPlan,
+        ) -> replay_models._ReplayShardOutcome:
             calls.append(
                 (
                     plan.shard_index,
@@ -445,7 +455,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                     int(plan.args.max_total_frontier_candidates),
                 )
             )
-            return runner._ReplayShardOutcome(
+            return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
                 result=runner.EpochReplayResult(
@@ -468,7 +478,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
-                    runner._retry_real_replay_failed_shard_specs(
+                    replay_shards._retry_real_replay_failed_shard_specs(
                         args=args,
                         output_dir=Path(tmpdir) / "epoch",
                         specs=(spec,),
@@ -499,10 +509,10 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
         calls: list[int] = []
 
         def fake_execute(
-            plan: runner._ReplayShardPlan,
-        ) -> runner._ReplayShardOutcome:
+            plan: replay_models._ReplayShardPlan,
+        ) -> replay_models._ReplayShardOutcome:
             calls.append(plan.shard_index)
-            bundle = runner.evidence_bundle_from_frontier_candidate(
+            bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=spec.candidate_spec_id,
                 candidate={
                     "candidate_id": "cand-retry-completes",
@@ -515,7 +525,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 dataset_snapshot_id="snap-retry-completes",
                 result_path="feedback://retry-completes",
             )
-            return runner._ReplayShardOutcome(
+            return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
                 result=runner.EpochReplayResult(
@@ -531,7 +541,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 replay_shards, "_execute_real_replay_shard", side_effect=fake_execute
             ):
                 evidence, replay_results, failures, summary = (
-                    runner._retry_real_replay_failed_shard_specs(
+                    replay_shards._retry_real_replay_failed_shard_specs(
                         args=args,
                         output_dir=Path(tmpdir) / "epoch",
                         specs=(spec,),
@@ -573,7 +583,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args.max_frontier_candidates_per_spec = 2
             args.max_total_frontier_candidates = 5
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -618,7 +628,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args.max_frontier_candidates_per_spec = 64
             args.max_total_frontier_candidates = 8
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -647,13 +657,13 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args = self._args(output_dir)
             args.real_replay_shard_workers = 8
             workers_seen: list[int] = []
-            submitted: list[tuple[Any, runner._ReplayShardPlan]] = []
+            submitted: list[tuple[Any, replay_models._ReplayShardPlan]] = []
 
             class _FakeFuture:
-                def __init__(self, outcome: runner._ReplayShardOutcome) -> None:
+                def __init__(self, outcome: replay_models._ReplayShardOutcome) -> None:
                     self._outcome = outcome
 
-                def result(self) -> runner._ReplayShardOutcome:
+                def result(self) -> replay_models._ReplayShardOutcome:
                     return self._outcome
 
             class _FakeExecutor:
@@ -669,11 +679,11 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 def submit(
                     self,
                     fn: Any,
-                    plan: runner._ReplayShardPlan,
+                    plan: replay_models._ReplayShardPlan,
                 ) -> _FakeFuture:
                     submitted.append((fn, plan))
                     return _FakeFuture(
-                        runner._ReplayShardOutcome(
+                        replay_models._ReplayShardOutcome(
                             shard_index=plan.shard_index,
                             candidate_spec_ids=tuple(
                                 spec.candidate_spec_id for spec in plan.specs
@@ -699,7 +709,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                     replay_shards, "as_completed", side_effect=fake_as_completed
                 ),
             ):
-                result = runner._run_real_replay_shards(
+                result = replay_shards._run_real_replay_shards(
                     args=args,
                     output_dir=output_dir,
                     specs=specs,
@@ -740,7 +750,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args.real_replay_shard_workers = 8
             args.real_replay_max_parallel_frontier_candidates = 10
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -749,12 +759,15 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             )
 
         self.assertEqual(
-            [runner._replay_shard_frontier_candidate_budget(plan) for plan in plans],
+            [
+                replay_shards._replay_shard_frontier_candidate_budget(plan)
+                for plan in plans
+            ],
             [8, 8, 8],
         )
         self.assertEqual([plan.timeout_seconds for plan in plans], [900, 900, 900])
         self.assertEqual(
-            runner._bounded_real_replay_shard_workers(args=args, plans=plans),
+            replay_shards._bounded_real_replay_shard_workers(args=args, plans=plans),
             1,
         )
 
@@ -778,7 +791,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             args.real_replay_shard_workers = 8
             args.real_replay_max_parallel_frontier_candidates = 99
 
-            plans = runner._build_real_replay_shards(
+            plans = replay_shards._build_real_replay_shards(
                 args=args,
                 output_dir=output_dir,
                 specs=specs,
@@ -787,7 +800,7 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
             )
 
         self.assertEqual(
-            runner._bounded_real_replay_shard_workers(args=args, plans=plans),
+            replay_shards._bounded_real_replay_shard_workers(args=args, plans=plans),
             2,
         )
 
@@ -801,10 +814,10 @@ class TestRealReplayWorkerReportsSuccessErrorAndErrorPayload(
                 *,
                 args: Namespace,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 spec = specs[0]
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec.candidate_spec_id,
                     candidate={
                         "candidate_id": "cand-incomplete",

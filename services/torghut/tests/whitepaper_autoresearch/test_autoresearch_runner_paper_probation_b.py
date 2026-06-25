@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.proposal_training as proposal_training
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
     Namespace,
@@ -223,7 +226,7 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
     def test_candidate_universe_symbols_default_to_chip_coverage_when_empty(
         self,
     ) -> None:
-        symbols = runner._candidate_universe_symbols_from_args(
+        symbols = artifact_io._candidate_universe_symbols_from_args(
             Namespace(symbols="MSFT,SHOP")
         )
 
@@ -350,7 +353,7 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
         )
 
     def test_best_false_negative_table_excludes_pre_replay_blocked_specs(self) -> None:
-        table = runner._best_false_negative_table(
+        table = proposal_training._best_false_negative_table(
             candidate_selection={
                 "rows": [
                     {

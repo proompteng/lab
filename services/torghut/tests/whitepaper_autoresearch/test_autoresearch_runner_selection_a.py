@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Any,
     Decimal,
@@ -17,29 +20,31 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
             "spec-family-negative-mutated",
             entry_minute_after_open="60",
         )
-        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=source_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-family-negative-source",
-                "family_template_id": source_spec.family_template_id,
-                "runtime_family": source_spec.runtime_family,
-                "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "-250",
-                    "active_day_ratio": "1",
-                    "positive_day_ratio": "0",
-                    "negative_day_count": 4,
-                    "daily_net": {
-                        "2026-05-01": "-150",
-                        "2026-05-04": "-350",
+        family_feedback_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=source_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-family-negative-source",
+                    "family_template_id": source_spec.family_template_id,
+                    "runtime_family": source_spec.runtime_family,
+                    "runtime_strategy_name": source_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-250",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 4,
+                        "daily_net": {
+                            "2026-05-01": "-150",
+                            "2026-05-04": "-350",
+                        },
                     },
                 },
-            },
-            dataset_snapshot_id="snap-family-negative-feedback",
-            result_path="feedback://family-negative",
+                dataset_snapshot_id="snap-family-negative-feedback",
+                result_path="feedback://family-negative",
+            )
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(mutated_family_spec,),
             feedback_evidence_bundles=(family_feedback_bundle,),
         )
@@ -93,34 +98,36 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
                 "params": adaptive_params,
             },
         )
-        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=source_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-active-loss-source",
-                "family_template_id": source_spec.family_template_id,
-                "runtime_family": source_spec.runtime_family,
-                "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "-50",
-                    "active_day_ratio": "0.67",
-                    "positive_day_ratio": "0",
-                    "negative_day_count": 2,
-                    "decision_count": 4,
-                    "filled_count": 4,
-                    "avg_filled_notional_per_day": "40000",
-                    "worst_day_loss": "90",
-                    "max_drawdown": "130",
-                    "daily_net": {
-                        "2026-05-06": "-40",
-                        "2026-05-07": "-90",
+        family_feedback_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=source_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-active-loss-source",
+                    "family_template_id": source_spec.family_template_id,
+                    "runtime_family": source_spec.runtime_family,
+                    "runtime_strategy_name": source_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-50",
+                        "active_day_ratio": "0.67",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 2,
+                        "decision_count": 4,
+                        "filled_count": 4,
+                        "avg_filled_notional_per_day": "40000",
+                        "worst_day_loss": "90",
+                        "max_drawdown": "130",
+                        "daily_net": {
+                            "2026-05-06": "-40",
+                            "2026-05-07": "-90",
+                        },
                     },
                 },
-            },
-            dataset_snapshot_id="snap-active-loss-feedback",
-            result_path="feedback://active-loss",
+                dataset_snapshot_id="snap-active-loss-feedback",
+                result_path="feedback://active-loss",
+            )
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(adaptive_spec,),
             feedback_evidence_bundles=(family_feedback_bundle,),
         )
@@ -173,37 +180,39 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
                 "params": repair_params,
             },
         )
-        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=source_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-consistency-source",
-                "family_template_id": source_spec.family_template_id,
-                "runtime_family": source_spec.runtime_family,
-                "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "900",
-                    "active_day_ratio": "0.40",
-                    "positive_day_ratio": "0.20",
-                    "negative_day_count": 0,
-                    "decision_count": 5,
-                    "filled_count": 5,
-                    "avg_filled_notional_per_day": "350000",
-                    "best_day_share": "0.84",
-                    "max_cluster_contribution_share": "0.70",
-                    "worst_day_loss": "0",
-                    "max_drawdown": "0",
-                    "min_daily_net_pnl": "0",
-                    "daily_net": {
-                        "2026-05-06": "4500",
-                        "2026-05-07": "0",
+        family_feedback_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=source_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-consistency-source",
+                    "family_template_id": source_spec.family_template_id,
+                    "runtime_family": source_spec.runtime_family,
+                    "runtime_strategy_name": source_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "900",
+                        "active_day_ratio": "0.40",
+                        "positive_day_ratio": "0.20",
+                        "negative_day_count": 0,
+                        "decision_count": 5,
+                        "filled_count": 5,
+                        "avg_filled_notional_per_day": "350000",
+                        "best_day_share": "0.84",
+                        "max_cluster_contribution_share": "0.70",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "min_daily_net_pnl": "0",
+                        "daily_net": {
+                            "2026-05-06": "4500",
+                            "2026-05-07": "0",
+                        },
                     },
                 },
-            },
-            dataset_snapshot_id="snap-consistency-feedback",
-            result_path="feedback://consistency",
+                dataset_snapshot_id="snap-consistency-feedback",
+                result_path="feedback://consistency",
+            )
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(repair_spec,),
             feedback_evidence_bundles=(family_feedback_bundle,),
         )
@@ -280,34 +289,36 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
                 "params": adverse_params,
             },
         )
-        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=source_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-active-loss-score-source",
-                "family_template_id": source_spec.family_template_id,
-                "runtime_family": source_spec.runtime_family,
-                "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "-50",
-                    "active_day_ratio": "0.50",
-                    "positive_day_ratio": "0",
-                    "negative_day_count": 2,
-                    "decision_count": 4,
-                    "filled_count": 4,
-                    "avg_filled_notional_per_day": "40000",
-                    "worst_day_loss": "90",
-                    "max_drawdown": "130",
-                    "daily_net": {
-                        "2026-05-06": "-40",
-                        "2026-05-07": "-90",
+        family_feedback_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=source_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-active-loss-score-source",
+                    "family_template_id": source_spec.family_template_id,
+                    "runtime_family": source_spec.runtime_family,
+                    "runtime_strategy_name": source_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "-50",
+                        "active_day_ratio": "0.50",
+                        "positive_day_ratio": "0",
+                        "negative_day_count": 2,
+                        "decision_count": 4,
+                        "filled_count": 4,
+                        "avg_filled_notional_per_day": "40000",
+                        "worst_day_loss": "90",
+                        "max_drawdown": "130",
+                        "daily_net": {
+                            "2026-05-06": "-40",
+                            "2026-05-07": "-90",
+                        },
                     },
                 },
-            },
-            dataset_snapshot_id="snap-active-loss-score-feedback",
-            result_path="feedback://active-loss-score",
+                dataset_snapshot_id="snap-active-loss-score-feedback",
+                result_path="feedback://active-loss-score",
+            )
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(daily_spec, adverse_spec),
             feedback_evidence_bundles=(family_feedback_bundle,),
         )

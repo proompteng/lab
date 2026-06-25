@@ -47,6 +47,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_support import (
     sys,
     timezone,
 )
+from app.trading.discovery.candidate_specs import CandidateSpec
+import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
 
 
 class WhitepaperAutoresearchRunnerTestCaseBase(TestCase):
@@ -90,7 +92,7 @@ class WhitepaperAutoresearchRunnerTestCaseBase(TestCase):
             chunk_minutes=10,
             symbols=",".join(_CHIP_UNIVERSE),
             progress_log_seconds=30,
-            max_frontier_candidates_per_spec=runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+            max_frontier_candidates_per_spec=cli_parsing._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
             max_total_frontier_candidates=0,
             staged_train_screen_multiplier=0,
             capture_rejected_seed_full_window_ledger=False,
@@ -104,9 +106,9 @@ class WhitepaperAutoresearchRunnerTestCaseBase(TestCase):
             consistency_repair_candidates=0,
             real_replay_timeout_seconds=0,
             real_replay_shard_size=0,
-            real_replay_shard_timeout_seconds=runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
-            real_replay_shard_workers=runner._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
-            real_replay_max_parallel_frontier_candidates=runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+            real_replay_shard_timeout_seconds=cli_parsing._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            real_replay_shard_workers=cli_parsing._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+            real_replay_max_parallel_frontier_candidates=cli_parsing._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
             real_replay_failed_spec_retries=1,
             real_replay_retry_timeout_seconds=0,
             real_replay_retry_max_frontier_candidates_per_spec=1,
@@ -121,9 +123,9 @@ class WhitepaperAutoresearchRunnerTestCaseBase(TestCase):
             replay_tape_manifest=None,
             replay_tape_preview_top_k=0,
             replay_tape_preview_min_rows=2,
-            replay_tape_exact_candidate_cap=runner._DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
-            replay_tape_frontier_exploitation_slots=runner._DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,
-            replay_tape_frontier_exploration_slots=runner._DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS,
+            replay_tape_exact_candidate_cap=cli_parsing._DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP,
+            replay_tape_frontier_exploitation_slots=cli_parsing._DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,
+            replay_tape_frontier_exploration_slots=cli_parsing._DEFAULT_FAST_REPLAY_EXPLORATION_SLOTS,
             materialize_replay_tape=False,
             coverage_diagnostic_output=None,
             latest_complete_window_min_days=0,
@@ -185,8 +187,8 @@ class WhitepaperAutoresearchRunnerTestCaseBase(TestCase):
         family_template_id: str = "microbar_cross_sectional_pairs_v1",
         entry_minute_after_open: str = "45",
         selection_mode: str = "reversal",
-    ) -> runner.CandidateSpec:
-        return runner.CandidateSpec(
+    ) -> CandidateSpec:
+        return CandidateSpec(
             schema_version="torghut.candidate-spec.v1",
             candidate_spec_id=candidate_spec_id,
             hypothesis_id=f"hyp-{candidate_spec_id}",

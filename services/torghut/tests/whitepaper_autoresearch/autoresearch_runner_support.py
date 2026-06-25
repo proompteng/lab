@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import app.whitepapers.claim_compiler as claim_compiler
+
 from contextlib import contextmanager
 from dataclasses import replace
 import json
@@ -33,6 +35,9 @@ from app.models import (
     WhitepaperDocumentVersion,
 )
 from app.trading.discovery import fast_replay
+from app.trading.discovery.candidate_specs import (
+    LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE,
+)
 from app.trading.discovery.replay_tape import (
     REPLAY_TAPE_MANIFEST_SCHEMA_VERSION,
     ReplayTapeManifest,
@@ -41,7 +46,7 @@ from app.trading.discovery.replay_tape import (
 from app.trading.discovery.evidence_bundles import evidence_bundle_blockers
 from app.trading.models import SignalEnvelope
 
-_CHIP_UNIVERSE = list(runner.LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
+_CHIP_UNIVERSE = list(LIVE_SIGNAL_COVERED_SEMICONDUCTOR_UNIVERSE)
 
 
 class _FakeSigalrmSignal:
@@ -173,8 +178,10 @@ def _source_jsonl_payload() -> dict[str, object]:
     }
 
 
-def _source_from_payload(payload: dict[str, object]) -> runner.WhitepaperResearchSource:
-    return runner.WhitepaperResearchSource(
+def _source_from_payload(
+    payload: dict[str, object],
+) -> claim_compiler.WhitepaperResearchSource:
+    return claim_compiler.WhitepaperResearchSource(
         run_id=str(payload["run_id"]),
         title=str(payload["title"]),
         source_url=str(payload["source_url"]),
@@ -194,7 +201,7 @@ def _source_from_payload(payload: dict[str, object]) -> runner.WhitepaperResearc
 def _compact_recent_whitepaper_sources(
     source_count: int = 4,
 ) -> Any:
-    sources: list[runner.WhitepaperResearchSource] = []
+    sources: list[claim_compiler.WhitepaperResearchSource] = []
     for index in range(source_count):
         payload = _source_jsonl_payload()
         payload["run_id"] = f"compact-seed-2026-{index}"

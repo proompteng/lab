@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import scripts.whitepaper_autoresearch_runner.candidate_remediation as candidate_remediation
+import scripts.whitepaper_autoresearch_runner.next_epoch_planning as next_epoch_planning
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
+
 import json
 from decimal import Decimal
 from pathlib import Path
@@ -38,7 +42,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 start=1,
             )
         ]
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -111,7 +115,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 "selected_for_replay": True,
             }
         ]
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -169,7 +173,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
     def test_remediation_recommends_surface_mutation_when_mlx_blocks_synthetic_prior(
         self,
     ) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -212,7 +216,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
     def test_remediation_recommends_surface_mutation_when_feedback_blocks_all_candidates(
         self,
     ) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -273,7 +277,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
@@ -324,7 +328,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
@@ -362,10 +366,10 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
-            flags = runner._profitability_next_epoch_flags(
+            flags = next_epoch_planning._profitability_next_epoch_flags(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
@@ -475,17 +479,17 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
         self.assertEqual(
-            runner._bounded_real_replay_shard_timeout_seconds(0),
-            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            replay_shards._bounded_real_replay_shard_timeout_seconds(0),
+            replay_shards._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
         self.assertEqual(
-            runner._bounded_real_replay_shard_timeout_seconds(-1),
-            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            replay_shards._bounded_real_replay_shard_timeout_seconds(-1),
+            replay_shards._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
         self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
         self.assertIn(
@@ -516,7 +520,7 @@ class TestRemediationRecommendsProfileSurfaceWhenSelectionBudgetExhausted(
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 

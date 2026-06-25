@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import scripts.run_strategy_factory_v2 as strategy_factory_runner
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
+import scripts.whitepaper_autoresearch_runner.next_epoch_planning as next_epoch_planning
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
     Namespace,
@@ -249,7 +256,9 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
             "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
-            sources = runner._load_sources_from_db(["paper-completed", "paper-running"])
+            sources = persisted_feedback_sources._load_sources_from_db(
+                ["paper-completed", "paper-running"]
+            )
 
         self.assertEqual([source.run_id for source in sources], ["paper-completed"])
 
@@ -318,7 +327,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
         self.assertEqual(parsed.symbols, ",".join(_CHIP_UNIVERSE))
         self.assertEqual(
             parsed.max_frontier_candidates_per_spec,
-            runner._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
+            cli_parsing._DEFAULT_MAX_FRONTIER_CANDIDATES_PER_SPEC,
         )
         self.assertEqual(parsed.max_total_frontier_candidates, 7)
         self.assertEqual(parsed.staged_train_screen_multiplier, 4)
@@ -334,15 +343,15 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
         self.assertEqual(parsed.real_replay_shard_size, 0)
         self.assertEqual(
             parsed.real_replay_shard_timeout_seconds,
-            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            cli_parsing._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
         self.assertEqual(
             parsed.real_replay_shard_workers,
-            runner._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
+            cli_parsing._DEFAULT_REAL_REPLAY_SHARD_WORKERS,
         )
         self.assertEqual(
             parsed.real_replay_max_parallel_frontier_candidates,
-            runner._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
+            cli_parsing._DEFAULT_REAL_REPLAY_MAX_PARALLEL_FRONTIER_CANDIDATES,
         )
         self.assertEqual(parsed.replay_tape_path, Path(tmpdir) / "tape.jsonl")
         self.assertEqual(
@@ -364,7 +373,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
         self.assertFalse(parsed.persist_results)
 
     def test_decimal_arg_or_default_uses_explicit_cli_override(self) -> None:
-        value = runner._decimal_arg_or_default(
+        value = next_epoch_planning._decimal_arg_or_default(
             Namespace(min_daily_net_pnl="-125.50"),
             "min_daily_net_pnl",
             Decimal("-350"),
@@ -533,7 +542,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
             }
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2",
                 return_value=factory_payload,
             ):
@@ -591,7 +600,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
         self.assertEqual(scorecard["runtime_strategy_name"], spec.runtime_strategy_name)
         self.assertEqual(
             scorecard["execution_signature"],
-            runner._candidate_spec_execution_signature(spec),
+            candidate_identity._candidate_spec_execution_signature(spec),
         )
 
     def test_real_replay_uses_spec_universe_instead_of_global_symbols(self) -> None:
@@ -641,7 +650,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -711,7 +720,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -764,7 +773,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -820,7 +829,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -908,7 +917,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 return factory_payload
 
             with patch.object(
-                runner.strategy_factory_runner,
+                strategy_factory_runner,
                 "run_strategy_factory_v2_from_specs",
                 side_effect=fake_run,
             ):
@@ -961,10 +970,10 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
     ) -> None:
         args = self._args(Path("/tmp/epoch"))
         program = runner._load_epoch_program(args)
-        controls = runner._resolved_real_replay_frontier_controls(args, program)
+        controls = replay_shards._resolved_real_replay_frontier_controls(args, program)
 
         self.assertEqual(
-            runner._resolved_staged_train_screen_multiplier(args, program),
+            replay_shards._resolved_staged_train_screen_multiplier(args, program),
             3,
         )
         self.assertEqual(controls["symbol_prune_iterations"], 1)
@@ -979,14 +988,13 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
         args.staged_train_screen_multiplier = 4
         args.symbol_prune_candidates = 5
         args.capture_positive_rejected_full_window_ledgers = 6
-        override_controls = runner._resolved_real_replay_frontier_controls(
+        override_controls = replay_shards._resolved_real_replay_frontier_controls(
             args, program
         )
         self.assertEqual(
-            runner._resolved_staged_train_screen_multiplier(args, program),
+            replay_shards._resolved_staged_train_screen_multiplier(args, program),
             4,
         )
         self.assertEqual(override_controls["symbol_prune_candidates"], 5)
-        self.assertEqual(
-            override_controls["capture_positive_rejected_full_window_ledgers"], 6
-        )
+        positive_ledger_key = "capture_positive_rejected_full_window_ledgers"
+        self.assertEqual(override_controls[positive_ledger_key], 6)

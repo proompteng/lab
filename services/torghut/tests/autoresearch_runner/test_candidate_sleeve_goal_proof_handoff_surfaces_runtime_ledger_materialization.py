@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.candidate_goal_metadata as candidate_goal_metadata
+
 import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
@@ -20,7 +23,7 @@ class TestCandidateSleeveGoalProofHandoffSurfacesRuntimeLedgerMaterialization(
             "zero_authoritative_daily_pnl_until_materialized": True,
             "required_artifacts": "runtime-ledger/daily-pnl.json",
         }
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-sleeve-runtime-ledger-handoff",
             candidate_id="cand-sleeve-runtime-ledger-handoff",
@@ -41,12 +44,14 @@ class TestCandidateSleeveGoalProofHandoffSurfacesRuntimeLedgerMaterialization(
             },
         )
 
-        proof_handoff = runner._candidate_sleeve_goal_proof_handoff_fields(
-            selection={"selected_for_replay": True},
-            spec=spec,
-            scorecard=evidence.objective_scorecard,
-            evidence=evidence,
-            selected_for_replay=True,
+        proof_handoff = (
+            candidate_goal_metadata._candidate_sleeve_goal_proof_handoff_fields(
+                selection={"selected_for_replay": True},
+                spec=spec,
+                scorecard=evidence.objective_scorecard,
+                evidence=evidence,
+                selected_for_replay=True,
+            )
         )
 
         self.assertEqual(
@@ -101,14 +106,16 @@ class TestCandidateSleeveGoalProofHandoffSurfacesRuntimeLedgerMaterialization(
                 {"ref": "runtime-ledger/scorecard-ref.json"}
             ],
         }
-        scorecard_proof_handoff = runner._candidate_sleeve_goal_proof_handoff_fields(
-            selection={},
-            spec=None,
-            scorecard={
-                "runtime_ledger_lineage_materialization_handoff": scorecard_handoff
-            },
-            evidence=None,
-            selected_for_replay=False,
+        scorecard_proof_handoff = (
+            candidate_goal_metadata._candidate_sleeve_goal_proof_handoff_fields(
+                selection={},
+                spec=None,
+                scorecard={
+                    "runtime_ledger_lineage_materialization_handoff": scorecard_handoff
+                },
+                evidence=None,
+                selected_for_replay=False,
+            )
         )
         self.assertEqual(
             scorecard_proof_handoff["runtime_ledger_lineage_materialization_handoff"],
