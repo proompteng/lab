@@ -30,7 +30,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: verify
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:5c952ec3bc4847ef909ad03b8cfbb85c60154251d687f09b51269d9290d75661
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:763e9f774d17ab5824b4696022629a07bb2470cb599a85e69361f43434aa927e
               imagePullPolicy: Always
               command:
                 - /opt/venv/bin/python
