@@ -712,19 +712,6 @@ def gate6_profitability_evidence(
     )
 
 
-__all__ = (
-    "GateStatus",
-    "UncertaintyGateAction",
-    "PromotionTarget",
-    "GateResult",
-    "GateInputs",
-    "GatePolicyMatrix",
-    "GateEvaluationReport",
-    "UncertaintyGateOutcome",
-    "evaluate_gate_matrix",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",

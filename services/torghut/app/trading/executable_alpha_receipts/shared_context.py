@@ -578,18 +578,6 @@ def executable_alpha_repair_receipt(
     }
 
 
-__all__ = (
-    "CAPITAL_REPLAY_BOARD_SCHEMA_VERSION",
-    "EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION",
-    "EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION",
-    "EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION",
-    "EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION",
-    "EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION",
-    "EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION",
-    "GraduationState",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "ALPHA_RUNTIME_REPAIR_REASONS",

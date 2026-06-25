@@ -113,14 +113,6 @@ def _runtime_enabled() -> bool:
     return True
 
 
-__all__ = [
-    "DecisionEngine",
-    "DecisionRuntimeTelemetry",
-    "SignalFeatures",
-    "extract_signal_features",
-]
-
-
 # Public aliases used by split-module consumers.
 count_open_short_positions = _count_open_short_positions
 resolve_signal_timeframe = _resolve_signal_timeframe

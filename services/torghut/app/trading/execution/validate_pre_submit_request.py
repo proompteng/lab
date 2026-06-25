@@ -526,9 +526,6 @@ def _positive_decimal(value: Any) -> Decimal | None:
     return None
 
 
-__all__ = ["OrderExecutor"]
-
-
 # Public aliases used by split-module consumers.
 apply_execution_status = _apply_execution_status
 attach_execution_policy_context = _attach_execution_policy_context

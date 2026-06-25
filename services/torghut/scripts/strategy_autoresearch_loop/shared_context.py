@@ -715,12 +715,6 @@ def _frontier_args(
     )
 
 
-__all__ = (
-    "WorkItem",
-    "LatestCompleteWindowRequirement",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",

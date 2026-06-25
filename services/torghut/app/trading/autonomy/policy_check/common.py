@@ -145,12 +145,6 @@ class DeeplobBdlobThresholds:
     min_fallback_reliability: float
 
 
-__all__ = (
-    "PromotionPrerequisiteResult",
-    "RollbackReadinessResult",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "ADVISOR_FALLBACK_SLO_CONTRACT_SCHEMA_VERSION",

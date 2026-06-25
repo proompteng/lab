@@ -875,16 +875,6 @@ def run_id(prefix: str = "strategy-autoresearch") -> str:
     return f"{prefix}-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
 
 
-__all__ = (
-    "load_strategy_autoresearch_program",
-    "apply_program_objective",
-    "build_mutated_sweep_config",
-    "candidate_meets_objective",
-    "stable_payload_hash",
-    "run_id",
-)
-
-
 # Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",

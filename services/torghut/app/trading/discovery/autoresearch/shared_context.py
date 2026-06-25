@@ -483,20 +483,6 @@ def load_runtime_closure_policy(payload: Mapping[str, Any]) -> RuntimeClosurePol
     )
 
 
-__all__ = (
-    "StrategyObjective",
-    "SnapshotPolicy",
-    "ProposalModelPolicy",
-    "ReplayBudget",
-    "RuntimeClosurePolicy",
-    "ResearchClaim",
-    "ResearchSource",
-    "MutationSpace",
-    "FamilyAutoresearchPlan",
-    "StrategyAutoresearchProgram",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",
