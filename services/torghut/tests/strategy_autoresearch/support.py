@@ -199,8 +199,6 @@ class StrategyAutoresearchTestCase(TestCase):
         return program_path, family_dir
 
 
-__all__ = ("StrategyAutoresearchTestCase",)
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "FamilyAutoresearchPlan",

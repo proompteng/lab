@@ -41,8 +41,6 @@ class _TestPortfolioSizingBase(TestCase):
         )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "ALLOCATOR_CLIP_CORRELATION_CAPACITY",
     "ALLOCATOR_CLIP_STRATEGY_BUDGET",

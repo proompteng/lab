@@ -38,8 +38,6 @@ class RunEmpiricalPromotionJobsTestCase(TestCase):
         super().tearDown()
 
 
-__all__ = ("RunEmpiricalPromotionJobsTestCase",)
-
 __all__: tuple[str, ...] = (
     "Any",
     "EMPIRICAL_JOB_TYPES",

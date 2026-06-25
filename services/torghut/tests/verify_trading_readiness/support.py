@@ -468,8 +468,6 @@ class _TestVerifyTradingReadinessBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "BaseHTTPRequestHandler",

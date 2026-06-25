@@ -118,8 +118,6 @@ def _healthy_forecast_metrics_payload() -> dict[str, str]:
     }
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "GateInputs",

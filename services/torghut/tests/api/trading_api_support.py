@@ -693,11 +693,6 @@ class TradingApiTestCaseBase(TestCase):
         )
 
 
-__all__ = (
-    "healthz",
-    "TradingApiTestCaseBase",
-)
-
 __all__: tuple[str, ...] = (
     "Any",
     "AutoresearchCandidateSpec",

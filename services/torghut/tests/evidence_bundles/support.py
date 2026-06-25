@@ -60,8 +60,6 @@ def _unmaterialized_runtime_handoff() -> dict[str, object]:
     }
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "CandidateEvidenceBundle",
     "EVIDENCE_BUNDLE_SCHEMA_VERSION",

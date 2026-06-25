@@ -119,8 +119,6 @@ def _write_dspy_promotion_eval_snapshot(
     )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",

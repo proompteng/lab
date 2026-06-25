@@ -28,6 +28,7 @@ STRICT_STRUCTURAL_RULES = (
     "torghut-custom-module-class",
     "torghut-test-compat-wrapper",
     "torghut-source-string-execution",
+    "torghut-shadowed-all",
 )
 
 

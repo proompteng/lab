@@ -580,8 +580,6 @@ def _gate_report() -> dict[str, object]:
     }
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "ArtifactProvenance",

@@ -159,8 +159,6 @@ def _source_authority_lifecycle_rows(
     return rows
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "EXACT_REPLAY_LEDGER_SCHEMA_VERSION",

@@ -98,8 +98,6 @@ def _simple_lane_status() -> dict[str, object]:
     }
 
 
-__all__ = ("NOW",)
-
 __all__: tuple[str, ...] = (
     "Any",
     "Mapping",

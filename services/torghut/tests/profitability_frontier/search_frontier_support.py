@@ -124,8 +124,6 @@ def _authoritative_exact_replay_ledger_payload(
     }
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "Namespace",

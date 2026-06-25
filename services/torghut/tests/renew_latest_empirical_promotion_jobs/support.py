@@ -127,8 +127,6 @@ class _TestRenewLatestEmpiricalPromotionJobsRuntimeLedgerBase(TestCase):
         )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",

@@ -29,6 +29,7 @@ PLUGIN_ENABLES = ",".join(
         "torghut-custom-module-class",
         "torghut-test-compat-wrapper",
         "torghut-source-string-execution",
+        "torghut-shadowed-all",
     )
 )
 
@@ -165,6 +166,33 @@ def test_torghut_pylint_quality_plugin_rejects_source_segment_names(
 
     assert result.returncode != 0
     assert "torghut-generated-split-filename" in result.output
+
+
+def test_torghut_pylint_quality_plugin_rejects_shadowed_all(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "shadowed_exports.py"
+    module_path.write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "__all__ = ('old_name',)",
+                "",
+                "def current_name() -> int:",
+                "    return 42",
+                "",
+                "__all__: tuple[str, ...] = ('current_name',)",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_quality_pylint(module_path)
+
+    assert result.returncode != 0
+    assert "torghut-shadowed-all" in result.output
 
 
 def test_torghut_pylint_quality_plugin_rejects_test_compat_wrappers(

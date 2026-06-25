@@ -35,8 +35,6 @@ class _TestMlxTrainingDataBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "CandidateSpec",
     "Decimal",

@@ -128,8 +128,6 @@ class _TestWhitepaperAutoresearchArtifactsBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "Decimal",

@@ -471,8 +471,6 @@ def _write_advisor_fallback_slo_payload(
     return artifact_path
 
 
-__all__ = ("PolicyChecksTestCaseBase",)
-
 __all__: tuple[str, ...] = (
     "Any",
     "ArtifactProvenance",

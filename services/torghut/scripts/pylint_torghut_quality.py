@@ -156,6 +156,11 @@ class TorghutQualityChecker(BaseChecker):
             "torghut-source-string-execution",
             "Used when code executes source strings instead of importing normal modules.",
         ),
+        "C9019": (
+            "Shadowed __all__ at line %s; keep a single explicit export list",
+            "torghut-shadowed-all",
+            "Used when a module defines top-level __all__ more than once.",
+        ),
     }
 
     def visit_module(self, node: nodes.Module) -> None:
@@ -207,8 +212,23 @@ class TorghutQualityChecker(BaseChecker):
             tree = ast.parse(text)
         except SyntaxError:
             return
+        self._check_shadowed_all(module_node, tree)
         for node in ast.walk(tree):
             self._check_node(module_node, node)
+
+    def _check_shadowed_all(self, module_node: nodes.Module, tree: ast.Module) -> None:
+        all_assignments = [
+            statement
+            for statement in tree.body
+            if _is_top_level_all_assignment(statement)
+        ]
+        for shadowed in all_assignments[:-1]:
+            self.add_message(
+                "torghut-shadowed-all",
+                node=module_node,
+                line=shadowed.lineno,
+                args=(all_assignments[-1].lineno,),
+            )
 
     def _check_node(self, module_node: nodes.Module, node: ast.AST) -> None:
         if isinstance(node, ast.ClassDef):
@@ -339,6 +359,16 @@ def _is_dynamic_all_assignment(target: ast.AST, value: ast.AST) -> bool:
         and target.id == "__all__"
         and _contains_globals_call(value)
     )
+
+
+def _is_top_level_all_assignment(statement: ast.stmt) -> bool:
+    if isinstance(statement, ast.Assign):
+        return any(_is_all_target(target) for target in statement.targets)
+    return isinstance(statement, ast.AnnAssign) and _is_all_target(statement.target)
+
+
+def _is_all_target(target: ast.AST) -> bool:
+    return isinstance(target, ast.Name) and target.id == "__all__"
 
 
 def _contains_globals_call(node: ast.AST) -> bool:

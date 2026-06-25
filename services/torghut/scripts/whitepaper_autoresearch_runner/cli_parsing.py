@@ -566,15 +566,6 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--allow-unsafe-replay-tape-exact-cap-override",
-        action="store_true",
-        help=(
-            "Deprecated no-op retained for CLI compatibility. Replay-tape preview "
-            f"handoff is always capped at {_DEFAULT_FAST_REPLAY_EXACT_CANDIDATE_CAP} "
-            "exact-replay candidates."
-        ),
-    )
-    parser.add_argument(
         "--replay-tape-frontier-exploitation-slots",
         type=int,
         default=_DEFAULT_FAST_REPLAY_EXPLOITATION_SLOTS,

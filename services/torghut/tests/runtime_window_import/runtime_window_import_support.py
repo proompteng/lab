@@ -494,8 +494,6 @@ def _source_backed_runtime_split_rows(
     return decision_rows, order_rows, execution_rows
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",

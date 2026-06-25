@@ -56,8 +56,6 @@ class _TestWhitepaperCandidateCompilerBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "Path",
