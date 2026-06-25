@@ -549,7 +549,6 @@ class TradingApiTestCaseBase(TestCase):
             "app.api.trading_status.SessionLocal",
             "app.api.status_helpers.SessionLocal",
             "app.api.trading_misc.consumer_evidence_payload.SessionLocal",
-            "app.api.trading_misc.shared_context.SessionLocal",
             "app.api.vnext_helpers.SessionLocal",
         ):
             session_local_patch = patch(session_local_target, self.session_local)
