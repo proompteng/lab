@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api import trading_loop_status as trading_loop_status_api
 from app.trading import loop_status as loop_status_module
+from app.trading.multifactor import status_payloads
 
 from app.trading.loop_status import (
     LoopStatusOptions,
@@ -499,6 +500,148 @@ def test_loop_status_anchors_market_data_to_multifactor_proof_snapshot() -> None
     assert payload["market_data"]["latest_feature_at"] == proof_feature_at.isoformat()
     assert payload["market_data"]["quote_lag_seconds"] == 15
     assert "hyperliquid_market_data_not_fresh" not in payload["blocker_reasons"]
+
+
+def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    current_feature_at = datetime(2026, 6, 25, 11, 59, 50, tzinfo=timezone.utc)
+    old_fill_at = datetime(2026, 6, 25, 11, 10, tzinfo=timezone.utc)
+    rows = LoopStatusRows(
+        latest_cycle={"finished_at": now.isoformat(), "selected_coins": ["BNB", "ZRO"]},
+        latest_signal={
+            "generated_at": now.isoformat(),
+            "feature_event_ts": current_feature_at.isoformat(),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 1,
+            "coin": "BNB",
+            "action": "hold",
+            "edge_bps": "0.05",
+            "reason": "no_edge",
+        },
+        latest_order={
+            "created_at": old_fill_at.isoformat(),
+            "coin": "ZRO",
+            "cloid": "historical-zro",
+            "exchange_order_id": "555",
+            "side": "buy",
+            "status": "filled",
+            "notional_usd": "10",
+        },
+        counts_24h={"orders_24h": 1},
+        fill_summary={"fills_24h": 3},
+        latest_fill={
+            "event_ts": old_fill_at.isoformat(),
+            "coin": "ZRO",
+            "fill_hash": "fill-zro",
+            "exchange_order_id": "555",
+            "side": "buy",
+            "notional_usd": "10",
+            "fee_usd": "0.01",
+            "closed_pnl_usd": "0",
+        },
+        latest_account={
+            "observed_at": now.isoformat(),
+            "raw_payload": {"dexStates": {"default": {"assetPositions": []}}},
+        },
+        positions=[],
+        performance={"fill_count_24h": 3, "sample_ready": False},
+        stale_open_orders=[],
+        unexpected_live_alpaca={"orders_24h": 0, "events_24h": 0},
+        query_errors=[],
+        latest_multifactor_run={
+            "id": "current-run",
+            "lane": "hyperliquid_testnet",
+            "model_version": "active-portfolio-management-v1",
+            "finished_at": now.isoformat(),
+        },
+        latest_factor_snapshot={
+            "run_id": "current-run",
+            "asset_key": "hyperliquid:hl:perp:default:BNB",
+            "symbol": "BNB",
+            "source_event_at": current_feature_at.isoformat(),
+            "source_lag_seconds": 1,
+            "quote_lag_seconds": 1,
+            "raw_factors": {"momentum_5m": "1"},
+            "normalized_factors": {"momentum_5m": "0.1000"},
+        },
+        latest_forecast={
+            "run_id": "current-run",
+            "asset_key": "hyperliquid:hl:perp:default:BNB",
+            "model_id": "active-portfolio-management-v1",
+            "score": "2.0000",
+            "residual_volatility_bps": "50",
+            "information_coefficient": "0.05",
+            "expected_return_bps": "8",
+            "direction": "buy",
+        },
+        latest_risk_forecast={
+            "run_id": "current-run",
+            "asset_key": "hyperliquid:hl:perp:default:BNB",
+            "active_risk_bps": "1",
+            "gross_exposure_usd": "0",
+            "symbol_exposure_usd": "0",
+            "liquidity_capacity_usd": "10",
+            "concentration_bps": "0",
+        },
+        latest_portfolio_target={
+            "run_id": "current-run",
+            "asset_key": "hyperliquid:hl:perp:default:BNB",
+            "direction": "buy",
+            "target_notional_usd": "10",
+            "delta_notional_usd": "10",
+            "expected_return_bps": "8",
+            "expected_cost_bps": "4",
+            "active_risk_bps": "1",
+            "risk_buffer_bps": "1",
+        },
+        latest_execution_intent={
+            "run_id": "historical-run",
+            "asset_key": "hyperliquid:hl:perp:default:ZRO",
+            "venue": "hyperliquid",
+            "side": "buy",
+            "notional_usd": "10",
+            "idempotency_key": "historical-zro",
+            "status": "filled",
+            "venue_order_id": "555",
+        },
+    )
+
+    payload = assemble_trading_loop_status(
+        rows=rows,
+        options=LoopStatusOptions(
+            generated_at=now,
+            trading_mode="paper",
+            trading_enabled=True,
+            min_recent_fills=3,
+            freshness_threshold_seconds=180,
+            account_freshness_seconds=300,
+        ),
+    )
+
+    assert payload["restored"] is True
+    assert payload["market_data"]["selected_symbol"] == "BNB"
+    assert payload["market_data"]["latest_feature_at"] == current_feature_at.isoformat()
+    assert payload["algorithm"]["run_id"] == "current-run"
+    assert payload["algorithm"]["asset_key"] == "hyperliquid:hl:perp:default:BNB"
+    assert payload["execution_intent"]["venue_order_id"] == "555"
+    assert "hyperliquid_market_data_not_fresh" not in payload["blocker_reasons"]
+
+
+def test_multifactor_status_queries_use_current_run_for_current_surfaces() -> None:
+    current_surface_queries = (
+        status_payloads.LATEST_FACTOR_SNAPSHOT_SQL,
+        status_payloads.LATEST_FORECAST_SQL,
+        status_payloads.LATEST_RISK_FORECAST_SQL,
+        status_payloads.LATEST_PORTFOLIO_TARGET_SQL,
+    )
+
+    assert "FROM multifactor_execution_intents" not in (
+        status_payloads.LATEST_MULTIFACTOR_RUN_SQL
+    )
+    for query in current_surface_queries:
+        assert "WITH latest_run AS" in query
+        assert "JOIN latest_run USING (run_id)" in query
+        assert "current_intent" in query
 
 
 def test_loop_status_reads_nested_hyperliquid_dex_positions() -> None:
