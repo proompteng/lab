@@ -54,7 +54,7 @@ The design intentionally builds on the existing production runtime contracts:
 - **Trading day**: A New York market session day (currently Mon–Fri by default).
 - **Trading-session window**: `09:30` to `16:00 America/New_York` by default, with configurable buffer.
 - **Simulation run**: One `scripts.historical_simulation_startup` apply/teardown cycle driven by a per-day dataset manifest.
-- **Paper-only**: `TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`, `TRADING_EXECUTION_ADAPTER=simulation`.
+- **Paper-only**: `TRADING_MODE=paper`, `TRADING_EXECUTION_ADAPTER=simulation`.
 
 ```mermaid
 flowchart TD
@@ -150,7 +150,7 @@ Each run follows this sequence:
 3. **Monitor and gate**
    - Wait for `kservice` env checks:
      - `TRADING_MODE=paper`
-     - `TRADING_LIVE_ENABLED=false`
+     - `TRADING_MODE=paper`
      - `TRADING_EXECUTION_ADAPTER=simulation`
      - `TRADING_SIMULATION_ENABLED=true`
      - `TRADING_SIGNAL_TABLE=<simulation_db>.ta_signals`
@@ -226,7 +226,7 @@ Recommended minimum KPIs:
 - Simulation artifacts must remain in isolated database names (`torghut_sim_*`) and simulation topics (`torghut.sim.*`).
 - Always set:
   - `TRADING_MODE=paper`
-  - `TRADING_LIVE_ENABLED=false`
+  - `TRADING_MODE=paper`
   - `TRADING_EXECUTION_ADAPTER=simulation`
   - `TRADING_SIMULATION_ENABLED=true`
 - `TRADING_UNIVERSE_SOURCE` remains `jangar` (matches existing runtime hard constraints when trading is active).

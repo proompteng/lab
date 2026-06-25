@@ -63,7 +63,7 @@ stateDiagram-v2
   - `LLM_FAIL_MODE=veto` (current default in `services/torghut/app/config.py`) fails-closed.
   - `LLM_FAIL_MODE=pass_through` allows deterministic pass-through on AI errors.
 
-Note: Live mode is itself gated by `TRADING_LIVE_ENABLED=true`; this document assumes that is rare and carefully reviewed.
+Note: Live mode is itself gated by `TRADING_MODE=live`; this document assumes that is rare and carefully reviewed.
 The deployment contract test in `services/torghut/tests/test_live_config_manifest_contract.py` validates Argo live env wiring
 against `Settings` validation to fail CI for boot-invalid combinations.
 Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_through` (see `argocd/applications/torghut/knative-service.yaml`).
@@ -72,7 +72,7 @@ Current deployed paper configuration (2026-02-09) sets `LLM_FAIL_MODE=pass_throu
 
 - Keep GitOps defaults aligned with live guardrails:
   - `TRADING_MODE=paper`
-  - `TRADING_LIVE_ENABLED=false`
+  - `TRADING_MODE=paper`
   - `TRADING_KILL_SWITCH_ENABLED=true`
   - `TRADING_EMERGENCY_STOP_ENABLED=true`
   - `TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION=false`

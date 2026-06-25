@@ -213,7 +213,7 @@ The script must implement the full startup workflow:
 - Point order feed to simulation trade-updates topic only.
 - Force safe mode: `TRADING_MODE=paper`, `TRADING_EXECUTION_ADAPTER=simulation`, and
   `TRADING_EXECUTION_FALLBACK_ADAPTER=none`.
-- Treat `TRADING_LIVE_ENABLED` as deprecated compatibility state derived from `TRADING_MODE`, not as a required
+- Treat `TRADING_MODE` as deprecated compatibility state derived from `TRADING_MODE`, not as a required
   explicit env patch for simulation.
 - Set execution fallback policy to avoid accidental live mutation routes.
 

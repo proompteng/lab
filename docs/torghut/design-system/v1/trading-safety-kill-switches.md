@@ -36,7 +36,7 @@ Document the explicit kill switches that allow oncall to rapidly reduce risk dur
 ```mermaid
 flowchart TD
   Incident["Incident detected"] --> DisableTrading["TRADING_ENABLED=false"]
-  Incident --> ForcePaper["TRADING_MODE=paper + TRADING_LIVE_ENABLED=false"]
+  Incident --> ForcePaper["TRADING_MODE=paper"]
   Incident --> DisableAI["LLM_ENABLED=false"]
   DisableTrading --> Stable["System stable; audit continues"]
 ```
@@ -47,13 +47,13 @@ flowchart TD
 | ---------------------------- | ---------------------------------- | -------------------------------------------------------- |
 | `TRADING_ENABLED=false`      | stops decision execution loop      | any uncertainty about signal correctness or broker state |
 | `TRADING_MODE=paper`         | forces paper context               | default; always during initial rollout                   |
-| `TRADING_LIVE_ENABLED=false` | blocks live mode even if mis-set   | safety backstop                                          |
+| `TRADING_SIMPLE_SUBMIT_ENABLED=false` | blocks broker submission | safety backstop                                          |
 | `LLM_ENABLED=false`          | disables AI advisory calls         | LLM outages, cost spikes, or suspicious behavior         |
 | `LLM_SHADOW_MODE=true`       | log reviews but do not veto/adjust | evaluation without impact                                |
 
 ### Rollout/verification (paper-default + emergency-stop posture)
 
-- Keep `TRADING_MODE=paper` and `TRADING_LIVE_ENABLED=false` as the default deployment posture.
+- Keep `TRADING_MODE=paper` as the default deployment posture.
 - Keep `TRADING_KILL_SWITCH_ENABLED=true` so hard order blocking remains enabled by default until an approved GitOps change disables it.
 - Keep `TRADING_EMERGENCY_STOP_ENABLED=true` so emergency stop remains ready.
 - Verify by checking:

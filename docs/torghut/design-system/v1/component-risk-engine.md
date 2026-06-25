@@ -50,7 +50,7 @@ flowchart TD
 Based on `services/torghut/app/trading/risk.py`:
 
 - Trading enabled: `TRADING_ENABLED` must be true.
-- Live trading gated: `TRADING_MODE=live` requires `TRADING_LIVE_ENABLED=true`.
+- Live trading gated: `TRADING_MODE=live` requires live-submit activation and deterministic risk approval.
 - Strategy enabled: `strategy.enabled` must be true.
 - Universe allowlist: if provided, `decision.symbol` must be allowed.
 - Price required: decision must include a usable price (`price`, `limit_price`, or `stop_price`).
@@ -79,7 +79,7 @@ Exact env keys live in `services/torghut/app/config.py`. Operationally important
 | --- | --- | --- |
 | `TRADING_ENABLED` | master enable | `false` in new envs (paper can be enabled intentionally) |
 | `TRADING_MODE` | paper vs live | `paper` |
-| `TRADING_LIVE_ENABLED` | hard live gate | `false` |
+| `TRADING_SIMPLE_SUBMIT_ENABLED` | broker submission gate | `false` |
 
 ## Failure modes, detection, recovery
 

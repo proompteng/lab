@@ -32,7 +32,7 @@ Jangar -> symbols/universe API + TA visualization (reads ClickHouse directly)
 ## Runtime Configuration (env)
 
 - `TRADING_ENABLED` (default `false`) gates the trading loop.
-- `TRADING_MODE` (`paper|live`, default `paper`); live requires `TRADING_LIVE_ENABLED=true`.
+- `TRADING_MODE` (`paper|live`, default `paper`); live order submission also requires the live-submit activation and simple-submit gates.
 - `TRADING_SIGNAL_SOURCE` (`clickhouse`), `TRADING_SIGNAL_TABLE` (default `torghut.ta_signals`).
 - `TRADING_SIGNAL_SCHEMA` (`auto|envelope|flat`) to align ClickHouse shape with ingestion.
   - `auto`: inspect columns (prefers `event_ts` + flattened columns when `payload` is absent).

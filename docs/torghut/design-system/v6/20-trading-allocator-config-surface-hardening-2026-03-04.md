@@ -2,23 +2,17 @@
 
 ## Problem
 
-Torghut allocator configuration in `services/torghut/app/config.py` had two partially overlapping env-mapping surfaces:
-
-- `TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS` vs `TRADING_ALLOCATOR_SYMBOL_CORRELATION_GROUPS`
-- `TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS` vs `TRADING_ALLOCATOR_CORRELATION_GROUP_CAPS`
+Torghut allocator configuration in `services/torghut/app/config.py` had partially overlapping env-mapping surfaces before the canonical allocator config cleanup.
 
 This duplication caused inconsistent normalization/validation paths and duplicated merge logic in `portfolio.py`, increasing the chance of runtime drift, hidden misconfiguration, and rollout instability when one key family is used while another is silently ignored.
 
 ## Decision
 
-Adopt one canonical allocator config surface while keeping backward-compatible env aliases.
+Adopt one canonical allocator config surface and remove backward-compatible env aliases.
 
 - Canonical settings fields:
   - `trading_allocator_symbol_correlation_groups`
   - `trading_allocator_correlation_group_caps`
-- Validation aliases retained for legacy keys:
-  - `TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS` → `trading_allocator_symbol_correlation_groups`
-  - `TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS` → `trading_allocator_correlation_group_caps`
 - Canonical output maps are normalized once and reused by runtime allocation logic.
 - Remove duplicated merge behavior in allocator construction so one map is the source of truth.
 

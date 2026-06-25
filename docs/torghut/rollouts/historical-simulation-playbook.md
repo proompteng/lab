@@ -21,8 +21,8 @@ Use this playbook when you need to:
 - Never run `apply` without a unique `run_id`.
 - Never run simulation with production Postgres/ClickHouse targets.
 - Keep Torghut in paper mode during simulation (`TRADING_MODE=paper` and `TRADING_EXECUTION_ADAPTER=simulation`).
-- Do not expect `TRADING_LIVE_ENABLED` to appear as an explicit Knative env override during simulation validation.
-  The runtime now treats it as a deprecated derived setting from `TRADING_MODE`.
+- Do not expect a separate live-enabled compatibility env during simulation validation.
+  The runtime uses `TRADING_MODE` as the paper/live source of truth.
 - Run `teardown` in the same `run_id` immediately after evidence collection.
 - Keep `runtime.target_mode=dedicated_service` and `argocd.manage_automation=true` in the manifest so the script uses
   the dedicated simulation services and restores automation correctly.
@@ -218,8 +218,8 @@ Expected values:
 - `<simulation_db>.ta_signals`
 - `<historical override value>` (for example `43200000`)
 
-If you need to confirm the deprecated live/paper compatibility field, query `/trading/status` or service logs instead of
-expecting a literal `TRADING_LIVE_ENABLED` env entry on the Knative revision.
+If you need to confirm paper/live state, query `/trading/status` or service logs instead of expecting a separate
+live-enabled compatibility env on the Knative revision.
 
 2. Validate TA topic rewiring on `torghut-ta-sim-config`:
 

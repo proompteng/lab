@@ -26,7 +26,7 @@ The v1 documents are written to stay consistent with:
 
 ## Safety principles (non-negotiable)
 
-- **Paper trading is the default** (`TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`).
+- **Paper trading is the default** (`TRADING_MODE=paper`).
 - AI is **advisory** and is never allowed to bypass deterministic risk policies.
 - All “go-live” paths require explicit enablement flags and auditable change control.
 

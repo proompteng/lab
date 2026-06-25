@@ -197,7 +197,7 @@ spec:
     Guardrails:
     - Only modify files under ${gitopsPath}.
     - Require confirm == ACTUATE_TORGHUT.
-    - Do not change TRADING_LIVE_ENABLED or TRADING_MODE.
+    - Do not change TRADING_MODE or TRADING_MODE.
     - Do not expose secrets.
 
     Steps:

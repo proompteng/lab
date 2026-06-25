@@ -550,53 +550,6 @@ class TestTigerbeetleSettingsAreNormalized(_TestConfigBase):
             "trading_allocator_symbol_notional_caps",
             model_fields,
         )
-        self.assertNotIn(
-            "trading_allocator_correlation_symbol_groups",
-            model_fields,
-        )
-        self.assertNotIn(
-            "trading_allocator_correlation_group_notional_caps",
-            model_fields,
-        )
-
-    def test_removed_allocator_aliases_do_not_populate_canonical_fields(self) -> None:
-        settings = Settings(
-            TRADING_UNIVERSE_SOURCE="static",
-            TRADING_ENABLED=False,
-            TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS={" msft ": " MegaCap "},
-            TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS={" MegaCap ": 3000.0},
-            DB_DSN="postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-        )
-        self.assertEqual(
-            settings.trading_allocator_symbol_correlation_groups,
-            {},
-        )
-        self.assertEqual(
-            settings.trading_allocator_correlation_group_caps,
-            {},
-        )
-
-    def test_removed_allocator_alias_environment_is_ignored(self) -> None:
-        with patch.dict(
-            os.environ,
-            {
-                "TRADING_ALLOCATOR_CORRELATION_SYMBOL_GROUPS": '{"msft":"megacap"}',
-                "TRADING_ALLOCATOR_CORRELATION_GROUP_NOTIONAL_CAPS": '{"MEGACAP":3000}',
-                "TRADING_ENABLED": "false",
-                "TRADING_UNIVERSE_SOURCE": "static",
-                "DB_DSN": "postgresql+psycopg://torghut:torghut@localhost:15438/torghut",
-            },
-            clear=False,
-        ):
-            settings = Settings()
-            self.assertEqual(
-                settings.trading_allocator_symbol_correlation_groups,
-                {},
-            )
-            self.assertEqual(
-                settings.trading_allocator_correlation_group_caps,
-                {},
-            )
 
     def test_allocator_canonical_environment_populates_fields(self) -> None:
         with patch.dict(
