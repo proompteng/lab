@@ -4,6 +4,7 @@ import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
 import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
 import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
 import scripts.whitepaper_autoresearch_runner.queue_metadata as queue_metadata
+import scripts.whitepaper_autoresearch_runner.runtime_closure as runtime_closure
 
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
@@ -23,6 +24,7 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     runner,
     timezone,
 )
+import scripts.whitepaper_autoresearch_runner.preview_narrowing as preview_narrowing
 
 
 class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -355,7 +357,7 @@ class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBa
                     ),
                 ) as optimizer_mock,
                 patch.object(
-                    runner,
+                    runtime_closure,
                     "_runtime_closure_payload",
                     side_effect=AssertionError(
                         "selection-only must not build runtime closure"
@@ -714,7 +716,7 @@ class TestAutoresearchRunnerSeedSelection(WhitepaperAutoresearchRunnerTestCaseBa
             }
 
             narrowed_specs, updated_selection = (
-                runner._apply_fast_replay_preview_narrowing(
+                preview_narrowing._apply_fast_replay_preview_narrowing(
                     args=args,
                     output_dir=output_dir,
                     specs=specs,

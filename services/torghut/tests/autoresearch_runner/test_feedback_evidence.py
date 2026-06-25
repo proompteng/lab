@@ -20,7 +20,6 @@ from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from scripts.whitepaper_autoresearch_runner import proposal_building
 from scripts.whitepaper_autoresearch_runner import proposal_training
 from app.models import (
@@ -33,6 +32,7 @@ from app.trading.discovery.evidence_bundles import evidence_bundle_blockers
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
 
 
 class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
@@ -105,7 +105,7 @@ class TestAutoresearchRunnerFeedbackEvidence(AutoresearchRunnerTestCase):
         args = self._args(Path("unused"))
         args.ranker_backend_preference = "not-a-backend"
 
-        self.assertEqual(runner._ranker_backend_preference(args), "mlx")
+        self.assertEqual(cli_parsing._ranker_backend_preference(args), "mlx")
 
     def test_candidate_feedback_metadata_preserves_runtime_params_for_closure(
         self,

@@ -5,7 +5,6 @@ import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_id
 import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
 import scripts.whitepaper_autoresearch_runner.next_epoch_planning as next_epoch_planning
 import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
-import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
 
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
@@ -27,6 +26,10 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     patch,
     runner,
 )
+import app.trading.discovery.whitepaper_candidate_compiler as whitepaper_candidate_compiler
+import app.whitepapers.claim_compiler as claim_compiler
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.replay_execution as replay_execution
 
 
 class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -313,7 +316,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                     "--no-persist-results",
                 ],
             ):
-                parsed = runner._parse_args()
+                parsed = cli_parsing._parse_args()
 
         self.assertEqual(parsed.output_dir, output_dir)
         self.assertEqual(parsed.epoch_id, "whitepaper-autoresearch-cli-epoch")
@@ -385,13 +388,13 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
         self,
     ) -> None:
         with patch.dict("os.environ", {"TORGHUT_TEST_CLICKHOUSE_PASSWORD": "from-env"}):
-            resolved = runner._resolved_clickhouse_password(
+            resolved = artifact_io._resolved_clickhouse_password(
                 Namespace(
                     clickhouse_password="",
                     clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
                 )
             )
-            direct = runner._resolved_clickhouse_password(
+            direct = artifact_io._resolved_clickhouse_password(
                 Namespace(
                     clickhouse_password="direct",
                     clickhouse_password_env="TORGHUT_TEST_CLICKHOUSE_PASSWORD",
@@ -546,7 +549,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 "run_strategy_factory_v2",
                 return_value=factory_payload,
             ):
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     self._args(output_dir), output_dir=output_dir
                 )
 
@@ -579,7 +582,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 ),
                 encoding="utf-8",
             )
-            result = runner._real_replay_result_from_factory_payload(
+            result = replay_execution._real_replay_result_from_factory_payload(
                 {
                     "experiments": [
                         {
@@ -655,17 +658,19 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.replay_tape_path = output_dir / "tape.jsonl"
                 args.replay_tape_manifest = output_dir / "tape.manifest.json"
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -725,17 +730,19 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.max_candidates = 24
                 args.max_total_frontier_candidates = 11
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -778,18 +785,20 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.max_candidates = 24
                 args.max_frontier_candidates_per_spec = 64
                 args.max_total_frontier_candidates = 8
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:8],
@@ -834,18 +843,20 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.max_candidates = 24
                 args.max_frontier_candidates_per_spec = 8
                 args.max_total_frontier_candidates = 0
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -922,12 +933,14 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 side_effect=fake_run,
             ):
                 cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                    [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                    [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
                 )
-                compilation = runner.compile_whitepaper_candidate_specs(
-                    hypothesis_cards=cards,
-                    family_template_dir=Path("config/trading/families"),
-                    seed_sweep_dir=Path("config/trading"),
+                compilation = (
+                    whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                        hypothesis_cards=cards,
+                        family_template_dir=Path("config/trading/families"),
+                        seed_sweep_dir=Path("config/trading"),
+                    )
                 )
                 args = self._args(output_dir)
                 args.staged_train_screen_multiplier = 3
@@ -940,7 +953,7 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
                 args.loss_repair_candidates = 1
                 args.consistency_repair_iterations = 1
                 args.consistency_repair_candidates = 2
-                result = runner._run_real_replay(
+                result = replay_execution._run_real_replay(
                     args,
                     output_dir=output_dir,
                     specs=compilation.executable_specs[:1],
@@ -964,37 +977,3 @@ class TestAutoresearchRunnerSourcesReplay(WhitepaperAutoresearchRunnerTestCaseBa
             ],
         )
         self.assertEqual(len(result.evidence_bundles), 0)
-
-    def test_program_replay_budget_supplies_staged_train_screen_multiplier(
-        self,
-    ) -> None:
-        args = self._args(Path("/tmp/epoch"))
-        program = runner._load_epoch_program(args)
-        controls = replay_shards._resolved_real_replay_frontier_controls(args, program)
-
-        self.assertEqual(
-            replay_shards._resolved_staged_train_screen_multiplier(args, program),
-            3,
-        )
-        self.assertEqual(controls["symbol_prune_iterations"], 1)
-        self.assertEqual(controls["symbol_prune_candidates"], 2)
-        self.assertEqual(controls["symbol_prune_min_universe_size"], 5)
-        self.assertEqual(controls["loss_repair_iterations"], 1)
-        self.assertEqual(controls["loss_repair_candidates"], 1)
-        self.assertEqual(controls["consistency_repair_iterations"], 1)
-        self.assertEqual(controls["consistency_repair_candidates"], 2)
-        self.assertFalse(controls["capture_rejected_seed_full_window_ledger"])
-        self.assertEqual(controls["capture_positive_rejected_full_window_ledgers"], 0)
-        args.staged_train_screen_multiplier = 4
-        args.symbol_prune_candidates = 5
-        args.capture_positive_rejected_full_window_ledgers = 6
-        override_controls = replay_shards._resolved_real_replay_frontier_controls(
-            args, program
-        )
-        self.assertEqual(
-            replay_shards._resolved_staged_train_screen_multiplier(args, program),
-            4,
-        )
-        self.assertEqual(override_controls["symbol_prune_candidates"], 5)
-        positive_ledger_key = "capture_positive_rejected_full_window_ledgers"
-        self.assertEqual(override_controls[positive_ledger_key], 6)

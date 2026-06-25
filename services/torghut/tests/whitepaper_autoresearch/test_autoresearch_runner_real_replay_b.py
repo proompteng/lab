@@ -17,6 +17,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     runner,
 )
 from scripts.whitepaper_autoresearch_runner import replay_shards
+import app.trading.discovery.whitepaper_candidate_compiler as whitepaper_candidate_compiler
+import app.whitepapers.claim_compiler as claim_compiler
 
 
 class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -39,7 +41,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
-                result=runner.EpochReplayResult(
+                result=replay_models.EpochReplayResult(
                     evidence_bundles=(),
                     replay_results=(),
                 ),
@@ -109,7 +111,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
             return replay_models._ReplayShardOutcome(
                 shard_index=plan.shard_index,
                 candidate_spec_ids=(spec.candidate_spec_id,),
-                result=runner.EpochReplayResult(
+                result=replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "ok"},),
                 ),
@@ -150,12 +152,14 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:3]
             args = self._args(output_dir)
@@ -195,12 +199,14 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:8]
             args = self._args(output_dir)
@@ -227,12 +233,14 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:3]
             args = self._args(output_dir)
@@ -269,7 +277,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                             candidate_spec_ids=tuple(
                                 spec.candidate_spec_id for spec in plan.specs
                             ),
-                            result=runner.EpochReplayResult(
+                            result=replay_models.EpochReplayResult(
                                 evidence_bundles=(),
                                 replay_results=(
                                     {
@@ -317,12 +325,14 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:6]
             args = self._args(output_dir)
@@ -358,12 +368,14 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
         with TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir) / "epoch"
             cards = claim_compiler_script.compile_sources_to_hypothesis_cards(
-                [runner.RECENT_WHITEPAPER_SEEDS[0]]
+                [claim_compiler.RECENT_WHITEPAPER_SEEDS[0]]
             )
-            compilation = runner.compile_whitepaper_candidate_specs(
-                hypothesis_cards=cards,
-                family_template_dir=Path("config/trading/families"),
-                seed_sweep_dir=Path("config/trading"),
+            compilation = (
+                whitepaper_candidate_compiler.compile_whitepaper_candidate_specs(
+                    hypothesis_cards=cards,
+                    family_template_dir=Path("config/trading/families"),
+                    seed_sweep_dir=Path("config/trading"),
+                )
             )
             specs = compilation.executable_specs[:4]
             args = self._args(output_dir)
@@ -396,7 +408,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                 args: Namespace,
                 output_dir: Path,
                 specs: Sequence[CandidateSpec],
-            ) -> runner.EpochReplayResult:
+            ) -> replay_models.EpochReplayResult:
                 spec = specs[0]
                 bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=spec.candidate_spec_id,
@@ -418,7 +430,7 @@ class TestAutoresearchRunnerRealReplayB(WhitepaperAutoresearchRunnerTestCaseBase
                     dataset_snapshot_id="snap-incomplete",
                     result_path=str(output_dir / "incomplete.json"),
                 )
-                return runner.EpochReplayResult(
+                return replay_models.EpochReplayResult(
                     evidence_bundles=(bundle,),
                     replay_results=({"status": "partial_replay_shards_interrupted"},),
                     incomplete=True,

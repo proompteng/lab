@@ -14,6 +14,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     json,
     runner,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_paper_probation as candidate_board_paper_probation
+import scripts.whitepaper_autoresearch_runner.candidate_board_runtime_windows as candidate_board_runtime_windows
 
 
 class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -63,9 +65,11 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
             "blockers": [],
         }
 
-        candidate = runner._candidate_board_paper_probation_candidate(
-            [row],
-            target=Decimal("500"),
+        candidate = (
+            candidate_board_paper_probation._candidate_board_paper_probation_candidate(
+                [row],
+                target=Decimal("500"),
+            )
         )
 
         self.assertIsNotNone(candidate)
@@ -77,7 +81,7 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
         )
         self.assertFalse(candidate["final_promotion_allowed"])
         self.assertIsNone(
-            runner._candidate_board_paper_probation_candidate(
+            candidate_board_paper_probation._candidate_board_paper_probation_candidate(
                 [],
                 target=Decimal("500"),
             )
@@ -117,20 +121,24 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
             "runtime_window_end": "2026-05-21T20:00:00+00:00",
         }
 
-        plan = runner._candidate_board_runtime_window_import_plan(
-            rows=(row,),
-            paper_probation_candidate=row,
-            promotion_subject={
-                "target_met": True,
-                "sleeve_candidate_spec_ids": ["spec-runtime-plan"],
-            },
+        plan = (
+            candidate_board_runtime_windows._candidate_board_runtime_window_import_plan(
+                rows=(row,),
+                paper_probation_candidate=row,
+                promotion_subject={
+                    "target_met": True,
+                    "sleeve_candidate_spec_ids": ["spec-runtime-plan"],
+                },
+            )
         )
-        fallback_plan = runner._candidate_board_runtime_window_import_plan(
-            rows=(),
-            paper_probation_candidate=fallback_row,
-            promotion_subject=None,
+        fallback_plan = (
+            candidate_board_runtime_windows._candidate_board_runtime_window_import_plan(
+                rows=(),
+                paper_probation_candidate=fallback_row,
+                promotion_subject=None,
+            )
         )
-        incomplete_plan = runner._candidate_board_runtime_window_import_plan(
+        incomplete_plan = candidate_board_runtime_windows._candidate_board_runtime_window_import_plan(
             rows=(),
             paper_probation_candidate={
                 "candidate_spec_id": "spec-incomplete",
@@ -143,11 +151,13 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
         )
 
         self.assertEqual(
-            runner._candidate_board_hypothesis_manifest_ref(None),
+            candidate_board_runtime_windows._candidate_board_hypothesis_manifest_ref(
+                None
+            ),
             "",
         )
         self.assertEqual(
-            runner._candidate_board_runtime_window_bounds(
+            candidate_board_runtime_windows._candidate_board_runtime_window_bounds(
                 {
                     "runtime_window_start": "2026-05-01",
                     "runtime_window_end": "2026-05-02",
@@ -236,19 +246,19 @@ class TestAutoresearchRunnerPaperProbationB(WhitepaperAutoresearchRunnerTestCase
         self,
     ) -> None:
         self.assertEqual(
-            runner._candidate_universe_symbols_for_compilation(
+            artifact_io._candidate_universe_symbols_for_compilation(
                 Namespace(symbols=",".join(_CHIP_UNIVERSE))
             ),
             (),
         )
         self.assertEqual(
-            runner._candidate_universe_symbols_for_compilation(
+            artifact_io._candidate_universe_symbols_for_compilation(
                 Namespace(symbols="MSFT,SHOP")
             ),
             (),
         )
         self.assertEqual(
-            runner._candidate_universe_symbols_for_compilation(
+            artifact_io._candidate_universe_symbols_for_compilation(
                 Namespace(symbols="NVDA,AMAT,AAPL")
             ),
             ("NVDA", "AAPL"),

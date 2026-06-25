@@ -9,10 +9,10 @@ from decimal import Decimal
 from typing import Any, cast
 
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
@@ -59,7 +59,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(mutated_family_spec,),
             proposal_rows=rows,
             top_k=1,
@@ -141,7 +141,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
         )
         self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(adaptive_spec,),
             proposal_rows=rows,
             top_k=0,
@@ -239,7 +239,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             rows[0]["consistency_repair_feedback_reasons"],
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(repair_spec,),
             proposal_rows=rows,
             top_k=0,
@@ -390,7 +390,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             runtime_strategy_name="late-day-continuation-long-v1",
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(
                 active_breakout,
                 active_microbar,
@@ -493,7 +493,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             "pre_replay_mlx_no_activity_feedback_blocked",
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(spec,),
             proposal_rows=rows,
             top_k=1,
@@ -598,7 +598,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(probe_spec,),
             proposal_rows=rows,
             top_k=1,
@@ -661,7 +661,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             feedback_evidence_bundles=(feedback_bundle,),
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(blocked_spec, capital_unsafe_spec),
             proposal_rows=rows,
             top_k=1,
@@ -695,7 +695,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             entry_minute_after_open="75",
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(synthetic_probe_spec, feedback_spec),
             proposal_rows=[
                 {
@@ -777,7 +777,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
         )
         self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(spec,),
             proposal_rows=rows,
             top_k=1,
@@ -827,7 +827,7 @@ class TestAutoresearchRunnerCandidateSelection(AutoresearchRunnerTestCase):
             },
         ]
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(unsafe_spec, safe_spec),
             proposal_rows=proposal_rows,
             top_k=1,

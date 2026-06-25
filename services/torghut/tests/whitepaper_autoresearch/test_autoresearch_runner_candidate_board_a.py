@@ -11,8 +11,12 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     WhitepaperAutoresearchRunnerTestCaseBase,
     json,
     replace,
-    runner,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_fields as candidate_board_fields
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.candidate_board_status as candidate_board_status
+import scripts.whitepaper_autoresearch_runner.candidate_board_summaries as candidate_board_summaries
+import scripts.whitepaper_autoresearch_runner.runtime_closure as runtime_closure
 
 
 class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -32,8 +36,10 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
                 + "\n",
                 encoding="utf-8",
             )
-            default_marker_update = runner._runtime_closure_market_impact_stress_update(
-                {"market_impact_stress_report_path": str(default_marker_path)}
+            default_marker_update = (
+                runtime_closure._runtime_closure_market_impact_stress_update(
+                    {"market_impact_stress_report_path": str(default_marker_path)}
+                )
             )
             self.assertEqual(
                 default_marker_update["market_impact_stress_source_markers"],
@@ -75,7 +81,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
                 encoding="utf-8",
             )
             component_marker_update = (
-                runner._runtime_closure_market_impact_stress_update(
+                runtime_closure._runtime_closure_market_impact_stress_update(
                     {"market_impact_stress_report_path": str(component_marker_path)}
                 )
             )
@@ -120,9 +126,12 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        self.assertEqual(runner._candidate_board_int_field({"bad": object()}, "bad"), 0)
         self.assertEqual(
-            runner._candidate_board_market_impact_proof_summary(
+            candidate_board_fields._candidate_board_int_field({"bad": object()}, "bad"),
+            0,
+        )
+        self.assertEqual(
+            candidate_board_summaries._candidate_board_market_impact_proof_summary(
                 {
                     "market_impact_stress_model": "almgren_chriss_proxy",
                     "market_impact_stress_cost_bps": "150",
@@ -144,7 +153,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
         )
         self.assertIn(
             "double_square_root_impact_arxiv_2502_16246_2025",
-            runner._candidate_board_market_impact_proof_summary(
+            candidate_board_summaries._candidate_board_market_impact_proof_summary(
                 {
                     "market_impact_stress_model": "almgren_chriss_proxy",
                     "market_impact_stress_cost_bps": "150",
@@ -163,16 +172,20 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
                 }
             )["source_markers"],
         )
-        missing_impact = runner._candidate_board_market_impact_proof_summary(
-            {"target_met": True}
+        missing_impact = (
+            candidate_board_summaries._candidate_board_market_impact_proof_summary(
+                {"target_met": True}
+            )
         )
         self.assertEqual(missing_impact["state"], "blocked")
         self.assertIn(
             "nonlinear_market_impact_components_missing",
             missing_impact["blockers"],
         )
-        regime_summary = runner._candidate_board_regime_specialist_summary(
-            spec, {"regime_slice_pass_rate": "0.30"}
+        regime_summary = (
+            candidate_board_summaries._candidate_board_regime_specialist_summary(
+                spec, {"regime_slice_pass_rate": "0.30"}
+            )
         )
         self.assertEqual(regime_summary["state"], "blocked")
         self.assertIn(
@@ -184,7 +197,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             ["risk-sensitive-routing", "vvg-validation"],
         )
         self.assertEqual(
-            runner._candidate_board_blockers(
+            candidate_board_status._candidate_board_blockers(
                 selected_for_replay=True,
                 evidence=None,
                 scorecard={},
@@ -192,19 +205,21 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             ["replay_evidence_missing"],
         )
         self.assertEqual(
-            runner._candidate_board_blockers(
+            candidate_board_status._candidate_board_blockers(
                 selected_for_replay=True,
                 evidence=evidence,
                 scorecard={"target_met": True, "oracle_passed": False},
             ),
             ["profit_target_oracle_failed"],
         )
-        dirty_lineage = runner._candidate_board_evidence_lineage_summary(
-            replace(evidence, code_commit="commit-test-dirty")
+        dirty_lineage = (
+            candidate_board_summaries._candidate_board_evidence_lineage_summary(
+                replace(evidence, code_commit="commit-test-dirty")
+            )
         )
         self.assertEqual(dirty_lineage["blockers"], ["code_commit_dirty"])
         self.assertEqual(
-            runner._candidate_board_status(
+            candidate_board_status._candidate_board_status(
                 selected_for_replay=True,
                 evidence=None,
                 scorecard={},
@@ -214,7 +229,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             "selected_pending_replay_evidence",
         )
         self.assertEqual(
-            runner._candidate_board_status(
+            candidate_board_status._candidate_board_status(
                 selected_for_replay=True,
                 evidence=evidence,
                 scorecard={"oracle_passed": True},
@@ -224,7 +239,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             "candidate_oracle_passed",
         )
         self.assertEqual(
-            runner._candidate_board_status(
+            candidate_board_status._candidate_board_status(
                 selected_for_replay=True,
                 evidence=evidence,
                 scorecard={"target_met": True, "oracle_passed": False},
@@ -234,7 +249,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             "blocked_by_oracle",
         )
         self.assertEqual(
-            runner._candidate_board_status(
+            candidate_board_status._candidate_board_status(
                 selected_for_replay=True,
                 evidence=evidence,
                 scorecard={},
@@ -243,7 +258,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             ),
             "portfolio_component_passed_oracle",
         )
-        denied_readiness = runner._promotion_readiness_payload(
+        denied_readiness = runtime_closure._promotion_readiness_payload(
             oracle_candidate_found=True,
             status="ready_for_promotion_review",
             blockers=[],
@@ -261,7 +276,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             denied_readiness["status"], "blocked_pending_promotion_prerequisites"
         )
         self.assertEqual(denied_readiness["blockers"], ["promotion_gate_report_denied"])
-        allowed_readiness = runner._promotion_readiness_payload(
+        allowed_readiness = runtime_closure._promotion_readiness_payload(
             oracle_candidate_found=True,
             status="ready_for_promotion_review",
             blockers=[],
@@ -540,7 +555,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             optimizer_report={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-portfolio-promotion-subject",
             output_dir=Path("/tmp/torghut-test"),
             target=Decimal("500"),
@@ -624,7 +639,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-rejected-signal-board",
             output_dir=Path("/tmp/epoch-rejected-signal-board"),
             target=Decimal("500"),
@@ -685,7 +700,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-unknown-lineage-board",
             output_dir=Path("/tmp/epoch-unknown-lineage-board"),
             target=Decimal("500"),
@@ -772,7 +787,7 @@ class TestAutoresearchRunnerCandidateBoardA(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-board",
             output_dir=Path("/tmp/epoch-market-limit-board"),
             target=Decimal("500"),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
 import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
 import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
 import scripts.whitepaper_autoresearch_runner.feedback_blocking_rules as feedback_blocking_rules
@@ -14,10 +15,11 @@ from typing import Any, cast
 from unittest.mock import patch
 
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.replay_execution as replay_execution
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
@@ -67,7 +69,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
         )
         self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(matching_spec,),
             proposal_rows=rows,
             top_k=1,
@@ -136,7 +138,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
             Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(matching_risk_probe,),
             proposal_rows=rows,
             top_k=1,
@@ -192,120 +194,122 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
         )
 
     def test_current_code_commit_uses_git_when_env_commit_is_missing(self) -> None:
-        rev_parse = runner.subprocess.CompletedProcess(
+        rev_parse = artifact_io.subprocess.CompletedProcess(
             args=("git", "rev-parse", "HEAD"),
             returncode=0,
             stdout="abc123\n",
         )
-        clean_diff = runner.subprocess.CompletedProcess(
+        clean_diff = artifact_io.subprocess.CompletedProcess(
             args=("git", "diff", "--quiet"),
             returncode=0,
             stdout="",
         )
         with (
-            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(artifact_io.os, "getenv", return_value=""),
             patch.object(
-                runner.subprocess,
+                artifact_io.subprocess,
                 "run",
                 side_effect=[rev_parse, clean_diff, clean_diff],
             ) as run,
         ):
-            self.assertEqual(runner._current_code_commit(), "abc123")
+            self.assertEqual(artifact_io._current_code_commit(), "abc123")
 
         self.assertEqual(run.call_count, 3)
 
     def test_current_code_commit_prefers_env_commit(self) -> None:
         with (
             patch.object(
-                runner.os,
+                artifact_io.os,
                 "getenv",
                 side_effect=lambda name: (
                     "env123" if name == "TORGHUT_CODE_COMMIT" else ""
                 ),
             ),
-            patch.object(runner.subprocess, "run") as run,
+            patch.object(artifact_io.subprocess, "run") as run,
         ):
-            self.assertEqual(runner._current_code_commit(), "env123")
+            self.assertEqual(artifact_io._current_code_commit(), "env123")
 
         run.assert_not_called()
 
     def test_current_code_commit_handles_short_container_script_path(
         self,
     ) -> None:
-        bad_rev_parse = runner.subprocess.CompletedProcess(
+        bad_rev_parse = artifact_io.subprocess.CompletedProcess(
             args=("git", "rev-parse", "HEAD"),
             returncode=128,
             stdout="",
         )
         with (
-            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(artifact_io.os, "getenv", return_value=""),
             patch.object(
-                runner,
+                artifact_io,
                 "__file__",
                 "/app/scripts/run_whitepaper_autoresearch_profit_target.py",
             ),
             patch.object(
-                runner.subprocess,
+                artifact_io.subprocess,
                 "run",
                 return_value=bad_rev_parse,
             ) as run,
         ):
-            self.assertEqual(runner._current_code_commit(), "unknown")
+            self.assertEqual(artifact_io._current_code_commit(), "unknown")
 
         self.assertEqual(run.call_args.args[0][0:3], ("git", "-C", "/"))
 
     def test_current_code_commit_marks_dirty_or_unknown_git_state(self) -> None:
-        rev_parse = runner.subprocess.CompletedProcess(
+        rev_parse = artifact_io.subprocess.CompletedProcess(
             args=("git", "rev-parse", "HEAD"),
             returncode=0,
             stdout="abc123\n",
         )
-        dirty_diff = runner.subprocess.CompletedProcess(
+        dirty_diff = artifact_io.subprocess.CompletedProcess(
             args=("git", "diff", "--quiet"),
             returncode=1,
             stdout="",
         )
-        bad_rev_parse = runner.subprocess.CompletedProcess(
+        bad_rev_parse = artifact_io.subprocess.CompletedProcess(
             args=("git", "rev-parse", "HEAD"),
             returncode=128,
             stdout="",
         )
         with (
-            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(artifact_io.os, "getenv", return_value=""),
             patch.object(
-                runner.subprocess,
+                artifact_io.subprocess,
                 "run",
                 side_effect=[rev_parse, dirty_diff],
             ),
         ):
-            self.assertEqual(runner._current_code_commit(), "abc123-dirty")
+            self.assertEqual(artifact_io._current_code_commit(), "abc123-dirty")
         with (
-            patch.object(runner.os, "getenv", return_value=""),
-            patch.object(runner.subprocess, "run", side_effect=OSError("git missing")),
-        ):
-            self.assertEqual(runner._current_code_commit(), "unknown")
-        with (
-            patch.object(runner.os, "getenv", return_value=""),
-            patch.object(runner.subprocess, "run", return_value=bad_rev_parse),
-        ):
-            self.assertEqual(runner._current_code_commit(), "unknown")
-        with (
-            patch.object(runner.os, "getenv", return_value=""),
+            patch.object(artifact_io.os, "getenv", return_value=""),
             patch.object(
-                runner.subprocess,
+                artifact_io.subprocess, "run", side_effect=OSError("git missing")
+            ),
+        ):
+            self.assertEqual(artifact_io._current_code_commit(), "unknown")
+        with (
+            patch.object(artifact_io.os, "getenv", return_value=""),
+            patch.object(artifact_io.subprocess, "run", return_value=bad_rev_parse),
+        ):
+            self.assertEqual(artifact_io._current_code_commit(), "unknown")
+        with (
+            patch.object(artifact_io.os, "getenv", return_value=""),
+            patch.object(
+                artifact_io.subprocess,
                 "run",
                 side_effect=[rev_parse, OSError("diff missing")],
             ),
         ):
-            self.assertEqual(runner._current_code_commit(), "abc123-dirty")
+            self.assertEqual(artifact_io._current_code_commit(), "abc123-dirty")
 
     def test_synthetic_replay_evidence_carries_code_commit(self) -> None:
         spec = self._candidate_spec("spec-synthetic-replay-code-commit")
         with TemporaryDirectory() as tmpdir:
             with patch.object(
-                runner, "_current_code_commit", return_value="synthetic123"
+                replay_execution, "_current_code_commit", return_value="synthetic123"
             ):
-                replay = runner._run_synthetic_replay(
+                replay = replay_execution._run_synthetic_replay(
                     specs=(spec,),
                     output_dir=Path(tmpdir),
                     max_candidates=1,
@@ -319,7 +323,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
     ) -> None:
         spec = self._candidate_spec("spec-negative-synthetic-prior")
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(spec,),
             proposal_rows=[
                 {
@@ -352,7 +356,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
     ) -> None:
         spec = self._candidate_spec("spec-negative-synthetic-prior-probe")
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(spec,),
             proposal_rows=[
                 {
@@ -391,7 +395,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
     ) -> None:
         spec = self._candidate_spec("spec-capacity-short-synthetic-prior-probe")
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(spec,),
             proposal_rows=[
                 {
@@ -434,7 +438,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
     ) -> None:
         spec = self._candidate_spec("spec-malformed-feedback-context")
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(spec,),
             proposal_rows=[
                 {
@@ -470,7 +474,7 @@ class TestCandidateSelectionKeepsPositiveSignatureFeedbackRepairCandidates(
             },
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(scalar_universe_spec,),
             proposal_rows=[
                 {

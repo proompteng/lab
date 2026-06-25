@@ -27,6 +27,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     select,
 )
 from scripts.whitepaper_autoresearch_runner import replay_execution, run_reporting
+import scripts.whitepaper_autoresearch_runner.replay_models as replay_models
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestAutoresearchRunnerPersistenceRemediation(
@@ -66,7 +68,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
             runtime_strategy_name="late-day-continuation-long-v1",
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(breakout_primary, breakout_secondary, intraday, late_day),
             proposal_rows=[
                 {
@@ -707,7 +709,7 @@ class TestAutoresearchRunnerPersistenceRemediation(
             patch.object(
                 run_reporting,
                 "_collect_partial_real_replay",
-                return_value=runner.EpochReplayResult(
+                return_value=replay_models.EpochReplayResult(
                     evidence_bundles=(
                         evidence_bundles.evidence_bundle_from_frontier_candidate(
                             candidate_spec_id="spec-partial",

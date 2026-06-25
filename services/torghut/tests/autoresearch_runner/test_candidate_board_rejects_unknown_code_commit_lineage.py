@@ -7,10 +7,11 @@ from decimal import Decimal
 from pathlib import Path
 
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.candidate_board_summaries as candidate_board_summaries
 
 
 class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCase):
@@ -38,7 +39,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-unknown-lineage-board",
             output_dir=Path("/tmp/epoch-unknown-lineage-board"),
             target=Decimal("500"),
@@ -125,7 +126,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-board",
             output_dir=Path("/tmp/epoch-market-limit-board"),
             target=Decimal("500"),
@@ -238,7 +239,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-pass-board",
             output_dir=Path("/tmp/epoch-market-limit-pass-board"),
             target=Decimal("500"),
@@ -320,7 +321,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-queue-survival-board",
             output_dir=Path("/tmp/epoch-queue-survival-board"),
             target=Decimal("500"),
@@ -380,7 +381,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             },
         )
 
-        summary = runner._candidate_board_queue_position_survival_summary(
+        summary = candidate_board_summaries._candidate_board_queue_position_survival_summary(
             spec,
             {
                 "queue_position_survival_fill_curve_evidence_present": True,
@@ -458,7 +459,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-missing-artifact-ref-board",
             output_dir=Path("/tmp/epoch-market-limit-missing-artifact-ref-board"),
             target=Decimal("500"),
@@ -554,7 +555,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-route-bool-board",
             output_dir=Path("/tmp/epoch-market-limit-route-bool-board"),
             target=Decimal("500"),
@@ -637,7 +638,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-market-limit-route-artifact-board",
             output_dir=Path("/tmp/epoch-market-limit-route-artifact-board"),
             target=Decimal("500"),
@@ -745,7 +746,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-candidate-board-split",
             output_dir=Path("/tmp/epoch-candidate-board-split"),
             target=Decimal("500"),
@@ -850,7 +851,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-alpha-decay-missing-stress",
             output_dir=Path("/tmp/epoch-alpha-decay-missing-stress"),
             target=Decimal("500"),

@@ -19,11 +19,14 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     evidence_bundle_blockers,
     patch,
     replace,
-    runner,
     sys,
 )
 from scripts.whitepaper_autoresearch_runner import proposal_building
 from scripts.whitepaper_autoresearch_runner import proposal_training
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.cli_parsing as cli_parsing
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -96,7 +99,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
         args = self._args(Path("unused"))
         args.ranker_backend_preference = "not-a-backend"
 
-        self.assertEqual(runner._ranker_backend_preference(args), "mlx")
+        self.assertEqual(cli_parsing._ranker_backend_preference(args), "mlx")
 
     def test_candidate_board_adds_factor_acceptance_replay_metadata(self) -> None:
         spec = replace(
@@ -147,7 +150,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-factor-acceptance",
             output_dir=Path("/tmp/torghut-factor-acceptance"),
             target=Decimal("500"),
@@ -449,7 +452,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             row_by_spec[control_spec.candidate_spec_id]["rank"],
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(control_spec, paper_spec),
             proposal_rows=rows,
             top_k=1,
@@ -500,7 +503,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
         )
 
         exploration_selected, exploration_selection = (
-            runner._select_candidate_specs_for_replay(
+            replay_selection._select_candidate_specs_for_replay(
                 specs=(control_spec, paper_spec),
                 proposal_rows=rows,
                 top_k=0,
@@ -535,7 +538,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                     tmpdir,
                 ],
             ):
-                args = runner._parse_args()
+                args = cli_parsing._parse_args()
 
         self.assertEqual(args.target_net_pnl_per_day, "500")
         self.assertEqual(args.epoch_id, "")
@@ -569,7 +572,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                     ],
                 ),
             ):
-                args = runner._parse_args()
+                args = cli_parsing._parse_args()
 
         self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
         self.assertEqual(args.clickhouse_username, "reader")
@@ -597,7 +600,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
                     ],
                 ),
             ):
-                args = runner._parse_args()
+                args = cli_parsing._parse_args()
 
         self.assertEqual(args.clickhouse_http_url, "http://127.0.0.1:8123")
 
@@ -614,7 +617,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=socket.gaierror("not known"),
         ):
-            failure = runner._clickhouse_endpoint_preflight_failure(args)
+            failure = artifact_io._clickhouse_endpoint_preflight_failure(args)
 
         self.assertIn("clickhouse_endpoint_unreachable", failure)
         self.assertIn("TA_CLICKHOUSE_URL", failure)
@@ -631,7 +634,7 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("non-cluster endpoints are replay-checked"),
         ):
-            failure = runner._clickhouse_endpoint_preflight_failure(args)
+            failure = artifact_io._clickhouse_endpoint_preflight_failure(args)
 
         self.assertEqual(failure, "")
 
@@ -647,6 +650,6 @@ class TestAutoresearchRunnerParser(WhitepaperAutoresearchRunnerTestCaseBase):
             "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("replay tape should bypass DNS preflight"),
         ):
-            failure = runner._clickhouse_endpoint_preflight_failure(args)
+            failure = artifact_io._clickhouse_endpoint_preflight_failure(args)
 
         self.assertEqual(failure, "")

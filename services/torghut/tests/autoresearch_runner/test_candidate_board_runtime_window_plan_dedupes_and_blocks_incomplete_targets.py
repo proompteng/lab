@@ -16,6 +16,8 @@ from tests.autoresearch_runner.helpers import (
     _CHIP_UNIVERSE,
     _compact_recent_whitepaper_sources,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_runtime_windows as candidate_board_runtime_windows
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestCandidateBoardRuntimeWindowPlanDedupesAndBlocksIncompleteTargets(
@@ -55,20 +57,24 @@ class TestCandidateBoardRuntimeWindowPlanDedupesAndBlocksIncompleteTargets(
             "runtime_window_end": "2026-05-21T20:00:00+00:00",
         }
 
-        plan = runner._candidate_board_runtime_window_import_plan(
-            rows=(row,),
-            paper_probation_candidate=row,
-            promotion_subject={
-                "target_met": True,
-                "sleeve_candidate_spec_ids": ["spec-runtime-plan"],
-            },
+        plan = (
+            candidate_board_runtime_windows._candidate_board_runtime_window_import_plan(
+                rows=(row,),
+                paper_probation_candidate=row,
+                promotion_subject={
+                    "target_met": True,
+                    "sleeve_candidate_spec_ids": ["spec-runtime-plan"],
+                },
+            )
         )
-        fallback_plan = runner._candidate_board_runtime_window_import_plan(
-            rows=(),
-            paper_probation_candidate=fallback_row,
-            promotion_subject=None,
+        fallback_plan = (
+            candidate_board_runtime_windows._candidate_board_runtime_window_import_plan(
+                rows=(),
+                paper_probation_candidate=fallback_row,
+                promotion_subject=None,
+            )
         )
-        incomplete_plan = runner._candidate_board_runtime_window_import_plan(
+        incomplete_plan = candidate_board_runtime_windows._candidate_board_runtime_window_import_plan(
             rows=(),
             paper_probation_candidate={
                 "candidate_spec_id": "spec-incomplete",
@@ -81,11 +87,13 @@ class TestCandidateBoardRuntimeWindowPlanDedupesAndBlocksIncompleteTargets(
         )
 
         self.assertEqual(
-            runner._candidate_board_hypothesis_manifest_ref(None),
+            candidate_board_runtime_windows._candidate_board_hypothesis_manifest_ref(
+                None
+            ),
             "",
         )
         self.assertEqual(
-            runner._candidate_board_runtime_window_bounds(
+            candidate_board_runtime_windows._candidate_board_runtime_window_bounds(
                 {
                     "runtime_window_start": "2026-05-01",
                     "runtime_window_end": "2026-05-02",
@@ -174,19 +182,19 @@ class TestCandidateBoardRuntimeWindowPlanDedupesAndBlocksIncompleteTargets(
         self,
     ) -> None:
         self.assertEqual(
-            runner._candidate_universe_symbols_for_compilation(
+            artifact_io._candidate_universe_symbols_for_compilation(
                 Namespace(symbols=",".join(_CHIP_UNIVERSE))
             ),
             (),
         )
         self.assertEqual(
-            runner._candidate_universe_symbols_for_compilation(
+            artifact_io._candidate_universe_symbols_for_compilation(
                 Namespace(symbols="MSFT,SHOP")
             ),
             (),
         )
         self.assertEqual(
-            runner._candidate_universe_symbols_for_compilation(
+            artifact_io._candidate_universe_symbols_for_compilation(
                 Namespace(symbols="NVDA,AMAT,AAPL")
             ),
             ("NVDA", "AAPL"),
@@ -417,7 +425,7 @@ class TestCandidateBoardRuntimeWindowPlanDedupesAndBlocksIncompleteTargets(
             runtime_strategy_name="late-day-continuation-long-v1",
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(breakout_primary, breakout_secondary, intraday, late_day),
             proposal_rows=[
                 {

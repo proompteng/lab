@@ -8,10 +8,12 @@ from decimal import Decimal
 from pathlib import Path
 
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_paper_probation as candidate_board_paper_probation
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.candidate_board_status as candidate_board_status
 
 
 class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestCase):
@@ -112,7 +114,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-paper-probation-board",
             output_dir=Path("/tmp/epoch-paper-probation-board"),
             target=Decimal("500"),
@@ -424,7 +426,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
         self.assertFalse(target["final_promotion_authorized"])
         self.assertFalse(target["final_promotion_allowed"])
         self.assertEqual(target["selection_reason"], "target_met_but_oracle_blocked")
-        handoff = runner._paper_probation_handoff_payload(board)
+        handoff = candidate_board_payloads._paper_probation_handoff_payload(board)
         self.assertEqual(
             handoff["schema_version"], "torghut.paper-probation-handoff.v1"
         )
@@ -633,7 +635,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
             objective_scorecard=bridge_scorecard,
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-paper-probation-economics",
             output_dir=Path("/tmp/epoch-paper-probation-economics"),
             target=Decimal("500"),
@@ -761,7 +763,9 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
         }
 
         self.assertEqual(
-            runner._candidate_board_paper_probation_admission_blockers(generic_row),
+            candidate_board_status._candidate_board_paper_probation_admission_blockers(
+                generic_row
+            ),
             [
                 "paper_probation_exact_replay_ledger_artifact_missing",
                 "paper_probation_exact_replay_ledger_row_count_missing",
@@ -770,7 +774,9 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
             ],
         )
         self.assertEqual(
-            runner._candidate_board_paper_probation_admission_blockers(ledger_row),
+            candidate_board_status._candidate_board_paper_probation_admission_blockers(
+                ledger_row
+            ),
             [],
         )
 
@@ -820,9 +826,11 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
             "blockers": [],
         }
 
-        candidate = runner._candidate_board_paper_probation_candidate(
-            [row],
-            target=Decimal("500"),
+        candidate = (
+            candidate_board_paper_probation._candidate_board_paper_probation_candidate(
+                [row],
+                target=Decimal("500"),
+            )
         )
 
         self.assertIsNotNone(candidate)
@@ -834,7 +842,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
         )
         self.assertFalse(candidate["final_promotion_allowed"])
         self.assertIsNone(
-            runner._candidate_board_paper_probation_candidate(
+            candidate_board_paper_probation._candidate_board_paper_probation_candidate(
                 [],
                 target=Decimal("500"),
             )

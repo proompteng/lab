@@ -8,8 +8,9 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     WhitepaperAutoresearchRunnerTestCaseBase,
     json,
     replace,
-    runner,
 )
+import scripts.whitepaper_autoresearch_runner.candidate_board_payloads as candidate_board_payloads
+import scripts.whitepaper_autoresearch_runner.candidate_board_status as candidate_board_status
 
 
 class TestAutoresearchRunnerPaperProbationA(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -110,7 +111,7 @@ class TestAutoresearchRunnerPaperProbationA(WhitepaperAutoresearchRunnerTestCase
             promotion_readiness={},
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-paper-probation-board",
             output_dir=Path("/tmp/epoch-paper-probation-board"),
             target=Decimal("500"),
@@ -422,7 +423,7 @@ class TestAutoresearchRunnerPaperProbationA(WhitepaperAutoresearchRunnerTestCase
         self.assertFalse(target["final_promotion_authorized"])
         self.assertFalse(target["final_promotion_allowed"])
         self.assertEqual(target["selection_reason"], "target_met_but_oracle_blocked")
-        handoff = runner._paper_probation_handoff_payload(board)
+        handoff = candidate_board_payloads._paper_probation_handoff_payload(board)
         self.assertEqual(
             handoff["schema_version"], "torghut.paper-probation-handoff.v1"
         )
@@ -631,7 +632,7 @@ class TestAutoresearchRunnerPaperProbationA(WhitepaperAutoresearchRunnerTestCase
             objective_scorecard=bridge_scorecard,
         )
 
-        board = runner._candidate_board_payload(
+        board = candidate_board_payloads._candidate_board_payload(
             epoch_id="epoch-paper-probation-economics",
             output_dir=Path("/tmp/epoch-paper-probation-economics"),
             target=Decimal("500"),
@@ -759,7 +760,9 @@ class TestAutoresearchRunnerPaperProbationA(WhitepaperAutoresearchRunnerTestCase
         }
 
         self.assertEqual(
-            runner._candidate_board_paper_probation_admission_blockers(generic_row),
+            candidate_board_status._candidate_board_paper_probation_admission_blockers(
+                generic_row
+            ),
             [
                 "paper_probation_exact_replay_ledger_artifact_missing",
                 "paper_probation_exact_replay_ledger_row_count_missing",
@@ -768,6 +771,8 @@ class TestAutoresearchRunnerPaperProbationA(WhitepaperAutoresearchRunnerTestCase
             ],
         )
         self.assertEqual(
-            runner._candidate_board_paper_probation_admission_blockers(ledger_row),
+            candidate_board_status._candidate_board_paper_probation_admission_blockers(
+                ledger_row
+            ),
             [],
         )

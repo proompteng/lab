@@ -9,8 +9,8 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     WhitepaperAutoresearchRunnerTestCaseBase,
     cast,
     replace,
-    runner,
 )
+import scripts.whitepaper_autoresearch_runner.replay_selection as replay_selection
 
 
 class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase):
@@ -57,7 +57,7 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
             Decimal(str(rows[0]["proposal_score"])), Decimal("-999999")
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(mutated_family_spec,),
             proposal_rows=rows,
             top_k=1,
@@ -139,7 +139,7 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
         )
         self.assertGreater(Decimal(str(rows[0]["proposal_score"])), Decimal("-999999"))
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(adaptive_spec,),
             proposal_rows=rows,
             top_k=0,
@@ -237,7 +237,7 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
             rows[0]["consistency_repair_feedback_reasons"],
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(repair_spec,),
             proposal_rows=rows,
             top_k=0,
@@ -388,7 +388,7 @@ class TestAutoresearchRunnerSelectionA(WhitepaperAutoresearchRunnerTestCaseBase)
             runtime_strategy_name="late-day-continuation-long-v1",
         )
 
-        selected, selection = runner._select_candidate_specs_for_replay(
+        selected, selection = replay_selection._select_candidate_specs_for_replay(
             specs=(
                 active_breakout,
                 active_microbar,

@@ -4,10 +4,10 @@ from __future__ import annotations
 import app.trading.discovery.evidence_bundles as evidence_bundles
 import scripts.whitepaper_autoresearch_runner.candidate_goal_metadata as candidate_goal_metadata
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from tests.autoresearch_runner.helpers import (
     AutoresearchRunnerTestCase,
 )
+import scripts.whitepaper_autoresearch_runner.common as runner_common
 
 
 class TestCandidateSleeveGoalProofHandoffSurfacesRuntimeLedgerMaterialization(
@@ -70,17 +70,19 @@ class TestCandidateSleeveGoalProofHandoffSurfacesRuntimeLedgerMaterialization(
             proof_handoff["zero_authoritative_daily_pnl_until_materialized"]
         )
         self.assertEqual(
-            runner._candidate_board_runtime_ledger_required_materialized_artifacts({}),
+            runner_common._candidate_board_runtime_ledger_required_materialized_artifacts(
+                {}
+            ),
             [],
         )
         self.assertEqual(
-            runner._candidate_board_runtime_ledger_required_materialized_artifacts(
+            runner_common._candidate_board_runtime_ledger_required_materialized_artifacts(
                 {"required_materialized_artifacts": "runtime-ledger/string.json"}
             ),
             ["runtime-ledger/string.json"],
         )
         self.assertEqual(
-            runner._candidate_board_runtime_ledger_required_materialized_artifacts(
+            runner_common._candidate_board_runtime_ledger_required_materialized_artifacts(
                 {
                     "required_materialized_artifacts": [
                         {"path": "runtime-ledger/path.json"},
