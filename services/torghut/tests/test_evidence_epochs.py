@@ -274,7 +274,7 @@ class TestEvidenceEpochs(TestCase):
             with (
                 session_local() as session,
                 patch(
-                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy.evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -372,7 +372,7 @@ class TestEvidenceEpochs(TestCase):
             session.commit()
             with (
                 patch(
-                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy.evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -512,7 +512,7 @@ class TestEvidenceEpochs(TestCase):
         with session_local() as session:
             with (
                 patch(
-                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy.evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -554,7 +554,7 @@ class TestEvidenceEpochs(TestCase):
         with session_local() as session:
             with (
                 patch(
-                    "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
+                    "app.api.trading_misc.trading_autonomy.evaluate_database_contract",
                     return_value={
                         "ok": True,
                         "schema_current": True,
@@ -958,7 +958,7 @@ class TestEvidenceEpochs(TestCase):
             )
 
             with patch(
-                "app.api.trading_misc.trading_autonomy._evaluate_database_contract",
+                "app.api.trading_misc.trading_autonomy.evaluate_database_contract",
                 side_effect=RuntimeError("database contract unavailable"),
             ):
                 degraded_response = client.get(

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 
-from app.api import readiness_helpers as readiness_helpers_api
+from app.api.readiness_helpers import (
+    refresh_universe_state_for_readiness as readiness_universe_refresh,
+)
 
 from tests.api.trading_api_support import (
     AutoresearchCandidateSpec,
@@ -247,7 +249,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_reports_schema_heads(
@@ -301,7 +303,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_lineage_divergence_returns_503_when_override_disabled(
@@ -354,7 +356,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_lineage_warning_returns_200_when_override_enabled(
@@ -414,7 +416,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         },
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True},
     )
     def test_db_check_schema_mismatch_returns_503(
@@ -545,7 +547,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
                 raise AssertionError(f"unexpected SQL: {sql}")
 
         fake_session = FakeSession()
-        payload = readiness_helpers_api._check_account_scope_invariants_bounded(
+        payload = readiness_universe_refresh.check_account_scope_invariants_bounded(
             fake_session
         )
 
@@ -646,7 +648,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         original_multi = settings.trading_multi_account_enabled
         settings.trading_multi_account_enabled = False
         try:
-            payload = readiness_helpers_api._check_account_scope_invariants_bounded(
+            payload = readiness_universe_refresh.check_account_scope_invariants_bounded(
                 FakeSession()
             )
         finally:
@@ -693,12 +695,12 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = True
         try:
             with patch(
-                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
                 side_effect=SQLAlchemyError(
                     "canceling statement due to statement timeout"
                 ),
             ):
-                payload = readiness_helpers_api._evaluate_database_contract(
+                payload = readiness_universe_refresh.evaluate_database_contract(
                     _FakeDatabaseContractSession()
                 )
         finally:
@@ -731,12 +733,12 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = False
         try:
             with patch(
-                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
                 side_effect=SQLAlchemyError(
                     "canceling statement due to statement timeout"
                 ),
             ):
-                payload = readiness_helpers_api._evaluate_database_contract(
+                payload = readiness_universe_refresh.evaluate_database_contract(
                     _FakeDatabaseContractSession()
                 )
         finally:
@@ -772,7 +774,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = True
         try:
             with patch(
-                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
                 return_value={
                     "account_scope_ready": False,
                     "account_scope_errors": [
@@ -815,7 +817,7 @@ class TestTradingApiDbContract(TradingApiTestCaseBase):
         settings.trading_multi_account_enabled = False
         try:
             with patch(
-                "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
                 return_value={
                     "account_scope_ready": False,
                     "account_scope_errors": ["legacy unique constraint/index detected"],

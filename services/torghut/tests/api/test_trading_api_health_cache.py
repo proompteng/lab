@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.api import common as common_api
-from app.api import readiness_helpers as readiness_helpers_api
+from app.api.readiness_helpers import readiness_surface as readiness_surface_helpers
 
 from tests.api.trading_api_support import (
     Event,
@@ -25,12 +25,10 @@ HEALTH_CHECKS_API = "app.api.health_checks"
 READINESS_CONTRACT_API = (
     "app.api.readiness_helpers.refresh_universe_state_for_readiness"
 )
-PATCH_ACCOUNT_SCOPE = (
-    f"{READINESS_CONTRACT_API}._check_account_scope_invariants_bounded"
-)
+PATCH_ACCOUNT_SCOPE = f"{READINESS_CONTRACT_API}.check_account_scope_invariants_bounded"
 PATCH_ALPACA = f"{HEALTH_CHECKS_API}.check_alpaca_dependency"
 PATCH_CLICKHOUSE = f"{HEALTH_CHECKS_API}.check_clickhouse_dependency"
-PATCH_DATABASE_CONTRACT = f"{READINESS_CONTRACT_API}._evaluate_database_contract"
+PATCH_DATABASE_CONTRACT = f"{READINESS_CONTRACT_API}.evaluate_database_contract"
 PATCH_POSTGRES = f"{HEALTH_CHECKS_API}.check_postgres_dependency"
 PATCH_SCHEMA_CURRENT = f"{READINESS_CONTRACT_API}.check_schema_current"
 PATCH_TIGERBEETLE = f"{HEALTH_CHECKS_API}.build_tigerbeetle_ledger_status"
@@ -111,7 +109,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_timeout_uses_cached_dependency_shape(self) -> None:
         original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
         common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
-        health_cache_key = readiness_helpers_api._trading_health_surface_cache_key(
+        health_cache_key = readiness_surface_helpers.trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
         )
@@ -175,7 +173,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_serves_completed_health_cache_while_refreshing(
         self,
     ) -> None:
-        cache_key = readiness_helpers_api._trading_health_surface_cache_key(
+        cache_key = readiness_surface_helpers.trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
         )
@@ -241,7 +239,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_serves_cached_payload_during_inflight_refresh(
         self,
     ) -> None:
-        cache_key = readiness_helpers_api._trading_health_surface_cache_key(
+        cache_key = readiness_surface_helpers.trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
         )
@@ -305,7 +303,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     ) -> None:
         original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
         common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
-        cache_key = readiness_helpers_api._trading_health_surface_cache_key(
+        cache_key = readiness_surface_helpers.trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
         )
@@ -381,7 +379,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_starts_fresh_eval_when_completed_future_has_no_cache(
         self,
     ) -> None:
-        cache_key = readiness_helpers_api._trading_health_surface_cache_key(
+        cache_key = readiness_surface_helpers.trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
         )
@@ -441,7 +439,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             settings.trading_simple_submit_enabled = False
             settings.trading_live_submit_activation_expires_at = "2000-01-01T00:00:00Z"
 
-            gate = readiness_helpers_api._minimal_health_surface_timeout_live_submission_gate(
+            gate = readiness_surface_helpers.minimal_health_surface_timeout_live_submission_gate(
                 reason_code="readyz_evaluation_timeout",
                 detail="readyz evaluation exceeded 3.0s",
             )
@@ -478,7 +476,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
     def test_trading_health_timeout_uses_cached_blockers_fail_closed(self) -> None:
         original_timeout = common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
         common_api.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS = 0.01
-        cache_key = readiness_helpers_api._trading_health_surface_cache_key(
+        cache_key = readiness_surface_helpers.trading_health_surface_cache_key(
             include_database_contract=False,
             allow_stale_dependency_cache=False,
         )

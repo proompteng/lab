@@ -30,9 +30,9 @@ from app.api import health_checks as health_checks_api
 from app.api import maintenance as maintenance_api
 from app.api import proof_floor_payloads as proof_floor_payloads_api
 from app.api import proofs as proofs_api
-from app.api import readiness_helpers as readiness_helpers_api
 from app.api import status_helpers as status_helpers_api
 from app.api import trading_misc as trading_misc_api
+from app.api.readiness_helpers import readiness_surface as readiness_surface_helpers
 from app.db import get_session
 from app.main import app
 from app.trading.paper_route_target_plan import (
@@ -81,7 +81,7 @@ _build_live_submission_gate_payload = (
     health_checks_api.build_api_live_submission_gate_payload
 )
 _build_route_image_proof_summary = (
-    proof_floor_payloads_api._build_route_image_proof_summary
+    proof_floor_payloads_api.build_route_image_proof_summary
 )
 _check_alpaca = health_checks_api.check_alpaca_dependency
 _daily_runtime_ledger_portfolio_summary = (
@@ -97,18 +97,20 @@ _load_options_catalog_freshness_summary = (
     health_checks_api.load_options_catalog_freshness_summary
 )
 _load_rejected_signal_outcome_learning_summary = (
-    proof_floor_payloads_api._load_rejected_signal_outcome_learning_summary
+    proof_floor_payloads_api.load_rejected_signal_outcome_learning_summary
 )
 _merge_external_paper_route_target_plan = (
     proofs_api._merge_external_paper_route_target_plan
 )
 _paper_route_target_plan_from_payload = proofs_api._paper_route_target_plan_from_payload
-_readiness_dependency_cache_key = readiness_helpers_api._readiness_dependency_cache_key
-_readiness_dependency_checks = readiness_helpers_api._readiness_dependency_checks
+_readiness_dependency_cache_key = (
+    readiness_surface_helpers.readiness_dependency_cache_key
+)
+_readiness_dependency_checks = readiness_surface_helpers.readiness_dependency_checks
 _retryable_tca_recompute_error = common_api._retryable_tca_recompute_error
 _route_claim_symbols = health_checks_api.route_claim_symbols
 _route_continuity_packet_for_proof_floor = (
-    proof_floor_payloads_api._route_continuity_packet_for_proof_floor
+    proof_floor_payloads_api.route_continuity_packet_for_proof_floor
 )
 healthz = app_bootstrap.healthz
 
@@ -791,7 +793,6 @@ __all__: tuple[str, ...] = (
     "persist_completion_trace",
     "proof_floor_payloads_api",
     "proofs_api",
-    "readiness_helpers_api",
     "select",
     "sessionmaker",
     "settings",

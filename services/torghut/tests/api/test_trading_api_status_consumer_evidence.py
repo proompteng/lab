@@ -160,7 +160,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.api.maintenance._evaluate_trading_health_payload",
+                "app.api.maintenance.evaluate_trading_health_payload",
                 return_value=({"status": "degraded"}, 503),
             ),
             patch(
@@ -241,7 +241,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.api.maintenance._evaluate_trading_health_payload",
+                "app.api.maintenance.evaluate_trading_health_payload",
                 return_value=({"status": "degraded"}, 503),
             ),
             patch(

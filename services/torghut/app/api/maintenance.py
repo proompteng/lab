@@ -40,8 +40,8 @@ from .common import (
 from .common import main_runtime_value
 from .application import get_app
 from .readiness_helpers import (
-    evaluate_database_contract as _evaluate_database_contract,
-    evaluate_trading_health_payload as _evaluate_trading_health_payload,
+    evaluate_database_contract,
+    evaluate_trading_health_payload,
 )
 from .trading_status import trading_status
 
@@ -71,7 +71,7 @@ def _load_jangar_verify_trust_foreclosure_board(
 def trading_revenue_repair() -> dict[str, object]:
     """Return business-state and repair-priority evidence for revenue readiness."""
 
-    readyz_payload, _status_code = _evaluate_trading_health_payload(
+    readyz_payload, _status_code = evaluate_trading_health_payload(
         include_database_contract=True,
         allow_stale_dependency_cache=True,
     )
@@ -515,7 +515,7 @@ def db_check(session: Session = Depends(get_session)) -> dict[str, object]:
     """Verify database connectivity and Alembic schema head alignment."""
 
     try:
-        database_contract = _evaluate_database_contract(session)
+        database_contract = evaluate_database_contract(session)
         schema_status = {
             "schema_current": bool(database_contract.get("schema_current")),
             "current_heads": database_contract.get("schema_current_heads"),

@@ -35,7 +35,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -104,7 +104,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -184,7 +184,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -268,7 +268,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -356,7 +356,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -441,7 +441,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -536,7 +536,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -614,7 +614,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             )
 
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -682,7 +682,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
             settings.trading_readiness_dependency_cache_ttl_seconds = original_cache_ttl
 
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -766,7 +766,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": False, "detail": "down"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -821,7 +821,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -891,7 +891,7 @@ class TestTradingApiHealthDependency(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
