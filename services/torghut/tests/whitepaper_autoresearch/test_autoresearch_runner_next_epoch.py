@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import scripts.whitepaper_autoresearch_runner.candidate_remediation as candidate_remediation
+import scripts.whitepaper_autoresearch_runner.next_epoch_planning as next_epoch_planning
+import scripts.whitepaper_autoresearch_runner.replay_shards as replay_shards
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
     Path,
@@ -14,7 +18,7 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
 
 class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
     def test_remediation_prioritizes_missing_promotion_proof(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {"compiled_candidate_count": "not-an-int"},
@@ -78,7 +82,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
         )
 
     def test_remediation_defers_promotion_proof_until_profit_gates_pass(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_candidate_failed_profit_target_oracle",
             candidate_selection={
                 "rows": [
@@ -134,7 +138,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
         self.assertEqual(proof_action["priority"], 7)
 
     def test_remediation_increases_breadth_from_current_epoch(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "rows": [
@@ -203,7 +207,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 start=1,
             )
         ]
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -276,7 +280,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 "selected_for_replay": True,
             }
         ]
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -334,7 +338,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
     def test_remediation_recommends_surface_mutation_when_mlx_blocks_synthetic_prior(
         self,
     ) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -377,7 +381,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
     def test_remediation_recommends_surface_mutation_when_feedback_blocks_all_candidates(
         self,
     ) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {
@@ -438,7 +442,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
@@ -489,7 +493,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
@@ -527,10 +531,10 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
-            flags = runner._profitability_next_epoch_flags(
+            flags = next_epoch_planning._profitability_next_epoch_flags(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
@@ -640,17 +644,17 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 
         self.assertEqual(
-            runner._bounded_real_replay_shard_timeout_seconds(0),
-            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            replay_shards._bounded_real_replay_shard_timeout_seconds(0),
+            replay_shards._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
         self.assertEqual(
-            runner._bounded_real_replay_shard_timeout_seconds(-1),
-            runner._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
+            replay_shards._bounded_real_replay_shard_timeout_seconds(-1),
+            replay_shards._DEFAULT_REAL_REPLAY_SHARD_TIMEOUT_SECONDS,
         )
         self.assertEqual(plan["flags"]["--real-replay-shard-timeout-seconds"], "900")
         self.assertIn(
@@ -681,7 +685,7 @@ class TestAutoresearchRunnerNextEpoch(WhitepaperAutoresearchRunnerTestCaseBase):
                 ]
             }
 
-            plan = runner._profitability_next_epoch_plan(
+            plan = next_epoch_planning._profitability_next_epoch_plan(
                 args=args, target=Decimal("500"), remediation=remediation
             )
 

@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.replay_tape as replay_tape
+from app.trading.discovery.candidate_specs import CandidateSpec
+import scripts.local_intraday_tsmom_replay as replay_mod
+import scripts.materialize_replay_tape as replay_materializer
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.preview_narrowing as preview_narrowing
+import scripts.whitepaper_autoresearch_runner.queue_metadata as queue_metadata
+
 from dataclasses import replace
 import json
 from argparse import Namespace
@@ -48,10 +57,12 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             args.full_window_start_date = "2026-02-23"
             args.full_window_end_date = "2026-02-27"
 
-            self.assertEqual(runner._resolved_fast_replay_preview_top_k(args), 77)
+            self.assertEqual(
+                preview_narrowing._resolved_fast_replay_preview_top_k(args), 77
+            )
 
             args.replay_tape_path = None
-            self.assertTrue(runner._auto_materialize_staged_replay_tape(args))
+            self.assertTrue(queue_metadata._auto_materialize_staged_replay_tape(args))
 
     def test_fast_replay_preview_scores_microstructure_diagnostics_preview_only(
         self,
@@ -196,15 +207,15 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 for seq, day in enumerate(range(23, 28), start=1)
             ]
 
-            with patch.object(
-                runner.replay_mod, "_iter_signal_rows", return_value=rows
-            ):
-                updated_args, receipt = runner._maybe_materialize_epoch_replay_tape(
-                    args=args,
-                    output_dir=output_dir,
-                    epoch_id="epoch-materialized",
+            with patch.object(replay_mod, "_iter_signal_rows", return_value=rows):
+                updated_args, receipt = (
+                    queue_metadata._maybe_materialize_epoch_replay_tape(
+                        args=args,
+                        output_dir=output_dir,
+                        epoch_id="epoch-materialized",
+                    )
                 )
-            tape = runner.load_replay_tape(updated_args.replay_tape_path)
+            tape = replay_tape.load_replay_tape(updated_args.replay_tape_path)
             self.assertIsNotNone(receipt)
             assert receipt is not None
             self.assertEqual(
@@ -245,14 +256,12 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 )
             ]
 
-            with patch.object(
-                runner.replay_mod, "_iter_signal_rows", return_value=rows
-            ):
+            with patch.object(replay_mod, "_iter_signal_rows", return_value=rows):
                 with self.assertRaisesRegex(
                     ValueError,
                     "replay_tape_incomplete_coverage:missing_days=2026-02-24,2026-02-25,2026-02-26,2026-02-27",
                 ):
-                    runner._maybe_materialize_epoch_replay_tape(
+                    queue_metadata._maybe_materialize_epoch_replay_tape(
                         args=args,
                         output_dir=output_dir,
                         epoch_id="epoch-materialized",
@@ -272,7 +281,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             args.materialize_replay_tape = True
             args.replay_tape_path = root / "provided-tape.jsonl"
 
-            updated_args, receipt = runner._maybe_materialize_epoch_replay_tape(
+            updated_args, receipt = queue_metadata._maybe_materialize_epoch_replay_tape(
                 args=args,
                 output_dir=output_dir,
                 epoch_id="epoch-skip",
@@ -286,7 +295,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             with self.assertRaisesRegex(
                 ValueError, "replay_tape_materialization_requires_real_replay"
             ):
-                runner._maybe_materialize_epoch_replay_tape(
+                queue_metadata._maybe_materialize_epoch_replay_tape(
                     args=args,
                     output_dir=output_dir,
                     epoch_id="epoch-synthetic",
@@ -297,7 +306,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             with self.assertRaisesRegex(
                 ValueError, "replay_tape_materialization_requires_replay_execution"
             ):
-                runner._maybe_materialize_epoch_replay_tape(
+                queue_metadata._maybe_materialize_epoch_replay_tape(
                     args=args,
                     output_dir=output_dir,
                     epoch_id="epoch-selection-only",
@@ -309,7 +318,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 ValueError,
                 "replay_tape_materialization_requires_full_window_start_date",
             ):
-                runner._maybe_materialize_epoch_replay_tape(
+                queue_metadata._maybe_materialize_epoch_replay_tape(
                     args=args,
                     output_dir=output_dir,
                     epoch_id="epoch-missing-window",
@@ -367,7 +376,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             }
 
             with patch.object(
-                runner.replay_materializer,
+                replay_materializer,
                 "_fetch_coverage_diagnostics",
                 return_value=coverage,
             ) as fetch:
@@ -403,7 +412,7 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
             args.full_window_end_date = "2026-02-27"
             args.symbols = "NVDA"
             args.replay_tape_dataset_snapshot_ref = "preview-snapshot"
-            requested_symbols = runner._candidate_universe_symbols_from_args(args)
+            requested_symbols = artifact_io._candidate_universe_symbols_from_args(args)
             materialize_signal_tape(
                 rows=[
                     SignalEnvelope(
@@ -421,17 +430,21 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 symbols=requested_symbols,
                 start_date=date(2026, 2, 23),
                 end_date=date(2026, 2, 27),
-                source_query_digest=runner._materialized_replay_tape_source_query_digest(
+                source_query_digest=queue_metadata._materialized_replay_tape_source_query_digest(
                     args=args,
                     symbols=requested_symbols,
                     start_date=date(2026, 2, 23),
                     end_date=date(2026, 2, 27),
                 ),
-                feature_schema_hash=runner._materialized_replay_tape_feature_schema_hash(
+                feature_schema_hash=queue_metadata._materialized_replay_tape_feature_schema_hash(
                     args
                 ),
-                cost_model_hash=runner._materialized_replay_tape_cost_model_hash(args),
-                strategy_family=runner._materialized_replay_tape_strategy_family(args),
+                cost_model_hash=queue_metadata._materialized_replay_tape_cost_model_hash(
+                    args
+                ),
+                strategy_family=queue_metadata._materialized_replay_tape_strategy_family(
+                    args
+                ),
             )
             spec = self._candidate_spec("spec-preview-fallback")
             selection = {
@@ -673,11 +686,11 @@ class TestStagedReplayFrontierDefaultResolversEnableBoundedRealPath(
                 *,
                 args: Namespace,
                 output_dir: Path,
-                specs: Sequence[runner.CandidateSpec],
+                specs: Sequence[CandidateSpec],
             ) -> runner.EpochReplayResult:
                 del args
                 captured_spec_ids.extend(spec.candidate_spec_id for spec in specs)
-                bundle = runner.evidence_bundle_from_frontier_candidate(
+                bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
                     candidate_spec_id=specs[0].candidate_spec_id,
                     candidate={
                         "candidate_id": "cand-direct-a",

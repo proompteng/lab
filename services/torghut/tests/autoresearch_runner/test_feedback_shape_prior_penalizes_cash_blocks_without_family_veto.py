@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import scripts.whitepaper_autoresearch_runner.feedback_blocking_rules as feedback_blocking_rules
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+
 from dataclasses import replace
 from decimal import Decimal
 from unittest.mock import patch
 
 from sqlalchemy.orm import Session
 
-import scripts.run_whitepaper_autoresearch_profit_target as runner
 from app.models import (
     AutoresearchPortfolioCandidate,
 )
@@ -28,9 +33,9 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             hypothesis_id="hyp-spec-shape-cash-probe",
             hard_vetoes={"required_min_daily_notional": "400000"},
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=failed_spec.candidate_spec_id,
-            candidate=runner._candidate_payload_with_feedback_metadata(
+            candidate=candidate_prior_scoring._candidate_payload_with_feedback_metadata(
                 spec=failed_spec,
                 candidate={
                     "candidate_id": "cand-shape-cash-source",
@@ -47,7 +52,7 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             result_path="feedback://shape-cash",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(same_shape_probe,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -67,9 +72,12 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
                 "universe_symbols": "NVDA",
             },
         )
-        self.assertEqual(runner._candidate_spec_universe_key(invalid_universe_spec), "")
+        self.assertEqual(
+            candidate_prior_scoring._candidate_spec_universe_key(invalid_universe_spec),
+            "",
+        )
         self.assertTrue(
-            runner._feedback_scorecard_has_hard_veto(
+            feedback_blocking_rules._feedback_scorecard_has_hard_veto(
                 {
                     "profit_target_oracle": {
                         "blockers": ["positive_day_ratio_below_oracle"]
@@ -78,11 +86,15 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             )
         )
         self.assertTrue(
-            runner._feedback_scorecard_has_hard_veto({"oracle_passed": False})
+            feedback_blocking_rules._feedback_scorecard_has_hard_veto(
+                {"oracle_passed": False}
+            )
         )
-        self.assertFalse(runner._feedback_daily_net_has_loss({"daily_net": "bad"}))
+        self.assertFalse(
+            feedback_blocking_rules._feedback_daily_net_has_loss({"daily_net": "bad"})
+        )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block(
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
                 {
                     "profit_target_oracle": {
                         "blockers": ["active_day_ratio_below_oracle"]
@@ -91,13 +103,17 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             )
         )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block({"positive_day_ratio": "0.5"})
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
+                {"positive_day_ratio": "0.5"}
+            )
         )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block({"best_day_share": "0.51"})
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
+                {"best_day_share": "0.51"}
+            )
         )
         self.assertTrue(
-            runner._feedback_family_prior_has_hard_block(
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
                 {
                     "active_day_ratio": "1",
                     "positive_day_ratio": "1",
@@ -117,11 +133,15 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             {"max_single_symbol_contribution_share": "0.36"},
             {"max_cluster_contribution_share": "0.41"},
         ):
-            self.assertTrue(runner._feedback_risk_profile_has_penalty(scorecard))
-        self.assertEqual(runner._feedback_risk_profile_key_from_scorecard({}), "")
+            self.assertTrue(
+                feedback_blocking_rules._feedback_risk_profile_has_penalty(scorecard)
+            )
+        self.assertEqual(
+            feedback_blocking_rules._feedback_risk_profile_key_from_scorecard({}), ""
+        )
 
         spec = self._candidate_spec("spec-empty-risk-key")
-        orphan_bundle = runner.evidence_bundle_from_frontier_candidate(
+        orphan_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-unmatched-risk-feedback",
             candidate={
                 "candidate_id": "cand-unmatched-risk-feedback",
@@ -130,7 +150,7 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             dataset_snapshot_id="snap-empty-risk-key",
             result_path="feedback://empty-risk-key",
         )
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,),
             feedback_evidence_bundles=(orphan_bundle,),
         )
@@ -203,7 +223,9 @@ class TestFeedbackShapePriorPenalizesCashBlocksWithoutFamilyVeto(
             )
             session.commit()
 
-            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+            loaded, manifest = (
+                persisted_feedback_sources._load_recent_persisted_feedback_evidence_bundles()
+            )
 
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)

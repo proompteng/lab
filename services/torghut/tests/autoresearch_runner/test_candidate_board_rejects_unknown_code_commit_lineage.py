@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -14,7 +16,7 @@ from tests.autoresearch_runner.helpers import (
 class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCase):
     def test_candidate_board_rejects_unknown_code_commit_lineage(self) -> None:
         spec = self._candidate_spec("spec-unknown-lineage")
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-unknown-lineage",
             candidate_id="cand-unknown-lineage",
@@ -98,7 +100,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-proof",
             candidate_id="cand-market-limit-proof",
@@ -187,7 +189,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-pass",
             candidate_id="cand-market-limit-pass",
@@ -289,7 +291,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_order_lifecycle_fill_evidence": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-queue-survival-proof",
             candidate_id="cand-queue-survival-proof",
@@ -423,7 +425,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-missing-artifact-ref",
             candidate_id="cand-market-limit-missing-artifact-ref",
@@ -519,7 +521,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-route-bool",
             candidate_id="cand-market-limit-route-bool",
@@ -602,7 +604,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-route-artifact",
             candidate_id="cand-market-limit-route-artifact",
@@ -672,7 +674,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
             "spec-hmicro-proof",
             family_template_id="microstructure_continuation_matched_filter_v1",
         )
-        executed_evidence = runner.CandidateEvidenceBundle(
+        executed_evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-hmicro-proof",
             candidate_id="chip-paper-microbar-composite@execution-proof",
@@ -823,7 +825,7 @@ class TestCandidateBoardRejectsUnknownCodeCommitLineage(AutoresearchRunnerTestCa
                 "requires_spread_adjusted_label_replay": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-alpha-decay-missing-stress",
             candidate_id="cand-alpha-decay-missing-stress",

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.candidate_goal_metadata as candidate_goal_metadata
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
     Path,
@@ -35,7 +38,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-pass",
             candidate_id="cand-market-limit-pass",
@@ -137,7 +140,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 "requires_order_lifecycle_fill_evidence": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-queue-survival-proof",
             candidate_id="cand-queue-survival-proof",
@@ -271,7 +274,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-missing-artifact-ref",
             candidate_id="cand-market-limit-missing-artifact-ref",
@@ -367,7 +370,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-route-bool",
             candidate_id="cand-market-limit-route-bool",
@@ -450,7 +453,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 "requires_execution_shortfall": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-market-limit-route-artifact",
             candidate_id="cand-market-limit-route-artifact",
@@ -520,7 +523,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             "spec-hmicro-proof",
             family_template_id="microstructure_continuation_matched_filter_v1",
         )
-        executed_evidence = runner.CandidateEvidenceBundle(
+        executed_evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-hmicro-proof",
             candidate_id="chip-paper-microbar-composite@execution-proof",
@@ -671,7 +674,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 "requires_spread_adjusted_label_replay": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-alpha-decay-missing-stress",
             candidate_id="cand-alpha-decay-missing-stress",
@@ -743,7 +746,7 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             "zero_authoritative_daily_pnl_until_materialized": True,
             "required_artifacts": "runtime-ledger/daily-pnl.json",
         }
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-sleeve-runtime-ledger-handoff",
             candidate_id="cand-sleeve-runtime-ledger-handoff",
@@ -764,12 +767,14 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
             },
         )
 
-        proof_handoff = runner._candidate_sleeve_goal_proof_handoff_fields(
-            selection={"selected_for_replay": True},
-            spec=spec,
-            scorecard=evidence.objective_scorecard,
-            evidence=evidence,
-            selected_for_replay=True,
+        proof_handoff = (
+            candidate_goal_metadata._candidate_sleeve_goal_proof_handoff_fields(
+                selection={"selected_for_replay": True},
+                spec=spec,
+                scorecard=evidence.objective_scorecard,
+                evidence=evidence,
+                selected_for_replay=True,
+            )
         )
 
         self.assertEqual(
@@ -824,14 +829,16 @@ class TestAutoresearchRunnerCandidateBoardB(WhitepaperAutoresearchRunnerTestCase
                 {"ref": "runtime-ledger/scorecard-ref.json"}
             ],
         }
-        scorecard_proof_handoff = runner._candidate_sleeve_goal_proof_handoff_fields(
-            selection={},
-            spec=None,
-            scorecard={
-                "runtime_ledger_lineage_materialization_handoff": scorecard_handoff
-            },
-            evidence=None,
-            selected_for_replay=False,
+        scorecard_proof_handoff = (
+            candidate_goal_metadata._candidate_sleeve_goal_proof_handoff_fields(
+                selection={},
+                spec=None,
+                scorecard={
+                    "runtime_ledger_lineage_materialization_handoff": scorecard_handoff
+                },
+                evidence=None,
+                selected_for_replay=False,
+            )
         )
         self.assertEqual(
             scorecard_proof_handoff["runtime_ledger_lineage_materialization_handoff"],

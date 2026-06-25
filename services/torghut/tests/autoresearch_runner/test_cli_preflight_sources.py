@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
+import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import socket
+
 import json
 import sys
 from argparse import Namespace
@@ -104,8 +109,8 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
         )
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
-            side_effect=runner.socket.gaierror("not known"),
+            "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
+            side_effect=socket.gaierror("not known"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)
 
@@ -121,7 +126,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
         )
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("non-cluster endpoints are replay-checked"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)
@@ -137,7 +142,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
         )
 
         with patch(
-            "scripts.run_whitepaper_autoresearch_profit_target.socket.getaddrinfo",
+            "scripts.whitepaper_autoresearch_runner.artifact_io.socket.getaddrinfo",
             side_effect=AssertionError("replay tape should bypass DNS preflight"),
         ):
             failure = runner._clickhouse_endpoint_preflight_failure(args)
@@ -587,14 +592,14 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
                     side_effect=AssertionError("selection-only must not persist specs"),
                 ) as persist_mock,
                 patch.object(
-                    runner,
+                    persisted_feedback_sources,
                     "_persist_epoch_ledgers",
                     side_effect=AssertionError(
                         "selection-only must not persist epoch ledgers"
                     ),
                 ) as ledger_mock,
                 patch.object(
-                    runner,
+                    portfolio_optimizer,
                     "optimize_portfolio_candidate",
                     side_effect=AssertionError(
                         "selection-only must not optimize a portfolio"
@@ -691,7 +696,7 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
         self.assertEqual(exit_code, 0)
 
     def test_candidate_universe_symbols_filter_to_live_chip_coverage(self) -> None:
-        symbols = runner._candidate_universe_symbols_from_args(
+        symbols = artifact_io._candidate_universe_symbols_from_args(
             Namespace(symbols="NVDA,AAPL,MSFT,AMAT,TSM,nvda")
         )
 

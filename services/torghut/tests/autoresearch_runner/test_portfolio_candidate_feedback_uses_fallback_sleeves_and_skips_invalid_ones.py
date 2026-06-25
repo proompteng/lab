@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.profit_target_oracle as profit_target_oracle
+from app.trading.discovery.candidate_specs import CandidateSpec
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import scripts.whitepaper_autoresearch_runner.feedback_blocking_rules as feedback_blocking_rules
+import scripts.whitepaper_autoresearch_runner.feedback_loading as feedback_loading
+import scripts.whitepaper_autoresearch_runner.oracle_policy as oracle_policy
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+import scripts.whitepaper_autoresearch_runner.proposal_training as proposal_training
+import scripts.whitepaper_autoresearch_runner.rejected_signal_feedback as rejected_signal_feedback
+
 from dataclasses import replace
 from argparse import Namespace
 from datetime import datetime
@@ -55,8 +68,10 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             status="blocked",
         )
 
-        fallback_bundles = runner._portfolio_candidate_row_to_feedback_bundles(
-            fallback_row
+        fallback_bundles = (
+            rejected_signal_feedback._portfolio_candidate_row_to_feedback_bundles(
+                fallback_row
+            )
         )
 
         self.assertEqual(len(fallback_bundles), 1)
@@ -72,7 +87,9 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             fallback_bundles[0].objective_scorecard["portfolio_blockers"],
         )
         self.assertEqual(
-            runner._portfolio_candidate_row_to_feedback_bundles(invalid_sleeve_row),
+            rejected_signal_feedback._portfolio_candidate_row_to_feedback_bundles(
+                invalid_sleeve_row
+            ),
             (),
         )
 
@@ -80,7 +97,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
         self,
     ) -> None:
         valid_spec = self._candidate_spec("spec-feedback-limit")
-        valid_bundle = runner.evidence_bundle_from_frontier_candidate(
+        valid_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=valid_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-feedback-limit",
@@ -89,7 +106,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             dataset_snapshot_id="snap-feedback-limit",
             result_path="feedback://limit",
         )
-        extra_bundle = runner.evidence_bundle_from_frontier_candidate(
+        extra_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-feedback-extra",
             candidate={
                 "candidate_id": "cand-feedback-extra",
@@ -159,8 +176,10 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             )
             session.commit()
 
-            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles(
-                limit=1
+            loaded, manifest = (
+                persisted_feedback_sources._load_recent_persisted_feedback_evidence_bundles(
+                    limit=1
+                )
             )
 
         self.assertEqual(len(loaded), 1)
@@ -178,7 +197,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
                 ValueError,
                 "feedback_evidence_jsonl_missing",
             ):
-                runner._load_feedback_evidence_bundles((missing_path,))
+                feedback_loading._load_feedback_evidence_bundles((missing_path,))
 
             invalid_path = Path(tmpdir) / "invalid.jsonl"
             invalid_path.write_text("\n[]\n", encoding="utf-8")
@@ -186,12 +205,12 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
                 ValueError,
                 "feedback_evidence_jsonl_invalid",
             ):
-                runner._load_feedback_evidence_bundles((invalid_path,))
+                feedback_loading._load_feedback_evidence_bundles((invalid_path,))
 
     def test_candidate_quality_gate_flags_capital_safety_failures(self) -> None:
-        policy = runner.ProfitTargetOraclePolicy()
+        policy = profit_target_oracle.ProfitTargetOraclePolicy()
 
-        failures = runner._candidate_quality_gate_failures(
+        failures = proposal_training._candidate_quality_gate_failures(
             {
                 "net_pnl_per_day": "750",
                 "active_day_ratio": "1",
@@ -220,9 +239,9 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
         self.assertIn("negative_cash_observed", failures)
 
     def test_candidate_quality_gate_preserves_current_oracle_blockers(self) -> None:
-        policy = runner.ProfitTargetOraclePolicy()
+        policy = profit_target_oracle.ProfitTargetOraclePolicy()
 
-        failures = runner._candidate_quality_gate_failures(
+        failures = proposal_training._candidate_quality_gate_failures(
             {
                 "net_pnl_per_day": "750",
                 "active_day_ratio": "1",
@@ -266,9 +285,9 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
         self.assertIn("delay_adjusted_depth_stress_model_failed", failures)
 
     def test_candidate_quality_gate_flags_weak_profit_factor(self) -> None:
-        policy = runner.ProfitTargetOraclePolicy()
+        policy = profit_target_oracle.ProfitTargetOraclePolicy()
 
-        failures = runner._candidate_quality_gate_failures(
+        failures = proposal_training._candidate_quality_gate_failures(
             {
                 "net_pnl_per_day": "750",
                 "active_day_ratio": "1",
@@ -328,13 +347,13 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
     def test_candidate_spec_contract_exposes_full_promotion_risk_parameters(
         self,
     ) -> None:
-        policy = runner.ProfitTargetOraclePolicy(
+        policy = profit_target_oracle.ProfitTargetOraclePolicy(
             max_gross_exposure_pct_equity=Decimal("0.85"),
             min_cash=Decimal("250"),
             max_negative_cash_observation_count=0,
         )
 
-        updated = runner._candidate_spec_with_oracle_policy(
+        updated = oracle_policy._candidate_spec_with_oracle_policy(
             self._candidate_spec("spec-full-promotion-policy"),
             oracle_policy=policy,
         )
@@ -369,12 +388,12 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
         )
 
         def feedback(
-            spec: runner.CandidateSpec,
+            spec: CandidateSpec,
             *,
             candidate_id: str,
             scorecard: dict[str, object],
-        ) -> runner.CandidateEvidenceBundle:
-            return runner.evidence_bundle_from_frontier_candidate(
+        ) -> evidence_bundles.CandidateEvidenceBundle:
+            return evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=spec.candidate_spec_id,
                 candidate={
                     "candidate_id": candidate_id,
@@ -467,7 +486,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             scorecard={"negative_cash_observation_count": "1"},
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(
                 string_veto_spec,
                 min_cash_spec,
@@ -525,14 +544,14 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
                 "source_run_id": "source-spec-drifted-signature",
             },
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=original_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-original-signature",
                 "family_template_id": original_spec.family_template_id,
                 "runtime_family": original_spec.runtime_family,
                 "runtime_strategy_name": original_spec.runtime_strategy_name,
-                "execution_signature": runner._candidate_spec_execution_signature(
+                "execution_signature": candidate_identity._candidate_spec_execution_signature(
                     original_spec
                 ),
                 "objective_scorecard": {
@@ -550,7 +569,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             result_path="feedback://signature-drift",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(drifted_spec,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -601,28 +620,30 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             entry_minute_after_open="90",
             selection_mode="continuation",
         )
-        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=source_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-family-source",
-                "family_template_id": source_spec.family_template_id,
-                "runtime_family": source_spec.runtime_family,
-                "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "125",
-                    "active_day_ratio": "1",
-                    "positive_day_ratio": "1",
-                    "negative_day_count": 0,
-                    "daily_net": {
-                        "2026-05-01": "250",
-                        "2026-05-04": "-25",
+        family_feedback_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=source_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-family-source",
+                    "family_template_id": source_spec.family_template_id,
+                    "runtime_family": source_spec.runtime_family,
+                    "runtime_strategy_name": source_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "125",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "daily_net": {
+                            "2026-05-01": "250",
+                            "2026-05-04": "-25",
+                        },
                     },
                 },
-            },
-            dataset_snapshot_id="snap-family-feedback",
-            result_path="feedback://family",
+                dataset_snapshot_id="snap-family-feedback",
+                result_path="feedback://family",
+            )
         )
-        no_family_bundle = runner.evidence_bundle_from_frontier_candidate(
+        no_family_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-not-in-current-epoch",
             candidate={
                 "candidate_id": "cand-no-family",
@@ -635,7 +656,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             result_path="feedback://no-family",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(mutated_family_spec, unrelated_spec),
             feedback_evidence_bundles=(family_feedback_bundle, no_family_bundle),
         )
@@ -696,26 +717,32 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             selection_mode="continuation",
         )
         self.assertNotEqual(
-            runner._candidate_spec_execution_signature(failed_spec),
-            runner._candidate_spec_execution_signature(same_shape_probe),
+            candidate_identity._candidate_spec_execution_signature(failed_spec),
+            candidate_identity._candidate_spec_execution_signature(same_shape_probe),
         )
         self.assertEqual(
-            runner._candidate_spec_feedback_shape_key(failed_spec),
-            runner._candidate_spec_feedback_shape_key(same_shape_probe),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(failed_spec),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(
+                same_shape_probe
+            ),
         )
         self.assertNotEqual(
-            runner._candidate_spec_feedback_shape_key(failed_spec),
-            runner._candidate_spec_feedback_shape_key(different_shape_same_risk_probe),
-        )
-        self.assertEqual(
-            runner._candidate_spec_feedback_risk_profile_key(failed_spec),
-            runner._candidate_spec_feedback_risk_profile_key(
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(failed_spec),
+            candidate_prior_scoring._candidate_spec_feedback_shape_key(
                 different_shape_same_risk_probe
             ),
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        self.assertEqual(
+            candidate_prior_scoring._candidate_spec_feedback_risk_profile_key(
+                failed_spec
+            ),
+            candidate_prior_scoring._candidate_spec_feedback_risk_profile_key(
+                different_shape_same_risk_probe
+            ),
+        )
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=failed_spec.candidate_spec_id,
-            candidate=runner._candidate_payload_with_feedback_metadata(
+            candidate=candidate_prior_scoring._candidate_payload_with_feedback_metadata(
                 spec=failed_spec,
                 candidate={
                     "candidate_id": "cand-daily-coverage-source",
@@ -736,7 +763,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             result_path="feedback://daily-coverage",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(same_shape_probe, different_shape_same_risk_probe, clean_probe),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -788,7 +815,7 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
     def test_feedback_risk_profile_uses_oracle_policy_and_allows_down_days(
         self,
     ) -> None:
-        policy = runner.ProfitTargetOraclePolicy(
+        policy = profit_target_oracle.ProfitTargetOraclePolicy(
             min_active_day_ratio=Decimal("0.90"),
             min_positive_day_ratio=Decimal("0.60"),
             max_best_day_share=Decimal("0.25"),
@@ -817,16 +844,22 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
         }
 
         self.assertFalse(
-            runner._feedback_risk_profile_has_penalty(scorecard, oracle_policy=policy)
-        )
-        self.assertFalse(runner._feedback_is_blocked(scorecard, oracle_policy=policy))
-        self.assertFalse(
-            runner._feedback_family_prior_has_hard_block(
+            feedback_blocking_rules._feedback_risk_profile_has_penalty(
                 scorecard, oracle_policy=policy
             )
         )
         self.assertFalse(
-            runner._feedback_risk_profile_has_terminal_block(
+            feedback_blocking_rules._feedback_is_blocked(
+                scorecard, oracle_policy=policy
+            )
+        )
+        self.assertFalse(
+            feedback_blocking_rules._feedback_family_prior_has_hard_block(
+                scorecard, oracle_policy=policy
+            )
+        )
+        self.assertFalse(
+            feedback_blocking_rules._feedback_risk_profile_has_terminal_block(
                 {
                     **scorecard,
                     "profit_target_oracle": {
@@ -844,10 +877,12 @@ class TestPortfolioCandidateFeedbackUsesFallbackSleevesAndSkipsInvalidOnes(
             max_negative_cash_observation_count=0,
         )
         self.assertTrue(
-            runner._feedback_is_blocked(scorecard, oracle_policy=strict_policy)
+            feedback_blocking_rules._feedback_is_blocked(
+                scorecard, oracle_policy=strict_policy
+            )
         )
         self.assertTrue(
-            runner._feedback_risk_profile_has_penalty(
+            feedback_blocking_rules._feedback_risk_profile_has_penalty(
                 {
                     "active_day_ratio": "1",
                     "positive_day_ratio": "1",

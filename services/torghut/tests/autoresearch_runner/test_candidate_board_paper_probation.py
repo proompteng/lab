@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+
 from dataclasses import replace
 import json
 from decimal import Decimal
@@ -17,7 +19,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
         self,
     ) -> None:
         spec = self._candidate_spec("spec-paper-probation")
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-paper-probation",
             candidate_id="cand-paper-probation",
@@ -446,7 +448,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
         close_spec = self._candidate_spec("spec-close-probation")
         bridge_spec = self._candidate_spec("spec-bridge-probation")
         raw_only_spec = self._candidate_spec("spec-raw-only-probation")
-        weak_evidence = runner.CandidateEvidenceBundle(
+        weak_evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-weak-probation",
             candidate_id="cand-weak-probation",
@@ -501,7 +503,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
             null_comparator={},
             promotion_readiness={},
         )
-        close_evidence = runner.CandidateEvidenceBundle(
+        close_evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-close-probation",
             candidate_id="cand-close-probation",
@@ -573,7 +575,7 @@ class TestAutoresearchRunnerCandidateBoardPaperProbation(AutoresearchRunnerTestC
             null_comparator={},
             promotion_readiness={},
         )
-        raw_only_evidence = runner.CandidateEvidenceBundle(
+        raw_only_evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-raw-only-probation",
             candidate_id="cand-raw-only-probation",

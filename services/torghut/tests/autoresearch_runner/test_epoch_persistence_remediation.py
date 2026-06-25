@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
+from app.trading.discovery.candidate_specs import CandidateSpec
+import scripts.whitepaper_autoresearch_runner.candidate_remediation as candidate_remediation
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+
 from dataclasses import replace
 import json
 from argparse import Namespace
@@ -134,7 +140,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
     def test_epoch_ledgers_allow_repeated_candidate_specs_across_epochs(
         self,
     ) -> None:
-        candidate_spec = runner.CandidateSpec(
+        candidate_spec = CandidateSpec(
             schema_version="torghut.candidate-spec.v1",
             candidate_spec_id="spec-repeatable",
             hypothesis_id="hyp-repeatable",
@@ -158,7 +164,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
             side_effect=lambda: Session(self.engine),
         ):
             for epoch_id in ("epoch-repeat-1", "epoch-repeat-2"):
-                runner._persist_epoch_ledgers(
+                persisted_feedback_sources._persist_epoch_ledgers(
                     epoch_id=epoch_id,
                     status="no_profit_target_candidate",
                     target_net_pnl_per_day=Decimal("300"),
@@ -195,7 +201,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
     def test_epoch_ledgers_persist_promotion_ready_only_from_readiness_payload(
         self,
     ) -> None:
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-readiness-test",
             source_candidate_ids=("candidate-test",),
@@ -215,7 +221,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
             "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
-            runner._persist_epoch_ledgers(
+            persisted_feedback_sources._persist_epoch_ledgers(
                 epoch_id="epoch-readiness-blocked",
                 status="ok",
                 target_net_pnl_per_day=Decimal("500"),
@@ -235,7 +241,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
                 started_at=started_at,
                 completed_at=completed_at,
             )
-            runner._persist_epoch_ledgers(
+            persisted_feedback_sources._persist_epoch_ledgers(
                 epoch_id="epoch-readiness-ready",
                 status="ok",
                 target_net_pnl_per_day=Decimal("500"),
@@ -285,7 +291,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
     def test_epoch_ledgers_persist_target_met_oracle_failed_as_paper_probation(
         self,
     ) -> None:
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-paper-probation",
             source_candidate_ids=("candidate-test",),
@@ -305,7 +311,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
             "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
-            runner._persist_epoch_ledgers(
+            persisted_feedback_sources._persist_epoch_ledgers(
                 epoch_id="epoch-paper-probation",
                 status="ok",
                 target_net_pnl_per_day=Decimal("500"),
@@ -344,7 +350,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
     def test_epoch_ledgers_keep_target_met_oracle_failed_blocked_without_paper_probation_authority(
         self,
     ) -> None:
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-paper-probation-blocked",
             source_candidate_ids=("candidate-test",),
@@ -364,7 +370,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
             "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=lambda: Session(self.engine),
         ):
-            runner._persist_epoch_ledgers(
+            persisted_feedback_sources._persist_epoch_ledgers(
                 epoch_id="epoch-paper-probation-blocked",
                 status="ok",
                 target_net_pnl_per_day=Decimal("500"),
@@ -502,7 +508,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
                 "_collect_partial_real_replay",
                 return_value=runner.EpochReplayResult(
                     evidence_bundles=(
-                        runner.evidence_bundle_from_frontier_candidate(
+                        evidence_bundles.evidence_bundle_from_frontier_candidate(
                             candidate_spec_id="spec-partial",
                             candidate={
                                 "candidate_id": "cand-partial",
@@ -560,7 +566,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         self.assertIn("candidate_search_remediation", summary)
 
     def test_timeout_remediation_recommends_smaller_replay_frontier(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="TimeoutError:real_replay_timeout_seconds:3600",
             candidate_selection={
                 "rows": [
@@ -591,7 +597,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         )
 
     def test_remediation_surfaces_recent_trading_day_shortfall(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="ValueError:insufficient_recent_trading_days:9<11",
             candidate_selection={
                 "rows": [
@@ -660,7 +666,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         )
 
     def test_remediation_surfaces_stale_tape_shortfall(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason=(
                 "ValueError:stale_tape:"
                 "expected_last_trading_day=2026-05-19:end_day=2026-05-18"
@@ -701,7 +707,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         self.assertIn("2026-05-18", stale_action["diagnostic_replay_note"])
 
     def test_remediation_prioritizes_missing_promotion_proof(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "budget": {"compiled_candidate_count": "not-an-int"},
@@ -765,7 +771,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         )
 
     def test_remediation_defers_promotion_proof_until_profit_gates_pass(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_candidate_failed_profit_target_oracle",
             candidate_selection={
                 "rows": [
@@ -821,7 +827,7 @@ class TestAutoresearchRunnerEpochPersistenceRemediation(AutoresearchRunnerTestCa
         self.assertEqual(proof_action["priority"], 7)
 
     def test_remediation_increases_breadth_from_current_epoch(self) -> None:
-        remediation = runner._candidate_search_remediation(
+        remediation = candidate_remediation._candidate_search_remediation(
             failure_reason="portfolio_optimizer_produced_no_candidate",
             candidate_selection={
                 "rows": [

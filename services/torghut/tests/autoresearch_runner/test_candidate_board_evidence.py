@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.portfolio_optimizer as portfolio_optimizer
+import scripts.whitepaper_autoresearch_runner.candidate_goal_metadata as candidate_goal_metadata
+import scripts.whitepaper_autoresearch_runner.candidate_prior_scoring as candidate_prior_scoring
+import scripts.whitepaper_autoresearch_runner.feedback_bundle_builders as feedback_bundle_builders
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -34,7 +41,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
                 "mechanism_overlay_ids": ["rankic_factor_acceptance_harness"]
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-factor-acceptance",
             candidate_id="candidate-factor-acceptance",
@@ -177,11 +184,11 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
         )
 
         self.assertGreater(
-            runner._pre_replay_candidate_score(paper_spec),
-            runner._pre_replay_candidate_score(control_spec),
+            candidate_prior_scoring._pre_replay_candidate_score(paper_spec),
+            candidate_prior_scoring._pre_replay_candidate_score(control_spec),
         )
 
-        prior_bundle = runner._pre_replay_prior_bundle(paper_spec)
+        prior_bundle = feedback_bundle_builders._pre_replay_prior_bundle(paper_spec)
         self.assertFalse(prior_bundle.promotion_readiness["promotable"])
         self.assertIn(
             "runtime_replay_required", prior_bundle.promotion_readiness["blockers"]
@@ -191,7 +198,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
             prior_bundle.promotion_readiness["blockers"],
         )
 
-        _model, rows = runner._pre_replay_proposal_model_and_rows(
+        _model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(control_spec, paper_spec),
         )
         row_by_spec = {row["candidate_spec_id"]: row for row in rows}
@@ -297,7 +304,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
                 ]
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-test",
             candidate_id="candidate-test",
@@ -494,7 +501,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
                 "requires_market_limit_order_mix": True,
             },
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-sleeve-order-type-proof",
             candidate_id="cand-sleeve-order-type-proof",
@@ -554,7 +561,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
             ]
         }
 
-        rows = runner._candidate_sleeve_goal_rows(
+        rows = candidate_goal_metadata._candidate_sleeve_goal_rows(
             candidate_specs=(spec,),
             candidate_selection=candidate_selection,
             evidence_bundles=(evidence,),
@@ -603,7 +610,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
         self.assertEqual(rows[0]["exact_replay_ledger_artifact_row_count"], 30)
         self.assertEqual(rows[0]["exact_replay_ledger_artifact_fill_count"], 10)
         self.assertEqual(rows[0]["runtime_window_start"], "2026-05-18T13:30:00+00:00")
-        fallback_rows = runner._candidate_sleeve_goal_rows(
+        fallback_rows = candidate_goal_metadata._candidate_sleeve_goal_rows(
             candidate_specs=(spec,),
             candidate_selection={
                 "rows": [
@@ -630,7 +637,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
         self.assertIn("route_tca", fallback_rows[0]["paper_required_evidence_tokens"])
         self.assertGreater(fallback_rows[0]["paper_required_evidence_count"], 0)
 
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-sleeve-order-type-proof",
             source_candidate_ids=(evidence.candidate_id,),
@@ -649,7 +656,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
             objective_scorecard={"target_met": True, "oracle_passed": True},
             optimizer_report={},
         )
-        portfolio_rows = runner._candidate_sleeve_goal_rows(
+        portfolio_rows = candidate_goal_metadata._candidate_sleeve_goal_rows(
             candidate_specs=(spec,),
             candidate_selection=candidate_selection,
             evidence_bundles=(evidence,),
@@ -680,7 +687,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
         self,
     ) -> None:
         spec = self._candidate_spec("spec-portfolio-promotion-subject")
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-portfolio-promotion-subject",
             candidate_id="cand-portfolio-promotion-subject",
@@ -700,7 +707,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
             null_comparator={},
             promotion_readiness={},
         )
-        portfolio = runner.PortfolioCandidateSpec(
+        portfolio = portfolio_optimizer.PortfolioCandidateSpec(
             schema_version="torghut.portfolio-candidate-spec.v1",
             portfolio_candidate_id="portfolio-promotion-subject",
             source_candidate_ids=(evidence.candidate_id,),
@@ -794,7 +801,7 @@ class TestAutoresearchRunnerCandidateBoardEvidence(AutoresearchRunnerTestCase):
             },
             promotion_contract={"requires_rejected_signal_outcome_learning": True},
         )
-        evidence = runner.CandidateEvidenceBundle(
+        evidence = evidence_bundles.CandidateEvidenceBundle(
             schema_version="torghut.candidate-evidence-bundle.v1",
             evidence_bundle_id="ev-rejected-signal-proof",
             candidate_id="cand-rejected-signal-proof",

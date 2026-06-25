@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import app.trading.discovery.profit_target_oracle as profit_target_oracle
+from app.trading.discovery.candidate_specs import CandidateSpec
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.feedback_loading as feedback_loading
+import scripts.whitepaper_autoresearch_runner.oracle_policy as oracle_policy
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+import scripts.whitepaper_autoresearch_runner.proposal_training as proposal_training
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     Decimal,
     Namespace,
@@ -19,7 +28,7 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
                 ValueError,
                 "feedback_evidence_jsonl_missing",
             ):
-                runner._load_feedback_evidence_bundles((missing_path,))
+                feedback_loading._load_feedback_evidence_bundles((missing_path,))
 
             invalid_path = Path(tmpdir) / "invalid.jsonl"
             invalid_path.write_text("\n[]\n", encoding="utf-8")
@@ -27,12 +36,12 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
                 ValueError,
                 "feedback_evidence_jsonl_invalid",
             ):
-                runner._load_feedback_evidence_bundles((invalid_path,))
+                feedback_loading._load_feedback_evidence_bundles((invalid_path,))
 
     def test_candidate_quality_gate_flags_capital_safety_failures(self) -> None:
-        policy = runner.ProfitTargetOraclePolicy()
+        policy = profit_target_oracle.ProfitTargetOraclePolicy()
 
-        failures = runner._candidate_quality_gate_failures(
+        failures = proposal_training._candidate_quality_gate_failures(
             {
                 "net_pnl_per_day": "750",
                 "active_day_ratio": "1",
@@ -61,9 +70,9 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
         self.assertIn("negative_cash_observed", failures)
 
     def test_candidate_quality_gate_preserves_current_oracle_blockers(self) -> None:
-        policy = runner.ProfitTargetOraclePolicy()
+        policy = profit_target_oracle.ProfitTargetOraclePolicy()
 
-        failures = runner._candidate_quality_gate_failures(
+        failures = proposal_training._candidate_quality_gate_failures(
             {
                 "net_pnl_per_day": "750",
                 "active_day_ratio": "1",
@@ -107,9 +116,9 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
         self.assertIn("delay_adjusted_depth_stress_model_failed", failures)
 
     def test_candidate_quality_gate_flags_weak_profit_factor(self) -> None:
-        policy = runner.ProfitTargetOraclePolicy()
+        policy = profit_target_oracle.ProfitTargetOraclePolicy()
 
-        failures = runner._candidate_quality_gate_failures(
+        failures = proposal_training._candidate_quality_gate_failures(
             {
                 "net_pnl_per_day": "750",
                 "active_day_ratio": "1",
@@ -169,13 +178,13 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
     def test_candidate_spec_contract_exposes_full_promotion_risk_parameters(
         self,
     ) -> None:
-        policy = runner.ProfitTargetOraclePolicy(
+        policy = profit_target_oracle.ProfitTargetOraclePolicy(
             max_gross_exposure_pct_equity=Decimal("0.85"),
             min_cash=Decimal("250"),
             max_negative_cash_observation_count=0,
         )
 
-        updated = runner._candidate_spec_with_oracle_policy(
+        updated = oracle_policy._candidate_spec_with_oracle_policy(
             self._candidate_spec("spec-full-promotion-policy"),
             oracle_policy=policy,
         )
@@ -210,12 +219,12 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
         )
 
         def feedback(
-            spec: runner.CandidateSpec,
+            spec: CandidateSpec,
             *,
             candidate_id: str,
             scorecard: dict[str, object],
-        ) -> runner.CandidateEvidenceBundle:
-            return runner.evidence_bundle_from_frontier_candidate(
+        ) -> evidence_bundles.CandidateEvidenceBundle:
+            return evidence_bundles.evidence_bundle_from_frontier_candidate(
                 candidate_spec_id=spec.candidate_spec_id,
                 candidate={
                     "candidate_id": candidate_id,
@@ -308,7 +317,7 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
             scorecard={"negative_cash_observation_count": "1"},
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(
                 string_veto_spec,
                 min_cash_spec,
@@ -366,14 +375,14 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
                 "source_run_id": "source-spec-drifted-signature",
             },
         )
-        feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
+        feedback_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=original_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-original-signature",
                 "family_template_id": original_spec.family_template_id,
                 "runtime_family": original_spec.runtime_family,
                 "runtime_strategy_name": original_spec.runtime_strategy_name,
-                "execution_signature": runner._candidate_spec_execution_signature(
+                "execution_signature": candidate_identity._candidate_spec_execution_signature(
                     original_spec
                 ),
                 "objective_scorecard": {
@@ -391,7 +400,7 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
             result_path="feedback://signature-drift",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(drifted_spec,),
             feedback_evidence_bundles=(feedback_bundle,),
         )
@@ -442,28 +451,30 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
             entry_minute_after_open="90",
             selection_mode="continuation",
         )
-        family_feedback_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=source_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-family-source",
-                "family_template_id": source_spec.family_template_id,
-                "runtime_family": source_spec.runtime_family,
-                "runtime_strategy_name": source_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "125",
-                    "active_day_ratio": "1",
-                    "positive_day_ratio": "1",
-                    "negative_day_count": 0,
-                    "daily_net": {
-                        "2026-05-01": "250",
-                        "2026-05-04": "-25",
+        family_feedback_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=source_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-family-source",
+                    "family_template_id": source_spec.family_template_id,
+                    "runtime_family": source_spec.runtime_family,
+                    "runtime_strategy_name": source_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "125",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "daily_net": {
+                            "2026-05-01": "250",
+                            "2026-05-04": "-25",
+                        },
                     },
                 },
-            },
-            dataset_snapshot_id="snap-family-feedback",
-            result_path="feedback://family",
+                dataset_snapshot_id="snap-family-feedback",
+                result_path="feedback://family",
+            )
         )
-        no_family_bundle = runner.evidence_bundle_from_frontier_candidate(
+        no_family_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-not-in-current-epoch",
             candidate={
                 "candidate_id": "cand-no-family",
@@ -476,7 +487,7 @@ class TestAutoresearchRunnerQualityOracle(WhitepaperAutoresearchRunnerTestCaseBa
             result_path="feedback://no-family",
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(mutated_family_spec, unrelated_spec),
             feedback_evidence_bundles=(family_feedback_bundle, no_family_bundle),
         )

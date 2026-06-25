@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+import app.trading.discovery.evidence_bundles as evidence_bundles
+import scripts.whitepaper_autoresearch_runner.candidate_identity as candidate_identity
+import scripts.whitepaper_autoresearch_runner.feedback_loading as feedback_loading
+import scripts.whitepaper_autoresearch_runner.persisted_feedback_sources as persisted_feedback_sources
+import scripts.whitepaper_autoresearch_runner.proposal_building as proposal_building
+import scripts.whitepaper_autoresearch_runner.rejected_signal_feedback as rejected_signal_feedback
+
 from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     AutoresearchCandidateSpec,
     AutoresearchEpoch,
@@ -14,7 +21,6 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     json,
     patch,
     replace,
-    runner,
 )
 
 
@@ -146,7 +152,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             entry_minute_after_open="75",
             selection_mode="continuation",
         )
-        losing_bundle = runner.evidence_bundle_from_frontier_candidate(
+        losing_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=losing_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-losing",
@@ -172,32 +178,34 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             dataset_snapshot_id="snap-feedback",
             result_path="feedback://losing",
         )
-        capital_unsafe_bundle = runner.evidence_bundle_from_frontier_candidate(
-            candidate_spec_id=capital_unsafe_spec.candidate_spec_id,
-            candidate={
-                "candidate_id": "cand-capital-unsafe",
-                "family_template_id": capital_unsafe_spec.family_template_id,
-                "runtime_family": capital_unsafe_spec.runtime_family,
-                "runtime_strategy_name": capital_unsafe_spec.runtime_strategy_name,
-                "objective_scorecard": {
-                    "net_pnl_per_day": "750",
-                    "active_day_ratio": "1",
-                    "positive_day_ratio": "1",
-                    "negative_day_count": 0,
-                    "best_day_share": "0.25",
-                    "worst_day_loss": "0",
-                    "max_drawdown": "0",
-                    "max_gross_exposure_pct_equity": "2.5",
-                    "min_cash": "-500",
-                    "negative_cash_observation_count": 8,
-                    "avg_filled_notional_per_day": "500000",
+        capital_unsafe_bundle = (
+            evidence_bundles.evidence_bundle_from_frontier_candidate(
+                candidate_spec_id=capital_unsafe_spec.candidate_spec_id,
+                candidate={
+                    "candidate_id": "cand-capital-unsafe",
+                    "family_template_id": capital_unsafe_spec.family_template_id,
+                    "runtime_family": capital_unsafe_spec.runtime_family,
+                    "runtime_strategy_name": capital_unsafe_spec.runtime_strategy_name,
+                    "objective_scorecard": {
+                        "net_pnl_per_day": "750",
+                        "active_day_ratio": "1",
+                        "positive_day_ratio": "1",
+                        "negative_day_count": 0,
+                        "best_day_share": "0.25",
+                        "worst_day_loss": "0",
+                        "max_drawdown": "0",
+                        "max_gross_exposure_pct_equity": "2.5",
+                        "min_cash": "-500",
+                        "negative_cash_observation_count": 8,
+                        "avg_filled_notional_per_day": "500000",
+                    },
                 },
-            },
-            dataset_snapshot_id="snap-feedback",
-            result_path="feedback://capital-unsafe",
+                dataset_snapshot_id="snap-feedback",
+                result_path="feedback://capital-unsafe",
+            )
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(losing_spec, unexplored_spec, capital_unsafe_spec),
             feedback_evidence_bundles=(losing_bundle, capital_unsafe_bundle),
         )
@@ -252,7 +260,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
 
     def test_feedback_evidence_jsonl_round_trips(self) -> None:
         spec = self._candidate_spec("spec-feedback-jsonl")
-        bundle = runner.evidence_bundle_from_frontier_candidate(
+        bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-feedback-jsonl",
@@ -271,14 +279,14 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
                 json.dumps(bundle.to_payload(), sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-            loaded = runner._load_feedback_evidence_bundles((path,))
+            loaded = feedback_loading._load_feedback_evidence_bundles((path,))
 
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
 
     def test_feedback_evidence_loads_recent_persisted_epoch_bundles(self) -> None:
         spec = self._candidate_spec("spec-feedback-persisted")
-        bundle = runner.evidence_bundle_from_frontier_candidate(
+        bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-feedback-persisted",
@@ -324,11 +332,13 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             )
             session.commit()
 
-            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
-                (), include_persisted=True
+            loaded, manifest = (
+                persisted_feedback_sources._load_autoresearch_feedback_evidence_bundles(
+                    (), include_persisted=True
+                )
             )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,), feedback_evidence_bundles=loaded
         )
 
@@ -439,11 +449,13 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             )
             session.commit()
 
-            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
-                (), include_persisted=True
+            loaded, manifest = (
+                persisted_feedback_sources._load_autoresearch_feedback_evidence_bundles(
+                    (), include_persisted=True
+                )
             )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,), feedback_evidence_bundles=loaded
         )
 
@@ -472,7 +484,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
 
     def test_feedback_evidence_dedupe_handles_missing_bundle_ids(self) -> None:
         spec = self._candidate_spec("spec-feedback-dedupe")
-        bundle = runner.evidence_bundle_from_frontier_candidate(
+        bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-feedback-dedupe",
@@ -483,7 +495,9 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         )
         no_id_bundle = replace(bundle, evidence_bundle_id="")
 
-        deduped = runner._dedupe_feedback_evidence_bundles((no_id_bundle, no_id_bundle))
+        deduped = feedback_loading._dedupe_feedback_evidence_bundles(
+            (no_id_bundle, no_id_bundle)
+        )
 
         self.assertEqual(len(deduped), 1)
         self.assertEqual(deduped[0].candidate_spec_id, spec.candidate_spec_id)
@@ -493,8 +507,10 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             "scripts.whitepaper_autoresearch_runner.persisted_feedback_sources.SessionLocal",
             side_effect=RuntimeError("db unavailable"),
         ):
-            loaded, manifest = runner._load_autoresearch_feedback_evidence_bundles(
-                (), include_persisted=True
+            loaded, manifest = (
+                persisted_feedback_sources._load_autoresearch_feedback_evidence_bundles(
+                    (), include_persisted=True
+                )
             )
 
         self.assertEqual(loaded, ())
@@ -508,7 +524,9 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         spec = self._candidate_spec("spec-summary-scorecard")
         scorecard = {
             "candidate_id": "cand-summary-scorecard",
-            "execution_signature": runner._candidate_spec_execution_signature(spec),
+            "execution_signature": candidate_identity._candidate_spec_execution_signature(
+                spec
+            ),
             "family_template_id": spec.family_template_id,
             "runtime_family": spec.runtime_family,
             "runtime_strategy_name": spec.runtime_strategy_name,
@@ -565,7 +583,9 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             )
             session.commit()
 
-            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+            loaded, manifest = (
+                persisted_feedback_sources._load_recent_persisted_feedback_evidence_bundles()
+            )
 
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
@@ -584,7 +604,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         self.assertEqual(manifest["legacy_summary_unmatched_scorecard_count"], 1)
         self.assertEqual(manifest["legacy_summary_bundle_count"], 1)
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,), feedback_evidence_bundles=loaded
         )
 
@@ -664,7 +684,9 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             )
             session.commit()
 
-            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles()
+            loaded, manifest = (
+                persisted_feedback_sources._load_recent_persisted_feedback_evidence_bundles()
+            )
 
         self.assertEqual(len(loaded), 1)
         self.assertEqual(loaded[0].candidate_spec_id, spec.candidate_spec_id)
@@ -695,7 +717,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             manifest["portfolio_candidate_ids"], ["portfolio-feedback-blocked"]
         )
 
-        model, rows = runner._pre_replay_proposal_model_and_rows(
+        model, rows = proposal_building._pre_replay_proposal_model_and_rows(
             specs=(spec,), feedback_evidence_bundles=loaded
         )
 
@@ -735,11 +757,15 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         )
 
         self.assertEqual(
-            runner._portfolio_candidate_row_to_feedback_bundles(non_feedback_status),
+            rejected_signal_feedback._portfolio_candidate_row_to_feedback_bundles(
+                non_feedback_status
+            ),
             (),
         )
         self.assertEqual(
-            runner._portfolio_candidate_row_to_feedback_bundles(empty_scorecard),
+            rejected_signal_feedback._portfolio_candidate_row_to_feedback_bundles(
+                empty_scorecard
+            ),
             (),
         )
 
@@ -774,8 +800,10 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             status="blocked",
         )
 
-        fallback_bundles = runner._portfolio_candidate_row_to_feedback_bundles(
-            fallback_row
+        fallback_bundles = (
+            rejected_signal_feedback._portfolio_candidate_row_to_feedback_bundles(
+                fallback_row
+            )
         )
 
         self.assertEqual(len(fallback_bundles), 1)
@@ -791,7 +819,9 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             fallback_bundles[0].objective_scorecard["portfolio_blockers"],
         )
         self.assertEqual(
-            runner._portfolio_candidate_row_to_feedback_bundles(invalid_sleeve_row),
+            rejected_signal_feedback._portfolio_candidate_row_to_feedback_bundles(
+                invalid_sleeve_row
+            ),
             (),
         )
 
@@ -799,7 +829,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
         self,
     ) -> None:
         valid_spec = self._candidate_spec("spec-feedback-limit")
-        valid_bundle = runner.evidence_bundle_from_frontier_candidate(
+        valid_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id=valid_spec.candidate_spec_id,
             candidate={
                 "candidate_id": "cand-feedback-limit",
@@ -808,7 +838,7 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             dataset_snapshot_id="snap-feedback-limit",
             result_path="feedback://limit",
         )
-        extra_bundle = runner.evidence_bundle_from_frontier_candidate(
+        extra_bundle = evidence_bundles.evidence_bundle_from_frontier_candidate(
             candidate_spec_id="spec-feedback-extra",
             candidate={
                 "candidate_id": "cand-feedback-extra",
@@ -878,8 +908,10 @@ class TestAutoresearchRunnerFeedbackLoading(WhitepaperAutoresearchRunnerTestCase
             )
             session.commit()
 
-            loaded, manifest = runner._load_recent_persisted_feedback_evidence_bundles(
-                limit=1
+            loaded, manifest = (
+                persisted_feedback_sources._load_recent_persisted_feedback_evidence_bundles(
+                    limit=1
+                )
             )
 
         self.assertEqual(len(loaded), 1)
