@@ -12,11 +12,11 @@ from sqlalchemy.pool import StaticPool
 
 from app.models import Base, Strategy, TradeDecision
 from app.config import settings
-from app.trading.execution import (
-    OrderExecutor,
-    _target_plan_ref_value,
-    _target_plan_source_decision_mode,
-    _target_plan_source_decision_needs_refresh,
+from app.trading.execution import OrderExecutor
+from app.trading.execution.shared_context import (
+    target_plan_ref_value,
+    target_plan_source_decision_mode,
+    target_plan_source_decision_needs_refresh,
 )
 from app.trading.models import StrategyDecision, decision_hash
 from app.trading.paper_route_target_plan import (
@@ -785,11 +785,11 @@ def test_order_executor_target_plan_source_refresh_helpers_cover_missing_refs() 
         },
     }
 
-    assert _target_plan_source_decision_mode({}) is None
-    assert _target_plan_ref_value({}, "hypothesis_id") is None
-    assert _target_plan_source_decision_needs_refresh({}, new_payload) is True
+    assert target_plan_source_decision_mode({}) is None
+    assert target_plan_ref_value({}, "hypothesis_id") is None
+    assert target_plan_source_decision_needs_refresh({}, new_payload) is True
     assert (
-        _target_plan_source_decision_needs_refresh(
+        target_plan_source_decision_needs_refresh(
             {
                 "params": {
                     "paper_route_target_plan_source_decision": {
@@ -803,7 +803,7 @@ def test_order_executor_target_plan_source_refresh_helpers_cover_missing_refs() 
         is True
     )
     assert (
-        _target_plan_source_decision_needs_refresh(
+        target_plan_source_decision_needs_refresh(
             {
                 "params": {
                     "paper_route_target_plan_source_decision": {

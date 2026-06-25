@@ -1,10 +1,6 @@
 from __future__ import annotations
 
 from tests.order_feed.support import (
-    SOURCE_TYPE_EXECUTION,
-    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-    TRANSFER_KIND_EXECUTION_FILL,
-    TRANSFER_KIND_FILL_POST,
     Decimal,
     Execution,
     ExecutionOrderEvent,
@@ -17,17 +13,22 @@ from tests.order_feed.support import (
     OrderFeedSourceWindow,
     OrderFeedTestCase,
     RejectedSignalOutcomeEvent,
+    SOURCE_TYPE_EXECUTION,
+    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     Session,
     Strategy,
+    TRANSFER_KIND_EXECUTION_FILL,
+    TRANSFER_KIND_FILL_POST,
     TigerBeetleReconciliationRun,
     TigerBeetleTransferRef,
     TradeDecision,
     apply_order_event_to_execution,
     datetime,
     latest_order_event_for_execution,
+    logger,
     merge_execution_raw_order_update,
     normalize_order_feed_record,
-    order_feed_module,
+    order_identity_matches_account_scope,
     patch,
     persist_order_event,
     select,
@@ -340,7 +341,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 ),
                 side_effect=RuntimeError("reconcile failed"),
             ):
-                with self.assertLogs(order_feed_module.logger, level="WARNING"):
+                with self.assertLogs(logger, level="WARNING"):
                     ingestor._reconcile_tigerbeetle_if_enabled(session)
 
                 settings.tigerbeetle_reconcile_required = True
@@ -860,7 +861,7 @@ class TestOrderFeedCore(OrderFeedTestCase):
                 raw_event={"event": "fill"},
             )
 
-            in_scope = order_feed_module._order_identity_matches_account_scope(
+            in_scope = order_identity_matches_account_scope(
                 session,
                 event,
                 account_label="paper",

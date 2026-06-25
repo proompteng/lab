@@ -41,21 +41,6 @@ from .shared_context import (
     upsert_execution_tca_metric,
 )
 from .order_executor_submission_methods import OrderExecutor
-from .order_executor_core_support import (
-    apply_execution_status as _apply_execution_status,
-    extract_execution_metadata as _extract_execution_metadata,
-    persist_lean_shadow_event as _persist_lean_shadow_event,
-)
-from .order_executor_submission_methods import (
-    json_default as _json_default,
-    normalize_reject_reason as _normalize_reject_reason,
-    stable_payload_hash as _stable_payload_hash,
-)
-from .shared_context import (
-    target_plan_ref_value as _target_plan_ref_value,
-    target_plan_source_decision_mode as _target_plan_source_decision_mode,
-    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
-)
 
 logger = _logging_for_module.getLogger(__name__)
 __all__ = [
@@ -99,13 +84,4 @@ __all__ = [
     "upsert_execution_tca_metric",
     "logger",
     "OrderExecutor",
-    "_apply_execution_status",
-    "_extract_execution_metadata",
-    "_json_default",
-    "_normalize_reject_reason",
-    "_persist_lean_shadow_event",
-    "_stable_payload_hash",
-    "_target_plan_ref_value",
-    "_target_plan_source_decision_mode",
-    "_target_plan_source_decision_needs_refresh",
 ]

@@ -9,8 +9,12 @@ from tests.order_feed.support import (
     OrderFeedTestCase,
     Session,
     datetime,
-    order_feed_module,
+    mark_order_event_account_alias,
+    order_event_account_label_alias,
+    order_event_client_identity,
+    order_event_linkage_blockers,
     patch,
+    raw_event_with_linkage_blockers,
     repair_order_feed_execution_links,
     repair_order_feed_execution_states,
     select,
@@ -523,7 +527,7 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
         self.assertIsNone(old_unmatchable_event.execution_id)
         self.assertIsNone(old_unmatchable_event.trade_decision_id)
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(old_unmatchable_event),
+            order_event_linkage_blockers(old_unmatchable_event),
             [],
         )
         self.assertEqual(linkable_event.alpaca_account_label, "PA3SX7FYNUTF")
@@ -541,7 +545,7 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
     def test_linkage_helpers_preserve_actionable_blocker_classifications(
         self,
     ) -> None:
-        non_mapping = order_feed_module._raw_event_with_linkage_blockers(
+        non_mapping = raw_event_with_linkage_blockers(
             "raw-event",
             ["missing_execution", "", "missing_execution"],
         )
@@ -565,14 +569,14 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
             symbol="AAPL",
             raw_event="raw-event",
         )
-        self.assertIsNone(order_feed_module._order_event_account_label_alias(event))
+        self.assertIsNone(order_event_account_label_alias(event))
 
         event.raw_event = {
             "_torghut_account_label_alias": {"source_account_label": "PA3SX7FYNUTF"}
         }
-        self.assertIsNone(order_feed_module._order_event_account_label_alias(event))
+        self.assertIsNone(order_event_account_label_alias(event))
 
-        order_feed_module._mark_order_event_account_alias(
+        mark_order_event_account_alias(
             event,
             source_account_label="PA3SX7FYNUTF",
             canonical_account_label="TORGHUT_SIM",
@@ -590,7 +594,7 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
         )
 
         event.raw_event = "raw-event"
-        order_feed_module._mark_order_event_account_alias(
+        mark_order_event_account_alias(
             event,
             source_account_label="PA3SX7FYNUTF",
             canonical_account_label="TORGHUT_SIM",
@@ -606,7 +610,7 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
             },
         )
 
-        existing = order_feed_module._raw_event_with_linkage_blockers(
+        existing = raw_event_with_linkage_blockers(
             {"event": "fill", "_torghut_linkage": {"source": "previous"}},
             ["ambiguous_execution_identity"],
         )
@@ -617,13 +621,11 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
             ["ambiguous_execution_identity"],
         )
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(
-                ExecutionOrderEvent(raw_event="raw-event")
-            ),
+            order_event_linkage_blockers(ExecutionOrderEvent(raw_event="raw-event")),
             [],
         )
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(
+            order_event_linkage_blockers(
                 ExecutionOrderEvent(
                     raw_event={"_torghut_linkage": {"blockers": "single_blocker"}}
                 )
@@ -631,18 +633,16 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
             ["single_blocker"],
         )
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(
+            order_event_linkage_blockers(
                 ExecutionOrderEvent(raw_event={"_torghut_linkage": {"blockers": 0}})
             ),
             [],
         )
         self.assertIsNone(
-            order_feed_module._order_event_client_identity(
-                ExecutionOrderEvent(raw_event="raw-event")
-            )
+            order_event_client_identity(ExecutionOrderEvent(raw_event="raw-event"))
         )
         self.assertEqual(
-            order_feed_module._order_event_client_identity(
+            order_event_client_identity(
                 ExecutionOrderEvent(
                     raw_event={
                         "order": {
