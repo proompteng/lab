@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from typing import Any, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from .common import (
     BUILD_VERSION,

@@ -60,9 +60,7 @@ from .probe_types import (
 if TYPE_CHECKING:
     from .probe_types import PaperRouteProbeRuntime
 else:
-
-    class PaperRouteProbeRuntime:
-        pass
+    PaperRouteProbeRuntime = object
 
 
 logger = logging.getLogger(__name__)

@@ -59,15 +59,12 @@ from .collection_types import (
     SourceCollectionTargetContext,
 )
 
-
 if TYPE_CHECKING:
     from .collection_types import (
         SourceCollectionRuntime as SourceCollectionRuntimeMixin,
     )
 else:
-
-    class SourceCollectionRuntimeMixin:
-        pass
+    SourceCollectionRuntimeMixin = object
 
 
 logger = logging.getLogger(__name__)

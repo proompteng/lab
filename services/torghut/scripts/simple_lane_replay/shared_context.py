@@ -12,28 +12,12 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from importlib import import_module
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeAlias, cast
+from typing import Any
 
 import yaml
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
-
-if TYPE_CHECKING:
-    from app.trading.execution_adapters import (
-        SimulationExecutionAdapter as SimulationExecutionAdapterT,
-    )
-    from app.trading.ingest import (
-        ClickHouseSignalIngestor as ClickHouseSignalIngestorT,
-        SignalBatch as SignalBatchT,
-    )
-    from app.trading.models import SignalEnvelope as SignalEnvelopeT
-else:
-    ClickHouseSignalIngestorT: TypeAlias = Any
-    SignalBatchT: TypeAlias = Any
-    SignalEnvelopeT: TypeAlias = Any
-    SimulationExecutionAdapterT: TypeAlias = Any
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -45,47 +29,26 @@ REPO_ROOT = SERVICE_ROOT.parent.parent
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-config = import_module("app.config")
-
-_models = import_module("app.models")
-Base = cast(Any, _models.Base)
-Execution = cast(Any, _models.Execution)
-Strategy = cast(Any, _models.Strategy)
-TradeDecision = cast(Any, _models.TradeDecision)
-
-_strategy_catalog = import_module("app.strategies.catalog")
-StrategyConfig = cast(Any, _strategy_catalog.StrategyConfig)
-_compose_strategy_description = cast(
-    Any, _strategy_catalog._compose_strategy_description
+from app import config  # noqa: E402
+from app.models import Base, Execution, Strategy, TradeDecision  # noqa: E402
+from app.strategies.catalog import (  # noqa: E402
+    StrategyConfig,
+    _compose_strategy_description,
 )
-
-DecisionEngine = cast(Any, import_module("app.trading.decisions").DecisionEngine)
-
-OrderExecutor = cast(Any, import_module("app.trading.execution").OrderExecutor)
-
-_execution_adapters = import_module("app.trading.execution_adapters")
-OrderSubmission = cast(Any, _execution_adapters.OrderSubmission)
-SimulationExecutionAdapter = cast(Any, _execution_adapters.SimulationExecutionAdapter)
-
-OrderFirewall = cast(Any, import_module("app.trading.firewall").OrderFirewall)
-
-_trading_ingest = import_module("app.trading.ingest")
-ClickHouseSignalIngestor = cast(Any, _trading_ingest.ClickHouseSignalIngestor)
-SignalBatch = cast(Any, _trading_ingest.SignalBatch)
-
-SignalEnvelope = cast(Any, import_module("app.trading.models").SignalEnvelope)
-
-Reconciler = cast(Any, import_module("app.trading.reconcile").Reconciler)
-
-RiskEngine = cast(Any, import_module("app.trading.risk").RiskEngine)
-
-SimpleTradingPipeline = cast(
-    Any, import_module("app.trading.scheduler.simple_pipeline").SimpleTradingPipeline
+from app.trading.decisions import DecisionEngine  # noqa: E402
+from app.trading.execution import OrderExecutor  # noqa: E402
+from app.trading.execution_adapters import (  # noqa: E402
+    OrderSubmission,
+    SimulationExecutionAdapter,
 )
-
-TradingState = cast(Any, import_module("app.trading.scheduler.state").TradingState)
-
-UniverseResolver = cast(Any, import_module("app.trading.universe").UniverseResolver)
+from app.trading.firewall import OrderFirewall  # noqa: E402
+from app.trading.ingest import ClickHouseSignalIngestor, SignalBatch  # noqa: E402
+from app.trading.models import SignalEnvelope  # noqa: E402
+from app.trading.reconcile import Reconciler  # noqa: E402
+from app.trading.risk import RiskEngine  # noqa: E402
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline  # noqa: E402
+from app.trading.scheduler.state import TradingState  # noqa: E402
+from app.trading.universe import UniverseResolver  # noqa: E402
 
 DEFAULT_SYMBOLS = [
     "NVDA",
@@ -159,7 +122,7 @@ class ReplayArtifacts:
 class BucketReplayIngestor:
     """Feed preloaded signal buckets into the scheduler."""
 
-    def __init__(self, buckets: list[list[SignalEnvelopeT]]) -> None:
+    def __init__(self, buckets: list[list[SignalEnvelope]]) -> None:
         self._buckets = buckets
         self._cursor = 0
         self.committed_batches = 0
@@ -168,7 +131,7 @@ class BucketReplayIngestor:
     def remaining(self) -> int:
         return max(len(self._buckets) - self._cursor, 0)
 
-    def fetch_signals(self, session: Session) -> SignalBatchT:
+    def fetch_signals(self, session: Session) -> SignalBatch:
         _ = session
         if self._cursor >= len(self._buckets):
             return SignalBatch(
@@ -192,7 +155,7 @@ class BucketReplayIngestor:
             no_signal_reason=None if signals else "empty_bucket",
         )
 
-    def commit_cursor(self, session: Session, batch: SignalBatchT) -> None:
+    def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
         _ = (session, batch)
         if self._cursor < len(self._buckets):
             self._cursor += 1
@@ -205,7 +168,7 @@ class LocalSimulationBroker:
     def __init__(
         self,
         *,
-        adapter: SimulationExecutionAdapterT,
+        adapter: SimulationExecutionAdapter,
         initial_cash: Decimal,
         allow_shorts: bool,
     ) -> None:
@@ -378,7 +341,7 @@ def main() -> int:
         raise RuntimeError("No enabled strategies found in strategy config")
 
     signal_fetch_counts: dict[str, int] = {}
-    all_signals: list[SignalEnvelopeT] = []
+    all_signals: list[SignalEnvelope] = []
     for symbol in symbols:
         signals = _fetch_signals_adaptive(
             ingestor=ingestor,
@@ -577,7 +540,7 @@ def _configure_replay_settings(
 
 def _fetch_signals_adaptive(
     *,
-    ingestor: ClickHouseSignalIngestorT,
+    ingestor: ClickHouseSignalIngestor,
     symbol: str,
     start: datetime,
     end: datetime,
@@ -589,7 +552,7 @@ def _fetch_signals_adaptive(
     clickhouse_username: str,
     clickhouse_password: str,
     clickhouse_table: str,
-) -> list[SignalEnvelopeT]:
+) -> list[SignalEnvelope]:
     try:
         return _fetch_signals_window(
             ingestor=ingestor,
@@ -653,7 +616,7 @@ def _fetch_signals_adaptive(
 
 def _fetch_signals_window(
     *,
-    ingestor: ClickHouseSignalIngestorT,
+    ingestor: ClickHouseSignalIngestor,
     symbol: str,
     start: datetime,
     end: datetime,
@@ -664,7 +627,7 @@ def _fetch_signals_window(
     clickhouse_username: str,
     clickhouse_password: str,
     clickhouse_table: str,
-) -> list[SignalEnvelopeT]:
+) -> list[SignalEnvelope]:
     if clickhouse_transport == "http":
         return ingestor.fetch_signals_between(start, end, symbol=symbol)
     from .fetch_rows_via_kubectl import _fetch_rows_via_kubectl
@@ -680,7 +643,7 @@ def _fetch_signals_window(
         clickhouse_password=clickhouse_password,
         clickhouse_table=clickhouse_table,
     )
-    signals: list[SignalEnvelopeT] = []
+    signals: list[SignalEnvelope] = []
     for row in rows:
         signal = ingestor.parse_row(row)
         if signal is None:

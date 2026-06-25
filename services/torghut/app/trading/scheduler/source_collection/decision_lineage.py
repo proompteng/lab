@@ -39,15 +39,12 @@ from ..target_plan_helpers import (
 from .source_decisions import SimplePipelineSourceCollectionDecisionMixin
 from .target_plan_fetch import SimplePipelineSourceCollectionTargetPlanMixin
 
-
 if TYPE_CHECKING:
     from .collection_types import (
         SourceCollectionRuntime as SourceCollectionRuntimeMixin,
     )
 else:
-
-    class SourceCollectionRuntimeMixin:
-        pass
+    SourceCollectionRuntimeMixin = object
 
 
 logger = logging.getLogger(__name__)
