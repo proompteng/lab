@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import logging
 from collections.abc import Sequence
 from typing import Any, cast
 
@@ -12,7 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.common import WHITEPAPER_WORKFLOW, logger
+from app.api.runtime_services import WHITEPAPER_WORKFLOW
 from app.db import get_session
 from app.models import (
     WhitepaperAnalysisRun,
@@ -34,6 +35,7 @@ from ..bootstrap import (
 )
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/whitepapers/status")

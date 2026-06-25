@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from app.api.common import PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
+from app.api.proof_contracts import PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
 from app.api.proof_floor_payloads.route_repair_payloads import (
     build_freshness_carry_ledger_payload,
     build_repair_bid_settlement_payload,

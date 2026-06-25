@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -11,10 +12,6 @@ from sqlalchemy import bindparam, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.common import (
-    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-)
-from app.api.common import logger
 from app.api.health_checks.shared_context import (
     active_runtime_revision as _active_runtime_revision,
 )
@@ -59,6 +56,9 @@ from app.api.health_checks.tigerbeetle_health import (
 from app.api.health_checks.tigerbeetle_health import (
     unavailable_tigerbeetle_reconciliation_payload as _unavailable_tigerbeetle_reconciliation_payload,
 )
+from app.api.proof_contracts import (
+    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
+)
 from app.config import settings
 from app.db import SessionLocal
 from app.models import TradeDecision
@@ -79,7 +79,6 @@ from app.trading.submission_council import (
 from app.trading.submission_council import (
     resolve_active_capital_stage as _resolve_active_capital_stage,
 )
-
 from ..application import get_app
 from .remember_alpaca_success import (
     alpaca_cached_last_good as _alpaca_cached_last_good,
@@ -123,6 +122,8 @@ from .remember_alpaca_success import (
 from .remember_alpaca_success import (
     tca_row_payload as _tca_row_payload,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _apply_status_read_statement_timeout(

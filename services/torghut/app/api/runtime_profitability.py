@@ -13,7 +13,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.common import (
+from app.api.proof_contracts import (
     RUNTIME_PROFITABILITY_LOOKBACK_HOURS,
     RUNTIME_PROFITABILITY_SCHEMA_VERSION,
 )

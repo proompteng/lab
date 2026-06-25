@@ -646,7 +646,7 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
 
         with (
             patch("app.api.trading_status.SessionLocal", self.session_local),
-            patch("app.api.common.BUILD_COMMIT", "abc123"),
+            patch("app.api.trading_misc.trading_autonomy.BUILD_COMMIT", "abc123"),
         ):
             response = self.client.get("/trading/completion/doc29")
         self.assertEqual(response.status_code, 200)
@@ -662,7 +662,7 @@ class TestTradingApiStatusMetadata(TradingApiTestCaseBase):
 
         with (
             patch("app.api.trading_status.SessionLocal", self.session_local),
-            patch("app.api.common.BUILD_COMMIT", "abc123"),
+            patch("app.api.trading_misc.trading_autonomy.BUILD_COMMIT", "abc123"),
         ):
             gate_response = self.client.get(
                 f"/trading/completion/doc29/{DOC29_SIMULATION_FULL_DAY_GATE}"

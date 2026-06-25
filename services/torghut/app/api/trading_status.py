@@ -7,8 +7,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter
 
-from app.api import common as api_common
-from app.api.common import BUILD_IMAGE_DIGEST, BUILD_VERSION
+from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST, BUILD_VERSION
 from app.config import settings
 from app.db import SessionLocal
 from app.trading.market_context_domains import active_market_context_reasons
@@ -547,7 +546,7 @@ def trading_status() -> dict[str, object]:
     )
     build_payload = {
         "version": BUILD_VERSION,
-        "commit": api_common.BUILD_COMMIT,
+        "commit": BUILD_COMMIT,
         "image_digest": BUILD_IMAGE_DIGEST,
         "active_revision": shadow_first_runtime["active_revision"],
     }
@@ -583,7 +582,7 @@ def trading_status() -> dict[str, object]:
     )
     clock_settlement_receipt = _build_clock_settlement_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         build=build_payload,
         evidence_clock_arbiter=evidence_clock_arbiter,
         routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
@@ -599,7 +598,7 @@ def trading_status() -> dict[str, object]:
     )
     route_evidence_clearinghouse_packet = _build_route_evidence_clearinghouse_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
         build=build_payload,
         proof_floor=proof_floor,
@@ -613,7 +612,7 @@ def trading_status() -> dict[str, object]:
     )
     repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
         build=build_payload,
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
@@ -623,7 +622,7 @@ def trading_status() -> dict[str, object]:
     )
     route_warrant_exchange = _build_route_warrant_exchange_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         build=build_payload,
         consumer_evidence_receipt=consumer_evidence_receipt,
         evidence_clock_arbiter=evidence_clock_arbiter,
@@ -637,7 +636,7 @@ def trading_status() -> dict[str, object]:
         market_context_status=market_context_status,
     )
     source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         build=build_payload,
         consumer_evidence_receipt=consumer_evidence_receipt,
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
@@ -656,7 +655,7 @@ def trading_status() -> dict[str, object]:
     )
     repair_receipt_frontier = _build_repair_receipt_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
         freshness_carry_ledger=freshness_carry_ledger,
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,

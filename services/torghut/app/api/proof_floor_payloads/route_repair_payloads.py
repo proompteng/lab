@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from app.api.common import (
+from app.api.build_metadata import (
     BUILD_ARGO_HEALTH,
     BUILD_ARGO_SYNC_REVISION,
     BUILD_MANIFEST_COMMIT,

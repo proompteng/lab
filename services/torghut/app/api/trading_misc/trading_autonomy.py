@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -14,8 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api import common as api_common
-from app.api.common import BUILD_IMAGE_DIGEST, logger
+from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST
 from app.api.trading_misc.shared_context import router
 from app.config import settings
 from app.db import get_session
@@ -111,6 +111,8 @@ from .autonomy_dependencies import (
 from .autonomy_dependencies import (
     unavailable_runtime_ledger_portfolio_summary as _unavailable_runtime_ledger_portfolio_summary,
 )
+
+logger = logging.getLogger(__name__)
 
 
 @router.get("/trading/autonomy")
@@ -452,7 +454,7 @@ def build_current_evidence_epoch(
             db_check_ok=database_ok,
             trading_status_ok=trading_status_ok,
             image_digest=BUILD_IMAGE_DIGEST,
-            revision=api_common.BUILD_COMMIT,
+            revision=BUILD_COMMIT,
             observed_at=observed_at,
         )
     )
@@ -639,7 +641,7 @@ def trading_completion_doc29(
     return build_doc29_completion_status(
         session=session,
         stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
-        current_git_revision=api_common.BUILD_COMMIT,
+        current_git_revision=BUILD_COMMIT,
         current_image_digest=BUILD_IMAGE_DIGEST,
     )
 
@@ -654,7 +656,7 @@ def trading_completion_doc29_gate(
     payload = build_doc29_completion_status(
         session=session,
         stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
-        current_git_revision=api_common.BUILD_COMMIT,
+        current_git_revision=BUILD_COMMIT,
         current_image_digest=BUILD_IMAGE_DIGEST,
     )
     for gate in cast(list[dict[str, object]], payload.get("gates", [])):

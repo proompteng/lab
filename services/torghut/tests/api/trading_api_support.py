@@ -25,8 +25,8 @@ from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
 from app import bootstrap as app_bootstrap
-from app.api import common as common_api
 from app.api import health_checks as health_checks_api
+from app.api import health_cache_state, proof_contracts
 from app.api import maintenance as maintenance_api
 from app.api import proof_floor_payloads as proof_floor_payloads_api
 from app.api import proofs as proofs_api
@@ -72,9 +72,9 @@ from app.models import (
     VNextEmpiricalJobRun,
 )
 
-_ALPACA_HEALTH_STATE = common_api.ALPACA_HEALTH_STATE
-_OPTIONS_CATALOG_FRESHNESS_CACHE = common_api.OPTIONS_CATALOG_FRESHNESS_CACHE
-_TRADING_DEPENDENCY_HEALTH_CACHE = common_api.TRADING_DEPENDENCY_HEALTH_CACHE
+_ALPACA_HEALTH_STATE = health_cache_state.ALPACA_HEALTH_STATE
+_OPTIONS_CATALOG_FRESHNESS_CACHE = health_cache_state.OPTIONS_CATALOG_FRESHNESS_CACHE
+_TRADING_DEPENDENCY_HEALTH_CACHE = health_cache_state.TRADING_DEPENDENCY_HEALTH_CACHE
 _assert_dspy_cutover_migration_guard = app_bootstrap.assert_dspy_cutover_migration_guard
 _build_hypothesis_runtime_payload = health_checks_api.build_hypothesis_runtime_payload
 _build_live_submission_gate_payload = (
@@ -107,7 +107,7 @@ _readiness_dependency_cache_key = (
     readiness_surface_helpers.readiness_dependency_cache_key
 )
 _readiness_dependency_checks = readiness_surface_helpers.readiness_dependency_checks
-_retryable_tca_recompute_error = common_api._retryable_tca_recompute_error
+_retryable_tca_recompute_error = proof_contracts.retryable_tca_recompute_error
 _route_claim_symbols = health_checks_api.route_claim_symbols
 _route_continuity_packet_for_proof_floor = (
     proof_floor_payloads_api.route_continuity_packet_for_proof_floor
@@ -672,12 +672,12 @@ class TradingApiTestCaseBase(TestCase):
             del app.state.trading_scheduler
 
     def _clear_trading_health_surface_cache(self) -> None:
-        with common_api.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
+        with health_cache_state.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
             refresh_futures = list(
-                common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.values()
+                health_cache_state.TRADING_HEALTH_SURFACE_EVALUATIONS.values()
             )
-            common_api.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            common_api.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
+            health_cache_state.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
+            health_cache_state.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
         for refresh_future in refresh_futures:
             refresh_future.cancel()
 
@@ -776,11 +776,11 @@ __all__: tuple[str, ...] = (
     "app",
     "app_bootstrap",
     "build_completion_trace",
-    "common_api",
     "create_engine",
     "datetime",
     "forecast_registry",
     "get_session",
+    "health_cache_state",
     "health_checks_api",
     "healthz",
     "inspect",

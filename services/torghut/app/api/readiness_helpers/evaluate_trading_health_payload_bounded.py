@@ -2,25 +2,25 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from concurrent.futures import Future, TimeoutError
 from copy import deepcopy
 from typing import cast
 
-from app.api import common as api_common
-from app.api.common import (
+from app.api.health_cache_state import (
     TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
 )
-from app.api.common import (
+from app.api.health_cache_state import (
     TRADING_HEALTH_SURFACE_EVALUATION_LOCK as _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
 )
-from app.api.common import (
+from app.api.health_cache_state import (
     TRADING_HEALTH_SURFACE_EVALUATIONS as _TRADING_HEALTH_SURFACE_EVALUATIONS,
 )
-from app.api.common import (
+from app.api.health_cache_state import (
     TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
 )
-from app.api.common import logger
+from app.api import health_cache_state
 from app.api.readiness_helpers.readiness_surface import (
     cache_completed_trading_health_surface_payload as _cache_completed_trading_health_surface_payload,
 )
@@ -42,6 +42,8 @@ from app.api.readiness_helpers.readiness_surface import (
 from app.api.readiness_helpers.readiness_surface import (
     trading_health_surface_cache_key as _trading_health_surface_cache_key,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def evaluate_trading_health_payload_bounded(
@@ -166,7 +168,7 @@ def evaluate_trading_health_payload_bounded(
     assert future is not None
     timeout_seconds = max(
         0.1,
-        float(api_common.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS),
+        float(health_cache_state.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS),
     )
     try:
         payload, status_code = future.result(timeout=timeout_seconds)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
@@ -10,11 +11,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api import common as api_common
-from app.api.common import (
+from app.api.build_metadata import BUILD_COMMIT
+from app.api.proof_contracts import (
     SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
 )
-from app.api.common import logger
 from app.api.health_checks.shared_context import (
     empirical_jobs_status as _empirical_jobs_status,
 )
@@ -56,6 +56,8 @@ from ..health_checks.load_options_catalog_freshness_summary import (
 from ..health_checks.remember_alpaca_success import (
     load_tca_summary as _load_tca_summary,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _build_jangar_reliability_settlement_ref(
@@ -336,7 +338,7 @@ def _build_autonomy_capital_replay_projection(
             )
         proof_floor = _build_profitability_proof_floor_payload(
             state=scheduler.state,
-            torghut_revision=api_common.BUILD_COMMIT,
+            torghut_revision=BUILD_COMMIT,
             live_submission_gate=live_submission_gate,
             hypothesis_payload=hypothesis_payload,
             empirical_jobs_status=empirical_jobs,
@@ -346,10 +348,10 @@ def _build_autonomy_capital_replay_projection(
         )
         route_reacquisition_board = _build_route_reacquisition_board_payload(
             proof_floor=proof_floor,
-            active_revision=api_common.BUILD_COMMIT,
+            active_revision=BUILD_COMMIT,
         )
         return _build_capital_replay_projection_payload(
-            torghut_revision=api_common.BUILD_COMMIT,
+            torghut_revision=BUILD_COMMIT,
             dependency_quorum=dependency_quorum.as_payload(),
             live_submission_gate=live_submission_gate,
             proof_floor=proof_floor,
@@ -362,7 +364,7 @@ def _build_autonomy_capital_replay_projection(
         return build_capital_replay_projection(
             account_label=settings.trading_account_label,
             trading_mode=settings.trading_mode,
-            torghut_revision=api_common.BUILD_COMMIT,
+            torghut_revision=BUILD_COMMIT,
             proof_floor_receipt={
                 "route_state": "unavailable",
                 "capital_state": "zero_notional",

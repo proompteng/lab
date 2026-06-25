@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import importlib
+
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.routing import APIRoute
 
 from app import main as main_module
-from app.api import common as api_common
 from app.api import proofs as proofs_api
 from app.api.application import api_routers, get_app
 from app.trading.scheduler import TradingScheduler
@@ -87,8 +88,9 @@ def test_api_application_mounts_concrete_routers() -> None:
     }.issubset(route_paths)
 
 
-def test_api_common_no_longer_exposes_dynamic_runtime_lookup() -> None:
-    assert not hasattr(api_common, "main_runtime_value")
+def test_api_common_dead_surface_is_removed() -> None:
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("app.api.common")
     assert not hasattr(main_module, "main_runtime_value")
     assert not hasattr(proofs_api, "main_runtime_value")
 

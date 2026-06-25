@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -14,15 +15,16 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.alpaca_client import TorghutAlpacaClient
-from app.api.common import ALPACA_HEALTH_CACHE_LOCK as _ALPACA_HEALTH_CACHE_LOCK
-from app.api.common import ALPACA_HEALTH_STATE as _ALPACA_HEALTH_STATE
-from app.api.common import (
+from app.api.health_cache_state import (
+    ALPACA_HEALTH_CACHE_LOCK as _ALPACA_HEALTH_CACHE_LOCK,
+)
+from app.api.health_cache_state import ALPACA_HEALTH_STATE as _ALPACA_HEALTH_STATE
+from app.api.health_cache_state import (
     OPTIONS_CATALOG_FRESHNESS_CACHE as _OPTIONS_CATALOG_FRESHNESS_CACHE,
 )
-from app.api.common import (
+from app.api.health_cache_state import (
     OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK as _OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
 )
-from app.api.common import logger
 from app.api.health_checks.shared_context import (
     alpaca_endpoint_class as _alpaca_endpoint_class,
 )
@@ -38,6 +40,8 @@ from app.trading.submission_council import (
     build_shadow_first_toggle_parity as _build_shadow_first_toggle_parity,
 )
 from app.trading.tca import build_tca_gate_inputs
+
+logger = logging.getLogger(__name__)
 
 
 def _rollback_status_read_session(session: Session, *, context: str) -> None:

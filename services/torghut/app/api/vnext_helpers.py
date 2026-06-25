@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Mapping
 from decimal import Decimal
 from pathlib import Path
@@ -12,7 +13,6 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.common import logger
 from app.db import SessionLocal
 from app.models import (
     VNextDatasetSnapshot,
@@ -32,6 +32,7 @@ from .health_checks import sqlalchemy_error_indicates_statement_timeout
 _sqlalchemy_error_indicates_statement_timeout = (
     sqlalchemy_error_indicates_statement_timeout
 )
+logger = logging.getLogger(__name__)
 
 
 def _rollback_status_read_session(session: Session, *, context: str) -> None:

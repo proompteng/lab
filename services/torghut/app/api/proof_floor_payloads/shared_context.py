@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from app.api.common import PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
+from app.api.proof_contracts import PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
 from app.config import settings
 from app.trading.capital_reentry_cohorts import build_capital_reentry_cohort_ledger
 from app.trading.clock_settlement import build_clock_settlement_receipt

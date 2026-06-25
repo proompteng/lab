@@ -15,7 +15,8 @@ from fastapi.responses import JSONResponse
 from inngest.fast_api import serve as inngest_fastapi_serve
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api.common import BUILD_COMMIT, BUILD_VERSION, WHITEPAPER_WORKFLOW
+from .api.build_metadata import BUILD_COMMIT, BUILD_VERSION
+from .api.runtime_services import WHITEPAPER_WORKFLOW
 from .config import settings
 from .db import SessionLocal, ensure_schema
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
