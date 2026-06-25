@@ -13,9 +13,9 @@ from sqlalchemy import select
 from app import config
 from app.models import Strategy, TradeDecision
 from app.trading.decisions import (
-    _is_entry_action_for_strategies,
-    _is_exit_action_for_strategies,
-    _strategy_uses_position_isolation,
+    is_entry_action_for_strategies,
+    is_exit_action_for_strategies,
+    strategy_uses_position_isolation,
     DecisionEngine,
 )
 from app.trading.execution import OrderExecutor
@@ -154,18 +154,18 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
             universe_symbols=["AAPL", "AMZN"],
         )
 
-        self.assertTrue(_strategy_uses_position_isolation(strategy))
+        self.assertTrue(strategy_uses_position_isolation(strategy))
         self.assertTrue(
-            _is_entry_action_for_strategies(strategies=[strategy], action="buy")
+            is_entry_action_for_strategies(strategies=[strategy], action="buy")
         )
         self.assertTrue(
-            _is_entry_action_for_strategies(strategies=[strategy], action="sell")
+            is_entry_action_for_strategies(strategies=[strategy], action="sell")
         )
         self.assertFalse(
-            _is_exit_action_for_strategies(strategies=[strategy], action="buy")
+            is_exit_action_for_strategies(strategies=[strategy], action="buy")
         )
         self.assertFalse(
-            _is_exit_action_for_strategies(strategies=[strategy], action="sell")
+            is_exit_action_for_strategies(strategies=[strategy], action="sell")
         )
 
     def test_pipeline_runtime_uncertainty_rechecks_after_llm_adjustment(self) -> None:

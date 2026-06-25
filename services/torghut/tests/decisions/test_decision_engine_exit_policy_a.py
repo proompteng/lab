@@ -13,9 +13,9 @@ from tests.decisions.support import (
     _BuyPlugin,
     _SellPlugin,
     _compose_strategy_description,
-    _passes_runtime_trade_policy,
-    _record_runtime_trade_policy_decision,
-    _resolve_strategy_time_in_force,
+    passes_runtime_trade_policy,
+    record_runtime_trade_policy_decision,
+    resolve_strategy_time_in_force,
     datetime,
     patch,
     settings,
@@ -810,7 +810,7 @@ class TestDecisionEngineExitPolicyA(TestCase):
         state = {}
 
         self.assertTrue(
-            _passes_runtime_trade_policy(
+            passes_runtime_trade_policy(
                 strategies=[strategy],
                 last_emitted_action_at={},
                 runtime_trade_policy_state=state,
@@ -823,11 +823,11 @@ class TestDecisionEngineExitPolicyA(TestCase):
             )
         )
         self.assertEqual(
-            _resolve_strategy_time_in_force(strategies=[strategy], action="sell"),
+            resolve_strategy_time_in_force(strategies=[strategy], action="sell"),
             "ioc",
         )
 
-        _record_runtime_trade_policy_decision(
+        record_runtime_trade_policy_decision(
             strategies=[strategy],
             runtime_trade_policy_state=state,
             signal_ts=signal.event_ts,
@@ -842,7 +842,7 @@ class TestDecisionEngineExitPolicyA(TestCase):
         )
 
         self.assertFalse(
-            _passes_runtime_trade_policy(
+            passes_runtime_trade_policy(
                 strategies=[strategy],
                 last_emitted_action_at={},
                 runtime_trade_policy_state=state,

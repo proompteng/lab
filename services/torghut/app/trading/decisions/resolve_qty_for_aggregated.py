@@ -21,54 +21,54 @@ from ..strategy_runtime import (
 
 
 from .decision_engine_runtime_methods import (
-    build_params as _build_params,
-    skip_non_executable_decision_qty as _skip_non_executable_decision_qty,
+    build_params,
+    skip_non_executable_decision_qty,
 )
 from .aggregated_qty import (
-    AggregatedCapacityAdjustment as _AggregatedCapacityAdjustment,
-    AggregatedQtyContext as _AggregatedQtyContext,
-    aggregated_capacity_adjustment as _aggregated_capacity_adjustment,
-    aggregated_capacity_exhausted_result as _aggregated_capacity_exhausted_result,
-    aggregated_capacity_meta as _aggregated_capacity_meta,
-    aggregated_capacity_reason as _aggregated_capacity_reason,
-    aggregated_exit_or_reentry_result as _aggregated_exit_or_reentry_result,
-    aggregated_min_qty_capacity_reason as _aggregated_min_qty_capacity_reason,
-    aggregated_min_qty_result as _aggregated_min_qty_result,
-    aggregated_qty_context as _aggregated_qty_context,
-    aggregated_qty_success_result as _aggregated_qty_success_result,
-    aggregated_requested_qty as _aggregated_requested_qty,
-    aggregated_short_entry_below_min as _aggregated_short_entry_below_min,
-    aggregated_zero_qty_result as _aggregated_zero_qty_result,
-    negative_position_qty as _negative_position_qty,
-    position_qty_is_flat_or_long as _position_qty_is_flat_or_long,
-    position_qty_is_flat_or_short as _position_qty_is_flat_or_short,
-    positive_position_qty as _positive_position_qty,
-    resolve_qty_for_aggregated as _resolve_qty_for_aggregated,
-    resolve_qty_from_aggregated_context as _resolve_qty_from_aggregated_context,
+    AggregatedCapacityAdjustment,
+    AggregatedQtyContext,
+    aggregated_capacity_adjustment,
+    aggregated_capacity_exhausted_result,
+    aggregated_capacity_meta,
+    aggregated_capacity_reason,
+    aggregated_exit_or_reentry_result,
+    aggregated_min_qty_capacity_reason,
+    aggregated_min_qty_result,
+    aggregated_qty_context,
+    aggregated_qty_success_result,
+    aggregated_requested_qty,
+    aggregated_short_entry_below_min,
+    aggregated_zero_qty_result,
+    negative_position_qty,
+    position_qty_is_flat_or_long,
+    position_qty_is_flat_or_short,
+    positive_position_qty,
+    resolve_qty_for_aggregated,
+    resolve_qty_from_aggregated_context,
 )
 from .resolve_qty_for_aggregated_support import (
-    default_trailing_stop_requires_structure_loss as _default_trailing_stop_requires_structure_loss,
-    passes_exit_profit_policy as _passes_exit_profit_policy,
-    position_age_seconds_for_symbol as _position_age_seconds_for_symbol,
-    position_avg_entry_price_for_symbol as _position_avg_entry_price_for_symbol,
-    position_qty_for_symbol as _position_qty_for_symbol,
-    realized_exit_bps as _realized_exit_bps,
-    reference_exit_price as _reference_exit_price,
-    resolve_bool_strategy_param as _resolve_bool_strategy_param,
-    resolve_dynamic_exit_threshold_bps as _resolve_dynamic_exit_threshold_bps,
-    resolve_max_nonnegative_strategy_param as _resolve_max_nonnegative_strategy_param,
-    resolve_min_positive_strategy_param as _resolve_min_positive_strategy_param,
-    signal_spread_bps as _signal_spread_bps,
-    strategy_catalog_runtime_type as _strategy_catalog_runtime_type,
-    trailing_stop_structure_loss_confirmed as _trailing_stop_structure_loss_confirmed,
-    treats_buy_as_exit_only as _treats_buy_as_exit_only,
-    treats_sell_as_exit_only as _treats_sell_as_exit_only,
-    volatility_to_bps as _volatility_to_bps,
+    default_trailing_stop_requires_structure_loss,
+    passes_exit_profit_policy,
+    position_age_seconds_for_symbol,
+    position_avg_entry_price_for_symbol,
+    position_qty_for_symbol,
+    realized_exit_bps,
+    reference_exit_price as resolve_reference_exit_price,
+    resolve_bool_strategy_param,
+    resolve_dynamic_exit_threshold_bps,
+    resolve_max_nonnegative_strategy_param,
+    resolve_min_positive_strategy_param,
+    signal_spread_bps,
+    strategy_catalog_runtime_type,
+    trailing_stop_structure_loss_confirmed,
+    treats_buy_as_exit_only,
+    treats_sell_as_exit_only,
+    volatility_to_bps,
 )
 
 
 @dataclass(frozen=True)
-class _RuntimeExitOverlayContext:
+class RuntimeExitOverlayContext:
     signal: SignalEnvelope
     strategies: list[Strategy]
     timeframe: str
@@ -90,7 +90,7 @@ class _RuntimeExitOverlayContext:
 
 
 @dataclass(frozen=True)
-class _RuntimeExitOverlayRequest:
+class RuntimeExitOverlayRequest:
     signal: SignalEnvelope
     strategies: list[Strategy]
     timeframe: str
@@ -108,7 +108,7 @@ class _RuntimeExitOverlayRequest:
 
 
 @dataclass(frozen=True)
-class _RuntimeExitMetrics:
+class RuntimeExitMetrics:
     spread_bps: Decimal | None
     volatility_bps: Decimal | None
     entry_drawdown_bps: Decimal
@@ -117,7 +117,7 @@ class _RuntimeExitMetrics:
 
 
 @dataclass(frozen=True)
-class _RuntimeExitThresholds:
+class RuntimeExitThresholds:
     hard_stop_threshold_bps: Decimal | None
     trailing_activation_profit_bps: Decimal | None
     trailing_stop_threshold_bps: Decimal | None
@@ -128,7 +128,7 @@ class _RuntimeExitThresholds:
 
 
 @dataclass(frozen=True)
-class _RuntimeExitTrigger:
+class RuntimeExitTrigger:
     exit_type: str
     rationale: str
     threshold_bps: Decimal | None
@@ -138,28 +138,28 @@ class _RuntimeExitTrigger:
 
 
 @dataclass(frozen=True)
-class _RuntimeExitSizing:
+class RuntimeExitSizing:
     qty: Decimal
     sizing_meta: dict[str, Any]
 
 
-def _build_runtime_position_exit_overlay(**kwargs: Any) -> StrategyDecision | None:
-    request = _runtime_exit_overlay_request(kwargs)
-    context = _runtime_exit_overlay_context(request)
+def build_runtime_position_exit_overlay(**kwargs: Any) -> StrategyDecision | None:
+    request = runtime_exit_overlay_request(kwargs)
+    context = runtime_exit_overlay_context(request)
     if context is None:
         return None
-    metrics = _runtime_exit_metrics(context)
-    thresholds = _runtime_exit_thresholds(context, metrics)
-    candidates = _runtime_exit_candidates(context, metrics, thresholds)
+    metrics = runtime_exit_metrics(context)
+    thresholds = runtime_exit_thresholds(context, metrics)
+    candidates = runtime_exit_candidates(context, metrics, thresholds)
     if not candidates:
         return None
-    trigger = _runtime_exit_trigger(context, candidates)
+    trigger = runtime_exit_trigger(context, candidates)
     if trigger is None:
         return None
-    sizing = _runtime_exit_sizing(context)
+    sizing = runtime_exit_sizing(context)
     if sizing is None:
         return None
-    return _runtime_exit_decision(
+    return runtime_exit_decision(
         context=context,
         metrics=metrics,
         trigger=trigger,
@@ -167,10 +167,10 @@ def _build_runtime_position_exit_overlay(**kwargs: Any) -> StrategyDecision | No
     )
 
 
-def _runtime_exit_overlay_request(
+def runtime_exit_overlay_request(
     kwargs: Mapping[str, Any],
-) -> _RuntimeExitOverlayRequest:
-    return _RuntimeExitOverlayRequest(
+) -> RuntimeExitOverlayRequest:
+    return RuntimeExitOverlayRequest(
         signal=cast(SignalEnvelope, kwargs["signal"]),
         strategies=cast(list[Strategy], kwargs["strategies"]),
         timeframe=str(kwargs["timeframe"]),
@@ -194,12 +194,12 @@ def _runtime_exit_overlay_request(
     )
 
 
-def _runtime_exit_overlay_context(
-    request: _RuntimeExitOverlayRequest,
-) -> _RuntimeExitOverlayContext | None:
+def runtime_exit_overlay_context(
+    request: RuntimeExitOverlayRequest,
+) -> RuntimeExitOverlayContext | None:
     if request.price is None or request.positions is None:
         return None
-    position_qty = _position_qty_for_symbol(request.positions, request.signal.symbol)
+    position_qty = position_qty_for_symbol(request.positions, request.signal.symbol)
     if position_qty is None or position_qty == 0:
         return None
     position_side: Literal["long", "short"] = "long" if position_qty > 0 else "short"
@@ -209,20 +209,20 @@ def _runtime_exit_overlay_context(
         for decision in request.decisions
     ):
         return None
-    eligible_strategies = _runtime_exit_eligible_strategies(
+    eligible_strategies = runtime_exit_eligible_strategies(
         strategies=request.strategies,
         timeframe=request.timeframe,
         position_side=position_side,
     )
     if not eligible_strategies:
         return None
-    avg_entry_price = _position_avg_entry_price_for_symbol(
+    avg_entry_price = position_avg_entry_price_for_symbol(
         request.positions,
         request.signal.symbol,
     )
     if avg_entry_price is None or avg_entry_price <= 0:
         return None
-    return _RuntimeExitOverlayContext(
+    return RuntimeExitOverlayContext(
         signal=request.signal,
         strategies=request.strategies,
         timeframe=request.timeframe,
@@ -244,7 +244,7 @@ def _runtime_exit_overlay_context(
     )
 
 
-def _runtime_exit_eligible_strategies(
+def runtime_exit_eligible_strategies(
     *,
     strategies: list[Strategy],
     timeframe: str,
@@ -255,29 +255,29 @@ def _runtime_exit_eligible_strategies(
         for strategy in strategies
         if strategy.enabled
         and strategy.base_timeframe == timeframe
-        and _supports_runtime_position_exit_overlay(
+        and supports_runtime_position_exit_overlay(
             strategy=strategy,
             position_side=position_side,
         )
     ]
 
 
-def _runtime_exit_metrics(context: _RuntimeExitOverlayContext) -> _RuntimeExitMetrics:
-    return _RuntimeExitMetrics(
-        spread_bps=_signal_spread_bps(signal=context.signal, price=context.price),
-        volatility_bps=_volatility_to_bps(context.features.volatility),
-        entry_drawdown_bps=_runtime_exit_entry_drawdown_bps(context),
-        position_age_seconds=_position_age_seconds_for_symbol(
+def runtime_exit_metrics(context: RuntimeExitOverlayContext) -> RuntimeExitMetrics:
+    return RuntimeExitMetrics(
+        spread_bps=signal_spread_bps(signal=context.signal, price=context.price),
+        volatility_bps=volatility_to_bps(context.features.volatility),
+        entry_drawdown_bps=runtime_exit_entry_drawdown_bps(context),
+        position_age_seconds=position_age_seconds_for_symbol(
             context.positions,
             context.signal.symbol,
             signal_ts=context.signal.event_ts,
         ),
-        minute_of_day_utc=_minute_of_day_utc(context.signal.event_ts),
+        minute_of_day_utc=minute_of_day_utc(context.signal.event_ts),
     )
 
 
-def _runtime_exit_entry_drawdown_bps(
-    context: _RuntimeExitOverlayContext,
+def runtime_exit_entry_drawdown_bps(
+    context: RuntimeExitOverlayContext,
 ) -> Decimal:
     if context.position_side == "long" and context.price < context.avg_entry_price:
         return (
@@ -290,22 +290,22 @@ def _runtime_exit_entry_drawdown_bps(
     return Decimal("0")
 
 
-def _minute_of_day_utc(value: datetime) -> Decimal:
+def minute_of_day_utc(value: datetime) -> Decimal:
     event_ts = value.astimezone(timezone.utc)
     return Decimal(str(event_ts.hour * 60 + event_ts.minute))
 
 
-def _runtime_exit_thresholds(
-    context: _RuntimeExitOverlayContext,
-    metrics: _RuntimeExitMetrics,
-) -> _RuntimeExitThresholds:
-    hard_stop_loss_bps = _runtime_hard_stop_loss_bps(context)
-    trailing_activation, trailing_threshold = _runtime_trailing_thresholds(
+def runtime_exit_thresholds(
+    context: RuntimeExitOverlayContext,
+    metrics: RuntimeExitMetrics,
+) -> RuntimeExitThresholds:
+    hard_stop_loss_bps = runtime_hard_stop_loss_bps(context)
+    trailing_activation, trailing_threshold = runtime_trailing_thresholds(
         context,
         metrics,
     )
-    return _RuntimeExitThresholds(
-        hard_stop_threshold_bps=_resolve_dynamic_exit_threshold_bps(
+    return RuntimeExitThresholds(
+        hard_stop_threshold_bps=resolve_dynamic_exit_threshold_bps(
             strategies=context.eligible_strategies,
             base_bps=hard_stop_loss_bps,
             spread_bps=metrics.spread_bps,
@@ -315,59 +315,59 @@ def _runtime_exit_thresholds(
         ),
         trailing_activation_profit_bps=trailing_activation,
         trailing_stop_threshold_bps=trailing_threshold,
-        trailing_stop_requires_structure_loss=_resolve_bool_strategy_param(
+        trailing_stop_requires_structure_loss=resolve_bool_strategy_param(
             strategies=context.eligible_strategies,
             key="long_trailing_stop_requires_structure_loss",
-            default=_default_trailing_stop_requires_structure_loss(
+            default=default_trailing_stop_requires_structure_loss(
                 context.eligible_strategies
             ),
         ),
-        trailing_stop_structure_loss_confirmed=_trailing_stop_structure_loss_confirmed(
+        trailing_stop_structure_loss_confirmed=trailing_stop_structure_loss_confirmed(
             signal=context.signal,
             price=context.price,
             strategies=context.eligible_strategies,
         ),
-        flatten_start_minute_utc=_resolve_max_nonnegative_strategy_param(
+        flatten_start_minute_utc=resolve_max_nonnegative_strategy_param(
             strategies=context.eligible_strategies,
             key="session_flatten_start_minute_utc",
         ),
-        max_hold_seconds=_resolve_max_nonnegative_strategy_param(
+        max_hold_seconds=resolve_max_nonnegative_strategy_param(
             strategies=context.eligible_strategies,
             key="max_hold_seconds",
         ),
     )
 
 
-def _runtime_hard_stop_loss_bps(
-    context: _RuntimeExitOverlayContext,
+def runtime_hard_stop_loss_bps(
+    context: RuntimeExitOverlayContext,
 ) -> Decimal | None:
-    value = _resolve_min_positive_strategy_param(
+    value = resolve_min_positive_strategy_param(
         strategies=context.eligible_strategies,
         key=f"{context.position_side}_stop_loss_bps",
     )
     if value is None and context.position_side == "short":
-        return _resolve_min_positive_strategy_param(
+        return resolve_min_positive_strategy_param(
             strategies=context.eligible_strategies,
             key="long_stop_loss_bps",
         )
     return value
 
 
-def _runtime_trailing_thresholds(
-    context: _RuntimeExitOverlayContext,
-    metrics: _RuntimeExitMetrics,
+def runtime_trailing_thresholds(
+    context: RuntimeExitOverlayContext,
+    metrics: RuntimeExitMetrics,
 ) -> tuple[Decimal | None, Decimal | None]:
     if context.position_side != "long":
         return None, None
-    activation = _resolve_min_positive_strategy_param(
+    activation = resolve_min_positive_strategy_param(
         strategies=context.eligible_strategies,
         key="long_trailing_stop_activation_profit_bps",
     )
-    drawdown = _resolve_min_positive_strategy_param(
+    drawdown = resolve_min_positive_strategy_param(
         strategies=context.eligible_strategies,
         key="long_trailing_stop_drawdown_bps",
     )
-    threshold = _resolve_dynamic_exit_threshold_bps(
+    threshold = resolve_dynamic_exit_threshold_bps(
         strategies=context.eligible_strategies,
         base_bps=drawdown,
         spread_bps=metrics.spread_bps,
@@ -378,16 +378,16 @@ def _runtime_trailing_thresholds(
     return activation, threshold
 
 
-def _runtime_exit_candidates(
-    context: _RuntimeExitOverlayContext,
-    metrics: _RuntimeExitMetrics,
-    thresholds: _RuntimeExitThresholds,
+def runtime_exit_candidates(
+    context: RuntimeExitOverlayContext,
+    metrics: RuntimeExitMetrics,
+    thresholds: RuntimeExitThresholds,
 ) -> list[tuple[str, str, Decimal | None, Decimal | None]]:
     candidates: list[tuple[str, str, Decimal | None, Decimal | None]] = []
-    trailing = _runtime_trailing_exit_candidate(context, thresholds)
+    trailing = runtime_trailing_exit_candidate(context, thresholds)
     if trailing is not None:
         candidates.append(trailing)
-    if _runtime_hard_stop_triggered(metrics, thresholds):
+    if runtime_hard_stop_triggered(metrics, thresholds):
         candidates.append(
             (
                 f"{context.position_side}_stop_loss_bps",
@@ -396,7 +396,7 @@ def _runtime_exit_candidates(
                 metrics.entry_drawdown_bps,
             )
         )
-    if _runtime_max_hold_triggered(metrics, thresholds):
+    if runtime_max_hold_triggered(metrics, thresholds):
         candidates.append(
             (
                 "max_hold_seconds",
@@ -405,7 +405,7 @@ def _runtime_exit_candidates(
                 None,
             )
         )
-    if _runtime_session_flatten_triggered(metrics, thresholds):
+    if runtime_session_flatten_triggered(metrics, thresholds):
         candidates.append(
             (
                 "session_flatten_minute_utc",
@@ -417,11 +417,11 @@ def _runtime_exit_candidates(
     return candidates
 
 
-def _runtime_trailing_exit_candidate(
-    context: _RuntimeExitOverlayContext,
-    thresholds: _RuntimeExitThresholds,
+def runtime_trailing_exit_candidate(
+    context: RuntimeExitOverlayContext,
+    thresholds: RuntimeExitThresholds,
 ) -> tuple[str, str, Decimal | None, Decimal | None] | None:
-    if not _runtime_trailing_exit_armed(context, thresholds):
+    if not runtime_trailing_exit_armed(context, thresholds):
         return None
     peak_profit_bps = (
         (cast(Decimal, context.position_peak_price) - context.avg_entry_price)
@@ -450,9 +450,9 @@ def _runtime_trailing_exit_candidate(
     )
 
 
-def _runtime_trailing_exit_armed(
-    context: _RuntimeExitOverlayContext,
-    thresholds: _RuntimeExitThresholds,
+def runtime_trailing_exit_armed(
+    context: RuntimeExitOverlayContext,
+    thresholds: RuntimeExitThresholds,
 ) -> bool:
     return (
         context.position_peak_price is not None
@@ -463,9 +463,9 @@ def _runtime_trailing_exit_armed(
     )
 
 
-def _runtime_hard_stop_triggered(
-    metrics: _RuntimeExitMetrics,
-    thresholds: _RuntimeExitThresholds,
+def runtime_hard_stop_triggered(
+    metrics: RuntimeExitMetrics,
+    thresholds: RuntimeExitThresholds,
 ) -> bool:
     return (
         thresholds.hard_stop_threshold_bps is not None
@@ -474,9 +474,9 @@ def _runtime_hard_stop_triggered(
     )
 
 
-def _runtime_max_hold_triggered(
-    metrics: _RuntimeExitMetrics,
-    thresholds: _RuntimeExitThresholds,
+def runtime_max_hold_triggered(
+    metrics: RuntimeExitMetrics,
+    thresholds: RuntimeExitThresholds,
 ) -> bool:
     return (
         thresholds.max_hold_seconds is not None
@@ -486,9 +486,9 @@ def _runtime_max_hold_triggered(
     )
 
 
-def _runtime_session_flatten_triggered(
-    metrics: _RuntimeExitMetrics,
-    thresholds: _RuntimeExitThresholds,
+def runtime_session_flatten_triggered(
+    metrics: RuntimeExitMetrics,
+    thresholds: RuntimeExitThresholds,
 ) -> bool:
     return (
         thresholds.flatten_start_minute_utc is not None
@@ -496,29 +496,29 @@ def _runtime_session_flatten_triggered(
     )
 
 
-def _runtime_exit_trigger(
-    context: _RuntimeExitOverlayContext,
+def runtime_exit_trigger(
+    context: RuntimeExitOverlayContext,
     candidates: list[tuple[str, str, Decimal | None, Decimal | None]],
-) -> _RuntimeExitTrigger | None:
-    reference_exit_price = _reference_exit_price(
+) -> RuntimeExitTrigger | None:
+    reference_exit_price = resolve_reference_exit_price(
         price=context.price,
         signal=context.signal,
         action=context.exit_action,
     )
-    realized_bps = _realized_exit_bps(
+    realized_bps = realized_exit_bps(
         avg_entry_price=context.avg_entry_price,
         exit_price=reference_exit_price,
         position_side=context.position_side,
     )
     for exit_type, rationale, threshold_bps, drawdown_bps in candidates:
-        if _runtime_exit_candidate_requires_profit(
+        if runtime_exit_candidate_requires_profit(
             exit_type
-        ) and not _passes_exit_profit_policy(
+        ) and not passes_exit_profit_policy(
             strategies=context.eligible_strategies,
             realized_bps=realized_bps,
         ):
             continue
-        return _RuntimeExitTrigger(
+        return RuntimeExitTrigger(
             exit_type=exit_type,
             rationale=rationale,
             threshold_bps=threshold_bps,
@@ -529,7 +529,7 @@ def _runtime_exit_trigger(
     return None
 
 
-def _runtime_exit_candidate_requires_profit(exit_type: str) -> bool:
+def runtime_exit_candidate_requires_profit(exit_type: str) -> bool:
     return exit_type not in {
         "long_stop_loss_bps",
         "short_stop_loss_bps",
@@ -538,10 +538,10 @@ def _runtime_exit_candidate_requires_profit(exit_type: str) -> bool:
     }
 
 
-def _runtime_exit_sizing(
-    context: _RuntimeExitOverlayContext,
-) -> _RuntimeExitSizing | None:
-    qty, sizing_meta = _resolve_qty_for_aggregated(
+def runtime_exit_sizing(
+    context: RuntimeExitOverlayContext,
+) -> RuntimeExitSizing | None:
+    qty, sizing_meta = resolve_qty_for_aggregated(
         context.eligible_strategies,
         symbol=context.signal.symbol,
         action=context.exit_action,
@@ -549,17 +549,17 @@ def _runtime_exit_sizing(
         equity=context.equity,
         positions=context.positions,
     )
-    if _skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
+    if skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
         return None
-    return _RuntimeExitSizing(qty=qty, sizing_meta=sizing_meta)
+    return RuntimeExitSizing(qty=qty, sizing_meta=sizing_meta)
 
 
-def _runtime_exit_decision(
+def runtime_exit_decision(
     *,
-    context: _RuntimeExitOverlayContext,
-    metrics: _RuntimeExitMetrics,
-    trigger: _RuntimeExitTrigger,
-    sizing: _RuntimeExitSizing,
+    context: RuntimeExitOverlayContext,
+    metrics: RuntimeExitMetrics,
+    trigger: RuntimeExitTrigger,
+    sizing: RuntimeExitSizing,
 ) -> StrategyDecision:
     primary_strategy = context.eligible_strategies[0]
     return StrategyDecision(
@@ -572,7 +572,7 @@ def _runtime_exit_decision(
         order_type="market",
         time_in_force="day",
         rationale=trigger.rationale,
-        params=_build_params(
+        params=build_params(
             signal=context.signal,
             macd=context.features.macd,
             macd_signal=context.features.macd_signal,
@@ -580,11 +580,11 @@ def _runtime_exit_decision(
             price=context.price,
             volatility=context.features.volatility,
             snapshot=context.snapshot,
-            runtime_metadata=_runtime_exit_metadata(context, primary_strategy, trigger),
+            runtime_metadata=runtime_exit_metadata(context, primary_strategy, trigger),
         )
         | {
             "sizing": sizing.sizing_meta,
-            "position_exit": _runtime_exit_position_payload(
+            "position_exit": runtime_exit_position_payload(
                 context=context,
                 metrics=metrics,
                 trigger=trigger,
@@ -593,10 +593,10 @@ def _runtime_exit_decision(
     )
 
 
-def _runtime_exit_metadata(
-    context: _RuntimeExitOverlayContext,
+def runtime_exit_metadata(
+    context: RuntimeExitOverlayContext,
     primary_strategy: Strategy,
-    trigger: _RuntimeExitTrigger,
+    trigger: RuntimeExitTrigger,
 ) -> dict[str, Any]:
     primary_runtime_metadata = dict(
         context.raw_runtime_by_strategy_id.get(str(primary_strategy.id), {})
@@ -643,11 +643,11 @@ def _runtime_exit_metadata(
     }
 
 
-def _runtime_exit_position_payload(
+def runtime_exit_position_payload(
     *,
-    context: _RuntimeExitOverlayContext,
-    metrics: _RuntimeExitMetrics,
-    trigger: _RuntimeExitTrigger,
+    context: RuntimeExitOverlayContext,
+    metrics: RuntimeExitMetrics,
+    trigger: RuntimeExitTrigger,
 ) -> dict[str, Any]:
     return {
         "type": trigger.exit_type,
@@ -663,7 +663,7 @@ def _runtime_exit_position_payload(
     }
 
 
-def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
+def blocks_same_direction_reentry(strategy: Strategy) -> bool:
     normalized = str(strategy.universe_type or "").strip().lower()
     return normalized in {
         "intraday_tsmom_v1",
@@ -679,13 +679,13 @@ def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
     }
 
 
-def _strategy_uses_position_isolation(strategy: Strategy) -> bool:
+def strategy_uses_position_isolation(strategy: Strategy) -> bool:
     params = StrategyRuntime.definition_from_strategy(strategy).params
     isolation_mode = str(params.get("position_isolation_mode") or "").strip().lower()
     if isolation_mode == "per_strategy":
         return True
     normalized = str(strategy.universe_type or "").strip().lower()
-    runtime_type = _strategy_catalog_runtime_type(strategy)
+    runtime_type = strategy_catalog_runtime_type(strategy)
     if (
         normalized == "microbar_cross_sectional_pairs_v1"
         and runtime_type != "microbar_cross_sectional_pairs_v1"
@@ -701,30 +701,30 @@ def _strategy_uses_position_isolation(strategy: Strategy) -> bool:
     }
 
 
-def _supports_runtime_position_exit_overlay(
+def supports_runtime_position_exit_overlay(
     *,
     strategy: Strategy,
     position_side: Literal["long", "short"],
 ) -> bool:
     if (
-        _treats_sell_as_exit_only(strategy)
+        treats_sell_as_exit_only(strategy)
         if position_side == "long"
-        else _treats_buy_as_exit_only(strategy)
+        else treats_buy_as_exit_only(strategy)
     ):
         return True
-    runtime_type = _strategy_catalog_runtime_type(strategy)
+    runtime_type = strategy_catalog_runtime_type(strategy)
     if runtime_type != "microbar_cross_sectional_pairs_v1":
         return False
     strategy_list = [strategy]
     has_session_flatten = (
-        _resolve_max_nonnegative_strategy_param(
+        resolve_max_nonnegative_strategy_param(
             strategies=strategy_list,
             key="session_flatten_start_minute_utc",
         )
         is not None
     )
     has_position_exit = any(
-        _resolve_max_nonnegative_strategy_param(strategies=strategy_list, key=key)
+        resolve_max_nonnegative_strategy_param(strategies=strategy_list, key=key)
         is not None
         for key in (
             "max_hold_seconds",
@@ -734,12 +734,12 @@ def _supports_runtime_position_exit_overlay(
             "long_trailing_stop_drawdown_bps",
         )
     )
-    return _strategy_uses_position_isolation(strategy) and (
+    return strategy_uses_position_isolation(strategy) and (
         has_session_flatten or has_position_exit
     )
 
 
-def _position_state_scope_key(
+def position_state_scope_key(
     *,
     position_isolation_mode: str | None,
     strategy_id: str | None,
@@ -750,7 +750,7 @@ def _position_state_scope_key(
     return normalized_strategy_id or None
 
 
-def _runtime_trade_policy_key(
+def runtime_trade_policy_key(
     *,
     symbol: str,
     action: str,
@@ -762,61 +762,6 @@ def _runtime_trade_policy_key(
         state_scope_key,
     )
 
-
-# Public aliases used by split-module consumers.
-build_runtime_position_exit_overlay = _build_runtime_position_exit_overlay
-position_state_scope_key = _position_state_scope_key
-runtime_trade_policy_key = _runtime_trade_policy_key
-strategy_uses_position_isolation = _strategy_uses_position_isolation
-AggregatedCapacityAdjustment = _AggregatedCapacityAdjustment
-AggregatedQtyContext = _AggregatedQtyContext
-RuntimeExitMetrics = _RuntimeExitMetrics
-RuntimeExitOverlayContext = _RuntimeExitOverlayContext
-RuntimeExitOverlayRequest = _RuntimeExitOverlayRequest
-RuntimeExitSizing = _RuntimeExitSizing
-RuntimeExitThresholds = _RuntimeExitThresholds
-RuntimeExitTrigger = _RuntimeExitTrigger
-aggregated_capacity_adjustment = _aggregated_capacity_adjustment
-aggregated_capacity_exhausted_result = _aggregated_capacity_exhausted_result
-aggregated_capacity_meta = _aggregated_capacity_meta
-aggregated_capacity_reason = _aggregated_capacity_reason
-aggregated_exit_or_reentry_result = _aggregated_exit_or_reentry_result
-aggregated_min_qty_capacity_reason = _aggregated_min_qty_capacity_reason
-aggregated_min_qty_result = _aggregated_min_qty_result
-aggregated_qty_context = _aggregated_qty_context
-aggregated_qty_success_result = _aggregated_qty_success_result
-aggregated_requested_qty = _aggregated_requested_qty
-aggregated_short_entry_below_min = _aggregated_short_entry_below_min
-aggregated_zero_qty_result = _aggregated_zero_qty_result
-blocks_same_direction_reentry = _blocks_same_direction_reentry
-minute_of_day_utc = _minute_of_day_utc
-negative_position_qty = _negative_position_qty
-position_qty_is_flat_or_long = _position_qty_is_flat_or_long
-position_qty_is_flat_or_short = _position_qty_is_flat_or_short
-positive_position_qty = _positive_position_qty
-resolve_qty_for_aggregated = _resolve_qty_for_aggregated
-resolve_qty_from_aggregated_context = _resolve_qty_from_aggregated_context
-runtime_exit_candidate_requires_profit = _runtime_exit_candidate_requires_profit
-runtime_exit_candidates = _runtime_exit_candidates
-runtime_exit_decision = _runtime_exit_decision
-runtime_exit_eligible_strategies = _runtime_exit_eligible_strategies
-runtime_exit_entry_drawdown_bps = _runtime_exit_entry_drawdown_bps
-runtime_exit_metadata = _runtime_exit_metadata
-runtime_exit_metrics = _runtime_exit_metrics
-runtime_exit_overlay_context = _runtime_exit_overlay_context
-runtime_exit_overlay_request = _runtime_exit_overlay_request
-runtime_exit_position_payload = _runtime_exit_position_payload
-runtime_exit_sizing = _runtime_exit_sizing
-runtime_exit_thresholds = _runtime_exit_thresholds
-runtime_exit_trigger = _runtime_exit_trigger
-runtime_hard_stop_loss_bps = _runtime_hard_stop_loss_bps
-runtime_hard_stop_triggered = _runtime_hard_stop_triggered
-runtime_max_hold_triggered = _runtime_max_hold_triggered
-runtime_session_flatten_triggered = _runtime_session_flatten_triggered
-runtime_trailing_exit_armed = _runtime_trailing_exit_armed
-runtime_trailing_exit_candidate = _runtime_trailing_exit_candidate
-runtime_trailing_thresholds = _runtime_trailing_thresholds
-supports_runtime_position_exit_overlay = _supports_runtime_position_exit_overlay
 
 __all__ = (
     "build_runtime_position_exit_overlay",

@@ -30,35 +30,35 @@ from ..strategy_runtime import (
 
 
 from .shared_context import (
-    DecisionEngineFields as _DecisionEngineFields,
+    DecisionEngineFields,
     logger,
 )
 from .decision_engine_core_methods import (
-    DecisionEngineCoreMethods as _DecisionEngineCoreMethods,
+    DecisionEngineCoreMethods,
 )
 from .single_strategy_qty import (
-    SingleStrategyCapacityAdjustment as _SingleStrategyCapacityAdjustment,
-    SingleStrategyQtyContext as _SingleStrategyQtyContext,
-    StrategyBudget as _StrategyBudget,
-    resolve_qty as _resolve_qty,
-    resolve_single_strategy_qty_from_context as _resolve_single_strategy_qty_from_context,
-    single_strategy_budget as _single_strategy_budget,
-    single_strategy_capacity_adjustment as _single_strategy_capacity_adjustment,
-    single_strategy_capacity_exhausted_result as _single_strategy_capacity_exhausted_result,
-    single_strategy_capacity_reason as _single_strategy_capacity_reason,
-    single_strategy_common_meta as _single_strategy_common_meta,
-    single_strategy_exit_guard_result as _single_strategy_exit_guard_result,
-    single_strategy_min_qty_capacity_reason as _single_strategy_min_qty_capacity_reason,
-    single_strategy_min_qty_result as _single_strategy_min_qty_result,
-    single_strategy_qty_context as _single_strategy_qty_context,
-    single_strategy_requested_qty as _single_strategy_requested_qty,
-    single_strategy_short_entry_below_min_result as _single_strategy_short_entry_below_min_result,
-    single_strategy_success_result as _single_strategy_success_result,
-    skip_non_executable_decision_qty as _skip_non_executable_decision_qty,
+    SingleStrategyCapacityAdjustment,
+    SingleStrategyQtyContext,
+    StrategyBudget,
+    resolve_qty,
+    resolve_single_strategy_qty_from_context,
+    single_strategy_budget,
+    single_strategy_capacity_adjustment,
+    single_strategy_capacity_exhausted_result,
+    single_strategy_capacity_reason,
+    single_strategy_common_meta,
+    single_strategy_exit_guard_result,
+    single_strategy_min_qty_capacity_reason,
+    single_strategy_min_qty_result,
+    single_strategy_qty_context,
+    single_strategy_requested_qty,
+    single_strategy_short_entry_below_min_result,
+    single_strategy_success_result,
+    skip_non_executable_decision_qty,
 )
 
 
-def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
+def has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
     from .positions_for_strategy_action import (
         has_legacy_indicator_inputs,
     )
@@ -66,7 +66,7 @@ def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
     return has_legacy_indicator_inputs(features)
 
 
-def _resolve_legacy_action(features: SignalFeatures) -> Any:
+def resolve_legacy_action(features: SignalFeatures) -> Any:
     from .positions_for_strategy_action import (
         resolve_legacy_action as resolve_action,
     )
@@ -75,7 +75,7 @@ def _resolve_legacy_action(features: SignalFeatures) -> Any:
 
 
 @dataclass(frozen=True)
-class _LegacyDecisionInputs:
+class LegacyDecisionInputs:
     timeframe: str
     features: SignalFeatures
     action: Literal["buy", "sell"]
@@ -83,7 +83,7 @@ class _LegacyDecisionInputs:
 
 
 @dataclass(frozen=True)
-class _LegacyMarketContext:
+class LegacyMarketContext:
     price: Decimal | None
     snapshot: MarketSnapshot | None
     forecast_contract: dict[str, Any] | None
@@ -91,13 +91,13 @@ class _LegacyMarketContext:
 
 
 @dataclass(frozen=True)
-class _LegacySizing:
+class LegacySizing:
     qty: Decimal
     sizing_meta: dict[str, Any]
 
 
 @dataclass(frozen=True)
-class _BuildParamsRequest:
+class BuildParamsRequest:
     signal: SignalEnvelope
     macd: Decimal | None
     macd_signal: Decimal | None
@@ -110,7 +110,7 @@ class _BuildParamsRequest:
     forecast_audit: dict[str, Any] | None
 
 
-class _DecisionEngineRuntimeMethods:
+class DecisionEngineRuntimeMethods:
     def evaluate_legacy_strategy(
         self,
         signal: SignalEnvelope,
@@ -134,11 +134,11 @@ class _DecisionEngineRuntimeMethods:
         equity: Optional[Decimal],
         positions: Optional[list[dict[str, Any]]],
     ) -> Optional[StrategyDecision]:
-        legacy_inputs = _legacy_decision_inputs(signal=signal, strategy=strategy)
+        legacy_inputs = legacy_decision_inputs(signal=signal, strategy=strategy)
         if legacy_inputs is None:
             return None
         market_context = self._legacy_market_context(signal, legacy_inputs)
-        qty, sizing_meta = _resolve_qty(
+        qty, sizing_meta = resolve_qty(
             strategy,
             symbol=signal.symbol,
             action=legacy_inputs.action,
@@ -146,38 +146,38 @@ class _DecisionEngineRuntimeMethods:
             equity=equity,
             positions=positions,
         )
-        sizing = _LegacySizing(qty=qty, sizing_meta=sizing_meta)
-        if _skip_non_executable_decision_qty(
+        sizing = LegacySizing(qty=qty, sizing_meta=sizing_meta)
+        if skip_non_executable_decision_qty(
             qty=sizing.qty, sizing_meta=sizing.sizing_meta
         ):
-            _log_skipped_legacy_decision(
+            log_skipped_legacy_decision(
                 strategy=strategy,
                 signal=signal,
                 action=legacy_inputs.action,
                 sizing_meta=sizing.sizing_meta,
             )
             return None
-        return _legacy_strategy_decision(
+        return legacy_strategy_decision(
             signal=signal,
             strategy=strategy,
             inputs=legacy_inputs,
             market_context=market_context,
-            runtime_metadata=_legacy_runtime_metadata(strategy),
+            runtime_metadata=legacy_runtime_metadata(strategy),
             sizing=sizing,
         )
 
     def _legacy_market_context(
         self,
         signal: SignalEnvelope,
-        inputs: _LegacyDecisionInputs,
-    ) -> _LegacyMarketContext:
+        inputs: LegacyDecisionInputs,
+    ) -> LegacyMarketContext:
         price, snapshot = self._resolve_price_and_snapshot(signal, inputs.features)
         forecast_contract, forecast_audit = self._resolve_forecast_payload(
             signal,
             timeframe=inputs.timeframe,
             price=price,
         )
-        return _LegacyMarketContext(
+        return LegacyMarketContext(
             price=price,
             snapshot=snapshot,
             forecast_contract=forecast_contract,
@@ -191,7 +191,7 @@ class _DecisionEngineRuntimeMethods:
     ) -> tuple[Optional[Decimal], Optional[MarketSnapshot]]:
         price = features.price
         snapshot: Optional[MarketSnapshot] = None
-        core_methods = cast(_DecisionEngineCoreMethods, self)
+        core_methods = cast(DecisionEngineCoreMethods, self)
         price_fetcher = core_methods.price_fetcher
         if price is None and price_fetcher is not None:
             snapshot = price_fetcher.fetch_market_snapshot(signal)
@@ -206,7 +206,7 @@ class _DecisionEngineRuntimeMethods:
         timeframe: str,
         price: Optional[Decimal],
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
-        core_methods = cast(_DecisionEngineCoreMethods, self)
+        core_methods = cast(DecisionEngineCoreMethods, self)
         forecast_router: ForecastRouterV5 | None = core_methods.forecast_router
         if forecast_router is None:
             return None, None
@@ -227,25 +227,25 @@ class _DecisionEngineRuntimeMethods:
         return forecast_result.contract.to_payload(), forecast_result.audit.to_payload()
 
 
-def _legacy_decision_inputs(
+def legacy_decision_inputs(
     *,
     signal: SignalEnvelope,
     strategy: Strategy,
-) -> _LegacyDecisionInputs | None:
+) -> LegacyDecisionInputs | None:
     timeframe = signal.timeframe
     if timeframe is None:
         return None
     features = extract_signal_features(signal)
-    if not _has_legacy_indicator_inputs(features):
+    if not has_legacy_indicator_inputs(features):
         logger.debug("Signal missing indicators for strategy %s", strategy.id)
         return None
-    action_bundle = _resolve_legacy_action(features)
+    action_bundle = resolve_legacy_action(features)
     if action_bundle is None:
         return None
     action, rationale_parts = action_bundle
     if action not in {"buy", "sell"}:
         return None
-    return _LegacyDecisionInputs(
+    return LegacyDecisionInputs(
         timeframe=timeframe,
         features=features,
         action=cast(Literal["buy", "sell"], action),
@@ -253,7 +253,7 @@ def _legacy_decision_inputs(
     )
 
 
-def _legacy_runtime_metadata(strategy: Strategy) -> dict[str, Any]:
+def legacy_runtime_metadata(strategy: Strategy) -> dict[str, Any]:
     runtime_definition = StrategyRuntime.definition_from_strategy(strategy)
     return {
         "strategy_row_id": str(strategy.id),
@@ -270,7 +270,7 @@ def _legacy_runtime_metadata(strategy: Strategy) -> dict[str, Any]:
     }
 
 
-def _log_skipped_legacy_decision(
+def log_skipped_legacy_decision(
     *,
     strategy: Strategy,
     signal: SignalEnvelope,
@@ -286,14 +286,14 @@ def _log_skipped_legacy_decision(
     )
 
 
-def _legacy_strategy_decision(
+def legacy_strategy_decision(
     *,
     signal: SignalEnvelope,
     strategy: Strategy,
-    inputs: _LegacyDecisionInputs,
-    market_context: _LegacyMarketContext,
+    inputs: LegacyDecisionInputs,
+    market_context: LegacyMarketContext,
     runtime_metadata: dict[str, Any],
-    sizing: _LegacySizing,
+    sizing: LegacySizing,
 ) -> StrategyDecision:
     return StrategyDecision(
         strategy_id=str(strategy.id),
@@ -305,7 +305,7 @@ def _legacy_strategy_decision(
         order_type="market",
         time_in_force="day",
         rationale=",".join(inputs.rationale_parts),
-        params=_build_params(
+        params=build_params(
             signal=signal,
             macd=inputs.features.macd,
             macd_signal=inputs.features.macd_signal,
@@ -322,25 +322,25 @@ def _legacy_strategy_decision(
 
 
 class DecisionEngine(
-    _DecisionEngineFields,
-    _DecisionEngineCoreMethods,
-    _DecisionEngineRuntimeMethods,
+    DecisionEngineFields,
+    DecisionEngineCoreMethods,
+    DecisionEngineRuntimeMethods,
 ):
     pass
 
 
-def _build_params(**kwargs: Any) -> dict[str, Any]:
-    request = _build_params_request(kwargs)
-    params = _base_decision_params(request)
-    params.update(_market_decision_params(request))
-    params.update(_forecast_decision_params(request))
-    params.update(_regime_decision_params(request))
-    params.update(_source_context_decision_params(request))
+def build_params(**kwargs: Any) -> dict[str, Any]:
+    request = build_params_request(kwargs)
+    params = base_decision_params(request)
+    params.update(market_decision_params(request))
+    params.update(forecast_decision_params(request))
+    params.update(regime_decision_params(request))
+    params.update(source_context_decision_params(request))
     return params
 
 
-def _build_params_request(kwargs: Mapping[str, Any]) -> _BuildParamsRequest:
-    return _BuildParamsRequest(
+def build_params_request(kwargs: Mapping[str, Any]) -> BuildParamsRequest:
+    return BuildParamsRequest(
         signal=cast(SignalEnvelope, kwargs["signal"]),
         macd=cast(Decimal | None, kwargs["macd"]),
         macd_signal=cast(Decimal | None, kwargs["macd_signal"]),
@@ -354,7 +354,7 @@ def _build_params_request(kwargs: Mapping[str, Any]) -> _BuildParamsRequest:
     )
 
 
-def _base_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
+def base_decision_params(request: BuildParamsRequest) -> dict[str, Any]:
     params: dict[str, Any] = {
         "macd": request.macd,
         "macd_signal": request.macd_signal,
@@ -368,16 +368,16 @@ def _base_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
     return params
 
 
-def _market_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
+def market_decision_params(request: BuildParamsRequest) -> dict[str, Any]:
     if request.snapshot is None:
         return {}
-    params: dict[str, Any] = {"price_snapshot": _snapshot_payload(request.snapshot)}
+    params: dict[str, Any] = {"price_snapshot": snapshot_payload(request.snapshot)}
     if request.snapshot.spread is not None:
         params["spread"] = request.snapshot.spread
     return params
 
 
-def _forecast_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
+def forecast_decision_params(request: BuildParamsRequest) -> dict[str, Any]:
     params: dict[str, Any] = {}
     if request.forecast_contract is not None:
         params["forecast"] = request.forecast_contract
@@ -386,8 +386,8 @@ def _forecast_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
     return params
 
 
-def _regime_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
-    regime_context_payload, regime_route_label = _resolve_regime_context(
+def regime_decision_params(request: BuildParamsRequest) -> dict[str, Any]:
+    regime_context_payload, regime_route_label = resolve_regime_context(
         request.signal,
         macd=request.macd,
         macd_signal=request.macd_signal,
@@ -401,27 +401,27 @@ def _regime_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
     return params
 
 
-def _source_context_decision_params(request: _BuildParamsRequest) -> dict[str, Any]:
+def source_context_decision_params(request: BuildParamsRequest) -> dict[str, Any]:
     params: dict[str, Any] = {}
-    microstructure_state = _resolve_microstructure_state_payload(request.signal)
+    microstructure_state = resolve_microstructure_state_payload(request.signal)
     if microstructure_state is not None:
         params["microstructure_state"] = microstructure_state
-    execution_advice = _resolve_execution_advice_payload(request.signal)
+    execution_advice = resolve_execution_advice_payload(request.signal)
     if execution_advice is not None:
         params["execution_advice"] = execution_advice
-    execution_features = _resolve_execution_feature_payload(request.signal)
+    execution_features = resolve_execution_feature_payload(request.signal)
     if execution_features is not None:
         params["execution_features"] = execution_features
-    fragility_snapshot = _resolve_fragility_snapshot_payload(request.signal)
+    fragility_snapshot = resolve_fragility_snapshot_payload(request.signal)
     if fragility_snapshot is not None:
         params["fragility_snapshot"] = fragility_snapshot
-    simulation_context = _resolve_decision_simulation_context(request.signal)
+    simulation_context = resolve_decision_simulation_context(request.signal)
     if simulation_context is not None:
         params["simulation_context"] = simulation_context
     return params
 
 
-def _resolve_decision_simulation_context(
+def resolve_decision_simulation_context(
     signal: SignalEnvelope,
 ) -> dict[str, Any] | None:
     source_context = signal.payload.get("simulation_context")
@@ -434,7 +434,7 @@ def _resolve_decision_simulation_context(
     return resolve_simulation_context(signal=signal, source=source_context_payload)
 
 
-def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
+def has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
     def _is_explicit_value(value: Any) -> bool:
         if value is None:
             return False
@@ -474,14 +474,14 @@ def _has_explicit_regime_context(payload: Mapping[str, Any]) -> bool:
     return False
 
 
-def _resolve_regime_context(
+def resolve_regime_context(
     signal: SignalEnvelope,
     macd: Decimal | None,
     macd_signal: Decimal | None,
 ) -> tuple[dict[str, Any], str | None]:
     payload = signal.payload
     regime_context = resolve_hmm_context(payload)
-    if not _has_explicit_regime_context(payload):
+    if not has_explicit_regime_context(payload):
         regime_payload = regime_context.to_payload()
         if regime_payload.get("regime_id") == HMM_UNKNOWN_REGIME_ID:
             normalized_route_label = resolve_regime_route_label(
@@ -500,7 +500,7 @@ def _resolve_regime_context(
     return regime_context.to_payload(), normalized_route_label
 
 
-def _resolve_microstructure_state_payload(
+def resolve_microstructure_state_payload(
     signal: SignalEnvelope,
 ) -> dict[str, Any] | None:
     payload = signal.payload
@@ -531,7 +531,7 @@ def _resolve_microstructure_state_payload(
     return state
 
 
-def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] | None:
+def resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] | None:
     payload = signal.payload
     raw_advice = payload.get("execution_advice")
     advice: dict[str, Any]
@@ -573,7 +573,7 @@ def _resolve_execution_advice_payload(signal: SignalEnvelope) -> dict[str, Any] 
     return advice
 
 
-def _resolve_execution_feature_payload(
+def resolve_execution_feature_payload(
     signal: SignalEnvelope,
 ) -> dict[str, Any] | None:
     payload = signal.payload
@@ -599,7 +599,7 @@ def _resolve_execution_feature_payload(
     return execution_features
 
 
-def _resolve_fragility_snapshot_payload(
+def resolve_fragility_snapshot_payload(
     signal: SignalEnvelope,
 ) -> dict[str, Any] | None:
     payload = signal.payload
@@ -632,7 +632,7 @@ def _resolve_fragility_snapshot_payload(
     return snapshot
 
 
-def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
+def snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
     return {
         "as_of": snapshot.as_of.isoformat(),
         "price": str(snapshot.price) if snapshot.price is not None else None,
@@ -640,52 +640,6 @@ def _snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
         "source": snapshot.source,
     }
 
-
-# Public aliases used by split-module consumers.
-build_params = _build_params
-BuildParamsRequest = _BuildParamsRequest
-DecisionEngineRuntimeMethods = _DecisionEngineRuntimeMethods
-LegacyDecisionInputs = _LegacyDecisionInputs
-LegacyMarketContext = _LegacyMarketContext
-LegacySizing = _LegacySizing
-SingleStrategyCapacityAdjustment = _SingleStrategyCapacityAdjustment
-SingleStrategyQtyContext = _SingleStrategyQtyContext
-StrategyBudget = _StrategyBudget
-base_decision_params = _base_decision_params
-build_params_request = _build_params_request
-forecast_decision_params = _forecast_decision_params
-has_explicit_regime_context = _has_explicit_regime_context
-legacy_decision_inputs = _legacy_decision_inputs
-legacy_runtime_metadata = _legacy_runtime_metadata
-legacy_strategy_decision = _legacy_strategy_decision
-log_skipped_legacy_decision = _log_skipped_legacy_decision
-market_decision_params = _market_decision_params
-regime_decision_params = _regime_decision_params
-resolve_decision_simulation_context = _resolve_decision_simulation_context
-resolve_execution_advice_payload = _resolve_execution_advice_payload
-resolve_execution_feature_payload = _resolve_execution_feature_payload
-resolve_fragility_snapshot_payload = _resolve_fragility_snapshot_payload
-resolve_microstructure_state_payload = _resolve_microstructure_state_payload
-resolve_qty = _resolve_qty
-resolve_regime_context = _resolve_regime_context
-resolve_single_strategy_qty_from_context = _resolve_single_strategy_qty_from_context
-single_strategy_budget = _single_strategy_budget
-single_strategy_capacity_adjustment = _single_strategy_capacity_adjustment
-single_strategy_capacity_exhausted_result = _single_strategy_capacity_exhausted_result
-single_strategy_capacity_reason = _single_strategy_capacity_reason
-single_strategy_common_meta = _single_strategy_common_meta
-single_strategy_exit_guard_result = _single_strategy_exit_guard_result
-single_strategy_min_qty_capacity_reason = _single_strategy_min_qty_capacity_reason
-single_strategy_min_qty_result = _single_strategy_min_qty_result
-single_strategy_qty_context = _single_strategy_qty_context
-single_strategy_requested_qty = _single_strategy_requested_qty
-single_strategy_short_entry_below_min_result = (
-    _single_strategy_short_entry_below_min_result
-)
-single_strategy_success_result = _single_strategy_success_result
-skip_non_executable_decision_qty = _skip_non_executable_decision_qty
-snapshot_payload = _snapshot_payload
-source_context_decision_params = _source_context_decision_params
 
 __all__ = (
     "DecisionEngine",

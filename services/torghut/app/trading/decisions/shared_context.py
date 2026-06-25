@@ -5,66 +5,38 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
-from decimal import Decimal, ROUND_HALF_UP
-from typing import Any, Iterable, Literal, Optional, cast
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Iterable, Optional
 
-from ...config import settings
-from ...models import Strategy
-from ...strategies.catalog import extract_catalog_metadata
 from ..features import (
     FeatureVectorV3,
-    FeatureNormalizationError,
-    SignalFeatures,
-    extract_signal_features,
-    normalize_feature_vector_v3,
-    optional_decimal,
 )
-from ..microstructure import parse_microstructure_state
 from ..evaluation_trace import StrategyTrace
-from ..forecasting import ForecastRoutingTelemetry, build_default_forecast_router
-from ..models import SignalEnvelope, StrategyDecision
-from ..regime_hmm import (
-    HMM_UNKNOWN_REGIME_ID,
-    resolve_hmm_context,
-    resolve_regime_route_label,
-)
-from ..prices import MarketSnapshot, PriceFetcher
-from ..quote_quality import QuoteQualityPolicy
-from ..quantity_rules import (
-    min_qty_for_symbol,
-    quantize_qty_for_symbol,
-    resolve_quantity_resolution,
-)
-from ..session_context import SessionContextTracker
-from ..simulation import resolve_simulation_context
 from ..strategy_runtime import (
     AggregatedIntent,
     RuntimeErrorRecord,
     RuntimeDecision,
     RuntimeEvaluation,
     RuntimeObservation,
-    StrategyRegistry,
-    StrategyRuntime,
 )
 
 
 logger = logging.getLogger(__name__)
 
-_SHORT_ENTRY_BELOW_MIN_QTY_REASON = "short_entry_below_min_qty"
+SHORT_ENTRY_BELOW_MIN_QTY_REASON = "short_entry_below_min_qty"
 
-_SAME_DIRECTION_REENTRY_REASON = "same_direction_reentry"
+SAME_DIRECTION_REENTRY_REASON = "same_direction_reentry"
 
-_EXIT_ONLY_SELL_FLAT_REASON = "exit_only_sell_without_long_position"
+EXIT_ONLY_SELL_FLAT_REASON = "exit_only_sell_without_long_position"
 
-_EXIT_ONLY_BUY_FLAT_REASON = "exit_only_buy_without_short_position"
+EXIT_ONLY_BUY_FLAT_REASON = "exit_only_buy_without_short_position"
 
-_RUNTIME_TRADE_POLICY_SHARED_OWNER = "__shared__"
+RUNTIME_TRADE_POLICY_SHARED_OWNER = "__shared__"
 
-_SELL_EXIT_ONLY_STRATEGY_TYPES = {
+SELL_EXIT_ONLY_STRATEGY_TYPES = {
     "intraday_tsmom_v1",
     "intraday_tsmom",
     "tsmom_intraday",
@@ -77,15 +49,15 @@ _SELL_EXIT_ONLY_STRATEGY_TYPES = {
     "end_of_day_reversal_long_v1",
 }
 
-_BUY_EXIT_ONLY_STRATEGY_TYPES = {
+BUY_EXIT_ONLY_STRATEGY_TYPES = {
     "mean_reversion_exhaustion_short_v1",
     "microbar_cross_sectional_short_v1",
 }
 
-_MICROBAR_PAIR_EXIT_RATIONALE = "microbar_cross_sectional_pair_exit"
+MICROBAR_PAIR_EXIT_RATIONALE = "microbar_cross_sectional_pair_exit"
 
 
-def _feature_vector_with_runtime_position(
+def feature_vector_with_runtime_position(
     feature_vector: FeatureVectorV3,
     *,
     position_qty: Decimal,
@@ -133,7 +105,7 @@ class DecisionRuntimeTelemetry:
     traces: tuple[StrategyTrace, ...] = field(default_factory=tuple)
 
 
-def _runtime_position_side(position_qty: Decimal | None) -> str | None:
+def runtime_position_side(position_qty: Decimal | None) -> str | None:
     if position_qty is None:
         return None
     if position_qty > 0:
@@ -143,7 +115,7 @@ def _runtime_position_side(position_qty: Decimal | None) -> str | None:
     return "flat"
 
 
-def _feature_vector_with_positions(
+def feature_vector_with_positions(
     feature_vector: FeatureVectorV3,
     *,
     positions: Optional[list[dict[str, Any]]],
@@ -154,14 +126,14 @@ def _feature_vector_with_positions(
     position_qty = position_qty_for_symbol(positions, symbol)
     if position_qty is None:
         return feature_vector
-    return _feature_vector_with_runtime_position(
+    return feature_vector_with_runtime_position(
         feature_vector,
         position_qty=position_qty,
-        position_side=_runtime_position_side(position_qty),
+        position_side=runtime_position_side(position_qty),
     )
 
 
-def _merge_runtime_counter(
+def merge_runtime_counter(
     target: dict[str, int],
     source: Mapping[str, int],
 ) -> None:
@@ -169,7 +141,7 @@ def _merge_runtime_counter(
         target[str(key)] = target.get(str(key), 0) + int(value)
 
 
-def _merge_runtime_evaluations(
+def merge_runtime_evaluations(
     evaluations: Iterable[RuntimeEvaluation],
 ) -> RuntimeEvaluation:
     intents: list[AggregatedIntent] = []
@@ -182,23 +154,23 @@ def _merge_runtime_evaluations(
         raw_intents.extend(evaluation.raw_intents)
         traces.extend(evaluation.traces)
         errors.extend(evaluation.errors)
-        _merge_runtime_counter(
+        merge_runtime_counter(
             observation.strategy_events_total,
             evaluation.observation.strategy_events_total,
         )
-        _merge_runtime_counter(
+        merge_runtime_counter(
             observation.strategy_intents_total,
             evaluation.observation.strategy_intents_total,
         )
-        _merge_runtime_counter(
+        merge_runtime_counter(
             observation.strategy_intent_suppression_total,
             evaluation.observation.strategy_intent_suppression_total,
         )
-        _merge_runtime_counter(
+        merge_runtime_counter(
             observation.strategy_errors_total,
             evaluation.observation.strategy_errors_total,
         )
-        _merge_runtime_counter(
+        merge_runtime_counter(
             observation.strategy_latency_ms,
             evaluation.observation.strategy_latency_ms,
         )
@@ -218,7 +190,7 @@ def _merge_runtime_evaluations(
 
 
 @dataclass
-class _RuntimeTradePolicySessionState:
+class RuntimeTradePolicySessionState:
     session_day: date
     entry_count: int = 0
     stop_loss_exit_count: int = 0
@@ -228,111 +200,25 @@ class _RuntimeTradePolicySessionState:
     last_negative_exit_at: datetime | None = None
 
 
-class _DecisionEngineFields:
+class DecisionEngineFields:
     """Evaluate TA signals against configured strategies."""
 
 
-# Public aliases used by split-module consumers.
-BUY_EXIT_ONLY_STRATEGY_TYPES = _BUY_EXIT_ONLY_STRATEGY_TYPES
-DecisionEngineFields = _DecisionEngineFields
-EXIT_ONLY_BUY_FLAT_REASON = _EXIT_ONLY_BUY_FLAT_REASON
-EXIT_ONLY_SELL_FLAT_REASON = _EXIT_ONLY_SELL_FLAT_REASON
-MICROBAR_PAIR_EXIT_RATIONALE = _MICROBAR_PAIR_EXIT_RATIONALE
-RUNTIME_TRADE_POLICY_SHARED_OWNER = _RUNTIME_TRADE_POLICY_SHARED_OWNER
-RuntimeTradePolicySessionState = _RuntimeTradePolicySessionState
-SAME_DIRECTION_REENTRY_REASON = _SAME_DIRECTION_REENTRY_REASON
-SELL_EXIT_ONLY_STRATEGY_TYPES = _SELL_EXIT_ONLY_STRATEGY_TYPES
-SHORT_ENTRY_BELOW_MIN_QTY_REASON = _SHORT_ENTRY_BELOW_MIN_QTY_REASON
-feature_vector_with_positions = _feature_vector_with_positions
-feature_vector_with_runtime_position = _feature_vector_with_runtime_position
-merge_runtime_counter = _merge_runtime_counter
-merge_runtime_evaluations = _merge_runtime_evaluations
-runtime_position_side = _runtime_position_side
-
-
-# Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
-    "AggregatedIntent",
-    "Any",
     "BUY_EXIT_ONLY_STRATEGY_TYPES",
-    "Decimal",
     "DecisionEngineFields",
     "DecisionRuntimeTelemetry",
     "EXIT_ONLY_BUY_FLAT_REASON",
     "EXIT_ONLY_SELL_FLAT_REASON",
-    "FeatureNormalizationError",
-    "FeatureVectorV3",
-    "ForecastRoutingTelemetry",
-    "HMM_UNKNOWN_REGIME_ID",
-    "Iterable",
-    "Literal",
     "MICROBAR_PAIR_EXIT_RATIONALE",
-    "Mapping",
-    "MarketSnapshot",
-    "Optional",
-    "PriceFetcher",
-    "QuoteQualityPolicy",
-    "ROUND_HALF_UP",
     "RUNTIME_TRADE_POLICY_SHARED_OWNER",
-    "RuntimeDecision",
-    "RuntimeErrorRecord",
-    "RuntimeEvaluation",
-    "RuntimeObservation",
     "RuntimeTradePolicySessionState",
     "SAME_DIRECTION_REENTRY_REASON",
     "SELL_EXIT_ONLY_STRATEGY_TYPES",
     "SHORT_ENTRY_BELOW_MIN_QTY_REASON",
-    "SessionContextTracker",
-    "SignalEnvelope",
-    "SignalFeatures",
-    "Strategy",
-    "StrategyDecision",
-    "StrategyRegistry",
-    "StrategyRuntime",
-    "StrategyTrace",
-    "_BUY_EXIT_ONLY_STRATEGY_TYPES",
-    "_DecisionEngineFields",
-    "_EXIT_ONLY_BUY_FLAT_REASON",
-    "_EXIT_ONLY_SELL_FLAT_REASON",
-    "_MICROBAR_PAIR_EXIT_RATIONALE",
-    "_RUNTIME_TRADE_POLICY_SHARED_OWNER",
-    "_RuntimeTradePolicySessionState",
-    "_SAME_DIRECTION_REENTRY_REASON",
-    "_SELL_EXIT_ONLY_STRATEGY_TYPES",
-    "_SHORT_ENTRY_BELOW_MIN_QTY_REASON",
-    "_feature_vector_with_positions",
-    "_feature_vector_with_runtime_position",
-    "_merge_runtime_counter",
-    "_merge_runtime_evaluations",
-    "_runtime_position_side",
-    "annotations",
-    "build_default_forecast_router",
-    "cast",
-    "dataclass",
-    "date",
-    "datetime",
-    "extract_catalog_metadata",
-    "extract_signal_features",
     "feature_vector_with_positions",
     "feature_vector_with_runtime_position",
-    "field",
-    "hashlib",
-    "json",
-    "logger",
-    "logging",
-    "merge_runtime_counter",
     "merge_runtime_evaluations",
-    "min_qty_for_symbol",
-    "normalize_feature_vector_v3",
-    "optional_decimal",
-    "parse_microstructure_state",
-    "quantize_qty_for_symbol",
-    "re",
-    "resolve_hmm_context",
-    "resolve_quantity_resolution",
-    "resolve_regime_route_label",
-    "resolve_simulation_context",
+    "logger",
     "runtime_position_side",
-    "settings",
-    "timezone",
 )

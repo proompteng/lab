@@ -17,14 +17,14 @@ from ..quantity_rules import (
 
 
 from .shared_context import (
-    EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
-    EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
-    SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
-    SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+    EXIT_ONLY_BUY_FLAT_REASON,
+    EXIT_ONLY_SELL_FLAT_REASON,
+    SAME_DIRECTION_REENTRY_REASON,
+    SHORT_ENTRY_BELOW_MIN_QTY_REASON,
 )
 
 
-def _resolve_aggregated_notional_budget(
+def resolve_aggregated_notional_budget(
     strategies: list[Strategy],
     *,
     equity: Optional[Decimal],
@@ -39,7 +39,7 @@ def _resolve_aggregated_notional_budget(
     )
 
 
-def _position_qty_for_symbol(
+def position_qty_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -48,7 +48,7 @@ def _position_qty_for_symbol(
     return position_qty_for_symbol(positions, symbol)
 
 
-def _resolve_symbol_notional_cap(
+def resolve_symbol_notional_cap(
     *,
     strategy_pcts: list[Optional[Decimal]],
     equity: Optional[Decimal],
@@ -58,7 +58,7 @@ def _resolve_symbol_notional_cap(
     return resolve_symbol_notional_cap(strategy_pcts=strategy_pcts, equity=equity)
 
 
-def _resolve_portfolio_gross_cap(
+def resolve_portfolio_gross_cap(
     *,
     strategies: list[Strategy],
     equity: Optional[Decimal],
@@ -68,7 +68,7 @@ def _resolve_portfolio_gross_cap(
     return resolve_portfolio_gross_cap(strategies=strategies, equity=equity)
 
 
-def _position_value_for_symbol(
+def position_value_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -77,7 +77,7 @@ def _position_value_for_symbol(
     return position_value_for_symbol(positions, symbol)
 
 
-def _portfolio_gross_exposure(
+def portfolio_gross_exposure(
     positions: Optional[list[dict[str, Any]]],
 ) -> Decimal:
     from .positions_for_strategy_action import portfolio_gross_exposure
@@ -85,25 +85,25 @@ def _portfolio_gross_exposure(
     return portfolio_gross_exposure(positions)
 
 
-def _treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
+def treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
     from .positions_for_strategy_action import treats_sell_as_exit_only_any
 
     return treats_sell_as_exit_only_any(strategies)
 
 
-def _treats_buy_as_exit_only_any(strategies: list[Strategy]) -> bool:
+def treats_buy_as_exit_only_any(strategies: list[Strategy]) -> bool:
     from .positions_for_strategy_action import treats_buy_as_exit_only_any
 
     return treats_buy_as_exit_only_any(strategies)
 
 
-def _blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
+def blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
     from .positions_for_strategy_action import blocks_same_direction_reentry_any
 
     return blocks_same_direction_reentry_any(strategies)
 
 
-def _same_direction_reentry_exists(
+def same_direction_reentry_exists(
     *,
     action: str,
     position_qty: Optional[Decimal],
@@ -113,7 +113,7 @@ def _same_direction_reentry_exists(
     return same_direction_reentry_exists(action=action, position_qty=position_qty)
 
 
-def _cap_requested_qty_by_symbol_cap(
+def cap_requested_qty_by_symbol_cap(
     *,
     action: str,
     requested_qty: Decimal,
@@ -132,7 +132,7 @@ def _cap_requested_qty_by_symbol_cap(
     )
 
 
-def _cap_requested_qty_by_portfolio_gross_cap(
+def cap_requested_qty_by_portfolio_gross_cap(
     *,
     action: str,
     requested_qty: Decimal,
@@ -152,7 +152,7 @@ def _cap_requested_qty_by_portfolio_gross_cap(
 
 
 @dataclass(frozen=True)
-class _AggregatedQtyContext:
+class AggregatedQtyContext:
     strategies: list[Strategy]
     symbol: str
     action: str
@@ -173,14 +173,14 @@ class _AggregatedQtyContext:
 
 
 @dataclass(frozen=True)
-class _AggregatedCapacityAdjustment:
+class AggregatedCapacityAdjustment:
     original_requested_qty: Decimal
     requested_qty: Decimal
     cap_applied: bool
     portfolio_cap_applied: bool
 
 
-def _resolve_qty_for_aggregated(
+def resolve_qty_for_aggregated(
     strategies: list[Strategy],
     *,
     symbol: str,
@@ -201,7 +201,7 @@ def _resolve_qty_for_aggregated(
     effective_capacity_positions = (
         capacity_positions if capacity_positions is not None else positions
     )
-    total_budget = _resolve_aggregated_notional_budget(
+    total_budget = resolve_aggregated_notional_budget(
         strategies,
         equity=equity,
         runtime_target_notional=runtime_target_notional,
@@ -213,7 +213,7 @@ def _resolve_qty_for_aggregated(
         if runtime_target_notional is not None and runtime_target_notional > 0
         else "aggregated_notional_budget"
     )
-    context = _aggregated_qty_context(
+    context = aggregated_qty_context(
         strategies=strategies,
         symbol=symbol,
         action=action,
@@ -225,10 +225,10 @@ def _resolve_qty_for_aggregated(
         budget_method=budget_method,
         runtime_exit_side=runtime_exit_side,
     )
-    return _resolve_qty_from_aggregated_context(context)
+    return resolve_qty_from_aggregated_context(context)
 
 
-def _aggregated_qty_context(
+def aggregated_qty_context(
     *,
     strategies: list[Strategy],
     symbol: str,
@@ -240,10 +240,10 @@ def _aggregated_qty_context(
     total_budget: Decimal,
     budget_method: str,
     runtime_exit_side: Literal["long", "short"] | None,
-) -> _AggregatedQtyContext:
+) -> AggregatedQtyContext:
     normalized_action = action.strip().lower()
-    position_qty = _position_qty_for_symbol(positions, symbol)
-    return _AggregatedQtyContext(
+    position_qty = position_qty_for_symbol(positions, symbol)
+    return AggregatedQtyContext(
         strategies=strategies,
         symbol=symbol,
         action=action,
@@ -253,44 +253,44 @@ def _aggregated_qty_context(
         effective_capacity_positions=effective_capacity_positions,
         total_budget=total_budget,
         budget_method=budget_method,
-        symbol_notional_cap=_resolve_symbol_notional_cap(
+        symbol_notional_cap=resolve_symbol_notional_cap(
             strategy_pcts=[
                 optional_decimal(strategy.max_position_pct_equity)
                 for strategy in strategies
             ],
             equity=equity,
         ),
-        portfolio_gross_cap=_resolve_portfolio_gross_cap(
+        portfolio_gross_cap=resolve_portfolio_gross_cap(
             strategies=strategies,
             equity=equity,
         ),
-        current_value=_position_value_for_symbol(effective_capacity_positions, symbol),
-        current_gross=_portfolio_gross_exposure(effective_capacity_positions),
+        current_value=position_value_for_symbol(effective_capacity_positions, symbol),
+        current_gross=portfolio_gross_exposure(effective_capacity_positions),
         position_qty=position_qty,
         normalized_action=normalized_action,
         exit_only_sell=(
-            _treats_sell_as_exit_only_any(strategies) or runtime_exit_side == "long"
+            treats_sell_as_exit_only_any(strategies) or runtime_exit_side == "long"
         )
         and normalized_action == "sell",
         exit_only_buy=(
-            _treats_buy_as_exit_only_any(strategies) or runtime_exit_side == "short"
+            treats_buy_as_exit_only_any(strategies) or runtime_exit_side == "short"
         )
         and normalized_action == "buy",
     )
 
 
-def _resolve_qty_from_aggregated_context(
-    context: _AggregatedQtyContext,
+def resolve_qty_from_aggregated_context(
+    context: AggregatedQtyContext,
 ) -> tuple[Decimal, dict[str, Any]]:
-    blocked_result = _aggregated_exit_or_reentry_result(context)
+    blocked_result = aggregated_exit_or_reentry_result(context)
     if blocked_result is not None:
         return blocked_result
-    capacity = _aggregated_capacity_adjustment(
+    capacity = aggregated_capacity_adjustment(
         context,
-        _aggregated_requested_qty(context),
+        aggregated_requested_qty(context),
     )
     if capacity.requested_qty <= 0:
-        return _aggregated_capacity_exhausted_result(context, capacity)
+        return aggregated_capacity_exhausted_result(context, capacity)
     resolution = resolve_quantity_resolution(
         action=context.action,
         symbol=context.symbol,
@@ -308,7 +308,7 @@ def _resolve_qty_from_aggregated_context(
         context.symbol,
         fractional_equities_enabled=resolution.fractional_allowed,
     )
-    min_qty_result = _aggregated_min_qty_result(
+    min_qty_result = aggregated_min_qty_result(
         context=context,
         capacity=capacity,
         resolution=resolution,
@@ -319,7 +319,7 @@ def _resolve_qty_from_aggregated_context(
         return min_qty_result
     if qty < min_qty:
         qty = min_qty
-    return _aggregated_qty_success_result(
+    return aggregated_qty_success_result(
         context=context,
         capacity=capacity,
         resolution=resolution,
@@ -327,42 +327,42 @@ def _resolve_qty_from_aggregated_context(
     )
 
 
-def _aggregated_exit_or_reentry_result(
-    context: _AggregatedQtyContext,
+def aggregated_exit_or_reentry_result(
+    context: AggregatedQtyContext,
 ) -> tuple[Decimal, dict[str, Any]] | None:
-    if context.exit_only_sell and _position_qty_is_flat_or_short(context.position_qty):
-        return _aggregated_zero_qty_result(
+    if context.exit_only_sell and position_qty_is_flat_or_short(context.position_qty):
+        return aggregated_zero_qty_result(
             context,
-            reason=_EXIT_ONLY_SELL_FLAT_REASON,
+            reason=EXIT_ONLY_SELL_FLAT_REASON,
         )
-    if context.exit_only_buy and _position_qty_is_flat_or_long(context.position_qty):
-        return _aggregated_zero_qty_result(
+    if context.exit_only_buy and position_qty_is_flat_or_long(context.position_qty):
+        return aggregated_zero_qty_result(
             context,
-            reason=_EXIT_ONLY_BUY_FLAT_REASON,
+            reason=EXIT_ONLY_BUY_FLAT_REASON,
         )
-    if _blocks_same_direction_reentry_any(
+    if blocks_same_direction_reentry_any(
         context.strategies
-    ) and _same_direction_reentry_exists(
+    ) and same_direction_reentry_exists(
         action=context.normalized_action,
         position_qty=context.position_qty,
     ):
-        return _aggregated_zero_qty_result(
+        return aggregated_zero_qty_result(
             context,
-            reason=_SAME_DIRECTION_REENTRY_REASON,
+            reason=SAME_DIRECTION_REENTRY_REASON,
         )
     return None
 
 
-def _position_qty_is_flat_or_short(position_qty: Decimal | None) -> bool:
+def position_qty_is_flat_or_short(position_qty: Decimal | None) -> bool:
     return position_qty is not None and position_qty <= 0
 
 
-def _position_qty_is_flat_or_long(position_qty: Decimal | None) -> bool:
+def position_qty_is_flat_or_long(position_qty: Decimal | None) -> bool:
     return position_qty is not None and position_qty >= 0
 
 
-def _aggregated_zero_qty_result(
-    context: _AggregatedQtyContext,
+def aggregated_zero_qty_result(
+    context: AggregatedQtyContext,
     *,
     reason: str,
 ) -> tuple[Decimal, dict[str, Any]]:
@@ -377,28 +377,28 @@ def _aggregated_zero_qty_result(
     }
 
 
-def _aggregated_requested_qty(context: _AggregatedQtyContext) -> Decimal:
+def aggregated_requested_qty(context: AggregatedQtyContext) -> Decimal:
     requested_qty = context.total_budget / context.price
-    if context.exit_only_sell and _positive_position_qty(context.position_qty):
+    if context.exit_only_sell and positive_position_qty(context.position_qty):
         return cast(Decimal, context.position_qty)
-    if context.exit_only_buy and _negative_position_qty(context.position_qty):
+    if context.exit_only_buy and negative_position_qty(context.position_qty):
         return abs(cast(Decimal, context.position_qty))
     return requested_qty
 
 
-def _positive_position_qty(position_qty: Decimal | None) -> bool:
+def positive_position_qty(position_qty: Decimal | None) -> bool:
     return position_qty is not None and position_qty > 0
 
 
-def _negative_position_qty(position_qty: Decimal | None) -> bool:
+def negative_position_qty(position_qty: Decimal | None) -> bool:
     return position_qty is not None and position_qty < 0
 
 
-def _aggregated_capacity_adjustment(
-    context: _AggregatedQtyContext,
+def aggregated_capacity_adjustment(
+    context: AggregatedQtyContext,
     requested_qty: Decimal,
-) -> _AggregatedCapacityAdjustment:
-    capped_by_symbol = _cap_requested_qty_by_symbol_cap(
+) -> AggregatedCapacityAdjustment:
+    capped_by_symbol = cap_requested_qty_by_symbol_cap(
         action=context.normalized_action,
         requested_qty=requested_qty,
         price=context.price,
@@ -408,7 +408,7 @@ def _aggregated_capacity_adjustment(
     symbol_adjusted_qty = (
         capped_by_symbol if capped_by_symbol is not None else requested_qty
     )
-    capped_by_portfolio = _cap_requested_qty_by_portfolio_gross_cap(
+    capped_by_portfolio = cap_requested_qty_by_portfolio_gross_cap(
         action=context.normalized_action,
         requested_qty=symbol_adjusted_qty,
         price=context.price,
@@ -418,7 +418,7 @@ def _aggregated_capacity_adjustment(
     adjusted_qty = (
         capped_by_portfolio if capped_by_portfolio is not None else symbol_adjusted_qty
     )
-    return _AggregatedCapacityAdjustment(
+    return AggregatedCapacityAdjustment(
         original_requested_qty=requested_qty,
         requested_qty=adjusted_qty,
         cap_applied=capped_by_symbol is not None and capped_by_symbol < requested_qty,
@@ -429,20 +429,20 @@ def _aggregated_capacity_adjustment(
     )
 
 
-def _aggregated_capacity_exhausted_result(
-    context: _AggregatedQtyContext,
-    capacity: _AggregatedCapacityAdjustment,
+def aggregated_capacity_exhausted_result(
+    context: AggregatedQtyContext,
+    capacity: AggregatedCapacityAdjustment,
 ) -> tuple[Decimal, dict[str, Any]]:
     return Decimal("0"), {
-        **_aggregated_capacity_meta(context, capacity),
-        "reason": _aggregated_capacity_reason(context, capacity),
+        **aggregated_capacity_meta(context, capacity),
+        "reason": aggregated_capacity_reason(context, capacity),
         "requested_qty": str(capacity.original_requested_qty),
     }
 
 
-def _aggregated_capacity_reason(
-    context: _AggregatedQtyContext,
-    capacity: _AggregatedCapacityAdjustment,
+def aggregated_capacity_reason(
+    context: AggregatedQtyContext,
+    capacity: AggregatedCapacityAdjustment,
 ) -> str:
     if capacity.portfolio_cap_applied or (
         context.normalized_action == "buy"
@@ -454,10 +454,10 @@ def _aggregated_capacity_reason(
     return "symbol_capacity_exhausted"
 
 
-def _aggregated_min_qty_result(
+def aggregated_min_qty_result(
     *,
-    context: _AggregatedQtyContext,
-    capacity: _AggregatedCapacityAdjustment,
+    context: AggregatedQtyContext,
+    capacity: AggregatedCapacityAdjustment,
     resolution: Any,
     qty: Decimal,
     min_qty: Decimal,
@@ -466,16 +466,16 @@ def _aggregated_min_qty_result(
         return None
     if capacity.cap_applied or capacity.portfolio_cap_applied:
         return Decimal("0"), {
-            **_aggregated_capacity_meta(context, capacity),
-            "reason": _aggregated_min_qty_capacity_reason(capacity),
+            **aggregated_capacity_meta(context, capacity),
+            "reason": aggregated_min_qty_capacity_reason(capacity),
             "requested_qty": str(capacity.requested_qty),
             "min_qty": str(min_qty),
             "quantity_resolution": resolution.to_payload(),
         }
-    if _aggregated_short_entry_below_min(context, resolution):
+    if aggregated_short_entry_below_min(context, resolution):
         return Decimal("0"), {
             "method": context.budget_method,
-            "reason": _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+            "reason": SHORT_ENTRY_BELOW_MIN_QTY_REASON,
             "notional_budget": str(context.total_budget),
             "price": str(context.price),
             "requested_qty": str(capacity.requested_qty),
@@ -485,16 +485,16 @@ def _aggregated_min_qty_result(
     return None
 
 
-def _aggregated_min_qty_capacity_reason(
-    capacity: _AggregatedCapacityAdjustment,
+def aggregated_min_qty_capacity_reason(
+    capacity: AggregatedCapacityAdjustment,
 ) -> str:
     if capacity.portfolio_cap_applied and not capacity.cap_applied:
         return "portfolio_gross_capacity_exhausted"
     return "symbol_capacity_exhausted"
 
 
-def _aggregated_short_entry_below_min(
-    context: _AggregatedQtyContext,
+def aggregated_short_entry_below_min(
+    context: AggregatedQtyContext,
     resolution: Any,
 ) -> bool:
     position_qty = resolution.position_qty
@@ -505,15 +505,15 @@ def _aggregated_short_entry_below_min(
     )
 
 
-def _aggregated_qty_success_result(
+def aggregated_qty_success_result(
     *,
-    context: _AggregatedQtyContext,
-    capacity: _AggregatedCapacityAdjustment,
+    context: AggregatedQtyContext,
+    capacity: AggregatedCapacityAdjustment,
     resolution: Any,
     qty: Decimal,
 ) -> tuple[Decimal, dict[str, Any]]:
     return qty, {
-        **_aggregated_capacity_meta(context, capacity),
+        **aggregated_capacity_meta(context, capacity),
         "requested_qty": str(capacity.requested_qty),
         "symbol_capacity_limited": capacity.cap_applied,
         "portfolio_gross_limited": capacity.portfolio_cap_applied,
@@ -526,9 +526,9 @@ def _aggregated_qty_success_result(
     }
 
 
-def _aggregated_capacity_meta(
-    context: _AggregatedQtyContext,
-    capacity: _AggregatedCapacityAdjustment,
+def aggregated_capacity_meta(
+    context: AggregatedQtyContext,
+    capacity: AggregatedCapacityAdjustment,
 ) -> dict[str, Any]:
     del capacity
     return {
@@ -554,28 +554,6 @@ def _aggregated_capacity_meta(
         ),
     }
 
-
-# Public aliases used by split-module consumers.
-resolve_qty_for_aggregated = _resolve_qty_for_aggregated
-AggregatedCapacityAdjustment = _AggregatedCapacityAdjustment
-AggregatedQtyContext = _AggregatedQtyContext
-aggregated_capacity_adjustment = _aggregated_capacity_adjustment
-aggregated_capacity_exhausted_result = _aggregated_capacity_exhausted_result
-aggregated_capacity_meta = _aggregated_capacity_meta
-aggregated_capacity_reason = _aggregated_capacity_reason
-aggregated_exit_or_reentry_result = _aggregated_exit_or_reentry_result
-aggregated_min_qty_capacity_reason = _aggregated_min_qty_capacity_reason
-aggregated_min_qty_result = _aggregated_min_qty_result
-aggregated_qty_context = _aggregated_qty_context
-aggregated_qty_success_result = _aggregated_qty_success_result
-aggregated_requested_qty = _aggregated_requested_qty
-aggregated_short_entry_below_min = _aggregated_short_entry_below_min
-aggregated_zero_qty_result = _aggregated_zero_qty_result
-negative_position_qty = _negative_position_qty
-position_qty_is_flat_or_long = _position_qty_is_flat_or_long
-position_qty_is_flat_or_short = _position_qty_is_flat_or_short
-positive_position_qty = _positive_position_qty
-resolve_qty_from_aggregated_context = _resolve_qty_from_aggregated_context
 
 __all__ = (
     "resolve_qty_for_aggregated",

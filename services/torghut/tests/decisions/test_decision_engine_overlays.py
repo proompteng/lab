@@ -8,7 +8,7 @@ from tests.decisions.support import (
     Strategy,
     StrategyConfig,
     TestCase,
-    _build_runtime_position_exit_overlay,
+    build_runtime_position_exit_overlay,
     _compose_strategy_description,
     datetime,
     extract_signal_features,
@@ -259,7 +259,7 @@ class TestDecisionEngineOverlays(TestCase):
             }
         ]
 
-        decision = _build_runtime_position_exit_overlay(
+        decision = build_runtime_position_exit_overlay(
             signal=trailing_signal,
             strategies=[strategy],
             timeframe="1Sec",
@@ -344,7 +344,7 @@ class TestDecisionEngineOverlays(TestCase):
             }
         ]
 
-        decision = _build_runtime_position_exit_overlay(
+        decision = build_runtime_position_exit_overlay(
             signal=trailing_signal,
             strategies=[strategy],
             timeframe="1Sec",
@@ -434,7 +434,7 @@ class TestDecisionEngineOverlays(TestCase):
             }
         ]
 
-        decision = _build_runtime_position_exit_overlay(
+        decision = build_runtime_position_exit_overlay(
             signal=signal,
             strategies=[strategy],
             timeframe="1Sec",
