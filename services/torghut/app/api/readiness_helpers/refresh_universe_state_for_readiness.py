@@ -10,7 +10,7 @@ from typing import Any, Protocol, cast
 from sqlalchemy import bindparam, text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.common import (
+from app.api.health_cache_state import (
     ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS as _ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
 )
 from app.config import settings

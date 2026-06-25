@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from typing import cast
@@ -9,7 +10,6 @@ from typing import cast
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api.common import logger
 from app.config import settings
 from app.db import ping
 from app.trading.tigerbeetle_client import check_tigerbeetle_health
@@ -19,6 +19,8 @@ from app.trading.tigerbeetle_reconcile import (
     latest_tigerbeetle_reconciliation_status_payload,
     tigerbeetle_ref_counts,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def apply_status_read_statement_timeout(

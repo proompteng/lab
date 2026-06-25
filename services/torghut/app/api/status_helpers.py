@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -10,7 +11,7 @@ from typing import Any, cast
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.api.common import TRADING_STATUS_READ_BUDGET_SECONDS, logger
+from app.api.health_cache_state import TRADING_STATUS_READ_BUDGET_SECONDS
 from app.config import settings
 from app.db import SessionLocal
 from app.trading.hypotheses import (
@@ -39,6 +40,7 @@ _load_tca_summary = load_tca_summary
 _unavailable_tigerbeetle_reconciliation_payload = (
     unavailable_tigerbeetle_reconciliation_payload
 )
+logger = logging.getLogger(__name__)
 
 
 class _TradingStatusReadBudget:

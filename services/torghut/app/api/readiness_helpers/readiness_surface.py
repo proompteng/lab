@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Mapping, Sequence
 from concurrent.futures import Future
@@ -12,17 +13,14 @@ from typing import cast
 
 from sqlalchemy.orm import Session
 
-from app.api import common as api_common
-from app.api.common import (
-    BUILD_IMAGE_DIGEST,
-    BUILD_VERSION,
+from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST, BUILD_VERSION
+from app.api.health_cache_state import (
     READINESS_PROMOTION_AUTHORITY_KEYS,
     TRADING_DEPENDENCY_HEALTH_CACHE,
     TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
     TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
     TRADING_HEALTH_SURFACE_EVALUATIONS,
     TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    logger,
 )
 from app.config import settings
 from app.db import SessionLocal
@@ -34,6 +32,8 @@ from ...trading.live_submit_activation import (
 )
 from .. import health_checks as health_checks_api
 from ..trading_scheduler_state import get_trading_scheduler
+
+logger = logging.getLogger(__name__)
 
 
 def active_runtime_revision() -> str | None:
@@ -421,9 +421,9 @@ def _evaluate_core_readiness_payload(
         "dependencies": dependencies,
         "build": {
             "version": BUILD_VERSION,
-            "commit": api_common.BUILD_COMMIT,
+            "commit": BUILD_COMMIT,
             "image_digest": BUILD_IMAGE_DIGEST,
-            "active_revision": active_runtime_revision() or api_common.BUILD_COMMIT,
+            "active_revision": active_runtime_revision() or BUILD_COMMIT,
         },
         "mode": settings.trading_mode,
         "pipeline_mode": settings.trading_pipeline_mode,

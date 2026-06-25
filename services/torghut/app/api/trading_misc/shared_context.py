@@ -8,10 +8,12 @@ from typing import Any, cast
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from app.api import common as api_common
-from app.api.common import (
+from app.api.build_metadata import (
+    BUILD_COMMIT,
     BUILD_IMAGE_DIGEST,
     BUILD_VERSION,
+)
+from app.api.runtime_services import (
     LEAN_LANE_MANAGER,
 )
 from app.config import settings
@@ -76,7 +78,7 @@ def trading_metrics(session: Session = Depends(get_session)) -> dict[str, object
         "metrics": metrics.to_payload(),
         "build": {
             "version": BUILD_VERSION,
-            "commit": api_common.BUILD_COMMIT,
+            "commit": BUILD_COMMIT,
             "image_digest": BUILD_IMAGE_DIGEST,
             "active_revision": shadow_first_runtime["active_revision"],
         },

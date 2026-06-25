@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
@@ -17,12 +18,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.common import (
-    BUILD_VERSION,
+from app.api.build_metadata import BUILD_VERSION
+from app.api.proof_contracts import (
     PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
     PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
     PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    logger,
 )
 from app.config import settings
 from app.db import SessionLocal, get_session
@@ -99,6 +99,7 @@ _strategy_universe_symbol_values = (
     _proofs_configured_collection.strategy_universe_symbol_values
 )
 router = APIRouter()
+logger = logging.getLogger(__name__)
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
 
 

@@ -8,7 +8,7 @@ from typing import Any, cast
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.common import PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
+from app.api.proof_contracts import PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
 from app.config import settings
 from app.models import Strategy
 from app.trading.proofs.schemas import DEFAULT_PROOFS_LIMIT

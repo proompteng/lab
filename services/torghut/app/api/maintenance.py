@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
@@ -12,11 +13,9 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.api import common as api_common
-from app.api.common import (
-    BUILD_VERSION,
+from app.api.build_metadata import BUILD_COMMIT, BUILD_VERSION
+from app.api.proof_contracts import (
     ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    logger,
     retryable_tca_recompute_error,
 )
 from app.config import settings
@@ -40,6 +39,7 @@ from .readiness_helpers import (
 from .trading_status import trading_status
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 def _load_jangar_dependency_quorum_payload() -> dict[str, object]:
@@ -474,7 +474,7 @@ def trading_profit_freshness_zero_notional_repair(
         account_label=settings.trading_account_label,
         trading_mode=settings.trading_mode,
         torghut_revision=cast(str | None, status_payload.get("active_revision")),
-        source_commit=api_common.BUILD_COMMIT,
+        source_commit=BUILD_COMMIT,
         profit_freshness_frontier=frontier,
         execute=execute,
         preferred_action=action,
@@ -500,7 +500,7 @@ def root() -> dict[str, str]:
         "service": "torghut",
         "status": "ok",
         "version": BUILD_VERSION,
-        "commit": api_common.BUILD_COMMIT,
+        "commit": BUILD_COMMIT,
     }
 
 
