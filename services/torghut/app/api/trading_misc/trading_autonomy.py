@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST
-from app.api.trading_misc.shared_context import router
+from app.api.trading_misc.router import router
 from app.config import settings
 from app.db import get_session
 from app.metrics import render_trading_metrics
