@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.trading.scheduler.target_plan_helpers import (
-    _target_requires_bounded_sim_collection_gate,
+    target_requires_bounded_sim_collection_gate as _target_requires_bounded_sim_collection_gate,
 )
 from tests.simple_pipeline.support import (
     Decimal,

@@ -76,25 +76,25 @@ _ALPACA_HEALTH_STATE = common_api.ALPACA_HEALTH_STATE
 _OPTIONS_CATALOG_FRESHNESS_CACHE = common_api.OPTIONS_CATALOG_FRESHNESS_CACHE
 _TRADING_DEPENDENCY_HEALTH_CACHE = common_api.TRADING_DEPENDENCY_HEALTH_CACHE
 _assert_dspy_cutover_migration_guard = app_bootstrap.assert_dspy_cutover_migration_guard
-_build_hypothesis_runtime_payload = health_checks_api._build_hypothesis_runtime_payload
+_build_hypothesis_runtime_payload = health_checks_api.build_hypothesis_runtime_payload
 _build_live_submission_gate_payload = (
-    health_checks_api._build_live_submission_gate_payload
+    health_checks_api.build_api_live_submission_gate_payload
 )
 _build_route_image_proof_summary = (
     proof_floor_payloads_api._build_route_image_proof_summary
 )
-_check_alpaca = health_checks_api._check_alpaca
+_check_alpaca = health_checks_api.check_alpaca_dependency
 _daily_runtime_ledger_portfolio_summary = (
     trading_misc_api.daily_runtime_ledger_portfolio_summary
 )
-_decimal_or_none = health_checks_api._decimal_or_none
+_decimal_or_none = health_checks_api.decimal_or_none
 _fetch_paper_route_target_plan_url = proofs_api._fetch_paper_route_target_plan_url
-_forecast_service_status = health_checks_api._forecast_service_status
+_forecast_service_status = health_checks_api.forecast_service_status
 _load_external_paper_route_target_plan = (
     proofs_api._load_external_paper_route_target_plan
 )
 _load_options_catalog_freshness_summary = (
-    health_checks_api._load_options_catalog_freshness_summary
+    health_checks_api.load_options_catalog_freshness_summary
 )
 _load_rejected_signal_outcome_learning_summary = (
     proof_floor_payloads_api._load_rejected_signal_outcome_learning_summary
@@ -106,7 +106,7 @@ _paper_route_target_plan_from_payload = proofs_api._paper_route_target_plan_from
 _readiness_dependency_cache_key = readiness_helpers_api._readiness_dependency_cache_key
 _readiness_dependency_checks = readiness_helpers_api._readiness_dependency_checks
 _retryable_tca_recompute_error = common_api._retryable_tca_recompute_error
-_route_claim_symbols = health_checks_api._route_claim_symbols
+_route_claim_symbols = health_checks_api.route_claim_symbols
 _route_continuity_packet_for_proof_floor = (
     proof_floor_payloads_api._route_continuity_packet_for_proof_floor
 )

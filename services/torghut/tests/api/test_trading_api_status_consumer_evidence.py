@@ -321,7 +321,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 "app.api.trading_status.load_quant_evidence_status",
                 return_value={"ok": True, "required": False},
             ),
-            patch("app.api.health_checks._load_tca_summary", return_value={}),
+            patch("app.api.health_checks.load_tca_summary", return_value={}),
             patch(
                 "app.api.trading_status._build_live_submission_gate_payload",
                 return_value=live_submission_gate,
@@ -769,7 +769,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 "app.api.trading_status.load_quant_evidence_status",
                 return_value={"ok": True, "required": False},
             ),
-            patch("app.api.health_checks._load_tca_summary", return_value={}),
+            patch("app.api.health_checks.load_tca_summary", return_value={}),
             patch(
                 "app.api.trading_status._build_live_submission_gate_payload",
                 return_value=live_submission_gate,
