@@ -4,43 +4,28 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Sequence, cast
 
-
-from .shared_context import (
-    ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS,
-    ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
-    BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
-    CONFORMAL_COST_BUFFER_SCORECARD_KEYS,
-    DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS,
-    EVIDENCE_BUNDLE_SCHEMA_VERSION,
-    FILL_SURVIVAL_SCORECARD_KEYS,
-    MARKET_IMPACT_SCORECARD_KEYS,
-    MARKET_IMPACT_STRESS_COST_BPS,
-    OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
-    REPLAY_ACTIVITY_SCORECARD_KEYS,
-    RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS,
-    STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
-    artifact_refs_from_scorecard as _artifact_refs_from_scorecard,
-    bool_value as _bool,
-    decimal as _decimal,
-    frontier_replay_params as _frontier_replay_params,
-    frontier_strategy_overrides as _frontier_strategy_overrides,
-    int_value as _int,
-    mapping as _mapping,
-    order_lifecycle_metrics as _order_lifecycle_metrics,
-    order_type_ablation_metrics as _order_type_ablation_metrics,
-    order_type_execution_metrics as _order_type_execution_metrics,
-    stable_hash as _stable_hash,
-    string as _string,
-    string_list as _string_list,
+from . import shared_context as _shared
+from .frontier_candidate_scorecard import (
+    frontier_candidate_adaptive_signal_falsification_stress,
+    frontier_candidate_null_comparator,
+    frontier_candidate_scorecard,
+    frontier_candidate_stress_metrics,
 )
 from .runtime_ledger_lineage_handoff_blockers import (
     CandidateEvidenceBundle,
-    decomposition_activity_counts as _decomposition_activity_counts,
-    decomposition_symbol_contribution_shares as _decomposition_symbol_contribution_shares,
-    enrich_scorecard_with_replay_stress_metrics as _enrich_scorecard_with_replay_stress_metrics,
-    scorecard_with_freshness_lineage as _scorecard_with_freshness_lineage,
     evidence_bundle_id_for_payload,
 )
+
+EVIDENCE_BUNDLE_SCHEMA_VERSION = _shared.EVIDENCE_BUNDLE_SCHEMA_VERSION
+MARKET_IMPACT_STRESS_COST_BPS = _shared.MARKET_IMPACT_STRESS_COST_BPS
+_artifact_refs_from_scorecard = _shared.artifact_refs_from_scorecard
+_bool = _shared.bool_value
+_decimal = _shared.decimal
+_int = _shared.int_value
+_mapping = _shared.mapping
+_stable_hash = _shared.stable_hash
+_string = _shared.string
+_string_list = _shared.string_list
 
 
 def evidence_bundle_from_frontier_candidate(
@@ -52,324 +37,13 @@ def evidence_bundle_from_frontier_candidate(
     code_commit: str = "unknown",
 ) -> CandidateEvidenceBundle:
     candidate_id = _string(candidate.get("candidate_id")) or candidate_spec_id
-    scorecard = _mapping(candidate.get("objective_scorecard"))
-    full_window = _mapping(candidate.get("full_window"))
-    summary = _mapping(candidate.get("summary"))
-    if not scorecard:
-        scorecard = {
-            "net_pnl_per_day": _string(full_window.get("net_per_day")),
-            "active_day_ratio": _string(full_window.get("active_day_ratio")),
-            "positive_day_ratio": _string(full_window.get("positive_day_ratio")),
-            "best_day_share": _string(full_window.get("best_day_share")),
-            "max_drawdown": _string(full_window.get("max_drawdown")),
-        }
-    adaptive_signal_falsification_stress = _mapping(
-        candidate.get("fast_replay_adaptive_signal_falsification_stress")
-        or candidate.get("adaptive_signal_falsification_stress")
-    )
-    adaptive_signal_falsification_scorecard_patch = _mapping(
-        candidate.get(
-            "fast_replay_adaptive_signal_falsification_objective_scorecard_patch"
-        )
-        or adaptive_signal_falsification_stress.get("objective_scorecard_patch")
-    )
-    if adaptive_signal_falsification_scorecard_patch:
-        for key in ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS:
-            if key in adaptive_signal_falsification_scorecard_patch:
-                scorecard = {
-                    **scorecard,
-                    key: adaptive_signal_falsification_scorecard_patch[key],
-                }
-    for key in REPLAY_ACTIVITY_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in MARKET_IMPACT_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in CONFORMAL_COST_BUFFER_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in (*DELAY_DEPTH_SURVIVAL_SCORECARD_KEYS, *FILL_SURVIVAL_SCORECARD_KEYS):
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in OFI_RESPONSE_HORIZON_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for key in STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS:
-        if key in scorecard:
-            continue
-        for source in (candidate, summary, full_window):
-            if key in source:
-                scorecard = {**scorecard, key: source[key]}
-                break
-    for source in (candidate, summary, full_window):
-        for key, value in _order_type_execution_metrics(source).items():
-            if key not in scorecard:
-                scorecard = {**scorecard, key: value}
-    for source in (candidate, summary, full_window):
-        for key, value in _order_lifecycle_metrics(source).items():
-            if key not in scorecard:
-                scorecard = {**scorecard, key: value}
-    for source in (candidate, summary, full_window):
-        for key, value in _order_type_ablation_metrics(source).items():
-            if key not in scorecard or key in {
-                "order_type_ablation_artifact_ref",
-                "order_type_ablation_sample_count",
-                "order_type_ablation_passed",
-                "order_type_ablation_selected_order_type",
-                "order_type_opportunity_cost_bps",
-                "order_type_opportunity_cost_evidence_present",
-                "opportunity_cost_evidence_present",
-                "limit_fill_probability_sample_count",
-                "limit_fill_probability_evidence_present",
-            }:
-                scorecard = {**scorecard, key: value}
-    if (
-        scorecard.get("market_limit_order_mix_evidence_present")
-        and "order_type_execution_artifact_ref" not in scorecard
-    ):
-        scorecard = {**scorecard, "order_type_execution_artifact_ref": result_path}
-    if (
-        scorecard.get("market_limit_order_mix_evidence_present")
-        and "market_limit_order_mix_artifact_ref" not in scorecard
-    ):
-        scorecard = {**scorecard, "market_limit_order_mix_artifact_ref": result_path}
-    for key, value in _decomposition_activity_counts(candidate).items():
-        if key not in scorecard:
-            scorecard = {**scorecard, key: value}
-    daily_net = _mapping(full_window.get("daily_net"))
-    if daily_net and "daily_net" not in scorecard:
-        scorecard = {**scorecard, "daily_net": daily_net}
-    daily_filled_notional = _mapping(full_window.get("daily_filled_notional"))
-    if daily_filled_notional and "daily_filled_notional" not in scorecard:
-        scorecard = {**scorecard, "daily_filled_notional": daily_filled_notional}
-    if "trading_day_count" in full_window and "trading_day_count" not in scorecard:
-        scorecard = {**scorecard, "trading_day_count": full_window["trading_day_count"]}
-    raw_candidate_hard_vetoes = candidate.get("hard_vetoes")
-    if isinstance(raw_candidate_hard_vetoes, str):
-        raw_hard_vetoes: Sequence[Any] = (raw_candidate_hard_vetoes,)
-    else:
-        raw_hard_vetoes = cast(Sequence[Any], raw_candidate_hard_vetoes or ())
-    hard_vetoes = tuple(
-        item for item in (_string(value) for value in raw_hard_vetoes) if item
-    )
-    if hard_vetoes and "hard_vetoes" not in scorecard:
-        scorecard = {**scorecard, "hard_vetoes": list(hard_vetoes)}
-    for nested_contract in (
-        _mapping(candidate.get("hard_vetoes")),
-        _mapping(candidate.get("promotion_contract")),
-    ):
-        for key in (
-            *BOOTSTRAP_ROBUST_OPTIMIZATION_SCORECARD_KEYS,
-            *ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS,
-            *OFI_RESPONSE_HORIZON_SCORECARD_KEYS,
-            *ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
-            *STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
-            *CONFORMAL_COST_BUFFER_SCORECARD_KEYS,
-        ):
-            if key in nested_contract and key not in scorecard:
-                scorecard = {**scorecard, key: nested_contract[key]}
-    replay_params = _frontier_replay_params(candidate)
-    if replay_params and "runtime_params" not in scorecard:
-        scorecard = {**scorecard, "runtime_params": replay_params}
-    strategy_overrides = _frontier_strategy_overrides(candidate)
-    if strategy_overrides and "candidate_strategy_overrides" not in scorecard:
-        scorecard = {**scorecard, "candidate_strategy_overrides": strategy_overrides}
-    universe_symbols = _string_list(strategy_overrides.get("universe_symbols"))
-    if universe_symbols and "universe_symbols" not in scorecard:
-        scorecard = {**scorecard, "universe_symbols": universe_symbols}
-    for key in ("max_notional_per_trade", "max_position_pct_equity"):
-        if key in scorecard:
-            continue
-        value = strategy_overrides.get(key)
-        if value is not None:
-            scorecard = {**scorecard, key: value}
-    if "symbol_contribution_shares" not in scorecard and "symbol" not in scorecard:
-        symbol_shares = _decomposition_symbol_contribution_shares(candidate)
-        if symbol_shares:
-            scorecard = {**scorecard, "symbol_contribution_shares": symbol_shares}
-    runtime_identity_fallbacks = {
-        "runtime_family": _string(candidate.get("family")),
-        "runtime_strategy_name": _string(candidate.get("strategy_name")),
-    }
-    for key in (
-        "family_template_id",
-        "runtime_family",
-        "runtime_strategy_name",
-        "execution_signature",
-        "execution_profile_id",
-        "execution_profile_index",
-        "feedback_risk_profile_key",
-        "feedback_shape_key",
-        "universe_key",
-        "signal_key",
-    ):
-        value = _string(candidate.get(key)) or runtime_identity_fallbacks.get(key, "")
-        if value and key not in scorecard:
-            scorecard = {**scorecard, key: value}
-    replay_lineage = _mapping(candidate.get("replay_lineage"))
-    if replay_lineage and "replay_lineage" not in scorecard:
-        scorecard = {**scorecard, "replay_lineage": replay_lineage}
-    replay_window_coverage = _mapping(
-        scorecard.get("replay_window_coverage")
-        or candidate.get("replay_window_coverage")
-        or replay_lineage.get("replay_window_coverage")
-    )
-    if replay_window_coverage and "replay_window_coverage" not in scorecard:
-        scorecard = {**scorecard, "replay_window_coverage": replay_window_coverage}
-    scorecard = _enrich_scorecard_with_replay_stress_metrics(
-        scorecard=scorecard,
-        full_window=full_window,
+    scorecard = frontier_candidate_scorecard(
+        candidate=candidate,
         result_path=result_path,
     )
-    scorecard = _scorecard_with_freshness_lineage(
-        scorecard=scorecard,
-        candidate=candidate,
+    adaptive_signal_falsification_stress = (
+        frontier_candidate_adaptive_signal_falsification_stress(candidate)
     )
-    stress_metrics = tuple(
-        cast(Sequence[Mapping[str, Any]], candidate.get("stress_metrics") or ())
-    )
-    if not stress_metrics:
-        stress_metrics = (
-            {
-                "source": "frontier_replay",
-                "stress_type": "market_impact",
-                "model": scorecard.get("market_impact_stress_model"),
-                "cost_bps": scorecard.get("market_impact_stress_cost_bps"),
-                "net_pnl_per_day": scorecard.get(
-                    "market_impact_stress_net_pnl_per_day"
-                ),
-                "passed": scorecard.get("market_impact_stress_passed"),
-                "artifact_ref": scorecard.get("market_impact_stress_artifact_ref"),
-            },
-            {
-                "source": "frontier_replay",
-                "stress_type": "delay_adjusted_depth",
-                "model": scorecard.get("delay_adjusted_depth_stress_model"),
-                "stress_ms": scorecard.get("delay_adjusted_depth_stress_ms"),
-                "latency_grid_ms": scorecard.get(
-                    "delay_adjusted_depth_latency_grid_ms"
-                ),
-                "grid_max_stress_ms": scorecard.get(
-                    "delay_adjusted_depth_grid_max_stress_ms"
-                ),
-                "fillable_notional_per_day": scorecard.get(
-                    "delay_adjusted_depth_fillable_notional_per_day"
-                ),
-                "worst_grid_fillable_notional_per_day": scorecard.get(
-                    "delay_adjusted_depth_worst_grid_fillable_notional_per_day"
-                ),
-                "worst_active_day_fillable_notional": scorecard.get(
-                    "delay_adjusted_depth_worst_active_day_fillable_notional"
-                ),
-                "p10_active_day_fillable_notional": scorecard.get(
-                    "delay_adjusted_depth_p10_active_day_fillable_notional"
-                ),
-                "tail_coverage_passed": scorecard.get(
-                    "delay_adjusted_depth_tail_coverage_passed"
-                ),
-                "liquidity_missing_day_count": scorecard.get(
-                    "delay_adjusted_depth_liquidity_missing_day_count"
-                ),
-                "fillable_ratio": scorecard.get("delay_adjusted_depth_fillable_ratio"),
-                "survival_adjusted_fillable_ratio": scorecard.get(
-                    "delay_adjusted_depth_survival_adjusted_fillable_ratio"
-                ),
-                "unfillable_notional_per_day": scorecard.get(
-                    "delay_adjusted_depth_unfillable_notional_per_day"
-                ),
-                "fill_survival_evidence_present": scorecard.get(
-                    "delay_adjusted_depth_fill_survival_evidence_present"
-                ),
-                "fill_survival_sample_count": scorecard.get(
-                    "delay_adjusted_depth_fill_survival_sample_count"
-                ),
-                "fill_survival_rate": scorecard.get(
-                    "delay_adjusted_depth_fill_survival_rate"
-                ),
-                "queue_ratio_p95": scorecard.get(
-                    "delay_adjusted_depth_queue_ratio_p95"
-                ),
-                "queue_ahead_depletion_evidence_present": scorecard.get(
-                    "delay_adjusted_depth_queue_ahead_depletion_evidence_present"
-                ),
-                "queue_ahead_depletion_sample_count": scorecard.get(
-                    "delay_adjusted_depth_queue_ahead_depletion_sample_count"
-                ),
-                "net_pnl_per_day": scorecard.get(
-                    "delay_adjusted_depth_stress_net_pnl_per_day"
-                ),
-                "passed": scorecard.get("delay_adjusted_depth_stress_passed"),
-                "artifact_ref": scorecard.get(
-                    "delay_adjusted_depth_stress_artifact_ref"
-                ),
-            },
-            {
-                "source": "frontier_replay",
-                "stress_type": "implementation_uncertainty",
-                "model": scorecard.get("implementation_uncertainty_model"),
-                "model_count": scorecard.get("implementation_uncertainty_model_count"),
-                "lower_net_pnl_per_day": scorecard.get(
-                    "implementation_uncertainty_lower_net_pnl_per_day"
-                ),
-                "upper_net_pnl_per_day": scorecard.get(
-                    "implementation_uncertainty_upper_net_pnl_per_day"
-                ),
-                "interval_width_per_day": scorecard.get(
-                    "implementation_uncertainty_interval_width_per_day"
-                ),
-                "scenarios": scorecard.get("implementation_uncertainty_scenarios"),
-                "passed": scorecard.get("implementation_uncertainty_stability_passed"),
-            },
-        )
     payload_seed = {
         "candidate_id": candidate_id,
         "candidate_spec_id": candidate_spec_id,
@@ -390,6 +64,10 @@ def evidence_bundle_from_frontier_candidate(
             ]
         )
     )
+    stress_metrics = frontier_candidate_stress_metrics(
+        candidate=candidate,
+        scorecard=scorecard,
+    )
     return CandidateEvidenceBundle(
         schema_version=EVIDENCE_BUNDLE_SCHEMA_VERSION,
         evidence_bundle_id=evidence_bundle_id_for_payload(payload_seed),
@@ -408,13 +86,11 @@ def evidence_bundle_from_frontier_candidate(
         stress_metrics=stress_metrics,
         cost_calibration=_mapping(candidate.get("cost_calibration"))
         or {"status": "provisional", "source": "frontier_replay"},
-        null_comparator=_mapping(candidate.get("null_comparator"))
-        or _mapping(adaptive_signal_falsification_stress.get("null_comparator_patch"))
-        or {
-            "baseline_outperformed": bool(
-                float(str(scorecard.get("net_pnl_per_day") or 0)) > 0
-            )
-        },
+        null_comparator=frontier_candidate_null_comparator(
+            candidate=candidate,
+            scorecard=scorecard,
+            adaptive_signal_falsification_stress=adaptive_signal_falsification_stress,
+        ),
         promotion_readiness=promotion_readiness,
     )
 
@@ -471,6 +147,15 @@ def requires_promotion_proof(bundle: CandidateEvidenceBundle) -> bool:
 
 def delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
     blockers: list[str] = []
+    blockers.extend(_delay_depth_stress_blockers(scorecard))
+    blockers.extend(_fill_survival_blockers(scorecard))
+    blockers.extend(_queue_ahead_depletion_blockers(scorecard))
+    blockers.extend(_queue_position_survival_blockers(scorecard))
+    return blockers
+
+
+def _delay_depth_stress_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not _bool(scorecard.get("delay_adjusted_depth_stress_passed")):
         blockers.append("delay_adjusted_depth_stress_failed")
     if not _string(scorecard.get("delay_adjusted_depth_stress_model")):
@@ -495,6 +180,11 @@ def delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         blockers.append("delay_adjusted_depth_worst_fillable_non_positive")
     if _decimal(scorecard.get("delay_adjusted_depth_stress_net_pnl_per_day")) <= 0:
         blockers.append("delay_adjusted_depth_stress_net_pnl_non_positive")
+    return blockers
+
+
+def _fill_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not (
         _bool(scorecard.get("fill_survival_evidence_present"))
         or _bool(scorecard.get("delay_adjusted_depth_fill_survival_evidence_present"))
@@ -508,6 +198,11 @@ def delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         <= 0
     ):
         blockers.append("fill_survival_sample_count_zero")
+    return blockers
+
+
+def _queue_ahead_depletion_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not (
         _bool(scorecard.get("queue_ahead_depletion_evidence_present"))
         or _bool(
@@ -535,7 +230,11 @@ def delay_depth_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         <= 0
     ):
         blockers.append("queue_ahead_depletion_sample_count_zero")
+    return blockers
 
+
+def _queue_position_survival_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not _bool(scorecard.get("queue_position_survival_fill_curve_evidence_present")):
         blockers.append("queue_position_survival_fill_curve_evidence_missing")
     if _int(scorecard.get("queue_position_survival_sample_count")) <= 0:
@@ -628,6 +327,15 @@ def order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         return []
 
     blockers: list[str] = []
+    blockers.extend(_market_limit_order_mix_blockers(scorecard))
+    blockers.extend(_route_tca_blockers(scorecard))
+    blockers.extend(_order_type_ablation_blockers(scorecard))
+    blockers.extend(_execution_quality_blockers(scorecard))
+    return blockers
+
+
+def _market_limit_order_mix_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not _bool(scorecard.get("market_limit_order_mix_evidence_present")):
         blockers.append("market_limit_order_mix_evidence_missing")
     if _int(scorecard.get("market_limit_order_mix_sample_count")) <= 0:
@@ -637,12 +345,22 @@ def order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         or _bool(scorecard.get("market_limit_execution_policy_passed"))
     ):
         blockers.append("market_limit_order_mix_missing_or_failed")
+    return blockers
+
+
+def _route_tca_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not has_artifact_ref(
         scorecard,
         "route_tca_artifact_ref",
         "route_tca_artifact_refs",
     ) and not _bool(scorecard.get("route_tca_evidence_present")):
         blockers.append("route_tca_evidence_missing")
+    return blockers
+
+
+def _order_type_ablation_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not has_artifact_ref(
         scorecard,
         "order_type_ablation_artifact_ref",
@@ -653,6 +371,11 @@ def order_type_execution_blockers(scorecard: Mapping[str, Any]) -> list[str]:
         blockers.append("order_type_ablation_sample_count_zero")
     if not _bool(scorecard.get("order_type_ablation_passed")):
         blockers.append("order_type_ablation_missing_or_failed")
+    return blockers
+
+
+def _execution_quality_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if not _bool(scorecard.get("limit_fill_probability_evidence_present")):
         blockers.append("limit_fill_probability_evidence_missing")
     if _int(scorecard.get("limit_fill_probability_sample_count")) <= 0:

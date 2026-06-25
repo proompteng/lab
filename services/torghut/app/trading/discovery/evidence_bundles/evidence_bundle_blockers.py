@@ -8,7 +8,71 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any, Literal, Mapping, Sequence, cast
 
-
+from .evidence_bundle_from_frontier_candidate import (
+    delay_depth_survival_blockers as _delay_depth_survival_blockers,
+)
+from .evidence_bundle_from_frontier_candidate import (
+    evidence_bundle_from_frontier_candidate,
+    evidence_bundle_from_payload,
+)
+from .evidence_bundle_from_frontier_candidate import (
+    has_artifact_ref as _has_artifact_ref,
+)
+from .evidence_bundle_from_frontier_candidate import (
+    implementation_uncertainty_blockers as _implementation_uncertainty_blockers,
+)
+from .evidence_bundle_from_frontier_candidate import (
+    market_impact_stress_blockers as _market_impact_stress_blockers,
+)
+from .evidence_bundle_from_frontier_candidate import (
+    order_type_execution_blockers as _order_type_execution_blockers,
+)
+from .evidence_bundle_from_frontier_candidate import (
+    requires_promotion_proof as _requires_promotion_proof,
+)
+from .implementation_risk_backtest_stability_blo import (
+    adaptive_signal_falsification_blockers as _adaptive_signal_falsification_blockers,
+)
+from .implementation_risk_backtest_stability_blo import (
+    alpha_decay_predictability_blockers as _alpha_decay_predictability_blockers,
+)
+from .implementation_risk_backtest_stability_blo import (
+    bootstrap_robust_optimization_blockers as _bootstrap_robust_optimization_blockers,
+)
+from .implementation_risk_backtest_stability_blo import (
+    conformal_tail_risk_blockers as _conformal_tail_risk_blockers,
+)
+from .implementation_risk_backtest_stability_blo import (
+    implementation_risk_backtest_stability_blockers as _implementation_risk_blockers,
+)
+from .implementation_risk_backtest_stability_blo import (
+    ofi_response_horizon_blockers as _ofi_response_horizon_blockers,
+)
+from .implementation_risk_backtest_stability_blo import (
+    stochastic_liquidity_resilience_blockers as _stochastic_liquidity_blockers,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    CandidateEvidenceBundle,
+    evidence_bundle_id_for_payload,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    decomposition_activity_counts as _decomposition_activity_counts,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    delay_depth_fillability as _delay_depth_fillability,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    is_synthetic_dataset_snapshot as _is_synthetic_dataset_snapshot,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    p10 as _p10,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    runtime_ledger_lineage_handoff_blockers as _runtime_ledger_lineage_handoff_blockers,
+)
+from .runtime_ledger_lineage_handoff_blockers import (
+    scorecard_with_freshness_lineage as _scorecard_with_freshness_lineage,
+)
 from .shared_context import (
     ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS,
     ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS,
@@ -28,58 +92,70 @@ from .shared_context import (
     RUNTIME_LEDGER_LINEAGE_HANDOFF_SCORECARD_KEYS,
     STOCHASTIC_LIQUIDITY_RESILIENCE_SCORECARD_KEYS,
     VALID_COST_CALIBRATION_STATUSES,
+)
+from .shared_context import (
     artifact_refs_from_scorecard as _artifact_refs_from_scorecard,
+)
+from .shared_context import (
     bool_value as _bool,
+)
+from .shared_context import (
     decimal as _decimal,
+)
+from .shared_context import (
     decimal_mapping_total as _decimal_mapping_total,
+)
+from .shared_context import (
     frontier_replay_params as _frontier_replay_params,
+)
+from .shared_context import (
     frontier_strategy_overrides as _frontier_strategy_overrides,
-    int_value as _int,
+)
+from .shared_context import (
     int_mapping as _int_mapping,
+)
+from .shared_context import (
+    int_value as _int,
+)
+from .shared_context import (
     mapping as _mapping,
+)
+from .shared_context import (
     order_lifecycle_metrics as _order_lifecycle_metrics,
+)
+from .shared_context import (
     order_type_ablation_metrics as _order_type_ablation_metrics,
+)
+from .shared_context import (
     order_type_execution_metrics as _order_type_execution_metrics,
+)
+from .shared_context import (
     runtime_ledger_lineage_handoff as _runtime_ledger_lineage_handoff,
+)
+from .shared_context import (
     stable_hash as _stable_hash,
+)
+from .shared_context import (
     string as _string,
+)
+from .shared_context import (
     string_list as _string_list,
-)
-from .runtime_ledger_lineage_handoff_blockers import (
-    CandidateEvidenceBundle,
-    decomposition_activity_counts as _decomposition_activity_counts,
-    decomposition_symbol_contribution_shares as _decomposition_symbol_contribution_shares,
-    delay_depth_fillability as _delay_depth_fillability,
-    enrich_scorecard_with_replay_stress_metrics as _enrich_scorecard_with_replay_stress_metrics,
-    is_synthetic_dataset_snapshot as _is_synthetic_dataset_snapshot,
-    p10 as _p10,
-    runtime_ledger_lineage_handoff_blockers as _runtime_ledger_lineage_handoff_blockers,
-    scorecard_with_freshness_lineage as _scorecard_with_freshness_lineage,
-    evidence_bundle_id_for_payload,
-)
-from .evidence_bundle_from_frontier_candidate import (
-    delay_depth_survival_blockers as _delay_depth_survival_blockers,
-    has_artifact_ref as _has_artifact_ref,
-    implementation_risk_backtest_stability_required as _implementation_risk_backtest_stability_required,
-    implementation_uncertainty_blockers as _implementation_uncertainty_blockers,
-    market_impact_stress_blockers as _market_impact_stress_blockers,
-    order_type_execution_blockers as _order_type_execution_blockers,
-    requires_promotion_proof as _requires_promotion_proof,
-    evidence_bundle_from_frontier_candidate,
-    evidence_bundle_from_payload,
-)
-from .implementation_risk_backtest_stability_blo import (
-    adaptive_signal_falsification_blockers as _adaptive_signal_falsification_blockers,
-    alpha_decay_predictability_blockers as _alpha_decay_predictability_blockers,
-    bootstrap_robust_optimization_blockers as _bootstrap_robust_optimization_blockers,
-    conformal_tail_risk_blockers as _conformal_tail_risk_blockers,
-    implementation_risk_backtest_stability_blockers as _implementation_risk_backtest_stability_blockers,
-    ofi_response_horizon_blockers as _ofi_response_horizon_blockers,
-    stochastic_liquidity_resilience_blockers as _stochastic_liquidity_resilience_blockers,
 )
 
 
 def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]:
+    blockers: list[str] = []
+    scorecard = bundle.objective_scorecard
+    blockers.extend(_dataset_replay_blockers(bundle))
+    blockers.extend(_cost_calibration_blockers(bundle))
+    blockers.extend(_freshness_blockers(scorecard))
+    blockers.extend(_synthetic_policy_blockers(bundle=bundle, scorecard=scorecard))
+    if _requires_promotion_proof(bundle):
+        blockers.extend(_promotion_proof_blockers(bundle=bundle, scorecard=scorecard))
+    return tuple(dict.fromkeys(blockers))
+
+
+def _dataset_replay_blockers(bundle: CandidateEvidenceBundle) -> list[str]:
     blockers: list[str] = []
     if not _string(bundle.dataset_snapshot_id):
         blockers.append("dataset_snapshot_missing")
@@ -87,7 +163,11 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         _string(item) for item in bundle.replay_artifact_refs
     ):
         blockers.append("replay_artifact_missing")
+    return blockers
 
+
+def _cost_calibration_blockers(bundle: CandidateEvidenceBundle) -> list[str]:
+    blockers: list[str] = []
     cost_status = _string(bundle.cost_calibration.get("status")).lower()
     cost_source = _string(bundle.cost_calibration.get("source"))
     if not bundle.cost_calibration:
@@ -96,8 +176,11 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
         blockers.append("cost_calibration_status_invalid")
     elif not cost_source:
         blockers.append("cost_calibration_source_missing")
+    return blockers
 
-    scorecard = bundle.objective_scorecard
+
+def _freshness_blockers(scorecard: Mapping[str, Any]) -> list[str]:
+    blockers: list[str] = []
     if bool(scorecard.get("stale_tape")) or bool(scorecard.get("stale_override_used")):
         blockers.append("stale_tape")
     freshness = _string(
@@ -122,6 +205,14 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
     receipt_is_fresh = dataset_receipt.get("is_fresh")
     if receipt_is_fresh is not None and not _bool(receipt_is_fresh):
         blockers.append("stale_tape")
+    return blockers
+
+
+def _synthetic_policy_blockers(
+    *,
+    bundle: CandidateEvidenceBundle,
+    scorecard: Mapping[str, Any],
+) -> list[str]:
     validation_contract = _mapping(
         scorecard.get("validation_contract")
         or bundle.promotion_readiness.get("validation_contract")
@@ -131,38 +222,46 @@ def evidence_bundle_blockers(bundle: CandidateEvidenceBundle) -> tuple[str, ...]
     ) == "validation_only_not_promotion_proof" and _is_synthetic_dataset_snapshot(
         bundle.dataset_snapshot_id
     ):
-        blockers.append("synthetic_evidence_not_promotion_proof")
-    if _requires_promotion_proof(bundle):
-        blockers.extend(
-            _runtime_ledger_lineage_handoff_blockers(
-                scorecard=scorecard,
-                promotion_readiness=bundle.promotion_readiness,
-            )
+        return ["synthetic_evidence_not_promotion_proof"]
+    return []
+
+
+def _promotion_proof_blockers(
+    *,
+    bundle: CandidateEvidenceBundle,
+    scorecard: Mapping[str, Any],
+) -> list[str]:
+    blockers: list[str] = []
+    blockers.extend(
+        _runtime_ledger_lineage_handoff_blockers(
+            scorecard=scorecard,
+            promotion_readiness=bundle.promotion_readiness,
         )
-        blockers.extend(_market_impact_stress_blockers(scorecard))
-        blockers.extend(_order_type_execution_blockers(scorecard))
-        blockers.extend(_implementation_uncertainty_blockers(scorecard))
-        blockers.extend(_implementation_risk_backtest_stability_blockers(scorecard))
-        blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
-        blockers.extend(
-            _adaptive_signal_falsification_blockers(
-                scorecard=scorecard,
-                null_comparator=bundle.null_comparator,
-            )
+    )
+    blockers.extend(_market_impact_stress_blockers(scorecard))
+    blockers.extend(_order_type_execution_blockers(scorecard))
+    blockers.extend(_implementation_uncertainty_blockers(scorecard))
+    blockers.extend(_implementation_risk_blockers(scorecard))
+    blockers.extend(_bootstrap_robust_optimization_blockers(scorecard))
+    blockers.extend(
+        _adaptive_signal_falsification_blockers(
+            scorecard=scorecard,
+            null_comparator=bundle.null_comparator,
         )
-        blockers.extend(_ofi_response_horizon_blockers(scorecard))
-        blockers.extend(_alpha_decay_predictability_blockers(scorecard))
-        blockers.extend(_stochastic_liquidity_resilience_blockers(scorecard))
-        blockers.extend(_conformal_tail_risk_blockers(scorecard))
-        blockers.extend(_delay_depth_survival_blockers(scorecard))
-    return tuple(dict.fromkeys(blockers))
+    )
+    blockers.extend(_ofi_response_horizon_blockers(scorecard))
+    blockers.extend(_alpha_decay_predictability_blockers(scorecard))
+    blockers.extend(_stochastic_liquidity_blockers(scorecard))
+    blockers.extend(_conformal_tail_risk_blockers(scorecard))
+    blockers.extend(_delay_depth_survival_blockers(scorecard))
+    return blockers
 
 
 def evidence_bundle_is_valid(bundle: CandidateEvidenceBundle) -> bool:
     return not evidence_bundle_blockers(bundle)
 
 
-# Explicit module exports; keeps re-export imports intentional without file-level Ruff ignores.
+# Explicit exports keep re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "ADAPTIVE_SIGNAL_FALSIFICATION_SCORECARD_KEYS",
     "ALPHA_DECAY_PREDICTABILITY_SCORECARD_KEYS",
@@ -198,15 +297,12 @@ __all__: tuple[str, ...] = (
     "_decimal",
     "_decimal_mapping_total",
     "_decomposition_activity_counts",
-    "_decomposition_symbol_contribution_shares",
     "_delay_depth_fillability",
     "_delay_depth_survival_blockers",
-    "_enrich_scorecard_with_replay_stress_metrics",
     "_frontier_replay_params",
     "_frontier_strategy_overrides",
     "_has_artifact_ref",
-    "_implementation_risk_backtest_stability_blockers",
-    "_implementation_risk_backtest_stability_required",
+    "_implementation_risk_blockers",
     "_implementation_uncertainty_blockers",
     "_int",
     "_int_mapping",
@@ -224,7 +320,7 @@ __all__: tuple[str, ...] = (
     "_runtime_ledger_lineage_handoff_blockers",
     "_scorecard_with_freshness_lineage",
     "_stable_hash",
-    "_stochastic_liquidity_resilience_blockers",
+    "_stochastic_liquidity_blockers",
     "_string",
     "_string_list",
     "annotations",

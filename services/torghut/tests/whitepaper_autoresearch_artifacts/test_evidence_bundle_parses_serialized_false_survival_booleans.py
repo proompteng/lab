@@ -566,16 +566,19 @@ class TestEvidenceBundleParsesSerializedFalseSurvivalBooleans(
             )[0]
         ]
 
-        import builtins
+        import importlib
 
-        real_import = builtins.__import__
+        real_import_module = importlib.import_module
 
-        def fake_import(name: str, *args: Any, **kwargs: Any) -> Any:
+        def fake_import_module(name: str, *args: Any, **kwargs: Any) -> Any:
             if name == "mlx.core":
                 raise ModuleNotFoundError("mlx unavailable in test")
-            return real_import(name, *args, **kwargs)
+            return real_import_module(name, *args, **kwargs)
 
-        with patch("builtins.__import__", side_effect=fake_import):
+        with patch(
+            "app.trading.discovery.mlx_training_data.shared_context.importlib.import_module",
+            side_effect=fake_import_module,
+        ):
             model = train_mlx_ranker(rows, backend_preference="mlx", steps=2)
 
         self.assertEqual(model.backend, "numpy-fallback")
