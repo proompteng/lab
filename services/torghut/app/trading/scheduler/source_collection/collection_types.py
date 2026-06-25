@@ -5,11 +5,15 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Literal, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Protocol
 
 from sqlalchemy.orm import Session
 
 from ....models import Strategy
+
+if TYPE_CHECKING:
+    from ..pipeline.contexts import LiveSubmissionGateInputs
+    from ..submission_preparation.shared import TargetQuantityResolutionRequest
 
 
 SourceCollectionAction = Literal["buy", "sell"]
@@ -100,7 +104,7 @@ class SourceCollectionRuntime(Protocol):
     def _live_submission_gate(
         self,
         *,
-        session: Session | None = None,
+        inputs: LiveSubmissionGateInputs | None = None,
     ) -> Mapping[str, Any]: ...
 
     def _fetch_paper_route_target_plan_url(
@@ -153,7 +157,7 @@ class SourceCollectionRuntime(Protocol):
 
     def _paper_route_target_quantity_resolution(
         self,
-        **_resolution_args: Any,
+        request: TargetQuantityResolutionRequest,
     ) -> SourceCollectionQuantityResolution | None: ...
 
 

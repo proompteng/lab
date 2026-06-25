@@ -8,6 +8,7 @@ from typing import Any, cast
 from sqlalchemy.orm import Session
 
 from ...config import settings
+from .pipeline.contexts import LiveSubmissionGateInputs
 from .pipeline.shared import TradingPipelineBase
 from .target_plan_helpers import (
     PAPER_ROUTE_PROBE_REASONS as _PAPER_ROUTE_PROBE_REASONS,
@@ -32,10 +33,12 @@ class SimplePipelineProofFloorMixin(TradingPipelineBase):
             empirical_jobs_status = self._build_empirical_jobs_status(session=session)
             quant_evidence = self._load_quant_evidence_status()
             live_submission_gate = self._live_submission_gate(
-                session=session,
-                hypothesis_summary=hypothesis_payload,
-                empirical_jobs_status=empirical_jobs_status,
-                quant_health_status=quant_evidence,
+                inputs=LiveSubmissionGateInputs(
+                    session=session,
+                    hypothesis_summary=hypothesis_payload,
+                    empirical_jobs_status=empirical_jobs_status,
+                    quant_health_status=quant_evidence,
+                )
             )
             return self._build_profitability_proof_floor_receipt(
                 account_label=self.account_label,

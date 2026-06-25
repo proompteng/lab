@@ -10,6 +10,7 @@ from tests.tigerbeetle_journal.support import (
     ExistingTransferLookupCountingFakeTigerBeetleClient,
     FakeTigerBeetleClient,
     LEDGER_USD_MICRO,
+    RuntimeLedgerJournalPayloadInput,
     Session,
     TIGERBEETLE_AUTHORITY_BLOCKER_ACCOUNTING_ONLY,
     TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
@@ -775,9 +776,11 @@ class TestLedgerJournalCore(_TestTigerBeetleLedgerJournalBase):
             self.assertFalse(ref.payload_json["promotion_authority"])
             self.assertFalse(ref.payload_json["overrides_runtime_ledger_authority"])
             parity = tigerbeetle_runtime_ledger_journal_payload(
-                bucket=bucket,
-                ref=ref,
-                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+                RuntimeLedgerJournalPayloadInput(
+                    bucket=bucket,
+                    ref=ref,
+                    status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+                )
             )
             self.assertEqual(parity["status"], "pass")
             self.assertEqual(parity["stable_ref_count"], 1)

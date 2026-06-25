@@ -36,6 +36,7 @@ from ..tca import build_tca_gate_inputs
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
 from .pipeline.contexts import (
+    AllocationDecisionContext,
     BatchSignalProcessingContext,
     LiveSubmissionGateInputs,
 )
@@ -285,13 +286,15 @@ class SimpleTradingPipeline(
             ):
                 return
             self._process_batch_signals(
-                session=session,
-                batch=batch,
-                strategies=strategies,
-                account_snapshot=account_snapshot,
-                account=account,
-                positions=positions,
-                allowed_symbols=allowed_symbols,
+                context=BatchSignalProcessingContext(
+                    session=session,
+                    batch=batch,
+                    strategies=strategies,
+                    account_snapshot=account_snapshot,
+                    account=account,
+                    positions=positions,
+                    allowed_symbols=allowed_symbols,
+                )
             )
             self._process_paper_route_probe_retry_decisions_unless_target_reserved(
                 session=session,
@@ -520,10 +523,7 @@ class SimpleTradingPipeline(
         self,
         *,
         inputs: LiveSubmissionGateInputs | None = None,
-        **legacy_inputs: Any,
     ) -> dict[str, object]:
-        if inputs is None and legacy_inputs:
-            inputs = LiveSubmissionGateInputs(**legacy_inputs)
         inputs = inputs or LiveSubmissionGateInputs()
         gate = TradingPipeline._live_submission_gate(
             self,
@@ -666,11 +666,15 @@ class SimpleTradingPipeline(
     def _process_batch_signals(
         self,
         *,
-        context: BatchSignalProcessingContext | None = None,
-        **legacy_context: Any,
+        context: BatchSignalProcessingContext,
     ) -> None:
-        if context is None:
-            context = BatchSignalProcessingContext(**legacy_context)
+        allocation_context = AllocationDecisionContext(
+            session=context.session,
+            strategies=context.strategies,
+            account=context.account,
+            positions=context.positions,
+            allowed_symbols=context.allowed_symbols,
+        )
         filtered_signals = self._quality_gate_signals(
             signals=context.batch.signals,
             strategies=context.strategies,
@@ -689,12 +693,8 @@ class SimpleTradingPipeline(
                 self.state.metrics.decisions_total += 1
                 try:
                     submitted = self._handle_decision(
-                        context.session,
+                        allocation_context,
                         decision,
-                        context.strategies,
-                        context.account,
-                        context.positions,
-                        context.allowed_symbols,
                     )
                     if submitted is not None:
                         self._apply_simple_projected_buying_power(
@@ -737,12 +737,14 @@ class SimpleTradingPipeline(
             self.state.metrics.decisions_total += 1
             try:
                 submitted = self._handle_decision(
-                    session,
+                    AllocationDecisionContext(
+                        session=session,
+                        strategies=strategies,
+                        account=account,
+                        positions=positions,
+                        allowed_symbols=allowed_symbols,
+                    ),
                     decision,
-                    strategies,
-                    account,
-                    positions,
-                    allowed_symbols,
                 )
                 if submitted is not None:
                     self._apply_simple_projected_buying_power(

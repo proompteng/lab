@@ -76,17 +76,64 @@ class TradingPipelineRunCycleMixin(TradingPipelineBase):
     def __init__(
         self,
         dependencies: TradingPipelineRuntimeDependencies | None = None,
-        *legacy_args: Any,
-        **legacy_kwargs: Any,
+        *,
+        alpaca_client: Any | None = None,
+        order_firewall: Any | None = None,
+        ingestor: Any | None = None,
+        decision_engine: Any | None = None,
+        risk_engine: Any | None = None,
+        executor: Any | None = None,
+        execution_adapter: Any | None = None,
+        reconciler: Any | None = None,
+        universe_resolver: Any | None = None,
+        state: Any | None = None,
+        account_label: str | None = None,
+        session_factory: Any | None = None,
+        llm_review_engine: Any | None = None,
+        price_fetcher: Any | None = None,
+        strategy_catalog: Any | None = None,
+        execution_policy: Any | None = None,
+        order_feed_ingestor: Any | None = None,
     ) -> None:
-        dependencies = (
-            dependencies
-            or TradingPipelineRuntimeDependencies.from_legacy_call(
-                legacy_args,
-                legacy_kwargs,
-                default_session_factory=SessionLocal,
+        if dependencies is None:
+            required = {
+                "alpaca_client": alpaca_client,
+                "order_firewall": order_firewall,
+                "ingestor": ingestor,
+                "decision_engine": decision_engine,
+                "risk_engine": risk_engine,
+                "executor": executor,
+                "execution_adapter": execution_adapter,
+                "reconciler": reconciler,
+                "universe_resolver": universe_resolver,
+                "state": state,
+                "account_label": account_label,
+            }
+            missing = [name for name, value in required.items() if value is None]
+            if missing:
+                missing_list = ", ".join(missing)
+                raise TypeError(
+                    f"missing required pipeline dependencies: {missing_list}"
+                )
+            dependencies = TradingPipelineRuntimeDependencies(
+                alpaca_client=alpaca_client,
+                order_firewall=order_firewall,
+                ingestor=ingestor,
+                decision_engine=decision_engine,
+                risk_engine=risk_engine,
+                executor=executor,
+                execution_adapter=execution_adapter,
+                reconciler=reconciler,
+                universe_resolver=universe_resolver,
+                state=state,
+                account_label=str(account_label),
+                session_factory=session_factory or SessionLocal,
+                llm_review_engine=llm_review_engine,
+                price_fetcher=price_fetcher,
+                strategy_catalog=strategy_catalog,
+                execution_policy=execution_policy,
+                order_feed_ingestor=order_feed_ingestor,
             )
-        )
         self.alpaca_client = dependencies.alpaca_client
         self.order_firewall = dependencies.order_firewall
         self.ingestor = dependencies.ingestor

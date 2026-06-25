@@ -284,15 +284,9 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
 
     def _handle_decision(
         self,
-        context: AllocationDecisionContext | Any,
-        decision: StrategyDecision | None = None,
-        *legacy_args: Any,
+        context: AllocationDecisionContext,
+        decision: StrategyDecision,
     ) -> StrategyDecision | None:
-        context, decision = self._handle_decision_request(
-            context,
-            decision,
-            legacy_args,
-        )
         decision_row: Optional[TradeDecision] = None
         try:
             strategy_context = self._resolve_strategy_context(
@@ -339,9 +333,6 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
                     session=context.session,
                     decision=decision,
                     decision_row=decision_row,
-                    strategy=strategy,
-                    account=context.account,
-                    positions=context.positions,
                 )
                 or not self._submit_decision_execution(
                     session=context.session,
@@ -381,30 +372,6 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
                     ),
                 )
             return None
-
-    @staticmethod
-    def _handle_decision_request(
-        context: AllocationDecisionContext | Any,
-        decision: StrategyDecision | None,
-        legacy_args: tuple[Any, ...],
-    ) -> tuple[AllocationDecisionContext, StrategyDecision]:
-        if isinstance(context, AllocationDecisionContext):
-            if decision is None:
-                raise TypeError("decision is required")
-            return context, decision
-        if decision is None or len(legacy_args) != 4:
-            raise TypeError("legacy _handle_decision call requires 6 arguments")
-        strategies, account, positions, allowed_symbols = legacy_args
-        return (
-            AllocationDecisionContext(
-                session=context,
-                strategies=strategies,
-                account=account,
-                positions=positions,
-                allowed_symbols=allowed_symbols,
-            ),
-            decision,
-        )
 
     def _prepare_decision_policy_stage(
         self,
@@ -487,10 +454,7 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
         self,
         *,
         inputs: LiveSubmissionGateInputs | None = None,
-        **legacy_inputs: Any,
     ) -> dict[str, object]:
-        if inputs is None and legacy_inputs:
-            inputs = LiveSubmissionGateInputs(**legacy_inputs)
         inputs = inputs or LiveSubmissionGateInputs()
         if (
             inputs.session is None
@@ -596,20 +560,8 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
 
     def _block_decision_submission(
         self,
-        request: DecisionBlockRequest | None = None,
-        **legacy_kwargs: Any,
+        request: DecisionBlockRequest,
     ) -> None:
-        if request is None:
-            request = DecisionBlockRequest(
-                session=legacy_kwargs["session"],
-                decision=legacy_kwargs["decision"],
-                decision_row=legacy_kwargs["decision_row"],
-                reason=legacy_kwargs["reason"],
-                submission_stage=legacy_kwargs["submission_stage"],
-                capital_stage=legacy_kwargs.get("capital_stage"),
-                extra_metadata=legacy_kwargs.get("extra_metadata"),
-                severity=legacy_kwargs.get("severity", "warning"),
-            )
         metadata = self._decision_lifecycle_metadata(
             submission_stage=request.submission_stage,
             capital_stage=request.capital_stage,

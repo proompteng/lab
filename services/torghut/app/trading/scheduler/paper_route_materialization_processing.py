@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from ...config import settings
 from ...models import Strategy, TradeDecision, coerce_json_payload
 from ..models import StrategyDecision
+from .pipeline.contexts import AllocationDecisionContext
 from .pipeline.shared import TradingPipelineBase
 from .target_plan_helpers import (
     bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
@@ -157,12 +158,14 @@ class SimplePipelinePaperRouteMaterializationProcessingMixin(TradingPipelineBase
             self.state.metrics.decisions_total += 1
             try:
                 submitted = self._handle_decision(
-                    session,
+                    AllocationDecisionContext(
+                        session=session,
+                        strategies=list(strategies),
+                        account=account,
+                        positions=positions,
+                        allowed_symbols=allowed_symbols,
+                    ),
                     decision,
-                    strategies,
-                    account,
-                    positions,
-                    allowed_symbols,
                 )
                 if submitted is not None:
                     self._apply_simple_projected_buying_power(

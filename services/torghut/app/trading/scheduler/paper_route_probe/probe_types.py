@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ....models import Strategy
 from ...models import StrategyDecision
+from ..pipeline.contexts import AllocationDecisionContext
 from ..target_plan_helpers import PaperRouteRetryTransition
 
 
@@ -205,7 +206,11 @@ class PaperRouteProbeRuntime:
     ) -> bool:
         raise NotImplementedError
 
-    def _handle_decision(self, *args: Any, **kwargs: Any) -> Any: ...
+    def _handle_decision(
+        self,
+        context: AllocationDecisionContext,
+        decision: StrategyDecision,
+    ) -> Any: ...
 
     def _apply_simple_projected_buying_power(
         self,

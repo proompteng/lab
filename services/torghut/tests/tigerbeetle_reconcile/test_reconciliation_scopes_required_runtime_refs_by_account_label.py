@@ -20,6 +20,7 @@ from tests.tigerbeetle_reconcile.support import (
     FakeTigerBeetleClient,
     LEDGER_USD_MICRO,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    StableRefPayloadInput,
     Session,
     TRANSFER_CODE_FILL_POST,
     TRANSFER_CODE_RUNTIME_NET_PNL,
@@ -341,16 +342,18 @@ class TestReconciliationScopesRequiredRuntimeRefsByAccountLabel(
             _add_account_refs_for_plan(session, plan)
             transfer = plan.transfer_spec
             stable_payload = tigerbeetle_stable_ref_payload(
-                cluster_id=2001,
-                account_specs=plan.account_specs,
-                transfer_spec=transfer,
-                source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
-                source_id=str(bucket.id),
-                payload_json={
-                    "runtime_key": plan.runtime_key,
-                    "debit_account_id": str(transfer.debit_account_id),
-                    "credit_account_id": str(transfer.credit_account_id),
-                },
+                StableRefPayloadInput(
+                    cluster_id=2001,
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "runtime_key": plan.runtime_key,
+                        "debit_account_id": str(transfer.debit_account_id),
+                        "credit_account_id": str(transfer.credit_account_id),
+                    },
+                )
             )
             stable_ref = stable_payload["stable_ref"]
             assert isinstance(stable_ref, dict)

@@ -22,6 +22,7 @@ from app.snapshots import snapshot_account_and_positions, sync_order_to_db
 from app.trading.execution import OrderExecutor
 from app.trading.models import StrategyDecision
 from app.trading.scheduler.pipeline import TradingPipeline
+from app.trading.scheduler.pipeline.contexts import LLMReviewRecord
 
 
 def _assert_no_uuid(value: Any) -> None:
@@ -157,20 +158,22 @@ class TestJsonSerializationBoundary(TestCase):
             }
             response_payload = {"review_id": review_id}
             TradingPipeline._persist_llm_review(
-                session=session,
-                decision_row=decision,
-                model="gpt-test",
-                prompt_version="v0",
-                request_json=request_payload,
-                response_json=response_payload,
-                verdict="approve",
-                confidence=None,
-                adjusted_qty=None,
-                adjusted_order_type=None,
-                rationale=None,
-                risk_flags=["review"],
-                tokens_prompt=None,
-                tokens_completion=None,
+                LLMReviewRecord(
+                    session=session,
+                    decision_row=decision,
+                    model="gpt-test",
+                    prompt_version="v0",
+                    request_json=request_payload,
+                    response_json=response_payload,
+                    verdict="approve",
+                    confidence=None,
+                    adjusted_qty=None,
+                    adjusted_order_type=None,
+                    rationale=None,
+                    risk_flags=["review"],
+                    tokens_prompt=None,
+                    tokens_completion=None,
+                )
             )
 
             stored = session.execute(select(LLMDecisionReview)).scalar_one()

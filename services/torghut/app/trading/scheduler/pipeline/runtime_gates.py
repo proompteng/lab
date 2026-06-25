@@ -338,10 +338,8 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineBase):
 
     def _submit_order_with_handling(
         self,
-        request: OrderSubmissionRequest | None = None,
-        **legacy_kwargs: Any,
+        request: OrderSubmissionRequest,
     ) -> tuple[Any | None, bool]:
-        request = self._order_submission_request(request, legacy_kwargs)
         try:
             retry_delays_seconds = [float(delay) for delay in request.retry_delays]
             execution = self.executor.submit_order(
@@ -364,22 +362,6 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineBase):
                 request=request,
                 exc=exc,
             )
-
-    @staticmethod
-    def _order_submission_request(
-        request: OrderSubmissionRequest | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> OrderSubmissionRequest:
-        if request is not None:
-            return request
-        return OrderSubmissionRequest(
-            session=legacy_kwargs["session"],
-            execution_client=legacy_kwargs["execution_client"],
-            decision=legacy_kwargs["decision"],
-            decision_row=legacy_kwargs["decision_row"],
-            selected_adapter_name=legacy_kwargs["selected_adapter_name"],
-            retry_delays=legacy_kwargs["retry_delays"],
-        )
 
     def _handle_order_firewall_block(
         self,

@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+from app.trading.scheduler.submission_preparation.shared import (
+    RiskVerdictRequest as SimpleRiskVerdictRequest,
+    SubmissionDecisionContext,
+)
 from tests.pipeline.trading_pipeline_base import (
     Any,
     Decimal,
@@ -32,6 +38,66 @@ from tests.pipeline.trading_pipeline_base import (
 
 
 class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
+    def test_pipeline_init_reports_missing_dependencies(self) -> None:
+        with self.assertRaisesRegex(
+            TypeError,
+            "missing required pipeline dependencies: order_firewall",
+        ):
+            TradingPipeline(
+                alpaca_client=FakeAlpacaClient(),
+            )
+
+    def test_simple_submission_request_guards_missing_fields(self) -> None:
+        decision = StrategyDecision(
+            strategy_id="strategy-id",
+            symbol="AAPL",
+            event_ts=datetime(2026, 6, 25, tzinfo=timezone.utc),
+            timeframe="1Min",
+            action="buy",
+            qty=Decimal("1"),
+        )
+        with self.assertRaisesRegex(
+            TypeError,
+            "Trading submission checks require session, decision, and decision_row",
+        ):
+            SimpleTradingPipeline._trading_submission_request(
+                session=None,
+                decision=decision,
+                decision_row=None,
+            )
+        with self.assertRaisesRegex(
+            TypeError,
+            "Submission preparation requires a SubmissionPreparationRequest",
+        ):
+            SimpleTradingPipeline._submission_preparation_request(
+                request=None,
+                context=None,
+                decision=decision,
+            )
+
+    def test_simple_risk_verdict_request_passthrough(self) -> None:
+        request = SimpleRiskVerdictRequest(
+            context=SubmissionDecisionContext(
+                session=SimpleNamespace(),
+                decision_row=SimpleNamespace(),
+                strategy=SimpleNamespace(),
+                account={"equity": "1000"},
+                positions=[],
+            ),
+            decision=StrategyDecision(
+                strategy_id="strategy-id",
+                symbol="AAPL",
+                event_ts=datetime(2026, 6, 25, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1"),
+            ),
+            symbol_allowlist={"AAPL"},
+            execution_advisor=None,
+        )
+
+        self.assertIs(SimpleTradingPipeline._risk_verdict_request(request), request)
+
     def test_paper_route_target_lineage_rejects_strategy_mismatch(self) -> None:
         from app import config
 

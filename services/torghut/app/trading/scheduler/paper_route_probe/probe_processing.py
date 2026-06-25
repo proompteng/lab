@@ -23,6 +23,7 @@ from ...session_context import regular_session_open_utc_for
 from ...simple_risk import (
     position_qty_for_symbol,
 )
+from ..pipeline.contexts import AllocationDecisionContext
 from ..submission_preparation.quote_routeability import (
     SimplePipelineSubmissionQuoteRouteabilityMixin,
 )
@@ -451,12 +452,14 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
         self.state.metrics.decisions_total += 1
         try:
             submitted = self._handle_decision(
-                context.session,
+                AllocationDecisionContext(
+                    session=context.session,
+                    strategies=context.strategies,
+                    account=context.account,
+                    positions=context.positions,
+                    allowed_symbols=context.allowed_symbols,
+                ),
                 prepared_decision,
-                context.strategies,
-                context.account,
-                context.positions,
-                context.allowed_symbols,
             )
             if submitted is not None:
                 self._apply_simple_projected_buying_power(

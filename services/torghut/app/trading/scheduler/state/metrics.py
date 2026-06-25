@@ -499,12 +499,9 @@ class _TradingMetricsMethods(TradingMetricsFields):
 
     def record_autonomy_promotion_outcome(
         self,
-        metrics: AutonomyPromotionOutcomeMetrics | None = None,
-        **legacy_fields: object,
+        metrics: AutonomyPromotionOutcomeMetrics,
     ) -> None:
-        resolved = metrics or AutonomyPromotionOutcomeMetrics.from_legacy_kwargs(
-            legacy_fields
-        )
+        resolved = metrics
         self.autonomy_signal_throughput_total += max(0, resolved.signal_count)
         self.autonomy_decision_throughput_total += max(0, resolved.decision_count)
         self.autonomy_trade_throughput_total += max(0, resolved.trade_count)

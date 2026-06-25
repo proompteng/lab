@@ -417,10 +417,8 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
 
     def _record_decision_rejection(
         self,
-        request: DecisionRejectionRequest | None = None,
-        **legacy_kwargs: Any,
+        request: DecisionRejectionRequest,
     ) -> None:
-        request = self._decision_rejection_request(request, legacy_kwargs)
         reasons = request.reasons
         if not reasons:
             return
@@ -451,21 +449,6 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
                 reason_codes=reasons,
                 extra_properties={"decision_status": "rejected"},
             )
-        )
-
-    @staticmethod
-    def _decision_rejection_request(
-        request: DecisionRejectionRequest | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> DecisionRejectionRequest:
-        if request is not None:
-            return request
-        return DecisionRejectionRequest(
-            session=legacy_kwargs["session"],
-            decision=legacy_kwargs["decision"],
-            decision_row=legacy_kwargs["decision_row"],
-            reasons=legacy_kwargs["reasons"],
-            log_template=legacy_kwargs["log_template"],
         )
 
     def _emit_domain_telemetry(
@@ -613,7 +596,6 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
         session: Session,
         decision: StrategyDecision,
         decision_row: TradeDecision,
-        **_submission_context: Any,
     ) -> bool:
         if not settings.trading_enabled:
             self._block_decision_submission(

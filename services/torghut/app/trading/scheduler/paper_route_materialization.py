@@ -22,6 +22,7 @@ from ..runtime_decision_authority import (
 from .paper_route_materialization_processing import (
     SimplePipelinePaperRouteMaterializationProcessingMixin,
 )
+from .submission_preparation.shared import TargetQuantityResolutionRequest
 from .target_plan_helpers import (
     bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
     bounded_sim_collection_target_with_runtime_account_audit as _bounded_sim_collection_target_with_runtime_account_audit,
@@ -491,15 +492,17 @@ class SimplePipelinePaperRouteMaterializationMixin(
             payload_qty or build.symbol_quantities.get(symbol) or Decimal("1")
         )
         quantity_resolution = self._paper_route_target_quantity_resolution(
-            target=target,
-            symbol=symbol,
-            symbols=build.target_symbols,
-            action=action,
-            requested_qty=requested_qty,
-            symbol_quantities=build.symbol_quantities,
-            max_notional=max_notional,
-            event_ts=event_ts,
-            timeframe=timeframe,
+            TargetQuantityResolutionRequest(
+                target=target,
+                symbol=symbol,
+                symbols=build.target_symbols,
+                action=action,
+                requested_qty=requested_qty,
+                symbol_quantities=build.symbol_quantities,
+                max_notional=max_notional,
+                event_ts=event_ts,
+                timeframe=timeframe,
+            )
         )
         if quantity_resolution is None:
             return None

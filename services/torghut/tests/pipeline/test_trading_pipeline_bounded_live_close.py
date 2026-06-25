@@ -347,11 +347,9 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 ):
                     self.assertTrue(
                         pipeline._is_trading_submission_allowed(
-                            TradingSubmissionRequest(
-                                session=session,
-                                decision=decision,
-                                decision_row=decision_row,
-                            )
+                            session=session,
+                            decision=decision,
+                            decision_row=decision_row,
                         )
                     )
 
@@ -462,11 +460,9 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 ):
                     self.assertFalse(
                         pipeline._is_trading_submission_allowed(
-                            TradingSubmissionRequest(
-                                session=session,
-                                decision=decision,
-                                decision_row=decision_row,
-                            )
+                            session=session,
+                            decision=decision,
+                            decision_row=decision_row,
                         )
                     )
 
@@ -549,11 +545,9 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 ):
                     self.assertFalse(
                         pipeline._is_trading_submission_allowed(
-                            TradingSubmissionRequest(
-                                session=session,
-                                decision=decision,
-                                decision_row=decision_row,
-                            )
+                            session=session,
+                            decision=decision,
+                            decision_row=decision_row,
                         )
                     )
 

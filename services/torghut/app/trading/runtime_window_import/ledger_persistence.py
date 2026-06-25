@@ -25,6 +25,7 @@ from ..tigerbeetle_journal import (
     TIGERBEETLE_BLOCKER_JOURNAL_ERROR,
     TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_NON_AUTHORITY_BLOCKED,
     TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+    RuntimeLedgerJournalPayloadInput,
     TigerBeetleLedgerJournal,
     tigerbeetle_runtime_ledger_journal_payload,
 )
@@ -679,12 +680,14 @@ def _mark_runtime_ledger_bucket_tigerbeetle_journal(
         else []
     )
     journal_payload = tigerbeetle_runtime_ledger_journal_payload(
-        bucket=row,
-        ref=mark.ref,
-        status=mark.status,
-        blockers=mark.blockers,
-        account_refs=account_refs,
-        error=mark.error,
+        RuntimeLedgerJournalPayloadInput(
+            bucket=row,
+            ref=mark.ref,
+            status=mark.status,
+            blockers=mark.blockers,
+            account_refs=account_refs,
+            error=mark.error,
+        )
     )
     existing_payload = mapping_payload(row.payload_json)
     source_refs = string_list(existing_payload.get("source_refs"))
