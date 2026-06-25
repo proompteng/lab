@@ -4,6 +4,18 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+from app.trading.multifactor.cost_model import estimate_transaction_cost
+from app.trading.multifactor.portfolio_construction import (
+    PortfolioCostInput,
+    PortfolioLimits,
+    build_portfolio_target,
+)
+from app.trading.multifactor.risk_model import (
+    RiskExposureState,
+    RiskLimits,
+    build_risk_forecast,
+)
+
 from .config import HyperliquidExecutionConfig
 from .models import RiskState, RiskVerdict, Signal, symbol_key
 
@@ -25,6 +37,69 @@ def evaluate_signal_risk(
     remaining_symbol = config.max_symbol_exposure_usd - symbol_exposure
     if remaining_symbol < config.min_order_notional_usd:
         return RiskVerdict("blocked", "symbol_exposure_cap", Decimal("0"))
+    if signal.factor_vector is not None and signal.alpha_forecast is not None:
+        risk_forecast = build_risk_forecast(
+            vector=signal.factor_vector,
+            forecast=signal.alpha_forecast,
+            exposure=RiskExposureState(
+                gross_exposure_usd=state.gross_exposure_usd,
+                symbol_exposure_usd=symbol_exposure,
+                daily_realized_pnl_usd=state.daily_realized_pnl_usd,
+            ),
+            limits=RiskLimits(
+                max_gross_exposure_usd=config.max_gross_exposure_usd,
+                max_symbol_exposure_usd=config.max_symbol_exposure_usd,
+                max_daily_loss_usd=config.max_daily_loss_usd,
+            ),
+        )
+        expected_cost_bps = estimate_transaction_cost(
+            signal.factor_vector,
+            cost_buffer_bps=config.cost_buffer_bps,
+            participation_rate=Decimal("0.001"),
+        )
+        portfolio_target = build_portfolio_target(
+            forecast=signal.alpha_forecast,
+            risk=risk_forecast,
+            costs=PortfolioCostInput(
+                expected_cost_bps=expected_cost_bps,
+                min_edge_bps=config.min_edge_bps,
+            ),
+            limits=PortfolioLimits(
+                min_order_notional_usd=config.min_order_notional_usd,
+                max_order_notional_usd=config.max_order_notional_usd,
+                max_gross_exposure_usd=config.max_gross_exposure_usd,
+                max_symbol_exposure_usd=config.max_symbol_exposure_usd,
+            ),
+        )
+        if not portfolio_target.executable:
+            return RiskVerdict(
+                "blocked",
+                portfolio_target.clip_reason or "portfolio_target_blocked",
+                Decimal("0"),
+                risk_forecast,
+                portfolio_target,
+            )
+        order_notional = min(
+            portfolio_target.delta_notional_usd,
+            config.max_order_notional_usd,
+            remaining_gross,
+            remaining_symbol,
+        )
+        if order_notional < config.min_order_notional_usd:
+            return RiskVerdict(
+                "blocked",
+                "target_notional_below_min_order",
+                Decimal("0"),
+                risk_forecast,
+                portfolio_target,
+            )
+        return RiskVerdict(
+            "allowed",
+            "allowed",
+            order_notional,
+            risk_forecast,
+            portfolio_target,
+        )
     order_notional = min(
         config.max_order_notional_usd, remaining_gross, remaining_symbol
     )
@@ -44,7 +119,10 @@ def _blocked_reason(
     checks = (
         (bool(config_errors), ",".join(config_errors)),
         (not state.trading_enabled, "trading_disabled"),
-        (signal.action == "hold", f"hold:{signal.reason}"),
+        (
+            signal.action == "hold" and signal.alpha_forecast is None,
+            f"hold:{signal.reason}",
+        ),
         (
             signal.action == "sell" and not config.allow_short_entries,
             "short_entries_disabled",

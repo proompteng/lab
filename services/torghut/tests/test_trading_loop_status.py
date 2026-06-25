@@ -77,6 +77,69 @@ def test_loop_status_requires_real_execution_proof() -> None:
         stale_open_orders=[],
         unexpected_live_alpaca={"orders_24h": 0, "events_24h": 0},
         query_errors=[],
+        latest_multifactor_run={
+            "id": "cycle-1",
+            "lane": "hyperliquid_testnet",
+            "model_version": "active-portfolio-management-v1",
+            "finished_at": now.isoformat(),
+        },
+        latest_factor_snapshot={
+            "run_id": "cycle-1",
+            "asset_key": "hyperliquid:hl:perp:default:AMD",
+            "source_lag_seconds": 1,
+            "quote_lag_seconds": 1,
+            "raw_factors": {"momentum_5m": "12"},
+            "normalized_factors": {"momentum_5m": "3.0000"},
+        },
+        latest_forecast={
+            "run_id": "cycle-1",
+            "asset_key": "hyperliquid:hl:perp:default:AMD",
+            "model_id": "active-portfolio-management-v1",
+            "score": "3.0000",
+            "residual_volatility_bps": "50",
+            "information_coefficient": "0.05",
+            "expected_return_bps": "8",
+            "direction": "buy",
+        },
+        latest_risk_forecast={
+            "run_id": "cycle-1",
+            "asset_key": "hyperliquid:hl:perp:default:AMD",
+            "active_risk_bps": "1",
+            "gross_exposure_usd": "0",
+            "symbol_exposure_usd": "0",
+            "liquidity_capacity_usd": "10",
+            "concentration_bps": "0",
+        },
+        latest_portfolio_target={
+            "run_id": "cycle-1",
+            "asset_key": "hyperliquid:hl:perp:default:AMD",
+            "direction": "buy",
+            "target_notional_usd": "10",
+            "delta_notional_usd": "10",
+            "expected_return_bps": "8",
+            "expected_cost_bps": "4",
+            "active_risk_bps": "1",
+            "risk_buffer_bps": "1",
+        },
+        latest_execution_intent={
+            "run_id": "cycle-1",
+            "asset_key": "hyperliquid:hl:perp:default:AMD",
+            "venue": "hyperliquid",
+            "side": "buy",
+            "notional_usd": "10",
+            "idempotency_key": "loop-proof-1",
+            "status": "filled",
+            "venue_order_id": "12345",
+        },
+        latest_attribution={
+            "run_id": "cycle-1",
+            "observed_at": now.isoformat(),
+            "fill_count": 3,
+            "realized_pnl_usd": "0.12",
+            "turnover_usd": "30",
+            "realized_cost_usd": "0.03",
+            "hit_rate": "1",
+        },
     )
 
     payload = assemble_trading_loop_status(
@@ -94,6 +157,9 @@ def test_loop_status_requires_real_execution_proof() -> None:
     assert payload["restored"] is True
     assert payload["blocker_reasons"] == []
     assert payload["fills"]["recent_count"] == 3
+    assert payload["alpha_model"]["present"] is True
+    assert payload["portfolio_target"]["target_notional_positive"] is True
+    assert payload["execution_intent"]["present"] is True
     assert payload["exchange_order_state"]["ack_seen"] is True
     assert payload["alpaca_guard"]["unexpected_live_order_count_24h"] == 0
     assert payload["runtime"]["live_capital"]["allowed"] is False

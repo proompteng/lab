@@ -103,6 +103,10 @@ class HyperliquidExecutionService:
         )
 
         repository.insert_performance_snapshot(observed_at=started_at)
+        repository.insert_multifactor_attribution_snapshot(
+            run_id=cycle_id,
+            observed_at=started_at,
+        )
         finished_at = datetime.now(timezone.utc)
         universe_details = _cycle_universe_details(context.universe_details, counts)
         result = CycleResult(
@@ -146,12 +150,21 @@ class HyperliquidExecutionService:
         counts: "_CycleCounts",
     ) -> None:
         for feature in context.features:
-            signal = generate_signal(feature, self._config, now=context.started_at)
+            signal = generate_signal(
+                feature,
+                self._config,
+                now=context.started_at,
+                run_id=context.cycle_id,
+            )
             signal_id = repository.insert_signal(
                 cycle_id=context.cycle_id, signal=signal
             )
             counts.signals_written += 1
             verdict = evaluate_signal_risk(signal, context.risk_state, self._config)
+            repository.insert_multifactor_risk_and_target(
+                run_id=context.cycle_id,
+                verdict=verdict,
+            )
             if not verdict.allowed:
                 counts.record_risk_block(signal.coin, verdict.reason)
                 continue
@@ -168,6 +181,12 @@ class HyperliquidExecutionService:
                 counts.record_order_error(type(exc).__name__)
                 continue
             repository.insert_order(intent, result)
+            repository.insert_multifactor_execution_intent(
+                run_id=context.cycle_id,
+                intent=intent,
+                result=result,
+                verdict=verdict,
+            )
             repository.update_reject_cooldown(
                 coin=intent.coin,
                 rejection_reason=result.rejection_reason,

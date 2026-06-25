@@ -7,6 +7,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
+from app.trading.multifactor.contracts import (
+    AlphaForecast,
+    FactorVector,
+    PortfolioTarget,
+    RiskForecast,
+)
+
 
 Action = Literal["buy", "sell", "hold"]
 OrderSide = Literal["buy", "sell"]
@@ -93,6 +100,8 @@ class Signal:
     edge_bps: Decimal
     reason: str
     feature: FeatureSnapshot
+    factor_vector: FactorVector | None = None
+    alpha_forecast: AlphaForecast | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +124,8 @@ class RiskVerdict:
     status: RiskStatus
     reason: str
     order_notional_usd: Decimal
+    risk_forecast: RiskForecast | None = None
+    portfolio_target: PortfolioTarget | None = None
 
     @property
     def allowed(self) -> bool:

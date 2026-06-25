@@ -5,6 +5,11 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from app.trading.multifactor.adapters.hyperliquid import factor_vector_from_feature
+from app.trading.multifactor.alpha_model import build_alpha_forecast
+from app.trading.multifactor.cost_model import estimate_transaction_cost
+from app.trading.multifactor.factor_registry import DEFAULT_RISK_BUFFER_BPS
+
 from .config import HyperliquidExecutionConfig
 from .models import FeatureSnapshot, Signal
 
@@ -19,10 +24,22 @@ def generate_signal(
     config: HyperliquidExecutionConfig,
     *,
     now: datetime | None = None,
+    run_id: str = "runtime-pending",
 ) -> Signal:
     """Emit buy/sell only when edge exceeds spread plus cost buffer."""
 
     generated_at = now or datetime.now(timezone.utc)
+    factor_vector = factor_vector_from_feature(
+        run_id=run_id,
+        feature=feature,
+        max_staleness_seconds=config.signal_staleness_seconds,
+    )
+    alpha_forecast = build_alpha_forecast(
+        factor_vector,
+        residual_volatility_bps=max(
+            feature.volatility_bps, abs(feature.momentum_5m_bps) * Decimal("3")
+        ),
+    )
     hold_reason = _hold_reason(feature, config)
     if hold_reason is not None:
         return Signal(
@@ -33,10 +50,17 @@ def generate_signal(
             Decimal("0"),
             hold_reason,
             feature,
+            factor_vector,
+            alpha_forecast,
         )
-    edge_bps = feature.momentum_5m_bps
+    edge_bps = alpha_forecast.expected_return_bps
+    expected_cost_bps = estimate_transaction_cost(
+        factor_vector,
+        cost_buffer_bps=config.cost_buffer_bps,
+        participation_rate=Decimal("0.001"),
+    )
     required_edge_bps = max(
-        config.min_edge_bps, feature.spread_bps + config.cost_buffer_bps
+        config.min_edge_bps, expected_cost_bps + DEFAULT_RISK_BUFFER_BPS
     )
     if abs(edge_bps) <= required_edge_bps:
         return Signal(
@@ -47,6 +71,8 @@ def generate_signal(
             edge_bps,
             "no_edge",
             feature,
+            factor_vector,
+            alpha_forecast,
         )
     action = "buy" if edge_bps > Decimal("0") else "sell"
     return Signal(
@@ -57,6 +83,8 @@ def generate_signal(
         edge_bps,
         "edge_exceeds_cost",
         feature,
+        factor_vector,
+        alpha_forecast,
     )
 
 

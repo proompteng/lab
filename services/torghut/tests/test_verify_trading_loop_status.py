@@ -16,6 +16,18 @@ def _restored_payload() -> dict[str, object]:
         "blocker_reasons": [],
         "runtime": {"status": "ok"},
         "market_data": {"fresh": True},
+        "alpha_model": {
+            "present": True,
+            "factor_snapshot_present": True,
+            "forecast_present": True,
+            "expected_edge_above_cost": True,
+        },
+        "risk_forecast": {"present": True},
+        "portfolio_target": {
+            "present": True,
+            "target_notional_positive": True,
+        },
+        "execution_intent": {"present": True},
         "submitted_order": {"present": True},
         "exchange_order_state": {"ack_seen": True},
         "fills": {"recent_count": 3},
@@ -38,6 +50,17 @@ def test_verifier_rejects_green_runtime_without_fills() -> None:
 
     assert "loop_status_not_restored" in failures
     assert "recent_fills_below_floor" in failures
+
+
+def test_verifier_rejects_missing_multifactor_proof() -> None:
+    payload = _restored_payload()
+    payload["alpha_model"] = {"present": False}
+    payload["portfolio_target"] = {"present": True, "target_notional_positive": False}
+
+    failures = evaluate_loop_status(payload)
+
+    assert "multifactor_alpha_model_missing" in failures
+    assert "multifactor_target_notional_not_positive" in failures
 
 
 def test_verifier_main_reads_status_file_and_reports_json(
