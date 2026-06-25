@@ -8,7 +8,9 @@ from app.trading.repair_bid_settlement import (
     _int,
     build_repair_bid_settlement_ledger,
 )
-from app.trading.revenue_repair import _summarize_repair_bid_settlement
+from app.trading.revenue_repair import (
+    summarize_repair_bid_settlement as _summarize_repair_bid_settlement,
+)
 
 
 NOW = datetime(2026, 5, 13, 3, 20, tzinfo=timezone.utc)

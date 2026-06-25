@@ -24,7 +24,9 @@ from scripts.build_revenue_repair_digest import (
     build_revenue_repair_digest,
     main,
 )
-from app.trading.revenue_repair import _summarize_runtime_window_import_repair
+from app.trading.revenue_repair import (
+    summarize_runtime_window_import_repair as _summarize_runtime_window_import_repair,
+)
 
 
 NOW = datetime(2026, 5, 7, 16, 0, tzinfo=timezone.utc)

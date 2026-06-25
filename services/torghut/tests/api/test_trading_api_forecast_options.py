@@ -262,7 +262,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
             "app.api.health_checks.remember_alpaca_success.build_tca_gate_inputs",
             return_value={"order_count": 0},
         ) as build_tca:
-            payload = health_checks_api._load_tca_summary(
+            payload = health_checks_api.load_tca_summary(
                 fake_session,
                 scheduler=None,
             )
@@ -334,7 +334,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                 "QueryCanceled: canceling statement due to statement timeout"
             ),
         ):
-            payload = health_checks_api._load_tca_summary(
+            payload = health_checks_api.load_tca_summary(
                 fake_session,
                 scheduler=None,
             )
@@ -370,7 +370,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
             ),
         ):
             payload, summary, _quorum = (
-                health_checks_api._build_hypothesis_runtime_payload(
+                health_checks_api.build_hypothesis_runtime_payload(
                     TradingScheduler(),
                     tca_summary={},
                     market_context_status={},
@@ -642,7 +642,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                     ),
                 ),
             ):
-                payload = health_checks_api._build_tigerbeetle_ledger_status(
+                payload = health_checks_api.build_tigerbeetle_ledger_status(
                     fake_session,
                 )
         finally:
@@ -696,7 +696,7 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                     },
                 ),
             ):
-                payload = health_checks_api._build_tigerbeetle_ledger_status(
+                payload = health_checks_api.build_tigerbeetle_ledger_status(
                     fake_session,
                 )
         finally:

@@ -15,8 +15,8 @@ from app.models import Strategy
 from app.strategies.catalog import StrategyConfig, _compose_strategy_description
 from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
 from app.trading.scheduler.target_plan_helpers import (
-    _target_pair_balance_state,
-    _target_probe_symbol_actions,
+    target_pair_balance_state as _target_pair_balance_state,
+    target_probe_symbol_actions as _target_probe_symbol_actions,
 )
 from app.trading.scheduler.runtime import TradingScheduler
 from app.trading.scheduler.safety import (
