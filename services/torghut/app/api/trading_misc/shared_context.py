@@ -39,11 +39,7 @@ from ..proof_floor_payloads import (
     consumer_evidence_jangar_continuity_packet as _consumer_evidence_jangar_continuity_packet,
 )
 from fastapi import APIRouter
-from typing import Any, TYPE_CHECKING
-
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from ..common import (
     BLOCKER_RECONCILIATION_STALE,
@@ -58,7 +54,7 @@ from ..common import (
     Body,
     CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE,
     ClickHouseSignalIngestor,
-    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    DEFAULT_PROOFS_LIMIT,
     Decimal,
     Depends,
     EvidenceEpoch,
@@ -76,7 +72,7 @@ from ..common import (
     LEAN_LANE_MANAGER,
     LeanLaneManager,
     Lock,
-    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    MAX_PROOFS_LIMIT,
     Mapping,
     OperationalError,
     PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
@@ -432,7 +428,7 @@ __all__: tuple[str, ...] = (
     "Body",
     "CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE",
     "ClickHouseSignalIngestor",
-    "DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+    "DEFAULT_PROOFS_LIMIT",
     "Decimal",
     "Depends",
     "EvidenceEpoch",
@@ -450,7 +446,7 @@ __all__: tuple[str, ...] = (
     "LEAN_LANE_MANAGER",
     "LeanLaneManager",
     "Lock",
-    "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+    "MAX_PROOFS_LIMIT",
     "Mapping",
     "OPTIONS_CATALOG_FRESHNESS_CACHE",
     "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",
@@ -487,7 +483,6 @@ __all__: tuple[str, ...] = (
     "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE",
     "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
     "TRADING_STATUS_READ_BUDGET_SECONDS",
-    "TYPE_CHECKING",
     "ThreadPoolExecutor",
     "TimeoutError",
     "TorghutAlpacaClient",

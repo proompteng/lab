@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from .common import (
-    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    DEFAULT_PROOFS_LIMIT,
     Mapping,
     PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
     Sequence,
@@ -147,7 +147,7 @@ def configured_strategy_paper_collection_targets(
             "final_promotion_authorized": False,
         }
         targets.append(target)
-        if len(targets) >= DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT:
+        if len(targets) >= DEFAULT_PROOFS_LIMIT:
             break
     return targets
 

@@ -130,12 +130,13 @@ from ..trading.paper_route_target_plan import (
     paper_route_target_plan_from_payload as _shared_paper_route_target_plan_from_payload,
 )
 from ..trading.proofs.schemas import (
-    DEFAULT_PROOFS_LIMIT as DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    MAX_PROOFS_LIMIT as MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    DEFAULT_PROOFS_LIMIT,
+    MAX_PROOFS_LIMIT,
+    ProofKind,
+    ProofWindowSelector,
     PROOFS_RUNTIME_ACCOUNT_LABEL as PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
 )
 from ..trading.proofs.service import build_proofs_payload
-from ..trading.proofs.schemas import ProofKind, ProofWindowSelector
 from ..trading.runtime_cost_authority import (
     cost_basis_counts_have_non_promotion_grade_costs,
 )
@@ -322,7 +323,7 @@ __all__: tuple[str, ...] = (
     "Body",
     "CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE",
     "ClickHouseSignalIngestor",
-    "DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+    "DEFAULT_PROOFS_LIMIT",
     "Decimal",
     "Depends",
     "EvidenceEpoch",
@@ -340,7 +341,7 @@ __all__: tuple[str, ...] = (
     "LEAN_LANE_MANAGER",
     "LeanLaneManager",
     "Lock",
-    "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+    "MAX_PROOFS_LIMIT",
     "Mapping",
     "OPTIONS_CATALOG_FRESHNESS_CACHE",
     "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",

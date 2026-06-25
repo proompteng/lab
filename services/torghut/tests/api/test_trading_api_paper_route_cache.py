@@ -430,7 +430,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
                 session.commit()
 
                 with patch(
-                    "app.api.proofs_configured_collection.DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+                    "app.api.proofs_configured_collection.DEFAULT_PROOFS_LIMIT",
                     2,
                 ):
                     targets = proofs_api._configured_strategy_paper_collection_targets(

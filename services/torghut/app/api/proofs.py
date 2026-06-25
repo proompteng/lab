@@ -12,8 +12,8 @@ from . import proofs_configured_collection as _proofs_configured_collection
 from . import proofs_external_target_fetch as _proofs_external_target_fetch
 from .common import (
     BUILD_VERSION,
-    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    DEFAULT_PROOFS_LIMIT,
+    MAX_PROOFS_LIMIT,
     PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
     PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
     PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
@@ -241,9 +241,9 @@ def trading_proofs(
         description="Proof family to return.",
     ),
     limit: int = Query(
-        DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        DEFAULT_PROOFS_LIMIT,
         ge=1,
-        le=MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+        le=MAX_PROOFS_LIMIT,
         description="Maximum number of proof targets to return.",
     ),
     window: str = Query(
