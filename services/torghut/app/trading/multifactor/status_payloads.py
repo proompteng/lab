@@ -9,23 +9,6 @@ from decimal import Decimal
 from typing import Any, cast
 
 LATEST_MULTIFACTOR_RUN_SQL = """
-WITH proof AS (
-  SELECT run_id
-  FROM multifactor_execution_intents
-  ORDER BY updated_at DESC
-  LIMIT 1
-),
-fallback AS (
-  SELECT id AS run_id
-  FROM multifactor_runs
-  ORDER BY finished_at DESC
-  LIMIT 1
-),
-selected AS (
-  SELECT run_id FROM proof
-  UNION ALL
-  SELECT run_id FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
-)
 SELECT
   id::text,
   lane,
@@ -36,27 +19,35 @@ SELECT
   blockers,
   selected_assets
 FROM multifactor_runs
-JOIN selected ON multifactor_runs.id = selected.run_id
+ORDER BY finished_at DESC
 LIMIT 1
 """
 
 LATEST_FACTOR_SNAPSHOT_SQL = """
-WITH proof AS (
+WITH latest_run AS (
+  SELECT id AS run_id
+  FROM multifactor_runs
+  ORDER BY finished_at DESC
+  LIMIT 1
+),
+current_intent AS (
   SELECT run_id, asset_key
   FROM multifactor_execution_intents
+  JOIN latest_run USING (run_id)
   ORDER BY updated_at DESC
   LIMIT 1
 ),
 fallback AS (
   SELECT run_id, asset_key
   FROM multifactor_factor_snapshots
-  ORDER BY observed_at DESC
+  JOIN latest_run USING (run_id)
+  ORDER BY observed_at DESC, updated_at DESC, asset_key ASC
   LIMIT 1
 ),
 selected AS (
-  SELECT run_id, asset_key FROM proof
+  SELECT run_id, asset_key FROM current_intent
   UNION ALL
-  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM current_intent)
 )
 SELECT
   snapshots.run_id::text,
@@ -79,22 +70,30 @@ LIMIT 1
 """
 
 LATEST_FORECAST_SQL = """
-WITH proof AS (
+WITH latest_run AS (
+  SELECT id AS run_id
+  FROM multifactor_runs
+  ORDER BY finished_at DESC
+  LIMIT 1
+),
+current_intent AS (
   SELECT run_id, asset_key
   FROM multifactor_execution_intents
+  JOIN latest_run USING (run_id)
   ORDER BY updated_at DESC
   LIMIT 1
 ),
 fallback AS (
   SELECT run_id, asset_key
   FROM multifactor_forecasts
-  ORDER BY updated_at DESC
+  JOIN latest_run USING (run_id)
+  ORDER BY updated_at DESC, asset_key ASC
   LIMIT 1
 ),
 selected AS (
-  SELECT run_id, asset_key FROM proof
+  SELECT run_id, asset_key FROM current_intent
   UNION ALL
-  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM current_intent)
 )
 SELECT
   forecasts.run_id::text,
@@ -115,22 +114,30 @@ LIMIT 1
 """
 
 LATEST_RISK_FORECAST_SQL = """
-WITH proof AS (
+WITH latest_run AS (
+  SELECT id AS run_id
+  FROM multifactor_runs
+  ORDER BY finished_at DESC
+  LIMIT 1
+),
+current_intent AS (
   SELECT run_id, asset_key
   FROM multifactor_execution_intents
+  JOIN latest_run USING (run_id)
   ORDER BY updated_at DESC
   LIMIT 1
 ),
 fallback AS (
   SELECT run_id, asset_key
   FROM multifactor_risk_forecasts
-  ORDER BY updated_at DESC
+  JOIN latest_run USING (run_id)
+  ORDER BY updated_at DESC, asset_key ASC
   LIMIT 1
 ),
 selected AS (
-  SELECT run_id, asset_key FROM proof
+  SELECT run_id, asset_key FROM current_intent
   UNION ALL
-  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM current_intent)
 )
 SELECT
   risk.run_id::text,
@@ -149,22 +156,30 @@ LIMIT 1
 """
 
 LATEST_PORTFOLIO_TARGET_SQL = """
-WITH proof AS (
+WITH latest_run AS (
+  SELECT id AS run_id
+  FROM multifactor_runs
+  ORDER BY finished_at DESC
+  LIMIT 1
+),
+current_intent AS (
   SELECT run_id, asset_key
   FROM multifactor_execution_intents
+  JOIN latest_run USING (run_id)
   ORDER BY updated_at DESC
   LIMIT 1
 ),
 fallback AS (
   SELECT run_id, asset_key
   FROM multifactor_portfolio_targets
-  ORDER BY updated_at DESC
+  JOIN latest_run USING (run_id)
+  ORDER BY updated_at DESC, asset_key ASC
   LIMIT 1
 ),
 selected AS (
-  SELECT run_id, asset_key FROM proof
+  SELECT run_id, asset_key FROM current_intent
   UNION ALL
-  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM proof)
+  SELECT run_id, asset_key FROM fallback WHERE NOT EXISTS (SELECT 1 FROM current_intent)
 )
 SELECT
   targets.run_id::text,

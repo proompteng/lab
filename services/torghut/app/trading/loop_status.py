@@ -384,8 +384,8 @@ def _algorithm_payload(
         "run_id": _optional_text(rows.latest_forecast.get("run_id"))
         or _optional_text(rows.latest_execution_intent.get("run_id"))
         or _optional_text(rows.latest_multifactor_run.get("id")),
-        "asset_key": _optional_text(rows.latest_execution_intent.get("asset_key"))
-        or _optional_text(rows.latest_factor_snapshot.get("asset_key")),
+        "asset_key": _optional_text(rows.latest_factor_snapshot.get("asset_key"))
+        or _optional_text(rows.latest_execution_intent.get("asset_key")),
         "factor_snapshot_present": summary.factor_snapshot_present,
         "forecast_present": summary.alpha_forecast_present,
         "risk_present": summary.risk_forecast_present,
