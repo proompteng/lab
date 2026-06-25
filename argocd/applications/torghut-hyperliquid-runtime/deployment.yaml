@@ -31,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-hyperliquid-runtime
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:5c952ec3bc4847ef909ad03b8cfbb85c60154251d687f09b51269d9290d75661
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:96f4ca5eb4096db2ea7008d72a5eca037a54778aea2b54ddf956c8777fe77aca
           imagePullPolicy: Always
           command:
             - uvicorn
@@ -45,9 +45,9 @@ spec:
                 name: torghut-hyperliquid-runtime-config
           env:
             - name: TORGHUT_COMMIT
-              value: 3b4413c0669dc10bda3ad9445007110b725b216e
+              value: e45cba6de7eb2eefa2e71200a8140d521e0977ff
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:5c952ec3bc4847ef909ad03b8cfbb85c60154251d687f09b51269d9290d75661
+              value: sha256:96f4ca5eb4096db2ea7008d72a5eca037a54778aea2b54ddf956c8777fe77aca
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
