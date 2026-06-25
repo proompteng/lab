@@ -928,7 +928,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                     return_value={"ok": True},
                 ),
                 patch(
-                    "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+                    "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
                     return_value={
                         "account_scope_ready": True,
                         "account_scope_errors": [],

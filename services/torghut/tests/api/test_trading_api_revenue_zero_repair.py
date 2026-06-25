@@ -138,7 +138,7 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
         }
         with (
             patch(
-                "app.api.maintenance._evaluate_trading_health_payload",
+                "app.api.maintenance.evaluate_trading_health_payload",
                 return_value=(readyz_payload, 503),
             ),
             patch("app.api.maintenance.trading_status", return_value=status_payload),

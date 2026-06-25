@@ -560,7 +560,7 @@ def _database_contract_account_scope(
     session: _ReadinessDatabaseSession,
 ) -> tuple[dict[str, object], list[str]]:
     try:
-        account_scope_checks = dict(_check_account_scope_invariants_bounded(session))
+        account_scope_checks = dict(check_account_scope_invariants_bounded(session))
     except (SQLAlchemyError, RuntimeError) as exc:
         account_scope_checks = {
             "account_scope_ready": False,
@@ -763,11 +763,6 @@ def evaluate_database_contract(
 
 __all__ = (
     "SessionLocal",
-    "_refresh_universe_state_for_readiness",
-    "_resolve_universe_resolver_for_readiness",
-    "_execute_readiness_account_scope_query",
-    "_check_account_scope_invariants_bounded",
-    "_evaluate_database_contract",
     "refresh_universe_state_for_readiness",
     "resolve_universe_resolver_for_readiness",
     "execute_readiness_account_scope_query",

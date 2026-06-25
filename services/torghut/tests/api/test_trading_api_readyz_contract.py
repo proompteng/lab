@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.api import readiness_helpers as readiness_helpers_api
+from app.api.readiness_helpers import readiness_surface as readiness_surface_helpers
 
 from tests.api.trading_api_support import (
     Any,
@@ -38,7 +38,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         return_value={"ok": True, "detail": "ok"},
     )
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._check_account_scope_invariants_bounded",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
         return_value={"account_scope_ready": True, "account_scope_errors": []},
     )
     @patch(
@@ -122,7 +122,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_simple_submit_enabled = False
             settings.trading_live_submit_activation_expires_at = "2000-01-01T00:00:00Z"
 
-            gate = readiness_helpers_api._core_readiness_live_submission_gate()
+            gate = readiness_surface_helpers.core_readiness_live_submission_gate()
         finally:
             settings.trading_mode = original["trading_mode"]
             settings.trading_enabled = original["trading_enabled"]
@@ -198,7 +198,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                 ),
             ):
                 payload, status_code = (
-                    readiness_helpers_api._evaluate_core_readiness_payload(
+                    readiness_surface_helpers.evaluate_core_readiness_payload(
                         include_database_contract=True,
                         allow_stale_dependency_cache=True,
                     )
@@ -275,7 +275,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertEqual(second["account_label"], "PA3SX7FYNUTF")
 
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,
@@ -367,7 +367,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_universe_source = original_source
 
     @patch(
-        "app.api.readiness_helpers.refresh_universe_state_for_readiness._evaluate_database_contract",
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.evaluate_database_contract",
         return_value={
             "ok": True,
             "schema_current": True,

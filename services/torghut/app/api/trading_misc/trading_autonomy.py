@@ -15,7 +15,7 @@ from ..health_checks import (
     load_tca_summary as _load_tca_summary,
 )
 from ..readiness_helpers import (
-    evaluate_database_contract as _evaluate_database_contract,
+    evaluate_database_contract,
 )
 from ..trading_scheduler_state import get_trading_scheduler
 from ..vnext_helpers import (
@@ -384,7 +384,7 @@ def build_current_evidence_epoch(
     trading_status_ok, _scheduler_payload = _evaluate_scheduler_status(scheduler)
 
     try:
-        database_contract = _evaluate_database_contract(session)
+        database_contract = evaluate_database_contract(session)
         database_ok = bool(database_contract.get("ok"))
         schema_current = bool(database_contract.get("schema_current"))
         schema_lineage_ready = bool(database_contract.get("schema_graph_lineage_ready"))
