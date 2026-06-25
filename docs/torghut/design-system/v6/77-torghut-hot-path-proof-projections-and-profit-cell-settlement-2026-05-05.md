@@ -326,7 +326,7 @@ Deployer stage:
    consecutive samples.
 3. Verify every non-observe cell cites the active projection and active evidence epoch.
 4. Verify image/platform receipts cover the nodes that run Torghut live and sim.
-5. Keep `TRADING_LIVE_ENABLED=false` or capital stage `observe` unless the settlement gates pass.
+5. Keep `TRADING_MODE=paper` or capital stage `observe` unless the settlement gates pass.
 
 ## Validation Gates
 

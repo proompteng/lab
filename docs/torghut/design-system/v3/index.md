@@ -207,13 +207,13 @@ Phase-1 and phase-2 foundations now implemented in `services/torghut/`:
 
 Current safety posture:
 
-- live remains gated by default (`TRADING_LIVE_ENABLED=false`, `allow_live_promotion=false`),
+- live remains gated by default (`TRADING_MODE=paper`, `allow_live_promotion=false`),
 - deterministic risk/firewall remain final authority in runtime execution path,
 - LLM path remains bounded/advisory and cannot bypass gate/risk controls.
 
 Migration notes for next phases:
 
-- promote `TRADING_STRATEGY_RUNTIME_MODE=plugin_v3` after paper shadow validation and parity checks,
+- promote `TRADING_STRATEGY_RUNTIME_MODE=scheduler_v3` after paper shadow validation and parity checks,
 - wire autonomous lane artifacts into AgentRun specs (`torghut-v3-backtest-robustness-v1` and
   `torghut-v3-gate-evaluation-v1`) for CI-enforced promotion flow,
 - extend dataset/feature registry persistence and audit-pack exporters per full-loop docs 05 and 10.

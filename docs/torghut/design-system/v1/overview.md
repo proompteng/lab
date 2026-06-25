@@ -74,7 +74,7 @@ flowchart LR
 The deployment currently enforces safe defaults via `argocd/applications/torghut/knative-service.yaml`:
 
 - `TRADING_MODE=paper`
-- `TRADING_LIVE_ENABLED=false`
+- `TRADING_MODE=paper`
 - AI review is advisory; deterministic risk controls remain final authority.
 
 ## Operational reality (known failure modes)

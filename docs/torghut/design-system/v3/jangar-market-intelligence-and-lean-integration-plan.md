@@ -55,7 +55,7 @@ From ClickHouse sampled on `2026-02-12`:
 
 From live `/trading/status` on `2026-02-12`:
 
-- `mode=paper`, `TRADING_LIVE_ENABLED=false`.
+- `mode=paper`, `TRADING_MODE=paper`.
 - `TRADING_ENABLED=true`, `TRADING_KILL_SWITCH_ENABLED=false`.
 - LLM path enabled in shadow mode (`LLM_SHADOW_MODE=true`).
 - Current counters (snapshot):

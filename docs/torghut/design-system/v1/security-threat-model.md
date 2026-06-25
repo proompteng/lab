@@ -49,7 +49,7 @@ flowchart LR
 
 - **Threat:** Trading enabled or switched to live without approval.
 - **Mitigations:**
-  - paper-by-default config: `TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false` (`argocd/applications/torghut/knative-service.yaml`).
+  - paper-by-default config: `TRADING_MODE=paper` (`argocd/applications/torghut/knative-service.yaml`).
   - deterministic risk engine must enforce these gates.
   - audit logging for config changes (GitOps history) + runtime status endpoint.
 

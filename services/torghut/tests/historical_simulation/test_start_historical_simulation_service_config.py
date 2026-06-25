@@ -439,6 +439,6 @@ class TestStartHistoricalSimulationServiceConfig(StartHistoricalSimulationTestCa
                     ),
                     kafka_config=kafka_config,
                     torghut_env_overrides={
-                        "TRADING_STRATEGY_RUNTIME_MODE": "plugin_v3",
+                        "TRADING_STRATEGY_RUNTIME_MODE": "unsupported_runtime",
                     },
                 )

@@ -53,7 +53,7 @@ flowchart LR
    - or Flink checkpoint storage issues (MinIO/S3).
 2. Confirm whether trading should be paused:
    - If signals are stale or uncertain, disable trading (`TRADING_ENABLED=false`) via GitOps.
-   - Do not change `TRADING_MODE` defaults; keep `TRADING_LIVE_ENABLED=false`.
+   - Do not change `TRADING_MODE` defaults; keep `TRADING_MODE=paper`.
 3. Confirm current TA consumer group and replay intent:
    - `TA_GROUP_ID` is set in `argocd/applications/torghut/ta/configmap.yaml`.
    - Replays should use a new group id (consumer-group isolation) unless you intend to advance the steady-state offsets.

@@ -89,7 +89,7 @@ flowchart TD
 
 ## Security considerations
 
-- Keep live trading gated; audit any changes to `TRADING_LIVE_ENABLED`.
+- Keep live trading gated; audit any changes to `TRADING_MODE`.
 - Do not store secrets in docs; operational procedures must reference secret _names_ only.
 
 ## Decisions (ADRs)

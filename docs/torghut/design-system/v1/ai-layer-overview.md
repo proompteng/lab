@@ -17,7 +17,7 @@ Describe Torghut’s AI layer as a strictly advisory component that:
 ## Non-goals
 
 - AI as primary decision maker.
-- Any design where AI can bypass `TRADING_LIVE_ENABLED` or deterministic risk checks.
+- Any design where AI can bypass trading-mode, live-submit activation, or deterministic risk checks.
 - Unbounded retrieval-augmented generation (RAG) from untrusted sources as a dependency for trading.
 
 ## Terminology
@@ -57,13 +57,12 @@ flowchart LR
   - AI never calls broker APIs.
   - AI outputs must parse as strict schema and pass policy guard.
   - Deterministic risk engine remains the final gate.
-  - Live trading still requires explicit flags (`TRADING_MODE=live` + `TRADING_LIVE_ENABLED=true`).
+  - Live trading still requires `TRADING_MODE=live`, live-submit activation, and deterministic risk approval.
 
 ### Rollout/verification (paper-first + live-gate posture)
 
 - After any env/config change, confirm GitOps manifest values:
   - `TRADING_MODE=paper`
-  - `TRADING_LIVE_ENABLED=false`
   - `TRADING_KILL_SWITCH_ENABLED=true`
   - `TRADING_EMERGENCY_STOP_ENABLED=true`
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`

@@ -21,7 +21,7 @@ Provide a factual, timestamped snapshot of the Torghut trading system for human 
 ## Executive Summary
 
 - Trading pipeline is running end-to-end: WS ingestion, TA/Flink processing, ClickHouse writes, and Torghut decision loop are all active.
-- Torghut is currently `live` mode with `TRADING_LIVE_ENABLED=true`, `kill_switch=false`, and `LLM_ENABLED=false`.
+- Torghut is currently `live` mode with `TRADING_MODE=live`, `kill_switch=false`, and `LLM_ENABLED=false`.
 - ClickHouse freshness is near-real-time (`lag_seconds <= 3` for both `ta_signals` and `ta_microbars`).
 - Recent rejections are dominated by `llm_veto` and `max_position_pct_exceeded`; `symbol_not_allowed` is `0` in the last 10 minutes.
 - Argo app `torghut` is `OutOfSync` while `Healthy`, and API server availability was intermittent during capture (`ServiceUnavailable` / `apiserver not ready` observed and recovered).

@@ -56,7 +56,7 @@ From `argocd/applications/torghut/knative-service.yaml`:
 | --- | --- | --- |
 | `TRADING_ENABLED` | Enables loop | `true` (but still paper by default) |
 | `TRADING_MODE` | `paper` / `live` | `paper` |
-| `TRADING_LIVE_ENABLED` | explicit live gate | `false` |
+| `TRADING_SIMPLE_SUBMIT_ENABLED` | live broker submission gate | `false` |
 | `TRADING_SIGNAL_SOURCE` | signal backend | `clickhouse` |
 | `TRADING_SIGNAL_TABLE` | ClickHouse table | `torghut.ta_signals` |
 | `TRADING_SIGNAL_SCHEMA` | Signals schema selector (`auto`/`envelope`/`flat`) | `auto` |
@@ -92,7 +92,7 @@ Notes:
 ### Gate 1: Explicit enablement
 
 - Trading loop must be enabled explicitly (`TRADING_ENABLED=true`).
-- Live trading requires a _second explicit_ flag: `TRADING_LIVE_ENABLED=true`.
+- Live broker submission also requires `TRADING_SIMPLE_SUBMIT_ENABLED=true` plus a valid live-submit activation.
 
 ### Gate 2: Deterministic risk policy
 
@@ -111,7 +111,6 @@ Orders must be idempotent across retries (see `v1/component-order-execution-and-
 
 - GitOps precondition for production:
   - `TRADING_MODE=paper`
-  - `TRADING_LIVE_ENABLED=false`
   - `TRADING_ACCOUNTS_JSON` account entries in paper mode
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
   - `TRADING_KILL_SWITCH_ENABLED=true`

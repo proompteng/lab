@@ -57,7 +57,7 @@ Prerequisites:
 Enable trading loop:
 
 1. Confirm `argocd/applications/torghut/knative-service.yaml` has `TRADING_ENABLED=true`,
-   `TRADING_MODE=paper`, and `TRADING_LIVE_ENABLED=false`.
+   `TRADING_MODE=paper`.
 2. Ensure `JANGAR_SYMBOLS_URL` is reachable (or switch to `TRADING_UNIVERSE_SOURCE=static` + `TRADING_STATIC_SYMBOLS`).
 3. Define strategies in `argocd/applications/torghut/strategy-configmap.yaml` and ensure
    `TRADING_STRATEGY_CONFIG_PATH` is set (hot-reload applies changes). For ad-hoc dev/stage seeding:

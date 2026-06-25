@@ -16,7 +16,7 @@ Merge the Torghut v1 design set into a single, execution-oriented design documen
 
 ## Non-negotiable invariants
 
-- Paper is default: `TRADING_MODE=paper`, `TRADING_LIVE_ENABLED=false`.
+- Paper is default: `TRADING_MODE=paper`.
 - Live trading requires explicit enablement and audited change control.
 - AI is advisory and must not bypass deterministic gates.
 - Alpaca market-data WS has a single-connection constraint per account; `torghut-ws` must remain single active.
@@ -186,7 +186,7 @@ Code pointers:
 
 Critical env vars (current):
 
-- Safety gates: `TRADING_ENABLED`, `TRADING_MODE`, `TRADING_LIVE_ENABLED`
+- Safety gates: `TRADING_ENABLED`, `TRADING_MODE`, `TRADING_SIMPLE_SUBMIT_ENABLED`
 - Signals: `TRADING_SIGNAL_TABLE`, `TRADING_SIGNAL_LOOKBACK_MINUTES`, `TRADING_SIGNAL_SCHEMA` (supported by code)
 - Universe: `TRADING_UNIVERSE_SOURCE`, `TRADING_STATIC_SYMBOLS`, `JANGAR_SYMBOLS_URL`
 - ClickHouse dependency checks: `TA_CLICKHOUSE_URL`, `TA_CLICKHOUSE_USERNAME`, `TA_CLICKHOUSE_PASSWORD`, `TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS`
@@ -221,7 +221,6 @@ Controls (from `services/torghut/app/config.py`):
 
 - Deployed safety posture for production drift control:
   - `TRADING_MODE=paper`
-  - `TRADING_LIVE_ENABLED=false`
   - `TRADING_LEAN_LIVE_CANARY_ENABLED=true` (observation-only, unless explicitly approved)
   - `TRADING_KILL_SWITCH_ENABLED=true`
   - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
@@ -276,7 +275,7 @@ Goal: stop order submission when data freshness is uncertain.
 Steps:
 
 1. Edit `argocd/applications/torghut/knative-service.yaml`:
-   - set `TRADING_ENABLED=false` (keep `TRADING_LIVE_ENABLED=false`).
+   - set `TRADING_ENABLED=false` (keep `TRADING_MODE=paper`).
 2. Argo sync and verify `ksvc/torghut` stays Ready.
 
 ### Procedure: Restart forwarder (`torghut-ws`)

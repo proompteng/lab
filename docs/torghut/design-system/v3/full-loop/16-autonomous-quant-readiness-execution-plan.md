@@ -21,7 +21,7 @@ Deliver a fully autonomous quant stack where research, backtest, validation, dep
 
 ## Current State (Observed 2026-02-12, historical)
 
-- Strategy runtime mode is `plugin_v3`.
+- Strategy runtime mode is `scheduler_v3`.
 - `TRADING_EXECUTION_ADAPTER=lean`, fallback adapter is `alpaca`.
 - Autonomy enabled flag is on, but autonomous lane signals remain low in recent windows.
 - Live `trading/executions` endpoint is returning route metadata as `null` for historical rows, confirming schema migration backfill and rollout coupling are incomplete.
