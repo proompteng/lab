@@ -39,6 +39,14 @@ from .universe_dependency import (
 )
 from ..trading_scheduler_state import get_trading_scheduler
 
+_PROOF_LANE_DEPENDENCY_KEYS = frozenset(
+    {
+        "empirical_jobs",
+        "live_submission_gate",
+        "profitability_proof_floor",
+    }
+)
+
 
 def evaluate_trading_health_payload(
     *,
@@ -473,8 +481,12 @@ def evaluate_trading_health_payload(
         "required": bool(quant_evidence.get("required", False)),
         "window": quant_evidence.get("window"),
     }
-    readiness_dependency_reasons = _readiness_dependency_degradation_reason_codes(
+    health_sections = split_runtime_and_proof_lane_dependencies(
         dependencies,
+        scheduler_ok=scheduler_ok,
+    )
+    readiness_dependency_reasons = _readiness_dependency_degradation_reason_codes(
+        runtime_dependencies_for_health_surface(dependencies),
         scheduler_ok=scheduler_ok,
     )
     live_submission_gate_for_readiness = _guard_live_submission_gate_for_readiness(
@@ -542,18 +554,15 @@ def evaluate_trading_health_payload(
         },
         generated_at=now,
     )
-    dependency_statuses = [
-        cast(dict[str, object], checks).get("ok", True)
-        for name, checks in dependencies.items()
-        if name != "readiness_cache"
-    ]
-
-    overall_ok = scheduler_ok and all(bool(dep) for dep in dependency_statuses)
+    runtime_status = cast(Mapping[str, object], health_sections["runtime"])
+    overall_ok = bool(runtime_status.get("ok"))
     status = "ok" if overall_ok else "degraded"
     status_code = 200 if overall_ok else 503
 
     response_payload = {
         "status": status,
+        "runtime": health_sections["runtime"],
+        "proof_lane": health_sections["proof_lane"],
         "scheduler": scheduler_payload,
         "dependencies": dependencies,
         "alpha_readiness": alpha_readiness,
@@ -653,4 +662,56 @@ def evaluate_trading_health_payload(
     return response_payload, status_code
 
 
-__all__: tuple[str, ...] = ()
+def split_runtime_and_proof_lane_dependencies(
+    dependencies: Mapping[str, object],
+    *,
+    scheduler_ok: bool,
+) -> dict[str, object]:
+    runtime_dependencies = runtime_dependencies_for_health_surface(dependencies)
+    proof_dependencies = {
+        key: value
+        for key, value in dependencies.items()
+        if key in _PROOF_LANE_DEPENDENCY_KEYS
+    }
+    runtime_ok = scheduler_ok and all(
+        _dependency_ok(value) for value in runtime_dependencies.values()
+    )
+    proof_lane_ok = all(_dependency_ok(value) for value in proof_dependencies.values())
+    return {
+        "runtime": {
+            "status": "ok" if runtime_ok else "degraded",
+            "ok": runtime_ok,
+            "scheduler_ok": scheduler_ok,
+            "dependency_count": len(runtime_dependencies),
+            "dependencies": dict(runtime_dependencies),
+        },
+        "proof_lane": {
+            "status": "ok" if proof_lane_ok else "degraded",
+            "ok": proof_lane_ok,
+            "hot_path_authority": False,
+            "required_for_runtime_health": False,
+            "dependencies": dict(proof_dependencies),
+        },
+    }
+
+
+def runtime_dependencies_for_health_surface(
+    dependencies: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        key: value
+        for key, value in dependencies.items()
+        if key != "readiness_cache" and key not in _PROOF_LANE_DEPENDENCY_KEYS
+    }
+
+
+def _dependency_ok(value: object) -> bool:
+    if isinstance(value, Mapping):
+        return bool(cast(Mapping[str, object], value).get("ok", True))
+    return True
+
+
+__all__: tuple[str, ...] = (
+    "runtime_dependencies_for_health_surface",
+    "split_runtime_and_proof_lane_dependencies",
+)

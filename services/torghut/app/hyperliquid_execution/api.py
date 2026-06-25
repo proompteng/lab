@@ -177,6 +177,7 @@ def _config_payload() -> dict[str, object]:
         "cost_buffer_bps": str(config.cost_buffer_bps),
         "signal_staleness_seconds": config.signal_staleness_seconds,
         "order_policy": config.order_policy,
+        "effective_order_tif": config.effective_order_tif,
         "maker_tif": config.maker_tif,
         "maker_ttl_seconds": config.maker_ttl_seconds,
         "max_open_orders_per_symbol": config.max_open_orders_per_symbol,

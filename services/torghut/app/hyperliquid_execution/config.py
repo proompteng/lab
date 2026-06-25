@@ -12,6 +12,9 @@ _TRUE_VALUES = {"1", "true", "yes", "y", "on"}
 _FALSE_VALUES = {"0", "false", "no", "n", "off"}
 _ENV_PREFIX = "HYPERLIQUID_EXECUTION_"
 _OLD_ENV_PREFIX = "HYPERLIQUID_RUNTIME_"
+_RESTORE_ORDER_POLICY = "marketable_ioc"
+_MAKER_ORDER_POLICY = "maker_ttl"
+_SUPPORTED_ORDER_POLICIES = {_RESTORE_ORDER_POLICY, _MAKER_ORDER_POLICY}
 _DEFAULT_TRADE_COINS = (
     "xyz:NVDA",
     "xyz:AMD",
@@ -135,9 +138,9 @@ class HyperliquidExecutionConfig:
             max_symbol_exposure_usd=max_symbol_exposure_usd,
             max_gross_exposure_usd=max_gross_exposure_usd,
             max_daily_loss_usd=_decimal(source, "MAX_DAILY_LOSS_USD", "25"),
-            order_policy=_text(source, "ORDER_POLICY", "maker_ttl").lower(),
+            order_policy=_text(source, "ORDER_POLICY", _RESTORE_ORDER_POLICY).lower(),
             maker_tif=_text(source, "MAKER_TIF", "Alo"),
-            maker_ttl_seconds=_int(source, "MAKER_TTL_SECONDS", 45),
+            maker_ttl_seconds=_int(source, "MAKER_TTL_SECONDS", 10),
             max_open_orders_per_symbol=_int(source, "MAX_OPEN_ORDERS_PER_SYMBOL", 1),
             reject_cooldown_threshold=_int(source, "REJECT_COOLDOWN_THRESHOLD", 3),
             reject_cooldown_window_seconds=_int(
@@ -174,10 +177,10 @@ class HyperliquidExecutionConfig:
             errors.append("account_address_required_when_trading_enabled")
         if self.trading_enabled and not self.api_wallet_private_key:
             errors.append("api_wallet_private_key_required_when_trading_enabled")
-        if self.order_policy != "maker_ttl":
-            errors.append("order_policy_must_be_maker_ttl")
-        if self.maker_tif != "Alo":
-            errors.append("maker_tif_must_be_alo")
+        if self.order_policy not in _SUPPORTED_ORDER_POLICIES:
+            errors.append("order_policy_must_be_marketable_ioc_or_maker_ttl")
+        if self.order_policy == _MAKER_ORDER_POLICY and self.maker_tif != "Alo":
+            errors.append("maker_tif_must_be_alo_for_maker_ttl")
         if self.maker_ttl_seconds <= 0:
             errors.append("maker_ttl_seconds_must_be_positive")
         if self.max_open_orders_per_symbol != 1:
@@ -204,6 +207,14 @@ class HyperliquidExecutionConfig:
         """Return whether config alone allows a live testnet order path."""
 
         return self.trading_enabled and not self.validation_errors()
+
+    @property
+    def effective_order_tif(self) -> str:
+        """Return the actual limit order time-in-force for the active policy."""
+
+        if self.order_policy == _RESTORE_ORDER_POLICY:
+            return "Ioc"
+        return self.maker_tif
 
 
 def _env_name(key: str, *, prefixed: bool = True) -> str:

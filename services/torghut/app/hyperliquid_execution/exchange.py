@@ -25,6 +25,7 @@ from .universe import execution_universe_status
 
 
 _METADATA_REFRESH_SECONDS = 300
+_SUPPORTED_LIMIT_TIFS = {"Alo", "Ioc"}
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -37,8 +38,8 @@ class HyperliquidExecutionExchange(Protocol):
         """Return markets active on the testnet execution venue."""
         ...
 
-    def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit an ALO maker limit order."""
+    def submit_order(self, intent: OrderIntent) -> OrderResult:
+        """Submit a bounded limit order."""
         ...
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
@@ -125,13 +126,13 @@ class HyperliquidSdkExecutionExchange:
             status, observed_at=self._last_metadata_at, details=details
         )
 
-    def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
-        if intent.tif != "Alo":
+    def submit_order(self, intent: OrderIntent) -> OrderResult:
+        if intent.tif not in _SUPPORTED_LIMIT_TIFS:
             return OrderResult(
                 status="rejected",
                 exchange_order_id=None,
-                raw_response={"error": "non_alo_order_policy_rejected"},
-                rejection_reason="non_alo_order_policy_rejected",
+                raw_response={"error": "unsupported_limit_tif"},
+                rejection_reason="unsupported_limit_tif",
             )
         if not self._config.api_wallet_private_key:
             return OrderResult(
@@ -148,7 +149,7 @@ class HyperliquidSdkExecutionExchange:
                 is_buy=normalized.side == "buy",
                 sz=float(normalized.size),
                 limit_px=float(normalized.limit_price),
-                order_type={"limit": {"tif": "Alo"}},
+                order_type={"limit": {"tif": normalized.tif}},
                 reduce_only=normalized.reduce_only,
                 cloid=self._cloid(normalized.cloid),
             ),
@@ -158,6 +159,11 @@ class HyperliquidSdkExecutionExchange:
         if _is_halted(result):
             self._halted_by_dex.setdefault(_sdk_dex(intent.dex), set()).add(intent.coin)
         return result
+
+    def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
+        """Submit an ALO maker limit order for compatibility diagnostics."""
+
+        return self.submit_order(intent)
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
         if not order.exchange_order_id:

@@ -28,6 +28,7 @@ def api_routers() -> tuple[APIRouter, ...]:
     from .readiness import router as readiness_router
     from .runtime_profitability import router as runtime_profitability_router
     from .trading_health import router as trading_health_router
+    from .trading_loop_status import router as trading_loop_status_router
     from .trading_misc import router as trading_misc_router
     from .trading_status import router as trading_status_router
     from .whitepaper import router as whitepaper_router
@@ -36,6 +37,7 @@ def api_routers() -> tuple[APIRouter, ...]:
         readiness_router,
         whitepaper_router,
         trading_status_router,
+        trading_loop_status_router,
         maintenance_router,
         trading_misc_router,
         runtime_profitability_router,

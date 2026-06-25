@@ -1,4 +1,4 @@
-"""Fake exchange tests for maker order behavior."""
+"""Fake exchange tests for order submission behavior."""
 
 from __future__ import annotations
 
@@ -11,8 +11,11 @@ from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
 from app.hyperliquid_execution.models import ExecutionMarket, OpenOrder, OrderIntent
 
 
-def test_exchange_submits_alo_maker_order() -> None:
+def test_exchange_submits_ioc_restore_order() -> None:
     sdk = _FakeSdk()
+    sdk.next_order_response = {
+        "response": {"data": {"statuses": [{"filled": {"oid": 123}}]}}
+    }
     exchange = _FakeExchange(
         HyperliquidExecutionConfig.from_env(
             {
@@ -31,17 +34,19 @@ def test_exchange_submits_alo_maker_order() -> None:
         limit_price=Decimal("10"),
         notional_usd=Decimal("10"),
         cloid="0xabc",
-        tif="Alo",
+        tif="Ioc",
         reduce_only=False,
         signal_id="signal",
         expires_at=datetime.now(timezone.utc),
     )
 
-    result = exchange.submit_maker_order(intent)
+    result = exchange.submit_order(intent)
+    maker_result = exchange.submit_maker_order(intent)
 
-    assert result.status == "accepted"
+    assert result.status == "filled"
     assert result.exchange_order_id == "123"
-    assert sdk.orders[0]["order_type"] == {"limit": {"tif": "Alo"}}
+    assert maker_result.status == "filled"
+    assert sdk.orders[0]["order_type"] == {"limit": {"tif": "Ioc"}}
     assert sdk.orders[0]["limit_px"] == 10.0
 
 
@@ -72,7 +77,7 @@ def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> Non
         expires_at=datetime.now(timezone.utc),
     )
 
-    result = exchange.submit_maker_order(intent)
+    result = exchange.submit_order(intent)
 
     assert result.status == "accepted"
     assert sdk.orders[0]["sz"] == 0.2
@@ -130,7 +135,7 @@ def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None
     sdk.next_order_response = {
         "response": {"data": {"statuses": [{"error": "Trading is halted."}]}}
     }
-    halted = exchange.submit_maker_order(halted_intent)
+    halted = exchange.submit_order(halted_intent)
     assert halted.status == "rejected"
 
     selected_after_halt, status_after_halt = exchange.filter_supported_markets(markets)
@@ -206,11 +211,11 @@ def test_exchange_reconciles_spot_state_fallback_paths() -> None:
     assert missing_balance_account.account.withdrawable_usd == Decimal("0.102402")
 
 
-def test_exchange_rejects_non_alo_missing_key_and_local_cancel() -> None:
+def test_exchange_rejects_unsupported_tif_missing_key_and_local_cancel() -> None:
     exchange = _FakeExchange(HyperliquidExecutionConfig.from_env({}), sdk=_FakeSdk())
 
-    non_alo = exchange.submit_maker_order(_intent("NVDA", tif="Ioc"))
-    missing_key = exchange.submit_maker_order(_intent("NVDA"))
+    unsupported_tif = exchange.submit_order(_intent("NVDA", tif="Gtc"))
+    missing_key = exchange.submit_order(_intent("NVDA", tif="Ioc"))
     local_cancel = exchange.cancel_order(
         OpenOrder(
             order_id="order",
@@ -223,7 +228,7 @@ def test_exchange_rejects_non_alo_missing_key_and_local_cancel() -> None:
         )
     )
 
-    assert non_alo.rejection_reason == "non_alo_order_policy_rejected"
+    assert unsupported_tif.rejection_reason == "unsupported_limit_tif"
     assert missing_key.rejection_reason == "api_wallet_private_key_missing"
     assert local_cancel.rejection_reason == "missing_exchange_order_id"
 

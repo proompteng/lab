@@ -572,9 +572,9 @@ class _ServiceExchange:
             },
         )
 
-    def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
-        assert intent.tif == "Alo"
-        return OrderResult("accepted", "456", {"resting": {"oid": 456}})
+    def submit_order(self, intent: OrderIntent) -> OrderResult:
+        assert intent.tif == "Ioc"
+        return OrderResult("filled", "456", {"filled": {"oid": 456}})
 
     def cancel_order(self, _order: Any) -> OrderResult:
         return OrderResult("cancelled", "123", {"ok": True})
@@ -786,7 +786,7 @@ def _intent(now: datetime) -> OrderIntent:
         limit_price=Decimal("99.5"),
         notional_usd=Decimal("9.95"),
         cloid="0xabc",
-        tif="Alo",
+        tif="Ioc",
         reduce_only=False,
         signal_id="signal",
         expires_at=now + timedelta(seconds=45),
