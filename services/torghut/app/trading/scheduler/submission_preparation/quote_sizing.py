@@ -216,10 +216,8 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
 
     def _paper_route_target_sizing_price(
         self,
-        request: TargetSizingPriceRequest | None = None,
-        **legacy_kwargs: Any,
+        request: TargetSizingPriceRequest,
     ) -> tuple[Decimal | None, dict[str, Any], str | None]:
-        request = self._target_sizing_price_request(request, legacy_kwargs)
         target_snapshot = target_metadata_quote_snapshot(
             request.target,
             symbol=request.symbol,
@@ -277,27 +275,10 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
             "price_fetcher_snapshot",
         )
 
-    @staticmethod
-    def _target_sizing_price_request(
-        request: TargetSizingPriceRequest | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> TargetSizingPriceRequest:
-        if request is not None:
-            return request
-        return TargetSizingPriceRequest(
-            target=legacy_kwargs["target"],
-            symbol=legacy_kwargs["symbol"],
-            action=legacy_kwargs["action"],
-            event_ts=legacy_kwargs["event_ts"],
-            timeframe=legacy_kwargs["timeframe"],
-        )
-
     def _paper_route_target_quantity_resolution(
         self,
-        request: TargetQuantityResolutionRequest | None = None,
-        **legacy_kwargs: Any,
+        request: TargetQuantityResolutionRequest,
     ) -> TargetProbeQuantityResolution | None:
-        request = self._target_quantity_resolution_request(request, legacy_kwargs)
         if request.requested_qty <= 0:
             return None
         normalized_symbol = request.symbol.strip().upper()
@@ -362,25 +343,6 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
             qty=resolved_qty,
             audit=audit,
             price_params=price_params,
-        )
-
-    @staticmethod
-    def _target_quantity_resolution_request(
-        request: TargetQuantityResolutionRequest | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> TargetQuantityResolutionRequest:
-        if request is not None:
-            return request
-        return TargetQuantityResolutionRequest(
-            target=legacy_kwargs["target"],
-            symbol=legacy_kwargs["symbol"],
-            symbols=legacy_kwargs["symbols"],
-            action=legacy_kwargs["action"],
-            requested_qty=legacy_kwargs["requested_qty"],
-            symbol_quantities=legacy_kwargs["symbol_quantities"],
-            max_notional=legacy_kwargs["max_notional"],
-            event_ts=legacy_kwargs["event_ts"],
-            timeframe=legacy_kwargs["timeframe"],
         )
 
     @staticmethod

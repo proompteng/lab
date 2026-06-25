@@ -21,6 +21,7 @@ from app.models import (
 from app.config import settings
 from app.trading.execution_adapters import (
     LeanExecutionAdapter,
+    OrderSubmission,
     SimulationExecutionAdapter,
 )
 from app.trading.execution import OrderExecutor
@@ -35,25 +36,42 @@ class FakeAlpacaClient:
 
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        qty: float,
-        order_type: str,
-        time_in_force: str,
+        request: OrderSubmission | str | None = None,
+        *,
+        symbol: str | None = None,
+        side: str | None = None,
+        qty: float | None = None,
+        order_type: str | None = None,
+        time_in_force: str | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
         extra_params: dict[str, str] | None = None,
     ) -> dict[str, str]:
+        if isinstance(request, OrderSubmission):
+            submission = request
+        else:
+            resolved_symbol = request if isinstance(request, str) else symbol
+            submission = OrderSubmission(
+                symbol=str(resolved_symbol),
+                side=str(side),
+                qty=float(qty or 0),
+                order_type=str(order_type),
+                time_in_force=str(time_in_force),
+                limit_price=limit_price,
+                stop_price=stop_price,
+                extra_params=extra_params,
+            )
+        extra_params = submission.extra_params or {}
         order = {
             "id": f"order-{len(self.submitted) + 1}",
             "client_order_id": extra_params.get("client_order_id")
             if extra_params
             else None,
-            "symbol": symbol,
-            "side": side,
-            "type": order_type,
-            "time_in_force": time_in_force,
-            "qty": str(qty),
+            "symbol": submission.symbol,
+            "side": submission.side,
+            "type": submission.order_type,
+            "time_in_force": submission.time_in_force,
+            "qty": str(submission.qty),
             "filled_qty": "0",
             "status": "accepted",
         }
@@ -96,16 +114,19 @@ class FakeAlpacaClient:
 class FilledAlpacaClient(FakeAlpacaClient):
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        qty: float,
-        order_type: str,
-        time_in_force: str,
+        request: OrderSubmission | str | None = None,
+        *,
+        symbol: str | None = None,
+        side: str | None = None,
+        qty: float | None = None,
+        order_type: str | None = None,
+        time_in_force: str | None = None,
         limit_price: float | None = None,
         stop_price: float | None = None,
         extra_params: dict[str, str] | None = None,
     ) -> dict[str, str]:
         order = super().submit_order(
+            request,
             symbol=symbol,
             side=side,
             qty=qty,
@@ -115,7 +136,9 @@ class FilledAlpacaClient(FakeAlpacaClient):
             stop_price=stop_price,
             extra_params=extra_params,
         )
-        order["filled_qty"] = str(qty)
+        order["filled_qty"] = str(
+            request.qty if isinstance(request, OrderSubmission) else qty
+        )
         order["filled_avg_price"] = "101"
         order["status"] = "filled"
         return order

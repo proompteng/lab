@@ -20,6 +20,7 @@ from ..safety import (
     latch_signal_continuity_alert_state as _latch_signal_continuity_alert_state,
     record_signal_continuity_recovery_cycle as _record_signal_continuity_recovery_cycle,
 )
+from ..state.metric_types import AutonomyPromotionOutcomeMetrics
 from .shared_context import (
     TradingSchedulerGovernanceMixinContract as _TradingSchedulerGovernanceMixinContract,
     resolve_autonomy_artifact_root as _resolve_autonomy_artifact_root,
@@ -379,12 +380,14 @@ class TradingSchedulerGovernanceDecisionMethods(
         self.state.last_autonomy_error = None
         self.state.last_autonomy_reason = reason
         self.state.metrics.record_autonomy_promotion_outcome(
-            signal_count=0,
-            decision_count=0,
-            trade_count=0,
-            recommendation="shadow",
-            promotion_allowed=False,
-            outcome="skipped_no_signal",
+            AutonomyPromotionOutcomeMetrics(
+                signal_count=0,
+                decision_count=0,
+                trade_count=0,
+                recommendation="shadow",
+                promotion_allowed=False,
+                outcome="skipped_no_signal",
+            )
         )
         query_start = batch.query_start or start
         query_end = batch.query_end or now

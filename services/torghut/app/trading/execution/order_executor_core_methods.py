@@ -22,6 +22,8 @@ from ...config import settings
 from ...snapshots import sync_order_to_db
 from ..route_metadata import resolve_order_route_metadata
 from ..execution_policy import should_retry_order_error
+from ..execution_adapters import OrderSubmission
+from ..firewall import OrderFirewall
 from ..models import ExecutionRequest, StrategyDecision, decision_hash
 from ..quantity_rules import (
     min_qty_for_symbol,
@@ -546,19 +548,38 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         attempt = 0
         while True:
             try:
-                return execution_client.submit_order(
-                    symbol=request.symbol,
-                    side=request.side,
-                    qty=float(request.qty),
-                    order_type=request.order_type,
-                    time_in_force=request.time_in_force,
-                    limit_price=float(request.limit_price)
+                limit_price = (
+                    float(request.limit_price)
                     if request.limit_price is not None
-                    else None,
-                    stop_price=float(request.stop_price)
+                    else None
+                )
+                stop_price = (
+                    float(request.stop_price)
                     if request.stop_price is not None
-                    else None,
-                    extra_params=dict(extra_params),
+                    else None
+                )
+                if isinstance(execution_client, OrderFirewall):
+                    return execution_client.submit_order(
+                        symbol=request.symbol,
+                        side=request.side,
+                        qty=float(request.qty),
+                        order_type=request.order_type,
+                        time_in_force=request.time_in_force,
+                        limit_price=limit_price,
+                        stop_price=stop_price,
+                        extra_params=dict(extra_params),
+                    )
+                return execution_client.submit_order(
+                    OrderSubmission(
+                        symbol=request.symbol,
+                        side=request.side,
+                        qty=float(request.qty),
+                        order_type=request.order_type,
+                        time_in_force=request.time_in_force,
+                        limit_price=limit_price,
+                        stop_price=stop_price,
+                        extra_params=dict(extra_params),
+                    )
                 )
             except Exception as exc:
                 if attempt >= len(retry_delays) or not should_retry_order_error(exc):

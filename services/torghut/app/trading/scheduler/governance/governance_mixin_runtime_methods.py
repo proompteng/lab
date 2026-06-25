@@ -14,6 +14,7 @@ from ...autonomy.phase_manifest_contract import (
     coerce_path_strings,
 )
 from ...models import SignalEnvelope
+from ..state.metric_types import AutonomyPromotionOutcomeMetrics
 
 
 from .shared_context import (
@@ -128,15 +129,17 @@ class _TradingSchedulerGovernanceRuntimeMethods(
         promotion_allowed = bool(promotion_decision.get("promotion_allowed", False))
         effective_promotion_allowed = bool(promotion_allowed and actuation_allowed)
         self.state.metrics.record_autonomy_promotion_outcome(
-            signal_count=_int_from_mapping(throughput, "signal_count"),
-            decision_count=_int_from_mapping(throughput, "decision_count"),
-            trade_count=_int_from_mapping(throughput, "trade_count"),
-            recommendation=recommended_mode,
-            promotion_allowed=effective_promotion_allowed,
-            outcome=(
-                f"promoted_{recommended_mode}"
-                if effective_promotion_allowed
-                else f"blocked_{recommended_mode}"
+            AutonomyPromotionOutcomeMetrics(
+                signal_count=_int_from_mapping(throughput, "signal_count"),
+                decision_count=_int_from_mapping(throughput, "decision_count"),
+                trade_count=_int_from_mapping(throughput, "trade_count"),
+                recommendation=recommended_mode,
+                promotion_allowed=effective_promotion_allowed,
+                outcome=(
+                    f"promoted_{recommended_mode}"
+                    if effective_promotion_allowed
+                    else f"blocked_{recommended_mode}"
+                ),
             ),
         )
         if not actuation_allowed:

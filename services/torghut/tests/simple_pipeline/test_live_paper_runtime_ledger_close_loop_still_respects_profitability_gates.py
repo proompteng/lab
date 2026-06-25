@@ -7,6 +7,8 @@ from tests.simple_pipeline.support import (
     SimpleNamespace,
     SimpleTradingPipeline,
     Strategy,
+    TargetQuantityResolutionRequest,
+    TargetSizingPriceRequest,
     _bounded_hpairs_target,
     _bounded_sim_collection_blockers,
     _build_realized_strategy_pnl_rows,
@@ -368,29 +370,33 @@ def test_target_quantity_resolution_records_fallback_blockers() -> None:
 
     assert (
         pipeline._paper_route_target_quantity_resolution(
-            target={"target_notional": "100"},
-            symbol="AAPL",
-            symbols=["AAPL"],
-            action="buy",
-            requested_qty=Decimal("0"),
-            symbol_quantities={},
-            max_notional=Decimal("100"),
-            event_ts=now,
-            timeframe="1Min",
+            TargetQuantityResolutionRequest(
+                target={"target_notional": "100"},
+                symbol="AAPL",
+                symbols=["AAPL"],
+                action="buy",
+                requested_qty=Decimal("0"),
+                symbol_quantities={},
+                max_notional=Decimal("100"),
+                event_ts=now,
+                timeframe="1Min",
+            )
         )
         is None
     )
 
     missing_budget = pipeline._paper_route_target_quantity_resolution(
-        target={"target_notional": "100"},
-        symbol="MSFT",
-        symbols=["AAPL"],
-        action="buy",
-        requested_qty=Decimal("1"),
-        symbol_quantities={},
-        max_notional=Decimal("100"),
-        event_ts=now,
-        timeframe="1Min",
+        TargetQuantityResolutionRequest(
+            target={"target_notional": "100"},
+            symbol="MSFT",
+            symbols=["AAPL"],
+            action="buy",
+            requested_qty=Decimal("1"),
+            symbol_quantities={},
+            max_notional=Decimal("100"),
+            event_ts=now,
+            timeframe="1Min",
+        )
     )
     assert missing_budget is not None
     assert missing_budget.qty == Decimal("1")
@@ -400,29 +406,33 @@ def test_target_quantity_resolution_records_fallback_blockers() -> None:
 
     no_price_pipeline = object.__new__(SimpleTradingPipeline)
     no_price = no_price_pipeline._paper_route_target_quantity_resolution(
-        target={"target_notional": "100"},
-        symbol="AAPL",
-        symbols=["AAPL"],
-        action="buy",
-        requested_qty=Decimal("1"),
-        symbol_quantities={},
-        max_notional=Decimal("100"),
-        event_ts=now,
-        timeframe="1Min",
+        TargetQuantityResolutionRequest(
+            target={"target_notional": "100"},
+            symbol="AAPL",
+            symbols=["AAPL"],
+            action="buy",
+            requested_qty=Decimal("1"),
+            symbol_quantities={},
+            max_notional=Decimal("100"),
+            event_ts=now,
+            timeframe="1Min",
+        )
     )
     assert no_price is not None
     assert no_price.audit["blockers"] == ["paper_route_target_notional_price_missing"]
 
     too_small = pipeline._paper_route_target_quantity_resolution(
-        target={"target_notional": "0.000001"},
-        symbol="AAPL",
-        symbols=["AAPL"],
-        action="buy",
-        requested_qty=Decimal("1"),
-        symbol_quantities={},
-        max_notional=Decimal("0.000001"),
-        event_ts=now,
-        timeframe="1Min",
+        TargetQuantityResolutionRequest(
+            target={"target_notional": "0.000001"},
+            symbol="AAPL",
+            symbols=["AAPL"],
+            action="buy",
+            requested_qty=Decimal("1"),
+            symbol_quantities={},
+            max_notional=Decimal("0.000001"),
+            event_ts=now,
+            timeframe="1Min",
+        )
     )
     assert too_small is None
 
@@ -434,11 +444,15 @@ def test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures()
     pipeline = object.__new__(SimpleTradingPipeline)
     reference_price, price_params, price_source = (
         pipeline._paper_route_target_sizing_price(
-            target={"price_snapshot": {"symbol": "AAPL", "bid": "99", "ask": "101"}},
-            symbol="AAPL",
-            action="buy",
-            event_ts=now,
-            timeframe="1Min",
+            TargetSizingPriceRequest(
+                target={
+                    "price_snapshot": {"symbol": "AAPL", "bid": "99", "ask": "101"}
+                },
+                symbol="AAPL",
+                action="buy",
+                event_ts=now,
+                timeframe="1Min",
+            )
         )
     )
     assert reference_price == Decimal("101")
@@ -447,11 +461,13 @@ def test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures()
 
     no_fetcher = object.__new__(SimpleTradingPipeline)
     assert no_fetcher._paper_route_target_sizing_price(
-        target={},
-        symbol="AAPL",
-        action="buy",
-        event_ts=now,
-        timeframe="1Min",
+        TargetSizingPriceRequest(
+            target={},
+            symbol="AAPL",
+            action="buy",
+            event_ts=now,
+            timeframe="1Min",
+        )
     ) == (None, {}, None)
 
     class RaisingFetcher:
@@ -461,11 +477,13 @@ def test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures()
     failing = object.__new__(SimpleTradingPipeline)
     failing.price_fetcher = RaisingFetcher()
     assert failing._paper_route_target_sizing_price(
-        target={},
-        symbol="AAPL",
-        action="buy",
-        event_ts=now,
-        timeframe="1Min",
+        TargetSizingPriceRequest(
+            target={},
+            symbol="AAPL",
+            action="buy",
+            event_ts=now,
+            timeframe="1Min",
+        )
     ) == (None, {}, None)
 
     invalid = object.__new__(SimpleTradingPipeline)
@@ -480,11 +498,13 @@ def test_target_sizing_price_uses_target_snapshot_and_handles_fetcher_failures()
     )
     reference_price, price_params, price_source = (
         invalid._paper_route_target_sizing_price(
-            target={},
-            symbol="AAPL",
-            action="buy",
-            event_ts=now,
-            timeframe="1Min",
+            TargetSizingPriceRequest(
+                target={},
+                symbol="AAPL",
+                action="buy",
+                event_ts=now,
+                timeframe="1Min",
+            )
         )
     )
     assert reference_price is None

@@ -244,7 +244,7 @@ def _payload_account_ids(
 
 
 def tigerbeetle_stable_ref_payload(
-    request: StableRefPayloadInput | None = None, **legacy_fields: object
+    request: StableRefPayloadInput,
 ) -> dict[str, object]:
     """Return a signed, deterministic audit-ref payload for a transfer ref.
 
@@ -254,7 +254,6 @@ def tigerbeetle_stable_ref_payload(
     authority.
     """
 
-    request = _stable_ref_payload_input(request, legacy_fields)
     account_label = _stable_ref_account_label(
         request.account_specs, request.payload_json
     )
@@ -413,28 +412,8 @@ def _append_transfer_account_ids(
             account_ids.append(account_id)
 
 
-def _stable_ref_payload_input(
-    request: StableRefPayloadInput | None, legacy_fields: Mapping[str, object]
-) -> StableRefPayloadInput:
-    if request is not None:
-        if legacy_fields:
-            raise TypeError("stable ref request cannot be mixed with keyword fields")
-        return request
-    return StableRefPayloadInput(
-        cluster_id=int(cast(str | int, legacy_fields["cluster_id"])),
-        account_specs=cast(
-            Sequence[TigerBeetleAccountSpec], legacy_fields["account_specs"]
-        ),
-        transfer_spec=cast(TigerBeetleTransferSpec, legacy_fields["transfer_spec"]),
-        source_type=str(legacy_fields["source_type"]),
-        source_id=str(legacy_fields["source_id"]),
-        payload_json=cast(Mapping[str, object], legacy_fields["payload_json"]),
-        event_fingerprint=cast(str | None, legacy_fields.get("event_fingerprint")),
-    )
-
-
 def tigerbeetle_runtime_ledger_journal_payload(
-    request: RuntimeLedgerJournalPayloadInput | None = None, **legacy_fields: object
+    request: RuntimeLedgerJournalPayloadInput,
 ) -> dict[str, object]:
     """Build stable bucket metadata for TigerBeetle journal parity.
 
@@ -444,7 +423,6 @@ def tigerbeetle_runtime_ledger_journal_payload(
     disabled, skipped, or degraded.
     """
 
-    request = _runtime_ledger_payload_input(request, legacy_fields)
     refs = _runtime_ledger_journal_refs(request)
     bucket = request.bucket
 
@@ -489,28 +467,6 @@ def tigerbeetle_runtime_ledger_journal_payload(
             if request.ref is not None
             else None,
         }
-    )
-
-
-def _runtime_ledger_payload_input(
-    request: RuntimeLedgerJournalPayloadInput | None,
-    legacy_fields: Mapping[str, object],
-) -> RuntimeLedgerJournalPayloadInput:
-    if request is not None:
-        if legacy_fields:
-            raise TypeError(
-                "runtime ledger request cannot be mixed with keyword fields"
-            )
-        return request
-    return RuntimeLedgerJournalPayloadInput(
-        bucket=cast(StrategyRuntimeLedgerBucket, legacy_fields["bucket"]),
-        ref=cast(TigerBeetleTransferRef | None, legacy_fields.get("ref")),
-        status=str(legacy_fields["status"]),
-        blockers=cast(Sequence[str], legacy_fields.get("blockers", ())),
-        account_refs=cast(
-            Sequence[TigerBeetleAccountRef], legacy_fields.get("account_refs", ())
-        ),
-        error=cast(str | None, legacy_fields.get("error")),
     )
 
 

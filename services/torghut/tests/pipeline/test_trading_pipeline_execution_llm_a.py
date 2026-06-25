@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.trading.scheduler.pipeline.contexts import OrderSubmissionRequest
 from tests.pipeline.trading_pipeline_base import (
     AdaptiveExecutionPolicyDecision,
     CountingAlpacaClient,
@@ -645,12 +646,14 @@ class TestTradingPipelineExecutionLlmA(TradingPipelineTestCaseBase):
             )
 
             execution, rejected = pipeline._submit_order_with_handling(
-                session=session,
-                execution_client=alpaca,
-                decision=decision,
-                decision_row=decision_row,
-                selected_adapter_name="alpaca",
-                retry_delays=[],
+                OrderSubmissionRequest(
+                    session=session,
+                    execution_client=alpaca,
+                    decision=decision,
+                    decision_row=decision_row,
+                    selected_adapter_name="alpaca",
+                    retry_delays=[],
+                )
             )
 
             self.assertIsNone(execution)

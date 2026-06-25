@@ -33,6 +33,10 @@ from ..target_plan_helpers import (
 
 
 from ..pipeline.shared import TradingPipelineBase
+from ..pipeline.contexts import (
+    DecisionSubmissionContext,
+    DecisionRejectionRequest,
+)
 
 from .quote_routeability_values import (
     assess_paper_route_quote_status,
@@ -437,9 +441,15 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
     def _prepare_decision_for_submission(
         self,
         request: SubmissionPreparationRequest | None = None,
-        **legacy_kwargs: Any,
+        *,
+        context: DecisionSubmissionContext | None = None,
+        decision: StrategyDecision | None = None,
     ) -> tuple[StrategyDecision, Optional[MarketSnapshot]] | None:
-        request = self._submission_preparation_request(request, legacy_kwargs)
+        request = self._submission_preparation_request(
+            request=request,
+            context=context,
+            decision=decision,
+        )
         decision = self._exit_window_guarded_submission_decision(request)
         if decision is None:
             return None
@@ -467,27 +477,24 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
     @staticmethod
     def _submission_preparation_request(
         request: SubmissionPreparationRequest | None,
-        legacy_kwargs: Mapping[str, Any],
+        *,
+        context: DecisionSubmissionContext | None,
+        decision: StrategyDecision | None,
     ) -> SubmissionPreparationRequest:
         if request is not None:
             return request
-        if "context" in legacy_kwargs:
-            context = legacy_kwargs["context"]
-            return SubmissionPreparationRequest(
-                session=context.session,
-                decision=legacy_kwargs["decision"],
-                decision_row=context.decision_row,
-                strategy=context.strategy,
-                account=context.account,
-                positions=context.positions,
+        if context is None or decision is None:
+            raise TypeError(
+                "Submission preparation requires a SubmissionPreparationRequest "
+                "or explicit context and decision"
             )
         return SubmissionPreparationRequest(
-            session=legacy_kwargs["session"],
-            decision=legacy_kwargs["decision"],
-            decision_row=legacy_kwargs["decision_row"],
-            strategy=legacy_kwargs["strategy"],
-            account=legacy_kwargs["account"],
-            positions=legacy_kwargs["positions"],
+            session=context.session,
+            decision=decision,
+            decision_row=context.decision_row,
+            strategy=context.strategy,
+            account=context.account,
+            positions=context.positions,
         )
 
     @staticmethod
@@ -522,11 +529,13 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
             request.session, request.decision_row, decision
         )
         self._record_decision_rejection(
-            session=request.session,
-            decision=decision,
-            decision_row=request.decision_row,
-            reasons=[bounded_exit_window_reject_reason],
-            log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+            DecisionRejectionRequest(
+                session=request.session,
+                decision=decision,
+                decision_row=request.decision_row,
+                reasons=[bounded_exit_window_reject_reason],
+                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+            )
         )
         return None
 
@@ -554,11 +563,13 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
             if not quote_status.valid:
                 reason = quote_status.reason or "missing_executable_quote"
                 self._record_decision_rejection(
-                    session=request.session,
-                    decision=decision,
-                    decision_row=request.decision_row,
-                    reasons=[reason],
-                    log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                    DecisionRejectionRequest(
+                        session=request.session,
+                        decision=decision,
+                        decision_row=request.decision_row,
+                        reasons=[reason],
+                        log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                    )
                 )
                 return None
         return decision, snapshot
@@ -584,11 +595,13 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         )
         if bounded_target_sizing_reject_reason is not None:
             self._record_decision_rejection(
-                session=request.session,
-                decision=decision,
-                decision_row=request.decision_row,
-                reasons=[bounded_target_sizing_reject_reason],
-                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                DecisionRejectionRequest(
+                    session=request.session,
+                    decision=decision,
+                    decision_row=request.decision_row,
+                    reasons=[bounded_target_sizing_reject_reason],
+                    log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                )
             )
             return None
         return decision
@@ -781,11 +794,13 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         if not preparation.approved or preparation.reject_reason is not None:
             reason = preparation.reject_reason or "broker_precheck_failed"
             self._record_decision_rejection(
-                session=request.session,
-                decision=prepared_decision,
-                decision_row=request.decision_row,
-                reasons=[reason],
-                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                DecisionRejectionRequest(
+                    session=request.session,
+                    decision=prepared_decision,
+                    decision_row=request.decision_row,
+                    reasons=[reason],
+                    log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                )
             )
             return None
         return prepared_decision, snapshot

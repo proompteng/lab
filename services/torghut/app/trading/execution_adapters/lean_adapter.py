@@ -70,13 +70,9 @@ class LeanExecutionAdapter:
 
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        qty: float,
-        *args: Any,
-        **kwargs: Any,
+        request: OrderSubmission,
+        /,
     ) -> dict[str, Any]:
-        request = OrderSubmission.from_legacy(symbol, side, qty, *args, **kwargs)
         extra_params_payload: dict[str, Any] = dict(request.extra_params or {})
         client_order_id = extra_params_payload.get("client_order_id")
         correlation_id = f"torghut-{uuid4().hex[:20]}"
@@ -465,14 +461,7 @@ class LeanExecutionAdapter:
         if self.fallback is None:
             raise RuntimeError("lean_fallback_not_configured")
         payload = self.fallback.submit_order(
-            symbol=request.symbol,
-            side=request.side,
-            qty=request.qty,
-            order_type=request.order_type,
-            time_in_force=request.time_in_force,
-            limit_price=request.limit_price,
-            stop_price=request.stop_price,
-            extra_params=request.extra_params,
+            request,
         )
         payload = self._coerce_order_dict(payload)
         payload = self._validate_submit_payload(

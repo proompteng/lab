@@ -28,6 +28,7 @@ from app.trading.tigerbeetle_journal import (
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+    RuntimeLedgerJournalPayloadInput,
     build_runtime_ledger_bucket_transfer_plan,
     build_order_event_transfer_plan,
     tigerbeetle_runtime_ledger_journal_payload,
@@ -448,9 +449,11 @@ def _attach_runtime_bucket_journal_payload(
     ref: TigerBeetleTransferRef,
 ) -> None:
     journal_payload = tigerbeetle_runtime_ledger_journal_payload(
-        bucket=row,
-        ref=ref,
-        status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+        RuntimeLedgerJournalPayloadInput(
+            bucket=row,
+            ref=ref,
+            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+        )
     )
     existing_payload = (
         dict(row.payload_json) if isinstance(row.payload_json, dict) else {}

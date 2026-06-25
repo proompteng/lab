@@ -16,6 +16,10 @@ from app.trading.prices import MarketSnapshot
 from app.trading.paper_route_target_plan import (
     blocked_target_readiness as _blocked_target_readiness,
 )
+from app.trading.scheduler.submission_preparation.shared import (
+    TargetQuantityResolutionRequest,
+    TargetSizingPriceRequest,
+)
 from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
 from app.trading.scheduler.target_plan_helpers import (
     _bounded_sim_collection_blockers,
@@ -125,6 +129,8 @@ __all__ = [
     "StaticPool",
     "Strategy",
     "StrategyDecision",
+    "TargetQuantityResolutionRequest",
+    "TargetSizingPriceRequest",
     "TradeDecision",
     "_blocked_target_readiness",
     "_bounded_hpairs_target",

@@ -15,6 +15,7 @@ from tests.tigerbeetle_reconcile.support import (
     SOURCE_TYPE_EXECUTION,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+    StableRefPayloadInput,
     Session,
     TRANSFER_CODE_EXECUTION_FILL,
     TRANSFER_CODE_FILL_POST,
@@ -427,13 +428,15 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
                 "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
             }
             stable_payload = tigerbeetle_stable_ref_payload(
-                cluster_id=2001,
-                account_specs=plan.account_specs,
-                transfer_spec=transfer,
-                source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-                source_id=str(event.id),
-                payload_json=payload_json,
-                event_fingerprint=event.event_fingerprint,
+                StableRefPayloadInput(
+                    cluster_id=2001,
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer,
+                    source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    source_id=str(event.id),
+                    payload_json=payload_json,
+                    event_fingerprint=event.event_fingerprint,
+                )
             )
             session.add(
                 TigerBeetleTransferRef(
@@ -544,13 +547,15 @@ class TestReconciliationPassesWhenPostgresRefsMatchTigerbeetle(
                 "source": SOURCE_TYPE_EXECUTION_ORDER_EVENT,
             }
             stable_payload = tigerbeetle_stable_ref_payload(
-                cluster_id=2001,
-                account_specs=plan.account_specs,
-                transfer_spec=transfer,
-                source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-                source_id=str(event.id),
-                payload_json=payload_json,
-                event_fingerprint=event.event_fingerprint,
+                StableRefPayloadInput(
+                    cluster_id=2001,
+                    account_specs=plan.account_specs,
+                    transfer_spec=transfer,
+                    source_type=SOURCE_TYPE_EXECUTION_ORDER_EVENT,
+                    source_id=str(event.id),
+                    payload_json=payload_json,
+                    event_fingerprint=event.event_fingerprint,
+                )
             )
             stable_ref = stable_payload["stable_ref"]
             assert isinstance(stable_ref, dict)

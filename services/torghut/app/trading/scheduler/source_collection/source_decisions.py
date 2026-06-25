@@ -46,6 +46,7 @@ from ..target_plan_helpers import (
     target_symbols as _target_symbols,
     target_truthy as _target_truthy,
 )
+from ..submission_preparation.shared import TargetQuantityResolutionRequest
 from .collection_types import (
     SourceCollectionAction,
     SourceCollectionDecisionPayload,
@@ -551,15 +552,17 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         timeframe = source_collection_timeframe(context)
         requested_qty = context.symbol_quantities.get(symbol, Decimal("1"))
         quantity_resolution = self._paper_route_target_quantity_resolution(
-            target=context.target,
-            symbol=symbol,
-            symbols=context.symbols,
-            action=action,
-            requested_qty=requested_qty,
-            symbol_quantities=context.symbol_quantities,
-            max_notional=context.target_cap,
-            event_ts=now,
-            timeframe=timeframe,
+            TargetQuantityResolutionRequest(
+                target=context.target,
+                symbol=symbol,
+                symbols=context.symbols,
+                action=action,
+                requested_qty=requested_qty,
+                symbol_quantities=context.symbol_quantities,
+                max_notional=context.target_cap,
+                event_ts=now,
+                timeframe=timeframe,
+            )
         )
         if quantity_resolution is None:
             return None

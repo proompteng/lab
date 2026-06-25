@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.trading.scheduler.submission_preparation.shared import (
+    SubmissionPreparationRequest,
+)
 from tests.pipeline.trading_pipeline_base import (
     Any,
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -269,16 +272,18 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
             )
 
             prepared = pipeline._prepare_decision_for_submission(
-                session=session,
-                decision=decision,
-                decision_row=row,
-                strategy=strategy,
-                account={
-                    "equity": "100000",
-                    "cash": "100000",
-                    "buying_power": "100000",
-                },
-                positions=[],
+                SubmissionPreparationRequest(
+                    session=session,
+                    decision=decision,
+                    decision_row=row,
+                    strategy=strategy,
+                    account={
+                        "equity": "100000",
+                        "cash": "100000",
+                        "buying_power": "100000",
+                    },
+                    positions=[],
+                )
             )
             session.refresh(row)
             row_json = cast(dict[str, Any], row.decision_json)
@@ -361,16 +366,18 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
             )
 
             prepared = pipeline._prepare_decision_for_submission(
-                session=session,
-                decision=decision,
-                decision_row=row,
-                strategy=strategy,
-                account={
-                    "equity": "100000",
-                    "cash": "100000",
-                    "buying_power": "100000",
-                },
-                positions=[],
+                SubmissionPreparationRequest(
+                    session=session,
+                    decision=decision,
+                    decision_row=row,
+                    strategy=strategy,
+                    account={
+                        "equity": "100000",
+                        "cash": "100000",
+                        "buying_power": "100000",
+                    },
+                    positions=[],
+                )
             )
             session.refresh(row)
             row_json = cast(dict[str, Any], row.decision_json)
@@ -501,16 +508,18 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
                 )
 
                 prepared = pipeline._prepare_decision_for_submission(
-                    session=session,
-                    decision=decision,
-                    decision_row=row,
-                    strategy=strategy,
-                    account={
-                        "equity": "100000",
-                        "cash": "100000",
-                        "buying_power": "100000",
-                    },
-                    positions=[],
+                    SubmissionPreparationRequest(
+                        session=session,
+                        decision=decision,
+                        decision_row=row,
+                        strategy=strategy,
+                        account={
+                            "equity": "100000",
+                            "cash": "100000",
+                            "buying_power": "100000",
+                        },
+                        positions=[],
+                    )
                 )
                 session.refresh(row)
                 row_json = cast(dict[str, Any], row.decision_json)
@@ -585,16 +594,18 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
             )
 
             prepared = pipeline._prepare_decision_for_submission(
-                session=session,
-                decision=decision,
-                decision_row=row,
-                strategy=strategy,
-                account={
-                    "equity": "100000",
-                    "cash": "100000",
-                    "buying_power": "100000",
-                },
-                positions=[],
+                SubmissionPreparationRequest(
+                    session=session,
+                    decision=decision,
+                    decision_row=row,
+                    strategy=strategy,
+                    account={
+                        "equity": "100000",
+                        "cash": "100000",
+                        "buying_power": "100000",
+                    },
+                    positions=[],
+                )
             )
             session.refresh(row)
             row_json = cast(dict[str, Any], row.decision_json)
@@ -710,16 +721,18 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
             )
 
             prepared = pipeline._prepare_decision_for_submission(
-                session=session,
-                decision=decision,
-                decision_row=row,
-                strategy=strategy,
-                account={
-                    "equity": "200000",
-                    "cash": "200000",
-                    "buying_power": "200000",
-                },
-                positions=[],
+                SubmissionPreparationRequest(
+                    session=session,
+                    decision=decision,
+                    decision_row=row,
+                    strategy=strategy,
+                    account={
+                        "equity": "200000",
+                        "cash": "200000",
+                        "buying_power": "200000",
+                    },
+                    positions=[],
+                )
             )
             session.refresh(row)
             row_json = cast(dict[str, Any], row.decision_json)

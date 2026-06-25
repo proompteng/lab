@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal, Optional, cast
@@ -73,33 +72,6 @@ class AutonomyPromotionOutcomeMetrics:
     recommendation: str | None
     promotion_allowed: bool
     outcome: str
-
-    @classmethod
-    def from_legacy_kwargs(
-        cls, fields: Mapping[str, object]
-    ) -> "AutonomyPromotionOutcomeMetrics":
-        return cls(
-            signal_count=_int_metric(fields.get("signal_count")),
-            decision_count=_int_metric(fields.get("decision_count")),
-            trade_count=_int_metric(fields.get("trade_count")),
-            recommendation=_optional_text(fields.get("recommendation")),
-            promotion_allowed=bool(fields.get("promotion_allowed")),
-            outcome=str(fields.get("outcome") or ""),
-        )
-
-
-def _int_metric(value: object) -> int:
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def _optional_text(value: object) -> str | None:
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 @dataclass

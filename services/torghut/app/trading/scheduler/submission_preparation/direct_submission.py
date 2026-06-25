@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import timezone
 from decimal import Decimal
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 
 from ....config import settings
@@ -23,11 +23,17 @@ from ..target_plan_helpers import (
 
 
 from ..pipeline.shared import TradingPipelineBase
+from ..pipeline.contexts import (
+    DecisionBlockRequest,
+    DecisionRejectionRequest,
+    LiveSubmissionGateInputs,
+    RiskVerdictRequest as PipelineRiskVerdictRequest,
+)
 from ..pipeline.support import extract_json_error_payload
 
 from .shared import (
     OrderSubmitRequest,
-    RiskVerdictRequest,
+    RiskVerdictRequest as SimpleRiskVerdictRequest,
     SubmissionDecisionContext,
     SubmitRejectionRequest,
     TradingSubmissionRequest,
@@ -55,14 +61,18 @@ _LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS = frozenset(
 
 _BOUNDED_PAPER_ROUTE_CLOSE_SOURCE = "filled_bounded_paper_route_collection_executions"
 
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+    from ....models import TradeDecision
+
 
 class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
     def _passes_risk_verdict(
         self,
-        request: RiskVerdictRequest | Any | None = None,
-        **legacy_kwargs: Any,
+        request: SimpleRiskVerdictRequest | PipelineRiskVerdictRequest,
     ) -> bool:
-        request = self._risk_verdict_request(request, legacy_kwargs)
+        request = self._risk_verdict_request(request)
         _ = (
             request.context.strategy,
             request.context.account,
@@ -76,20 +86,28 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if short_reason is None:
             return True
         self._record_decision_rejection(
-            session=request.context.session,
-            decision=request.decision,
-            decision_row=request.context.decision_row,
-            reasons=[short_reason],
-            log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+            DecisionRejectionRequest(
+                session=request.context.session,
+                decision=request.decision,
+                decision_row=request.context.decision_row,
+                reasons=[short_reason],
+                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+            )
         )
         return False
 
     def _is_trading_submission_allowed(
         self,
-        request: TradingSubmissionRequest | None = None,
-        **legacy_kwargs: Any,
+        *,
+        session: Session | None = None,
+        decision: StrategyDecision | None = None,
+        decision_row: TradeDecision | None = None,
     ) -> bool:
-        request = self._trading_submission_request(request, legacy_kwargs)
+        request = self._trading_submission_request(
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
+        )
         checks = (
             self._trading_enabled_submission_allowed,
             self._firewall_submission_allowed,
@@ -106,56 +124,39 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
 
     @staticmethod
     def _risk_verdict_request(
-        request: RiskVerdictRequest | Any | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> RiskVerdictRequest:
-        if request is not None:
-            if hasattr(request, "symbol_allowlist"):
-                return request
-            context = request.context
-            symbol_allowlist = cast(
-                set[str],
-                getattr(context, "symbol_allowlist", set[str]()),
-            )
-            return RiskVerdictRequest(
-                context=SubmissionDecisionContext(
-                    session=context.session,
-                    decision_row=context.decision_row,
-                    strategy=context.strategy,
-                    account=context.account,
-                    positions=context.positions,
-                ),
-                decision=request.decision,
-                symbol_allowlist=symbol_allowlist,
-                execution_advisor=request.execution_advisor,
-            )
-        return RiskVerdictRequest(
+        request: SimpleRiskVerdictRequest | PipelineRiskVerdictRequest,
+    ) -> SimpleRiskVerdictRequest:
+        if isinstance(request, SimpleRiskVerdictRequest):
+            return request
+        context = request.context
+        return SimpleRiskVerdictRequest(
             context=SubmissionDecisionContext(
-                session=legacy_kwargs["session"],
-                decision_row=legacy_kwargs["decision_row"],
-                strategy=legacy_kwargs["strategy"],
-                account=legacy_kwargs["account"],
-                positions=legacy_kwargs["positions"],
+                session=context.session,
+                decision_row=context.decision_row,
+                strategy=context.strategy,
+                account=context.account,
+                positions=context.positions,
             ),
-            decision=legacy_kwargs["decision"],
-            symbol_allowlist=legacy_kwargs["symbol_allowlist"],
-            execution_advisor=legacy_kwargs.get("execution_advisor"),
+            decision=request.decision,
+            symbol_allowlist=context.symbol_allowlist,
+            execution_advisor=request.execution_advisor,
         )
 
     @staticmethod
     def _trading_submission_request(
-        request: TradingSubmissionRequest | None,
-        legacy_kwargs: Mapping[str, Any],
+        *,
+        session: Session | None,
+        decision: StrategyDecision | None,
+        decision_row: TradeDecision | None,
     ) -> TradingSubmissionRequest:
-        if request is not None:
-            return request
+        if session is None or decision is None or decision_row is None:
+            raise TypeError(
+                "Trading submission checks require session, decision, and decision_row"
+            )
         return TradingSubmissionRequest(
-            session=legacy_kwargs["session"],
-            decision=legacy_kwargs["decision"],
-            decision_row=legacy_kwargs["decision_row"],
-            strategy=legacy_kwargs.get("strategy"),
-            account=legacy_kwargs.get("account"),
-            positions=legacy_kwargs.get("positions"),
+            session=session,
+            decision=decision,
+            decision_row=decision_row,
         )
 
     def _trading_enabled_submission_allowed(
@@ -164,11 +165,13 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
     ) -> bool:
         if not settings.trading_enabled:
             self._block_decision_submission(
-                session=request.session,
-                decision=request.decision,
-                decision_row=request.decision_row,
-                reason="trading_disabled",
-                submission_stage="blocked_trading_disabled",
+                DecisionBlockRequest(
+                    session=request.session,
+                    decision=request.decision,
+                    decision_row=request.decision_row,
+                    reason="trading_disabled",
+                    submission_stage="blocked_trading_disabled",
+                )
             )
             return False
         return True
@@ -180,11 +183,13 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         firewall_status = self.order_firewall.status()
         if firewall_status.kill_switch_enabled:
             self._record_decision_rejection(
-                session=request.session,
-                decision=request.decision,
-                decision_row=request.decision_row,
-                reasons=["kill_switch_enabled"],
-                log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                DecisionRejectionRequest(
+                    session=request.session,
+                    decision=request.decision,
+                    decision_row=request.decision_row,
+                    reasons=["kill_switch_enabled"],
+                    log_template="Simple-lane decision rejected strategy_id=%s symbol=%s reason=%s",
+                )
             )
             return False
         return True
@@ -194,7 +199,9 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         request: TradingSubmissionRequest,
     ) -> bool:
         if settings.trading_mode == "live":
-            live_submission_gate = self._live_submission_gate(session=request.session)
+            live_submission_gate = self._live_submission_gate(
+                inputs=LiveSubmissionGateInputs(session=request.session)
+            )
             if not bool(live_submission_gate.get("allowed", False)):
                 if self._bounded_live_paper_route_probe_request_allowed(
                     request,
@@ -202,15 +209,17 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                 ):
                     return True
                 self._block_decision_submission(
-                    session=request.session,
-                    decision=request.decision,
-                    decision_row=request.decision_row,
-                    reason=str(
-                        live_submission_gate.get("reason")
-                        or "live_submission_gate_blocked"
-                    ),
-                    submission_stage="blocked_live_submission_gate",
-                    extra_metadata={"live_submission_gate": live_submission_gate},
+                    DecisionBlockRequest(
+                        session=request.session,
+                        decision=request.decision,
+                        decision_row=request.decision_row,
+                        reason=str(
+                            live_submission_gate.get("reason")
+                            or "live_submission_gate_blocked"
+                        ),
+                        submission_stage="blocked_live_submission_gate",
+                        extra_metadata={"live_submission_gate": live_submission_gate},
+                    )
                 )
                 return False
         return True
@@ -424,13 +433,15 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         ):
             return True
         self._block_decision_submission(
-            session=session,
-            decision=decision,
-            decision_row=decision_row,
-            reason=proof_floor_block_reason,
-            submission_stage="blocked_profitability_proof_floor",
-            capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
-            extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+            DecisionBlockRequest(
+                session=session,
+                decision=decision,
+                decision_row=decision_row,
+                reason=proof_floor_block_reason,
+                submission_stage="blocked_profitability_proof_floor",
+                capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
+                extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+            )
         )
         return False
 
@@ -454,13 +465,17 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             ):
                 return True
             self._block_decision_submission(
-                session=request.session,
-                decision=decision,
-                decision_row=request.decision_row,
-                reason=proof_floor_symbol_block_reason,
-                submission_stage="blocked_profitability_route_symbol",
-                capital_stage=str(proof_floor.get("capital_state") or "zero_notional"),
-                extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+                DecisionBlockRequest(
+                    session=request.session,
+                    decision=decision,
+                    decision_row=request.decision_row,
+                    reason=proof_floor_symbol_block_reason,
+                    submission_stage="blocked_profitability_route_symbol",
+                    capital_stage=str(
+                        proof_floor.get("capital_state") or "zero_notional"
+                    ),
+                    extra_metadata={"profitability_proof_floor": dict(proof_floor)},
+                )
             )
             return False
         return True
@@ -471,11 +486,13 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
     ) -> bool:
         if settings.trading_emergency_stop_enabled and self.state.emergency_stop_active:
             self._block_decision_submission(
-                session=request.session,
-                decision=request.decision,
-                decision_row=request.decision_row,
-                reason=self.state.emergency_stop_reason or "emergency_stop_active",
-                submission_stage="blocked_emergency_stop",
+                DecisionBlockRequest(
+                    session=request.session,
+                    decision=request.decision,
+                    decision_row=request.decision_row,
+                    reason=self.state.emergency_stop_reason or "emergency_stop_active",
+                    submission_stage="blocked_emergency_stop",
+                )
             )
             return False
         return True
@@ -493,20 +510,22 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             exit_metadata = self._paper_route_probe_exit_metadata(decision)
             if collection_metadata is None and exit_metadata is None:
                 self._block_decision_submission(
-                    session=request.session,
-                    decision=decision,
-                    decision_row=request.decision_row,
-                    reason="paper_route_target_window_requires_scoped_source_decision",
-                    submission_stage="blocked_paper_route_target_window_unscoped",
-                    capital_stage="shadow",
-                    extra_metadata={
-                        "paper_route_target_window": active_target_window,
-                        "simple_lane": {
-                            "submit_enabled": settings.trading_simple_submit_enabled,
-                            "bounded_sim_collection_required": True,
-                            "bounded_sim_collection_bypass": False,
+                    DecisionBlockRequest(
+                        session=request.session,
+                        decision=decision,
+                        decision_row=request.decision_row,
+                        reason="paper_route_target_window_requires_scoped_source_decision",
+                        submission_stage="blocked_paper_route_target_window_unscoped",
+                        capital_stage="shadow",
+                        extra_metadata={
+                            "paper_route_target_window": active_target_window,
+                            "simple_lane": {
+                                "submit_enabled": settings.trading_simple_submit_enabled,
+                                "bounded_sim_collection_required": True,
+                                "bounded_sim_collection_bypass": False,
+                            },
                         },
-                    },
+                    )
                 )
                 return False
         return True
@@ -517,20 +536,22 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         proof_floor_block_reason: str,
     ) -> None:
         self._block_decision_submission(
-            session=request.session,
-            decision=request.decision,
-            decision_row=request.decision_row,
-            reason="simple_submit_disabled",
-            submission_stage="blocked_simple_submit_disabled",
-            capital_stage="shadow",
-            extra_metadata={
-                "simple_lane": {
-                    "submit_enabled": False,
-                    "bounded_sim_collection_bypass": False,
-                    "bounded_sim_collection_required": True,
-                    "proof_floor_block_reason": proof_floor_block_reason,
-                }
-            },
+            DecisionBlockRequest(
+                session=request.session,
+                decision=request.decision,
+                decision_row=request.decision_row,
+                reason="simple_submit_disabled",
+                submission_stage="blocked_simple_submit_disabled",
+                capital_stage="shadow",
+                extra_metadata={
+                    "simple_lane": {
+                        "submit_enabled": False,
+                        "bounded_sim_collection_bypass": False,
+                        "bounded_sim_collection_required": True,
+                        "proof_floor_block_reason": proof_floor_block_reason,
+                    }
+                },
+            )
         )
 
     def _bounded_sim_collection_metadata(
@@ -579,10 +600,8 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
 
     def _submit_order_with_handling(
         self,
-        request: OrderSubmitRequest | None = None,
-        **legacy_kwargs: Any,
+        request: OrderSubmitRequest,
     ) -> tuple[Any | None, bool]:
-        request = self._order_submit_request(request, legacy_kwargs)
         try:
             retry_delays_seconds = [float(delay) for delay in request.retry_delays]
             execution = self.executor.submit_order(
@@ -622,28 +641,10 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                 )
             )
 
-    @staticmethod
-    def _order_submit_request(
-        request: OrderSubmitRequest | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> OrderSubmitRequest:
-        if request is not None:
-            return request
-        return OrderSubmitRequest(
-            session=legacy_kwargs["session"],
-            execution_client=legacy_kwargs["execution_client"],
-            decision=legacy_kwargs["decision"],
-            decision_row=legacy_kwargs["decision_row"],
-            selected_adapter_name=legacy_kwargs["selected_adapter_name"],
-            retry_delays=legacy_kwargs["retry_delays"],
-        )
-
     def _reject_submit(
         self,
-        request: SubmitRejectionRequest | None = None,
-        **legacy_kwargs: Any,
+        request: SubmitRejectionRequest,
     ) -> tuple[None, bool]:
-        request = self._submit_rejection_request(request, legacy_kwargs)
         self.state.metrics.orders_rejected_total += 1
         self.state.metrics.record_decision_state("rejected")
         self.state.metrics.record_decision_rejection_reasons([request.reason])
@@ -669,23 +670,6 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             extra_properties={"rejection_type": request.rejection_type},
         )
         return None, True
-
-    @staticmethod
-    def _submit_rejection_request(
-        request: SubmitRejectionRequest | None,
-        legacy_kwargs: Mapping[str, Any],
-    ) -> SubmitRejectionRequest:
-        if request is not None:
-            return request
-        return SubmitRejectionRequest(
-            session=legacy_kwargs["session"],
-            decision=legacy_kwargs["decision"],
-            decision_row=legacy_kwargs["decision_row"],
-            selected_adapter_name=legacy_kwargs["selected_adapter_name"],
-            reason=legacy_kwargs["reason"],
-            rejection_type=legacy_kwargs["rejection_type"],
-            metadata=legacy_kwargs.get("metadata"),
-        )
 
     @staticmethod
     def _map_submit_exception(payload: Mapping[str, Any]) -> str:

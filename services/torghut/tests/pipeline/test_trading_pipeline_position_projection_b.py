@@ -24,6 +24,7 @@ from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.reconcile import Reconciler
 from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
+from app.trading.scheduler.pipeline.contexts import OrderSubmissionRequest
 from app.trading.scheduler.state import TradingState
 from app.trading.universe import UniverseResolver
 from tests.pipeline.trading_pipeline_base import TradingPipelineTestCaseBase
@@ -536,12 +537,14 @@ class TestTradingPipelinePositionProjectionB(TradingPipelineTestCaseBase):
             )
 
             execution, rejected = pipeline._submit_order_with_handling(
-                session=session,
-                execution_client=order_firewall,
-                decision=decision,
-                decision_row=decision_row,
-                selected_adapter_name="alpaca",
-                retry_delays=[],
+                OrderSubmissionRequest(
+                    session=session,
+                    execution_client=order_firewall,
+                    decision=decision,
+                    decision_row=decision_row,
+                    selected_adapter_name="alpaca",
+                    retry_delays=[],
+                )
             )
 
             self.assertFalse(rejected)

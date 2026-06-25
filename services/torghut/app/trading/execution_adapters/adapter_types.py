@@ -67,43 +67,6 @@ class OrderSubmission:
     stop_price: Optional[float]
     extra_params: Optional[dict[str, Any]]
 
-    @classmethod
-    def from_legacy(
-        cls,
-        symbol: str,
-        side: str,
-        qty: float,
-        *args: Any,
-        **kwargs: Any,
-    ) -> "OrderSubmission":
-        positional = list(args)
-        order_type = kwargs.pop(
-            "order_type", positional.pop(0) if positional else "market"
-        )
-        time_in_force = kwargs.pop(
-            "time_in_force", positional.pop(0) if positional else "day"
-        )
-        limit_price = kwargs.pop(
-            "limit_price", positional.pop(0) if positional else None
-        )
-        stop_price = kwargs.pop("stop_price", positional.pop(0) if positional else None)
-        extra_params = kwargs.pop(
-            "extra_params", positional.pop(0) if positional else None
-        )
-        if positional or kwargs:
-            unexpected = [*map(str, positional), *sorted(kwargs)]
-            raise TypeError(f"unexpected_order_submission_arguments:{unexpected}")
-        return cls(
-            symbol=symbol,
-            side=side,
-            qty=float(qty),
-            order_type=str(order_type),
-            time_in_force=str(time_in_force),
-            limit_price=cast(Optional[float], limit_price),
-            stop_price=cast(Optional[float], stop_price),
-            extra_params=cast(Optional[dict[str, Any]], extra_params),
-        )
-
 
 @dataclass(frozen=True)
 class SimulationAdapterConfig:
@@ -165,11 +128,8 @@ class ExecutionAdapter(Protocol):
 
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        qty: float,
-        *args: Any,
-        **kwargs: Any,
+        request: OrderSubmission,
+        /,
     ) -> dict[str, Any]: ...
 
     def cancel_order(self, order_id: str) -> bool: ...
@@ -201,13 +161,9 @@ class AlpacaExecutionAdapter:
 
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        qty: float,
-        *args: Any,
-        **kwargs: Any,
+        request: OrderSubmission,
+        /,
     ) -> dict[str, Any]:
-        request = OrderSubmission.from_legacy(symbol, side, qty, *args, **kwargs)
         payload = self._firewall.submit_order(
             symbol=request.symbol,
             side=request.side,
@@ -364,14 +320,10 @@ class SimulationExecutionAdapter:
 
     def submit_order(
         self,
-        symbol: str,
-        side: str,
-        qty: float,
-        *args: Any,
-        **kwargs: Any,
+        request: OrderSubmission,
+        /,
     ) -> dict[str, Any]:
         self._sync_runtime_context()
-        request = OrderSubmission.from_legacy(symbol, side, qty, *args, **kwargs)
         draft = self._simulation_order_draft(request)
         order = self._simulation_order_payload(draft)
         self._store_simulation_order(draft, order)

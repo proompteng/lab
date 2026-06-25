@@ -49,63 +49,6 @@ class TradingPipelineRuntimeDependencies:
     execution_policy: Any | None = None
     order_feed_ingestor: Any | None = None
 
-    @classmethod
-    def from_legacy_call(
-        cls,
-        args: tuple[Any, ...],
-        kwargs: dict[str, Any],
-        *,
-        default_session_factory: Any,
-    ) -> TradingPipelineRuntimeDependencies:
-        names = (
-            "alpaca_client",
-            "order_firewall",
-            "ingestor",
-            "decision_engine",
-            "risk_engine",
-            "executor",
-            "execution_adapter",
-            "reconciler",
-            "universe_resolver",
-            "state",
-            "account_label",
-            "session_factory",
-            "llm_review_engine",
-            "price_fetcher",
-            "strategy_catalog",
-            "execution_policy",
-            "order_feed_ingestor",
-        )
-        values = dict(kwargs)
-        for name, value in zip(names, args, strict=False):
-            if name in values:
-                raise TypeError(f"multiple values for argument {name!r}")
-            values[name] = value
-        values.setdefault("session_factory", default_session_factory)
-        missing = [name for name in names[:11] if name not in values]
-        if missing:
-            missing_list = ", ".join(missing)
-            raise TypeError(f"missing required pipeline dependencies: {missing_list}")
-        return cls(
-            alpaca_client=values["alpaca_client"],
-            order_firewall=values["order_firewall"],
-            ingestor=values["ingestor"],
-            decision_engine=values["decision_engine"],
-            risk_engine=values["risk_engine"],
-            executor=values["executor"],
-            execution_adapter=values["execution_adapter"],
-            reconciler=values["reconciler"],
-            universe_resolver=values["universe_resolver"],
-            state=values["state"],
-            account_label=str(values["account_label"]),
-            session_factory=values["session_factory"],
-            llm_review_engine=values.get("llm_review_engine"),
-            price_fetcher=values.get("price_fetcher"),
-            strategy_catalog=values.get("strategy_catalog"),
-            execution_policy=values.get("execution_policy"),
-            order_feed_ingestor=values.get("order_feed_ingestor"),
-        )
-
 
 @dataclass(frozen=True)
 class SessionWarmupWindow:

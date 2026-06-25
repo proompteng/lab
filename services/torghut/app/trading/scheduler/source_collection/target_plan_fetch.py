@@ -29,6 +29,7 @@ from ...runtime_decision_authority import (
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
 )
 from ...session_context import regular_session_open_utc_for
+from ..pipeline.contexts import LiveSubmissionGateInputs
 from ..target_plan_helpers import (
     BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL as _BOUNDED_SIM_COLLECTION_ACCOUNT_LABEL,
     PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS as _PAPER_ROUTE_TARGET_PLAN_CACHE_SECONDS,
@@ -104,7 +105,9 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
         strategies: Sequence[Strategy] | None = None,
     ) -> tuple[set[str], str | None, list[dict[str, Any]]]:
         try:
-            gate = self._live_submission_gate(session=session)
+            gate = self._live_submission_gate(
+                inputs=LiveSubmissionGateInputs(session=session)
+            )
         except Exception as exc:  # pragma: no cover - defensive runtime fallback
             logger.exception(
                 "Local paper-route target plan unavailable for bounded probe"

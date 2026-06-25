@@ -653,26 +653,8 @@ class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
 
     @staticmethod
     def _persist_llm_review(
-        record: LLMReviewRecord | None = None,
-        **legacy_kwargs: Any,
+        record: LLMReviewRecord,
     ) -> None:
-        if record is None:
-            record = LLMReviewRecord(
-                session=legacy_kwargs["session"],
-                decision_row=legacy_kwargs["decision_row"],
-                model=legacy_kwargs["model"],
-                prompt_version=legacy_kwargs["prompt_version"],
-                request_json=legacy_kwargs["request_json"],
-                response_json=legacy_kwargs["response_json"],
-                verdict=legacy_kwargs["verdict"],
-                confidence=legacy_kwargs["confidence"],
-                adjusted_qty=legacy_kwargs["adjusted_qty"],
-                adjusted_order_type=legacy_kwargs["adjusted_order_type"],
-                rationale=legacy_kwargs["rationale"],
-                risk_flags=legacy_kwargs["risk_flags"],
-                tokens_prompt=legacy_kwargs["tokens_prompt"],
-                tokens_completion=legacy_kwargs["tokens_completion"],
-            )
         request_payload = coerce_json_payload(record.request_json)
         response_payload_json = dict(record.response_json)
         attach_dspy_lineage(

@@ -63,9 +63,9 @@ DecisionEngine = cast(Any, import_module("app.trading.decisions").DecisionEngine
 
 OrderExecutor = cast(Any, import_module("app.trading.execution").OrderExecutor)
 
-SimulationExecutionAdapter = cast(
-    Any, import_module("app.trading.execution_adapters").SimulationExecutionAdapter
-)
+_execution_adapters = import_module("app.trading.execution_adapters")
+OrderSubmission = cast(Any, _execution_adapters.OrderSubmission)
+SimulationExecutionAdapter = cast(Any, _execution_adapters.SimulationExecutionAdapter)
 
 OrderFirewall = cast(Any, import_module("app.trading.firewall").OrderFirewall)
 
@@ -258,14 +258,16 @@ class LocalSimulationBroker:
     ) -> dict[str, Any]:
         _ = firewall_token
         order = self._adapter.submit_order(
-            symbol=symbol,
-            side=side,
-            qty=qty,
-            order_type=order_type,
-            time_in_force=time_in_force,
-            limit_price=limit_price,
-            stop_price=stop_price,
-            extra_params=extra_params,
+            OrderSubmission(
+                symbol=symbol,
+                side=side,
+                qty=qty,
+                order_type=order_type,
+                time_in_force=time_in_force,
+                limit_price=limit_price,
+                stop_price=stop_price,
+                extra_params=extra_params,
+            )
         )
         filled_qty = Decimal(str(order.get("filled_qty") or order.get("qty") or "0"))
         fill_price = Decimal(str(order.get("filled_avg_price") or "0"))

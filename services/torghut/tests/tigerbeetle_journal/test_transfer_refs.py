@@ -7,6 +7,7 @@ from tests.tigerbeetle_journal.support import (
     FakeTigerBeetleClient,
     LEDGER_USD_MICRO,
     NumericExistsFakeTigerBeetleClient,
+    RuntimeLedgerJournalPayloadInput,
     Session,
     SimpleNamespace,
     TIGERBEETLE_AUTHORITY_BLOCKER_RUNTIME_LEDGER_SOURCE_REFS_MISSING,
@@ -112,9 +113,11 @@ class TestTigerBeetleLedgerJournalTransferRefs(_TestTigerBeetleLedgerJournalBase
         self.assertIsNotNone(ref)
         assert ref is not None
         parity = tigerbeetle_runtime_ledger_journal_payload(
-            bucket=bucket,
-            ref=ref,
-            status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+            RuntimeLedgerJournalPayloadInput(
+                bucket=bucket,
+                ref=ref,
+                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+            )
         )
         self.assertFalse(parity["promotion_authority"])
         self.assertFalse(parity["overrides_runtime_ledger_authority"])
@@ -171,10 +174,12 @@ class TestTigerBeetleLedgerJournalTransferRefs(_TestTigerBeetleLedgerJournalBase
             session.flush()
 
             parity = tigerbeetle_runtime_ledger_journal_payload(
-                bucket=bucket,
-                ref=ref,
-                status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
-                account_refs=[duplicate_cash_ref, missing_fee_ref],
+                RuntimeLedgerJournalPayloadInput(
+                    bucket=bucket,
+                    ref=ref,
+                    status=TIGERBEETLE_RUNTIME_LEDGER_JOURNAL_STATUS_PASS,
+                    account_refs=[duplicate_cash_ref, missing_fee_ref],
+                )
             )
 
         self.assertEqual(parity["cluster_ids"], [2001, 2002])

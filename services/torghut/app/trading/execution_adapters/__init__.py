@@ -6,6 +6,7 @@ from ..simulation_progress import active_simulation_runtime_context
 from .adapter_types import (
     AlpacaExecutionAdapter,
     ExecutionAdapter,
+    OrderSubmission,
     SimulationExecutionAdapter,
     logger,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "AlpacaExecutionAdapter",
     "ExecutionAdapter",
     "LeanExecutionAdapter",
+    "OrderSubmission",
     "SimulationExecutionAdapter",
     "classify_failure_taxonomy",
     "classify_fallback_reason",
