@@ -16,16 +16,11 @@ _RESTORE_ORDER_POLICY = "marketable_ioc"
 _MAKER_ORDER_POLICY = "maker_ttl"
 _SUPPORTED_ORDER_POLICIES = {_RESTORE_ORDER_POLICY, _MAKER_ORDER_POLICY}
 _DEFAULT_TRADE_COINS = (
-    "xyz:NVDA",
-    "xyz:AMD",
-    "xyz:AVGO",
-    "xyz:MRVL",
-    "xyz:INTC",
-    "xyz:MU",
-    "xyz:WDC",
-    "xyz:SNDK",
-    "xyz:ARM",
-    "xyz:LITE",
+    "BNB",
+    "ZRO",
+    "PAXG",
+    "AERO",
+    "XMR",
 )
 
 

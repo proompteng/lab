@@ -278,6 +278,7 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
             "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
             "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
             "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
         }
     )
     session = _FakeSession()
@@ -349,6 +350,7 @@ def test_service_reports_blocked_signal_reasons() -> None:
             "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
             "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
             "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
         }
     )
     session = _FakeSession()

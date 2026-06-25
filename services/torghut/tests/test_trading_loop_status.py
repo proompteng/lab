@@ -29,6 +29,8 @@ def test_loop_status_requires_real_execution_proof() -> None:
         latest_signal={
             "generated_at": now.isoformat(),
             "feature_event_ts": now.isoformat(),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 1,
             "coin": "AMD",
             "action": "buy",
             "edge_bps": "12.5",
@@ -104,6 +106,8 @@ def test_loop_status_blocks_ready_runtime_without_fills_or_account_proof() -> No
         latest_signal={
             "generated_at": now.isoformat(),
             "feature_event_ts": now.isoformat(),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 1,
             "coin": "AMD",
             "action": "buy",
             "edge_bps": "12.5",
@@ -163,6 +167,8 @@ def test_loop_status_covers_raw_position_and_malformed_value_edges() -> None:
         latest_signal={
             "generated_at": "not-a-date",
             "feature_event_ts": datetime(2026, 6, 25, 11, 59),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 1,
             "coin": "MU",
             "action": "buy",
             "edge_bps": "7",
@@ -227,6 +233,145 @@ def test_loop_status_covers_raw_position_and_malformed_value_edges() -> None:
     assert "unexpected_live_alpaca_orders_present" in payload["blocker_reasons"]
     assert loop_status_module._mapping_payload("{not-json") == {}
     assert loop_status_module._string_list("AMD") == ["AMD"]
+
+
+def test_loop_status_blocks_future_event_timestamp_with_stale_quote_lag() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    rows = LoopStatusRows(
+        latest_cycle={"finished_at": now.isoformat(), "selected_coins": ["BNB"]},
+        latest_signal={
+            "generated_at": now.isoformat(),
+            "feature_event_ts": datetime(2026, 6, 25, 12, 5, tzinfo=timezone.utc),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 240,
+            "coin": "BNB",
+            "action": "buy",
+            "edge_bps": "14",
+            "reason": "edge_exceeds_cost",
+        },
+        latest_order={
+            "created_at": now.isoformat(),
+            "coin": "BNB",
+            "cloid": "loop-proof-bnb",
+            "exchange_order_id": "67890",
+            "side": "buy",
+            "status": "filled",
+            "notional_usd": "10",
+        },
+        counts_24h={
+            "cycles_24h": 3,
+            "signals_24h": 3,
+            "orders_24h": 3,
+            "fills_24h": 3,
+            "account_snapshots_24h": 3,
+        },
+        fill_summary={"fills_24h": 3},
+        latest_fill={"event_ts": now.isoformat(), "coin": "BNB"},
+        latest_account={
+            "observed_at": now.isoformat(),
+            "raw_payload": {"dexStates": {"default": {"assetPositions": []}}},
+        },
+        positions=[],
+        performance={"fill_count_24h": 3, "sample_ready": False},
+        stale_open_orders=[],
+        unexpected_live_alpaca={"orders_24h": 0, "events_24h": 0},
+        query_errors=[],
+    )
+
+    payload = assemble_trading_loop_status(
+        rows=rows,
+        options=LoopStatusOptions(
+            generated_at=now,
+            trading_mode="paper",
+            trading_enabled=True,
+            min_recent_fills=3,
+            freshness_threshold_seconds=180,
+            account_freshness_seconds=300,
+        ),
+    )
+
+    assert payload["restored"] is False
+    assert payload["market_data"]["fresh"] is False
+    assert payload["market_data"]["quote_lag_seconds"] == 240
+    assert "hyperliquid_market_data_not_fresh" in payload["blocker_reasons"]
+
+
+def test_loop_status_reads_nested_hyperliquid_dex_positions() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    rows = LoopStatusRows(
+        latest_cycle={"finished_at": now.isoformat(), "selected_coins": ["BNB"]},
+        latest_signal={
+            "generated_at": now.isoformat(),
+            "feature_event_ts": now.isoformat(),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 1,
+            "coin": "BNB",
+            "action": "buy",
+            "edge_bps": "14",
+            "reason": "edge_exceeds_cost",
+        },
+        latest_order={
+            "created_at": now.isoformat(),
+            "coin": "BNB",
+            "cloid": "loop-proof-bnb",
+            "exchange_order_id": "67890",
+            "side": "buy",
+            "status": "filled",
+            "notional_usd": "10",
+        },
+        counts_24h={},
+        fill_summary={"fills_24h": 3},
+        latest_fill={"event_ts": now.isoformat(), "coin": "BNB"},
+        latest_account={
+            "observed_at": now.isoformat(),
+            "raw_payload": {
+                "dexStates": {
+                    "xyz": {
+                        "assetPositions": [
+                            {
+                                "position": {
+                                    "coin": "xyz:NVDA",
+                                    "szi": "0.096",
+                                    "entryPx": "209.395",
+                                    "positionValue": "19.26528",
+                                    "unrealizedPnl": "-0.83664",
+                                }
+                            }
+                        ]
+                    }
+                }
+            },
+        },
+        positions=[],
+        performance={"fill_count_24h": 3, "sample_ready": False},
+        stale_open_orders=[],
+        unexpected_live_alpaca={"orders_24h": 0, "events_24h": 0},
+        query_errors=[],
+    )
+
+    payload = assemble_trading_loop_status(
+        rows=rows,
+        options=LoopStatusOptions(
+            generated_at=now,
+            trading_mode="paper",
+            trading_enabled=True,
+            min_recent_fills=3,
+            freshness_threshold_seconds=180,
+            account_freshness_seconds=300,
+        ),
+    )
+
+    assert payload["position"]["exchange_raw_positions"] == [
+        {
+            "coin": "xyz:NVDA",
+            "entry_price": "209.395",
+            "notional_usd": "19.26528",
+            "size": "0.096",
+            "unrealized_pnl_usd": "-0.83664",
+        }
+    ]
+    assert payload["position"]["reconciled"] is False
+    assert "hyperliquid_position_reconciliation_missing" in payload["blocker_reasons"]
 
 
 def test_trading_loop_status_route_uses_runtime_settings(

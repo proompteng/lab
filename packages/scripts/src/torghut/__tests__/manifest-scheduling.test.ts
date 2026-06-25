@@ -239,9 +239,7 @@ describe('Torghut manifest scheduling', () => {
     expect(runtimeData.HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES).toBe('false')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MARKET_DATA_NETWORK).toBe('mainnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXECUTION_NETWORK).toBe('testnet')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe(
-      'xyz:NVDA,xyz:AMD,xyz:AVGO,xyz:MRVL,xyz:INTC,xyz:MU,xyz:WDC,xyz:SNDK,xyz:ARM,xyz:LITE',
-    )
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe('BNB,ZRO,PAXG,AERO,XMR')
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXCLUDED_COINS).toBe('SPX')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('10')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('10')
@@ -255,7 +253,7 @@ describe('Torghut manifest scheduling', () => {
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-no-short-entries-20260620',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-proof-universe-20260625',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')

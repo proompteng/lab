@@ -17,6 +17,14 @@ def test_config_rejects_old_runtime_prefix() -> None:
 
 
 def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
+    assert HyperliquidExecutionConfig.from_env({}).trade_coins == (
+        "BNB",
+        "ZRO",
+        "PAXG",
+        "AERO",
+        "XMR",
+    )
+
     config = HyperliquidExecutionConfig.from_env(
         {
             "HYPERLIQUID_EXECUTION_MARKET_DATA_NETWORK": "mainnet",
