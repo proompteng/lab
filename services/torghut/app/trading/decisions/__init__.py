@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from . import aggregated_qty as _aggregated_qty
 from .count_open_short_positions import count_open_short_positions
 from .decision_engine_core_support import (
     build_runtime_position_exit_overlay,
@@ -18,9 +17,8 @@ from .resolve_runtime_trade_policy import (
     resolve_strategy_time_in_force,
 )
 from .shared_context import DecisionRuntimeTelemetry
+from .aggregated_qty import resolve_qty_for_aggregated
 from .single_strategy_qty import resolve_qty
-
-resolve_qty_for_aggregated = _aggregated_qty.resolve_qty_for_aggregated
 
 __all__ = (
     "DecisionEngine",

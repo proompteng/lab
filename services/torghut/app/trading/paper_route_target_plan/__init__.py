@@ -5,7 +5,6 @@ from __future__ import annotations
 from http.client import HTTPConnection, HTTPSConnection
 from typing import Any
 
-from . import target_plan as _target_plan
 from .materialization import (
     blocked_target_readiness,
     materialize_bounded_paper_route_target_plan,
@@ -22,6 +21,7 @@ from .target_plan import (
     PAPER_ROUTE_MATERIALIZATION_STAGE,
     PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY,
     PaperRouteTargetPlanFetchClient,
+    fetch_paper_route_target_plan_url as fetch_paper_route_target_plan_url_with_client,
     mapping_items,
     paper_route_target_plan_from_payload,
     paper_route_target_plan_probe_symbols,
@@ -41,7 +41,7 @@ def fetch_paper_route_target_plan_url(
     attempts: int = 1,
     retry_backoff_seconds: float = 0.25,
 ) -> dict[str, Any]:
-    return _target_plan.fetch_paper_route_target_plan_url(
+    return fetch_paper_route_target_plan_url_with_client(
         url,
         timeout_seconds=timeout_seconds,
         attempts=attempts,
