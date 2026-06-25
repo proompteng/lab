@@ -141,8 +141,6 @@ class _TestFastReplayPreviewBase(TestCase):
         )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "CANDIDATE_SPEC_SCHEMA_VERSION",
     "CandidateSpec",

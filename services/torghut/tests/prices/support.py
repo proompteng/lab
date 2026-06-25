@@ -141,15 +141,6 @@ class _TestClickHousePriceFetcherBase(TestCase):
         CapturingHTTPConnection.response = FakeHTTPResponse(200, '{"c": "123.45"}\n')
 
 
-__all__ = (
-    "FakeClickHousePriceFetcher",
-    "CapturingPriceFetcher",
-    "RoutingClickHousePriceFetcher",
-    "SeqAwarePriceFetcher",
-    "FakeHTTPResponse",
-    "CapturingHTTPConnection",
-)
-
 __all__: tuple[str, ...] = (
     "CapturingHTTPConnection",
     "CapturingPriceFetcher",

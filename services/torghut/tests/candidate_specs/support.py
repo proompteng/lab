@@ -39,8 +39,6 @@ class _TestCandidateSpecsBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "HYPOTHESIS_CARD_SCHEMA_VERSION",

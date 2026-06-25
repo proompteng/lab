@@ -100,8 +100,6 @@ class _TestExecutionPolicyBase(TestCase):
         )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "AdaptiveExecutionPolicyDecision",
     "Decimal",

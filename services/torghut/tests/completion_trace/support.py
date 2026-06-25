@@ -227,9 +227,6 @@ class _TestCompletionTraceBase(TestCase):
             future=True,
         )
 
-
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "Base",

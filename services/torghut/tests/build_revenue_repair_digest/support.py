@@ -339,8 +339,6 @@ class _TestBuildRevenueRepairDigestBase(TestCase):
     pass
 
 
-__all__ = ("NOW",)
-
 __all__: tuple[str, ...] = (
     "NOW",
     "Path",

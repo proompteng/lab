@@ -211,8 +211,6 @@ def _compact_recent_whitepaper_sources(
         yield
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "AutoresearchCandidateSpec",

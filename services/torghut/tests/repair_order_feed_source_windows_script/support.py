@@ -168,8 +168,6 @@ def _seed_live_source_window(
     return source_window
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",

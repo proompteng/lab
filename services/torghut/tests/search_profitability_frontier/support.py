@@ -153,8 +153,6 @@ class _TestSearchProfitabilityFrontierBase(TestCase):
         )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "Namespace",

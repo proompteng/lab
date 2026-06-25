@@ -210,11 +210,6 @@ class _TestTigerBeetleReconcileBase(TestCase):
         Base.metadata.create_all(self.engine)
 
 
-__all__ = (
-    "FailingLookupClient",
-    "CloseTrackingClient",
-)
-
 __all__: tuple[str, ...] = (
     "BLOCKER_AMOUNT_MISMATCH",
     "BLOCKER_CLIENT_UNAVAILABLE",

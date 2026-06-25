@@ -101,8 +101,6 @@ class RuntimeWindowImportTestCaseBase(TestCase):
     pass
 
 
-__all__ = ("RuntimeWindowImportTestCaseBase",)
-
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",

@@ -529,8 +529,6 @@ class SubmissionCouncilTestCase(TestCase):
         }
 
 
-__all__ = ("SubmissionCouncilTestCase",)
-
 __all__: tuple[str, ...] = (
     "Any",
     "AutoresearchCandidateSpec",

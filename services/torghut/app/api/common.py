@@ -131,9 +131,7 @@ from ..trading.paper_route_target_plan import (
 )
 from ..trading.proofs.schemas import (
     DEFAULT_PROOFS_LIMIT as DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    DEFAULT_PROOFS_LOOKBACK_HOURS as DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     MAX_PROOFS_LIMIT as MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
-    MAX_PROOFS_LOOKBACK_HOURS as MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS,
     PROOFS_RUNTIME_ACCOUNT_LABEL as PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
 )
 from ..trading.proofs.service import build_proofs_payload
@@ -324,7 +322,6 @@ __all__: tuple[str, ...] = (
     "Body",
     "CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE",
     "ClickHouseSignalIngestor",
-    "DEFAULT_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
     "DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
     "Decimal",
     "Depends",
@@ -343,7 +340,6 @@ __all__: tuple[str, ...] = (
     "LEAN_LANE_MANAGER",
     "LeanLaneManager",
     "Lock",
-    "MAX_PAPER_ROUTE_EVIDENCE_LOOKBACK_HOURS",
     "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
     "Mapping",
     "OPTIONS_CATALOG_FRESHNESS_CACHE",

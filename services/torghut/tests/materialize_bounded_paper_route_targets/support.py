@@ -315,12 +315,6 @@ class _RaisingConnection(_CapturingConnection):
         raise OSError("network down")
 
 
-__all__ = (
-    "HPAIRS_DYNAMIC_SELECTED_PLAN_SOURCE_CONFIRMATION",
-    "sqlite_dsn",
-    "in_memory_session",
-)
-
 __all__: tuple[str, ...] = (
     "Any",
     "Base",

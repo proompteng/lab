@@ -192,8 +192,6 @@ class _TestRunStrategyFactoryV2Base(TestCase):
         )
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Base",
     "Decimal",

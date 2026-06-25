@@ -325,8 +325,6 @@ class _TestLiveConfigManifestContractBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "DSPyReviewRuntime",
     "Decimal",

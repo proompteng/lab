@@ -117,8 +117,6 @@ class AutonomousLaneTestCaseBase(TestCase):
         return train_path, test_path
 
 
-__all__ = ("AutonomousLaneTestCaseBase",)
-
 __all__: tuple[str, ...] = (
     "Any",
     "AutonomousLaneTestCaseBase",

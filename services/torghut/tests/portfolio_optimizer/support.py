@@ -102,8 +102,6 @@ class _TestPortfolioOptimizerBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "CandidateEvidenceBundle",
     "Decimal",

@@ -226,8 +226,6 @@ class WhitepaperAutoresearchRunnerTestCaseBase(TestCase):
         )
 
 
-__all__ = ("WhitepaperAutoresearchRunnerTestCaseBase",)
-
 __all__: tuple[str, ...] = (
     "Any",
     "AutoresearchCandidateSpec",

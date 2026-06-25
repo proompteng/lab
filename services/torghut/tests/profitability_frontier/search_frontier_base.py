@@ -194,8 +194,6 @@ class SearchConsistentProfitabilityFrontierTestCaseBase(TestCase):
         )
 
 
-__all__ = ("SearchConsistentProfitabilityFrontierTestCaseBase",)
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "Namespace",

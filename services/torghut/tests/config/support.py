@@ -33,8 +33,6 @@ class _TestConfigBase(TestCase):
     pass
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "DSPyReviewRuntime",
     "FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD",

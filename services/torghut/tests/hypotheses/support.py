@@ -260,8 +260,6 @@ class _TestHypothesisReadinessBase(TestCase):
         _JANGAR_QUORUM_CACHE.clear()
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Decimal",
     "EXACT_REPLAY_LEDGER_SCHEMA_VERSION",

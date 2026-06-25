@@ -540,8 +540,6 @@ class _TestTradingSchedulerAutonomyBase(TestCase):
         return _capture
 
 
-__all__: tuple[str, ...] = ()
-
 __all__: tuple[str, ...] = (
     "Any",
     "Path",
