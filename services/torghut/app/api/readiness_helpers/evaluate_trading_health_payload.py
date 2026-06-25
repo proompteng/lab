@@ -2,42 +2,55 @@
 
 from __future__ import annotations
 
-from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
-from typing import Any
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from typing import Any, cast
 
-
-from .shared_context import (
-    BUILD_IMAGE_DIGEST,
-    BUILD_VERSION,
-    JangarDependencyQuorumStatus,
-    Mapping,
-    SessionLocal,
+from app.api import common as api_common
+from app.api.common import BUILD_IMAGE_DIGEST, BUILD_VERSION
+from app.api.readiness_helpers.readiness_surface import (
     guard_live_submission_gate_for_readiness as _guard_live_submission_gate_for_readiness,
-    readiness_dependency_degradation_reason_codes as _readiness_dependency_degradation_reason_codes,
-    readiness_dependency_snapshot as _readiness_dependency_snapshot,
-    strip_promotion_authority_claims_for_readiness as _strip_promotion_authority_claims_for_readiness,
-    active_simulation_runtime_context,
-    build_alpha_closure_dividend_slo,
-    build_revenue_repair_digest,
-    cast,
-    compact_alpha_evidence_foundry,
-    compact_alpha_readiness_settlement_conveyor,
-    compact_alpha_repair_closure_board,
-    compact_alpha_repair_dividend_ledger,
-    compact_executable_alpha_settlement_slots,
-    compact_jangar_controller_ingestion_carry,
-    compact_no_delta_repair_reentry_auction,
-    datetime,
-    load_quant_evidence_status,
-    main_runtime_value,
-    settings,
-    timezone,
 )
+from app.api.readiness_helpers.readiness_surface import (
+    readiness_dependency_degradation_reason_codes as _readiness_dependency_degradation_reason_codes,
+)
+from app.api.readiness_helpers.readiness_surface import (
+    readiness_dependency_snapshot as _readiness_dependency_snapshot,
+)
+from app.api.readiness_helpers.readiness_surface import (
+    strip_promotion_authority_claims_for_readiness as _strip_promotion_authority_claims_for_readiness,
+)
+from app.config import settings
+from app.db import SessionLocal
+from app.trading.alpha_closure_dividend_slo import build_alpha_closure_dividend_slo
+from app.trading.alpha_evidence_foundry import compact_alpha_evidence_foundry
+from app.trading.alpha_readiness_settlement_conveyor import (
+    compact_alpha_readiness_settlement_conveyor,
+)
+from app.trading.alpha_repair_closure_board import compact_alpha_repair_closure_board
+from app.trading.alpha_repair_dividend_ledger import (
+    compact_alpha_repair_dividend_ledger,
+)
+from app.trading.executable_alpha_receipts import (
+    compact_executable_alpha_settlement_slots,
+)
+from app.trading.hypotheses import JangarDependencyQuorumStatus
+from app.trading.jangar_controller_ingestion_carry import (
+    compact_jangar_controller_ingestion_carry,
+)
+from app.trading.no_delta_repair_reentry_auction import (
+    compact_no_delta_repair_reentry_auction,
+)
+from app.trading.revenue_repair import build_revenue_repair_digest
+from app.trading.simulation_progress import active_simulation_runtime_context
+from app.trading.submission_council import load_quant_evidence_status
+
+from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
+from ..trading_scheduler_state import get_trading_scheduler
 from . import status_dependencies as _status_dependencies
 from .universe_dependency import (
     evaluate_universe_dependency,
 )
-from ..trading_scheduler_state import get_trading_scheduler
 
 _PROOF_LANE_DEPENDENCY_KEYS = frozenset(
     {
@@ -157,7 +170,7 @@ def evaluate_trading_health_payload(
         )
     proof_floor = _status_dependencies.build_profitability_proof_floor_payload(
         state=scheduler.state,
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
+        torghut_revision=api_common.BUILD_COMMIT,
         live_submission_gate=live_submission_gate,
         hypothesis_payload=_hypothesis_payload,
         empirical_jobs_status=empirical_jobs,
@@ -168,7 +181,7 @@ def evaluate_trading_health_payload(
     renewal_bond_profit_escrow = (
         _status_dependencies.build_renewal_bond_profit_escrow_payload(
             state=scheduler.state,
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             live_submission_gate=live_submission_gate,
             proof_floor=proof_floor,
@@ -182,11 +195,11 @@ def evaluate_trading_health_payload(
     route_reacquisition_board = (
         _status_dependencies.build_route_reacquisition_board_payload(
             proof_floor=proof_floor,
-            active_revision=main_runtime_value("BUILD_COMMIT"),
+            active_revision=api_common.BUILD_COMMIT,
         )
     )
     profit_signal_quorum = _status_dependencies.build_profit_signal_quorum_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
+        torghut_revision=api_common.BUILD_COMMIT,
         dependency_quorum=_dependency_quorum.as_payload(),
         hypothesis_payload=_hypothesis_payload,
         quant_evidence=quant_evidence,
@@ -206,7 +219,7 @@ def evaluate_trading_health_payload(
         )
     capital_replay_projection = (
         _status_dependencies.build_capital_replay_projection_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             live_submission_gate=live_submission_gate,
             proof_floor=proof_floor,
@@ -218,7 +231,7 @@ def evaluate_trading_health_payload(
     )
     quality_adjusted_profit_frontier = (
         _status_dependencies.build_quality_adjusted_profit_frontier_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             live_submission_gate=live_submission_gate,
             proof_floor=proof_floor,
             route_reacquisition_board=route_reacquisition_board,
@@ -237,12 +250,12 @@ def evaluate_trading_health_payload(
             proof_floor=proof_floor,
             live_submission_gate=live_submission_gate,
             serving_revision=_status_dependencies.active_runtime_revision()
-            or main_runtime_value("BUILD_COMMIT"),
+            or api_common.BUILD_COMMIT,
         )
     )
     capital_reentry_cohort_ledger = (
         _status_dependencies.build_capital_reentry_cohort_ledger_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             consumer_evidence_receipt=consumer_evidence_receipt,
             proof_floor=proof_floor,
@@ -251,7 +264,7 @@ def evaluate_trading_health_payload(
     )
     profit_repair_settlement_ledger = (
         _status_dependencies.build_profit_repair_settlement_ledger_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             consumer_evidence_receipt=consumer_evidence_receipt,
             proof_floor=proof_floor,
@@ -264,7 +277,7 @@ def evaluate_trading_health_payload(
     )
     routeability_repair_acceptance_ledger = (
         _status_dependencies.build_routeability_repair_acceptance_ledger_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             consumer_evidence_receipt=consumer_evidence_receipt,
             proof_floor=proof_floor,
@@ -279,7 +292,7 @@ def evaluate_trading_health_payload(
     )
     profit_freshness_frontier = (
         _status_dependencies.build_profit_freshness_frontier_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             proof_floor=proof_floor,
             routeability_repair_acceptance_ledger=routeability_repair_acceptance_ledger,
@@ -294,15 +307,15 @@ def evaluate_trading_health_payload(
     )
     build_payload = {
         "version": BUILD_VERSION,
-        "commit": main_runtime_value("BUILD_COMMIT"),
+        "commit": api_common.BUILD_COMMIT,
         "image_digest": BUILD_IMAGE_DIGEST,
         "active_revision": _status_dependencies.active_runtime_revision()
-        or main_runtime_value("BUILD_COMMIT"),
+        or api_common.BUILD_COMMIT,
     }
     clickhouse_ta_status = _status_dependencies.load_clickhouse_ta_status(scheduler)
     evidence_clock_arbiter, routeable_profit_candidate_exchange = (
         _status_dependencies.build_evidence_clock_payloads(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             hypothesis_payload=_hypothesis_payload,
             quant_evidence=quant_evidence,
@@ -318,8 +331,8 @@ def evaluate_trading_health_payload(
         )
     )
     clock_settlement_receipt = _status_dependencies.build_clock_settlement_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        torghut_revision=api_common.BUILD_COMMIT,
+        source_commit=api_common.BUILD_COMMIT,
         build=build_payload,
         evidence_clock_arbiter=evidence_clock_arbiter,
         routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
@@ -335,8 +348,8 @@ def evaluate_trading_health_payload(
     )
     route_evidence_clearinghouse_packet = (
         _status_dependencies.build_route_evidence_clearinghouse_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
-            source_commit=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
+            source_commit=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             build=build_payload,
             proof_floor=proof_floor,
@@ -351,8 +364,8 @@ def evaluate_trading_health_payload(
     )
     repair_bid_settlement_ledger = (
         _status_dependencies.build_repair_bid_settlement_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
-            source_commit=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
+            source_commit=api_common.BUILD_COMMIT,
             dependency_quorum=_dependency_quorum.as_payload(),
             build=build_payload,
             route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
@@ -362,8 +375,8 @@ def evaluate_trading_health_payload(
         )
     )
     route_warrant_exchange = _status_dependencies.build_route_warrant_exchange_payload(
-        torghut_revision=main_runtime_value("BUILD_COMMIT"),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        torghut_revision=api_common.BUILD_COMMIT,
+        source_commit=api_common.BUILD_COMMIT,
         build=build_payload,
         consumer_evidence_receipt=consumer_evidence_receipt,
         evidence_clock_arbiter=evidence_clock_arbiter,
@@ -378,7 +391,7 @@ def evaluate_trading_health_payload(
     )
     source_serving_repair_receipt_ledger = (
         _status_dependencies.build_source_serving_repair_receipt_payload(
-            source_commit=main_runtime_value("BUILD_COMMIT"),
+            source_commit=api_common.BUILD_COMMIT,
             build=build_payload,
             consumer_evidence_receipt=consumer_evidence_receipt,
             route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
@@ -398,8 +411,8 @@ def evaluate_trading_health_payload(
     )
     repair_receipt_frontier = (
         _status_dependencies.build_repair_receipt_frontier_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
-            source_commit=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
+            source_commit=api_common.BUILD_COMMIT,
             source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
             freshness_carry_ledger=freshness_carry_ledger,
             repair_bid_settlement_ledger=repair_bid_settlement_ledger,

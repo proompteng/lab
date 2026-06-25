@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping, Sequence
+from typing import Any, cast
 
-from .common import (
-    DEFAULT_PROOFS_LIMIT,
-    Mapping,
-    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    Sequence,
-    Session,
-    Strategy,
-    cast,
-    select,
-    settings,
-)
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.common import PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL
+from app.config import settings
+from app.models import Strategy
+from app.trading.proofs.schemas import DEFAULT_PROOFS_LIMIT
+
 from .health_checks import decimal_or_none as _decimal_or_none
 from .vnext_helpers import decimal_to_string as _decimal_to_string
 

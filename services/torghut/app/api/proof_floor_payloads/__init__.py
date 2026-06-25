@@ -5,7 +5,32 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
-from . import shared_context
+from app.api.common import PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS
+from app.api.proof_floor_payloads.route_repair_payloads import (
+    build_freshness_carry_ledger_payload,
+    build_repair_bid_settlement_payload,
+    build_repair_outcome_dividend_ledger_payload,
+    build_repair_receipt_frontier_payload,
+    build_route_evidence_clearinghouse_payload,
+    build_route_image_proof_summary,
+    build_route_warrant_exchange_payload,
+    build_source_serving_repair_receipt_payload,
+)
+from app.api.proof_floor_payloads.shared_context import (
+    build_capital_reentry_cohort_ledger_payload,
+    build_clock_settlement_payload,
+    build_evidence_clock_payloads,
+    build_profitability_proof_floor_receipt,
+    build_profit_carry_passport_ledger_payload,
+    build_profit_freshness_frontier_payload,
+    build_profit_repair_settlement_ledger_payload,
+    build_renewal_bond_profit_escrow_payload,
+    build_route_reacquisition_board_payload,
+    build_routeability_repair_acceptance_ledger_payload,
+    consumer_evidence_jangar_continuity_packet,
+)
+from app.config import settings
+
 from .build_jangar_reliability_settlement_ref import (
     build_autonomy_capital_replay_projection,
     build_capital_replay_projection_payload,
@@ -18,26 +43,6 @@ from .build_jangar_reliability_settlement_ref import (
     simple_lane_reject_reason_totals,
 )
 from .paper_route_probe_targets import bounded_paper_route_probe_target_symbols
-from .shared_context import (
-    build_capital_reentry_cohort_ledger_payload,
-    build_clock_settlement_payload,
-    build_evidence_clock_payloads,
-    build_freshness_carry_ledger_payload,
-    build_profit_carry_passport_ledger_payload,
-    build_profit_freshness_frontier_payload,
-    build_profit_repair_settlement_ledger_payload,
-    build_renewal_bond_profit_escrow_payload,
-    build_repair_bid_settlement_payload,
-    build_repair_outcome_dividend_ledger_payload,
-    build_repair_receipt_frontier_payload,
-    build_route_evidence_clearinghouse_payload,
-    build_route_image_proof_summary,
-    build_route_reacquisition_board_payload,
-    build_route_warrant_exchange_payload,
-    build_routeability_repair_acceptance_ledger_payload,
-    build_source_serving_repair_receipt_payload,
-    consumer_evidence_jangar_continuity_packet,
-)
 from .status_refs import build_simple_lane_status_payload
 
 
@@ -53,10 +58,10 @@ def build_profitability_proof_floor_payload(
     tca_summary: Mapping[str, Any],
     simple_lane_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    return shared_context.build_profitability_proof_floor_receipt(
-        account_label=shared_context.settings.trading_account_label,
+    return build_profitability_proof_floor_receipt(
+        account_label=settings.trading_account_label,
         torghut_revision=torghut_revision,
-        trading_mode=shared_context.settings.trading_mode,
+        trading_mode=settings.trading_mode,
         market_session_open=cast(
             bool | None,
             getattr(state, "market_session_open", None),
@@ -71,7 +76,7 @@ def build_profitability_proof_floor_payload(
         paper_route_probe_target_symbols=bounded_paper_route_probe_target_symbols(
             live_submission_gate
         ),
-        tca_max_age_seconds=shared_context.PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
+        tca_max_age_seconds=PROFITABILITY_PROOF_FLOOR_TCA_MAX_AGE_SECONDS,
     )
 
 

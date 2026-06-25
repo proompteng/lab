@@ -2,57 +2,59 @@
 
 from __future__ import annotations
 
-from typing import Any
+import time
+from collections.abc import Mapping, Sequence
+from copy import deepcopy
+from datetime import datetime
+from decimal import Decimal
+from http.client import HTTPConnection, HTTPSConnection
+from typing import Any, cast
+from urllib.parse import urlsplit
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 
+from app.api.common import (
+    BUILD_VERSION,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
+    logger,
+)
+from app.config import settings
+from app.db import SessionLocal, get_session
+from app.models import ExecutionTCAMetric, Strategy
 from app.trading.live_submit_activation import live_submit_activation_status
 from app.trading.paper_route_target_plan import (
     PaperRouteTargetPlanFetchClient,
+)
+from app.trading.paper_route_target_plan import (
     fetch_paper_route_target_plan_url as _fetch_shared_paper_route_target_plan_url,
+)
+from app.trading.paper_route_target_plan import mapping_items as shared_mapping_items
+from app.trading.paper_route_target_plan import (
+    paper_route_target_plan_from_payload as shared_paper_route_target_plan_from_payload,
+)
+from app.trading.paper_route_target_plan import (
     paper_route_target_plan_url_points_to_self as _paper_route_target_plan_url_points_to_self,
 )
-
-from . import proofs_configured_collection as _proofs_configured_collection
-from .common import (
-    BUILD_VERSION,
+from app.trading.proofs.schemas import (
     DEFAULT_PROOFS_LIMIT,
     MAX_PROOFS_LIMIT,
-    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
-    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
-    Decimal,
-    Depends,
-    ExecutionTCAMetric,
-    HTTPConnection,
-    HTTPException,
-    HTTPSConnection,
-    JSONResponse,
-    Mapping,
     ProofKind,
     ProofWindowSelector,
-    Query,
-    Sequence,
-    Session,
-    SessionLocal,
-    Strategy,
-    TradingScheduler,
-    build_proofs_payload,
-    cast,
-    datetime,
-    deepcopy,
-    get_session,
-    jsonable_encoder,
-    load_quant_evidence_status,
-    logger,
-    select,
-    settings,
-    shared_mapping_items,
-    shared_paper_route_target_plan_from_payload,
-    time,
-    urlsplit,
 )
+from app.trading.proofs.schemas import (
+    PROOFS_RUNTIME_ACCOUNT_LABEL as PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+)
+from app.trading.proofs.service import build_proofs_payload
+from app.trading.scheduler import TradingScheduler
+from app.trading.submission_council import load_quant_evidence_status
+
+from . import proofs_configured_collection as _proofs_configured_collection
 from .health_checks import (
     build_api_live_submission_gate_payload,
     build_hypothesis_runtime_payload,

@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
-from .common import cast
+from typing import cast
+
 from .vnext_helpers import (
     extract_gate_result as _extract_gate_result,
+)
+from .vnext_helpers import (
     load_json_artifact_payload as _load_json_artifact_payload,
+)
+from .vnext_helpers import (
     safe_int as _safe_int,
+)
+from .vnext_helpers import (
     to_str_map as _to_str_map,
 )
 

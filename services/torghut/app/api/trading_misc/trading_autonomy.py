@@ -2,16 +2,82 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
+from decimal import Decimal
+from typing import cast
+
+from fastapi import Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse, Response
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.api import common as api_common
+from app.api.common import BUILD_IMAGE_DIGEST, logger
+from app.api.trading_misc.shared_context import router
+from app.config import settings
+from app.db import get_session
+from app.metrics import render_trading_metrics
+from app.models import StrategyRuntimeLedgerBucket, TradeDecision
+from app.trading.autonomy import evaluate_evidence_continuity
+from app.trading.completion import build_doc29_completion_status
+from app.trading.empirical_jobs import build_empirical_jobs_status
+from app.trading.evidence_epochs import (
+    EvidenceEpoch,
+    compile_evidence_epoch,
+    load_evidence_epoch_payload,
+    load_latest_evidence_epoch_payload,
+    persist_evidence_epoch,
+)
+from app.trading.evidence_receipts import (
+    EvidenceReceipt,
+    build_artifact_parity_receipt,
+    build_data_freshness_receipt,
+    build_empirical_jobs_receipt,
+    build_jangar_authority_receipt,
+    build_portfolio_proof_receipt,
+    build_schema_receipt,
+    build_service_health_receipt,
+)
+from app.trading.hypotheses import (
+    load_hypothesis_registry,
+    resolve_hypothesis_dependency_quorum,
+)
+from app.trading.llm.evaluation import build_llm_evaluation_metrics
+from app.trading.runtime_cost_authority import (
+    cost_basis_counts_have_non_promotion_grade_costs,
+)
+from app.trading.runtime_ledger_source_authority import (
+    build_runtime_ledger_profit_distance_readback,
+    runtime_ledger_promotion_source_authority_blockers,
+)
+from app.trading.simulation_progress import active_simulation_runtime_context
+from app.trading.time_source import trading_time_status
+
 from ...bootstrap import (
     env_csv as _env_csv,
+)
+from ...bootstrap import (
     env_json_string_list as _env_json_string_list,
+)
+from ...bootstrap import (
     evaluate_scheduler_status as _evaluate_scheduler_status,
 )
 from ..health_checks import (
     build_hypothesis_runtime_payload as _build_hypothesis_runtime_payload,
+)
+from ..health_checks import (
     empirical_jobs_status as _empirical_jobs_status,
+)
+from ..health_checks import (
     forecast_service_status as _forecast_service_status,
+)
+from ..health_checks import (
     lean_authority_status as _lean_authority_status,
+)
+from ..health_checks import (
     load_tca_summary as _load_tca_summary,
 )
 from ..readiness_helpers import (
@@ -20,67 +86,29 @@ from ..readiness_helpers import (
 from ..trading_scheduler_state import get_trading_scheduler
 from ..vnext_helpers import (
     build_autonomy_bridge_status as _build_autonomy_bridge_status,
-    safe_float as _safe_float,
-    safe_int as _safe_int,
 )
-
-
-from .shared_context import (
-    BUILD_IMAGE_DIGEST,
-    Decimal,
-    Depends,
-    EvidenceEpoch,
-    EvidenceReceipt,
-    HTTPException,
-    JSONResponse,
-    Mapping,
-    Query,
-    Response,
-    SQLAlchemyError,
-    Sequence,
-    Session,
-    StrategyRuntimeLedgerBucket,
-    TradeDecision,
-    active_simulation_runtime_context,
-    build_artifact_parity_receipt,
-    build_data_freshness_receipt,
-    build_doc29_completion_status,
-    build_empirical_jobs_receipt,
-    build_empirical_jobs_status,
-    build_jangar_authority_receipt,
-    build_llm_evaluation_metrics,
-    build_portfolio_proof_receipt,
-    build_runtime_ledger_profit_distance_readback,
-    build_schema_receipt,
-    build_service_health_receipt,
-    cast,
-    compile_evidence_epoch,
-    cost_basis_counts_have_non_promotion_grade_costs,
-    datetime,
-    evaluate_evidence_continuity,
-    get_session,
-    jsonable_encoder,
-    load_evidence_epoch_payload,
-    load_hypothesis_registry,
-    load_latest_evidence_epoch_payload,
-    logger,
-    main_runtime_value,
-    persist_evidence_epoch,
-    render_trading_metrics,
-    resolve_hypothesis_dependency_quorum,
-    router,
-    runtime_ledger_promotion_source_authority_blockers,
-    select,
-    settings,
-    timezone,
-    trading_time_status,
+from ..vnext_helpers import (
+    safe_float as _safe_float,
+)
+from ..vnext_helpers import (
+    safe_int as _safe_int,
 )
 from .autonomy_dependencies import (
     apply_status_read_statement_timeout as _apply_status_read_statement_timeout,
+)
+from .autonomy_dependencies import (
     build_autonomy_capital_replay_projection as _build_autonomy_capital_replay_projection,
+)
+from .autonomy_dependencies import (
     load_route_provenance_summary as _load_route_provenance_summary,
+)
+from .autonomy_dependencies import (
     rollback_status_read_session as _rollback_status_read_session,
+)
+from .autonomy_dependencies import (
     sqlalchemy_error_indicates_statement_timeout as _sqlalchemy_error_indicates_statement_timeout,
+)
+from .autonomy_dependencies import (
     unavailable_runtime_ledger_portfolio_summary as _unavailable_runtime_ledger_portfolio_summary,
 )
 
@@ -424,7 +452,7 @@ def build_current_evidence_epoch(
             db_check_ok=database_ok,
             trading_status_ok=trading_status_ok,
             image_digest=BUILD_IMAGE_DIGEST,
-            revision=main_runtime_value("BUILD_COMMIT"),
+            revision=api_common.BUILD_COMMIT,
             observed_at=observed_at,
         )
     )
@@ -611,7 +639,7 @@ def trading_completion_doc29(
     return build_doc29_completion_status(
         session=session,
         stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
-        current_git_revision=main_runtime_value("BUILD_COMMIT"),
+        current_git_revision=api_common.BUILD_COMMIT,
         current_image_digest=BUILD_IMAGE_DIGEST,
     )
 
@@ -626,7 +654,7 @@ def trading_completion_doc29_gate(
     payload = build_doc29_completion_status(
         session=session,
         stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
-        current_git_revision=main_runtime_value("BUILD_COMMIT"),
+        current_git_revision=api_common.BUILD_COMMIT,
         current_image_digest=BUILD_IMAGE_DIGEST,
     )
     for gate in cast(list[dict[str, object]], payload.get("gates", [])):

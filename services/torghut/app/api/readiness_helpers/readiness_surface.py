@@ -2,8 +2,30 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping, Sequence
+from concurrent.futures import Future
+from copy import deepcopy
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import cast
+
+from sqlalchemy.orm import Session
+
+from app.api import common as api_common
+from app.api.common import (
+    BUILD_IMAGE_DIGEST,
+    BUILD_VERSION,
+    READINESS_PROMOTION_AUTHORITY_KEYS,
+    TRADING_DEPENDENCY_HEALTH_CACHE,
+    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
+    TRADING_HEALTH_SURFACE_EVALUATIONS,
+    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
+    logger,
+)
+from app.config import settings
+from app.db import SessionLocal
 
 from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
 from ...trading.live_submit_activation import (
@@ -11,28 +33,6 @@ from ...trading.live_submit_activation import (
     live_submit_activation_status,
 )
 from .. import health_checks as health_checks_api
-from ..common import (
-    BUILD_IMAGE_DIGEST,
-    BUILD_VERSION,
-    Decimal,
-    Future,
-    READINESS_PROMOTION_AUTHORITY_KEYS,
-    Session,
-    SessionLocal,
-    TRADING_DEPENDENCY_HEALTH_CACHE,
-    TRADING_DEPENDENCY_HEALTH_CACHE_LOCK,
-    TRADING_HEALTH_SURFACE_EVALUATIONS,
-    TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
-    TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    datetime,
-    deepcopy,
-    logger,
-    main_runtime_value,
-    os,
-    settings,
-    timedelta,
-    timezone,
-)
 from ..trading_scheduler_state import get_trading_scheduler
 
 
@@ -421,10 +421,9 @@ def _evaluate_core_readiness_payload(
         "dependencies": dependencies,
         "build": {
             "version": BUILD_VERSION,
-            "commit": main_runtime_value("BUILD_COMMIT"),
+            "commit": api_common.BUILD_COMMIT,
             "image_digest": BUILD_IMAGE_DIGEST,
-            "active_revision": active_runtime_revision()
-            or main_runtime_value("BUILD_COMMIT"),
+            "active_revision": active_runtime_revision() or api_common.BUILD_COMMIT,
         },
         "mode": settings.trading_mode,
         "pipeline_mode": settings.trading_pipeline_mode,

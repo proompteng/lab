@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-from .shared_context import (
+from app.api.trading_misc.consumer_evidence_payload import (
     build_consumer_evidence_receipt_projection,
+    revenue_repair_topline_fields,
+)
+from app.api.trading_misc.shared_context import (
     get_lean_backtest,
     get_lean_shadow_parity,
-    revenue_repair_topline_fields,
     router,
     submit_lean_backtest,
     trading_consumer_evidence,
     trading_metrics,
     trading_simulation_progress,
 )
+
 from .trading_autonomy import (
     daily_runtime_ledger_portfolio_summary,
     prometheus_metrics,

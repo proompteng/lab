@@ -2,42 +2,36 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from typing import Any
+import time
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
-from .common import (
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.encoders import jsonable_encoder
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
+from sqlalchemy.orm import Session
+
+from app.api import common as api_common
+from app.api.common import (
     BUILD_VERSION,
-    Body,
-    Depends,
-    FeatureQualityThresholds,
-    HTTPException,
-    Mapping,
-    OperationalError,
-    Query,
-    SQLAlchemyError,
-    Sequence,
-    Session,
-    SessionLocal,
-    SignalEnvelope,
-    TradingScheduler,
     ZERO_NOTIONAL_TCA_RECOMPUTE_MAX_ATTEMPTS,
-    build_revenue_repair_digest,
-    cast,
-    datetime,
-    evaluate_feature_batch_quality,
-    get_session,
-    jsonable_encoder,
-    load_jangar_dependency_quorum,
     logger,
-    refresh_execution_tca_metrics,
     retryable_tca_recompute_error,
-    run_zero_notional_repair,
-    settings,
-    time,
-    timedelta,
-    timezone,
 )
-from .common import main_runtime_value
+from app.config import settings
+from app.db import SessionLocal, get_session
+from app.trading.feature_quality import (
+    FeatureQualityThresholds,
+    evaluate_feature_batch_quality,
+)
+from app.trading.hypotheses import load_jangar_dependency_quorum
+from app.trading.models import SignalEnvelope
+from app.trading.revenue_repair import build_revenue_repair_digest
+from app.trading.scheduler import TradingScheduler
+from app.trading.tca import refresh_execution_tca_metrics
+from app.trading.zero_notional_repair_executor import run_zero_notional_repair
+
 from .application import get_app
 from .readiness_helpers import (
     evaluate_database_contract,
@@ -480,7 +474,7 @@ def trading_profit_freshness_zero_notional_repair(
         account_label=settings.trading_account_label,
         trading_mode=settings.trading_mode,
         torghut_revision=cast(str | None, status_payload.get("active_revision")),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         profit_freshness_frontier=frontier,
         execute=execute,
         preferred_action=action,
@@ -506,7 +500,7 @@ def root() -> dict[str, str]:
         "service": "torghut",
         "status": "ok",
         "version": BUILD_VERSION,
-        "commit": main_runtime_value("BUILD_COMMIT"),
+        "commit": api_common.BUILD_COMMIT,
     }
 
 
