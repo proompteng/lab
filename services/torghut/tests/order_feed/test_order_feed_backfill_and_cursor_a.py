@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 from tests.order_feed.support import (
-    ORDER_FEED_SOURCE_REVISION,
     Decimal,
+    EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+    EXECUTION_RAW_ORDER_SOURCE_TOPIC,
     Execution,
     ExecutionOrderEvent,
     FakeConsumer,
     FakeManualConsumer,
     FakeRecord,
+    ORDER_FEED_SOURCE_REVISION,
     OrderFeedConsumerCursor,
     OrderFeedIngestor,
     OrderFeedSourceWindow,
@@ -15,15 +17,21 @@ from tests.order_feed.support import (
     Session,
     SimpleNamespace,
     backfill_order_feed_events_from_executions,
+    create_historical_source_window_for_event,
     datetime,
+    ensure_aware_utc,
+    event_timestamp_for_source_window,
+    execution_backfill_event_type,
+    find_existing_source_window_for_event,
     func,
-    order_feed_module,
+    isoformat_datetime,
     patch,
     repair_order_feed_execution_links,
     repair_order_feed_execution_states,
     repair_order_feed_fill_deltas,
     select,
     settings,
+    stable_execution_source_offset,
     timedelta,
     timezone,
 )
@@ -283,8 +291,8 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
             session.add(
                 ExecutionOrderEvent(
                     event_fingerprint="offset-collision",
-                    source_topic=order_feed_module.EXECUTION_RAW_ORDER_SOURCE_TOPIC,
-                    source_partition=order_feed_module.EXECUTION_RAW_ORDER_SOURCE_PARTITION,
+                    source_topic=EXECUTION_RAW_ORDER_SOURCE_TOPIC,
+                    source_partition=EXECUTION_RAW_ORDER_SOURCE_PARTITION,
                     source_offset=77,
                     alpaca_account_label="PA3SX7FYNUTF",
                     event_ts=datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
@@ -343,23 +351,23 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
         )
 
         self.assertEqual(
-            order_feed_module._execution_backfill_event_type(partial_execution),
+            execution_backfill_event_type(partial_execution),
             "partial_fill",
         )
         self.assertEqual(
-            order_feed_module._execution_backfill_event_type(unknown_execution),
+            execution_backfill_event_type(unknown_execution),
             "execution_snapshot",
         )
         self.assertEqual(
-            order_feed_module._ensure_aware_utc(
+            ensure_aware_utc(
                 datetime(2026, 2, 1, 2, 0, tzinfo=timezone(timedelta(hours=-8)))
             ),
             datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
         )
-        self.assertIsNone(order_feed_module._isoformat_datetime(None))
+        self.assertIsNone(isoformat_datetime(None))
         self.assertEqual(
-            order_feed_module._stable_execution_source_offset("not-a-uuid"),
-            order_feed_module._stable_execution_source_offset("not-a-uuid"),
+            stable_execution_source_offset("not-a-uuid"),
+            stable_execution_source_offset("not-a-uuid"),
         )
 
     def test_historical_source_window_helpers_handle_missing_and_aware_offsets(
@@ -387,7 +395,7 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
 
         with Session(self.engine) as session:
             self.assertIsNone(
-                order_feed_module._find_existing_source_window_for_event(
+                find_existing_source_window_for_event(
                     session,
                     event,
                 )
@@ -396,13 +404,13 @@ class TestOrderFeedBackfillAndCursorA(OrderFeedTestCase):
                 ValueError,
                 "historical_source_window_requires_source_offset",
             ):
-                order_feed_module._create_historical_source_window_for_event(
+                create_historical_source_window_for_event(
                     session,
                     event,
                 )
 
         self.assertEqual(
-            order_feed_module._event_timestamp_for_source_window(event),
+            event_timestamp_for_source_window(event),
             datetime(2026, 2, 1, 10, 0, tzinfo=timezone.utc),
         )
 

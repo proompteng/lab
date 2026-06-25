@@ -15,10 +15,11 @@ from tests.order_feed.support import (
     OrderFeedTestCase,
     Session,
     TopicPartition,
+    cross_dsn_linkage_counts_for_source_window,
     datetime,
     normalize_order_feed_record,
-    order_feed_module,
     persist_order_event,
+    refresh_source_window_linkage_counts,
     select,
     settings,
     timezone,
@@ -169,11 +170,11 @@ class TestOrderFeedFillDeltaAndIngest(OrderFeedTestCase):
             session.add_all(events)
             session.flush()
 
-            counts = order_feed_module._cross_dsn_linkage_counts_for_source_window(
+            counts = cross_dsn_linkage_counts_for_source_window(
                 session,
                 source_window.id,
             )
-            order_feed_module._refresh_source_window_linkage_counts(
+            refresh_source_window_linkage_counts(
                 session,
                 events[-1],
             )

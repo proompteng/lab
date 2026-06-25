@@ -3,6 +3,7 @@ from __future__ import annotations
 from tests.order_feed.support import (
     Decimal,
     EXECUTION_RAW_ORDER_SOURCE_WINDOW_REVISION,
+    ExecutionLinkageResolution,
     ExecutionOrderEvent,
     NormalizedOrderEvent,
     ORDER_FEED_SOURCE_REVISION,
@@ -13,13 +14,18 @@ from tests.order_feed.support import (
     TradeDecision,
     backfill_order_feed_events_from_executions,
     datetime,
+    dedupe,
     func,
     latest_order_event_for_execution,
     link_order_events_to_execution,
-    order_feed_module,
+    order_event_client_identity,
+    order_event_linkage_blockers,
     patch,
     persist_order_event,
+    raw_event_with_linkage_blockers,
     repair_order_feed_execution_links,
+    resolve_execution_linkage_for_identity,
+    resolve_trade_decision_linkage_for_identity,
     select,
     timezone,
 )
@@ -331,7 +337,7 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         self.assertIsNone(event.execution_id)
         self.assertEqual(event.trade_decision_id, decision_id)
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(event),
+            order_event_linkage_blockers(event),
             ["missing_execution_link"],
         )
         assert source_window is not None
@@ -405,14 +411,14 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         self.assertIsNone(old_unmatchable_event.execution_id)
         self.assertIsNone(old_unmatchable_event.trade_decision_id)
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(old_unmatchable_event),
+            order_event_linkage_blockers(old_unmatchable_event),
             ["missing_execution_link", "missing_trade_decision_link"],
         )
         self.assertEqual(linkable_event.execution_id, execution_id)
         self.assertEqual(linkable_event.trade_decision_id, trade_decision_id)
 
     def test_linkage_payload_helpers_cover_fallback_shapes(self) -> None:
-        wrapped = order_feed_module._raw_event_with_linkage_blockers(
+        wrapped = raw_event_with_linkage_blockers(
             ["raw-list"],
             ["missing_execution_link", "missing_execution_link", " "],
         )
@@ -421,7 +427,7 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             wrapped["_torghut_linkage"]["blockers"], ["missing_execution_link"]
         )
 
-        merged = order_feed_module._raw_event_with_linkage_blockers(
+        merged = raw_event_with_linkage_blockers(
             {"_torghut_linkage": {"existing": "kept"}},
             ["missing_trade_decision_link"],
         )
@@ -431,20 +437,20 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             "missing_trade_decision_link",
         )
 
-        cleared = order_feed_module._raw_event_with_linkage_blockers(
+        cleared = raw_event_with_linkage_blockers(
             {"_torghut_linkage": {"blockers": ["old"]}},
             [],
         )
         self.assertNotIn("_torghut_linkage", cleared)
 
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(
+            order_event_linkage_blockers(
                 ExecutionOrderEvent(raw_event=["not-a-mapping"])
             ),
             [],
         )
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(
+            order_event_linkage_blockers(
                 ExecutionOrderEvent(
                     raw_event={"_torghut_linkage": {"blockers": "single-blocker"}}
                 )
@@ -452,18 +458,18 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             ["single-blocker"],
         )
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(
+            order_event_linkage_blockers(
                 ExecutionOrderEvent(raw_event={"_torghut_linkage": {"blockers": 7}})
             ),
             [],
         )
         self.assertIsNone(
-            order_feed_module._order_event_client_identity(
+            order_event_client_identity(
                 ExecutionOrderEvent(raw_event=["not-a-mapping"])
             )
         )
         self.assertEqual(
-            order_feed_module._order_event_client_identity(
+            order_event_client_identity(
                 ExecutionOrderEvent(
                     raw_event={"order": {"idempotencyKey": "idem-client"}}
                 )
@@ -471,7 +477,7 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             "idem-client",
         )
         self.assertEqual(
-            order_feed_module._dedupe(["a", "", "a", " b ", "b"]),
+            dedupe(["a", "", "a", " b ", "b"]),
             ["a", "b"],
         )
 
@@ -611,10 +617,9 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             )
             session.commit()
             session.refresh(ambiguous_event)
-            with patch.object(
-                order_feed_module,
-                "_resolve_execution_linkage_for_identity",
-                return_value=order_feed_module._ExecutionLinkageResolution(
+            with patch(
+                "app.trading.order_feed.normalize_order_feed_record._resolve_execution_linkage_for_identity",
+                return_value=ExecutionLinkageResolution(
                     execution=other_execution,
                 ),
             ):
@@ -625,7 +630,7 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         self.assertEqual(ambiguous_count, 0)
         self.assertEqual(skipped_count, 0)
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(ambiguous_event),
+            order_event_linkage_blockers(ambiguous_event),
             ["ambiguous_execution_identity"],
         )
 
@@ -662,7 +667,7 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
 
         self.assertEqual(linked_count, 1)
         self.assertEqual(
-            order_feed_module._order_event_linkage_blockers(event),
+            order_event_linkage_blockers(event),
             ["order_feed_trade_decision_identity_missing"],
         )
 
@@ -670,13 +675,11 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
         self,
     ) -> None:
         with Session(self.engine) as session:
-            missing_execution = (
-                order_feed_module._resolve_execution_linkage_for_identity(
-                    session,
-                    account_label="paper",
-                    alpaca_order_id=None,
-                    client_order_id=None,
-                )
+            missing_execution = resolve_execution_linkage_for_identity(
+                session,
+                account_label="paper",
+                alpaca_order_id=None,
+                client_order_id=None,
             )
 
             strategy = Strategy(
@@ -704,12 +707,10 @@ class TestOrderFeedRepairLinksB(OrderFeedTestCase):
             )
             session.commit()
 
-            account_mismatch_decision = (
-                order_feed_module._resolve_trade_decision_linkage_for_identity(
-                    session,
-                    account_label="paper",
-                    client_order_id="account-mismatch-decision-client",
-                )
+            account_mismatch_decision = resolve_trade_decision_linkage_for_identity(
+                session,
+                account_label="paper",
+                client_order_id="account-mismatch-decision-client",
             )
 
         self.assertEqual(

@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 from tests.order_feed.support import (
-    ORDER_FEED_SOURCE_REVISION,
     Decimal,
     ExecutionOrderEvent,
     FakeConsumer,
     FakeRecord,
     NormalizedOrderEvent,
+    ORDER_FEED_SOURCE_REVISION,
     OrderFeedConsumerCursor,
     OrderFeedIngestor,
     OrderFeedSourceWindow,
@@ -14,11 +14,13 @@ from tests.order_feed.support import (
     Session,
     SimpleNamespace,
     datetime,
+    fill_delta_fields,
     normalize_order_feed_record,
-    order_feed_module,
+    order_event_has_failed_unhandled_source_window,
     patch,
     persist_order_event,
     repair_order_feed_fill_deltas,
+    retry_failed_duplicate_order_event_application,
     select,
     settings,
     timedelta,
@@ -113,11 +115,9 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
         )
 
         with Session(self.engine) as session:
-            has_failed_source_window = (
-                order_feed_module._order_event_has_failed_unhandled_source_window(
-                    session,
-                    event,
-                )
+            has_failed_source_window = order_event_has_failed_unhandled_source_window(
+                session,
+                event,
             )
 
         self.assertFalse(has_failed_source_window)
@@ -137,7 +137,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
                 RuntimeError,
                 "failed_unhandled_order_event_missing_execution_link",
             ):
-                order_feed_module._retry_failed_duplicate_order_event_application(
+                retry_failed_duplicate_order_event_application(
                     session=session,
                     event=event,
                     counters={"out_of_order_total": 0, "apply_updates_total": 0},
@@ -160,7 +160,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
                 RuntimeError,
                 "failed_unhandled_order_event_execution_not_found",
             ):
-                order_feed_module._retry_failed_duplicate_order_event_application(
+                retry_failed_duplicate_order_event_application(
                     session=session,
                     event=event,
                     counters={"out_of_order_total": 0, "apply_updates_total": 0},
@@ -225,7 +225,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
             )
             counters = {"out_of_order_total": 0, "apply_updates_total": 0}
 
-            order_feed_module._retry_failed_duplicate_order_event_application(
+            retry_failed_duplicate_order_event_application(
                 session=session,
                 event=event,
                 counters=counters,
@@ -486,7 +486,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
         )
 
         with Session(self.engine) as session:
-            qty_delta, notional_delta, basis = order_feed_module._fill_delta_fields(
+            qty_delta, notional_delta, basis = fill_delta_fields(
                 session,
                 event,
             )
@@ -538,7 +538,7 @@ class TestOrderFeedCursorAndRetries(OrderFeedTestCase):
             assert normalized.event is not None
             persist_order_event(session, normalized.event)
 
-            qty_delta, notional_delta, basis = order_feed_module._fill_delta_fields(
+            qty_delta, notional_delta, basis = fill_delta_fields(
                 session,
                 stale_repeat,
             )

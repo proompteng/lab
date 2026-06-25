@@ -9,29 +9,31 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
 from app.models import Base, Execution, LeanExecutionShadowEvent, TradeDecision
-from app.trading.execution import (
-    _apply_execution_status,
-    _extract_execution_metadata,
-    _json_default,
-    _normalize_reject_reason,
-    _persist_lean_shadow_event,
-    _stable_payload_hash,
+from app.trading.execution.order_executor_core_support import (
+    apply_execution_status,
+    extract_execution_metadata,
+    persist_lean_shadow_event,
+)
+from app.trading.execution.order_executor_submission_methods import (
+    json_default,
+    normalize_reject_reason,
+    stable_payload_hash,
 )
 from app.trading.models import StrategyDecision
 
 
 class TestExecutionRuntimeMetadataCoverage(TestCase):
     def test_stable_payload_hash_handles_empty_and_non_json_scalars(self) -> None:
-        self.assertIsNone(_stable_payload_hash(None))
-        self.assertIsNone(_stable_payload_hash({}))
+        self.assertIsNone(stable_payload_hash(None))
+        self.assertIsNone(stable_payload_hash({}))
         self.assertEqual(
-            _json_default(datetime(2026, 2, 10, 15, 30, tzinfo=timezone.utc)),
+            json_default(datetime(2026, 2, 10, 15, 30, tzinfo=timezone.utc)),
             "2026-02-10T15:30:00+00:00",
         )
-        self.assertEqual(_json_default(Decimal("0.125")), "0.125")
-        self.assertTrue(_json_default(object()).startswith("<object object at "))
+        self.assertEqual(json_default(Decimal("0.125")), "0.125")
+        self.assertTrue(json_default(object()).startswith("<object object at "))
 
-        payload_hash = _stable_payload_hash(
+        payload_hash = stable_payload_hash(
             {
                 "event_ts": datetime(2026, 2, 10, 15, 30, tzinfo=timezone.utc),
                 "cost": Decimal("0.125"),
@@ -63,7 +65,7 @@ class TestExecutionRuntimeMetadataCoverage(TestCase):
             },
         )
 
-        metadata = _extract_execution_metadata(decision)
+        metadata = extract_execution_metadata(decision)
 
         assert isinstance(metadata, dict)
         self.assertEqual(metadata.get("execution_policy_hash"), "policy-sha")
@@ -107,7 +109,7 @@ class TestExecutionRuntimeMetadataCoverage(TestCase):
             decision_hash="runtime-cost",
         )
 
-        metadata = _extract_execution_metadata(decision, decision_row=decision_row)
+        metadata = extract_execution_metadata(decision, decision_row=decision_row)
 
         assert isinstance(metadata, dict)
         self.assertEqual(
@@ -153,7 +155,7 @@ class TestExecutionRuntimeMetadataCoverage(TestCase):
 
         for reason, expected in cases.items():
             with self.subTest(reason=reason):
-                normalized = _normalize_reject_reason(reason)
+                normalized = normalize_reject_reason(reason)
                 self.assertEqual(
                     (
                         normalized.atomic_reason,
@@ -189,7 +191,7 @@ class TestExecutionRuntimeMetadataCoverage(TestCase):
         )
         execution.simulation_json = {"signal_event_ts": "2026-02-10T15:30:00Z"}
 
-        _apply_execution_status(decision_row, execution, "paper")
+        apply_execution_status(decision_row, execution, "paper")
 
         self.assertEqual(
             decision_row.executed_at,
@@ -227,7 +229,7 @@ class TestExecutionRuntimeMetadataCoverage(TestCase):
                     params={"price": Decimal("100")},
                 )
 
-                _persist_lean_shadow_event(
+                persist_lean_shadow_event(
                     session,
                     execution=execution,
                     order_payload={
