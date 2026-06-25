@@ -11,7 +11,7 @@ _SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(_SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(_SERVICE_ROOT))
 
-from app.trading.revenue_repair import (  # noqa: E402
+from app.trading.revenue_repair import (
     SCHEMA_VERSION,
     bool_value as _bool,
     build_alpha_evidence_foundry,

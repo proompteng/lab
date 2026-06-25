@@ -29,26 +29,26 @@ REPO_ROOT = SERVICE_ROOT.parent.parent
 if str(SERVICE_ROOT) not in sys.path:
     sys.path.insert(0, str(SERVICE_ROOT))
 
-from app import config  # noqa: E402
-from app.models import Base, Execution, Strategy, TradeDecision  # noqa: E402
-from app.strategies.catalog import (  # noqa: E402
+from app import config
+from app.models import Base, Execution, Strategy, TradeDecision
+from app.strategies.catalog import (
     StrategyConfig,
     _compose_strategy_description,
 )
-from app.trading.decisions import DecisionEngine  # noqa: E402
-from app.trading.execution import OrderExecutor  # noqa: E402
-from app.trading.execution_adapters import (  # noqa: E402
+from app.trading.decisions import DecisionEngine
+from app.trading.execution import OrderExecutor
+from app.trading.execution_adapters import (
     OrderSubmission,
     SimulationExecutionAdapter,
 )
-from app.trading.firewall import OrderFirewall  # noqa: E402
-from app.trading.ingest import ClickHouseSignalIngestor, SignalBatch  # noqa: E402
-from app.trading.models import SignalEnvelope  # noqa: E402
-from app.trading.reconcile import Reconciler  # noqa: E402
-from app.trading.risk import RiskEngine  # noqa: E402
-from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline  # noqa: E402
-from app.trading.scheduler.state import TradingState  # noqa: E402
-from app.trading.universe import UniverseResolver  # noqa: E402
+from app.trading.firewall import OrderFirewall
+from app.trading.ingest import ClickHouseSignalIngestor, SignalBatch
+from app.trading.models import SignalEnvelope
+from app.trading.reconcile import Reconciler
+from app.trading.risk import RiskEngine
+from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
+from app.trading.scheduler.state import TradingState
+from app.trading.universe import UniverseResolver
 
 DEFAULT_SYMBOLS = [
     "NVDA",
