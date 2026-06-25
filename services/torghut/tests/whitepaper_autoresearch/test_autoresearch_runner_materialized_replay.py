@@ -3,6 +3,20 @@ from __future__ import annotations
 import app.trading.discovery.evidence_bundles as evidence_bundles
 import app.trading.discovery.replay_tape as replay_tape
 from app.trading.discovery.candidate_specs import CandidateSpec
+from app.trading.discovery.fast_replay.extract_price import (
+    extract_microprice_bias_bps,
+    extract_ofi_pressure,
+    extract_price,
+    extract_quote_depth_imbalance,
+    extract_spread_bps,
+    extract_volume,
+    float_or_none,
+    mapping,
+)
+from app.trading.discovery.fast_replay.frontier_selection_blockers_for_row import (
+    candidate_direction,
+    candidate_symbols,
+)
 import scripts.local_intraday_tsmom_replay as replay_mod
 import scripts.materialize_replay_tape as replay_materializer
 import scripts.whitepaper_autoresearch_runner.artifact_io as artifact_io
@@ -18,7 +32,6 @@ from tests.whitepaper_autoresearch.autoresearch_runner_base import (
     WhitepaperAutoresearchRunnerTestCaseBase,
     date,
     datetime,
-    fast_replay,
     json,
     materialize_signal_tape,
     patch,
@@ -385,10 +398,10 @@ class TestAutoresearchRunnerMaterializedReplay(
                 }
             },
         )
-        self.assertEqual(fast_replay._candidate_symbols(no_universe_spec), ("NVDA",))
-        self.assertEqual(fast_replay._candidate_direction(no_universe_spec), 1.0)
+        self.assertEqual(candidate_symbols(no_universe_spec), ("NVDA",))
+        self.assertEqual(candidate_direction(no_universe_spec), 1.0)
         self.assertEqual(
-            fast_replay._extract_price(
+            extract_price(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -398,7 +411,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             101.0,
         )
         self.assertIsNone(
-            fast_replay._extract_price(
+            extract_price(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -406,7 +419,7 @@ class TestAutoresearchRunnerMaterializedReplay(
                 )
             )
         )
-        bid_ask_spread = fast_replay._extract_spread_bps(
+        bid_ask_spread = extract_spread_bps(
             SignalEnvelope(
                 event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                 symbol="NVDA",
@@ -415,7 +428,7 @@ class TestAutoresearchRunnerMaterializedReplay(
         )
         self.assertAlmostEqual(bid_ask_spread or 0.0, 99.50248756218905)
         self.assertEqual(
-            fast_replay._extract_spread_bps(
+            extract_spread_bps(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -425,7 +438,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             5.0,
         )
         self.assertAlmostEqual(
-            fast_replay._extract_quote_depth_imbalance(
+            extract_quote_depth_imbalance(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -439,7 +452,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             1.0 / 3.0,
         )
         self.assertAlmostEqual(
-            fast_replay._extract_ofi_pressure(
+            extract_ofi_pressure(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -450,7 +463,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             0.46211715726000974,
         )
         self.assertGreater(
-            fast_replay._extract_microprice_bias_bps(
+            extract_microprice_bias_bps(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -466,7 +479,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             0.0,
         )
         self.assertEqual(
-            fast_replay._extract_volume(
+            extract_volume(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -476,7 +489,7 @@ class TestAutoresearchRunnerMaterializedReplay(
             12345.0,
         )
         self.assertIsNone(
-            fast_replay._extract_spread_bps(
+            extract_spread_bps(
                 SignalEnvelope(
                     event_ts=datetime(2026, 2, 23, 15, 30, tzinfo=timezone.utc),
                     symbol="NVDA",
@@ -484,9 +497,9 @@ class TestAutoresearchRunnerMaterializedReplay(
                 )
             )
         )
-        self.assertIsNone(fast_replay._float_or_none("not-a-number"))
-        self.assertIsNone(fast_replay._float_or_none(float("nan")))
-        self.assertEqual(fast_replay._mapping("not-a-mapping"), {})
+        self.assertIsNone(float_or_none("not-a-number"))
+        self.assertIsNone(float_or_none(float("nan")))
+        self.assertEqual(mapping("not-a-mapping"), {})
 
     def test_candidate_specs_replay_skips_compiler_and_replays_selected_specs(
         self,

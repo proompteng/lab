@@ -11,9 +11,14 @@ from tests.fast_replay.support import (
     build_source_query_digest,
     date,
     datetime,
+    extract_ofi_memory_regime_score,
+    extract_ofi_pressure,
+    preview_rank_key,
     fast_replay,
     load_replay_tape,
     materialize_signal_tape,
+    row_with_rank_and_selection,
+    select_frontier_buckets,
     timedelta,
     timezone,
 )
@@ -114,7 +119,7 @@ class TestLoadedHpairsReplayTapeFeaturesFeedOfflineRankingOnly(
             ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
         )
 
-        ofi_pressure = fast_replay._extract_ofi_pressure(signal)
+        ofi_pressure = extract_ofi_pressure(signal)
 
         self.assertIsNotNone(ofi_pressure)
         assert ofi_pressure is not None
@@ -148,8 +153,8 @@ class TestLoadedHpairsReplayTapeFeaturesFeedOfflineRankingOnly(
             ingest_ts=datetime(2026, 2, 23, 14, 31, tzinfo=timezone.utc),
         )
 
-        ofi_pressure = fast_replay._extract_ofi_pressure(signal)
-        ofi_memory = fast_replay._extract_ofi_memory_regime_score(signal)
+        ofi_pressure = extract_ofi_pressure(signal)
+        ofi_memory = extract_ofi_memory_regime_score(signal)
 
         self.assertEqual(ofi_pressure, 0.275)
         self.assertEqual(ofi_memory, 0.35)
@@ -290,9 +295,9 @@ class TestLoadedHpairsReplayTapeFeaturesFeedOfflineRankingOnly(
                     is_hpairs_candidate=False,
                 ),
             ),
-            key=fast_replay._preview_rank_key,
+            key=preview_rank_key,
         )
-        selected = fast_replay._select_frontier_buckets(
+        selected = select_frontier_buckets(
             ranked_rows=ranked,
             exploitation_count=1,
             exploration_count=1,
@@ -497,17 +502,17 @@ class TestLoadedHpairsReplayTapeFeaturesFeedOfflineRankingOnly(
                     symbols=["FFF"],
                 ),
             ),
-            key=fast_replay._preview_rank_key,
+            key=preview_rank_key,
         )
 
-        selected = fast_replay._select_frontier_buckets(
+        selected = select_frontier_buckets(
             ranked_rows=ranked,
             exploitation_count=fast_replay.FAST_REPLAY_DEFAULT_EXPLOITATION_COUNT,
             exploration_count=fast_replay.FAST_REPLAY_DEFAULT_EXPLORATION_COUNT,
             exact_replay_candidate_cap=fast_replay.FAST_REPLAY_EXACT_REPLAY_CANDIDATE_CAP,
         )
         final_rows = [
-            fast_replay._row_with_rank_and_selection(
+            row_with_rank_and_selection(
                 row=item,
                 rank=index,
                 frontier_bucket=selected.get(item.candidate_spec_id, "not_selected"),
@@ -752,7 +757,7 @@ class TestLoadedHpairsReplayTapeFeaturesFeedOfflineRankingOnly(
                 row("mean-only-tail-risk", preview_score="100", robust_utility="-5"),
                 row("robust-frontier", preview_score="50", robust_utility="12"),
             ),
-            key=fast_replay._preview_rank_key,
+            key=preview_rank_key,
         )
 
         self.assertEqual(ranked[0].candidate_spec_id, "robust-frontier")

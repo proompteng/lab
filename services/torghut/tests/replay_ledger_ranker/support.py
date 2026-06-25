@@ -18,6 +18,25 @@ from app.trading.discovery.replay_ledger_ranker import (
     rank_replay_ledger_files,
     rank_replay_ledger_payload,
 )
+from app.trading.discovery.replay_ledger_ranker.promotion_blockers import (
+    daily_bucket_ranges,
+    dedupe_source_papers,
+    lob_reality_gap_stress_summary,
+    lob_signal_rows,
+    microstructure_stress_summary,
+    stress_penalty_bps,
+    utc,
+)
+from app.trading.discovery.replay_ledger_ranker.row_has_fill_status import (
+    best_day_share,
+    dedupe,
+    event_type,
+    fill_notional,
+    parse_window_datetime,
+    positive_decimal,
+    profit_factor,
+    safe_divide,
+)
 
 
 def _ts(day: int, minute: int = 0) -> str:
@@ -266,15 +285,30 @@ __all__: tuple[str, ...] = (
     "_with_execution_quality",
     "_with_lob_reality_gap_evidence",
     "_with_microstructure_stress_evidence",
+    "best_day_share",
     "build_replay_ledger_ranking_report",
+    "daily_bucket_ranges",
     "datetime",
+    "dedupe",
+    "dedupe_source_papers",
     "default_replay_ledger_ranking_policy",
+    "event_type",
+    "fill_notional",
     "json",
+    "lob_reality_gap_stress_summary",
+    "lob_signal_rows",
+    "microstructure_stress_summary",
+    "parse_window_datetime",
+    "positive_decimal",
+    "profit_factor",
     "pytest",
     "rank_replay_ledger_files",
     "rank_replay_ledger_payload",
     "rank_replay_ledgers_cli",
     "ranker",
+    "safe_divide",
+    "stress_penalty_bps",
     "sys",
     "timezone",
+    "utc",
 )
