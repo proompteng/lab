@@ -9,7 +9,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.api.trading_misc.shared_context import router
+from app.api.trading_misc.router import router
 from app.db import get_session
 from app.models import Execution, ExecutionTCAMetric
 
