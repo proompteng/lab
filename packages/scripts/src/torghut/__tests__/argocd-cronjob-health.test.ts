@@ -24,6 +24,14 @@ describe('Argo CD CronJob health customization', () => {
     expect(cronJobHealth).not.toContain('torghut-paper-account-flatten')
   })
 
+  it('checks Torghut CronJobs before the generic suspended CronJob health branch', () => {
+    expect(cronJobHealth.indexOf('metadata.namespace == "torghut"')).toBeGreaterThanOrEqual(0)
+    expect(cronJobHealth.indexOf('if spec.suspend == true then')).toBeGreaterThanOrEqual(0)
+    expect(cronJobHealth.indexOf('metadata.namespace == "torghut"')).toBeLessThan(
+      cronJobHealth.indexOf('if spec.suspend == true then'),
+    )
+  })
+
   it('retains failed-run health for non-Torghut CronJobs', () => {
     expect(cronJobHealth).toContain('status.lastScheduleTime ~= nil and status.lastSuccessfulTime == nil')
     expect(cronJobHealth).toContain('status.lastScheduleTime > status.lastSuccessfulTime')
