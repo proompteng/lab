@@ -456,6 +456,10 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen ruff check app tests scripts migrations
 
+      - name: Unused import and suppression gate
+        working-directory: services/torghut
+        run: uv run --frozen ruff check app tests scripts migrations --select RUF100,F401 --preview
+
       - name: Pylint structural hardening gate
         working-directory: services/torghut
         run: uv run --frozen python scripts/run_pylint_torghut_structural_gate.py
@@ -927,6 +931,6 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen ruff check app scripts migrations --select S --statistics --exit-zero
 
-      - name: Dead-code scan (vulture, non-blocking)
+      - name: Dead-code scan (vulture)
         working-directory: services/torghut
-        run: uv run --frozen vulture --config pyproject.toml || true
+        run: uv run --frozen vulture --config pyproject.toml
