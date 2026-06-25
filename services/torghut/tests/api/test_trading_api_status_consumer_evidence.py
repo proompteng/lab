@@ -291,10 +291,10 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.api.trading_misc.shared_context.resolve_hypothesis_dependency_quorum"
+                "app.api.proof_floor_payloads.build_jangar_reliability_settlement_ref.resolve_hypothesis_dependency_quorum"
             ) as dependency_fetch,
             patch(
-                "app.api.trading_misc.shared_context.load_jangar_route_continuity_packet"
+                "app.api.proof_floor_payloads.build_jangar_reliability_settlement_ref.load_jangar_route_continuity_packet"
             ) as continuity_fetch,
             patch(
                 "app.api.trading_status._forecast_service_status",
@@ -327,7 +327,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 return_value=live_submission_gate,
             ),
             patch(
-                "app.api.proof_floor_payloads.shared_context.build_profitability_proof_floor_receipt",
+                "app.api.proof_floor_payloads.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
             patch(
@@ -729,10 +729,10 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.api.trading_misc.shared_context.resolve_hypothesis_dependency_quorum"
+                "app.api.proof_floor_payloads.build_jangar_reliability_settlement_ref.resolve_hypothesis_dependency_quorum"
             ) as dependency_fetch,
             patch(
-                "app.api.trading_misc.shared_context.load_jangar_route_continuity_packet"
+                "app.api.proof_floor_payloads.build_jangar_reliability_settlement_ref.load_jangar_route_continuity_packet"
             ) as continuity_fetch,
             patch(
                 "app.api.trading_misc.consumer_evidence_payload.load_jangar_dependency_quorum",
@@ -775,7 +775,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 return_value=live_submission_gate,
             ),
             patch(
-                "app.api.proof_floor_payloads.shared_context.build_profitability_proof_floor_receipt",
+                "app.api.proof_floor_payloads.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
             patch(
