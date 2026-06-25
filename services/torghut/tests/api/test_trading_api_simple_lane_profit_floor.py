@@ -474,7 +474,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads.build_profitability_proof_floor_receipt",
+            "app.api.proof_floor_payloads.proof_floor_receipts.build_profitability_proof_floor_receipt",
             return_value=proof_floor,
         ):
             status_response = self.client.get("/trading/status")
@@ -785,7 +785,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads.shared_context.build_renewal_bond_profit_escrow",
+            "app.api.proof_floor_payloads.proof_floor_receipts.build_renewal_bond_profit_escrow",
             return_value=escrow,
         ):
             status_response = self.client.get("/trading/status")
@@ -815,7 +815,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
 
         with (
             patch(
-                "app.api.proof_floor_payloads.shared_context.build_capital_replay_projection",
+                "app.api.proof_floor_payloads.capital_and_repair_ledgers.build_capital_replay_projection",
                 return_value=projection,
             ),
             patch(

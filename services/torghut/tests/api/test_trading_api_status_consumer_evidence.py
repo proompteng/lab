@@ -327,7 +327,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 return_value=live_submission_gate,
             ),
             patch(
-                "app.api.proof_floor_payloads.build_profitability_proof_floor_receipt",
+                "app.api.proof_floor_payloads.proof_floor_receipts.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
             patch(
@@ -775,7 +775,7 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
                 return_value=live_submission_gate,
             ),
             patch(
-                "app.api.proof_floor_payloads.build_profitability_proof_floor_receipt",
+                "app.api.proof_floor_payloads.proof_floor_receipts.build_profitability_proof_floor_receipt",
                 return_value=proof_floor,
             ),
             patch(

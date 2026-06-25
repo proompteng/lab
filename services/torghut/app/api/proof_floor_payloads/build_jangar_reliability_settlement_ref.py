@@ -18,17 +18,15 @@ from app.api.proof_contracts import (
 from app.api.health_checks.shared_context import (
     empirical_jobs_status as _empirical_jobs_status,
 )
-from app.api.proof_floor_payloads.shared_context import (
-    build_capital_replay_projection_payload as _build_capital_replay_projection_payload,
+from app.api.proof_floor_payloads.capital_and_repair_ledgers import (
+    build_capital_replay_projection_payload,
 )
-from app.api.proof_floor_payloads.shared_context import (
-    build_jangar_contract_graduation_ref as _build_jangar_contract_graduation_ref,
+from app.api.proof_floor_payloads.jangar_dependency_refs import (
+    build_jangar_contract_graduation_ref,
 )
-from app.api.proof_floor_payloads.shared_context import (
-    build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
-)
-from app.api.proof_floor_payloads.shared_context import (
-    build_route_reacquisition_board_payload as _build_route_reacquisition_board_payload,
+from app.api.proof_floor_payloads.proof_floor_receipts import (
+    build_profitability_proof_floor_payload,
+    build_route_reacquisition_board_payload,
 )
 from app.config import settings
 from app.db import SessionLocal
@@ -60,7 +58,7 @@ from ..health_checks.remember_alpaca_success import (
 logger = logging.getLogger(__name__)
 
 
-def _build_jangar_reliability_settlement_ref(
+def build_jangar_reliability_settlement_ref(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
     raw_settlement = (
@@ -125,7 +123,7 @@ def _build_jangar_reliability_settlement_ref(
     }
 
 
-def _build_torghut_routeability_admission_ref(
+def build_torghut_routeability_admission_ref(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
     raw_admission = dependency_quorum.get("routeability_admission")
@@ -184,7 +182,7 @@ def _build_torghut_routeability_admission_ref(
     }
 
 
-def _build_torghut_stage_clearance_packet_ref(
+def build_torghut_stage_clearance_packet_ref(
     dependency_quorum: Mapping[str, Any],
 ) -> dict[str, object]:
     raw_packet = dependency_quorum.get("stage_clearance_packet")
@@ -232,7 +230,7 @@ def _build_torghut_stage_clearance_packet_ref(
     }
 
 
-def _build_profit_signal_quorum_payload(
+def build_profit_signal_quorum_payload(
     *,
     torghut_revision: str | None,
     dependency_quorum: Mapping[str, Any],
@@ -253,13 +251,13 @@ def _build_profit_signal_quorum_payload(
         proof_floor_receipt=proof_floor,
         route_reacquisition_board=route_reacquisition_board,
         live_submission_gate=live_submission_gate,
-        torghut_stage_clearance_packet=_build_torghut_stage_clearance_packet_ref(
+        torghut_stage_clearance_packet=build_torghut_stage_clearance_packet_ref(
             dependency_quorum
         ),
     )
 
 
-def _simulation_cache_status_payload(
+def simulation_cache_status_payload(
     active_simulation_context: Mapping[str, Any] | None,
 ) -> dict[str, object]:
     context = active_simulation_context or {}
@@ -276,7 +274,7 @@ def _simulation_cache_status_payload(
     }
 
 
-def _build_quality_adjusted_profit_frontier_payload(
+def build_quality_adjusted_profit_frontier_payload(
     *,
     torghut_revision: str | None,
     live_submission_gate: Mapping[str, Any],
@@ -297,14 +295,14 @@ def _build_quality_adjusted_profit_frontier_payload(
         hypothesis_payload=hypothesis_payload,
         quant_evidence=quant_evidence,
         market_context_status=market_context_status,
-        simulation_cache_status=_simulation_cache_status_payload(
+        simulation_cache_status=simulation_cache_status_payload(
             active_simulation_context
         ),
-        jangar_evidence_quality=_route_continuity_packet_for_proof_floor(proof_floor),
+        jangar_evidence_quality=route_continuity_packet_for_proof_floor(proof_floor),
     )
 
 
-def _build_autonomy_capital_replay_projection(
+def build_autonomy_capital_replay_projection(
     scheduler: TradingScheduler,
 ) -> dict[str, object]:
     dependency_quorum = resolve_hypothesis_dependency_quorum(load_hypothesis_registry())
@@ -336,7 +334,7 @@ def _build_autonomy_capital_replay_projection(
                 ),
                 quant_health_status=quant_evidence,
             )
-        proof_floor = _build_profitability_proof_floor_payload(
+        proof_floor = build_profitability_proof_floor_payload(
             state=scheduler.state,
             torghut_revision=BUILD_COMMIT,
             live_submission_gate=live_submission_gate,
@@ -346,11 +344,11 @@ def _build_autonomy_capital_replay_projection(
             market_context_status=market_context_status,
             tca_summary=tca_summary,
         )
-        route_reacquisition_board = _build_route_reacquisition_board_payload(
+        route_reacquisition_board = build_route_reacquisition_board_payload(
             proof_floor=proof_floor,
             active_revision=BUILD_COMMIT,
         )
-        return _build_capital_replay_projection_payload(
+        return build_capital_replay_projection_payload(
             torghut_revision=BUILD_COMMIT,
             dependency_quorum=dependency_quorum.as_payload(),
             live_submission_gate=live_submission_gate,
@@ -379,13 +377,13 @@ def _build_autonomy_capital_replay_projection(
             empirical_jobs_status={},
             quant_evidence={},
             market_context_status={},
-            jangar_contract_graduation_ref=_build_jangar_contract_graduation_ref(
+            jangar_contract_graduation_ref=build_jangar_contract_graduation_ref(
                 dependency_quorum.as_payload()
             ),
         )
 
 
-def _route_continuity_packet_for_proof_floor(
+def route_continuity_packet_for_proof_floor(
     proof_floor: Mapping[str, Any],
 ) -> dict[str, object]:
     registry = load_hypothesis_registry()
@@ -411,7 +409,7 @@ def _route_continuity_packet_for_proof_floor(
     }
 
 
-def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
+def simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
     metrics = getattr(state, "metrics", None)
     totals = getattr(metrics, "decision_reject_reason_total", {})
     if not isinstance(totals, Mapping):
@@ -425,7 +423,7 @@ def _simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
     return payload
 
 
-def _build_rejected_signal_outcome_learning_payload(
+def build_rejected_signal_outcome_learning_payload(
     state: object,
     *,
     persisted_summary: Mapping[str, object] | None = None,
@@ -516,7 +514,7 @@ def _build_rejected_signal_outcome_learning_payload(
     }
 
 
-def _load_rejected_signal_outcome_learning_summary(
+def load_rejected_signal_outcome_learning_summary(
     session: Session,
 ) -> dict[str, object] | None:
     try:
@@ -599,7 +597,7 @@ def _load_rejected_signal_outcome_learning_summary(
         return {"persistence_state": "unavailable"}
 
 
-def _load_route_provenance_summary(session: Session) -> dict[str, object]:
+def load_route_provenance_summary(session: Session) -> dict[str, object]:
     window_start = datetime.now(timezone.utc) - timedelta(hours=24)
     row = session.execute(
         select(
@@ -645,27 +643,6 @@ def _load_route_provenance_summary(session: Session) -> dict[str, object]:
         "unknown_ratio": unknown / safe_total,
         "mismatch_ratio": mismatch / safe_total,
     }
-
-
-build_jangar_reliability_settlement_ref = _build_jangar_reliability_settlement_ref
-build_capital_replay_projection_payload = _build_capital_replay_projection_payload
-build_torghut_routeability_admission_ref = _build_torghut_routeability_admission_ref
-build_torghut_stage_clearance_packet_ref = _build_torghut_stage_clearance_packet_ref
-build_profit_signal_quorum_payload = _build_profit_signal_quorum_payload
-simulation_cache_status_payload = _simulation_cache_status_payload
-build_quality_adjusted_profit_frontier_payload = (
-    _build_quality_adjusted_profit_frontier_payload
-)
-build_autonomy_capital_replay_projection = _build_autonomy_capital_replay_projection
-route_continuity_packet_for_proof_floor = _route_continuity_packet_for_proof_floor
-simple_lane_reject_reason_totals = _simple_lane_reject_reason_totals
-build_rejected_signal_outcome_learning_payload = (
-    _build_rejected_signal_outcome_learning_payload
-)
-load_rejected_signal_outcome_learning_summary = (
-    _load_rejected_signal_outcome_learning_summary
-)
-load_route_provenance_summary = _load_route_provenance_summary
 
 
 __all__ = (

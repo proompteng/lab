@@ -4,6 +4,7 @@ from decimal import Decimal
 from types import SimpleNamespace
 
 from app.api import proof_floor_payloads
+from app.api.proof_floor_payloads import proof_floor_receipts
 from app.api.proof_floor_payloads.paper_route_probe_targets import (
     bounded_paper_route_probe_target_symbols,
 )
@@ -132,7 +133,7 @@ def test_profitability_payload_injects_bounded_probe_target_symbols(
     try:
         settings.trading_static_symbols_raw = "AAPL,NVDA"
         monkeypatch.setattr(
-            proof_floor_payloads,
+            proof_floor_receipts,
             "build_profitability_proof_floor_receipt",
             fake_receipt,
         )
