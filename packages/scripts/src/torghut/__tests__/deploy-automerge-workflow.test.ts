@@ -37,6 +37,7 @@ describe('torghut-deploy-automerge workflow', () => {
     const promotedHyperliquidRuntimeManifests = [
       'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml',
       'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml',
+      'argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml',
     ]
 
     for (const manifestPath of promotedHyperliquidRuntimeManifests) {
