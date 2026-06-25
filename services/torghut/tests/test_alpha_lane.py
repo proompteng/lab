@@ -22,7 +22,8 @@ from app.models import (
     ResearchSequentialTrial,
     ResearchValidationTest,
 )
-from app.trading.alpha.lane import run_alpha_discovery_lane, _normalize_prices
+from app.trading.alpha.lane import run_alpha_discovery_lane
+from app.trading.alpha.lane.alpha_lane_result import normalize_prices
 from app.trading.discovery.sequential_trials import build_sequential_trial_summary
 
 
@@ -409,7 +410,7 @@ class TestAlphaLane(TestCase):
                 "B": [201.0, 202.0, 203.0, 204.0],
             }
         )
-        normalized = _normalize_prices(prices, label="train")
+        normalized = normalize_prices(prices, label="train")
 
         self.assertEqual(normalized.shape, (4, 2))
         self.assertIn("A", normalized.columns)

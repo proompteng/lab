@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from app.trading.discovery.mlx_training_data.paper_contract_feature_values import (
+    observed_replay_viability_penalty,
+)
+from app.trading.discovery.mlx_training_data.shared_context import (
+    hard_veto_count,
+    sequence_strings,
+)
+
 from tests.mlx_training_data.support import (
     CandidateSpec,
     Decimal,
@@ -10,7 +18,6 @@ from tests.mlx_training_data.support import (
     candidate_spec_capital_features,
     compile_candidate_specs,
     evidence_bundle_from_frontier_candidate,
-    mlx_training_data_module,
     rank_training_rows,
     train_mlx_ranker,
 )
@@ -23,18 +30,13 @@ class TestTrainingFeedbackHelpersHandleStringVetoesAndScalarSequences(
         self,
     ) -> None:
         self.assertEqual(
-            mlx_training_data_module._hard_veto_count(
-                {"hard_vetoes": "positive_day_ratio_below_oracle"}
-            ),
+            hard_veto_count({"hard_vetoes": "positive_day_ratio_below_oracle"}),
             1.0,
         )
+        self.assertEqual(hard_veto_count({"hard_vetoes": "  "}), 0.0)
+        self.assertEqual(sequence_strings("NVDA"), ())
         self.assertEqual(
-            mlx_training_data_module._hard_veto_count({"hard_vetoes": "  "}),
-            0.0,
-        )
-        self.assertEqual(mlx_training_data_module._sequence_strings("NVDA"), ())
-        self.assertEqual(
-            mlx_training_data_module._sequence_strings(["NVDA", "", "AMD"]),
+            sequence_strings(["NVDA", "", "AMD"]),
             ("NVDA", "AMD"),
         )
 
@@ -180,7 +182,7 @@ class TestTrainingFeedbackHelpersHandleStringVetoesAndScalarSequences(
     def test_observed_replay_viability_penalty_marks_zero_activity_notional_gap(
         self,
     ) -> None:
-        penalty = mlx_training_data_module._observed_replay_viability_penalty(
+        penalty = observed_replay_viability_penalty(
             {
                 "active_day_ratio": "0",
                 "positive_day_ratio": "0",

@@ -10,7 +10,9 @@ import numpy as np
 
 import app.trading.discovery.candidate_specs as candidate_specs_module
 import app.trading.discovery.evidence_bundles as evidence_bundles_module
-import app.trading.discovery.mlx_training_data as mlx_training_data_module
+from app.trading.discovery.mlx_training_data import (
+    shared_context as mlx_training_data_shared_context,
+)
 from app.trading.discovery.candidate_specs import (
     candidate_spec_from_payload,
     compile_candidate_specs,
@@ -20,6 +22,7 @@ from app.trading.discovery.evidence_bundles import (
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
 )
+from app.trading.discovery.evidence_bundles.shared_context import bool_value
 from app.trading.discovery.hypothesis_cards import (
     HYPOTHESIS_CARD_SCHEMA_VERSION,
     HypothesisCard,
@@ -147,13 +150,14 @@ __all__: tuple[str, ...] = (
     "candidate_spec_from_payload",
     "candidate_specs_module",
     "compile_candidate_specs",
+    "bool_value",
     "evidence_bundle_blockers",
     "evidence_bundle_from_frontier_candidate",
     "evidence_bundle_from_payload",
     "evidence_bundles_module",
     "hypothesis_card_from_payload",
     "mlx_ranker_model_from_payload",
-    "mlx_training_data_module",
+    "mlx_training_data_shared_context",
     "np",
     "optimize_portfolio_candidate",
     "patch",

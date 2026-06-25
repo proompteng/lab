@@ -27,7 +27,6 @@ from .evidence_bundle_blockers import (
     evidence_bundle_blockers,
     evidence_bundle_is_valid,
 )
-from .shared_context import bool_value as _bool
 
 __all__ = [
     "EVIDENCE_BUNDLE_SCHEMA_VERSION",
@@ -54,5 +53,4 @@ __all__ = [
     "evidence_bundle_from_payload",
     "evidence_bundle_blockers",
     "evidence_bundle_is_valid",
-    "_bool",
 ]
