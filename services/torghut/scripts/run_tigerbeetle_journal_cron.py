@@ -16,13 +16,13 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from app.trading.tigerbeetle_journal import (
+from app.trading.tigerbeetle_journal import (  # noqa: E402
     SOURCE_TYPE_EXECUTION,
     SOURCE_TYPE_EXECUTION_ORDER_EVENT,
     SOURCE_TYPE_EXECUTION_TCA_METRIC,
     SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
 )
-from scripts import journal_tigerbeetle_order_events as journal_script
+from scripts import journal_tigerbeetle_order_events as journal_script  # noqa: E402
 
 MAX_TIGERBEETLE_BATCH_SIZE = 5000
 LIVE_ORDER_EVENT_BATCH_SIZE = 50
