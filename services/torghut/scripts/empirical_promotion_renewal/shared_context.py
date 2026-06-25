@@ -10,7 +10,6 @@ import subprocess
 import sys
 import time as wall_time
 import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path

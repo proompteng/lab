@@ -183,10 +183,10 @@ Use existing feature-flags service but account-specific entity ids:
 Required lane controls:
 
 - `torghut_trading_enabled`,
-- `torghut_trading_live_enabled`,
+- `TRADING_MODE` for paper/live lane selection,
 - `torghut_trading_crypto_enabled`,
 - `torghut_trading_crypto_live_enabled`,
-- account-specific kill switch.
+- account-specific kill switch and live-submit activation.
 
 ## 9. Rollout Plan (GitOps)
 

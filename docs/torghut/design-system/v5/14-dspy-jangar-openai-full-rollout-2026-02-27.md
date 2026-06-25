@@ -187,7 +187,7 @@ Work:
 ### Live smoke
 
 1. new `llm_decision_reviews` rows show DSPy model lineage.
-2. no new rows indicate legacy runtime model branch usage.
+2. no new rows indicate unsupported runtime-mode branch usage.
 3. non-zero DSPy review volume on live signal flow.
 4. no regression in deterministic gate rejection behavior.
 

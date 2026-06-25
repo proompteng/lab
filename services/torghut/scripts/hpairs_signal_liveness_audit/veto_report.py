@@ -12,7 +12,6 @@ import argparse
 import json
 import sys
 import urllib.error
-import urllib.request
 from collections.abc import Mapping, Sequence
 from typing import cast
 
