@@ -18,14 +18,14 @@ from ..quantity_rules import (
 
 
 from .shared_context import (
-    EXIT_ONLY_BUY_FLAT_REASON as _EXIT_ONLY_BUY_FLAT_REASON,
-    EXIT_ONLY_SELL_FLAT_REASON as _EXIT_ONLY_SELL_FLAT_REASON,
-    SAME_DIRECTION_REENTRY_REASON as _SAME_DIRECTION_REENTRY_REASON,
-    SHORT_ENTRY_BELOW_MIN_QTY_REASON as _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+    EXIT_ONLY_BUY_FLAT_REASON,
+    EXIT_ONLY_SELL_FLAT_REASON,
+    SAME_DIRECTION_REENTRY_REASON,
+    SHORT_ENTRY_BELOW_MIN_QTY_REASON,
 )
 
 
-def _resolve_symbol_notional_cap(
+def resolve_symbol_notional_cap(
     *,
     strategy_pcts: list[Optional[Decimal]],
     equity: Optional[Decimal],
@@ -35,7 +35,7 @@ def _resolve_symbol_notional_cap(
     return resolve_symbol_notional_cap(strategy_pcts=strategy_pcts, equity=equity)
 
 
-def _resolve_portfolio_gross_cap(
+def resolve_portfolio_gross_cap(
     *,
     strategies: list[Strategy],
     equity: Optional[Decimal],
@@ -45,7 +45,7 @@ def _resolve_portfolio_gross_cap(
     return resolve_portfolio_gross_cap(strategies=strategies, equity=equity)
 
 
-def _position_value_for_symbol(
+def position_value_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -54,7 +54,7 @@ def _position_value_for_symbol(
     return position_value_for_symbol(positions, symbol)
 
 
-def _portfolio_gross_exposure(
+def portfolio_gross_exposure(
     positions: Optional[list[dict[str, Any]]],
 ) -> Decimal:
     from .positions_for_strategy_action import portfolio_gross_exposure
@@ -62,7 +62,7 @@ def _portfolio_gross_exposure(
     return portfolio_gross_exposure(positions)
 
 
-def _position_qty_for_symbol(
+def position_qty_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -71,25 +71,25 @@ def _position_qty_for_symbol(
     return position_qty_for_symbol(positions, symbol)
 
 
-def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
+def treats_sell_as_exit_only(strategy: Strategy) -> bool:
     from .positions_for_strategy_action import treats_sell_as_exit_only
 
     return treats_sell_as_exit_only(strategy)
 
 
-def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
+def treats_buy_as_exit_only(strategy: Strategy) -> bool:
     from .positions_for_strategy_action import treats_buy_as_exit_only
 
     return treats_buy_as_exit_only(strategy)
 
 
-def _blocks_same_direction_reentry(strategy: Strategy) -> bool:
+def blocks_same_direction_reentry(strategy: Strategy) -> bool:
     from .positions_for_strategy_action import blocks_same_direction_reentry
 
     return blocks_same_direction_reentry(strategy)
 
 
-def _same_direction_reentry_exists(
+def same_direction_reentry_exists(
     *,
     action: str,
     position_qty: Optional[Decimal],
@@ -99,7 +99,7 @@ def _same_direction_reentry_exists(
     return same_direction_reentry_exists(action=action, position_qty=position_qty)
 
 
-def _cap_requested_qty_by_symbol_cap(
+def cap_requested_qty_by_symbol_cap(
     *,
     action: str,
     requested_qty: Decimal,
@@ -118,7 +118,7 @@ def _cap_requested_qty_by_symbol_cap(
     )
 
 
-def _cap_requested_qty_by_portfolio_gross_cap(
+def cap_requested_qty_by_portfolio_gross_cap(
     *,
     action: str,
     requested_qty: Decimal,
@@ -137,28 +137,28 @@ def _cap_requested_qty_by_portfolio_gross_cap(
     )
 
 
-def _skip_non_executable_decision_qty(
+def skip_non_executable_decision_qty(
     *, qty: Decimal, sizing_meta: Mapping[str, Any]
 ) -> bool:
     reason = str(sizing_meta.get("reason") or "").strip()
     return qty <= 0 and reason in {
-        _EXIT_ONLY_SELL_FLAT_REASON,
-        _EXIT_ONLY_BUY_FLAT_REASON,
-        _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
-        _SAME_DIRECTION_REENTRY_REASON,
+        EXIT_ONLY_SELL_FLAT_REASON,
+        EXIT_ONLY_BUY_FLAT_REASON,
+        SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+        SAME_DIRECTION_REENTRY_REASON,
         "symbol_capacity_exhausted",
         "portfolio_gross_capacity_exhausted",
     }
 
 
 @dataclass(frozen=True)
-class _StrategyBudget:
+class StrategyBudget:
     notional_budget: Decimal | None
     method: str
 
 
 @dataclass(frozen=True)
-class _SingleStrategyQtyContext:
+class SingleStrategyQtyContext:
     strategy: Strategy
     symbol: str
     action: str
@@ -178,14 +178,14 @@ class _SingleStrategyQtyContext:
 
 
 @dataclass(frozen=True)
-class _SingleStrategyCapacityAdjustment:
+class SingleStrategyCapacityAdjustment:
     original_requested_qty: Decimal
     requested_qty: Decimal
     cap_applied: bool
     portfolio_cap_applied: bool
 
 
-def _resolve_qty(
+def resolve_qty(
     strategy: Strategy,
     *,
     symbol: str,
@@ -207,10 +207,10 @@ def _resolve_qty(
     default_qty = Decimal(str(settings.trading_default_qty))
     if price is None or price <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_price"}
-    budget = _single_strategy_budget(strategy=strategy, equity=equity)
+    budget = single_strategy_budget(strategy=strategy, equity=equity)
     if budget.notional_budget is None or budget.notional_budget <= 0:
         return default_qty, {"method": "default_qty", "reason": "missing_budget"}
-    context = _single_strategy_qty_context(
+    context = single_strategy_qty_context(
         strategy=strategy,
         symbol=symbol,
         action=action,
@@ -219,14 +219,14 @@ def _resolve_qty(
         positions=positions,
         budget=budget,
     )
-    return _resolve_single_strategy_qty_from_context(context)
+    return resolve_single_strategy_qty_from_context(context)
 
 
-def _single_strategy_budget(
+def single_strategy_budget(
     *,
     strategy: Strategy,
     equity: Decimal | None,
-) -> _StrategyBudget:
+) -> StrategyBudget:
     max_notional = optional_decimal(strategy.max_notional_per_trade)
     max_pct = optional_decimal(strategy.max_position_pct_equity)
     pct_notional: Optional[Decimal] = None
@@ -250,10 +250,10 @@ def _single_strategy_budget(
         if global_notional is not None and global_notional > 0:
             notional_budget = global_notional
             method = "global_max_notional_per_trade"
-    return _StrategyBudget(notional_budget=notional_budget, method=method)
+    return StrategyBudget(notional_budget=notional_budget, method=method)
 
 
-def _single_strategy_qty_context(
+def single_strategy_qty_context(
     *,
     strategy: Strategy,
     symbol: str,
@@ -261,23 +261,23 @@ def _single_strategy_qty_context(
     price: Decimal,
     equity: Decimal | None,
     positions: list[dict[str, Any]] | None,
-    budget: _StrategyBudget,
-) -> _SingleStrategyQtyContext:
-    symbol_notional_cap = _resolve_symbol_notional_cap(
+    budget: StrategyBudget,
+) -> SingleStrategyQtyContext:
+    symbol_notional_cap = resolve_symbol_notional_cap(
         strategy_pcts=[optional_decimal(strategy.max_position_pct_equity)],
         equity=equity,
     )
-    portfolio_gross_cap = _resolve_portfolio_gross_cap(
+    portfolio_gross_cap = resolve_portfolio_gross_cap(
         strategies=[strategy],
         equity=equity,
     )
-    current_value = _position_value_for_symbol(positions, symbol)
-    current_gross = _portfolio_gross_exposure(positions)
-    position_qty = _position_qty_for_symbol(positions, symbol)
+    current_value = position_value_for_symbol(positions, symbol)
+    current_gross = portfolio_gross_exposure(positions)
+    position_qty = position_qty_for_symbol(positions, symbol)
     normalized_action = action.strip().lower()
-    exit_only_sell = _treats_sell_as_exit_only(strategy) and normalized_action == "sell"
-    exit_only_buy = _treats_buy_as_exit_only(strategy) and normalized_action == "buy"
-    return _SingleStrategyQtyContext(
+    exit_only_sell = treats_sell_as_exit_only(strategy) and normalized_action == "sell"
+    exit_only_buy = treats_buy_as_exit_only(strategy) and normalized_action == "buy"
+    return SingleStrategyQtyContext(
         strategy=strategy,
         symbol=symbol,
         action=action,
@@ -297,18 +297,18 @@ def _single_strategy_qty_context(
     )
 
 
-def _resolve_single_strategy_qty_from_context(
-    context: _SingleStrategyQtyContext,
+def resolve_single_strategy_qty_from_context(
+    context: SingleStrategyQtyContext,
 ) -> tuple[Decimal, dict[str, Any]]:
-    exit_result = _single_strategy_exit_guard_result(context)
+    exit_result = single_strategy_exit_guard_result(context)
     if exit_result is not None:
         return exit_result
-    capacity = _single_strategy_capacity_adjustment(
+    capacity = single_strategy_capacity_adjustment(
         context,
-        requested_qty=_single_strategy_requested_qty(context),
+        requested_qty=single_strategy_requested_qty(context),
     )
     if capacity.requested_qty <= 0:
-        return _single_strategy_capacity_exhausted_result(context, capacity)
+        return single_strategy_capacity_exhausted_result(context, capacity)
     resolution = resolve_quantity_resolution(
         action=context.action,
         symbol=context.symbol,
@@ -326,7 +326,7 @@ def _resolve_single_strategy_qty_from_context(
         context.symbol,
         fractional_equities_enabled=resolution.fractional_allowed,
     )
-    min_qty_result = _single_strategy_min_qty_result(
+    min_qty_result = single_strategy_min_qty_result(
         context=context,
         capacity=capacity,
         resolution=resolution,
@@ -339,7 +339,7 @@ def _resolve_single_strategy_qty_from_context(
     if qty < min_qty:
         qty = min_qty
         result_position_qty = resolution.position_qty
-    return _single_strategy_success_result(
+    return single_strategy_success_result(
         context=context,
         capacity=capacity,
         resolution=resolution,
@@ -348,8 +348,8 @@ def _resolve_single_strategy_qty_from_context(
     )
 
 
-def _single_strategy_exit_guard_result(
-    context: _SingleStrategyQtyContext,
+def single_strategy_exit_guard_result(
+    context: SingleStrategyQtyContext,
 ) -> tuple[Decimal, dict[str, Any]] | None:
     if (
         context.exit_only_sell
@@ -358,7 +358,7 @@ def _single_strategy_exit_guard_result(
     ):
         return Decimal("0"), {
             "method": context.method,
-            "reason": _EXIT_ONLY_SELL_FLAT_REASON,
+            "reason": EXIT_ONLY_SELL_FLAT_REASON,
             "notional_budget": str(context.notional_budget),
             "price": str(context.price),
             "position_qty": str(context.position_qty),
@@ -370,20 +370,20 @@ def _single_strategy_exit_guard_result(
     ):
         return Decimal("0"), {
             "method": context.method,
-            "reason": _EXIT_ONLY_BUY_FLAT_REASON,
+            "reason": EXIT_ONLY_BUY_FLAT_REASON,
             "notional_budget": str(context.notional_budget),
             "price": str(context.price),
             "position_qty": str(context.position_qty),
         }
-    if _blocks_same_direction_reentry(
+    if blocks_same_direction_reentry(
         context.strategy
-    ) and _same_direction_reentry_exists(
+    ) and same_direction_reentry_exists(
         action=context.normalized_action,
         position_qty=context.position_qty,
     ):
         return Decimal("0"), {
             "method": context.method,
-            "reason": _SAME_DIRECTION_REENTRY_REASON,
+            "reason": SAME_DIRECTION_REENTRY_REASON,
             "notional_budget": str(context.notional_budget),
             "price": str(context.price),
             "position_qty": (
@@ -393,7 +393,7 @@ def _single_strategy_exit_guard_result(
     return None
 
 
-def _single_strategy_requested_qty(context: _SingleStrategyQtyContext) -> Decimal:
+def single_strategy_requested_qty(context: SingleStrategyQtyContext) -> Decimal:
     requested_qty = context.notional_budget / context.price
     if (
         context.exit_only_sell
@@ -410,12 +410,12 @@ def _single_strategy_requested_qty(context: _SingleStrategyQtyContext) -> Decima
     return requested_qty
 
 
-def _single_strategy_capacity_adjustment(
-    context: _SingleStrategyQtyContext,
+def single_strategy_capacity_adjustment(
+    context: SingleStrategyQtyContext,
     *,
     requested_qty: Decimal,
-) -> _SingleStrategyCapacityAdjustment:
-    capped_requested_qty = _cap_requested_qty_by_symbol_cap(
+) -> SingleStrategyCapacityAdjustment:
+    capped_requested_qty = cap_requested_qty_by_symbol_cap(
         action=context.normalized_action,
         requested_qty=requested_qty,
         price=context.price,
@@ -427,7 +427,7 @@ def _single_strategy_capacity_adjustment(
     )
     if capped_requested_qty is not None:
         requested_qty = capped_requested_qty
-    capped_by_portfolio_qty = _cap_requested_qty_by_portfolio_gross_cap(
+    capped_by_portfolio_qty = cap_requested_qty_by_portfolio_gross_cap(
         action=context.normalized_action,
         requested_qty=requested_qty,
         price=context.price,
@@ -439,7 +439,7 @@ def _single_strategy_capacity_adjustment(
     )
     if capped_by_portfolio_qty is not None:
         requested_qty = capped_by_portfolio_qty
-    return _SingleStrategyCapacityAdjustment(
+    return SingleStrategyCapacityAdjustment(
         original_requested_qty=context.notional_budget / context.price,
         requested_qty=requested_qty,
         cap_applied=cap_applied,
@@ -447,20 +447,20 @@ def _single_strategy_capacity_adjustment(
     )
 
 
-def _single_strategy_capacity_exhausted_result(
-    context: _SingleStrategyQtyContext,
-    capacity: _SingleStrategyCapacityAdjustment,
+def single_strategy_capacity_exhausted_result(
+    context: SingleStrategyQtyContext,
+    capacity: SingleStrategyCapacityAdjustment,
 ) -> tuple[Decimal, dict[str, Any]]:
     return Decimal("0"), {
-        "reason": _single_strategy_capacity_reason(context, capacity),
+        "reason": single_strategy_capacity_reason(context, capacity),
         "requested_qty": str(capacity.original_requested_qty),
-        **_single_strategy_common_meta(context, position_qty=context.position_qty),
+        **single_strategy_common_meta(context, position_qty=context.position_qty),
     }
 
 
-def _single_strategy_capacity_reason(
-    context: _SingleStrategyQtyContext,
-    capacity: _SingleStrategyCapacityAdjustment,
+def single_strategy_capacity_reason(
+    context: SingleStrategyQtyContext,
+    capacity: SingleStrategyCapacityAdjustment,
 ) -> str:
     if capacity.portfolio_cap_applied:
         return "portfolio_gross_capacity_exhausted"
@@ -474,10 +474,10 @@ def _single_strategy_capacity_reason(
     return "symbol_capacity_exhausted"
 
 
-def _single_strategy_min_qty_result(
+def single_strategy_min_qty_result(
     *,
-    context: _SingleStrategyQtyContext,
-    capacity: _SingleStrategyCapacityAdjustment,
+    context: SingleStrategyQtyContext,
+    capacity: SingleStrategyCapacityAdjustment,
     resolution: Any,
     qty: Decimal,
     min_qty: Decimal,
@@ -487,16 +487,16 @@ def _single_strategy_min_qty_result(
     if qty < min_qty:
         if capacity.cap_applied or capacity.portfolio_cap_applied:
             return Decimal("0"), {
-                "reason": _single_strategy_min_qty_capacity_reason(capacity),
+                "reason": single_strategy_min_qty_capacity_reason(capacity),
                 "requested_qty": str(capacity.requested_qty),
                 "min_qty": str(min_qty),
                 "quantity_resolution": resolution.to_payload(),
-                **_single_strategy_common_meta(
+                **single_strategy_common_meta(
                     context,
                     position_qty=context.position_qty,
                 ),
             }
-        return _single_strategy_short_entry_below_min_result(
+        return single_strategy_short_entry_below_min_result(
             context=context,
             resolution=resolution,
             requested_qty=capacity.requested_qty,
@@ -505,17 +505,17 @@ def _single_strategy_min_qty_result(
     return None
 
 
-def _single_strategy_min_qty_capacity_reason(
-    capacity: _SingleStrategyCapacityAdjustment,
+def single_strategy_min_qty_capacity_reason(
+    capacity: SingleStrategyCapacityAdjustment,
 ) -> str:
     if capacity.portfolio_cap_applied and not capacity.cap_applied:
         return "portfolio_gross_capacity_exhausted"
     return "symbol_capacity_exhausted"
 
 
-def _single_strategy_short_entry_below_min_result(
+def single_strategy_short_entry_below_min_result(
     *,
-    context: _SingleStrategyQtyContext,
+    context: SingleStrategyQtyContext,
     resolution: Any,
     requested_qty: Decimal,
     min_qty: Decimal,
@@ -530,7 +530,7 @@ def _single_strategy_short_entry_below_min_result(
         return None
     return Decimal("0"), {
         "method": context.method,
-        "reason": _SHORT_ENTRY_BELOW_MIN_QTY_REASON,
+        "reason": SHORT_ENTRY_BELOW_MIN_QTY_REASON,
         "notional_budget": str(context.notional_budget),
         "price": str(context.price),
         "requested_qty": str(requested_qty),
@@ -539,10 +539,10 @@ def _single_strategy_short_entry_below_min_result(
     }
 
 
-def _single_strategy_success_result(
+def single_strategy_success_result(
     *,
-    context: _SingleStrategyQtyContext,
-    capacity: _SingleStrategyCapacityAdjustment,
+    context: SingleStrategyQtyContext,
+    capacity: SingleStrategyCapacityAdjustment,
     resolution: Any,
     qty: Decimal,
     position_qty: Decimal | None,
@@ -552,12 +552,12 @@ def _single_strategy_success_result(
         "symbol_capacity_limited": capacity.cap_applied,
         "portfolio_gross_limited": capacity.portfolio_cap_applied,
         "quantity_resolution": resolution.to_payload(),
-        **_single_strategy_common_meta(context, position_qty=position_qty),
+        **single_strategy_common_meta(context, position_qty=position_qty),
     }
 
 
-def _single_strategy_common_meta(
-    context: _SingleStrategyQtyContext,
+def single_strategy_common_meta(
+    context: SingleStrategyQtyContext,
     *,
     position_qty: Decimal | None,
 ) -> dict[str, Any]:
@@ -582,28 +582,6 @@ def _single_strategy_common_meta(
         ),
     }
 
-
-# Public aliases used by split-module consumers.
-SingleStrategyCapacityAdjustment = _SingleStrategyCapacityAdjustment
-SingleStrategyQtyContext = _SingleStrategyQtyContext
-StrategyBudget = _StrategyBudget
-resolve_qty = _resolve_qty
-resolve_single_strategy_qty_from_context = _resolve_single_strategy_qty_from_context
-single_strategy_budget = _single_strategy_budget
-single_strategy_capacity_adjustment = _single_strategy_capacity_adjustment
-single_strategy_capacity_exhausted_result = _single_strategy_capacity_exhausted_result
-single_strategy_capacity_reason = _single_strategy_capacity_reason
-single_strategy_common_meta = _single_strategy_common_meta
-single_strategy_exit_guard_result = _single_strategy_exit_guard_result
-single_strategy_min_qty_capacity_reason = _single_strategy_min_qty_capacity_reason
-single_strategy_min_qty_result = _single_strategy_min_qty_result
-single_strategy_qty_context = _single_strategy_qty_context
-single_strategy_requested_qty = _single_strategy_requested_qty
-single_strategy_short_entry_below_min_result = (
-    _single_strategy_short_entry_below_min_result
-)
-single_strategy_success_result = _single_strategy_success_result
-skip_non_executable_decision_qty = _skip_non_executable_decision_qty
 
 __all__ = (
     "SingleStrategyCapacityAdjustment",

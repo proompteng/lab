@@ -20,15 +20,15 @@ from ..strategy_runtime import (
 
 
 from .shared_context import (
-    BUY_EXIT_ONLY_STRATEGY_TYPES as _BUY_EXIT_ONLY_STRATEGY_TYPES,
-    SELL_EXIT_ONLY_STRATEGY_TYPES as _SELL_EXIT_ONLY_STRATEGY_TYPES,
+    BUY_EXIT_ONLY_STRATEGY_TYPES,
+    SELL_EXIT_ONLY_STRATEGY_TYPES,
 )
 from .resolve_qty_for_aggregated import (
-    blocks_same_direction_reentry as _blocks_same_direction_reentry,
+    blocks_same_direction_reentry,
 )
 
 
-def _positions_for_strategy_action(
+def positions_for_strategy_action(
     positions: Optional[list[dict[str, Any]]],
     *,
     strategy_id: str,
@@ -43,17 +43,17 @@ def _positions_for_strategy_action(
         if str(position.get("strategy_id") or "").strip() == strategy_id
     ]
     if runtime_exit_side is not None or action.strip().lower() == "sell":
-        return _actual_positions_only(tagged_positions)
+        return actual_positions_only(tagged_positions)
     if tagged_positions:
         return tagged_positions
     return []
 
 
-def _is_pending_entry_position(position: Mapping[str, Any]) -> bool:
+def is_pending_entry_position(position: Mapping[str, Any]) -> bool:
     return bool(position.get("pending_entry"))
 
 
-def _actual_positions_only(
+def actual_positions_only(
     positions: Optional[list[dict[str, Any]]],
 ) -> Optional[list[dict[str, Any]]]:
     if not positions:
@@ -61,32 +61,30 @@ def _actual_positions_only(
     return [
         dict(position)
         for position in positions
-        if not _is_pending_entry_position(position)
+        if not is_pending_entry_position(position)
     ]
 
 
-def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
-    return _strategy_exit_semantics_type(strategy) in _SELL_EXIT_ONLY_STRATEGY_TYPES
+def treats_sell_as_exit_only(strategy: Strategy) -> bool:
+    return strategy_exit_semantics_type(strategy) in SELL_EXIT_ONLY_STRATEGY_TYPES
 
 
-def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
-    return _strategy_exit_semantics_type(strategy) in _BUY_EXIT_ONLY_STRATEGY_TYPES
+def treats_buy_as_exit_only(strategy: Strategy) -> bool:
+    return strategy_exit_semantics_type(strategy) in BUY_EXIT_ONLY_STRATEGY_TYPES
 
 
-def _strategy_exit_semantics_type(strategy: Strategy) -> str:
-    runtime_type = _strategy_catalog_runtime_type(strategy)
-    if runtime_type in _SELL_EXIT_ONLY_STRATEGY_TYPES | _BUY_EXIT_ONLY_STRATEGY_TYPES:
+def strategy_exit_semantics_type(strategy: Strategy) -> str:
+    runtime_type = strategy_catalog_runtime_type(strategy)
+    if runtime_type in SELL_EXIT_ONLY_STRATEGY_TYPES | BUY_EXIT_ONLY_STRATEGY_TYPES:
         return runtime_type
 
     universe_type = str(strategy.universe_type or "").strip().lower()
-    if universe_type in (
-        _SELL_EXIT_ONLY_STRATEGY_TYPES | _BUY_EXIT_ONLY_STRATEGY_TYPES
-    ):
+    if universe_type in (SELL_EXIT_ONLY_STRATEGY_TYPES | BUY_EXIT_ONLY_STRATEGY_TYPES):
         return universe_type
     return runtime_type
 
 
-def _strategy_catalog_runtime_type(strategy: Strategy) -> str:
+def strategy_catalog_runtime_type(strategy: Strategy) -> str:
     metadata = extract_catalog_metadata(
         str(strategy.description) if strategy.description is not None else None
     )
@@ -101,48 +99,48 @@ def _strategy_catalog_runtime_type(strategy: Strategy) -> str:
     return universe_type
 
 
-def _blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
-    return any(_blocks_same_direction_reentry(strategy) for strategy in strategies)
+def blocks_same_direction_reentry_any(strategies: list[Strategy]) -> bool:
+    return any(blocks_same_direction_reentry(strategy) for strategy in strategies)
 
 
-def _treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
-    return any(_treats_sell_as_exit_only(strategy) for strategy in strategies)
+def treats_sell_as_exit_only_any(strategies: list[Strategy]) -> bool:
+    return any(treats_sell_as_exit_only(strategy) for strategy in strategies)
 
 
-def _treats_buy_as_exit_only_any(strategies: list[Strategy]) -> bool:
-    return any(_treats_buy_as_exit_only(strategy) for strategy in strategies)
+def treats_buy_as_exit_only_any(strategies: list[Strategy]) -> bool:
+    return any(treats_buy_as_exit_only(strategy) for strategy in strategies)
 
 
-def _is_entry_action_for_strategies(*, strategies: list[Strategy], action: str) -> bool:
+def is_entry_action_for_strategies(*, strategies: list[Strategy], action: str) -> bool:
     normalized_action = action.strip().lower()
     if normalized_action == "buy":
-        return not _treats_buy_as_exit_only_any(strategies)
+        return not treats_buy_as_exit_only_any(strategies)
     if normalized_action == "sell":
-        return not _treats_sell_as_exit_only_any(strategies)
+        return not treats_sell_as_exit_only_any(strategies)
     return False
 
 
-def _is_exit_action_for_strategies(*, strategies: list[Strategy], action: str) -> bool:
+def is_exit_action_for_strategies(*, strategies: list[Strategy], action: str) -> bool:
     normalized_action = action.strip().lower()
     if normalized_action == "buy":
-        return _treats_buy_as_exit_only_any(strategies)
+        return treats_buy_as_exit_only_any(strategies)
     if normalized_action == "sell":
-        return _treats_sell_as_exit_only_any(strategies)
+        return treats_sell_as_exit_only_any(strategies)
     return False
 
 
-def _exit_position_side_for_strategies(
+def exit_position_side_for_strategies(
     *, strategies: list[Strategy], action: str
 ) -> Literal["long", "short"] | None:
     normalized_action = action.strip().lower()
-    if normalized_action == "sell" and _treats_sell_as_exit_only_any(strategies):
+    if normalized_action == "sell" and treats_sell_as_exit_only_any(strategies):
         return "long"
-    if normalized_action == "buy" and _treats_buy_as_exit_only_any(strategies):
+    if normalized_action == "buy" and treats_buy_as_exit_only_any(strategies):
         return "short"
     return None
 
 
-def _same_direction_reentry_exists(
+def same_direction_reentry_exists(
     *,
     action: str,
     position_qty: Optional[Decimal],
@@ -156,7 +154,7 @@ def _same_direction_reentry_exists(
     return False
 
 
-def _cap_requested_qty_by_symbol_cap(
+def cap_requested_qty_by_symbol_cap(
     *,
     action: str,
     requested_qty: Decimal,
@@ -172,7 +170,7 @@ def _cap_requested_qty_by_symbol_cap(
         return None
 
     cap_qty = symbol_notional_cap / price
-    max_requested_qty = _max_requested_qty_with_symbol_cap(
+    max_requested_qty = max_requested_qty_with_symbol_cap(
         action=action,
         position_qty=position_qty,
         cap_qty=cap_qty,
@@ -180,7 +178,7 @@ def _cap_requested_qty_by_symbol_cap(
     return min(requested_qty, max_requested_qty)
 
 
-def _cap_requested_qty_by_portfolio_gross_cap(
+def cap_requested_qty_by_portfolio_gross_cap(
     *,
     action: str,
     requested_qty: Decimal,
@@ -194,7 +192,7 @@ def _cap_requested_qty_by_portfolio_gross_cap(
         return None
     if portfolio_gross_cap is None or portfolio_gross_cap <= 0 or price <= 0:
         return None
-    current_gross = _portfolio_gross_exposure(positions)
+    current_gross = portfolio_gross_exposure(positions)
     available_notional = portfolio_gross_cap - current_gross
     if available_notional <= 0:
         return Decimal("0")
@@ -202,7 +200,7 @@ def _cap_requested_qty_by_portfolio_gross_cap(
     return min(requested_qty, cap_qty)
 
 
-def _max_requested_qty_with_symbol_cap(
+def max_requested_qty_with_symbol_cap(
     *,
     action: str,
     position_qty: Decimal,
@@ -221,7 +219,7 @@ def _max_requested_qty_with_symbol_cap(
     return Decimal("0")
 
 
-def _position_qty_for_symbol(
+def position_qty_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -250,7 +248,7 @@ def _position_qty_for_symbol(
     return current_qty
 
 
-def _position_qty_from_payload(position: Mapping[str, Any]) -> Decimal | None:
+def position_qty_from_payload(position: Mapping[str, Any]) -> Decimal | None:
     raw_qty = position.get("qty") or position.get("quantity")
     if raw_qty is None:
         return None
@@ -264,7 +262,7 @@ def _position_qty_from_payload(position: Mapping[str, Any]) -> Decimal | None:
     return qty
 
 
-def _portfolio_gross_exposure(
+def portfolio_gross_exposure(
     positions: Optional[list[dict[str, Any]]],
 ) -> Decimal:
     if not positions:
@@ -285,7 +283,7 @@ def _portfolio_gross_exposure(
     return gross
 
 
-def _position_value_for_symbol(
+def position_value_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -315,7 +313,7 @@ def _position_value_for_symbol(
     return current_value
 
 
-def _position_avg_entry_price_for_symbol(
+def position_avg_entry_price_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -337,7 +335,7 @@ def _position_avg_entry_price_for_symbol(
     return None
 
 
-def _resolve_min_positive_strategy_param(
+def resolve_min_positive_strategy_param(
     *,
     strategies: list[Strategy],
     key: str,
@@ -359,7 +357,7 @@ def _resolve_min_positive_strategy_param(
     return min(values)
 
 
-def _resolve_max_nonnegative_strategy_param(
+def resolve_max_nonnegative_strategy_param(
     *,
     strategies: list[Strategy],
     key: str,
@@ -381,7 +379,7 @@ def _resolve_max_nonnegative_strategy_param(
     return max(values)
 
 
-def _resolve_dynamic_exit_threshold_bps(
+def resolve_dynamic_exit_threshold_bps(
     *,
     strategies: list[Strategy],
     base_bps: Decimal | None,
@@ -393,7 +391,7 @@ def _resolve_dynamic_exit_threshold_bps(
     if base_bps is None or base_bps <= 0:
         return None
     threshold_bps = base_bps
-    spread_multiplier = _resolve_max_nonnegative_strategy_param(
+    spread_multiplier = resolve_max_nonnegative_strategy_param(
         strategies=strategies,
         key=spread_multiplier_key,
     )
@@ -404,7 +402,7 @@ def _resolve_dynamic_exit_threshold_bps(
         and spread_multiplier > 0
     ):
         threshold_bps += spread_bps * spread_multiplier
-    volatility_multiplier = _resolve_max_nonnegative_strategy_param(
+    volatility_multiplier = resolve_max_nonnegative_strategy_param(
         strategies=strategies,
         key=volatility_multiplier_key,
     )
@@ -418,19 +416,19 @@ def _resolve_dynamic_exit_threshold_bps(
     return threshold_bps
 
 
-def _volatility_to_bps(volatility: Decimal | None) -> Decimal | None:
+def volatility_to_bps(volatility: Decimal | None) -> Decimal | None:
     if volatility is None or volatility <= 0:
         return None
     return volatility * Decimal("10000")
 
 
-def _signal_spread(signal: SignalEnvelope) -> Decimal | None:
+def signal_spread(signal: SignalEnvelope) -> Decimal | None:
     from .resolve_runtime_trade_policy import signal_spread as owned
 
     return owned(signal)
 
 
-def _near_touch_exit_price(
+def near_touch_exit_price(
     price: Decimal,
     spread: Decimal | None,
     action: str,
@@ -451,33 +449,33 @@ def _bool_param(value: Any) -> bool | None:
     return None
 
 
-def _signal_spread_bps(
+def signal_spread_bps(
     *,
     signal: SignalEnvelope,
     price: Decimal,
 ) -> Decimal | None:
-    spread = _signal_spread(signal)
+    spread = signal_spread(signal)
     if spread is None or spread <= 0 or price <= 0:
         return None
     return (spread / price) * Decimal("10000")
 
 
-def _reference_exit_price(
+def reference_exit_price(
     *,
     price: Decimal,
     signal: SignalEnvelope,
     action: str,
 ) -> Decimal:
     if settings.trading_execution_prefer_limit:
-        return _near_touch_exit_price(
+        return near_touch_exit_price(
             price,
-            _signal_spread(signal),
+            signal_spread(signal),
             action,
         )
     return price
 
 
-def _realized_exit_bps(
+def realized_exit_bps(
     *,
     avg_entry_price: Decimal,
     exit_price: Decimal,
@@ -488,13 +486,13 @@ def _realized_exit_bps(
     return ((exit_price - avg_entry_price) / avg_entry_price) * Decimal("10000")
 
 
-def _passes_exit_profit_policy(
+def passes_exit_profit_policy(
     *,
     strategies: list[Strategy],
     realized_bps: Decimal,
 ) -> bool:
     if (
-        _resolve_bool_strategy_param(
+        resolve_bool_strategy_param(
             strategies=strategies,
             key="require_positive_price_for_signal_exit",
             default=True,
@@ -503,7 +501,7 @@ def _passes_exit_profit_policy(
     ):
         return False
 
-    min_profit_bps = _resolve_max_nonnegative_strategy_param(
+    min_profit_bps = resolve_max_nonnegative_strategy_param(
         strategies=strategies,
         key="min_signal_exit_profit_bps",
     )
@@ -512,7 +510,7 @@ def _passes_exit_profit_policy(
     return True
 
 
-def _resolve_bool_strategy_param(
+def resolve_bool_strategy_param(
     *,
     strategies: list[Strategy],
     key: str,
@@ -530,7 +528,7 @@ def _resolve_bool_strategy_param(
     return resolved if resolved_any else default
 
 
-def _resolve_symbol_notional_cap(
+def resolve_symbol_notional_cap(
     *,
     strategy_pcts: list[Optional[Decimal]],
     equity: Optional[Decimal],
@@ -549,7 +547,7 @@ def _resolve_symbol_notional_cap(
     return min(caps)
 
 
-def _resolve_portfolio_gross_cap(
+def resolve_portfolio_gross_cap(
     *,
     strategies: list[Strategy],
     equity: Optional[Decimal],
@@ -564,13 +562,13 @@ def _resolve_portfolio_gross_cap(
         )
         if global_pct is not None and global_pct > 0:
             caps.append(equity * global_pct)
-        strategy_pct = _resolve_min_positive_strategy_param(
+        strategy_pct = resolve_min_positive_strategy_param(
             strategies=strategies,
             key="max_gross_exposure_pct_equity",
         )
         if strategy_pct is not None and strategy_pct > 0:
             caps.append(equity * strategy_pct)
-    strategy_absolute = _resolve_min_positive_strategy_param(
+    strategy_absolute = resolve_min_positive_strategy_param(
         strategies=strategies,
         key="max_gross_exposure",
     )
@@ -581,7 +579,7 @@ def _resolve_portfolio_gross_cap(
     return min(caps)
 
 
-def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
+def has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
     return (
         features.macd is not None
         and features.macd_signal is not None
@@ -589,7 +587,7 @@ def _has_legacy_indicator_inputs(features: SignalFeatures) -> bool:
     )
 
 
-def _resolve_legacy_action(
+def resolve_legacy_action(
     features: SignalFeatures,
 ) -> tuple[Literal["buy", "sell"], list[str]] | None:
     if features.macd is None or features.macd_signal is None or features.rsi is None:
@@ -601,7 +599,7 @@ def _resolve_legacy_action(
     return None
 
 
-def _resolve_aggregated_notional_budget(
+def resolve_aggregated_notional_budget(
     strategies: list[Strategy],
     *,
     equity: Optional[Decimal],
@@ -628,45 +626,6 @@ def _resolve_aggregated_notional_budget(
         return equity * pct
     return Decimal("0")
 
-
-# Public aliases used by split-module consumers.
-actual_positions_only = _actual_positions_only
-has_legacy_indicator_inputs = _has_legacy_indicator_inputs
-position_avg_entry_price_for_symbol = _position_avg_entry_price_for_symbol
-position_qty_for_symbol = _position_qty_for_symbol
-position_qty_from_payload = _position_qty_from_payload
-positions_for_strategy_action = _positions_for_strategy_action
-resolve_legacy_action = _resolve_legacy_action
-blocks_same_direction_reentry = _blocks_same_direction_reentry
-blocks_same_direction_reentry_any = _blocks_same_direction_reentry_any
-cap_requested_qty_by_portfolio_gross_cap = _cap_requested_qty_by_portfolio_gross_cap
-cap_requested_qty_by_symbol_cap = _cap_requested_qty_by_symbol_cap
-exit_position_side_for_strategies = _exit_position_side_for_strategies
-is_entry_action_for_strategies = _is_entry_action_for_strategies
-is_exit_action_for_strategies = _is_exit_action_for_strategies
-is_pending_entry_position = _is_pending_entry_position
-max_requested_qty_with_symbol_cap = _max_requested_qty_with_symbol_cap
-passes_exit_profit_policy = _passes_exit_profit_policy
-portfolio_gross_exposure = _portfolio_gross_exposure
-position_value_for_symbol = _position_value_for_symbol
-realized_exit_bps = _realized_exit_bps
-reference_exit_price = _reference_exit_price
-resolve_aggregated_notional_budget = _resolve_aggregated_notional_budget
-resolve_bool_strategy_param = _resolve_bool_strategy_param
-resolve_dynamic_exit_threshold_bps = _resolve_dynamic_exit_threshold_bps
-resolve_max_nonnegative_strategy_param = _resolve_max_nonnegative_strategy_param
-resolve_min_positive_strategy_param = _resolve_min_positive_strategy_param
-resolve_portfolio_gross_cap = _resolve_portfolio_gross_cap
-resolve_symbol_notional_cap = _resolve_symbol_notional_cap
-same_direction_reentry_exists = _same_direction_reentry_exists
-signal_spread_bps = _signal_spread_bps
-strategy_catalog_runtime_type = _strategy_catalog_runtime_type
-strategy_exit_semantics_type = _strategy_exit_semantics_type
-treats_buy_as_exit_only = _treats_buy_as_exit_only
-treats_buy_as_exit_only_any = _treats_buy_as_exit_only_any
-treats_sell_as_exit_only = _treats_sell_as_exit_only
-treats_sell_as_exit_only_any = _treats_sell_as_exit_only_any
-volatility_to_bps = _volatility_to_bps
 
 __all__ = (
     "actual_positions_only",

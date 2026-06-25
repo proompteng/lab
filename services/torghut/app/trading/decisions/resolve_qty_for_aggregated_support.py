@@ -10,7 +10,7 @@ from ...models import Strategy
 from ..models import SignalEnvelope
 
 
-def _position_qty_for_symbol(
+def position_qty_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -19,7 +19,7 @@ def _position_qty_for_symbol(
     return position_qty_for_symbol(positions, symbol)
 
 
-def _position_avg_entry_price_for_symbol(
+def position_avg_entry_price_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> Optional[Decimal]:
@@ -28,19 +28,19 @@ def _position_avg_entry_price_for_symbol(
     return position_avg_entry_price_for_symbol(positions, symbol)
 
 
-def _signal_spread_bps(*, signal: SignalEnvelope, price: Decimal) -> Decimal | None:
+def signal_spread_bps(*, signal: SignalEnvelope, price: Decimal) -> Decimal | None:
     from .positions_for_strategy_action import signal_spread_bps
 
     return signal_spread_bps(signal=signal, price=price)
 
 
-def _volatility_to_bps(volatility: Decimal | None) -> Decimal | None:
+def volatility_to_bps(volatility: Decimal | None) -> Decimal | None:
     from .positions_for_strategy_action import volatility_to_bps
 
     return volatility_to_bps(volatility)
 
 
-def _resolve_bool_strategy_param(
+def resolve_bool_strategy_param(
     *,
     strategies: list[Strategy],
     key: str,
@@ -51,7 +51,7 @@ def _resolve_bool_strategy_param(
     return resolve_bool_strategy_param(strategies=strategies, key=key, default=default)
 
 
-def _resolve_max_nonnegative_strategy_param(
+def resolve_max_nonnegative_strategy_param(
     *,
     strategies: list[Strategy],
     key: str,
@@ -61,7 +61,7 @@ def _resolve_max_nonnegative_strategy_param(
     return resolve_max_nonnegative_strategy_param(strategies=strategies, key=key)
 
 
-def _resolve_min_positive_strategy_param(
+def resolve_min_positive_strategy_param(
     *,
     strategies: list[Strategy],
     key: str,
@@ -71,7 +71,7 @@ def _resolve_min_positive_strategy_param(
     return resolve_min_positive_strategy_param(strategies=strategies, key=key)
 
 
-def _resolve_dynamic_exit_threshold_bps(
+def resolve_dynamic_exit_threshold_bps(
     *,
     strategies: list[Strategy],
     base_bps: Decimal | None,
@@ -92,7 +92,7 @@ def _resolve_dynamic_exit_threshold_bps(
     )
 
 
-def _reference_exit_price(
+def reference_exit_price(
     *,
     price: Decimal,
     signal: SignalEnvelope,
@@ -103,7 +103,7 @@ def _reference_exit_price(
     return reference_exit_price(price=price, signal=signal, action=action)
 
 
-def _realized_exit_bps(
+def realized_exit_bps(
     *,
     avg_entry_price: Decimal,
     exit_price: Decimal,
@@ -118,7 +118,7 @@ def _realized_exit_bps(
     )
 
 
-def _passes_exit_profit_policy(
+def passes_exit_profit_policy(
     *,
     strategies: list[Strategy],
     realized_bps: Decimal,
@@ -128,25 +128,25 @@ def _passes_exit_profit_policy(
     return passes_exit_profit_policy(strategies=strategies, realized_bps=realized_bps)
 
 
-def _treats_sell_as_exit_only(strategy: Strategy) -> bool:
+def treats_sell_as_exit_only(strategy: Strategy) -> bool:
     from .positions_for_strategy_action import treats_sell_as_exit_only
 
     return treats_sell_as_exit_only(strategy)
 
 
-def _treats_buy_as_exit_only(strategy: Strategy) -> bool:
+def treats_buy_as_exit_only(strategy: Strategy) -> bool:
     from .positions_for_strategy_action import treats_buy_as_exit_only
 
     return treats_buy_as_exit_only(strategy)
 
 
-def _strategy_catalog_runtime_type(strategy: Strategy) -> str:
+def strategy_catalog_runtime_type(strategy: Strategy) -> str:
     from .positions_for_strategy_action import strategy_catalog_runtime_type
 
     return strategy_catalog_runtime_type(strategy)
 
 
-def _default_trailing_stop_requires_structure_loss(
+def default_trailing_stop_requires_structure_loss(
     strategies: list[Strategy],
 ) -> bool:
     from .resolve_runtime_trade_policy import (
@@ -156,7 +156,7 @@ def _default_trailing_stop_requires_structure_loss(
     return default_trailing_stop_requires_structure_loss(strategies)
 
 
-def _trailing_stop_structure_loss_confirmed(
+def trailing_stop_structure_loss_confirmed(
     *,
     signal: SignalEnvelope,
     price: Decimal,
@@ -171,7 +171,7 @@ def _trailing_stop_structure_loss_confirmed(
     )
 
 
-def _position_age_seconds_for_symbol(
+def position_age_seconds_for_symbol(
     positions: list[dict[str, Any]],
     symbol: str,
     *,
@@ -187,25 +187,24 @@ def _position_age_seconds_for_symbol(
 
 
 default_trailing_stop_requires_structure_loss = (
-    _default_trailing_stop_requires_structure_loss
+    default_trailing_stop_requires_structure_loss
 )
-passes_exit_profit_policy = _passes_exit_profit_policy
-position_age_seconds_for_symbol = _position_age_seconds_for_symbol
-position_avg_entry_price_for_symbol = _position_avg_entry_price_for_symbol
-position_qty_for_symbol = _position_qty_for_symbol
-realized_exit_bps = _realized_exit_bps
-reference_exit_price = _reference_exit_price
-resolve_bool_strategy_param = _resolve_bool_strategy_param
-resolve_dynamic_exit_threshold_bps = _resolve_dynamic_exit_threshold_bps
-resolve_max_nonnegative_strategy_param = _resolve_max_nonnegative_strategy_param
-resolve_min_positive_strategy_param = _resolve_min_positive_strategy_param
-signal_spread_bps = _signal_spread_bps
-strategy_catalog_runtime_type = _strategy_catalog_runtime_type
-trailing_stop_structure_loss_confirmed = _trailing_stop_structure_loss_confirmed
-treats_buy_as_exit_only = _treats_buy_as_exit_only
-treats_sell_as_exit_only = _treats_sell_as_exit_only
-volatility_to_bps = _volatility_to_bps
-
+passes_exit_profit_policy = passes_exit_profit_policy
+position_age_seconds_for_symbol = position_age_seconds_for_symbol
+position_avg_entry_price_for_symbol = position_avg_entry_price_for_symbol
+position_qty_for_symbol = position_qty_for_symbol
+realized_exit_bps = realized_exit_bps
+reference_exit_price = reference_exit_price
+resolve_bool_strategy_param = resolve_bool_strategy_param
+resolve_dynamic_exit_threshold_bps = resolve_dynamic_exit_threshold_bps
+resolve_max_nonnegative_strategy_param = resolve_max_nonnegative_strategy_param
+resolve_min_positive_strategy_param = resolve_min_positive_strategy_param
+signal_spread_bps = signal_spread_bps
+strategy_catalog_runtime_type = strategy_catalog_runtime_type
+trailing_stop_structure_loss_confirmed = trailing_stop_structure_loss_confirmed
+treats_buy_as_exit_only = treats_buy_as_exit_only
+treats_sell_as_exit_only = treats_sell_as_exit_only
+volatility_to_bps = volatility_to_bps
 
 __all__ = [
     "default_trailing_stop_requires_structure_loss",

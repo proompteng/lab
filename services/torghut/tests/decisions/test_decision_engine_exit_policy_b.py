@@ -11,12 +11,12 @@ from tests.decisions.support import (
     TestCase,
     _SellPlugin,
     _compose_strategy_description,
-    _count_open_short_positions,
-    _exit_position_side_for_strategies,
-    _is_entry_action_for_strategies,
-    _is_exit_action_for_strategies,
-    _resolve_qty,
-    _resolve_qty_for_aggregated,
+    count_open_short_positions,
+    exit_position_side_for_strategies,
+    is_entry_action_for_strategies,
+    is_exit_action_for_strategies,
+    resolve_qty,
+    resolve_qty_for_aggregated,
     datetime,
     patch,
     settings,
@@ -41,7 +41,7 @@ class TestDecisionEngineExitPolicyB(TestCase):
             max_notional_per_trade=Decimal("12000"),
         )
 
-        blocked_qty, blocked_meta = _resolve_qty(
+        blocked_qty, blocked_meta = resolve_qty(
             strategy,
             symbol="META",
             action="buy",
@@ -52,7 +52,7 @@ class TestDecisionEngineExitPolicyB(TestCase):
         self.assertEqual(blocked_qty, Decimal("0"))
         self.assertEqual(blocked_meta["reason"], "exit_only_buy_without_short_position")
 
-        cover_qty, cover_meta = _resolve_qty(
+        cover_qty, cover_meta = resolve_qty(
             strategy,
             symbol="META",
             action="buy",
@@ -64,18 +64,18 @@ class TestDecisionEngineExitPolicyB(TestCase):
         self.assertEqual(cover_meta["method"], "min(max_notional,pct_equity)")
 
         self.assertFalse(
-            _is_entry_action_for_strategies(strategies=[strategy], action="hold")
+            is_entry_action_for_strategies(strategies=[strategy], action="hold")
         )
         self.assertFalse(
-            _is_exit_action_for_strategies(strategies=[strategy], action="hold")
+            is_exit_action_for_strategies(strategies=[strategy], action="hold")
         )
         self.assertIsNone(
-            _exit_position_side_for_strategies(strategies=[strategy], action="hold")
+            exit_position_side_for_strategies(strategies=[strategy], action="hold")
         )
 
-        self.assertEqual(_count_open_short_positions(None), 0)
+        self.assertEqual(count_open_short_positions(None), 0)
         self.assertEqual(
-            _count_open_short_positions(
+            count_open_short_positions(
                 [
                     {"symbol": "META", "qty": "3", "side": "short"},
                     {"symbol": "", "qty": "2", "side": "short"},
@@ -505,7 +505,7 @@ class TestDecisionEngineExitPolicyB(TestCase):
             max_notional_per_trade=Decimal("15000"),
         )
 
-        qty, sizing_meta = _resolve_qty_for_aggregated(
+        qty, sizing_meta = resolve_qty_for_aggregated(
             [strategy],
             symbol="NVDA",
             action="sell",
@@ -572,28 +572,28 @@ class TestDecisionEngineExitPolicyB(TestCase):
         )
 
         self.assertTrue(
-            _is_entry_action_for_strategies(strategies=[long_strategy], action="buy")
+            is_entry_action_for_strategies(strategies=[long_strategy], action="buy")
         )
         self.assertFalse(
-            _is_exit_action_for_strategies(strategies=[long_strategy], action="buy")
+            is_exit_action_for_strategies(strategies=[long_strategy], action="buy")
         )
         self.assertTrue(
-            _is_exit_action_for_strategies(strategies=[long_strategy], action="sell")
+            is_exit_action_for_strategies(strategies=[long_strategy], action="sell")
         )
         self.assertEqual(
-            _exit_position_side_for_strategies(
+            exit_position_side_for_strategies(
                 strategies=[long_strategy], action="sell"
             ),
             "long",
         )
         self.assertTrue(
-            _is_entry_action_for_strategies(strategies=[short_strategy], action="sell")
+            is_entry_action_for_strategies(strategies=[short_strategy], action="sell")
         )
         self.assertTrue(
-            _is_exit_action_for_strategies(strategies=[short_strategy], action="buy")
+            is_exit_action_for_strategies(strategies=[short_strategy], action="buy")
         )
         self.assertEqual(
-            _exit_position_side_for_strategies(
+            exit_position_side_for_strategies(
                 strategies=[short_strategy], action="buy"
             ),
             "short",

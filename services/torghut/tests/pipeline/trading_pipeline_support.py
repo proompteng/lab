@@ -34,9 +34,9 @@ from app.models import (
 from app import config
 from app.trading.decisions import (
     DecisionEngine,
-    _is_entry_action_for_strategies,
-    _is_exit_action_for_strategies,
-    _strategy_uses_position_isolation,
+    is_entry_action_for_strategies,
+    is_exit_action_for_strategies,
+    strategy_uses_position_isolation,
 )
 from app.trading.execution_adapters import OrderSubmission, SimulationExecutionAdapter
 from app.trading.execution import OrderExecutor
@@ -945,8 +945,8 @@ __all__: tuple[str, ...] = (
     "_committee_trace_has_veto",
     "_default_probabilities",
     "_executable_bid_ask_present",
-    "_is_entry_action_for_strategies",
-    "_is_exit_action_for_strategies",
+    "is_entry_action_for_strategies",
+    "is_exit_action_for_strategies",
     "_market_context_bundle",
     "_paper_route_probe_entry_metadata",
     "_paper_route_probe_lineage_from_params",
@@ -955,7 +955,7 @@ __all__: tuple[str, ...] = (
     "_safe_int",
     "_set_llm_guardrails",
     "_strategy_signal_paper_entry_metadata",
-    "_strategy_uses_position_isolation",
+    "strategy_uses_position_isolation",
     "_target_notional_sizing_audit_from_params",
     "_target_price_snapshots",
     "_target_probe_action",

@@ -27,38 +27,38 @@ from ..strategy_runtime import (
 
 from .shared_context import (
     DecisionRuntimeTelemetry,
-    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
-    feature_vector_with_positions as _feature_vector_with_positions,
-    feature_vector_with_runtime_position as _feature_vector_with_runtime_position,
-    merge_runtime_evaluations as _merge_runtime_evaluations,
-    runtime_position_side as _runtime_position_side,
+    RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    RuntimeTradePolicySessionState,
+    feature_vector_with_positions,
+    feature_vector_with_runtime_position,
+    merge_runtime_evaluations,
+    runtime_position_side as resolve_runtime_position_side,
     logger,
 )
 
 from .decision_engine_core_support import (
-    actual_positions_only as _actual_positions_only,
-    build_params as _build_params,
-    build_runtime_position_exit_overlay as _build_runtime_position_exit_overlay,
-    decision_position_exit_type as _decision_position_exit_type,
-    passes_runtime_trade_policy as _passes_runtime_trade_policy,
-    passes_signal_exit_policy as _passes_signal_exit_policy,
-    position_avg_entry_price_for_symbol as _position_avg_entry_price_for_symbol,
-    position_qty_for_symbol as _position_qty_for_symbol,
-    position_qty_from_payload as _position_qty_from_payload,
-    position_state_scope_key as _position_state_scope_key,
-    positions_for_strategy_action as _positions_for_strategy_action,
-    record_runtime_trade_policy_decision as _record_runtime_trade_policy_decision,
-    resolve_qty_for_aggregated as _resolve_qty_for_aggregated,
-    resolve_runtime_trade_policy as _resolve_runtime_trade_policy,
-    resolve_signal_timeframe as _resolve_signal_timeframe,
-    resolve_strategy_time_in_force as _resolve_strategy_time_in_force,
-    runtime_enabled as _runtime_enabled,
-    runtime_intent_exit_side as _runtime_intent_exit_side,
-    runtime_trade_policy_key as _runtime_trade_policy_key,
-    runtime_trade_policy_owner as _runtime_trade_policy_owner,
-    skip_non_executable_decision_qty as _skip_non_executable_decision_qty,
-    strategy_uses_position_isolation as _strategy_uses_position_isolation,
+    actual_positions_only,
+    build_params,
+    build_runtime_position_exit_overlay,
+    decision_position_exit_type,
+    passes_runtime_trade_policy,
+    passes_signal_exit_policy,
+    position_avg_entry_price_for_symbol,
+    position_qty_for_symbol,
+    position_qty_from_payload,
+    position_state_scope_key as resolve_position_state_scope_key,
+    positions_for_strategy_action,
+    record_runtime_trade_policy_decision,
+    resolve_qty_for_aggregated,
+    resolve_runtime_trade_policy,
+    resolve_signal_timeframe,
+    resolve_strategy_time_in_force,
+    runtime_enabled as strategy_runtime_enabled,
+    runtime_intent_exit_side,
+    runtime_trade_policy_key,
+    runtime_trade_policy_owner,
+    skip_non_executable_decision_qty,
+    strategy_uses_position_isolation,
 )
 
 
@@ -73,7 +73,7 @@ class _LegacyStrategyEvaluator(Protocol):
     ) -> Optional[StrategyDecision]: ...
 
 
-class _DecisionEngineCoreMethods:
+class DecisionEngineCoreMethods:
     def __init__(
         self,
         price_fetcher: Optional[PriceFetcher] = None,
@@ -96,7 +96,7 @@ class _DecisionEngineCoreMethods:
         self._last_emitted_action_at: dict[tuple[str, str, str | None], datetime] = {}
         self._position_peak_price_by_scope: dict[tuple[str, str | None], Decimal] = {}
         self._runtime_trade_policy_state: dict[
-            tuple[str, str], _RuntimeTradePolicySessionState
+            tuple[str, str], RuntimeTradePolicySessionState
         ] = {}
         self._session_context_tracker = SessionContextTracker(
             quote_quality_policy=QuoteQualityPolicy(
@@ -127,7 +127,7 @@ class _DecisionEngineCoreMethods:
         positions: Optional[list[dict[str, Any]]] = None,
     ) -> list[StrategyDecision]:
         filtered = [strategy for strategy in strategies if strategy.enabled]
-        timeframe = _resolve_signal_timeframe(signal)
+        timeframe = resolve_signal_timeframe(signal)
         if timeframe is None:
             self._last_runtime_telemetry = DecisionRuntimeTelemetry(
                 mode=settings.trading_strategy_runtime_mode,
@@ -138,8 +138,8 @@ class _DecisionEngineCoreMethods:
         if signal.timeframe != timeframe:
             signal = signal.model_copy(update={"timeframe": timeframe})
 
-        runtime_enabled = _runtime_enabled()
-        if runtime_enabled:
+        is_runtime_enabled = strategy_runtime_enabled()
+        if is_runtime_enabled:
             decisions = self._evaluate_with_runtime(
                 signal,
                 filtered,
@@ -183,7 +183,7 @@ class _DecisionEngineCoreMethods:
         timeframe = signal.timeframe
         if timeframe is None:
             return []
-        actual_positions = _actual_positions_only(positions)
+        actual_positions = actual_positions_only(positions)
         features = extract_signal_features(signal)
 
         price = features.price
@@ -195,11 +195,11 @@ class _DecisionEngineCoreMethods:
         normalized_payload = self._session_context_tracker.enrich_signal_payload(signal)
         if price is not None and "price" not in normalized_payload:
             normalized_payload["price"] = price
-        runtime_position_qty = _position_qty_for_symbol(actual_positions, signal.symbol)
+        runtime_position_qty = position_qty_for_symbol(actual_positions, signal.symbol)
         runtime_position_side: str | None = None
         if runtime_position_qty is not None:
             normalized_payload["runtime_position_qty"] = str(runtime_position_qty)
-            runtime_position_side = _runtime_position_side(runtime_position_qty)
+            runtime_position_side = resolve_runtime_position_side(runtime_position_qty)
             normalized_payload["runtime_position_side"] = runtime_position_side
         normalized_signal = signal.model_copy(update={"payload": normalized_payload})
         params_payload = dict(normalized_payload)
@@ -217,7 +217,7 @@ class _DecisionEngineCoreMethods:
             return []
         account_feature_vector = feature_vector
         if runtime_position_qty is not None:
-            account_feature_vector = _feature_vector_with_runtime_position(
+            account_feature_vector = feature_vector_with_runtime_position(
                 feature_vector,
                 position_qty=runtime_position_qty,
                 position_side=runtime_position_side,
@@ -227,7 +227,7 @@ class _DecisionEngineCoreMethods:
         isolated_strategy_ids = {
             str(strategy.id)
             for strategy in strategies
-            if _strategy_uses_position_isolation(strategy)
+            if strategy_uses_position_isolation(strategy)
         }
         non_isolated_strategy_ids = {
             str(strategy.id)
@@ -252,7 +252,7 @@ class _DecisionEngineCoreMethods:
             strategy = strategies_by_id.get(isolated_strategy_id)
             if strategy is None:
                 continue
-            isolated_positions = _positions_for_strategy_action(
+            isolated_positions = positions_for_strategy_action(
                 actual_positions,
                 strategy_id=isolated_strategy_id,
                 action="sell",
@@ -260,7 +260,7 @@ class _DecisionEngineCoreMethods:
             runtime_evaluations.append(
                 self.strategy_runtime.evaluate_all(
                     [strategy],
-                    _feature_vector_with_positions(
+                    feature_vector_with_positions(
                         feature_vector,
                         positions=isolated_positions,
                         symbol=signal.symbol,
@@ -268,7 +268,7 @@ class _DecisionEngineCoreMethods:
                     timeframe=timeframe,
                 )
             )
-        runtime_eval = _merge_runtime_evaluations(runtime_evaluations)
+        runtime_eval = merge_runtime_evaluations(runtime_evaluations)
         self._last_runtime_telemetry = DecisionRuntimeTelemetry(
             mode=settings.trading_strategy_runtime_mode,
             runtime_enabled=True,
@@ -324,7 +324,7 @@ class _DecisionEngineCoreMethods:
                 if primary_strategy_id in raw_runtime_by_strategy_id
                 else {}
             )
-            qty, sizing_meta = _resolve_qty_for_aggregated(
+            qty, sizing_meta = resolve_qty_for_aggregated(
                 source_strategies,
                 symbol=symbol,
                 action=direction,
@@ -343,7 +343,7 @@ class _DecisionEngineCoreMethods:
                         reason,
                     )
 
-            if _skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
+            if skip_non_executable_decision_qty(qty=qty, sizing_meta=sizing_meta):
                 reason = str(sizing_meta.get("reason") or "non_executable_qty")
                 _record_suppression(reason)
                 logger.debug(
@@ -364,19 +364,19 @@ class _DecisionEngineCoreMethods:
                 forecast_contract = forecast_result.contract.to_payload()
                 forecast_audit = forecast_result.audit.to_payload()
                 self._last_forecast_telemetry.append(forecast_result.telemetry)
-            trade_policy = _resolve_runtime_trade_policy(source_strategies)
-            position_state_scope_key = _position_state_scope_key(
+            trade_policy = resolve_runtime_trade_policy(source_strategies)
+            position_state_scope_key = resolve_position_state_scope_key(
                 position_isolation_mode=position_isolation_mode,
                 strategy_id=primary_strategy_id,
             )
-            if not _passes_runtime_trade_policy(
+            if not passes_runtime_trade_policy(
                 strategies=source_strategies,
                 last_emitted_action_at=self._last_emitted_action_at,
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
                 symbol=symbol,
                 action=direction,
-                position_owner=_runtime_trade_policy_owner(
+                position_owner=runtime_trade_policy_owner(
                     primary_strategy_id=primary_strategy_id,
                     position_isolation_mode=position_isolation_mode,
                 ),
@@ -387,7 +387,7 @@ class _DecisionEngineCoreMethods:
             ):
                 _record_suppression("runtime_trade_policy_blocked")
                 return
-            if not _passes_signal_exit_policy(
+            if not passes_signal_exit_policy(
                 strategies=source_strategies,
                 symbol=symbol,
                 action=direction,
@@ -419,14 +419,14 @@ class _DecisionEngineCoreMethods:
                 order_type="market",
                 time_in_force=cast(
                     Literal["day", "gtc", "ioc", "fok"],
-                    _resolve_strategy_time_in_force(
+                    resolve_strategy_time_in_force(
                         strategies=source_strategies,
                         action=direction,
                         runtime_exit_side=runtime_exit_side,
                     ),
                 ),
                 rationale=",".join(explain),
-                params=_build_params(
+                params=build_params(
                     signal=params_signal,
                     macd=features.macd,
                     macd_signal=features.macd_signal,
@@ -486,18 +486,18 @@ class _DecisionEngineCoreMethods:
             )
             decisions.append(decision)
             self._last_emitted_action_at[
-                _runtime_trade_policy_key(
+                runtime_trade_policy_key(
                     symbol=symbol,
                     action=direction,
                     state_scope_key=position_state_scope_key,
                 )
             ] = signal.event_ts
-            _record_runtime_trade_policy_decision(
+            record_runtime_trade_policy_decision(
                 strategies=source_strategies,
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
                 symbol=symbol,
-                position_owner=_runtime_trade_policy_owner(
+                position_owner=runtime_trade_policy_owner(
                     primary_strategy_id=primary_strategy_id,
                     position_isolation_mode=position_isolation_mode,
                 ),
@@ -517,7 +517,7 @@ class _DecisionEngineCoreMethods:
             strategy = strategies_by_id.get(primary_strategy_id)
             if strategy is None:
                 continue
-            runtime_exit_side = _runtime_intent_exit_side(
+            runtime_exit_side = runtime_intent_exit_side(
                 action=raw_decision.intent.direction,
                 explain=raw_decision.intent.explain,
             )
@@ -528,7 +528,7 @@ class _DecisionEngineCoreMethods:
                 direction=raw_decision.intent.direction,
                 explain=raw_decision.intent.explain,
                 feature_snapshot_hashes=[raw_decision.feature_hash],
-                positions_scope=_positions_for_strategy_action(
+                positions_scope=positions_for_strategy_action(
                     positions,
                     strategy_id=primary_strategy_id,
                     action=raw_decision.intent.direction,
@@ -552,7 +552,7 @@ class _DecisionEngineCoreMethods:
                     intent.horizon,
                 )
                 continue
-            runtime_exit_side = _runtime_intent_exit_side(
+            runtime_exit_side = runtime_intent_exit_side(
                 action=intent.direction,
                 explain=intent.explain,
             )
@@ -576,7 +576,7 @@ class _DecisionEngineCoreMethods:
             strategy = strategies_by_id.get(isolated_strategy_id)
             if strategy is None:
                 continue
-            isolated_positions = _positions_for_strategy_action(
+            isolated_positions = positions_for_strategy_action(
                 actual_positions,
                 strategy_id=isolated_strategy_id,
                 action="sell",
@@ -585,12 +585,12 @@ class _DecisionEngineCoreMethods:
                 symbol=signal.symbol,
                 positions=isolated_positions,
                 price=price,
-                state_scope_key=_position_state_scope_key(
+                state_scope_key=resolve_position_state_scope_key(
                     position_isolation_mode="per_strategy",
                     strategy_id=isolated_strategy_id,
                 ),
             )
-            overlay_decision = _build_runtime_position_exit_overlay(
+            overlay_decision = build_runtime_position_exit_overlay(
                 signal=signal,
                 strategies=[strategy],
                 timeframe=timeframe,
@@ -612,17 +612,17 @@ class _DecisionEngineCoreMethods:
                 position_isolation_mode="per_strategy",
             )
             if overlay_decision is not None:
-                overlay_policy = _resolve_runtime_trade_policy([strategy])
-                overlay_positions = _positions_for_strategy_action(
+                overlay_policy = resolve_runtime_trade_policy([strategy])
+                overlay_positions = positions_for_strategy_action(
                     actual_positions,
                     strategy_id=isolated_strategy_id,
                     action="sell",
                 )
-                overlay_position_owner = _runtime_trade_policy_owner(
+                overlay_position_owner = runtime_trade_policy_owner(
                     primary_strategy_id=isolated_strategy_id,
                     position_isolation_mode="per_strategy",
                 )
-                if not _passes_runtime_trade_policy(
+                if not passes_runtime_trade_policy(
                     strategies=[strategy],
                     last_emitted_action_at=self._last_emitted_action_at,
                     runtime_trade_policy_state=self._runtime_trade_policy_state,
@@ -632,12 +632,12 @@ class _DecisionEngineCoreMethods:
                     position_owner=overlay_position_owner,
                     positions=overlay_positions,
                     policy=overlay_policy,
-                    position_exit_type=_decision_position_exit_type(overlay_decision),
+                    position_exit_type=decision_position_exit_type(overlay_decision),
                     state_scope_key=isolated_strategy_id,
                 ):
                     continue
                 decisions.append(overlay_decision)
-                _record_runtime_trade_policy_decision(
+                record_runtime_trade_policy_decision(
                     strategies=[strategy],
                     runtime_trade_policy_state=self._runtime_trade_policy_state,
                     signal_ts=signal.event_ts,
@@ -668,7 +668,7 @@ class _DecisionEngineCoreMethods:
             if non_isolated_strategy_ids
             else None
         )
-        overlay_decision = _build_runtime_position_exit_overlay(
+        overlay_decision = build_runtime_position_exit_overlay(
             signal=signal,
             strategies=[
                 strategy
@@ -692,14 +692,14 @@ class _DecisionEngineCoreMethods:
             position_peak_price=aggregated_position_peak_price,
         )
         if overlay_decision is not None:
-            overlay_policy = _resolve_runtime_trade_policy(
+            overlay_policy = resolve_runtime_trade_policy(
                 [
                     strategy
                     for strategy in strategies
                     if str(strategy.id) in non_isolated_strategy_ids
                 ]
             )
-            if not _passes_runtime_trade_policy(
+            if not passes_runtime_trade_policy(
                 strategies=[
                     strategy
                     for strategy in strategies
@@ -710,14 +710,14 @@ class _DecisionEngineCoreMethods:
                 signal_ts=signal.event_ts,
                 symbol=signal.symbol,
                 action=overlay_decision.action,
-                position_owner=_RUNTIME_TRADE_POLICY_SHARED_OWNER,
+                position_owner=RUNTIME_TRADE_POLICY_SHARED_OWNER,
                 positions=actual_positions,
                 policy=overlay_policy,
-                position_exit_type=_decision_position_exit_type(overlay_decision),
+                position_exit_type=decision_position_exit_type(overlay_decision),
             ):
                 return decisions
             decisions.append(overlay_decision)
-            _record_runtime_trade_policy_decision(
+            record_runtime_trade_policy_decision(
                 strategies=[
                     strategy
                     for strategy in strategies
@@ -726,7 +726,7 @@ class _DecisionEngineCoreMethods:
                 runtime_trade_policy_state=self._runtime_trade_policy_state,
                 signal_ts=signal.event_ts,
                 symbol=signal.symbol,
-                position_owner=_RUNTIME_TRADE_POLICY_SHARED_OWNER,
+                position_owner=RUNTIME_TRADE_POLICY_SHARED_OWNER,
                 action=overlay_decision.action,
                 policy=overlay_policy,
                 positions=actual_positions,
@@ -747,7 +747,7 @@ class _DecisionEngineCoreMethods:
         active_symbols = {
             str(position.get("symbol") or "").strip().upper()
             for position in (positions or [])
-            if (_position_qty_from_payload(position) or Decimal("0")) > 0
+            if (position_qty_from_payload(position) or Decimal("0")) > 0
         }
         for tracked_symbol, tracked_scope_key in list(
             self._position_peak_price_by_scope
@@ -761,12 +761,12 @@ class _DecisionEngineCoreMethods:
 
         normalized_symbol = symbol.strip().upper()
         peak_price_key = (normalized_symbol, state_scope_key)
-        position_qty = _position_qty_for_symbol(positions, normalized_symbol)
+        position_qty = position_qty_for_symbol(positions, normalized_symbol)
         if position_qty is None or position_qty <= 0:
             self._position_peak_price_by_scope.pop(peak_price_key, None)
             return None
 
-        avg_entry_price = _position_avg_entry_price_for_symbol(
+        avg_entry_price = position_avg_entry_price_for_symbol(
             positions, normalized_symbol
         )
         candidates = [
@@ -823,8 +823,5 @@ class _DecisionEngineCoreMethods:
         )
         return decisions
 
-
-# Public aliases used by split-module consumers.
-DecisionEngineCoreMethods = _DecisionEngineCoreMethods
 
 __all__ = ("DecisionEngineCoreMethods",)

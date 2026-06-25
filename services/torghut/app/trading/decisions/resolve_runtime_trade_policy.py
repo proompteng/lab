@@ -18,27 +18,27 @@ from ..strategy_runtime import (
 
 
 from .shared_context import (
-    MICROBAR_PAIR_EXIT_RATIONALE as _MICROBAR_PAIR_EXIT_RATIONALE,
-    RUNTIME_TRADE_POLICY_SHARED_OWNER as _RUNTIME_TRADE_POLICY_SHARED_OWNER,
-    RuntimeTradePolicySessionState as _RuntimeTradePolicySessionState,
+    MICROBAR_PAIR_EXIT_RATIONALE,
+    RUNTIME_TRADE_POLICY_SHARED_OWNER,
+    RuntimeTradePolicySessionState,
 )
 from .resolve_qty_for_aggregated import (
-    runtime_trade_policy_key as _runtime_trade_policy_key,
+    runtime_trade_policy_key,
 )
 from .positions_for_strategy_action import (
-    exit_position_side_for_strategies as _exit_position_side_for_strategies,
-    is_entry_action_for_strategies as _is_entry_action_for_strategies,
-    is_exit_action_for_strategies as _is_exit_action_for_strategies,
-    passes_exit_profit_policy as _passes_exit_profit_policy,
-    position_avg_entry_price_for_symbol as _position_avg_entry_price_for_symbol,
-    position_qty_for_symbol as _position_qty_for_symbol,
-    position_qty_from_payload as _position_qty_from_payload,
-    realized_exit_bps as _realized_exit_bps,
-    reference_exit_price as _reference_exit_price,
-    resolve_max_nonnegative_strategy_param as _resolve_max_nonnegative_strategy_param,
+    exit_position_side_for_strategies,
+    is_entry_action_for_strategies,
+    is_exit_action_for_strategies,
+    passes_exit_profit_policy,
+    position_avg_entry_price_for_symbol,
+    position_qty_for_symbol,
+    position_qty_from_payload,
+    realized_exit_bps,
+    reference_exit_price as resolve_reference_exit_price,
+    resolve_max_nonnegative_strategy_param,
 )
 from .count_open_short_positions import (
-    count_open_short_positions as _count_open_short_positions,
+    count_open_short_positions,
 )
 
 
@@ -51,7 +51,7 @@ def _int_param(value: Any) -> int:
         return 0
 
 
-def _resolve_runtime_trade_policy(
+def resolve_runtime_trade_policy(
     strategies: list[Strategy],
 ) -> dict[str, int | Decimal]:
     entry_cooldown = 0
@@ -150,11 +150,11 @@ def _resolve_runtime_trade_policy(
     }
 
 
-def _passes_runtime_trade_policy(
+def passes_runtime_trade_policy(
     *,
     strategies: list[Strategy],
     last_emitted_action_at: dict[tuple[str, str, str | None], datetime],
-    runtime_trade_policy_state: dict[tuple[str, str], _RuntimeTradePolicySessionState],
+    runtime_trade_policy_state: dict[tuple[str, str], RuntimeTradePolicySessionState],
     signal_ts: datetime,
     symbol: str,
     action: str,
@@ -166,17 +166,17 @@ def _passes_runtime_trade_policy(
     state_scope_key: str | None = None,
 ) -> bool:
     normalized_action = action.strip().lower()
-    session_state = _resolve_runtime_trade_policy_session_state(
+    session_state = resolve_runtime_trade_policy_session_state(
         runtime_trade_policy_state=runtime_trade_policy_state,
         signal_ts=signal_ts,
         symbol=symbol,
         position_owner=position_owner,
     )
-    entry_action = runtime_exit_side is None and _is_entry_action_for_strategies(
+    entry_action = runtime_exit_side is None and is_entry_action_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
-    exit_action = runtime_exit_side is not None or _is_exit_action_for_strategies(
+    exit_action = runtime_exit_side is not None or is_exit_action_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
@@ -187,11 +187,11 @@ def _passes_runtime_trade_policy(
         if max_concurrent_positions > 0 and (
             (
                 normalized_action == "buy"
-                and _count_open_long_positions(positions) >= max_concurrent_positions
+                and count_open_long_positions(positions) >= max_concurrent_positions
             )
             or (
                 normalized_action == "sell"
-                and _count_open_short_positions(positions) >= max_concurrent_positions
+                and count_open_short_positions(positions) >= max_concurrent_positions
             )
         ):
             return False
@@ -257,7 +257,7 @@ def _passes_runtime_trade_policy(
     cooldown_key = "entry_cooldown_seconds" if entry_action else "exit_cooldown_seconds"
     cooldown_seconds = max(0, int(policy.get(cooldown_key, 0)))
     last_emitted = last_emitted_action_at.get(
-        _runtime_trade_policy_key(
+        runtime_trade_policy_key(
             symbol=symbol,
             action=normalized_action,
             state_scope_key=state_scope_key,
@@ -276,13 +276,13 @@ def _passes_runtime_trade_policy(
     if not exit_action:
         return True
 
-    if _position_exit_bypasses_min_hold(position_exit_type):
+    if position_exit_bypasses_min_hold(position_exit_type):
         return True
 
     min_hold_seconds = max(0, int(policy.get("min_hold_seconds", 0)))
     if min_hold_seconds <= 0:
         return True
-    position_opened_at = _position_opened_at_for_symbol(positions, symbol)
+    position_opened_at = position_opened_at_for_symbol(positions, symbol)
     if position_opened_at is None:
         return True
     age_seconds = (
@@ -291,7 +291,7 @@ def _passes_runtime_trade_policy(
     return age_seconds >= min_hold_seconds
 
 
-def _decision_position_exit_type(decision: StrategyDecision) -> str | None:
+def decision_position_exit_type(decision: StrategyDecision) -> str | None:
     position_exit = decision.params.get("position_exit")
     if not isinstance(position_exit, Mapping):
         return None
@@ -299,7 +299,7 @@ def _decision_position_exit_type(decision: StrategyDecision) -> str | None:
     return normalized or None
 
 
-def _position_exit_bypasses_min_hold(position_exit_type: str | None) -> bool:
+def position_exit_bypasses_min_hold(position_exit_type: str | None) -> bool:
     normalized = str(position_exit_type or "").strip().lower()
     return normalized in {
         "long_stop_loss_bps",
@@ -309,7 +309,7 @@ def _position_exit_bypasses_min_hold(position_exit_type: str | None) -> bool:
     }
 
 
-def _resolve_strategy_time_in_force(
+def resolve_strategy_time_in_force(
     *,
     strategies: list[Strategy],
     action: str,
@@ -320,7 +320,7 @@ def _resolve_strategy_time_in_force(
         "exit_time_in_force"
         if runtime_exit_side is not None
         else "entry_time_in_force"
-        if _is_entry_action_for_strategies(
+        if is_entry_action_for_strategies(
             strategies=strategies, action=normalized_action
         )
         else "exit_time_in_force"
@@ -345,39 +345,39 @@ def _resolve_strategy_time_in_force(
     return "day"
 
 
-def _runtime_trade_policy_owner(
+def runtime_trade_policy_owner(
     *,
     primary_strategy_id: str,
     position_isolation_mode: str | None,
 ) -> str:
     if str(position_isolation_mode or "").strip().lower() == "per_strategy":
         return primary_strategy_id
-    return _RUNTIME_TRADE_POLICY_SHARED_OWNER
+    return RUNTIME_TRADE_POLICY_SHARED_OWNER
 
 
-def _resolve_runtime_trade_policy_session_state(
+def resolve_runtime_trade_policy_session_state(
     *,
-    runtime_trade_policy_state: dict[tuple[str, str], _RuntimeTradePolicySessionState],
+    runtime_trade_policy_state: dict[tuple[str, str], RuntimeTradePolicySessionState],
     signal_ts: datetime,
     symbol: str,
     position_owner: str,
-) -> _RuntimeTradePolicySessionState:
+) -> RuntimeTradePolicySessionState:
     session_day = signal_ts.astimezone(timezone.utc).date()
     key = (
         symbol.strip().upper(),
-        position_owner.strip() or _RUNTIME_TRADE_POLICY_SHARED_OWNER,
+        position_owner.strip() or RUNTIME_TRADE_POLICY_SHARED_OWNER,
     )
     state = runtime_trade_policy_state.get(key)
     if state is None or state.session_day != session_day:
-        state = _RuntimeTradePolicySessionState(session_day=session_day)
+        state = RuntimeTradePolicySessionState(session_day=session_day)
         runtime_trade_policy_state[key] = state
     return state
 
 
-def _record_runtime_trade_policy_decision(
+def record_runtime_trade_policy_decision(
     *,
     strategies: list[Strategy],
-    runtime_trade_policy_state: dict[tuple[str, str], _RuntimeTradePolicySessionState],
+    runtime_trade_policy_state: dict[tuple[str, str], RuntimeTradePolicySessionState],
     signal_ts: datetime,
     symbol: str,
     position_owner: str,
@@ -390,17 +390,17 @@ def _record_runtime_trade_policy_decision(
     runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> None:
     normalized_action = action.strip().lower()
-    state = _resolve_runtime_trade_policy_session_state(
+    state = resolve_runtime_trade_policy_session_state(
         runtime_trade_policy_state=runtime_trade_policy_state,
         signal_ts=signal_ts,
         symbol=symbol,
         position_owner=position_owner,
     )
-    entry_action = runtime_exit_side is None and _is_entry_action_for_strategies(
+    entry_action = runtime_exit_side is None and is_entry_action_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
-    exit_side = runtime_exit_side or _exit_position_side_for_strategies(
+    exit_side = runtime_exit_side or exit_position_side_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
@@ -420,12 +420,12 @@ def _record_runtime_trade_policy_decision(
         state.stop_loss_exit_count += 1
         state.last_stop_loss_exit_at = signal_ts
 
-    avg_entry_price = _position_avg_entry_price_for_symbol(positions, symbol)
+    avg_entry_price = position_avg_entry_price_for_symbol(positions, symbol)
     if avg_entry_price is None or avg_entry_price <= 0:
         return
-    realized_bps = _realized_exit_bps(
+    realized_bps = realized_exit_bps(
         avg_entry_price=avg_entry_price,
-        exit_price=_reference_exit_price(
+        exit_price=resolve_reference_exit_price(
             price=price,
             signal=signal,
             action=normalized_action,
@@ -448,7 +448,7 @@ def _record_runtime_trade_policy_decision(
     state.cumulative_negative_exit_bps += loss_bps
 
 
-def _passes_signal_exit_policy(
+def passes_signal_exit_policy(
     *,
     strategies: list[Strategy],
     symbol: str,
@@ -459,46 +459,46 @@ def _passes_signal_exit_policy(
     runtime_exit_side: Literal["long", "short"] | None = None,
 ) -> bool:
     normalized_action = action.strip().lower()
-    exit_side = runtime_exit_side or _exit_position_side_for_strategies(
+    exit_side = runtime_exit_side or exit_position_side_for_strategies(
         strategies=strategies,
         action=normalized_action,
     )
     if exit_side is None or price is None or price <= 0:
         return True
 
-    position_qty = _position_qty_for_symbol(positions, symbol)
+    position_qty = position_qty_for_symbol(positions, symbol)
     if (exit_side == "long" and (position_qty is None or position_qty <= 0)) or (
         exit_side == "short" and (position_qty is None or position_qty >= 0)
     ):
         return True
 
-    avg_entry_price = _position_avg_entry_price_for_symbol(positions, symbol)
+    avg_entry_price = position_avg_entry_price_for_symbol(positions, symbol)
     if avg_entry_price is None or avg_entry_price <= 0:
         return True
 
-    reference_exit_price = _reference_exit_price(
+    reference_exit_price = resolve_reference_exit_price(
         price=price,
         signal=signal,
         action=normalized_action,
     )
-    realized_bps = _realized_exit_bps(
+    realized_bps = realized_exit_bps(
         avg_entry_price=avg_entry_price,
         exit_price=reference_exit_price,
         position_side=exit_side,
     )
-    return _passes_exit_profit_policy(
+    return passes_exit_profit_policy(
         strategies=strategies,
         realized_bps=realized_bps,
     )
 
 
-def _runtime_intent_exit_side(
+def runtime_intent_exit_side(
     *,
     action: str,
     explain: tuple[str, ...],
 ) -> Literal["long", "short"] | None:
     tokens = {str(item).strip().lower() for item in explain if str(item).strip()}
-    if _MICROBAR_PAIR_EXIT_RATIONALE not in tokens:
+    if MICROBAR_PAIR_EXIT_RATIONALE not in tokens:
         return None
     normalized_action = action.strip().lower()
     if normalized_action == "sell":
@@ -508,7 +508,7 @@ def _runtime_intent_exit_side(
     return None
 
 
-def _default_trailing_stop_requires_structure_loss(
+def default_trailing_stop_requires_structure_loss(
     strategies: list[Strategy],
 ) -> bool:
     continuation_strategy_types = {
@@ -521,38 +521,38 @@ def _default_trailing_stop_requires_structure_loss(
     )
 
 
-def _trailing_stop_structure_loss_confirmed(
+def trailing_stop_structure_loss_confirmed(
     *,
     signal: SignalEnvelope,
     price: Decimal,
     strategies: list[Strategy],
 ) -> bool:
     payload = signal.payload or {}
-    vwap_threshold = _resolve_max_nonnegative_strategy_param(
+    vwap_threshold = resolve_max_nonnegative_strategy_param(
         strategies=strategies,
         key="long_trailing_stop_structure_loss_vwap_bps",
     )
     if vwap_threshold is None:
         vwap_threshold = Decimal("0")
-    opening_range_high_threshold = _resolve_max_nonnegative_strategy_param(
+    opening_range_high_threshold = resolve_max_nonnegative_strategy_param(
         strategies=strategies,
         key="long_trailing_stop_structure_loss_price_vs_opening_range_high_bps",
     )
     if opening_range_high_threshold is None:
         opening_range_high_threshold = Decimal("0")
-    session_range_position_max = _resolve_max_nonnegative_strategy_param(
+    session_range_position_max = resolve_max_nonnegative_strategy_param(
         strategies=strategies,
         key="long_trailing_stop_structure_loss_session_range_position_max",
     )
     if session_range_position_max is None:
         session_range_position_max = Decimal("0.80")
-    price_vs_vwap_w5m_bps = _signal_decimal_feature_bps(
+    price_vs_vwap_w5m_bps = signal_decimal_feature_bps(
         signal,
         key="price_vs_vwap_w5m_bps",
         price=price,
         reference_key="vwap_w5m",
     )
-    price_vs_opening_range_high_bps = _signal_decimal_feature_bps(
+    price_vs_opening_range_high_bps = signal_decimal_feature_bps(
         signal,
         key="price_vs_opening_range_high_bps",
         price=price,
@@ -572,7 +572,7 @@ def _trailing_stop_structure_loss_confirmed(
     )
 
 
-def _signal_spread(signal: SignalEnvelope) -> Decimal | None:
+def signal_spread(signal: SignalEnvelope) -> Decimal | None:
     payload = signal.payload or {}
     spread = optional_decimal(payload.get("spread"))
     if spread is not None and spread > 0:
@@ -596,7 +596,7 @@ def _signal_spread(signal: SignalEnvelope) -> Decimal | None:
     return ask - bid
 
 
-def _signal_decimal_feature_bps(
+def signal_decimal_feature_bps(
     signal: SignalEnvelope,
     *,
     key: str,
@@ -613,27 +613,27 @@ def _signal_decimal_feature_bps(
     return ((price - reference_value) / reference_value) * Decimal("10000")
 
 
-def _near_touch_exit_price(
+def near_touch_exit_price(
     price: Decimal,
     spread: Decimal | None,
     action: str,
 ) -> Decimal:
     if spread is None or spread <= 0:
-        return _normalize_exit_price(price)
+        return normalize_exit_price(price)
     half_spread = spread / Decimal("2")
     if action == "buy":
-        return _normalize_exit_price(price + half_spread)
-    return _normalize_exit_price(price - half_spread)
+        return normalize_exit_price(price + half_spread)
+    return normalize_exit_price(price - half_spread)
 
 
-def _normalize_exit_price(price: Decimal) -> Decimal:
+def normalize_exit_price(price: Decimal) -> Decimal:
     tick_size = (
         Decimal("0.0001") if price.copy_abs() < Decimal("1") else Decimal("0.01")
     )
     return price.quantize(tick_size, rounding=ROUND_HALF_UP)
 
 
-def _position_opened_at_for_symbol(
+def position_opened_at_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
 ) -> datetime | None:
@@ -655,13 +655,13 @@ def _position_opened_at_for_symbol(
     return None
 
 
-def _position_age_seconds_for_symbol(
+def position_age_seconds_for_symbol(
     positions: Optional[list[dict[str, Any]]],
     symbol: str,
     *,
     signal_ts: datetime,
 ) -> int | None:
-    opened_at = _position_opened_at_for_symbol(positions, symbol)
+    opened_at = position_opened_at_for_symbol(positions, symbol)
     if opened_at is None:
         return None
     age_seconds = (
@@ -670,7 +670,7 @@ def _position_age_seconds_for_symbol(
     return max(0, int(age_seconds))
 
 
-def _count_open_long_positions(positions: Optional[list[dict[str, Any]]]) -> int:
+def count_open_long_positions(positions: Optional[list[dict[str, Any]]]) -> int:
     if not positions:
         return 0
     open_symbols: set[str] = set()
@@ -678,7 +678,7 @@ def _count_open_long_positions(positions: Optional[list[dict[str, Any]]]) -> int
         symbol = str(position.get("symbol") or "").strip().upper()
         if not symbol:
             continue
-        qty = _position_qty_from_payload(position)
+        qty = position_qty_from_payload(position)
         if qty is not None:
             if qty > 0:
                 open_symbols.add(symbol)
@@ -698,29 +698,6 @@ def _count_open_long_positions(positions: Optional[list[dict[str, Any]]]) -> int
             open_symbols.add(symbol)
     return len(open_symbols)
 
-
-# Public aliases used by split-module consumers.
-decision_position_exit_type = _decision_position_exit_type
-passes_runtime_trade_policy = _passes_runtime_trade_policy
-passes_signal_exit_policy = _passes_signal_exit_policy
-record_runtime_trade_policy_decision = _record_runtime_trade_policy_decision
-resolve_runtime_trade_policy = _resolve_runtime_trade_policy
-resolve_strategy_time_in_force = _resolve_strategy_time_in_force
-runtime_intent_exit_side = _runtime_intent_exit_side
-runtime_trade_policy_owner = _runtime_trade_policy_owner
-count_open_long_positions = _count_open_long_positions
-default_trailing_stop_requires_structure_loss = (
-    _default_trailing_stop_requires_structure_loss
-)
-near_touch_exit_price = _near_touch_exit_price
-normalize_exit_price = _normalize_exit_price
-position_age_seconds_for_symbol = _position_age_seconds_for_symbol
-position_exit_bypasses_min_hold = _position_exit_bypasses_min_hold
-position_opened_at_for_symbol = _position_opened_at_for_symbol
-resolve_runtime_trade_policy_session_state = _resolve_runtime_trade_policy_session_state
-signal_decimal_feature_bps = _signal_decimal_feature_bps
-signal_spread = _signal_spread
-trailing_stop_structure_loss_confirmed = _trailing_stop_structure_loss_confirmed
 
 __all__ = (
     "decision_position_exit_type",

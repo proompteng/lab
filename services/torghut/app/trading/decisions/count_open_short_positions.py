@@ -6,25 +6,15 @@ import re
 from decimal import Decimal
 from typing import Any, Optional, cast
 
-from ..features import (
-    SignalFeatures as SignalFeatures,
-    extract_signal_features as extract_signal_features,
-)
 from ..models import SignalEnvelope
 
 
-from .shared_context import (
-    DecisionRuntimeTelemetry as DecisionRuntimeTelemetry,
-)
-from .decision_engine_runtime_methods import (
-    DecisionEngine as DecisionEngine,
-)
 from .positions_for_strategy_action import (
-    position_qty_from_payload as _position_qty_from_payload,
+    position_qty_from_payload,
 )
 
 
-def _count_open_short_positions(positions: Optional[list[dict[str, Any]]]) -> int:
+def count_open_short_positions(positions: Optional[list[dict[str, Any]]]) -> int:
     if not positions:
         return 0
     open_symbols: set[str] = set()
@@ -32,7 +22,7 @@ def _count_open_short_positions(positions: Optional[list[dict[str, Any]]]) -> in
         symbol = str(position.get("symbol") or "").strip().upper()
         if not symbol:
             continue
-        qty = _position_qty_from_payload(position)
+        qty = position_qty_from_payload(position)
         if qty is not None:
             if qty < 0:
                 open_symbols.add(symbol)
@@ -54,7 +44,7 @@ def _count_open_short_positions(positions: Optional[list[dict[str, Any]]]) -> in
     return len(open_symbols)
 
 
-def _resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:
+def resolve_signal_timeframe(signal: SignalEnvelope) -> Optional[str]:
     if signal.timeframe is not None:
         return signal.timeframe
     payload_map: dict[str, Any] = signal.payload
@@ -109,14 +99,9 @@ def _coerce_timeframe(value: str) -> Optional[str]:
     return None
 
 
-def _runtime_enabled() -> bool:
+def runtime_enabled() -> bool:
     return True
 
-
-# Public aliases used by split-module consumers.
-count_open_short_positions = _count_open_short_positions
-resolve_signal_timeframe = _resolve_signal_timeframe
-runtime_enabled = _runtime_enabled
 
 __all__ = (
     "count_open_short_positions",
