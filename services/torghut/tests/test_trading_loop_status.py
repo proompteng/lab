@@ -571,8 +571,8 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
             "score": "2.0000",
             "residual_volatility_bps": "50",
             "information_coefficient": "0.05",
-            "expected_return_bps": "8",
-            "direction": "buy",
+            "expected_return_bps": "2",
+            "direction": "hold",
         },
         latest_risk_forecast={
             "run_id": "current-run",
@@ -586,13 +586,14 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
         latest_portfolio_target={
             "run_id": "current-run",
             "asset_key": "hyperliquid:hl:perp:default:BNB",
-            "direction": "buy",
-            "target_notional_usd": "10",
-            "delta_notional_usd": "10",
-            "expected_return_bps": "8",
+            "direction": "hold",
+            "target_notional_usd": "0",
+            "delta_notional_usd": "0",
+            "expected_return_bps": "2",
             "expected_cost_bps": "4",
             "active_risk_bps": "1",
             "risk_buffer_bps": "1",
+            "clip_reason": "expected_edge_not_above_cost",
         },
         latest_execution_intent={
             "run_id": "historical-run",
@@ -624,7 +625,11 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
     assert payload["algorithm"]["run_id"] == "current-run"
     assert payload["algorithm"]["asset_key"] == "hyperliquid:hl:perp:default:BNB"
     assert payload["execution_intent"]["venue_order_id"] == "555"
+    assert payload["alpha_model"]["expected_edge_above_cost"] is False
+    assert payload["portfolio_target"]["target_notional_positive"] is False
     assert "hyperliquid_market_data_not_fresh" not in payload["blocker_reasons"]
+    assert "multifactor_expected_edge_not_above_cost" not in payload["blocker_reasons"]
+    assert "multifactor_target_notional_not_positive" not in payload["blocker_reasons"]
 
 
 def test_multifactor_status_queries_use_current_run_for_current_surfaces() -> None:
@@ -642,6 +647,13 @@ def test_multifactor_status_queries_use_current_run_for_current_surfaces() -> No
         assert "WITH latest_run AS" in query
         assert "JOIN latest_run USING (run_id)" in query
         assert "current_intent" in query
+
+
+def test_status_proof_queries_select_acknowledged_execution_rows() -> None:
+    assert "exchange_order_id IS NOT NULL" in loop_status_module._LATEST_ORDER_SQL
+    assert "status IN ('accepted', 'filled')" in loop_status_module._LATEST_ORDER_SQL
+    assert "venue_order_id IS NOT NULL" in status_payloads.LATEST_EXECUTION_INTENT_SQL
+    assert "status <> 'rejected'" in status_payloads.LATEST_EXECUTION_INTENT_SQL
 
 
 def test_loop_status_reads_nested_hyperliquid_dex_positions() -> None:
