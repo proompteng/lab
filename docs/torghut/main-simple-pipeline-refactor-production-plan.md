@@ -90,8 +90,7 @@ From a running `torghut` pod, hit:
 - `/readyz`
 - `/trading/status`
 - `/trading/health`
-- `/trading/paper-route-evidence`
-- `/trading/proofs`
+- `/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=5`
 
 Required smoke result:
 

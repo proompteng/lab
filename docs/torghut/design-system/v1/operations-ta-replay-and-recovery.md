@@ -240,7 +240,7 @@ the live paper-route target plan says the session is closed and settled, then wr
 
 Read these fields before deciding the next action:
 
-- `checks.paper_route_runtime_window_import_audit`: proves `/trading/paper-route-evidence` included the current
+- `checks.paper_route_runtime_window_import_audit`: proves `/trading/proofs` included the current
   `runtime_window_import_audit` when import was due.
 - `checks.paper_route_source_activity`: distinguishes missing paper-route decisions/executions/TCA from a later
   runtime-ledger import failure.

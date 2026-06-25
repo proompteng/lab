@@ -26,6 +26,7 @@ from .target_plan import (
     paper_route_target_plan_from_payload,
     paper_route_target_plan_probe_symbols,
     paper_route_target_plan_targets,
+    paper_route_target_plan_url_points_to_self,
     target_identity_keys,
     target_plan_selection_score,
     target_source_decision_quantities,
@@ -40,13 +41,15 @@ def fetch_paper_route_target_plan_url(
     timeout_seconds: float,
     attempts: int = 1,
     retry_backoff_seconds: float = 0.25,
+    fetch_client: PaperRouteTargetPlanFetchClient | None = None,
 ) -> dict[str, Any]:
     return fetch_paper_route_target_plan_url_with_client(
         url,
         timeout_seconds=timeout_seconds,
         attempts=attempts,
         retry_backoff_seconds=retry_backoff_seconds,
-        fetch_client=PaperRouteTargetPlanFetchClient(
+        fetch_client=fetch_client
+        or PaperRouteTargetPlanFetchClient(
             http_connection=HTTPConnection,
             https_connection=HTTPSConnection,
         ),
@@ -74,6 +77,7 @@ __all__ = [
     "paper_route_target_plan_from_payload",
     "paper_route_target_plan_probe_symbols",
     "paper_route_target_plan_targets",
+    "paper_route_target_plan_url_points_to_self",
     "target_identity_keys",
     "target_plan_selection_score",
     "target_source_decision_quantities",
