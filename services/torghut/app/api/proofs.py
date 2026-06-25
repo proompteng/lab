@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
-from typing import Any, TYPE_CHECKING
 
 from app.trading.live_submit_activation import live_submit_activation_status
 
-if TYPE_CHECKING:
-    pass
-
+from . import proofs_configured_collection as _proofs_configured_collection
+from . import proofs_external_target_fetch as _proofs_external_target_fetch
 from .common import (
     BUILD_VERSION,
     DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
+    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
+    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
+    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
     Decimal,
     Depends,
     ExecutionTCAMetric,
@@ -20,18 +25,13 @@ from .common import (
     HTTPException,
     HTTPSConnection,
     JSONResponse,
-    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
     Mapping,
-    PAPER_ROUTE_RUNTIME_ACCOUNT_LABEL,
     ProofKind,
     ProofWindowSelector,
     Query,
     Sequence,
     Session,
     SessionLocal,
-    PAPER_ROUTE_BOUNDED_COLLECTION_ACCOUNT_LABEL,
-    PAPER_ROUTE_TARGET_PLAN_STALE_SUCCESS_SECONDS,
-    PAPER_ROUTE_TARGET_PLAN_SUCCESS_CACHE_LOCK,
     Strategy,
     TradingScheduler,
     build_proofs_payload,
@@ -52,33 +52,14 @@ from .health_checks import (
     build_api_live_submission_gate_payload,
     build_hypothesis_runtime_payload,
     build_simple_lane_status_payload,
-    decimal_or_none as _decimal_or_none,
     empirical_jobs_status,
     load_tca_summary,
 )
+from .health_checks import (
+    decimal_or_none as _decimal_or_none,
+)
 from .proof_floor_payloads import (
     build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
-)
-from .proofs_configured_collection import (
-    configured_paper_collection_target_plan as _configured_paper_collection_target_plan,
-)
-from .proofs_configured_collection import (
-    configured_static_symbol_allowlist as _configured_static_symbol_allowlist,
-)
-from .proofs_configured_collection import (
-    configured_strategy_paper_collection_symbols as _configured_strategy_paper_collection_symbols,
-)
-from .proofs_configured_collection import (
-    configured_strategy_paper_collection_targets as _configured_strategy_paper_collection_targets,
-)
-from .proofs_configured_collection import (
-    strategy_universe_symbol_values as _strategy_universe_symbol_values,
-)
-from .proofs_external_target_fetch import (
-    fetch_paper_route_target_plan_url as _fetch_paper_route_target_plan_url_impl,
-)
-from .proofs_external_target_fetch import (
-    paper_route_target_plan_url_points_to_self as _paper_route_target_plan_url_points_to_self,
 )
 from .runtime_profitability import aggregate_tca_rows as _aggregate_tca_rows
 from .status_helpers import deferred_hypothesis_payload_for_live_submission_gate
@@ -93,8 +74,29 @@ _deferred_hypothesis_payload_for_live_submission_gate = (
     deferred_hypothesis_payload_for_live_submission_gate
 )
 _empirical_jobs_status = empirical_jobs_status
+_configured_paper_collection_target_plan = (
+    _proofs_configured_collection.configured_paper_collection_target_plan
+)
+_configured_static_symbol_allowlist = (
+    _proofs_configured_collection.configured_static_symbol_allowlist
+)
+_configured_strategy_paper_collection_symbols = (
+    _proofs_configured_collection.configured_strategy_paper_collection_symbols
+)
+_configured_strategy_paper_collection_targets = (
+    _proofs_configured_collection.configured_strategy_paper_collection_targets
+)
+_fetch_paper_route_target_plan_url_impl = (
+    _proofs_external_target_fetch.fetch_paper_route_target_plan_url
+)
 _load_tca_summary = load_tca_summary
 _live_submit_activation_status = live_submit_activation_status
+_paper_route_target_plan_url_points_to_self = (
+    _proofs_external_target_fetch.paper_route_target_plan_url_points_to_self
+)
+_strategy_universe_symbol_values = (
+    _proofs_configured_collection.strategy_universe_symbol_values
+)
 router = APIRouter()
 _paper_route_target_plan_success_cache: tuple[dict[str, Any], float] | None = None
 
@@ -360,30 +362,42 @@ def _paper_route_probe_symbol_values_from_mapping(
     return symbols
 
 
+def _append_unique_paper_route_symbols(
+    symbols: list[str],
+    candidates: Sequence[str],
+) -> None:
+    for symbol in candidates:
+        if symbol not in symbols:
+            symbols.append(symbol)
+
+
+def _paper_route_probe_symbol_mappings_from_target(
+    target: Mapping[str, Any],
+) -> list[Mapping[str, Any]]:
+    mappings: list[Mapping[str, Any]] = [target]
+    for field in (
+        "paper_route_clean_window_baseline_state",
+        "clean_window_baseline_state",
+    ):
+        state = target.get(field)
+        if not isinstance(state, Mapping):
+            continue
+        typed_state = cast(Mapping[str, Any], state)
+        mappings.append(typed_state)
+        source_audit = typed_state.get("source_audit")
+        if isinstance(source_audit, Mapping):
+            mappings.append(cast(Mapping[str, Any], source_audit))
+    return mappings
+
+
 def _paper_route_target_plan_probe_symbols(plan: Mapping[str, Any]) -> list[str]:
     symbols: list[str] = []
     for target in _paper_route_target_plan_targets(plan):
-        for symbol in _paper_route_probe_symbol_values_from_mapping(target):
-            if symbol not in symbols:
-                symbols.append(symbol)
-        for field in (
-            "paper_route_clean_window_baseline_state",
-            "clean_window_baseline_state",
-        ):
-            state = target.get(field)
-            if not isinstance(state, Mapping):
-                continue
-            typed_state = cast(Mapping[str, Any], state)
-            for symbol in _paper_route_probe_symbol_values_from_mapping(typed_state):
-                if symbol not in symbols:
-                    symbols.append(symbol)
-            source_audit = typed_state.get("source_audit")
-            if isinstance(source_audit, Mapping):
-                for symbol in _paper_route_probe_symbol_values_from_mapping(
-                    cast(Mapping[str, Any], source_audit)
-                ):
-                    if symbol not in symbols:
-                        symbols.append(symbol)
+        for mapping in _paper_route_probe_symbol_mappings_from_target(target):
+            _append_unique_paper_route_symbols(
+                symbols,
+                _paper_route_probe_symbol_values_from_mapping(mapping),
+            )
     return symbols
 
 
@@ -574,6 +588,70 @@ def _with_configured_paper_collection_targets(
     return payload
 
 
+def _paper_route_target_plan_eligible_symbols(
+    plan: Mapping[str, Any],
+    targets: Sequence[Mapping[str, Any]],
+    *,
+    session: Session | None,
+) -> list[str]:
+    eligible_symbols = _paper_route_target_plan_probe_symbols(plan)
+    if eligible_symbols or session is None:
+        return eligible_symbols
+    return _paper_route_probe_symbols_from_target_plan_strategies(
+        session,
+        targets,
+    )
+
+
+def _paper_route_live_submit_activation_blocking_reasons(
+    live_submit_activation: Mapping[str, Any],
+) -> list[str]:
+    if live_submit_activation.get("configured") is not True:
+        return ["live_submit_activation_missing"]
+    if live_submit_activation.get("valid") is not True:
+        return [
+            str(
+                live_submit_activation.get("reason") or "live_submit_activation_invalid"
+            )
+        ]
+    if live_submit_activation.get("expired") is True:
+        return [
+            str(
+                live_submit_activation.get("reason") or "live_submit_activation_expired"
+            )
+        ]
+    return []
+
+
+def _paper_route_probe_mode_status(
+    simple_lane_status: Mapping[str, Any],
+) -> tuple[bool, Mapping[str, Any] | None, list[str]]:
+    live_mode_collection_allowed = bool(
+        simple_lane_status.get("paper_route_probe_allow_live_mode")
+    )
+    if settings.trading_mode == "paper":
+        return live_mode_collection_allowed, None, []
+    if settings.trading_mode == "live" and live_mode_collection_allowed:
+        live_submit_activation = cast(
+            Mapping[str, Any],
+            _live_submit_activation_status(),
+        )
+        return (
+            live_mode_collection_allowed,
+            live_submit_activation,
+            _paper_route_live_submit_activation_blocking_reasons(
+                live_submit_activation
+            ),
+        )
+    if settings.trading_mode == "live":
+        return (
+            live_mode_collection_allowed,
+            None,
+            ["live_paper_route_probe_collection_disabled"],
+        )
+    return live_mode_collection_allowed, None, ["not_paper_mode"]
+
+
 def _paper_route_probe_book_from_target_plan(
     live_submission_gate: Mapping[str, Any],
     *,
@@ -585,12 +663,11 @@ def _paper_route_probe_book_from_target_plan(
     targets = _paper_route_target_plan_targets(plan)
     if not targets:
         return None
-    eligible_symbols = _paper_route_target_plan_probe_symbols(plan)
-    if not eligible_symbols and session is not None:
-        eligible_symbols = _paper_route_probe_symbols_from_target_plan_strategies(
-            session,
-            targets,
-        )
+    eligible_symbols = _paper_route_target_plan_eligible_symbols(
+        plan,
+        targets,
+        session=session,
+    )
     if not eligible_symbols:
         return None
     next_session_max_notional = _paper_route_target_plan_probe_notional(
@@ -604,38 +681,13 @@ def _paper_route_probe_book_from_target_plan(
     if not configured_enabled:
         return None
     market_session_open = cast(bool | None, getattr(state, "market_session_open", None))
-    blocking_reasons: list[str] = []
-    live_mode_collection_allowed = bool(
-        simple_lane_status.get("paper_route_probe_allow_live_mode")
+    (
+        live_mode_collection_allowed,
+        live_submit_activation,
+        blocking_reasons,
+    ) = _paper_route_probe_mode_status(
+        simple_lane_status,
     )
-    live_submit_activation: Mapping[str, Any] | None = None
-    if settings.trading_mode == "paper":
-        pass
-    elif settings.trading_mode == "live" and live_mode_collection_allowed:
-        live_submit_activation = cast(
-            Mapping[str, Any],
-            _live_submit_activation_status(),
-        )
-        if live_submit_activation.get("configured") is not True:
-            blocking_reasons.append("live_submit_activation_missing")
-        elif live_submit_activation.get("valid") is not True:
-            blocking_reasons.append(
-                str(
-                    live_submit_activation.get("reason")
-                    or "live_submit_activation_invalid"
-                )
-            )
-        elif live_submit_activation.get("expired") is True:
-            blocking_reasons.append(
-                str(
-                    live_submit_activation.get("reason")
-                    or "live_submit_activation_expired"
-                )
-            )
-    elif settings.trading_mode == "live":
-        blocking_reasons.append("live_paper_route_probe_collection_disabled")
-    else:
-        blocking_reasons.append("not_paper_mode")
     if market_session_open is not True:
         blocking_reasons.append("market_session_closed")
     active = configured_enabled and market_session_open is True and not blocking_reasons
@@ -701,7 +753,8 @@ def _load_external_paper_route_target_plan() -> dict[str, Any]:
         cached_plan = _cached_external_paper_route_target_plan_success(load_error)
         if cached_plan:
             logger.warning(
-                "Using stale successful paper-route target plan after fetch failure url=%s error=%s",
+                "Using stale successful paper-route target plan after fetch failure "
+                "url=%s error=%s",
                 url,
                 load_error,
             )
@@ -741,6 +794,94 @@ def _cached_external_paper_route_target_plan_success(
     return cached_plan
 
 
+def _paper_route_external_plan_unavailable_payload(
+    local_plan: Mapping[str, Any],
+    load_error: str,
+) -> dict[str, object]:
+    return {
+        "schema_version": local_plan.get("schema_version")
+        or "torghut.runtime-ledger-paper-probation-import-plan.v1",
+        "target_count": 0,
+        "skipped_target_count": len(_paper_route_target_plan_targets(local_plan)),
+        "promotion_allowed": False,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "targets": [],
+        "skipped_targets": [
+            {
+                "reason": "external_paper_route_target_plan_unavailable",
+                "missing_or_blocking_fields": [load_error],
+            }
+        ],
+    }
+
+
+def _paper_route_gate_with_external_load_error(
+    gate: dict[str, object],
+    *,
+    local_plan: Mapping[str, Any],
+    load_error: str,
+) -> dict[str, object]:
+    gate["paper_route_target_plan_error"] = load_error
+    if not settings.trading_paper_route_target_plan_url:
+        return gate
+    if _paper_route_target_plan_cache_safe_for_live(local_plan):
+        gate.setdefault(
+            "paper_route_target_plan_source",
+            "local_runtime_ledger_paper_probation_import_plan",
+        )
+        gate["paper_route_target_plan_external_source"] = "external_target_plan_url"
+        return gate
+    gate["runtime_ledger_paper_probation_import_plan"] = (
+        _paper_route_external_plan_unavailable_payload(local_plan, load_error)
+    )
+    gate["paper_route_target_plan_source"] = "external_target_plan_url"
+    return gate
+
+
+def _external_paper_route_target_plan_targets(
+    external_plan: Mapping[str, Any],
+) -> list[dict[str, Any]]:
+    merged_targets: list[dict[str, Any]] = []
+    for raw_target in _paper_route_target_plan_targets(external_plan):
+        target = dict(raw_target)
+        target["paper_route_target_plan_source"] = "external_target_plan_url"
+        if target.get("paper_route_probe_symbols"):
+            target["paper_route_probe_scope_authority"] = "external_target_plan"
+        merged_targets.append(target)
+    return merged_targets
+
+
+def _paper_route_gate_with_external_plan(
+    gate: dict[str, object],
+    *,
+    external_plan: Mapping[str, Any],
+) -> dict[str, object]:
+    merged_plan = dict(external_plan)
+    cache_status = str(
+        merged_plan.get("paper_route_target_plan_cache_status") or ""
+    ).strip()
+    last_load_error = str(
+        merged_plan.get("paper_route_target_plan_last_load_error") or ""
+    ).strip()
+    merged_targets = _external_paper_route_target_plan_targets(external_plan)
+    merged_plan["targets"] = merged_targets
+    merged_plan["target_count"] = len(merged_targets)
+    merged_plan["skipped_target_count"] = int(
+        merged_plan.get("skipped_target_count") or 0
+    )
+    merged_plan["promotion_allowed"] = False
+    merged_plan["final_promotion_allowed"] = False
+    merged_plan["final_promotion_authorized"] = False
+    gate["runtime_ledger_paper_probation_import_plan"] = merged_plan
+    gate["paper_route_target_plan_source"] = "external_target_plan_url"
+    if cache_status:
+        gate["paper_route_target_plan_cache_status"] = cache_status
+    if last_load_error:
+        gate["paper_route_target_plan_error"] = last_load_error
+    return gate
+
+
 def _merge_external_paper_route_target_plan(
     live_submission_gate: Mapping[str, Any],
 ) -> dict[str, object]:
@@ -754,81 +895,24 @@ def _merge_external_paper_route_target_plan(
 
     external_plan = _load_external_paper_route_target_plan()
     if not external_plan:
-        if _paper_route_target_plan_targets(local_plan):
-            return gate
         return gate
 
     load_error = str(external_plan.get("load_error") or "").strip()
     if load_error:
-        gate["paper_route_target_plan_error"] = load_error
-        if settings.trading_paper_route_target_plan_url:
-            if _paper_route_target_plan_cache_safe_for_live(local_plan):
-                gate.setdefault(
-                    "paper_route_target_plan_source",
-                    "local_runtime_ledger_paper_probation_import_plan",
-                )
-                gate["paper_route_target_plan_external_source"] = (
-                    "external_target_plan_url"
-                )
-                return gate
-            gate["runtime_ledger_paper_probation_import_plan"] = {
-                "schema_version": local_plan.get("schema_version")
-                or "torghut.runtime-ledger-paper-probation-import-plan.v1",
-                "target_count": 0,
-                "skipped_target_count": len(
-                    _paper_route_target_plan_targets(local_plan)
-                ),
-                "promotion_allowed": False,
-                "final_promotion_allowed": False,
-                "final_promotion_authorized": False,
-                "targets": [],
-                "skipped_targets": [
-                    {
-                        "reason": "external_paper_route_target_plan_unavailable",
-                        "missing_or_blocking_fields": [load_error],
-                    }
-                ],
-            }
-            gate["paper_route_target_plan_source"] = "external_target_plan_url"
-        return gate
+        return _paper_route_gate_with_external_load_error(
+            gate,
+            local_plan=local_plan,
+            load_error=load_error,
+        )
 
     if _paper_route_target_plan_targets(
         local_plan
     ) and not _paper_route_target_plan_targets(external_plan):
         return gate
 
-    if _paper_route_target_plan_targets(external_plan):
-        merged_plan = dict(external_plan)
-        cache_status = str(
-            merged_plan.get("paper_route_target_plan_cache_status") or ""
-        ).strip()
-        last_load_error = str(
-            merged_plan.get("paper_route_target_plan_last_load_error") or ""
-        ).strip()
-        merged_targets: list[dict[str, Any]] = []
-        for raw_target in _paper_route_target_plan_targets(external_plan):
-            target = dict(raw_target)
-            target["paper_route_target_plan_source"] = "external_target_plan_url"
-            if target.get("paper_route_probe_symbols"):
-                target["paper_route_probe_scope_authority"] = "external_target_plan"
-            merged_targets.append(target)
-        merged_plan["targets"] = merged_targets
-        merged_plan["target_count"] = len(merged_targets)
-        merged_plan["skipped_target_count"] = int(
-            merged_plan.get("skipped_target_count") or 0
-        )
-        merged_plan["promotion_allowed"] = False
-        merged_plan["final_promotion_allowed"] = False
-        merged_plan["final_promotion_authorized"] = False
-        gate["runtime_ledger_paper_probation_import_plan"] = merged_plan
-        gate["paper_route_target_plan_source"] = "external_target_plan_url"
-        if cache_status:
-            gate["paper_route_target_plan_cache_status"] = cache_status
-        if last_load_error:
-            gate["paper_route_target_plan_error"] = last_load_error
+    if not _paper_route_target_plan_targets(external_plan):
         return gate
-
-    return gate
+    return _paper_route_gate_with_external_plan(gate, external_plan=external_plan)
 
 
 @router.get("/trading/tca")
