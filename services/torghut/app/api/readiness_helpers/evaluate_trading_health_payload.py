@@ -35,7 +35,7 @@ from .shared_context import (
 )
 from . import status_dependencies as _status_dependencies
 from .universe_dependency import (
-    evaluate_universe_dependency as evaluate_universe_dependency,
+    evaluate_universe_dependency,
 )
 from ..trading_scheduler_state import get_trading_scheduler
 
