@@ -558,10 +558,6 @@ def _blockers(
         blockers.append("multifactor_portfolio_target_missing")
     if not summary.execution_intent_present:
         blockers.append("multifactor_execution_intent_missing")
-    if not summary.alpha_edge_above_cost:
-        blockers.append("multifactor_expected_edge_not_above_cost")
-    if not summary.target_notional_positive:
-        blockers.append("multifactor_target_notional_not_positive")
     if not summary.latest_order_present:
         blockers.append("hyperliquid_order_submission_missing")
     if not summary.exchange_ack_seen:
@@ -832,6 +828,8 @@ SELECT
   notional_usd::text
 FROM hyperliquid_execution_orders
 WHERE execution_network = 'testnet'
+  AND exchange_order_id IS NOT NULL
+  AND status IN ('accepted', 'filled')
 ORDER BY created_at DESC
 LIMIT 1
 """

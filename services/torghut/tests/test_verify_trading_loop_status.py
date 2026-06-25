@@ -41,6 +41,23 @@ def test_verifier_accepts_hard_proof_payload() -> None:
     assert evaluate_loop_status(_restored_payload()) == []
 
 
+def test_verifier_accepts_current_no_trade_decision_with_execution_proof() -> None:
+    payload = _restored_payload()
+    payload["alpha_model"] = {
+        "present": True,
+        "factor_snapshot_present": True,
+        "forecast_present": True,
+        "expected_edge_above_cost": False,
+    }
+    payload["portfolio_target"] = {
+        "present": True,
+        "target_notional_positive": False,
+        "clip_reason": "expected_edge_not_above_cost",
+    }
+
+    assert evaluate_loop_status(payload) == []
+
+
 def test_verifier_rejects_green_runtime_without_fills() -> None:
     payload = _restored_payload()
     payload["restored"] = False
@@ -60,7 +77,7 @@ def test_verifier_rejects_missing_multifactor_proof() -> None:
     failures = evaluate_loop_status(payload)
 
     assert "multifactor_alpha_model_missing" in failures
-    assert "multifactor_target_notional_not_positive" in failures
+    assert "multifactor_target_notional_not_positive" not in failures
 
 
 def test_verifier_main_reads_status_file_and_reports_json(

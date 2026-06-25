@@ -212,6 +212,8 @@ SELECT
   blocker,
   venue_order_id
 FROM multifactor_execution_intents
+WHERE venue_order_id IS NOT NULL
+  AND status <> 'rejected'
 ORDER BY updated_at DESC
 LIMIT 1
 """

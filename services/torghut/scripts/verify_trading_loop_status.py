@@ -171,11 +171,6 @@ def evaluate_loop_status(
         failures,
     )
     _require(
-        alpha_model.get("expected_edge_above_cost") is True,
-        "multifactor_expected_edge_not_above_cost",
-        failures,
-    )
-    _require(
         _mapping(payload.get("risk_forecast")).get("present") is True,
         "multifactor_risk_forecast_missing",
         failures,
@@ -184,11 +179,6 @@ def evaluate_loop_status(
     _require(
         portfolio_target.get("present") is True,
         "multifactor_portfolio_target_missing",
-        failures,
-    )
-    _require(
-        portfolio_target.get("target_notional_positive") is True,
-        "multifactor_target_notional_not_positive",
         failures,
     )
     _require(
