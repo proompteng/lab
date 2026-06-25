@@ -1,5 +1,4 @@
 from __future__ import annotations
-from . import shared_context as _whitepaper_shared_context
 from .shared_context import (
     asyncio,
     hashlib,
@@ -72,6 +71,7 @@ from .shared_context import (
     build_whitepaper_run_id,
     comment_requests_requeue,
     extract_pdf_urls,
+    logger,
     normalize_github_issue_event,
 )
 from .ceph_s3_client import CephS3Client, IssueKickoffResult
@@ -81,8 +81,6 @@ from .whitepaper_workflow_service import (
     WhitepaperKafkaWorker,
 )
 
-_http_request_bytes = getattr(_whitepaper_shared_context, "http_request_bytes")
-logger = getattr(_whitepaper_shared_context, "logger")
 __all__ = [
     "asyncio",
     "hashlib",
@@ -162,5 +160,4 @@ __all__ = [
     "WhitepaperWorkflowService",
     "WhitepaperKafkaIssueIngestor",
     "WhitepaperKafkaWorker",
-    "_http_request_bytes",
 ]

@@ -11,7 +11,6 @@ from tests.llm_dspy_workflow.support import (
     TradeDecision,
     _TestLLMDSPyWorkflowBase,
     _build_dspy_lane_overrides,
-    _sanitize_idempotency_key,
     _write_dspy_promotion_eval_snapshot,
     build_compile_result,
     build_dspy_agentrun_payload,
@@ -20,6 +19,7 @@ from tests.llm_dspy_workflow.support import (
     datetime,
     orchestrate_dspy_agentrun_workflow,
     patch,
+    sanitize_idempotency_key,
     select,
     timedelta,
     timezone,
@@ -283,15 +283,15 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
                 self.assertEqual(metadata.get("executor"), "dspy_live")
 
     def test_sanitize_idempotency_key_replaces_invalid_chars(self) -> None:
-        key = _sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
+        key = sanitize_idempotency_key(" :torghut:dspy:run:2026-02-27T07:39:00Z: ")
         self.assertTrue(key)
         self.assertNotIn(":", key)
         self.assertLessEqual(len(key), 63)
 
     def test_sanitize_idempotency_key_long_values_remain_unique(self) -> None:
         prefix = "torghut-dspy-" + ("x" * 90)
-        dataset_key = _sanitize_idempotency_key(f"{prefix}-dataset-build")
-        compile_key = _sanitize_idempotency_key(f"{prefix}-compile")
+        dataset_key = sanitize_idempotency_key(f"{prefix}-dataset-build")
+        compile_key = sanitize_idempotency_key(f"{prefix}-compile")
 
         self.assertLessEqual(len(dataset_key), 63)
         self.assertLessEqual(len(compile_key), 63)

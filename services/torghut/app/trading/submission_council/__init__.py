@@ -84,7 +84,6 @@ from .certificate_loading import (
     load_latest_certificate_evidence as _load_latest_certificate_evidence,
     merge_runtime_certificate_evidence as _merge_runtime_certificate_evidence,
     metric_window_activity_reason_codes as _metric_window_activity_reason_codes,
-    promotion_decision_blocking_reason_codes as _promotion_decision_blocking_reason_codes,
 )
 from .certificate_eval import (
     attach_lineage_refs as _attach_lineage_refs,
@@ -959,7 +958,6 @@ __all__ = [
     "_maybe_set_runtime_ledger_status_statement_timeout",
     "_merge_runtime_certificate_evidence",
     "_metric_window_activity_reason_codes",
-    "_promotion_decision_blocking_reason_codes",
     "_refresh_runtime_summary_totals",
     "_rollback_runtime_ledger_status_session",
     "_runtime_ledger_aggregate_candidate_payloads",

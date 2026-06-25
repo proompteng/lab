@@ -13,45 +13,45 @@ from tests.hypotheses.support import (
     _TestHypothesisReadinessBase,
     _hpairs_tca_symbol_breakdown,
     _hypothesis_manifest_payload,
-    _optional_bool,
-    _optional_decimal,
     _runtime_ledger_summary,
-    _sequence,
     _state,
-    _weighted_decimal_average,
     compile_hypothesis_runtime_statuses,
     datetime,
     json,
     load_hypothesis_registry,
+    optional_bool,
+    optional_decimal,
+    sequence,
     settings,
     timezone,
+    weighted_decimal_average,
 )
 
 
 class TestRouteTcaHelperEdgeCasesAreDefensive(_TestHypothesisReadinessBase):
     def test_route_tca_helper_edge_cases_are_defensive(self) -> None:
-        self.assertIsNone(_optional_decimal(None))
-        self.assertEqual(_optional_decimal(Decimal("1.25")), Decimal("1.25"))
-        self.assertEqual(_optional_decimal("2.50"), Decimal("2.50"))
-        self.assertIsNone(_optional_decimal("not-a-decimal"))
-        self.assertIsNone(_optional_decimal([]))
-        self.assertIsNone(_optional_bool(None))
-        self.assertTrue(_optional_bool(True))
-        self.assertFalse(_optional_bool(False))
-        self.assertTrue(_optional_bool(1))
-        self.assertFalse(_optional_bool(0))
-        self.assertTrue(_optional_bool("passed"))
-        self.assertFalse(_optional_bool("blocked"))
-        self.assertIsNone(_optional_bool("unknown"))
-        self.assertEqual(_sequence("AAPL"), ())
+        self.assertIsNone(optional_decimal(None))
+        self.assertEqual(optional_decimal(Decimal("1.25")), Decimal("1.25"))
+        self.assertEqual(optional_decimal("2.50"), Decimal("2.50"))
+        self.assertIsNone(optional_decimal("not-a-decimal"))
+        self.assertIsNone(optional_decimal([]))
+        self.assertIsNone(optional_bool(None))
+        self.assertTrue(optional_bool(True))
+        self.assertFalse(optional_bool(False))
+        self.assertTrue(optional_bool(1))
+        self.assertFalse(optional_bool(0))
+        self.assertTrue(optional_bool("passed"))
+        self.assertFalse(optional_bool("blocked"))
+        self.assertIsNone(optional_bool("unknown"))
+        self.assertEqual(sequence("AAPL"), ())
         self.assertIsNone(
-            _weighted_decimal_average(
+            weighted_decimal_average(
                 [{"order_count": 0, "avg_abs_slippage_bps": Decimal("4")}],
                 "avg_abs_slippage_bps",
             )
         )
         self.assertIsNone(
-            _weighted_decimal_average(
+            weighted_decimal_average(
                 [{"order_count": 2, "avg_abs_slippage_bps": None}],
                 "avg_abs_slippage_bps",
             )

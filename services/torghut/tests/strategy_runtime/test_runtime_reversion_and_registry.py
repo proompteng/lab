@@ -18,7 +18,7 @@ from tests.strategy_runtime.support import (
     _FailingPlugin,
     _SellPlugin,
     _compose_strategy_description,
-    _trace_suppression_reason,
+    trace_suppression_reason,
     datetime,
     normalize_feature_vector_v3,
     timezone,
@@ -780,7 +780,7 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
             "microbar_cross_sectional_pairs_v1",
         )
 
-    def test_trace_suppression_reason_falls_back_to_gate_or_default(self) -> None:
+    def testtrace_suppression_reason_falls_back_to_gate_or_default(self) -> None:
         trace = StrategyTrace(
             strategy_id="microbar_cross_sectional_pairs_v1@research",
             strategy_type="microbar_cross_sectional_pairs_v1",
@@ -799,5 +799,5 @@ class TestStrategyRuntimeReversionAndRegistry(TestCase):
         )
         empty_trace = trace.with_updates(gates=())
 
-        self.assertEqual(_trace_suppression_reason(trace), "pair_rank_selection")
-        self.assertEqual(_trace_suppression_reason(empty_trace), "no_runtime_intent")
+        self.assertEqual(trace_suppression_reason(trace), "pair_rank_selection")
+        self.assertEqual(trace_suppression_reason(empty_trace), "no_runtime_intent")

@@ -52,7 +52,6 @@ from .row_has_fill_status import (
     parse_window_datetime as _parse_window_datetime,
     positive_decimal as _positive_decimal,
     profit_factor as _profit_factor,
-    ranking_sort_key as _ranking_sort_key,
     safe_divide as _safe_divide,
 )
 
@@ -103,7 +102,6 @@ __all__ = [
     "_parse_window_datetime",
     "_positive_decimal",
     "_profit_factor",
-    "_ranking_sort_key",
     "_safe_divide",
     "_stress_penalty_bps",
     "_utc",
