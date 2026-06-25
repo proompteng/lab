@@ -4,12 +4,12 @@ from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import Any, cast
 
-from ...config import settings
-from ..common import (
-    shared_mapping_items,
-    shared_paper_route_target_plan_from_payload,
+from app.trading.paper_route_target_plan import mapping_items as shared_mapping_items
+from app.trading.paper_route_target_plan import (
+    paper_route_target_plan_from_payload as shared_paper_route_target_plan_from_payload,
 )
 
+from ...config import settings
 
 _PROMOTION_KEYS = (
     "promotion_allowed",

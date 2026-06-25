@@ -2,25 +2,44 @@
 
 from __future__ import annotations
 
-from .shared_context import (
-    Future,
-    Mapping,
+from collections.abc import Mapping
+from concurrent.futures import Future, TimeoutError
+from copy import deepcopy
+from typing import cast
+
+from app.api import common as api_common
+from app.api.common import (
     TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR as _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR,
+)
+from app.api.common import (
     TRADING_HEALTH_SURFACE_EVALUATION_LOCK as _TRADING_HEALTH_SURFACE_EVALUATION_LOCK,
+)
+from app.api.common import (
     TRADING_HEALTH_SURFACE_EVALUATIONS as _TRADING_HEALTH_SURFACE_EVALUATIONS,
+)
+from app.api.common import (
     TRADING_HEALTH_SURFACE_PAYLOAD_CACHE as _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE,
-    TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS as _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-    TimeoutError,
+)
+from app.api.common import logger
+from app.api.readiness_helpers.readiness_surface import (
     cache_completed_trading_health_surface_payload as _cache_completed_trading_health_surface_payload,
-    cast,
-    deepcopy,
+)
+from app.api.readiness_helpers.readiness_surface import (
     guard_live_submission_gate_for_readiness as _guard_live_submission_gate_for_readiness,
+)
+from app.api.readiness_helpers.readiness_surface import (
     health_surface_timeout_fallback_payload as _health_surface_timeout_fallback_payload,
-    logger,
-    main_runtime_value,
+)
+from app.api.readiness_helpers.readiness_surface import (
     readiness_dependency_degradation_reason_codes as _readiness_dependency_degradation_reason_codes,
+)
+from app.api.readiness_helpers.readiness_surface import (
     record_trading_health_surface_completion as _record_trading_health_surface_completion,
+)
+from app.api.readiness_helpers.readiness_surface import (
     strip_promotion_authority_claims_for_readiness as _strip_promotion_authority_claims_for_readiness,
+)
+from app.api.readiness_helpers.readiness_surface import (
     trading_health_surface_cache_key as _trading_health_surface_cache_key,
 )
 
@@ -147,12 +166,7 @@ def evaluate_trading_health_payload_bounded(
     assert future is not None
     timeout_seconds = max(
         0.1,
-        float(
-            main_runtime_value(
-                "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
-                _TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS,
-            )
-        ),
+        float(api_common.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS),
     )
     try:
         payload, status_code = future.result(timeout=timeout_seconds)

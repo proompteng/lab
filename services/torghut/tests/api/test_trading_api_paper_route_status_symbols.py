@@ -132,7 +132,7 @@ def test_profitability_payload_injects_bounded_probe_target_symbols(
     try:
         settings.trading_static_symbols_raw = "AAPL,NVDA"
         monkeypatch.setattr(
-            proof_floor_payloads.shared_context,
+            proof_floor_payloads,
             "build_profitability_proof_floor_receipt",
             fake_receipt,
         )

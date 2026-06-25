@@ -2,51 +2,59 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, cast
 
+from sqlalchemy import func, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
-from .shared_context import (
-    Execution,
-    Mapping,
-    RejectedSignalOutcomeEvent,
-    SQLAlchemyError,
-    Sequence,
-    Session,
-    SessionLocal,
-    TradingScheduler,
+from app.api import common as api_common
+from app.api.common import (
     SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
+)
+from app.api.common import logger
+from app.api.health_checks.shared_context import (
+    empirical_jobs_status as _empirical_jobs_status,
+)
+from app.api.proof_floor_payloads.shared_context import (
     build_capital_replay_projection_payload as _build_capital_replay_projection_payload,
+)
+from app.api.proof_floor_payloads.shared_context import (
     build_jangar_contract_graduation_ref as _build_jangar_contract_graduation_ref,
+)
+from app.api.proof_floor_payloads.shared_context import (
     build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
+)
+from app.api.proof_floor_payloads.shared_context import (
     build_route_reacquisition_board_payload as _build_route_reacquisition_board_payload,
-    build_capital_replay_projection,
-    build_profit_signal_quorum,
-    build_quality_adjusted_profit_frontier,
-    cast,
-    datetime,
-    func,
+)
+from app.config import settings
+from app.db import SessionLocal
+from app.models import Execution, RejectedSignalOutcomeEvent
+from app.trading.executable_alpha_receipts import build_capital_replay_projection
+from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
-    load_jangar_route_continuity_packet,
-    load_quant_evidence_status,
-    logger,
-    main_runtime_value,
     resolve_hypothesis_dependency_quorum,
-    select,
-    settings,
-    timedelta,
-    timezone,
 )
+from app.trading.jangar_continuity import load_jangar_route_continuity_packet
+from app.trading.profit_signal_quorum import build_profit_signal_quorum
+from app.trading.quality_adjusted_profit_frontier import (
+    build_quality_adjusted_profit_frontier,
+)
+from app.trading.scheduler import TradingScheduler
+from app.trading.submission_council import load_quant_evidence_status
 
 from ..health_checks.load_options_catalog_freshness_summary import (
     build_hypothesis_runtime_payload as _build_hypothesis_runtime_payload,
+)
+from ..health_checks.load_options_catalog_freshness_summary import (
     build_live_submission_gate_payload as _build_live_submission_gate_payload,
 )
 from ..health_checks.remember_alpaca_success import (
     load_tca_summary as _load_tca_summary,
-)
-from ..health_checks.shared_context import (
-    empirical_jobs_status as _empirical_jobs_status,
 )
 
 
@@ -328,7 +336,7 @@ def _build_autonomy_capital_replay_projection(
             )
         proof_floor = _build_profitability_proof_floor_payload(
             state=scheduler.state,
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             live_submission_gate=live_submission_gate,
             hypothesis_payload=hypothesis_payload,
             empirical_jobs_status=empirical_jobs,
@@ -338,10 +346,10 @@ def _build_autonomy_capital_replay_projection(
         )
         route_reacquisition_board = _build_route_reacquisition_board_payload(
             proof_floor=proof_floor,
-            active_revision=main_runtime_value("BUILD_COMMIT"),
+            active_revision=api_common.BUILD_COMMIT,
         )
         return _build_capital_replay_projection_payload(
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             dependency_quorum=dependency_quorum.as_payload(),
             live_submission_gate=live_submission_gate,
             proof_floor=proof_floor,
@@ -354,7 +362,7 @@ def _build_autonomy_capital_replay_projection(
         return build_capital_replay_projection(
             account_label=settings.trading_account_label,
             trading_mode=settings.trading_mode,
-            torghut_revision=main_runtime_value("BUILD_COMMIT"),
+            torghut_revision=api_common.BUILD_COMMIT,
             proof_floor_receipt={
                 "route_state": "unavailable",
                 "capital_state": "zero_notional",

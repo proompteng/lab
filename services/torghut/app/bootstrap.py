@@ -15,24 +15,20 @@ from fastapi.responses import JSONResponse
 from inngest.fast_api import serve as inngest_fastapi_serve
 from sqlalchemy.exc import SQLAlchemyError
 
-from .api.common import (
-    BUILD_COMMIT,
-    BUILD_VERSION,
-    SessionLocal,
-    WHITEPAPER_WORKFLOW,
+from .api.common import BUILD_COMMIT, BUILD_VERSION, WHITEPAPER_WORKFLOW
+from .config import settings
+from .db import SessionLocal, ensure_schema
+from .observability import capture_posthog_event, shutdown_posthog_telemetry
+from .trading.autonomy import assert_runtime_gate_policy_contract
+from .trading.autoresearch_routes import router as autoresearch_router
+from .trading.hypotheses import validate_hypothesis_registry_from_settings
+from .trading.scheduler import TradingScheduler
+from .whitepapers import (
     WhitepaperKafkaWorker,
-    assert_runtime_gate_policy_contract,
-    autoresearch_router,
-    capture_posthog_event,
-    ensure_schema,
-    settings,
-    shutdown_posthog_telemetry,
-    validate_hypothesis_registry_from_settings,
     whitepaper_inngest_enabled,
     whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
-from .trading.scheduler import TradingScheduler
 
 logger = logging.getLogger(__name__)
 

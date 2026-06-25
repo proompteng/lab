@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
-from ..common import (
+from app.trading.hypotheses import (
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
-    load_jangar_route_continuity_packet,
 )
+from app.trading.jangar_continuity import load_jangar_route_continuity_packet
 
 __all__ = (
     "build_jangar_reliability_settlement_ref_payload",

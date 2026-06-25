@@ -87,11 +87,10 @@ def test_api_application_mounts_concrete_routers() -> None:
     }.issubset(route_paths)
 
 
-def test_main_runtime_value_falls_back_to_common_default() -> None:
-    assert (
-        api_common.main_runtime_value("__missing_refactor_probe__", "fallback")
-        == "fallback"
-    )
+def test_api_common_no_longer_exposes_dynamic_runtime_lookup() -> None:
+    assert not hasattr(api_common, "main_runtime_value")
+    assert not hasattr(main_module, "main_runtime_value")
+    assert not hasattr(proofs_api, "main_runtime_value")
 
 
 def test_proof_request_value_helpers_live_with_proofs_api() -> None:

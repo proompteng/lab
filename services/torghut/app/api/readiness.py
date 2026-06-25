@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
-from .common import (
-    JSONResponse,
-    jsonable_encoder,
-)
 from . import readiness_helpers
 
 router = APIRouter()

@@ -2,23 +2,24 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, cast
 
-from .common import (
-    BUILD_IMAGE_DIGEST,
-    BUILD_VERSION,
-    SessionLocal,
-    TradingScheduler,
-    active_simulation_runtime_context,
-    cast,
-    datetime,
-    load_quant_evidence_status,
-    settings,
-    timezone,
-    trading_time_status,
+from fastapi import APIRouter
+
+from app.api import common as api_common
+from app.api.common import BUILD_IMAGE_DIGEST, BUILD_VERSION
+from app.config import settings
+from app.db import SessionLocal
+from app.trading.market_context_domains import active_market_context_reasons
+from app.trading.scheduler import TradingScheduler
+from app.trading.simulation_progress import active_simulation_runtime_context
+from app.trading.submission_authority import (
+    build_submission_authority_status as _build_submission_authority_status,
 )
-from .common import main_runtime_value
+from app.trading.submission_council import load_quant_evidence_status
+from app.trading.time_source import trading_time_status
+
 from .application import get_app
 from .health_checks import (
     budget_exhausted_live_submission_gate_payload,
@@ -37,27 +38,71 @@ from .health_checks import (
 )
 from .proof_floor_payloads import (
     build_capital_reentry_cohort_ledger_payload as _build_capital_reentry_cohort_ledger_payload,
+)
+from .proof_floor_payloads import (
     build_capital_replay_projection_payload as _build_capital_replay_projection_payload,
+)
+from .proof_floor_payloads import (
     build_clock_settlement_payload as _build_clock_settlement_payload,
+)
+from .proof_floor_payloads import (
     build_evidence_clock_payloads as _build_evidence_clock_payloads,
+)
+from .proof_floor_payloads import (
     build_freshness_carry_ledger_payload as _build_freshness_carry_ledger_payload,
+)
+from .proof_floor_payloads import (
     build_profit_freshness_frontier_payload as _build_profit_freshness_frontier_payload,
+)
+from .proof_floor_payloads import (
     build_profit_repair_settlement_ledger_payload as _build_profit_repair_settlement_ledger_payload,
+)
+from .proof_floor_payloads import (
     build_profit_signal_quorum_payload as _build_profit_signal_quorum_payload,
+)
+from .proof_floor_payloads import (
     build_profitability_proof_floor_payload as _build_profitability_proof_floor_payload,
+)
+from .proof_floor_payloads import (
     build_quality_adjusted_profit_frontier_payload as _build_quality_adjusted_profit_frontier_payload,
+)
+from .proof_floor_payloads import (
     build_rejected_signal_outcome_learning_payload as _build_rejected_signal_outcome_learning_payload,
+)
+from .proof_floor_payloads import (
     build_renewal_bond_profit_escrow_payload as _build_renewal_bond_profit_escrow_payload,
+)
+from .proof_floor_payloads import (
     build_repair_bid_settlement_payload as _build_repair_bid_settlement_payload,
+)
+from .proof_floor_payloads import (
     build_repair_outcome_dividend_ledger_payload as _build_repair_outcome_dividend_ledger_payload,
+)
+from .proof_floor_payloads import (
     build_repair_receipt_frontier_payload as _build_repair_receipt_frontier_payload,
+)
+from .proof_floor_payloads import (
     build_route_evidence_clearinghouse_payload as _build_route_evidence_clearinghouse_payload,
+)
+from .proof_floor_payloads import (
     build_route_image_proof_summary as _build_route_image_proof_summary,
+)
+from .proof_floor_payloads import (
     build_route_reacquisition_board_payload as _build_route_reacquisition_board_payload,
+)
+from .proof_floor_payloads import (
     build_route_warrant_exchange_payload as _build_route_warrant_exchange_payload,
+)
+from .proof_floor_payloads import (
     build_routeability_repair_acceptance_ledger_payload as _build_routeability_repair_acceptance_ledger_payload,
+)
+from .proof_floor_payloads import (
     build_source_serving_repair_receipt_payload as _build_source_serving_repair_receipt_payload,
+)
+from .proof_floor_payloads import (
     load_rejected_signal_outcome_learning_summary,
+)
+from .proof_floor_payloads import (
     simple_lane_reject_reason_totals as _simple_lane_reject_reason_totals,
 )
 from .status_helpers import (
@@ -75,10 +120,6 @@ from .status_helpers import (
 )
 from .trading_misc import (
     build_consumer_evidence_receipt_projection as _build_consumer_evidence_receipt_projection,
-)
-from app.trading.market_context_domains import active_market_context_reasons
-from app.trading.submission_authority import (
-    build_submission_authority_status as _build_submission_authority_status,
 )
 from .vnext_helpers import build_autonomy_bridge_status as _build_autonomy_bridge_status
 
@@ -506,7 +547,7 @@ def trading_status() -> dict[str, object]:
     )
     build_payload = {
         "version": BUILD_VERSION,
-        "commit": main_runtime_value("BUILD_COMMIT"),
+        "commit": api_common.BUILD_COMMIT,
         "image_digest": BUILD_IMAGE_DIGEST,
         "active_revision": shadow_first_runtime["active_revision"],
     }
@@ -542,7 +583,7 @@ def trading_status() -> dict[str, object]:
     )
     clock_settlement_receipt = _build_clock_settlement_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         build=build_payload,
         evidence_clock_arbiter=evidence_clock_arbiter,
         routeable_profit_candidate_exchange=routeable_profit_candidate_exchange,
@@ -558,7 +599,7 @@ def trading_status() -> dict[str, object]:
     )
     route_evidence_clearinghouse_packet = _build_route_evidence_clearinghouse_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
         build=build_payload,
         proof_floor=proof_floor,
@@ -572,7 +613,7 @@ def trading_status() -> dict[str, object]:
     )
     repair_bid_settlement_ledger = _build_repair_bid_settlement_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         dependency_quorum=hypothesis_dependency_quorum.as_payload(),
         build=build_payload,
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
@@ -582,7 +623,7 @@ def trading_status() -> dict[str, object]:
     )
     route_warrant_exchange = _build_route_warrant_exchange_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         build=build_payload,
         consumer_evidence_receipt=consumer_evidence_receipt,
         evidence_clock_arbiter=evidence_clock_arbiter,
@@ -596,7 +637,7 @@ def trading_status() -> dict[str, object]:
         market_context_status=market_context_status,
     )
     source_serving_repair_receipt_ledger = _build_source_serving_repair_receipt_payload(
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         build=build_payload,
         consumer_evidence_receipt=consumer_evidence_receipt,
         route_evidence_clearinghouse_packet=route_evidence_clearinghouse_packet,
@@ -615,7 +656,7 @@ def trading_status() -> dict[str, object]:
     )
     repair_receipt_frontier = _build_repair_receipt_frontier_payload(
         torghut_revision=cast(str | None, shadow_first_runtime["active_revision"]),
-        source_commit=main_runtime_value("BUILD_COMMIT"),
+        source_commit=api_common.BUILD_COMMIT,
         source_serving_repair_receipt_ledger=source_serving_repair_receipt_ledger,
         freshness_carry_ledger=freshness_carry_ledger,
         repair_bid_settlement_ledger=repair_bid_settlement_ledger,

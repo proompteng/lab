@@ -2,36 +2,33 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from typing import Any
+import os
+from collections.abc import Sequence
+from typing import Any, cast
 
-from .common import (
-    Body,
-    Depends,
-    HTTPException,
-    JSONResponse,
-    Query,
-    Request,
-    Sequence,
-    Session,
-    WHITEPAPER_WORKFLOW,
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.common import WHITEPAPER_WORKFLOW, logger
+from app.db import get_session
+from app.models import (
     WhitepaperAnalysisRun,
     WhitepaperCodexAgentRun,
     WhitepaperDesignPullRequest,
     WhitepaperEngineeringTrigger,
-    WhitepaperKafkaWorker,
     WhitepaperRolloutTransition,
-    cast,
-    get_session,
-    jsonable_encoder,
-    logger,
-    os,
-    select,
+)
+from app.whitepapers import (
+    WhitepaperKafkaWorker,
     whitepaper_inngest_enabled,
     whitepaper_kafka_enabled,
     whitepaper_semantic_indexing_enabled,
     whitepaper_workflow_enabled,
 )
+
 from ..bootstrap import (
     require_whitepaper_control_token as _require_whitepaper_control_token,
 )

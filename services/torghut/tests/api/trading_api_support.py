@@ -537,7 +537,7 @@ class TradingApiTestCaseBase(TestCase):
             bind=engine, expire_on_commit=False, future=True
         )
         for session_local_target in (
-            "app.api.common.SessionLocal",
+            "app.bootstrap.SessionLocal",
             "app.api.health_checks.shared_context.SessionLocal",
             "app.api.health_checks.load_options_catalog_freshness_summary.SessionLocal",
             "app.api.health_checks.remember_alpaca_success.SessionLocal",
@@ -549,7 +549,6 @@ class TradingApiTestCaseBase(TestCase):
             "app.api.trading_status.SessionLocal",
             "app.api.status_helpers.SessionLocal",
             "app.api.trading_misc.consumer_evidence_payload.SessionLocal",
-            "app.api.trading_misc.shared_context.SessionLocal",
             "app.api.vnext_helpers.SessionLocal",
         ):
             session_local_patch = patch(session_local_target, self.session_local)

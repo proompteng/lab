@@ -474,7 +474,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         }
 
         with patch(
-            "app.api.proof_floor_payloads.shared_context.build_profitability_proof_floor_receipt",
+            "app.api.proof_floor_payloads.build_profitability_proof_floor_receipt",
             return_value=proof_floor,
         ):
             status_response = self.client.get("/trading/status")

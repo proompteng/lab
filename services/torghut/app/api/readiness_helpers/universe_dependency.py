@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from ..common import TradingScheduler, settings
+from app.config import settings
+from app.trading.scheduler import TradingScheduler
+
 from . import status_dependencies
 
 __all__ = ("evaluate_universe_dependency",)

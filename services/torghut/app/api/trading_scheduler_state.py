@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from app.trading.scheduler import TradingScheduler
+
 from .application import get_app
-from .common import TradingScheduler
 
 __all__ = ("get_trading_scheduler",)
 
