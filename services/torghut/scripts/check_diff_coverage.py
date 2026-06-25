@@ -407,18 +407,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-# Public aliases used by split-module consumers.
-drop_missing_non_executable_files = _drop_missing_non_executable_files
-executable_source_lines = _executable_source_lines
-format_summary = _format_summary
-git = _git
-git_optional = _git_optional
-include_untracked_python_files = _include_untracked_python_files
-list_untracked_python_files = _list_untracked_python_files
-load_coverage_index = _load_coverage_index
-parse_args = _parse_args
-parse_changed_python_lines = _parse_changed_python_lines
-repo_root = _repo_root
-resolve_base_spec = _resolve_base_spec
-resolve_diff_base = _resolve_diff_base

@@ -750,6 +750,3 @@ def _parse_cli_timestamp(value: str | None) -> datetime | None:
     if parsed is None:
         raise ValueError(f"invalid timestamp: {value}")
     return parsed
-
-
-__all__: tuple[str, ...] = ()

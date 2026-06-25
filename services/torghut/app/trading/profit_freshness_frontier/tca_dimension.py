@@ -571,6 +571,3 @@ def repair_lot(
         "paper_notional_limit": "0",
         "live_notional_limit": "0",
     }
-
-
-__all__: tuple[str, ...] = ()

@@ -702,6 +702,3 @@ class WhitepaperWorkflowAgentMethods(_WhitepaperWorkflowAgentBase):
             "model": embeddings_model,
             "dimension": embedding_dimension,
         }
-
-
-__all__: tuple[str, ...] = ()

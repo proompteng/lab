@@ -803,6 +803,3 @@ def record_unique_rejection(
         return
     seen_rejections.add(key)
     rejected.append(dict(rejection))
-
-
-__all__: tuple[str, ...] = ()

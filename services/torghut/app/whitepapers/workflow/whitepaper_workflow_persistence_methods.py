@@ -671,6 +671,3 @@ class WhitepaperWorkflowPersistenceMethods(_WhitepaperWorkflowPersistenceBase):
             source_scope="synthesis",
             chunks=combined_chunks,
         )
-
-
-__all__: tuple[str, ...] = ()

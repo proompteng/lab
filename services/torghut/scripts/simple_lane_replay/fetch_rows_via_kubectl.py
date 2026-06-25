@@ -471,6 +471,3 @@ def _is_governance_block_reason(reason: str) -> bool:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-__all__: tuple[str, ...] = ()

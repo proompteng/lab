@@ -609,6 +609,3 @@ def merge_runtime_certificate_evidence(
         )
         merged.append(updated)
     return merged
-
-
-__all__: tuple[str, ...] = ()

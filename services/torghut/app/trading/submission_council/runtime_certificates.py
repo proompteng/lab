@@ -562,6 +562,3 @@ def runtime_ledger_repair_score(
             ended_at.timestamp() if ended_at is not None else 0.0,
         )
     )
-
-
-__all__: tuple[str, ...] = ()

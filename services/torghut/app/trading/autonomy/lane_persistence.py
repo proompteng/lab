@@ -988,19 +988,3 @@ persist_strategy_spec_lineage_trace = _persist_strategy_spec_lineage_trace
 persist_hypothesis_governance_rows = _persist_hypothesis_governance_rows
 persist_vnext_objects = _persist_vnext_objects
 trace_id = _trace_id
-
-__all__ = [
-    "upsert_autonomy_no_signal_run",
-    "_collect_walk_decisions_for_runtime",
-    "_resolve_confidence_calibration",
-    "_resolve_paper_patch_path",
-    "_mark_run_passed_if_requested",
-    "_mark_run_failed_if_requested",
-    "_upsert_research_run",
-    "_mark_run_failed",
-    "_mark_run_passed",
-    "_persist_strategy_spec_lineage_trace",
-    "_persist_hypothesis_governance_rows",
-    "_persist_vnext_objects",
-    "_trace_id",
-]

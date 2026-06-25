@@ -161,6 +161,11 @@ class TorghutQualityChecker(BaseChecker):
             "torghut-shadowed-all",
             "Used when a module defines top-level __all__ more than once.",
         ),
+        "C9020": (
+            "Empty __all__; delete the no-op export stub",
+            "torghut-empty-all",
+            "Used when a module defines an empty top-level __all__.",
+        ),
     }
 
     def visit_module(self, node: nodes.Module) -> None:
@@ -213,6 +218,7 @@ class TorghutQualityChecker(BaseChecker):
         except SyntaxError:
             return
         self._check_shadowed_all(module_node, tree)
+        self._check_empty_all(module_node, tree)
         for node in ast.walk(tree):
             self._check_node(module_node, node)
 
@@ -229,6 +235,15 @@ class TorghutQualityChecker(BaseChecker):
                 line=shadowed.lineno,
                 args=(all_assignments[-1].lineno,),
             )
+
+    def _check_empty_all(self, module_node: nodes.Module, tree: ast.Module) -> None:
+        for statement in tree.body:
+            if _is_empty_all_assignment(statement):
+                self.add_message(
+                    "torghut-empty-all",
+                    node=module_node,
+                    line=statement.lineno,
+                )
 
     def _check_node(self, module_node: nodes.Module, node: ast.AST) -> None:
         if isinstance(node, ast.ClassDef):
@@ -365,6 +380,13 @@ def _is_top_level_all_assignment(statement: ast.stmt) -> bool:
     if isinstance(statement, ast.Assign):
         return any(_is_all_target(target) for target in statement.targets)
     return isinstance(statement, ast.AnnAssign) and _is_all_target(statement.target)
+
+
+def _is_empty_all_assignment(statement: ast.stmt) -> bool:
+    if not _is_top_level_all_assignment(statement):
+        return False
+    value = statement.value
+    return isinstance(value, (ast.List, ast.Tuple)) and not value.elts
 
 
 def _is_all_target(target: ast.AST) -> bool:

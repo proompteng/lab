@@ -340,6 +340,3 @@ def evaluate_advisor_fallback_slo_evidence(
         )
 
     return reasons, details, refs
-
-
-__all__: tuple[str, ...] = ()

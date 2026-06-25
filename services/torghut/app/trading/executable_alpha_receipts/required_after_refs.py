@@ -660,6 +660,3 @@ def replay_item(
             "replay_class": replay_class,
         },
     }
-
-
-__all__: tuple[str, ...] = ()
