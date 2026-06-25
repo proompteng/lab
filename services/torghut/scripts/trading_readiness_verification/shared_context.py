@@ -434,19 +434,6 @@ def _paper_route_quote_fillability_summary(
     }
 
 
-__all__ = (
-    "SCHEMA_VERSION",
-    "ROUTE_REACQUISITION_BOARD_SCHEMA_VERSION",
-    "ROUTE_REACQUISITION_BOOK_SCHEMA_VERSION",
-    "NEXT_PAPER_ROUTE_TARGET_PLAN_SCHEMA_VERSION",
-    "RUNTIME_LEDGER_PROOF_PACKET_SCHEMA_VERSION",
-    "TIGERBEETLE_RUNTIME_LEDGER_PARITY_SCHEMA_VERSION",
-    "TIGERBEETLE_PARITY_STATUS_PASS",
-    "DOC29_LIVE_SCALE_GATE",
-    "REQUIRED_RUNTIME_WINDOW_TARGET_PLAN_FLAGS",
-)
-
-
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",
