@@ -12,11 +12,7 @@ from ..simulation import (
 )
 
 
-from .shared_context import (
-    SignalBatch as SignalBatch,
-)
 from .clickhouse_signal_ingestor_persistence_methods import (
-    ClickHouseSignalIngestor as ClickHouseSignalIngestor,
     coerce_seq as _coerce_seq,
 )
 

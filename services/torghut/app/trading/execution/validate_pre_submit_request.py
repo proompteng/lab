@@ -40,7 +40,6 @@ from .shared_context import (
     RUNTIME_COST_PAYLOAD_KEYS as _RUNTIME_COST_PAYLOAD_KEYS,
 )
 from .order_executor_submission_methods import (
-    OrderExecutor as OrderExecutor,
     coerce_json as _coerce_json,
     copy_mapping as _copy_mapping,
     first_mapping_text as _first_mapping_text,

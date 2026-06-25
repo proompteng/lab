@@ -11,11 +11,6 @@ from typing import Any
 from .shared_context import (
     CAPITAL_REPLAY_BOARD_SCHEMA_VERSION,
     EXECUTABLE_ALPHA_RECEIPTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION as EXECUTABLE_ALPHA_REPAIR_RECEIPTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION as EXECUTABLE_ALPHA_REPAIR_RECEIPT_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION as EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_REF_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION as EXECUTABLE_ALPHA_SETTLEMENT_SLOTS_SCHEMA_VERSION,
-    EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION as EXECUTABLE_ALPHA_SETTLEMENT_SLOT_SCHEMA_VERSION,
     GraduationState,
     ALPHA_RUNTIME_REPLAY_CLASS as _ALPHA_RUNTIME_REPLAY_CLASS,
     BREADTH_HYPOTHESIS as _BREADTH_HYPOTHESIS,
@@ -30,11 +25,6 @@ from .shared_context import (
     stable_hash as _stable_hash,
     string_list as _string_list,
     text as _text,
-)
-from .build_executable_alpha_repair_receipts import (
-    build_executable_alpha_repair_receipts as build_executable_alpha_repair_receipts,
-    build_executable_alpha_settlement_slots as build_executable_alpha_settlement_slots,
-    compact_executable_alpha_settlement_slots as compact_executable_alpha_settlement_slots,
 )
 from .required_after_refs import (
     alpha_runtime_replay_item as _alpha_runtime_replay_item,

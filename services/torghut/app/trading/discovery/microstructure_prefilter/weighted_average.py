@@ -17,20 +17,6 @@ import numpy as np
 from numpy.typing import NDArray
 
 
-from .shared_context import (
-    HPAIRS_AUTHORITY_BLOCKERS as HPAIRS_AUTHORITY_BLOCKERS,
-    HPAIRS_FAMILY_TEMPLATE_ID as HPAIRS_FAMILY_TEMPLATE_ID,
-    HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL as HPAIRS_PREFILTER_PROOF_SEMANTICS_LABEL,
-    HPAIRS_PREFILTER_PROOF_SOURCE as HPAIRS_PREFILTER_PROOF_SOURCE,
-    HPAIRS_PREFILTER_ROW_SCHEMA_VERSION as HPAIRS_PREFILTER_ROW_SCHEMA_VERSION,
-    HPAIRS_PREFILTER_SCHEMA_VERSION as HPAIRS_PREFILTER_SCHEMA_VERSION,
-    HPAIRS_RUNTIME_STRATEGY_NAME as HPAIRS_RUNTIME_STRATEGY_NAME,
-    MicrostructureCandidatePrefilterRow as MicrostructureCandidatePrefilterRow,
-    MicrostructurePrefilterResult as MicrostructurePrefilterResult,
-    build_hpairs_microstructure_prefilter as build_hpairs_microstructure_prefilter,
-)
-
-
 def _weighted_average(values: Sequence[tuple[float, int]]) -> float:
     total_weight = sum(max(0, weight) for _, weight in values)
     if total_weight <= 0:

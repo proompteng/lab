@@ -22,8 +22,8 @@ from app.whitepapers.claim_compiler import (
 )
 
 from scripts.whitepaper_autoresearch_runner.common import (
-    _decimal as _decimal,
-    _list_of_mappings as _list_of_mappings,
+    _decimal,
+    _list_of_mappings,
 )
 
 from scripts.whitepaper_autoresearch_runner.cli_parsing import (
