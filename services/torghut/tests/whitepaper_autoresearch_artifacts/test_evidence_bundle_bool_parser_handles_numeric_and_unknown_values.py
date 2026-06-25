@@ -9,6 +9,7 @@ from tests.whitepaper_autoresearch_artifacts.support import (
     _FakeTorchModule,
     _TestWhitepaperAutoresearchArtifactsBase,
     _profile_ids_for_family,
+    bool_value,
     build_hypothesis_cards,
     build_mlx_training_rows,
     candidate_spec_from_payload,
@@ -17,9 +18,8 @@ from tests.whitepaper_autoresearch_artifacts.support import (
     evidence_bundle_blockers,
     evidence_bundle_from_frontier_candidate,
     evidence_bundle_from_payload,
-    evidence_bundles_module,
     hypothesis_card_from_payload,
-    mlx_training_data_module,
+    mlx_training_data_shared_context,
     optimize_portfolio_candidate,
     patch,
     rank_training_rows,
@@ -33,9 +33,9 @@ class TestEvidenceBundleBoolParserHandlesNumericAndUnknownValues(
     def test_evidence_bundle_bool_parser_handles_numeric_and_unknown_values(
         self,
     ) -> None:
-        self.assertEqual(evidence_bundles_module._bool(Decimal("1")), True)
-        self.assertEqual(evidence_bundles_module._bool(0), False)
-        self.assertEqual(evidence_bundles_module._bool("custom-truthy-marker"), True)
+        self.assertEqual(bool_value(Decimal("1")), True)
+        self.assertEqual(bool_value(0), False)
+        self.assertEqual(bool_value("custom-truthy-marker"), True)
 
     def test_hypothesis_and_candidate_specs_round_trip(self) -> None:
         cards = build_hypothesis_cards(
@@ -246,41 +246,47 @@ class TestEvidenceBundleBoolParserHandlesNumericAndUnknownValues(
 
     def test_torch_ranker_backend_selection_covers_fallback_edges(self) -> None:
         with patch.object(
-            mlx_training_data_module.importlib,
+            mlx_training_data_shared_context.importlib,
             "import_module",
             side_effect=ModuleNotFoundError("torch"),
         ):
             self.assertIsNone(
-                mlx_training_data_module._import_torch_array_backend("torch-cuda")
+                mlx_training_data_shared_context.import_torch_array_backend(
+                    "torch-cuda"
+                )
             )
 
         with patch.object(
-            mlx_training_data_module.importlib,
+            mlx_training_data_shared_context.importlib,
             "import_module",
             return_value=_FakeTorchCpuModule(),
         ):
             self.assertIsNone(
-                mlx_training_data_module._import_torch_array_backend("torch-cuda")
+                mlx_training_data_shared_context.import_torch_array_backend(
+                    "torch-cuda"
+                )
             )
             self.assertEqual(
-                mlx_training_data_module._import_array_backend("cuda")[0],
+                mlx_training_data_shared_context.import_array_backend("cuda")[0],
                 "numpy-fallback",
             )
             self.assertEqual(
-                mlx_training_data_module._import_torch_array_backend("torch")[0],
+                mlx_training_data_shared_context.import_torch_array_backend("torch")[0],
                 "torch",
             )
             self.assertIsNone(
-                mlx_training_data_module._import_torch_array_backend("unsupported")
+                mlx_training_data_shared_context.import_torch_array_backend(
+                    "unsupported"
+                )
             )
 
         with patch.object(
-            mlx_training_data_module.importlib,
+            mlx_training_data_shared_context.importlib,
             "import_module",
             return_value=_FakeTorchModule(),
         ):
             self.assertEqual(
-                mlx_training_data_module._import_torch_array_backend("torch")[0],
+                mlx_training_data_shared_context.import_torch_array_backend("torch")[0],
                 "torch-cuda",
             )
 

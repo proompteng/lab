@@ -22,17 +22,12 @@ from .shared_context import (
     MlxRankedCandidate,
     MlxRankBucketLift,
     MlxRankedRowsPolicyResult,
-    hard_veto_count as _hard_veto_count,
-    import_array_backend as _import_array_backend,
-    import_torch_array_backend as _import_torch_array_backend,
-    sequence_strings as _sequence_strings,
 )
 from .paper_contract_feature_values import (
     candidate_spec_capital_features,
     capital_budget_penalty,
     configured_daily_notional_capacity_penalty,
     observed_capital_penalty,
-    observed_replay_viability_penalty as _observed_replay_viability_penalty,
 )
 from .build_mlx_training_rows import (
     build_mlx_training_rows,
@@ -66,15 +61,10 @@ __all__ = [
     "MlxRankedCandidate",
     "MlxRankBucketLift",
     "MlxRankedRowsPolicyResult",
-    "_hard_veto_count",
-    "_import_array_backend",
-    "_import_torch_array_backend",
-    "_sequence_strings",
     "candidate_spec_capital_features",
     "capital_budget_penalty",
     "configured_daily_notional_capacity_penalty",
     "observed_capital_penalty",
-    "_observed_replay_viability_penalty",
     "build_mlx_training_rows",
     "train_mlx_ranker",
     "rank_training_rows",

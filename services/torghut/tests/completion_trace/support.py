@@ -27,17 +27,21 @@ from app.trading.completion import (
     DOC29_SIMULATION_FULL_DAY_GATE,
     DOC29_SIMULATION_SMOKE_GATE,
     TRACE_STATUS_SATISFIED,
-    _median_decimal,
-    _p10_decimal,
-    _runtime_ledger_bucket_matches_window,
-    _runtime_ledger_bucket_refs_for_windows,
-    _runtime_ledger_bucket_summary,
-    _runtime_ledger_daily_summary,
-    _runtime_ledger_trading_day_key,
     build_completion_trace,
     build_doc29_completion_status,
     persist_completion_trace,
     runtime_and_doc_completion_matrices_match,
+)
+from app.trading.completion.runtime_ledger_bucket_existing_blockers import (
+    runtime_ledger_bucket_matches_window as _runtime_ledger_bucket_matches_window,
+    runtime_ledger_bucket_refs_for_windows as _runtime_ledger_bucket_refs_for_windows,
+    runtime_ledger_bucket_summary as _runtime_ledger_bucket_summary,
+    runtime_ledger_daily_summary as _runtime_ledger_daily_summary,
+)
+from app.trading.completion.runtime_matrix_path import (
+    median_decimal as _median_decimal,
+    p10_decimal as _p10_decimal,
+    runtime_ledger_trading_day_key as _runtime_ledger_trading_day_key,
 )
 
 
