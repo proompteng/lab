@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -465,6 +466,32 @@ def _parse_paper_route_target_plan_url(url: str) -> tuple[SplitResult, str | Non
     return parsed, None
 
 
+def paper_route_target_plan_url_points_to_self(parsed: Any) -> bool:
+    path = str(getattr(parsed, "path", "") or "").rstrip("/")
+    if path != "/trading/proofs":
+        return False
+    hostname = str(getattr(parsed, "hostname", "") or "").strip().lower()
+    if not hostname:
+        return False
+
+    self_hosts = {"localhost", "127.0.0.1", "::1"}
+    service_name = os.getenv("K_SERVICE", "").strip().lower()
+    namespace = os.getenv("POD_NAMESPACE", os.getenv("NAMESPACE", "")).strip().lower()
+    if service_name:
+        if not namespace and service_name in {"torghut", "torghut-sim"}:
+            namespace = "torghut"
+        self_hosts.add(service_name)
+        if namespace:
+            self_hosts.update(
+                {
+                    f"{service_name}.{namespace}",
+                    f"{service_name}.{namespace}.svc",
+                    f"{service_name}.{namespace}.svc.cluster.local",
+                }
+            )
+    return hostname in self_hosts
+
+
 def _read_paper_route_target_plan_url(
     parsed: SplitResult,
     *,
@@ -766,6 +793,7 @@ __all__ = [
     "paper_route_target_plan_from_payload",
     "paper_route_target_plan_probe_symbols",
     "paper_route_target_plan_targets",
+    "paper_route_target_plan_url_points_to_self",
     "safe_decimal",
     "safe_text",
     "target_identity",

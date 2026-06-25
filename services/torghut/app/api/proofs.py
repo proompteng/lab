@@ -7,9 +7,13 @@ from typing import Any
 from fastapi import APIRouter
 
 from app.trading.live_submit_activation import live_submit_activation_status
+from app.trading.paper_route_target_plan import (
+    PaperRouteTargetPlanFetchClient,
+    fetch_paper_route_target_plan_url as _fetch_shared_paper_route_target_plan_url,
+    paper_route_target_plan_url_points_to_self as _paper_route_target_plan_url_points_to_self,
+)
 
 from . import proofs_configured_collection as _proofs_configured_collection
-from . import proofs_external_target_fetch as _proofs_external_target_fetch
 from .common import (
     BUILD_VERSION,
     DEFAULT_PROOFS_LIMIT,
@@ -47,6 +51,7 @@ from .common import (
     shared_mapping_items,
     shared_paper_route_target_plan_from_payload,
     time,
+    urlsplit,
 )
 from .health_checks import (
     build_api_live_submission_gate_payload,
@@ -86,14 +91,8 @@ _configured_strategy_paper_collection_symbols = (
 _configured_strategy_paper_collection_targets = (
     _proofs_configured_collection.configured_strategy_paper_collection_targets
 )
-_fetch_paper_route_target_plan_url_impl = (
-    _proofs_external_target_fetch.fetch_paper_route_target_plan_url
-)
 _load_tca_summary = load_tca_summary
 _live_submit_activation_status = live_submit_activation_status
-_paper_route_target_plan_url_points_to_self = (
-    _proofs_external_target_fetch.paper_route_target_plan_url_points_to_self
-)
 _strategy_universe_symbol_values = (
     _proofs_configured_collection.strategy_universe_symbol_values
 )
@@ -108,13 +107,18 @@ def _fetch_paper_route_target_plan_url(
     attempts: int = 1,
     retry_backoff_seconds: float = 0.25,
 ) -> dict[str, Any]:
-    return _fetch_paper_route_target_plan_url_impl(
+    parsed = urlsplit(url)
+    if _paper_route_target_plan_url_points_to_self(parsed):
+        return {"load_error": "paper_route_target_plan_self_reference"}
+    return _fetch_shared_paper_route_target_plan_url(
         url,
         timeout_seconds=timeout_seconds,
         attempts=attempts,
         retry_backoff_seconds=retry_backoff_seconds,
-        http_connection_class=HTTPConnection,
-        https_connection_class=HTTPSConnection,
+        fetch_client=PaperRouteTargetPlanFetchClient(
+            http_connection=HTTPConnection,
+            https_connection=HTTPSConnection,
+        ),
     )
 
 
