@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 from ...trading.live_submit_activation import (
     live_submit_activation_blocker,
     live_submit_activation_status,
 )
 
-
-if TYPE_CHECKING:
-    pass
 
 from ..common import (
     ACCOUNT_SCOPE_STATEMENT_TIMEOUT_MS,
@@ -30,7 +27,7 @@ from ..common import (
     Body,
     CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE,
     ClickHouseSignalIngestor,
-    DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    DEFAULT_PROOFS_LIMIT,
     Decimal,
     Depends,
     EvidenceEpoch,
@@ -48,7 +45,7 @@ from ..common import (
     LEAN_LANE_MANAGER,
     LeanLaneManager,
     Lock,
-    MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT,
+    MAX_PROOFS_LIMIT,
     Mapping,
     OPTIONS_CATALOG_FRESHNESS_CACHE,
     OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK,
@@ -277,7 +274,7 @@ __all__: tuple[str, ...] = (
     "Body",
     "CONSUMER_EVIDENCE_CONTROL_PLANE_DEPENDENCY_MESSAGE",
     "ClickHouseSignalIngestor",
-    "DEFAULT_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+    "DEFAULT_PROOFS_LIMIT",
     "Decimal",
     "Depends",
     "EvidenceEpoch",
@@ -295,7 +292,7 @@ __all__: tuple[str, ...] = (
     "LEAN_LANE_MANAGER",
     "LeanLaneManager",
     "Lock",
-    "MAX_PAPER_ROUTE_EVIDENCE_TARGET_LIMIT",
+    "MAX_PROOFS_LIMIT",
     "Mapping",
     "OPTIONS_CATALOG_FRESHNESS_CACHE",
     "OPTIONS_CATALOG_FRESHNESS_CACHE_LOCK",
@@ -332,7 +329,6 @@ __all__: tuple[str, ...] = (
     "TRADING_HEALTH_SURFACE_PAYLOAD_CACHE",
     "TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS",
     "TRADING_STATUS_READ_BUDGET_SECONDS",
-    "TYPE_CHECKING",
     "ThreadPoolExecutor",
     "TimeoutError",
     "TorghutAlpacaClient",
