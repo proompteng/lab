@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
+import importlib
 import json
 import logging
 from dataclasses import dataclass
-from importlib import import_module
 from datetime import datetime
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from decimal import Decimal
 from typing import Any, Optional, Protocol, cast
 from uuid import uuid4
@@ -38,19 +38,7 @@ logger = logging.getLogger(__name__)
 
 
 def _active_simulation_runtime_context() -> Mapping[str, Any] | None:
-    provider: Callable[[], object] = active_simulation_runtime_context
-    try:
-        execution_adapters_api = import_module("app.trading.execution_adapters")
-        patched_provider = getattr(
-            execution_adapters_api,
-            "active_simulation_runtime_context",
-            provider,
-        )
-        if callable(patched_provider):
-            provider = cast(Callable[[], object], patched_provider)
-    except Exception:
-        pass
-    context = provider()
+    context = active_simulation_runtime_context()
     if isinstance(context, Mapping):
         return cast(Mapping[str, Any], context)
     return None
@@ -576,7 +564,7 @@ class SimulationExecutionAdapter:
 
     def _build_producer(self, bootstrap_servers: str) -> Any | None:
         try:
-            kafka_module = import_module("kafka")
+            kafka_module = importlib.import_module("kafka")
             kafka_producer = getattr(kafka_module, "KafkaProducer")
         except Exception as exc:  # pragma: no cover - dependency/runtime error
             self._producer_init_error = f"kafka_import_failed:{exc}"

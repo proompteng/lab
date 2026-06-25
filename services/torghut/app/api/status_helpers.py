@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
+from typing import Any
 
 from .common import (
     JangarDependencyQuorumStatus,

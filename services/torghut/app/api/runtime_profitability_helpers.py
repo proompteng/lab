@@ -2,11 +2,6 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    pass
-
 from .common import cast
 from .vnext_helpers import (
     extract_gate_result as _extract_gate_result,

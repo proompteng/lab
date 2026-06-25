@@ -375,7 +375,7 @@ class TestExecutionAdapters(TestCase):
             dataset_id="dataset-1",
         )
         with patch(
-            "app.trading.execution_adapters.active_simulation_runtime_context",
+            "app.trading.execution_adapters.adapter_types.active_simulation_runtime_context",
             side_effect=[
                 {"run_id": "sim-2026-02-27-01", "dataset_id": "dataset-1"},
                 {"run_id": "sim-2026-02-27-01", "dataset_id": "dataset-1"},
