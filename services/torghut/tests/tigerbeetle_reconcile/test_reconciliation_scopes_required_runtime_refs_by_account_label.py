@@ -32,7 +32,7 @@ from tests.tigerbeetle_reconcile.support import (
     _add_ref,
     _runtime_bucket,
     _settings,
-    _stable_ref_matches,
+    stable_ref_matches,
     _transfer,
     build_runtime_ledger_bucket_transfer_plan,
     datetime,
@@ -400,7 +400,7 @@ class TestReconciliationScopesRequiredRuntimeRefsByAccountLabel(
                 client=client,
             )
 
-        self.assertFalse(_stable_ref_matches(ref))
+        self.assertFalse(stable_ref_matches(ref))
         self.assertFalse(payload["ok"], payload)
         self.assertIn(BLOCKER_STABLE_REF_PAYLOAD_MISMATCH, payload["blockers"])
         self.assertEqual(payload["stable_ref_count"], 1)
