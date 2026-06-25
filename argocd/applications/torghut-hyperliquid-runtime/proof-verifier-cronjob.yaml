@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-hyperliquid-runtime-proof-verifier
+  namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 180
+      template:
+        metadata:
+          labels:
+            app: torghut-hyperliquid-runtime-proof-verifier
+        spec:
+          automountServiceAccountToken: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: verify
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:ced3ed60b4e320b3f3c013f0825cd11bfdd576a28c6e69b7950c78869416c371
+              imagePullPolicy: Always
+              command:
+                - /opt/venv/bin/python
+                - scripts/verify_multifactor_machine.py
+              args:
+                - --status-url
+                - http://torghut.torghut.svc.cluster.local/trading/loop/status
+                - --min-fills
+                - "3"
+                - --required-passes
+                - "3"
+                - --interval-seconds
+                - "15"
+                - --max-attempts
+                - "6"
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL

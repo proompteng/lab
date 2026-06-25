@@ -162,7 +162,25 @@ def test_loop_status_requires_real_execution_proof() -> None:
     assert payload["execution_intent"]["present"] is True
     assert payload["exchange_order_state"]["ack_seen"] is True
     assert payload["alpaca_guard"]["unexpected_live_order_count_24h"] == 0
+    assert payload["operator_approval"]["scope"] == "testnet_only"
+    assert payload["proof_trading"] == {
+        "allowed": True,
+        "lane": "hyperliquid_testnet",
+        "reason": "testnet_proof_trading_operator_approved",
+    }
     assert payload["runtime"]["live_capital"]["allowed"] is False
+    assert payload["algorithm"] == {
+        "name": "generic_multifactor_apm_v1",
+        "run_id": "cycle-1",
+        "asset_key": "hyperliquid:hl:perp:default:AMD",
+        "factor_snapshot_present": True,
+        "forecast_present": True,
+        "risk_present": True,
+        "target_present": True,
+        "intent_present": True,
+        "latest_order_id": "12345",
+    }
+    assert "live_capital" not in ",".join(payload["blocker_reasons"])
 
 
 def test_loop_status_blocks_ready_runtime_without_fills_or_account_proof() -> None:
@@ -360,6 +378,127 @@ def test_loop_status_blocks_future_event_timestamp_with_stale_quote_lag() -> Non
     assert payload["market_data"]["fresh"] is False
     assert payload["market_data"]["quote_lag_seconds"] == 240
     assert "hyperliquid_market_data_not_fresh" in payload["blocker_reasons"]
+
+
+def test_loop_status_anchors_market_data_to_multifactor_proof_snapshot() -> None:
+    now = datetime(2026, 6, 25, 12, 0, tzinfo=timezone.utc)
+    stale_signal_at = datetime(2026, 6, 25, 10, 0, tzinfo=timezone.utc)
+    proof_feature_at = datetime(2026, 6, 25, 11, 59, 45, tzinfo=timezone.utc)
+    rows = LoopStatusRows(
+        latest_cycle={"finished_at": now.isoformat(), "selected_coins": ["BNB"]},
+        latest_signal={
+            "generated_at": now.isoformat(),
+            "feature_event_ts": stale_signal_at.isoformat(),
+            "feature_source_lag_seconds": 1,
+            "feature_quote_lag_seconds": 9999,
+            "coin": "BNB",
+            "action": "hold",
+            "edge_bps": "0",
+            "reason": "old_signal",
+        },
+        latest_order={
+            "created_at": now.isoformat(),
+            "coin": "ZRO",
+            "cloid": "proof-zro",
+            "exchange_order_id": "555",
+            "side": "buy",
+            "status": "filled",
+            "notional_usd": "10",
+        },
+        counts_24h={
+            "cycles_24h": 3,
+            "signals_24h": 3,
+            "orders_24h": 3,
+            "fills_24h": 3,
+            "account_snapshots_24h": 3,
+        },
+        fill_summary={"fills_24h": 3},
+        latest_fill={"event_ts": now.isoformat(), "coin": "ZRO"},
+        latest_account={
+            "observed_at": now.isoformat(),
+            "raw_payload": {"dexStates": {"default": {"assetPositions": []}}},
+        },
+        positions=[],
+        performance={"fill_count_24h": 3, "sample_ready": False},
+        stale_open_orders=[],
+        unexpected_live_alpaca={"orders_24h": 0, "events_24h": 0},
+        query_errors=[],
+        latest_multifactor_run={
+            "id": "run-zro",
+            "lane": "hyperliquid_testnet",
+            "model_version": "active-portfolio-management-v1",
+            "finished_at": now.isoformat(),
+        },
+        latest_factor_snapshot={
+            "run_id": "run-zro",
+            "asset_key": "hyperliquid:hl:perp:default:ZRO",
+            "symbol": "ZRO",
+            "source_event_at": proof_feature_at.isoformat(),
+            "source_lag_seconds": 0,
+            "quote_lag_seconds": 15,
+            "raw_factors": {"momentum_5m": "12"},
+            "normalized_factors": {"momentum_5m": "3.0000"},
+        },
+        latest_forecast={
+            "run_id": "run-zro",
+            "asset_key": "hyperliquid:hl:perp:default:ZRO",
+            "model_id": "active-portfolio-management-v1",
+            "score": "3.0000",
+            "residual_volatility_bps": "50",
+            "information_coefficient": "0.05",
+            "expected_return_bps": "8",
+            "direction": "buy",
+        },
+        latest_risk_forecast={
+            "run_id": "run-zro",
+            "asset_key": "hyperliquid:hl:perp:default:ZRO",
+            "active_risk_bps": "1",
+            "gross_exposure_usd": "0",
+            "symbol_exposure_usd": "0",
+            "liquidity_capacity_usd": "10",
+            "concentration_bps": "0",
+        },
+        latest_portfolio_target={
+            "run_id": "run-zro",
+            "asset_key": "hyperliquid:hl:perp:default:ZRO",
+            "direction": "buy",
+            "target_notional_usd": "10",
+            "delta_notional_usd": "10",
+            "expected_return_bps": "8",
+            "expected_cost_bps": "4",
+            "active_risk_bps": "1",
+            "risk_buffer_bps": "1",
+        },
+        latest_execution_intent={
+            "run_id": "run-zro",
+            "asset_key": "hyperliquid:hl:perp:default:ZRO",
+            "venue": "hyperliquid",
+            "side": "buy",
+            "notional_usd": "10",
+            "idempotency_key": "proof-zro",
+            "status": "filled",
+            "venue_order_id": "555",
+        },
+    )
+
+    payload = assemble_trading_loop_status(
+        rows=rows,
+        options=LoopStatusOptions(
+            generated_at=now,
+            trading_mode="paper",
+            trading_enabled=True,
+            min_recent_fills=3,
+            freshness_threshold_seconds=180,
+            account_freshness_seconds=300,
+        ),
+    )
+
+    assert payload["restored"] is True
+    assert payload["market_data"]["fresh"] is True
+    assert payload["market_data"]["selected_symbol"] == "ZRO"
+    assert payload["market_data"]["latest_feature_at"] == proof_feature_at.isoformat()
+    assert payload["market_data"]["quote_lag_seconds"] == 15
+    assert "hyperliquid_market_data_not_fresh" not in payload["blocker_reasons"]
 
 
 def test_loop_status_reads_nested_hyperliquid_dex_positions() -> None:

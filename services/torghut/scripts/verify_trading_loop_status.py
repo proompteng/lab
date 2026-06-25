@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 from urllib.request import Request, urlopen
@@ -24,22 +26,117 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--min-fills", type=int, default=3)
+    parser.add_argument("--required-passes", type=int, default=1)
+    parser.add_argument("--interval-seconds", type=float, default=0.0)
+    parser.add_argument("--max-attempts", type=int, default=1)
     args = parser.parse_args(argv)
 
-    payload = _load_payload(args.status_file, args.status_url, args.timeout_seconds)
-    failures = evaluate_loop_status(payload, min_fills=args.min_fills)
+    if args.required_passes < 1:
+        raise SystemExit("--required-passes must be >= 1")
+    if args.max_attempts < args.required_passes:
+        raise SystemExit("--max-attempts must be >= --required-passes")
+    if args.interval_seconds < 0:
+        raise SystemExit("--interval-seconds must be >= 0")
+
+    request = VerificationRequest(
+        status_file=args.status_file,
+        status_url=args.status_url,
+        timeout_seconds=args.timeout_seconds,
+        min_fills=args.min_fills,
+        required_passes=args.required_passes,
+        interval_seconds=args.interval_seconds,
+        max_attempts=args.max_attempts,
+    )
+    result = _verify_with_retries(request)
     report = {
         "schema_version": "torghut.trading-loop-status-verifier.v1",
-        "ok": not failures,
-        "failures": failures,
-        "status": {
-            "generated_at": payload.get("generated_at"),
-            "restored": payload.get("restored"),
-            "blocker_reasons": payload.get("blocker_reasons"),
-        },
+        "ok": result.ok,
+        "failures": result.failures,
+        "attempts": result.attempts,
+        "consecutive_passes": result.consecutive_passes,
+        "required_passes": args.required_passes,
+        "status": result.status,
     }
+    if result.last_failure is not None:
+        report["last_failure"] = result.last_failure
     print(json.dumps(report, indent=2, sort_keys=True))
-    return 0 if not failures else 1
+    return 0 if result.ok else 1
+
+
+@dataclass(frozen=True)
+class VerificationRequest:
+    status_file: Path | None
+    status_url: str
+    timeout_seconds: float
+    min_fills: int
+    required_passes: int
+    interval_seconds: float
+    max_attempts: int
+
+
+class VerificationResult:
+    def __init__(
+        self,
+        *,
+        ok: bool,
+        failures: list[str],
+        attempts: int,
+        consecutive_passes: int,
+        status: Mapping[str, object],
+        last_failure: Mapping[str, object] | None,
+    ) -> None:
+        self.ok = ok
+        self.failures = failures
+        self.attempts = attempts
+        self.consecutive_passes = consecutive_passes
+        self.status = status
+        self.last_failure = last_failure
+
+
+def _verify_with_retries(request: VerificationRequest) -> VerificationResult:
+    consecutive_passes = 0
+    attempts = 0
+    last_payload: Mapping[str, Any] = {}
+    last_failures: list[str] = []
+    last_failure: Mapping[str, object] | None = None
+    for attempt_index in range(request.max_attempts):
+        attempts = attempt_index + 1
+        last_payload = _load_payload(
+            request.status_file,
+            request.status_url,
+            request.timeout_seconds,
+        )
+        failures = evaluate_loop_status(last_payload, min_fills=request.min_fills)
+        if failures:
+            consecutive_passes = 0
+            last_failures = failures
+            last_failure = {
+                "failures": failures,
+                "status": _status_summary(last_payload),
+            }
+        else:
+            consecutive_passes += 1
+            if consecutive_passes >= request.required_passes:
+                return VerificationResult(
+                    ok=True,
+                    failures=[],
+                    attempts=attempts,
+                    consecutive_passes=consecutive_passes,
+                    status=_status_summary(last_payload),
+                    last_failure=last_failure,
+                )
+        if attempt_index + 1 < request.max_attempts and request.interval_seconds > 0:
+            time.sleep(request.interval_seconds)
+    if not last_failures:
+        last_failures = ["required_consecutive_passes_not_met"]
+    return VerificationResult(
+        ok=False,
+        failures=last_failures,
+        attempts=attempts,
+        consecutive_passes=consecutive_passes,
+        status=_status_summary(last_payload),
+        last_failure=last_failure,
+    )
 
 
 def evaluate_loop_status(
@@ -151,6 +248,23 @@ def _load_payload(
     if not isinstance(loaded, Mapping):
         raise SystemExit("status payload must be a JSON object")
     return cast(Mapping[str, Any], loaded)
+
+
+def _status_summary(payload: Mapping[str, Any]) -> dict[str, object]:
+    return {
+        "generated_at": payload.get("generated_at"),
+        "restored": payload.get("restored"),
+        "blocker_reasons": payload.get("blocker_reasons"),
+        "market_data": _mapping(payload.get("market_data")),
+        "algorithm": _mapping(payload.get("algorithm")),
+        "execution_intent": _mapping(payload.get("execution_intent")),
+        "submitted_order": _mapping(payload.get("submitted_order")),
+        "exchange_order_state": _mapping(payload.get("exchange_order_state")),
+        "fills": _mapping(payload.get("fills")),
+        "position": _mapping(payload.get("position")),
+        "stale_open_orders": _mapping(payload.get("stale_open_orders")),
+        "alpaca_guard": _mapping(payload.get("alpaca_guard")),
+    }
 
 
 def _require(condition: bool, reason: str, failures: list[str]) -> None:

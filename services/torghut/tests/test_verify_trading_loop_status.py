@@ -75,6 +75,93 @@ def test_verifier_main_reads_status_file_and_reports_json(
     report = json.loads(capsys.readouterr().out)
     assert report["schema_version"] == "torghut.trading-loop-status-verifier.v1"
     assert report["ok"] is True
+    assert report["attempts"] == 1
+    assert report["consecutive_passes"] == 1
+
+
+def test_verifier_requires_consecutive_passing_samples(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failing_payload = _restored_payload()
+    failing_payload["restored"] = False
+    failing_payload["blocker_reasons"] = ["hyperliquid_market_data_not_fresh"]
+    failing_payload["market_data"] = {"fresh": False, "selected_symbol": "ZRO"}
+    samples = [failing_payload, _restored_payload(), _restored_payload()]
+
+    def fake_load_payload(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return samples.pop(0)
+
+    monkeypatch.setattr(verifier, "_load_payload", fake_load_payload)
+
+    assert (
+        verifier.main(
+            [
+                "--required-passes",
+                "2",
+                "--max-attempts",
+                "3",
+                "--interval-seconds",
+                "0",
+            ]
+        )
+        == 0
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is True
+    assert report["attempts"] == 3
+    assert report["consecutive_passes"] == 2
+    assert report["last_failure"]["failures"] == [
+        "loop_status_not_restored",
+        "market_data_not_fresh",
+        "status_blocker_reasons_present",
+    ]
+    assert report["last_failure"]["status"]["market_data"]["selected_symbol"] == "ZRO"
+
+
+def test_verifier_failure_report_includes_last_failing_status_summary(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    failing_payload = _restored_payload()
+    failing_payload["restored"] = False
+    failing_payload["generated_at"] = "2026-06-25T12:00:00+00:00"
+    failing_payload["blocker_reasons"] = ["stale_open_orders_present"]
+    failing_payload["stale_open_orders"] = {"count": 2}
+    failing_payload["algorithm"] = {
+        "name": "generic_multifactor_apm_v1",
+        "run_id": "run-1",
+    }
+
+    def fake_load_payload(*_args: object, **_kwargs: object) -> dict[str, object]:
+        return failing_payload
+
+    monkeypatch.setattr(verifier, "_load_payload", fake_load_payload)
+
+    assert (
+        verifier.main(
+            [
+                "--required-passes",
+                "2",
+                "--max-attempts",
+                "2",
+                "--interval-seconds",
+                "0",
+            ]
+        )
+        == 1
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["ok"] is False
+    assert report["attempts"] == 2
+    assert report["consecutive_passes"] == 0
+    assert report["last_failure"]["status"]["generated_at"] == (
+        "2026-06-25T12:00:00+00:00"
+    )
+    assert report["last_failure"]["status"]["algorithm"]["run_id"] == "run-1"
+    assert report["last_failure"]["status"]["stale_open_orders"]["count"] == 2
 
 
 def test_verifier_loads_url_payload_and_rejects_non_object(

@@ -10,3 +10,4 @@ resources:
   - deployment.yaml
   - service.yaml
   - pdb.yaml
+  - proof-verifier-cronjob.yaml
