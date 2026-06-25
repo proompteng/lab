@@ -46,9 +46,16 @@ def evaluate_trading_health_payload_bounded(
         payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
         dependencies = payload.get("dependencies")
         if isinstance(dependencies, Mapping):
+            from .evaluate_trading_health_payload import (
+                runtime_dependencies_for_health_surface,
+            )
+
+            runtime_dependencies = runtime_dependencies_for_health_surface(
+                cast(Mapping[str, object], dependencies)
+            )
             readiness_dependency_reasons = (
                 _readiness_dependency_degradation_reason_codes(
-                    cast(Mapping[str, object], dependencies),
+                    runtime_dependencies,
                     scheduler_ok=True,
                 )
             )

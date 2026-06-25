@@ -12,7 +12,10 @@ from app.hyperliquid_execution.models import (
     RiskVerdict,
     RuntimeDependencyStatus,
 )
-from app.hyperliquid_execution.order_policy import build_maker_order_intent
+from app.hyperliquid_execution.order_policy import (
+    build_maker_order_intent,
+    build_order_intent,
+)
 from app.hyperliquid_execution.risk import evaluate_signal_risk
 from app.hyperliquid_execution.strategy import generate_signal
 from app.hyperliquid_execution.universe import (
@@ -183,7 +186,7 @@ def test_risk_blocks_short_entries_by_default() -> None:
     assert allowed.allowed
 
 
-def test_maker_order_policy_uses_alo_bid_ask_and_ttl() -> None:
+def test_restore_order_policy_uses_ioc_crossing_quote_and_ttl() -> None:
     config = HyperliquidExecutionConfig.from_env(
         {"HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true"}
     )
@@ -199,14 +202,14 @@ def test_maker_order_policy_uses_alo_bid_ask_and_ttl() -> None:
         now=now,
     )
 
-    buy_intent = build_maker_order_intent(
+    buy_intent = build_order_intent(
         signal=buy_signal,
         verdict=evaluate_signal_risk(buy_signal, _risk_state(), config),
         config=config,
         signal_id="signal-buy",
         now=now,
     )
-    sell_intent = build_maker_order_intent(
+    sell_intent = build_order_intent(
         signal=sell_signal,
         verdict=evaluate_signal_risk(sell_signal, _risk_state(), config),
         config=config,
@@ -214,21 +217,58 @@ def test_maker_order_policy_uses_alo_bid_ask_and_ttl() -> None:
         now=now,
     )
 
-    assert buy_intent.tif == "Alo"
-    assert sell_intent.tif == "Alo"
-    assert buy_intent.limit_price == Decimal("10")
-    assert sell_intent.limit_price == Decimal("10.02")
-    assert buy_intent.expires_at.timestamp() - now.timestamp() == 45
+    assert buy_intent.tif == "Ioc"
+    assert sell_intent.tif == "Ioc"
+    assert buy_intent.limit_price == Decimal("10.02")
+    assert sell_intent.limit_price == Decimal("10")
+    assert buy_intent.expires_at.timestamp() - now.timestamp() == 10
+
+
+def test_maker_order_policy_still_uses_alo_bid_ask_when_explicit() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true",
+            "HYPERLIQUID_EXECUTION_ORDER_POLICY": "maker_ttl",
+            "HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS": "45",
+        }
+    )
+    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
+    buy_signal = generate_signal(
+        _feature(momentum=Decimal("12"), bid=Decimal("10"), ask=Decimal("10.02")),
+        config,
+        now=now,
+    )
+
+    intent = build_maker_order_intent(
+        signal=buy_signal,
+        verdict=evaluate_signal_risk(buy_signal, _risk_state(), config),
+        config=config,
+        signal_id="signal-buy",
+        now=now,
+    )
+    active_policy_intent = build_order_intent(
+        signal=buy_signal,
+        verdict=evaluate_signal_risk(buy_signal, _risk_state(), config),
+        config=config,
+        signal_id="signal-buy",
+        now=now,
+    )
+
+    assert intent.tif == "Alo"
+    assert intent.limit_price == Decimal("10")
+    assert intent.expires_at.timestamp() - now.timestamp() == 45
+    assert active_policy_intent.tif == "Alo"
+    assert active_policy_intent.limit_price == Decimal("10")
 
 
 def test_maker_order_policy_rounds_size_up_to_clear_min_notional() -> None:
     config = HyperliquidExecutionConfig.from_env({})
     signal = generate_signal(
-        _feature(momentum=Decimal("12"), bid=Decimal("99.99"), ask=Decimal("100")),
+        _feature(momentum=Decimal("12"), bid=Decimal("99.5"), ask=Decimal("99.99")),
         config,
     )
 
-    intent = build_maker_order_intent(
+    intent = build_order_intent(
         signal=signal,
         verdict=evaluate_signal_risk(signal, _risk_state(), config),
         config=config,
@@ -251,14 +291,14 @@ def test_maker_order_policy_rejects_blocked_or_unusable_quotes() -> None:
     for candidate_signal, verdict, candidate_config in (
         (signal, blocked, config),
         (
-            generate_signal(_feature(momentum=Decimal("-12"), ask=None), config),
+            generate_signal(_feature(momentum=Decimal("-12"), bid=None), config),
             allowed,
             config,
         ),
         (signal, RiskVerdict("allowed", "allowed", Decimal("10")), high_floor_config),
     ):
         try:
-            build_maker_order_intent(
+            build_order_intent(
                 signal=candidate_signal,
                 verdict=verdict,
                 config=candidate_config,

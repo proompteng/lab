@@ -19,7 +19,7 @@ from .models import (
     RiskState,
     RuntimeDependencyStatus,
 )
-from .order_policy import build_maker_order_intent
+from .order_policy import build_order_intent
 from .repository import HyperliquidExecutionRepository
 from .risk import evaluate_signal_risk
 from .strategy import generate_signal
@@ -156,14 +156,14 @@ class HyperliquidExecutionService:
                 counts.record_risk_block(signal.coin, verdict.reason)
                 continue
             try:
-                intent = build_maker_order_intent(
+                intent = build_order_intent(
                     signal=signal,
                     verdict=verdict,
                     config=self._config,
                     signal_id=signal_id,
                     now=context.started_at,
                 )
-                result = self._exchange.submit_maker_order(intent)
+                result = self._exchange.submit_order(intent)
             except Exception as exc:
                 counts.record_order_error(type(exc).__name__)
                 continue

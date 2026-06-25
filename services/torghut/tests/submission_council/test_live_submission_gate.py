@@ -183,7 +183,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             settings.trading_simple_paper_route_probe_allow_live_mode = True
             settings.trading_simple_submit_enabled = True
             settings.trading_simple_paper_route_probe_max_notional = 100
-            settings.trading_live_submit_activation_expires_at = "2026-06-22T20:05:00Z"
+            settings.trading_live_submit_activation_expires_at = "2999-01-01T20:05:00Z"
             settings.trading_account_label = "PA3SX7FYNUTF"
             settings.trading_static_symbols_raw = "NVDA,AMD,MU,WDC"
 
