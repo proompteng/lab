@@ -4,7 +4,6 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-import importlib
 from types import SimpleNamespace
 
 from sqlalchemy import create_engine, func, select
@@ -55,10 +54,6 @@ from app.trading.order_feed import (
     repair_order_feed_execution_links,
     repair_order_feed_execution_states,
     repair_order_feed_fill_deltas,
-)
-
-order_feed_repair_module = importlib.import_module(
-    "app.trading.order_feed.repair_order_feed_execution_links"
 )
 
 
@@ -283,7 +278,6 @@ __all__ = [
     "merge_execution_raw_order_update",
     "normalize_order_feed_record",
     "order_feed_module",
-    "order_feed_repair_module",
     "patch",
     "persist_order_event",
     "repair_order_feed_execution_links",

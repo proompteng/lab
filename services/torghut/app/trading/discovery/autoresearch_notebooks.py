@@ -62,14 +62,7 @@ except ModuleNotFoundError:
 try:
     from IPython.display import HTML, Markdown, SVG, display
 except ModuleNotFoundError:
-    class HTML(str):
-        pass
-
-    class Markdown(str):
-        pass
-
-    class SVG(str):
-        pass
+    HTML = Markdown = SVG = str
 
     def display(*items: object) -> None:
         for item in items:
@@ -483,14 +476,7 @@ except ModuleNotFoundError:
 try:
     from IPython.display import HTML, Markdown, SVG, display
 except ModuleNotFoundError:
-    class HTML(str):
-        pass
-
-    class Markdown(str):
-        pass
-
-    class SVG(str):
-        pass
+    HTML = Markdown = SVG = str
 
     def display(*items: object) -> None:
         for item in items:

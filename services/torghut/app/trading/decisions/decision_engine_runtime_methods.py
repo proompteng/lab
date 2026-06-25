@@ -325,7 +325,6 @@ class DecisionEngine(
     _DecisionEngineFields,
     _DecisionEngineCoreMethods,
     _DecisionEngineRuntimeMethods,
-    object,
 ):
     pass
 

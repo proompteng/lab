@@ -792,6 +792,5 @@ class SimplePipelineSubmissionPreparationMixin(
     SimplePipelineSubmissionQuoteSizingMixin,
     SimplePipelineSubmissionQuoteRouteabilityMixin,
     SimplePipelineDirectSubmissionMixin,
-    object,
 ):
     pass

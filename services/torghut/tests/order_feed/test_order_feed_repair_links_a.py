@@ -10,7 +10,6 @@ from tests.order_feed.support import (
     Session,
     datetime,
     order_feed_module,
-    order_feed_repair_module,
     patch,
     repair_order_feed_execution_links,
     repair_order_feed_execution_states,
@@ -252,14 +251,12 @@ class TestOrderFeedRepairLinksA(OrderFeedTestCase):
             session.commit()
 
             with (
-                patch.object(
-                    order_feed_repair_module,
-                    "latest_order_event_for_execution",
+                patch(
+                    "app.trading.order_feed.repair_order_feed_execution_links.latest_order_event_for_execution",
                     side_effect=[None, linked_events[1], linked_events[2]],
                 ) as latest_event,
-                patch.object(
-                    order_feed_repair_module,
-                    "apply_order_event_to_execution",
+                patch(
+                    "app.trading.order_feed.repair_order_feed_execution_links.apply_order_event_to_execution",
                     side_effect=[(False, True), (False, False)],
                 ) as apply_event,
             ):

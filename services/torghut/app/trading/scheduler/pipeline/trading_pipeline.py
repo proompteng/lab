@@ -20,7 +20,6 @@ class TradingPipeline(
     TradingPipelineRuntimeGatesMixin,
     TradingPipelineReviewMixin,
     TradingPipelineReviewOutcomeMixin,
-    object,
 ):
     pass
 

@@ -496,7 +496,6 @@ class TradingSchedulerGovernanceMixin(
     _TradingSchedulerGovernanceLifecycleMethods,
     _TradingSchedulerGovernanceDecisionMethods,
     _TradingSchedulerGovernanceRuntimeMethods,
-    object,
 ):
     pass
 

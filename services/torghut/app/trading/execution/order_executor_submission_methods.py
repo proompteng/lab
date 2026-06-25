@@ -478,7 +478,6 @@ class OrderExecutor(
     _OrderExecutorFields,
     _OrderExecutorCoreMethods,
     _OrderExecutorSubmissionMethods,
-    object,
 ):
     pass
 
