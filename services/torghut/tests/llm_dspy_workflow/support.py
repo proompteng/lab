@@ -28,7 +28,9 @@ from app.trading.llm.dspy_compile import (
     upsert_workflow_artifact_record,
     write_artifact_bundle,
 )
-from app.trading.llm.dspy_compile.workflow import _sanitize_idempotency_key
+from app.trading.llm.dspy_compile.workflow.shared_context import (
+    sanitize_idempotency_key,
+)
 
 
 class _TestLLMDSPyWorkflowBase(TestCase):
@@ -132,7 +134,6 @@ __all__: tuple[str, ...] = (
     "TradeDecision",
     "_TestLLMDSPyWorkflowBase",
     "_build_dspy_lane_overrides",
-    "_sanitize_idempotency_key",
     "_write_dspy_promotion_eval_snapshot",
     "build_compile_result",
     "build_dspy_agentrun_payload",
@@ -143,6 +144,7 @@ __all__: tuple[str, ...] = (
     "json",
     "orchestrate_dspy_agentrun_workflow",
     "patch",
+    "sanitize_idempotency_key",
     "select",
     "timedelta",
     "timezone",

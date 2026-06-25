@@ -9,10 +9,10 @@ from sqlalchemy.orm import sessionmaker
 
 from app.models import Base, TradeCursor
 from app.trading.ingest import ClickHouseSignalIngestor
-from app.trading.ingest import (
-    _normalized_signal_symbols,
-    _normalized_signal_timeframes,
-    _timeframes_to_iso_durations,
+from app.trading.ingest.clickhouse_signal_ingestor_persistence_methods import (
+    normalized_signal_symbols,
+    normalized_signal_timeframes,
+    timeframes_to_iso_durations,
 )
 from app.trading.models import SignalEnvelope
 
@@ -249,12 +249,12 @@ def test_timeframe_scope_clause_uses_available_schema_columns() -> None:
 
 
 def test_scope_normalization_filters_invalid_values_and_renders_iso_durations() -> None:
-    assert _normalized_signal_symbols({"AAPL", "bad symbol", "amzn"}) == (
+    assert normalized_signal_symbols({"AAPL", "bad symbol", "amzn"}) == (
         "AAPL",
         "AMZN",
     )
-    assert _normalized_signal_timeframes({"1Sec", "bad timeframe!"}) == ("1Sec",)
-    assert _timeframes_to_iso_durations(("1Sec", "5Min", "2Hour", "custom")) == (
+    assert normalized_signal_timeframes({"1Sec", "bad timeframe!"}) == ("1Sec",)
+    assert timeframes_to_iso_durations(("1Sec", "5Min", "2Hour", "custom")) == (
         "PT1S",
         "PT5M",
         "PT2H",

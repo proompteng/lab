@@ -14,7 +14,6 @@ from unittest.mock import patch
 
 import yaml
 
-import app.trading.discovery.autoresearch as autoresearch
 from app.trading.discovery.autoresearch import (
     FamilyAutoresearchPlan,
     MutationSpace,
@@ -23,6 +22,14 @@ from app.trading.discovery.autoresearch import (
     build_mutated_sweep_config,
     candidate_meets_objective,
     load_strategy_autoresearch_program,
+)
+from app.trading.discovery.autoresearch.shared_context import (
+    decimal_from_candidate,
+    format_numeric_like,
+    load_mutation_space,
+    resolve_seed_sweep_path,
+    stable_value_key,
+    string_list,
 )
 from app.trading.discovery.autoresearch_notebooks import (
     build_strategy_discovery_history_notebook,
@@ -214,19 +221,24 @@ __all__: tuple[str, ...] = (
     "UTC",
     "_family_template",
     "apply_program_objective",
-    "autoresearch",
     "build_mutated_sweep_config",
     "build_strategy_discovery_history_notebook",
     "build_strategy_factory_history_notebook",
     "candidate_meets_objective",
     "copy",
     "date",
+    "decimal_from_candidate",
     "datetime",
+    "format_numeric_like",
     "frontier",
     "json",
+    "load_mutation_space",
     "load_strategy_autoresearch_program",
     "patch",
+    "resolve_seed_sweep_path",
     "runner",
+    "stable_value_key",
+    "string_list",
     "sys",
     "timedelta",
     "write_autoresearch_notebooks",

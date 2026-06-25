@@ -12,18 +12,20 @@ from unittest.mock import patch
 
 from app.config import settings
 from app.trading.hypotheses import (
-    _JANGAR_QUORUM_CACHE,
     JangarDependencyQuorumStatus,
     compile_hypothesis_runtime_statuses,
     hypothesis_registry_requires_dependency_capability,
     load_hypothesis_registry,
     load_jangar_dependency_quorum,
-    _optional_bool,
-    _optional_decimal,
-    _sequence,
-    _weighted_decimal_average,
     resolve_hypothesis_dependency_quorum,
     summarize_hypothesis_runtime_statuses,
+)
+from app.trading.hypotheses.extract_stage_renewal_bonds import weighted_decimal_average
+from app.trading.hypotheses.shared_context import (
+    JANGAR_QUORUM_CACHE,
+    optional_bool,
+    optional_decimal,
+    sequence,
 )
 from app.trading.runtime_ledger import (
     EXACT_REPLAY_LEDGER_SCHEMA_VERSION,
@@ -257,7 +259,7 @@ class _TestHypothesisReadinessBase(TestCase):
         settings.trading_jangar_control_plane_timeout_seconds = self._settings_snapshot[
             "trading_jangar_control_plane_timeout_seconds"
         ]
-        _JANGAR_QUORUM_CACHE.clear()
+        JANGAR_QUORUM_CACHE.clear()
 
 
 __all__: tuple[str, ...] = (
@@ -271,28 +273,28 @@ __all__: tuple[str, ...] = (
     "TestCase",
     "_FakeHttpResponse",
     "_HPAIRS_AI_HARDWARE_UNIVERSE",
-    "_JANGAR_QUORUM_CACHE",
     "_MANIFEST_CANDIDATE_IDS",
     "_MANIFEST_STRATEGY_FAMILIES",
     "_TestHypothesisReadinessBase",
     "_hpairs_route_repair_tca_summary",
     "_hpairs_tca_symbol_breakdown",
     "_hypothesis_manifest_payload",
-    "_optional_bool",
-    "_optional_decimal",
     "_runtime_ledger_summary",
-    "_sequence",
     "_state",
-    "_weighted_decimal_average",
     "compile_hypothesis_runtime_statuses",
     "datetime",
     "hypothesis_registry_requires_dependency_capability",
+    "JANGAR_QUORUM_CACHE",
     "json",
     "load_hypothesis_registry",
     "load_jangar_dependency_quorum",
+    "optional_bool",
+    "optional_decimal",
     "patch",
     "resolve_hypothesis_dependency_quorum",
+    "sequence",
     "settings",
     "summarize_hypothesis_runtime_statuses",
     "timezone",
+    "weighted_decimal_average",
 )

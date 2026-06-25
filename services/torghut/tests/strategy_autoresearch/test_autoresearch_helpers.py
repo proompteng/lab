@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from tests.strategy_autoresearch.support import (
     Decimal,
+    decimal_from_candidate,
+    format_numeric_like,
+    load_mutation_space,
+    resolve_seed_sweep_path,
+    stable_value_key,
+    string_list,
     Namespace,
     Path,
     StrategyAutoresearchTestCase,
     TemporaryDirectory,
-    autoresearch,
     json,
     load_strategy_autoresearch_program,
     patch,
@@ -18,24 +23,24 @@ from tests.strategy_autoresearch.support import (
 
 class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
     def test_autoresearch_helper_branches_cover_edge_cases(self) -> None:
-        self.assertEqual(autoresearch._string_list("not-a-list"), ())
-        self.assertEqual(autoresearch._string_list(["", " NVDA ", None]), ("NVDA",))
+        self.assertEqual(string_list("not-a-list"), ())
+        self.assertEqual(string_list(["", " NVDA ", None]), ("NVDA",))
         self.assertEqual(
-            autoresearch._stable_value_key({"b": 2, "a": 1}),
+            stable_value_key({"b": 2, "a": 1}),
             '{"a":1,"b":2}',
         )
-        self.assertIsNone(autoresearch._decimal_from_candidate(None))
-        self.assertIsNone(autoresearch._decimal_from_candidate("not-a-number"))
+        self.assertIsNone(decimal_from_candidate(None))
+        self.assertIsNone(decimal_from_candidate("not-a-number"))
         self.assertEqual(
-            autoresearch._format_numeric_like(Decimal("3"), current_value="2"),
+            format_numeric_like(Decimal("3"), current_value="2"),
             "3",
         )
         self.assertEqual(
-            autoresearch._format_numeric_like(Decimal("3.125"), current_value="2.00"),
+            format_numeric_like(Decimal("3.125"), current_value="2.00"),
             "3.12",
         )
         self.assertEqual(
-            autoresearch._format_numeric_like(Decimal("3.1400"), current_value=""),
+            format_numeric_like(Decimal("3.1400"), current_value=""),
             "3.14",
         )
 
@@ -803,13 +808,13 @@ class TestStrategyAutoresearchHelpers(StrategyAutoresearchTestCase):
 
     def test_load_mutation_space_rejects_invalid_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "autoresearch_mutation_mode_invalid"):
-            autoresearch._load_mutation_space({"mode": "bad-mode"})
+            load_mutation_space({"mode": "bad-mode"})
 
     def test_resolve_seed_sweep_path_keeps_absolute_path(self) -> None:
         with TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             absolute = root / "seed.yaml"
-            resolved = autoresearch._resolve_seed_sweep_path(
+            resolved = resolve_seed_sweep_path(
                 program_path=root / "program.yaml",
                 raw_path=str(absolute),
             )

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from app.trading.ingest import ClickHouseSignalIngestor, _coerce_count
+from app.trading.ingest import ClickHouseSignalIngestor
+from app.trading.ingest.shared_context import coerce_count
 
 
 class ReadinessCountingIngestor(ClickHouseSignalIngestor):
@@ -50,12 +51,12 @@ class FailingReadinessIngestor(ReadinessCountingIngestor):
 
 
 def test_coerce_count_handles_clickhouse_json_values() -> None:
-    assert _coerce_count(True) == 1
-    assert _coerce_count(12) == 12
-    assert _coerce_count(6.9) == 6
-    assert _coerce_count(" 8 ") == 8
-    assert _coerce_count("bad") == 0
-    assert _coerce_count("") == 0
+    assert coerce_count(True) == 1
+    assert coerce_count(12) == 12
+    assert coerce_count(6.9) == 6
+    assert coerce_count(" 8 ") == 8
+    assert coerce_count("bad") == 0
+    assert coerce_count("") == 0
 
 
 def test_latest_signal_status_includes_readiness_counts() -> None:

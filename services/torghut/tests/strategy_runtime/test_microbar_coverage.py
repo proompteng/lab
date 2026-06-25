@@ -13,12 +13,12 @@ from tests.strategy_runtime.support import (
     StrategyRuntime,
     TestCase,
     _compose_strategy_description,
-    _evaluate_microbar_cross_sectional,
-    _microbar_entry_window_minutes,
-    _microbar_exit_minute_after_open,
-    _microbar_minutes_elapsed,
-    _microbar_rank_thresholds,
-    _microbar_universe_size,
+    evaluate_microbar_cross_sectional,
+    microbar_entry_window_minutes,
+    microbar_exit_minute_after_open,
+    microbar_minutes_elapsed,
+    microbar_rank_thresholds,
+    microbar_universe_size,
     _test_feature_vector,
     uuid,
 )
@@ -53,80 +53,80 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
     ) -> None:
         context = self._context()
         self.assertEqual(
-            _microbar_minutes_elapsed(
+            microbar_minutes_elapsed(
                 context=self._context(event_ts="2026-03-24T14:31:00+00:00"),
                 features=_test_feature_vector({"session_minutes_elapsed": "61"}),
             ),
             61,
         )
         self.assertIsNone(
-            _microbar_minutes_elapsed(
+            microbar_minutes_elapsed(
                 context=context,
                 features=_test_feature_vector({"session_minutes_elapsed": "bad-value"}),
             )
         )
         self.assertEqual(
-            _microbar_minutes_elapsed(
+            microbar_minutes_elapsed(
                 context=self._context(event_ts="2026-03-24T14:35:00+00:00"),
                 features=_test_feature_vector({}),
             ),
             65,
         )
         self.assertEqual(
-            _microbar_minutes_elapsed(
+            microbar_minutes_elapsed(
                 context=self._context(event_ts="2026-05-29T15:30:00+00:00"),
                 features=_test_feature_vector({"session_minutes_elapsed": 60}),
             ),
             120,
         )
         self.assertEqual(
-            _microbar_minutes_elapsed(
+            microbar_minutes_elapsed(
                 context=self._context(event_ts="2026-01-05T15:30:00+00:00"),
                 features=_test_feature_vector({}),
             ),
             60,
         )
         self.assertIsNone(
-            _microbar_minutes_elapsed(
+            microbar_minutes_elapsed(
                 context=self._context(event_ts="not-a-timestamp"),
                 features=_test_feature_vector({}),
             )
         )
 
-        self.assertIsNone(_microbar_exit_minute_after_open({}))
+        self.assertIsNone(microbar_exit_minute_after_open({}))
         self.assertIsNone(
-            _microbar_exit_minute_after_open({"exit_minute_after_open": ""})
+            microbar_exit_minute_after_open({"exit_minute_after_open": ""})
         )
         self.assertEqual(
-            _microbar_exit_minute_after_open({"exit_minute_after_open": "close"}), 390
+            microbar_exit_minute_after_open({"exit_minute_after_open": "close"}), 390
         )
         self.assertEqual(
-            _microbar_exit_minute_after_open({"exit_minute_after_open": "75"}), 75
+            microbar_exit_minute_after_open({"exit_minute_after_open": "75"}), 75
         )
         self.assertIsNone(
-            _microbar_exit_minute_after_open({"exit_minute_after_open": "bad-value"})
+            microbar_exit_minute_after_open({"exit_minute_after_open": "bad-value"})
         )
-        self.assertEqual(_microbar_entry_window_minutes({}), 0)
+        self.assertEqual(microbar_entry_window_minutes({}), 0)
         self.assertEqual(
-            _microbar_entry_window_minutes({"entry_window_minutes": "30"}), 30
-        )
-        self.assertEqual(
-            _microbar_entry_window_minutes({"entry_window_minutes": "-5"}), 0
+            microbar_entry_window_minutes({"entry_window_minutes": "30"}), 30
         )
         self.assertEqual(
-            _microbar_entry_window_minutes({"entry_window_minutes": "bad-value"}), 0
+            microbar_entry_window_minutes({"entry_window_minutes": "-5"}), 0
+        )
+        self.assertEqual(
+            microbar_entry_window_minutes({"entry_window_minutes": "bad-value"}), 0
         )
 
     def test_microbar_universe_and_rank_threshold_helpers_cover_fallbacks(self) -> None:
         self.assertEqual(
-            _microbar_universe_size(
+            microbar_universe_size(
                 context=self._context(),
                 params={"universe_size": "6"},
             ),
             6,
         )
         self.assertEqual(
-            _microbar_universe_size(
+            microbar_universe_size(
                 context=self._context(),
                 params={
                     "universe_size": "bad-value",
@@ -136,14 +136,14 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             3,
         )
         self.assertEqual(
-            _microbar_universe_size(
+            microbar_universe_size(
                 context=self._context(strategy_spec={"universe_symbols": ["META"]}),
                 params={},
             ),
             2,
         )
         self.assertEqual(
-            _microbar_universe_size(
+            microbar_universe_size(
                 context=self._context(
                     strategy_spec={"universe_symbols": ["META", "NVDA", "AAPL", "MSFT"]}
                 ),
@@ -152,11 +152,11 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             4,
         )
         self.assertEqual(
-            _microbar_rank_thresholds(universe_size=1, top_n=3),
+            microbar_rank_thresholds(universe_size=1, top_n=3),
             (Decimal("0"), Decimal("1")),
         )
         self.assertEqual(
-            _microbar_rank_thresholds(universe_size=5, top_n=2),
+            microbar_rank_thresholds(universe_size=5, top_n=2),
             (Decimal("0.25"), Decimal("0.75")),
         )
 
@@ -172,7 +172,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             "top_n": "2",
         }
 
-        missing_minutes = _evaluate_microbar_cross_sectional(
+        missing_minutes = evaluate_microbar_cross_sectional(
             context=self._context(params=base_params, event_ts="bad-timestamp"),
             features=_test_feature_vector({}),
             entry_action="buy",
@@ -182,7 +182,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         assert missing_minutes.trace is not None
         self.assertEqual(missing_minutes.trace.first_failed_gate, "schedule")
 
-        mismatched_minute = _evaluate_microbar_cross_sectional(
+        mismatched_minute = evaluate_microbar_cross_sectional(
             context=self._context(
                 params=base_params, event_ts="2026-03-24T14:29:00+00:00"
             ),
@@ -197,7 +197,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             mismatched_minute.trace.gates[0].context["entry_window_minutes"], 0
         )
 
-        regime_reject = _evaluate_microbar_cross_sectional(
+        regime_reject = evaluate_microbar_cross_sectional(
             context=self._context(params=base_params),
             features=_test_feature_vector(
                 {
@@ -214,7 +214,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         self.assertEqual(regime_reject.trace.first_failed_gate, "regime_gate")
         self.assertEqual(len(regime_reject.trace.gates[0].thresholds), 2)
 
-        missing_rank = _evaluate_microbar_cross_sectional(
+        missing_rank = evaluate_microbar_cross_sectional(
             context=self._context(params=base_params),
             features=_test_feature_vector(
                 {
@@ -229,7 +229,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         assert missing_rank.trace is not None
         self.assertEqual(missing_rank.trace.first_failed_gate, "rank_selection")
 
-        window_entry = _evaluate_microbar_cross_sectional(
+        window_entry = evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
                     **base_params,
@@ -254,7 +254,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             90,
         )
 
-        late_window = _evaluate_microbar_cross_sectional(
+        late_window = evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
                     **base_params,
@@ -388,7 +388,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             ),
         )
 
-        continuation_skip = _evaluate_microbar_cross_sectional(
+        continuation_skip = evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
                     "entry_minute_after_open": "60",
@@ -412,7 +412,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
         assert continuation_skip.trace is not None
         self.assertEqual(continuation_skip.trace.first_failed_gate, "rank_selection")
 
-        executable_universe_buy = _evaluate_microbar_cross_sectional(
+        executable_universe_buy = evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
                     "entry_minute_after_open": "60",
@@ -439,7 +439,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             executable_universe_buy.trace.gates[0].context["universe_size"], 5
         )
 
-        clusterlob_rank_buy = _evaluate_microbar_cross_sectional(
+        clusterlob_rank_buy = evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
                     "entry_minute_after_open": "60",
@@ -469,7 +469,7 @@ class TestStrategyRuntimeMicrobarCoverage(TestCase):
             clusterlob_rank_buy.intent.rationale,
         )
 
-        reversal_buy = _evaluate_microbar_cross_sectional(
+        reversal_buy = evaluate_microbar_cross_sectional(
             context=self._context(
                 params={
                     "entry_minute_after_open": "60",
