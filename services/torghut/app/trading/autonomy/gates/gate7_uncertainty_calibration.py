@@ -6,19 +6,17 @@ from decimal import Decimal
 from typing import Any, cast
 
 
-from .shared_context import (
-    GateEvaluationReport,
+from .gate_contracts import (
     GateInputs,
     GatePolicyMatrix,
     GateResult,
     PromotionTarget,
     UncertaintyGateAction,
     UncertaintyGateOutcome,
-    evaluate_gate_matrix,
 )
 
 
-def _gate7_uncertainty_calibration(
+def gate7_uncertainty_calibration(
     inputs: GateInputs,
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
@@ -30,11 +28,11 @@ def _gate7_uncertainty_calibration(
     confidence = _dict_from_any(
         _dict_from_any(inputs.profitability_evidence).get("confidence_calibration")
     )
-    coverage_error = _decimal(confidence.get("coverage_error"))
-    shift_score = _decimal(confidence.get("shift_score"))
-    avg_interval_width = _decimal(confidence.get("avg_interval_width"))
-    target_coverage = _decimal(confidence.get("target_coverage"))
-    observed_coverage = _decimal(confidence.get("observed_coverage"))
+    coverage_error = decimal(confidence.get("coverage_error"))
+    shift_score = decimal(confidence.get("shift_score"))
+    avg_interval_width = decimal(confidence.get("avg_interval_width"))
+    target_coverage = decimal(confidence.get("target_coverage"))
+    observed_coverage = decimal(confidence.get("observed_coverage"))
     recalibration_run_id_raw = confidence.get("recalibration_run_id")
     recalibration_run_id = (
         str(recalibration_run_id_raw).strip() if recalibration_run_id_raw else None
@@ -84,13 +82,13 @@ def _gate7_uncertainty_calibration(
     return gate, outcome
 
 
-def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
+def gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
     reasons: list[str] = []
     if not inputs.fragility_inputs_valid:
         return ["fragility_inputs_invalid"]
-    max_drawdown = _decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
-    turnover_ratio = _decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
-    cost_bps = _decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
+    max_drawdown = decimal(inputs.metrics.get("max_drawdown")) or Decimal("0")
+    turnover_ratio = decimal(inputs.metrics.get("turnover_ratio")) or Decimal("0")
+    cost_bps = decimal(inputs.metrics.get("cost_bps")) or Decimal("0")
     if max_drawdown > policy.gate2_max_drawdown:
         reasons.append("drawdown_exceeds_maximum")
     if turnover_ratio > policy.gate2_max_turnover_ratio:
@@ -111,7 +109,7 @@ def _gate2_base_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[st
     return reasons
 
 
-def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
+def gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str]:
     order_count_raw = inputs.tca_metrics.get("order_count")
     if order_count_raw is None:
         return ["tca_order_count_missing"]
@@ -145,7 +143,7 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     elif avg_tca_shortfall > policy.gate2_max_tca_shortfall_notional:
         reasons.append("tca_shortfall_exceeds_maximum")
 
-    expected_shortfall_coverage = _decimal(
+    expected_shortfall_coverage = decimal(
         inputs.tca_metrics.get("expected_shortfall_coverage")
     )
     expected_shortfall_sample_count = _int_or_default(
@@ -170,7 +168,7 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     if avg_tca_divergence > policy.gate2_max_tca_divergence_bps:
         reasons.append("tca_divergence_bps_exceeds_maximum")
 
-    avg_tca_calibration_error = _decimal(
+    avg_tca_calibration_error = decimal(
         inputs.tca_metrics.get("avg_calibration_error_bps")
     )
     if avg_tca_calibration_error is None:
@@ -190,7 +188,7 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
                 "tca_expected_shortfall_calibration_coverage_below_threshold"
             )
 
-    avg_tca_churn_ratio = _decimal(inputs.tca_metrics.get("avg_churn_ratio"))
+    avg_tca_churn_ratio = decimal(inputs.tca_metrics.get("avg_churn_ratio"))
     if avg_tca_churn_ratio is None:
         reasons.append("tca_churn_ratio_missing")
     elif avg_tca_churn_ratio > policy.gate2_max_tca_churn_ratio:
@@ -198,7 +196,7 @@ def _gate2_tca_reasons(inputs: GateInputs, policy: GatePolicyMatrix) -> list[str
     return reasons
 
 
-def _gate6_early_result(
+def gate6_early_result(
     inputs: GateInputs,
     policy: GatePolicyMatrix,
     promotion_target: PromotionTarget,
@@ -220,7 +218,7 @@ def _gate6_early_result(
     return None
 
 
-def _gate6_schema_reasons(evidence: dict[str, Any]) -> list[str]:
+def gate6_schema_reasons(evidence: dict[str, Any]) -> list[str]:
     reasons: list[str] = []
     schema_version = str(evidence.get("schema_version", "")).strip()
     if schema_version != "profitability-evidence-v4":
@@ -234,38 +232,36 @@ def _gate6_schema_reasons(evidence: dict[str, Any]) -> list[str]:
     return reasons
 
 
-def _gate6_threshold_reasons(
+def gate6_threshold_reasons(
     evidence: dict[str, Any], policy: GatePolicyMatrix
 ) -> list[str]:
     reasons: list[str] = []
     risk_adjusted = _dict_from_any(evidence.get("risk_adjusted_metrics"))
-    market_delta = _decimal(risk_adjusted.get("market_net_pnl_delta")) or Decimal("0")
+    market_delta = decimal(risk_adjusted.get("market_net_pnl_delta")) or Decimal("0")
     if market_delta < policy.gate6_min_market_net_pnl_delta:
         reasons.append("profitability_market_net_pnl_delta_below_threshold")
-    regime_ratio = _decimal(risk_adjusted.get("regime_slice_pass_ratio")) or Decimal(
-        "0"
-    )
+    regime_ratio = decimal(risk_adjusted.get("regime_slice_pass_ratio")) or Decimal("0")
     if regime_ratio < policy.gate6_min_regime_slice_pass_ratio:
         reasons.append("profitability_regime_slice_ratio_below_threshold")
-    return_over_drawdown = _decimal(
+    return_over_drawdown = decimal(
         risk_adjusted.get("return_over_drawdown")
     ) or Decimal("0")
     if return_over_drawdown < policy.gate6_min_return_over_drawdown:
         reasons.append("profitability_return_over_drawdown_below_threshold")
 
     realism = _dict_from_any(evidence.get("cost_fill_realism"))
-    cost_bps = _decimal(realism.get("cost_bps")) or Decimal("0")
+    cost_bps = decimal(realism.get("cost_bps")) or Decimal("0")
     if cost_bps > policy.gate6_max_cost_bps:
         reasons.append("profitability_cost_bps_exceeds_threshold")
 
     confidence = _dict_from_any(evidence.get("confidence_calibration"))
-    calibration_error = _decimal(confidence.get("calibration_error")) or Decimal("1")
+    calibration_error = decimal(confidence.get("calibration_error")) or Decimal("1")
     if calibration_error > policy.gate6_max_calibration_error:
         reasons.append("profitability_calibration_error_exceeds_threshold")
     return reasons
 
 
-def _gate6_reproducibility_reasons(
+def gate6_reproducibility_reasons(
     evidence: dict[str, Any], policy: GatePolicyMatrix
 ) -> list[str]:
     reproducibility = _dict_from_any(evidence.get("reproducibility"))
@@ -279,7 +275,7 @@ def _gate6_reproducibility_reasons(
     return []
 
 
-def _gate6_janus_q_reasons(
+def gate6_janus_q_reasons(
     evidence: dict[str, Any], policy: GatePolicyMatrix
 ) -> list[str]:
     if not policy.gate6_require_janus_evidence:
@@ -396,7 +392,7 @@ def _gate7_action_with_reasons(
     return "pass", derived_reasons
 
 
-def _decimal(value: Any) -> Decimal | None:
+def decimal(value: Any) -> Decimal | None:
     if value is None:
         return None
     if isinstance(value, Decimal):
@@ -413,14 +409,14 @@ def _decimal(value: Any) -> Decimal | None:
 
 
 def _abs_decimal(value: Any) -> Decimal | None:
-    parsed = _decimal(value)
+    parsed = decimal(value)
     if parsed is None:
         return None
     return abs(parsed)
 
 
-def _decimal_or_default(value: Any, default: Decimal) -> Decimal:
-    parsed = _decimal(value)
+def decimal_or_default(value: Any, default: Decimal) -> Decimal:
+    parsed = decimal(value)
     if parsed is None:
         return default
     return parsed
@@ -449,25 +445,9 @@ def _fragility_state_rank(state: str) -> int:
     return ranks.get(normalized, 1)
 
 
-# Public aliases used by split-module consumers.
-decimal_or_default = _decimal_or_default
-gate2_base_reasons = _gate2_base_reasons
-gate2_tca_reasons = _gate2_tca_reasons
-gate6_early_result = _gate6_early_result
-gate6_janus_q_reasons = _gate6_janus_q_reasons
-gate6_reproducibility_reasons = _gate6_reproducibility_reasons
-gate6_schema_reasons = _gate6_schema_reasons
-gate6_threshold_reasons = _gate6_threshold_reasons
-gate7_uncertainty_calibration = _gate7_uncertainty_calibration
-
 __all__ = [
-    "GateEvaluationReport",
-    "GateInputs",
-    "GatePolicyMatrix",
-    "GateResult",
-    "PromotionTarget",
+    "decimal",
     "decimal_or_default",
-    "evaluate_gate_matrix",
     "gate2_base_reasons",
     "gate2_tca_reasons",
     "gate6_early_result",
