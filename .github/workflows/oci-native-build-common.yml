@@ -67,28 +67,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install xz for Nix installer
-        run: |
-          set -euo pipefail
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y xz-utils
-          elif command -v apk >/dev/null 2>&1; then
-            sudo apk add --no-cache xz
-          elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y xz
-          elif ! command -v xz >/dev/null 2>&1; then
-            echo "xz is required to install Nix on this runner." >&2
-            exit 1
-          fi
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
       - name: Set up Docker Buildx builder
         uses: docker/setup-buildx-action@v3
 
@@ -102,49 +80,42 @@ jobs:
           if [ -z "${json}" ]; then
             json='{}'
           fi
-          nix develop -c jq -e 'type == "object"' <<< "${json}" >/dev/null
+          jq -e 'type == "object"' <<< "${json}" >/dev/null
           {
             echo 'value<<EOF'
-            nix develop -c jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "${json}"
+            jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "${json}"
             echo EOF
           } >> "${GITHUB_OUTPUT}"
 
-      - name: Build and push native image
+      - name: Render image tags
+        id: image-tags
         env:
           IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
           TAG: ${{ inputs.tag }}
           ARCH: ${{ matrix.arch }}
-          PLATFORM: ${{ matrix.platform }}
-          CONTEXT: ${{ inputs.context }}
-          DOCKERFILE: ${{ inputs.dockerfile }}
-          CACHE_MODE: ${{ inputs.cache_mode }}
           LATEST: ${{ inputs.latest }}
-          BUILD_ARGS: ${{ steps.build-args.outputs.value }}
         run: |
           set -euo pipefail
-
-          args=(
-            docker buildx build
-            --push
-            --platform "${PLATFORM}"
-            --file "${DOCKERFILE}"
-            --tag "${IMAGE}:${TAG}-${ARCH}"
-            --cache-from "type=registry,ref=${IMAGE}:cache-${ARCH}"
-            --cache-to "type=registry,ref=${IMAGE}:cache-${ARCH},mode=${CACHE_MODE}"
-          )
-
+          {
+            echo 'value<<EOF'
+            echo "${IMAGE}:${TAG}-${ARCH}"
+          } >> "${GITHUB_OUTPUT}"
           if [ "${LATEST}" = "true" ]; then
-            args+=(--tag "${IMAGE}:latest-${ARCH}")
+            echo "${IMAGE}:latest-${ARCH}" >> "${GITHUB_OUTPUT}"
           fi
+          echo EOF >> "${GITHUB_OUTPUT}"
 
-          while IFS= read -r build_arg; do
-            if [ -n "${build_arg}" ]; then
-              args+=(--build-arg "${build_arg}")
-            fi
-          done <<< "${BUILD_ARGS}"
-
-          args+=("${CONTEXT}")
-          nix develop -c "${args[@]}"
+      - name: Build and push native image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ steps.image-tags.outputs.value }}
+          build-args: ${{ steps.build-args.outputs.value }}
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:cache-${{ matrix.arch }}
+          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:cache-${{ matrix.arch }},mode=${{ inputs.cache_mode }}
 
   publish-index:
     needs: build-platform
@@ -203,7 +174,7 @@ jobs:
           set -euo pipefail
 
           args=(
-            bun run packages/scripts/src/shared/oci.ts create-index
+            nix run .#create-oci-index --
             --image "${IMAGE}"
             --tag "${TAG}"
             --arch-tag "linux/amd64=${TAG}-amd64"
@@ -214,10 +185,10 @@ jobs:
             args+=(--latest)
           fi
 
-          nix develop -c "${args[@]}"
+          "${args[@]}"
 
       - name: Verify OCI image index platforms
         env:
           IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
           TAG: ${{ inputs.tag }}
-        run: nix develop -c bun run packages/scripts/src/shared/oci.ts assert "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+        run: nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64

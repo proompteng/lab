@@ -175,11 +175,12 @@ describe('native OCI build workflows', () => {
     expect(facteurWorkflow).not.toContain('platforms: linux/amd64,linux/arm64')
   })
 
-  it('defines native ARC runners and daemonless OCI index publication', () => {
+  it('defines native ARC runners and minimal Nix OCI index publication', () => {
     expect(nativeWorkflow).toContain('runner: arc-amd64')
     expect(nativeWorkflow).toContain('runner: arc-arm64')
-    expect(nativeWorkflow).toContain('docker buildx build')
-    expect(nativeWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts create-index')
-    expect(nativeWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts assert')
+    expect(nativeWorkflow).toContain('uses: docker/build-push-action@v6')
+    expect(nativeWorkflow).toContain('nix run .#create-oci-index --')
+    expect(nativeWorkflow).toContain('nix run .#assert-oci-platforms --')
+    expect(nativeWorkflow).not.toContain('nix develop -c')
   })
 })

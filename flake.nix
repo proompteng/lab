@@ -108,6 +108,14 @@
             name: text:
             mkShellScript name (shellPackages ++ [ pkgs.bash ]) text;
 
+          mkOciScript =
+            name: text:
+            mkShellScript name [
+              exact.bun
+              pkgs.go-containerregistry
+              pkgs.regclient
+            ] text;
+
           lintArgocd = mkScript "lint-argocd" ''
             exec bash scripts/kubeconform.sh argocd
           '';
@@ -120,11 +128,15 @@
             exec bash scripts/argo-lint.sh
           '';
 
-          inspectOciImage = mkScript "inspect-oci-image" ''
+          createOciIndex = mkOciScript "create-oci-index" ''
+            exec bun run packages/scripts/src/shared/oci.ts create-index "$@"
+          '';
+
+          inspectOciImage = mkOciScript "inspect-oci-image" ''
             exec bun run packages/scripts/src/shared/oci.ts inspect "$@"
           '';
 
-          assertOciPlatforms = mkScript "assert-oci-platforms" ''
+          assertOciPlatforms = mkOciScript "assert-oci-platforms" ''
             exec bun run packages/scripts/src/shared/oci.ts assert "$@"
           '';
 
@@ -143,6 +155,7 @@
               lintArgocd
               renderHeadlamp
               lintArgoWorkflows
+              createOciIndex
               inspectOciImage
               assertOciPlatforms
               ;
@@ -155,6 +168,7 @@
             lint-argocd = mkApp lintArgocd;
             render-headlamp = mkApp renderHeadlamp;
             lint-argo-workflows = mkApp lintArgoWorkflows;
+            create-oci-index = mkApp createOciIndex;
             inspect-oci-image = mkApp inspectOciImage;
             assert-oci-platforms = mkApp assertOciPlatforms;
           };
