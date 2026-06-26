@@ -13,36 +13,27 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-and-push:
+  meta:
     runs-on: arc-arm64
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Docker meta
+      - name: Resolve image tag
         id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: registry.ide-newton.ts.net/lab/facteur
-          tags: |
-            type=ref,event=branch
-            type=sha
-            type=raw,value=latest
+        run: echo "tag=sha-$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build and push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: services/facteur/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            FACTEUR_VERSION=${{ steps.meta.outputs.version != '' && steps.meta.outputs.version || github.sha }}
-            FACTEUR_COMMIT=${{ github.sha }}
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/facteur:latest
-          cache-to: type=inline
+  build-and-push:
+    needs: meta
+    uses: ./.github/workflows/oci-native-build-common.yml
+    with:
+      image_name: facteur
+      dockerfile: services/facteur/Dockerfile
+      context: .
+      tag: ${{ needs.meta.outputs.tag }}
+      latest: ${{ github.ref == 'refs/heads/main' }}
+      build_args_json: >-
+        {"FACTEUR_VERSION":"${{ needs.meta.outputs.tag }}","FACTEUR_COMMIT":"${{ github.sha }}"}
+    secrets: inherit

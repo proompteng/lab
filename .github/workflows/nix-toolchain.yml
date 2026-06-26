@@ -1,0 +1,89 @@
+name: nix-toolchain
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - '.envrc.example'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'kubernetes/coder/README.md'
+      - 'scripts/kubeconform.sh'
+      - 'scripts/argo-lint.sh'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'packages/scripts/src/shared/__tests__/oci.test.ts'
+      - 'argocd/**/*.yaml'
+      - '.github/workflows/nix-toolchain.yml'
+      - '.github/workflows/oci-native-build-common.yml'
+      - '.github/workflows/oci-builder-benchmark.yml'
+      - '.github/workflows/kubeconform.yml'
+      - '.github/workflows/khoshut-ci.yml'
+      - '.github/workflows/headlamp-ci.yml'
+      - '.github/workflows/argo-lint.yml'
+      - '.github/workflows/facteur-build-push.yaml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - '.envrc.example'
+      - 'README.md'
+      - 'AGENTS.md'
+      - 'kubernetes/coder/README.md'
+      - 'scripts/kubeconform.sh'
+      - 'scripts/argo-lint.sh'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'packages/scripts/src/shared/__tests__/oci.test.ts'
+      - 'argocd/**/*.yaml'
+      - '.github/workflows/nix-toolchain.yml'
+      - '.github/workflows/oci-native-build-common.yml'
+      - '.github/workflows/oci-builder-benchmark.yml'
+      - '.github/workflows/kubeconform.yml'
+      - '.github/workflows/khoshut-ci.yml'
+      - '.github/workflows/headlamp-ci.yml'
+      - '.github/workflows/argo-lint.yml'
+      - '.github/workflows/facteur-build-push.yaml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Check flake
+        run: nix flake check --print-build-logs
+
+      - name: Verify toolchain
+        run: nix develop -c toolchain-doctor
+
+      - name: Verify OCI toolchain
+        run: nix develop -c oci-doctor
+
+      - name: Validate Argo CD manifests
+        run: nix run .#lint-argocd
+
+      - name: Render Headlamp manifests
+        run: nix run .#render-headlamp
+
+      - name: Lint Argo Workflow manifests
+        run: nix run .#lint-argo-workflows

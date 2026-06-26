@@ -56,6 +56,9 @@ coder workspaces create sutro --template "k8s-arm64"
   - Persist Bun environment variables in `.profile` and `.zshrc`
   - Run with a workspace service account bound to `cluster-admin` via a ClusterRoleBinding (cluster-wide) so `kubectl` works inside the pod
 
+This bootstrap remains imperative for now. Once Nix is installed in the workspace image or startup script, prefer the
+repo shell with `nix develop` and verify it with `toolchain-doctor`; the flake pins the versions used by the CI pilot.
+
 If a workspace becomes unhealthy, check logs inside the pod:
 
 - `/tmp/coder-startup-script.log`

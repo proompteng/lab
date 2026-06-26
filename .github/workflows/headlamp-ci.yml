@@ -9,12 +9,18 @@ on:
       - 'services/headlamp/**'
       - 'argocd/applications/headlamp/**'
       - 'docs/headlamp-setup.md'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - '.github/workflows/headlamp-ci.yml'
   push:
     branches:
       - main
     paths:
       - 'services/headlamp/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - '.github/workflows/headlamp-ci.yml'
   workflow_dispatch:
 
@@ -30,34 +36,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Install Helm
-        uses: azure/setup-helm@v4
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
         with:
-          version: v3.14.4
-
-      - name: Install kustomize
-        run: |
-          KUSTOMIZE_VERSION="5.8.0"
-          OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
-          ARCH="$(uname -m)"
-          case "${ARCH}" in
-            x86_64|amd64) ARCH="amd64" ;;
-            aarch64|arm64) ARCH="arm64" ;;
-            *)
-              echo "Unsupported architecture: ${ARCH}" >&2
-              exit 1
-              ;;
-          esac
-          TARBALL="kustomize_v${KUSTOMIZE_VERSION}_${OS}_${ARCH}.tar.gz"
-          URL="https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize/v${KUSTOMIZE_VERSION}/${TARBALL}"
-          curl -fsSL -o kustomize.tar.gz "${URL}"
-          tar -xzf kustomize.tar.gz kustomize
-          chmod +x kustomize
-          sudo mv kustomize /usr/local/bin/
-          kustomize version
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
       - name: Render Headlamp manifests
-        run: kustomize build --enable-helm argocd/applications/headlamp >/dev/null
+        run: nix run .#render-headlamp
 
       - name: Run Upstream Multiplexer Regression Tests
         run: |

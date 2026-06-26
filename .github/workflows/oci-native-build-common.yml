@@ -1,0 +1,190 @@
+name: OCI Native Build Common
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+      dockerfile:
+        required: true
+        type: string
+      context:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+      platforms:
+        required: false
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      latest:
+        required: false
+        type: boolean
+        default: false
+      cache_mode:
+        required: false
+        type: string
+        default: max
+      build_args_json:
+        required: false
+        type: string
+        default: '{}'
+    outputs:
+      image:
+        value: ${{ jobs.publish-index.outputs.image }}
+      tag:
+        value: ${{ jobs.publish-index.outputs.tag }}
+      digest:
+        value: ${{ jobs.publish-index.outputs.digest }}
+      platform_digest_amd64:
+        value: ${{ jobs.publish-index.outputs.platform_digest_amd64 }}
+      platform_digest_arm64:
+        value: ${{ jobs.publish-index.outputs.platform_digest_arm64 }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.image_name }}-${{ inputs.tag }}
+  cancel-in-progress: true
+
+jobs:
+  build-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: arc-amd64
+          - platform: linux/arm64
+            arch: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Set up Docker Buildx builder
+        uses: docker/setup-buildx-action@v3
+
+      - name: Render build args
+        id: build-args
+        env:
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json }}
+        run: |
+          set -euo pipefail
+          json="${BUILD_ARGS_JSON:-{}}"
+          nix develop -c jq -e 'type == "object"' <<< "${json}" >/dev/null
+          {
+            echo 'value<<EOF'
+            nix develop -c jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "${json}"
+            echo EOF
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push native image
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
+          TAG: ${{ inputs.tag }}
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          CONTEXT: ${{ inputs.context }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          CACHE_MODE: ${{ inputs.cache_mode }}
+          LATEST: ${{ inputs.latest }}
+          BUILD_ARGS: ${{ steps.build-args.outputs.value }}
+        run: |
+          set -euo pipefail
+
+          args=(
+            docker buildx build
+            --push
+            --platform "${PLATFORM}"
+            --file "${DOCKERFILE}"
+            --tag "${IMAGE}:${TAG}-${ARCH}"
+            --cache-from "type=registry,ref=${IMAGE}:cache-${ARCH}"
+            --cache-to "type=registry,ref=${IMAGE}:cache-${ARCH},mode=${CACHE_MODE}"
+          )
+
+          if [ "${LATEST}" = "true" ]; then
+            args+=(--tag "${IMAGE}:latest-${ARCH}")
+          fi
+
+          while IFS= read -r build_arg; do
+            if [ -n "${build_arg}" ]; then
+              args+=(--build-arg "${build_arg}")
+            fi
+          done <<< "${BUILD_ARGS}"
+
+          args+=("${CONTEXT}")
+          nix develop -c "${args[@]}"
+
+  publish-index:
+    needs: build-platform
+    runs-on: arc-arm64
+    outputs:
+      image: ${{ steps.oci.outputs.image }}
+      tag: ${{ steps.oci.outputs.tag }}
+      digest: ${{ steps.oci.outputs.digest }}
+      platform_digest_amd64: ${{ steps.oci.outputs.platform_digest_amd64 }}
+      platform_digest_arm64: ${{ steps.oci.outputs.platform_digest_arm64 }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Validate platform contract
+        run: |
+          set -euo pipefail
+          platforms=',${{ inputs.platforms }},'
+          case "${platforms}" in
+            *,linux/amd64,*linux/arm64,*|*,linux/arm64,*linux/amd64,*) ;;
+            *)
+              echo "oci-native-build-common requires linux/amd64 and linux/arm64 for index publication." >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Create OCI image index
+        id: oci
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
+          TAG: ${{ inputs.tag }}
+          LATEST: ${{ inputs.latest }}
+        run: |
+          set -euo pipefail
+
+          args=(
+            bun run packages/scripts/src/shared/oci.ts create-index
+            --image "${IMAGE}"
+            --tag "${TAG}"
+            --arch-tag "linux/amd64=${TAG}-amd64"
+            --arch-tag "linux/arm64=${TAG}-arm64"
+          )
+
+          if [ "${LATEST}" = "true" ]; then
+            args+=(--latest)
+          fi
+
+          nix develop -c "${args[@]}"
+
+      - name: Verify OCI image index platforms
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
+          TAG: ${{ inputs.tag }}
+        run: nix develop -c bun run packages/scripts/src/shared/oci.ts assert "${IMAGE}:${TAG}" linux/amd64 linux/arm64
