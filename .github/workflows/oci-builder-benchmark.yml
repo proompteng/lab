@@ -5,6 +5,21 @@ permissions:
   id-token: write
 
 on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+    paths:
+      - '.github/workflows/oci-builder-benchmark.yml'
+      - '.github/workflows/oci-native-build-common.yml'
+      - '.github/workflows/facteur-build-push.yaml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'services/facteur/**'
   workflow_dispatch:
     inputs:
       image_name:
@@ -35,6 +50,7 @@ concurrency:
 jobs:
   legacy-buildx-single-runner:
     name: Legacy Buildx single-runner multi-platform
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
     runs-on: arc-arm64
     steps:
       - name: Checkout
@@ -85,6 +101,7 @@ jobs:
 
   docker-buildx-native:
     name: Docker Buildx native (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
     strategy:
       fail-fast: false
       matrix:
@@ -146,6 +163,7 @@ jobs:
 
   buildctl-native:
     name: BuildKit buildctl native (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
     strategy:
       fail-fast: false
       matrix:
@@ -206,7 +224,7 @@ jobs:
 
   depot-native:
     name: Depot native benchmark
-    if: vars.DEPOT_PROJECT_ID != ''
+    if: (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')) && vars.DEPOT_PROJECT_ID != ''
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -240,7 +258,7 @@ jobs:
           build-args: ${{ steps.build-args.outputs.value }}
 
   summarize:
-    if: always()
+    if: always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark'))
     needs:
       - legacy-buildx-single-runner
       - docker-buildx-native

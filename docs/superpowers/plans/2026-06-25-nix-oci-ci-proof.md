@@ -127,7 +127,18 @@ Run:
 gh workflow run facteur-build-push.yaml -R proompteng/lab --ref codex/adopt-nix-toolchain
 ```
 
-- [ ] **Step 2: Trigger benchmark**
+- [ ] **Step 2: Trigger benchmark before merge**
+
+For a PR branch where the new benchmark workflow is not yet present on `main`, add the explicit opt-in label:
+
+```bash
+gh label create run-oci-benchmark -R proompteng/lab --color 5319e7 --description "Run OCI builder benchmark on PR" || true
+gh pr edit <pr-number> -R proompteng/lab --add-label run-oci-benchmark
+```
+
+The benchmark workflow runs on `pull_request` events only when this label is present.
+
+- [ ] **Step 3: Trigger benchmark after merge**
 
 Run:
 
@@ -140,7 +151,7 @@ gh workflow run oci-builder-benchmark.yml -R proompteng/lab --ref codex/adopt-ni
   -f build_args_json='{}'
 ```
 
-- [ ] **Step 3: Watch runs**
+- [ ] **Step 4: Watch runs**
 
 Run:
 
@@ -149,7 +160,7 @@ gh run list -R proompteng/lab --branch codex/adopt-nix-toolchain --limit 10
 gh run watch <run-id> -R proompteng/lab --exit-status
 ```
 
-- [ ] **Step 4: Extract timings**
+- [ ] **Step 5: Extract timings**
 
 Run:
 
