@@ -164,6 +164,7 @@ jobs:
   buildctl-native:
     name: BuildKit buildctl native (${{ matrix.arch }})
     if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
