@@ -42,6 +42,11 @@ on:
         description: JSON object of build args
         required: false
         default: '{}'
+      run_buildctl:
+        description: Run the experimental direct buildctl benchmark
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: oci-builder-benchmark-${{ github.run_id }}
@@ -163,7 +168,13 @@ jobs:
 
   buildctl-native:
     name: BuildKit buildctl native (${{ matrix.arch }})
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.run_buildctl) ||
+      (
+        github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark') &&
+        contains(github.event.pull_request.labels.*.name, 'run-buildctl-benchmark')
+      )
     continue-on-error: true
     strategy:
       fail-fast: false

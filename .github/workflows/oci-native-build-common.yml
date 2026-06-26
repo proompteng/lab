@@ -98,7 +98,10 @@ jobs:
           BUILD_ARGS_JSON: ${{ inputs.build_args_json }}
         run: |
           set -euo pipefail
-          json="${BUILD_ARGS_JSON:-{}}"
+          json="${BUILD_ARGS_JSON:-}"
+          if [ -z "${json}" ]; then
+            json='{}'
+          fi
           nix develop -c jq -e 'type == "object"' <<< "${json}" >/dev/null
           {
             echo 'value<<EOF'
