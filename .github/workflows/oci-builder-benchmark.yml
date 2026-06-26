@@ -199,11 +199,27 @@ jobs:
           start="$(date +%s)"
           dockerfile_dir="$(dirname "${DOCKERFILE}")"
           dockerfile_name="$(basename "${DOCKERFILE}")"
+          buildkit_socket="${RUNNER_TEMP}/buildkitd-${{ matrix.arch }}.sock"
           mapfile -t build_args < <(
             nix develop -c jq -r 'to_entries[] | "--opt=build-arg:\(.key)=\(.value)"' <<< "${BUILD_ARGS_JSON}"
           )
 
-          nix develop -c buildctl-daemonless.sh build \
+          nix develop -c buildkitd \
+            --addr "unix://${buildkit_socket}" \
+            --oci-worker=true \
+            --containerd-worker=false &
+          buildkitd_pid="$!"
+          trap 'kill "${buildkitd_pid}" >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if nix develop -c buildctl --addr "unix://${buildkit_socket}" debug workers >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          nix develop -c buildctl --addr "unix://${buildkit_socket}" debug workers >/dev/null
+
+          nix develop -c buildctl --addr "unix://${buildkit_socket}" build \
             --frontend dockerfile.v0 \
             --local "context=${CONTEXT}" \
             --local "dockerfile=${dockerfile_dir}" \

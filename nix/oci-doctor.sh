@@ -17,13 +17,12 @@ print_version() {
   printf '%-18s %s\n' "$name" "$output"
 }
 
-for cmd in buildctl buildkitd buildctl-daemonless.sh docker docker-buildx crane skopeo regctl cosign; do
+for cmd in buildctl buildkitd docker docker-buildx crane skopeo regctl cosign; do
   have "$cmd"
 done
 
 print_version buildctl buildctl --version
 print_version buildkitd buildkitd --version
-printf '%-18s %s\n' buildctl-daemonless "$(command -v buildctl-daemonless.sh)"
 print_version docker-buildx docker-buildx version
 print_version "docker buildx" docker buildx version
 print_version crane crane version

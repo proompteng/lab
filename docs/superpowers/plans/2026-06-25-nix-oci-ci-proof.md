@@ -6,7 +6,7 @@
 
 **Architecture:** Keep Nix as the pinned toolchain layer, run native per-architecture OCI builds on ARC runners, publish an OCI index with crane, and measure legacy single-runner multi-platform builds against native Buildx and direct BuildKit. Branch canaries must never mutate `latest`; only `main` may publish `latest`.
 
-**Tech Stack:** Nix flakes, GitHub Actions, Docker Buildx, BuildKit `buildctl`, crane/go-containerregistry, Bun tests, actionlint, shellcheck.
+**Tech Stack:** Nix flakes, GitHub Actions, Docker Buildx, BuildKit `buildkitd` plus `buildctl`, crane/go-containerregistry, Bun tests, actionlint, shellcheck.
 
 ---
 
@@ -51,7 +51,7 @@ Add a job named `legacy-buildx-single-runner` that runs on `arc-arm64`, uses `do
 
 - [ ] **Step 2: Keep native benchmark jobs**
 
-Keep existing native matrix jobs for Docker Buildx and direct `buildctl`.
+Keep existing native matrix jobs for Docker Buildx and direct BuildKit. The BuildKit job starts a local `buildkitd` from the Nix shell and calls `buildctl --addr` against that socket because nixpkgs packages `buildctl` and `buildkitd`, not Docker's `buildctl-daemonless.sh` helper.
 
 - [ ] **Step 3: Include legacy in summary**
 
