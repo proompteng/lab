@@ -1,3 +1,5 @@
+#!/usr/bin/env bash
+
 fail() {
   printf 'oci-doctor: %s\n' "$*" >&2
   exit 1
