@@ -62,7 +62,7 @@ jobs:
       - name: Render build args
         id: build-args
         env:
-          BUILD_ARGS_JSON: ${{ inputs.build_args_json }}
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
         run: |
           set -euo pipefail
           jq -e 'type == "object"' <<< "${BUILD_ARGS_JSON}" >/dev/null
@@ -79,14 +79,14 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:${{ inputs.tag_prefix }}-${{ github.run_id }}-legacy
+          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-legacy
           build-args: ${{ steps.build-args.outputs.value }}
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:benchmark-legacy-cache
-          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:benchmark-legacy-cache,mode=max
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-legacy-cache
+          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-legacy-cache,mode=max
 
       - name: Record benchmark result
         env:
@@ -123,7 +123,7 @@ jobs:
       - name: Render build args
         id: build-args
         env:
-          BUILD_ARGS_JSON: ${{ inputs.build_args_json }}
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
         run: |
           set -euo pipefail
           jq -e 'type == "object"' <<< "${BUILD_ARGS_JSON}" >/dev/null
@@ -140,14 +140,14 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
           platforms: ${{ matrix.platform }}
           push: true
-          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:${{ inputs.tag_prefix }}-${{ github.run_id }}-docker-${{ matrix.arch }}
+          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-docker-${{ matrix.arch }}
           build-args: ${{ steps.build-args.outputs.value }}
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:benchmark-docker-cache-${{ matrix.arch }}
-          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:benchmark-docker-cache-${{ matrix.arch }},mode=max
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-docker-cache-${{ matrix.arch }}
+          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-docker-cache-${{ matrix.arch }},mode=max
 
       - name: Record benchmark result
         env:
@@ -179,6 +179,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Install xz for Nix installer
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          elif command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y xz
+          elif ! command -v xz >/dev/null 2>&1; then
+            echo "xz is required to install Nix on this runner." >&2
+            exit 1
+          fi
+
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:
@@ -188,12 +203,12 @@ jobs:
 
       - name: Build benchmark image with buildctl
         env:
-          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
-          TAG: ${{ inputs.tag_prefix }}-${{ github.run_id }}-buildctl-${{ matrix.arch }}
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}
+          TAG: ${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-buildctl-${{ matrix.arch }}
           PLATFORM: ${{ matrix.platform }}
-          CONTEXT: ${{ inputs.context }}
-          DOCKERFILE: ${{ inputs.dockerfile }}
-          BUILD_ARGS_JSON: ${{ inputs.build_args_json }}
+          CONTEXT: ${{ inputs.context || '.' }}
+          DOCKERFILE: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
         run: |
           set -euo pipefail
           start="$(date +%s)"
@@ -252,7 +267,7 @@ jobs:
       - name: Render build args
         id: build-args
         env:
-          BUILD_ARGS_JSON: ${{ inputs.build_args_json }}
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
         run: |
           set -euo pipefail
           jq -e 'type == "object"' <<< "${BUILD_ARGS_JSON}" >/dev/null
@@ -266,11 +281,11 @@ jobs:
         uses: depot/build-push-action@v1
         with:
           project: ${{ vars.DEPOT_PROJECT_ID }}
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}:${{ inputs.tag_prefix }}-${{ github.run_id }}-depot
+          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-depot
           build-args: ${{ steps.build-args.outputs.value }}
 
   summarize:
