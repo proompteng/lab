@@ -19,15 +19,8 @@ from ..state.metric_types import AutonomyPromotionOutcomeMetrics
 
 from .shared_context import (
     TradingSchedulerGovernanceMixinContract as _TradingSchedulerGovernanceMixinContract,
-    TradingSchedulerGovernanceMixinFields as _TradingSchedulerGovernanceMixinFields,
     int_from_mapping as _int_from_mapping,
     logger,
-)
-from .governance_mixin_lifecycle_methods import (
-    TradingSchedulerGovernanceLifecycleMethods as _TradingSchedulerGovernanceLifecycleMethods,
-)
-from .governance_mixin_decision_methods import (
-    TradingSchedulerGovernanceDecisionMethods as _TradingSchedulerGovernanceDecisionMethods,
 )
 
 
@@ -37,7 +30,7 @@ else:
     _TradingSchedulerGovernanceRuntimeBase = object
 
 
-class _TradingSchedulerGovernanceRuntimeMethods(
+class TradingSchedulerGovernanceRuntimeMethods(
     _TradingSchedulerGovernanceRuntimeBase,
 ):
     def _apply_autonomy_lane_result(
@@ -491,13 +484,4 @@ class _TradingSchedulerGovernanceRuntimeMethods(
         self.state.metrics.autonomy_last_stress_metrics_count = stress_metrics_count
 
 
-class TradingSchedulerGovernanceMixin(
-    _TradingSchedulerGovernanceMixinFields,
-    _TradingSchedulerGovernanceLifecycleMethods,
-    _TradingSchedulerGovernanceDecisionMethods,
-    _TradingSchedulerGovernanceRuntimeMethods,
-):
-    pass
-
-
-__all__ = ("TradingSchedulerGovernanceMixin",)
+__all__ = ("TradingSchedulerGovernanceRuntimeMethods",)

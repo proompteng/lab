@@ -39,9 +39,6 @@ from .shared import (
     TradingSubmissionRequest,
     logger,
 )
-from .quote_sizing import SimplePipelineSubmissionQuoteSizingMixin
-from .quote_routeability import SimplePipelineSubmissionQuoteRouteabilityMixin
-
 
 _LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS = frozenset(
     {
@@ -786,11 +783,3 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if consumed <= 0:
             return
         account["buying_power"] = str(max(buying_power - consumed, Decimal("0")))
-
-
-class SimplePipelineSubmissionPreparationMixin(
-    SimplePipelineSubmissionQuoteSizingMixin,
-    SimplePipelineSubmissionQuoteRouteabilityMixin,
-    SimplePipelineDirectSubmissionMixin,
-):
-    pass
