@@ -13,6 +13,7 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - Creating AgentRuns safely (prompt precedence): `agentrun-creation-guide.md`
 - Agents control-plane UI and schema-form rollout proof: `control-plane-ui.md`
 - Connecting Codex to Agents through MCP: `codex-mcp-agents.md`
+- Connecting ChatGPT to a private dev-shell through OpenAI Secure MCP Tunnel: `chatgpt-dev-shell-mcp.md`
 - Launching workflow loops correctly (state reuse + checks): `agentrun-workflow-loop-launch-guide.md`
 - Running Codex Spark review/fix PR cycles: `codex-spark-review-cycle.md`
 - How to validate changes in CI: `ci-validation-plan.md`

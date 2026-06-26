@@ -271,7 +271,34 @@ imagePolicy:
 ```
 
 `imagePolicy.requireDigest=true` rejects mutable chart-managed images at render time. It covers the control plane,
-runner image defaults, Argo CD hooks, Helm tests, and non-canonical runtime image env aliases.
+runner image defaults, the dev-shell MCP deployment, Argo CD hooks, Helm tests, and non-canonical runtime image env
+aliases.
+
+### Dev-Shell MCP Tunnel
+
+Set `devShell.enabled=true` to run a private ChatGPT-facing shell MCP server in the release namespace. The deployment
+uses a dedicated ServiceAccount, does not mount its service account token by default, runs the MCP server on
+`127.0.0.1:8090`, and forwards the configured OpenAI tunnel through a `tunnel-client` sidecar.
+
+```yaml
+devShell:
+  enabled: true
+  image:
+    repository: registry.example.com/platform/agents-dev-shell
+    tag: 2026-06-25
+    digest: sha256:...
+  tunnel:
+    id: tunnel_6a3e0c93576481919403b1ae9edeafd0
+    secretName: openai-tunnel-client
+    secretKey: api-key
+  externalSecret:
+    enabled: true
+    remoteRef:
+      key: openai-tunnel-client/agents-control-plane-api-key
+```
+
+When `externalSecret.enabled=false`, create `devShell.tunnel.secretName` out of band. The Secret must contain the
+OpenAI tunnel `CONTROL_PLANE_API_KEY` at `devShell.tunnel.secretKey`.
 
 ### Database
 
@@ -534,6 +561,7 @@ Frequent render failures:
 | `image.repository`, `image.tag`, `image.digest`                      | Default Agents image used by the control-plane and controllers.           |
 | `controlPlane.image.*`, `controllers.image.*`                        | Optional per-deployment overrides when those images differ.               |
 | `runner.image.repository`, `runner.image.tag`, `runner.image.digest` | Global fallback image for AgentRun Jobs.                                  |
+| `devShell.*`                                                         | Optional private shell MCP server forwarded through OpenAI Secure Tunnel. |
 | `imagePolicy.requireDigest`                                          | Require immutable image digests for chart-managed images.                 |
 | `database.secretRef.*`                                               | Existing database URL Secret.                                             |
 | `database.caSecret.*`                                                | Optional Postgres CA certificate Secret.                                  |

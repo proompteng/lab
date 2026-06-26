@@ -79,6 +79,73 @@ runner:
     pullPolicy: IfNotPresent
     pullSecrets: []
 
+devShell:
+  enabled: false
+  name: agents-dev-shell
+  replicaCount: 1
+  image:
+    repository: ghcr.io/proompteng/agents-dev-shell
+    tag: latest
+    digest: ''
+    pullPolicy: IfNotPresent
+    pullSecrets: []
+  tunnel:
+    id: tunnel_6a3e0c93576481919403b1ae9edeafd0
+    secretName: openai-tunnel-client
+    secretKey: api-key
+    mcpServerUrl: http://127.0.0.1:8090/mcp
+    channel: main
+  externalSecret:
+    enabled: false
+    refreshPolicy: CreatedOnce
+    refreshInterval: 0s
+    secretStoreRef:
+      kind: ClusterSecretStore
+      name: onepassword-infra
+    remoteRef:
+      key: openai-tunnel-client/agents-control-plane-api-key
+  serviceAccount:
+    create: true
+    name: ''
+    annotations: {}
+  workspace:
+    medium: ''
+    sizeLimit: ''
+  mcp:
+    port: 8090
+    host: 127.0.0.1
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        memory: 2Gi
+  tunnelClient:
+    healthPort: 8081
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        memory: 256Mi
+  podAnnotations: {}
+  podLabels: {}
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+    seccompProfile:
+      type: RuntimeDefault
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  nodeSelector: {}
+  affinity: {}
+  tolerations: []
+
 serviceAccount:
   create: true
   name: ''

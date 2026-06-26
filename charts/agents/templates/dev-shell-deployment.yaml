@@ -1,0 +1,177 @@
+{{- if .Values.devShell.enabled -}}
+{{- $image := .Values.devShell.image -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agents.devShellName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: dev-shell
+spec:
+  replicas: {{ .Values.devShell.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "agents.devShellSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.devShellSelectorLabels" . | nindent 8 }}
+        {{- with .Values.devShell.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.devShell.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "agents.devShellServiceAccountName" . }}
+      automountServiceAccountToken: false
+      {{- if $image.pullSecrets }}
+      imagePullSecrets:
+        {{- range $image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if hasKey .Values.devShell "nodeSelector" }}
+      nodeSelector:
+        {{- if .Values.devShell.nodeSelector }}
+        {{- toYaml .Values.devShell.nodeSelector | nindent 8 }}
+        {{- else }}
+        {}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.devShell.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.devShell.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.devShell.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 30
+      volumes:
+        - name: workspace
+          {{- if or .Values.devShell.workspace.medium .Values.devShell.workspace.sizeLimit }}
+          emptyDir:
+            {{- if .Values.devShell.workspace.medium }}
+            medium: {{ .Values.devShell.workspace.medium | quote }}
+            {{- end }}
+            {{- if .Values.devShell.workspace.sizeLimit }}
+            sizeLimit: {{ .Values.devShell.workspace.sizeLimit | quote }}
+            {{- end }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: openai-tunnel
+          secret:
+            secretName: {{ .Values.devShell.tunnel.secretName }}
+      containers:
+        - name: mcp-shell
+          image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- with .Values.devShell.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - bun
+            - run
+            - src/server/dev-shell-mcp.ts
+          env:
+            - name: AGENTS_DEV_SHELL_MCP_HOST
+              value: {{ .Values.devShell.mcp.host | quote }}
+            - name: AGENTS_DEV_SHELL_MCP_PORT
+              value: {{ .Values.devShell.mcp.port | quote }}
+            - name: AGENTS_DEV_SHELL_WORKSPACE_ROOT
+              value: /workspace
+            - name: AGENTS_DEV_SHELL_AUDIT_LOG_PATH
+              value: /workspace/.agents-dev-shell/audit.jsonl
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.devShell.mcp.port }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -lc
+                - curl -fsS http://127.0.0.1:${AGENTS_DEV_SHELL_MCP_PORT}/readyz >/dev/null
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -lc
+                - curl -fsS http://127.0.0.1:${AGENTS_DEV_SHELL_MCP_PORT}/healthz >/dev/null
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.devShell.mcp.resources | nindent 12 }}
+        - name: tunnel-client
+          image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- with .Values.devShell.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          command:
+            - /bin/bash
+            - -lc
+          args:
+            - >-
+              exec tunnel-client run
+              --control-plane.tunnel-id "${CONTROL_PLANE_TUNNEL_ID}"
+              --control-plane.api-key "file:/var/run/secrets/openai-tunnel/${CONTROL_PLANE_API_KEY_FILE}"
+              --mcp.server-url "url=${MCP_SERVER_URL},channel=${MCP_CHANNEL}"
+              --health.listen-addr "0.0.0.0:${HEALTH_PORT}"
+              --log.format json
+          env:
+            - name: CONTROL_PLANE_TUNNEL_ID
+              value: {{ .Values.devShell.tunnel.id | quote }}
+            - name: CONTROL_PLANE_API_KEY_FILE
+              value: {{ .Values.devShell.tunnel.secretKey | quote }}
+            - name: MCP_SERVER_URL
+              value: {{ .Values.devShell.tunnel.mcpServerUrl | quote }}
+            - name: MCP_CHANNEL
+              value: {{ .Values.devShell.tunnel.channel | quote }}
+            - name: HEALTH_PORT
+              value: {{ .Values.devShell.tunnelClient.healthPort | quote }}
+          ports:
+            - name: tunnel-health
+              containerPort: {{ .Values.devShell.tunnelClient.healthPort }}
+          volumeMounts:
+            - name: openai-tunnel
+              mountPath: /var/run/secrets/openai-tunnel
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: tunnel-health
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: tunnel-health
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.devShell.tunnelClient.resources | nindent 12 }}
+{{- end }}

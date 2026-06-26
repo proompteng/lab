@@ -9,6 +9,7 @@ const sha = 'a'.repeat(40)
 const controllerDigest = `sha256:${'1'.repeat(64)}`
 const controlPlaneDigest = `sha256:${'2'.repeat(64)}`
 const runnerDigest = `sha256:${'3'.repeat(64)}`
+const devShellDigest = `sha256:${'4'.repeat(64)}`
 
 describe('agents update-values helper', () => {
   it('writes promoted controller, control-plane, and runner multi-arch digests', () => {
@@ -31,6 +32,11 @@ runner:
     repository: old/runner
     tag: old
     digest: sha256:old-runner
+devShell:
+  image:
+    repository: old/dev-shell
+    tag: old
+    digest: sha256:old-dev-shell
 controllers:
   image:
     repository: old/controller
@@ -46,6 +52,8 @@ controllers:
         controllerDigest,
         controlPlaneRepository: 'registry.example/lab/agents-control-plane',
         controlPlaneDigest,
+        devShellRepository: 'registry.example/lab/agents-dev-shell',
+        devShellDigest,
         runnerRepository: 'registry.example/lab/agents-codex-runner',
         runnerDigest,
         sourceSha: sha,
@@ -57,10 +65,12 @@ controllers:
       expect(updated).toContain('repository: registry.example/lab/agents-controller')
       expect(updated).toContain('repository: registry.example/lab/agents-control-plane')
       expect(updated).toContain('repository: registry.example/lab/agents-codex-runner')
+      expect(updated).toContain('repository: registry.example/lab/agents-dev-shell')
       expect(updated).toContain('tag: abc12345')
       expect(updated).toContain(`digest: ${controllerDigest}`)
       expect(updated).toContain(`digest: ${controlPlaneDigest}`)
       expect(updated).toContain(`digest: ${runnerDigest}`)
+      expect(updated).toContain(`digest: ${devShellDigest}`)
       expect(updated).toContain(`AGENTS_SOURCE_HEAD_SHA: ${sha}`)
       expect(updated).toContain('AGENTS_SOURCE_CI_RUN_ID: "123456"')
     } finally {
@@ -78,6 +88,8 @@ controllers:
         controllerDigest: 'sha256:not-valid',
         controlPlaneRepository: 'registry.example/lab/agents-control-plane',
         controlPlaneDigest,
+        devShellRepository: 'registry.example/lab/agents-dev-shell',
+        devShellDigest,
         runnerRepository: 'registry.example/lab/agents-codex-runner',
         runnerDigest,
         sourceSha: sha,

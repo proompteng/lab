@@ -27,6 +27,7 @@ describe('agents deploy-service helpers', () => {
         registry: 'registry.example',
         repository: 'lab/agents-controller',
         controlPlaneRepository: 'lab/agents-control-plane',
+        devShellRepository: 'lab/agents-dev-shell',
         tag: 'abc1234',
         platforms: ['linux/arm64'],
       }),
@@ -43,6 +44,13 @@ describe('agents deploy-service helpers', () => {
         repository: 'lab/agents-control-plane',
         tag: 'abc1234',
         target: 'control-plane',
+        platforms: ['linux/arm64'],
+      },
+      {
+        registry: 'registry.example',
+        repository: 'lab/agents-dev-shell',
+        tag: 'abc1234',
+        target: 'dev-shell',
         platforms: ['linux/arm64'],
       },
     ])
@@ -160,6 +168,11 @@ runner:
     repository: old/runner
     tag: old
     digest: sha256:old-runner
+devShell:
+  image:
+    repository: old/dev-shell
+    tag: old
+    digest: sha256:old-dev-shell
 `,
     )
 
@@ -183,6 +196,11 @@ runner:
         servingBuildCommit: 'abcdef1234567890',
         servingImageDigest: 'sha256:control-plane',
       },
+      {
+        repository: 'registry.example/lab/agents-dev-shell',
+        tag: 'abc123',
+        digest: 'sha256:dev-shell',
+      },
     )
 
     const updated = readFileSync(valuesPath, 'utf8')
@@ -190,8 +208,10 @@ runner:
     expect(updated).not.toContain('old/controllers-override')
     expect(updated).toContain('repository: registry.example/lab/agents-control-plane')
     expect(updated).toContain('repository: registry.example/lab/agents-codex-runner')
+    expect(updated).toContain('repository: registry.example/lab/agents-dev-shell')
     expect(updated).toContain('digest: sha256:controller')
     expect(updated).toContain('digest: sha256:runner')
+    expect(updated).toContain('digest: sha256:dev-shell')
     expect(updated).toContain('AGENTS_SOURCE_HEAD_SHA: abcdef1234567890')
     expect(updated).toContain('AGENTS_SOURCE_CI_RUN_ID: "12345"')
     expect(updated).toContain('AGENTS_SERVING_IMAGE_DIGEST: sha256:control-plane')

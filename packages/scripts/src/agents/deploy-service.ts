@@ -23,6 +23,7 @@ type Options = {
   registry: string
   repository: string
   controlPlaneRepository: string
+  devShellRepository: string
   runnerRepository: string
   runnerDockerfile: string
   codexAuthPath?: string
@@ -55,9 +56,13 @@ type DatabaseSecretRequirement = {
 
 const CONTROLLER_DOCKER_TARGET = 'controller'
 const CONTROL_PLANE_DOCKER_TARGET = 'control-plane'
+const DEV_SHELL_DOCKER_TARGET = 'dev-shell'
 
 const buildAgentsServiceImagePlans = (
-  options: Pick<Options, 'registry' | 'repository' | 'controlPlaneRepository' | 'tag' | 'platforms'>,
+  options: Pick<
+    Options,
+    'registry' | 'repository' | 'controlPlaneRepository' | 'devShellRepository' | 'tag' | 'platforms'
+  >,
 ): BuildImageOptions[] => [
   {
     registry: options.registry,
@@ -71,6 +76,13 @@ const buildAgentsServiceImagePlans = (
     repository: options.controlPlaneRepository,
     tag: options.tag,
     target: CONTROL_PLANE_DOCKER_TARGET,
+    platforms: options.platforms,
+  },
+  {
+    registry: options.registry,
+    repository: options.devShellRepository,
+    tag: options.tag,
+    target: DEV_SHELL_DOCKER_TARGET,
     platforms: options.platforms,
   },
 ]
@@ -154,6 +166,15 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       options.controlPlaneRepository = arg.slice('--control-plane-repository='.length)
       continue
     }
+    if (arg === '--dev-shell-repository') {
+      options.devShellRepository = argv[i + 1]
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--dev-shell-repository=')) {
+      options.devShellRepository = arg.slice('--dev-shell-repository='.length)
+      continue
+    }
     if (arg === '--runner-repository') {
       options.runnerRepository = argv[i + 1]
       i += 1
@@ -211,6 +232,8 @@ const resolveOptions = (): Options => {
     'lab/agents-controller'
   const controlPlaneRepository =
     args.controlPlaneRepository ?? process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ?? 'lab/agents-control-plane'
+  const devShellRepository =
+    args.devShellRepository ?? process.env.AGENTS_DEV_SHELL_IMAGE_REPOSITORY ?? 'lab/agents-dev-shell'
   const runnerRepository =
     args.runnerRepository ??
     process.env.AGENTS_RUNNER_IMAGE_REPOSITORY ??
@@ -234,6 +257,7 @@ const resolveOptions = (): Options => {
     registry,
     repository,
     controlPlaneRepository,
+    devShellRepository,
     runnerRepository,
     runnerDockerfile: resolve(repoRoot, runnerDockerfile),
     codexAuthPath,
@@ -380,6 +404,7 @@ const updateValuesFile = (
   runnerTag: string,
   runnerDigest: string,
   releaseMetadata?: ReleaseMetadata,
+  devShellImage?: ImagePin | null,
 ) => {
   const raw = readFileSync(valuesPath, 'utf8')
   const doc = YAML.parse(raw) ?? {}
@@ -407,6 +432,14 @@ const updateValuesFile = (
   doc.runner.image.tag = runnerTag
   doc.runner.image.digest = runnerDigest
 
+  if (devShellImage) {
+    doc.devShell ??= {}
+    doc.devShell.image ??= {}
+    doc.devShell.image.repository = devShellImage.repository
+    doc.devShell.image.tag = devShellImage.tag
+    doc.devShell.image.digest = devShellImage.digest
+  }
+
   if (releaseMetadata) {
     doc.controlPlane.env ??= {}
     doc.controlPlane.env.vars ??= {}
@@ -422,7 +455,7 @@ const updateValuesFile = (
 
   writeFileSync(valuesPath, YAML.stringify(doc, { lineWidth: 120 }))
   console.log(
-    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}, ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}, and ${runnerImageRepository}:${runnerTag}@${runnerDigest}`,
+    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}, ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}, ${runnerImageRepository}:${runnerTag}@${runnerDigest}${devShellImage ? `, and ${devShellImage.repository}:${devShellImage.tag}@${devShellImage.digest}` : ''}`,
   )
 }
 
@@ -535,6 +568,8 @@ const main = async () => {
   const image = `${imageName}:${options.tag}`
   const controlPlaneImageName = `${options.registry}/${options.controlPlaneRepository}`
   const controlPlaneImage = `${controlPlaneImageName}:${options.tag}`
+  const devShellImageName = `${options.registry}/${options.devShellRepository}`
+  const devShellImage = `${devShellImageName}:${options.tag}`
   const runnerImageName = `${options.registry}/${options.runnerRepository}`
   const runnerImage = `${runnerImageName}:${options.tag}`
 
@@ -564,6 +599,8 @@ const main = async () => {
   const controlPlaneDigest = controlPlaneRepoDigest.includes('@')
     ? controlPlaneRepoDigest.split('@')[1]
     : controlPlaneRepoDigest
+  const devShellRepoDigest = inspectImageDigest(devShellImage)
+  const devShellDigest = devShellRepoDigest.includes('@') ? devShellRepoDigest.split('@')[1] : devShellRepoDigest
   const runnerRepoDigest = options.buildRunner ? inspectImageDigest(runnerImage) : runnerPin?.digest
   const runnerDigest =
     (runnerRepoDigest?.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest) ??
@@ -588,6 +625,11 @@ const main = async () => {
       manifestImageDigest: controlPlaneDigest,
       servingBuildCommit: execGit(['rev-parse', 'HEAD']),
       servingImageDigest: controlPlaneDigest,
+    },
+    {
+      repository: devShellImageName,
+      tag: options.tag,
+      digest: devShellDigest,
     },
   )
 

@@ -112,6 +112,26 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 {{- end -}}
 
+{{- define "agents.devShellName" -}}
+{{- .Values.devShell.name | default (printf "%s-dev-shell" (include "agents.name" .)) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "agents.devShellSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "agents.devShellName" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: dev-shell
+{{- end -}}
+
+{{- define "agents.devShellServiceAccountName" -}}
+{{- if .Values.devShell.serviceAccount.name -}}
+{{- .Values.devShell.serviceAccount.name -}}
+{{- else if .Values.devShell.serviceAccount.create -}}
+{{- include "agents.devShellName" . -}}
+{{- else -}}
+default
+{{- end -}}
+{{- end -}}
+
 {{- define "agents.databaseSecretName" -}}
 {{- if .Values.database.createSecret.enabled -}}
 {{- if .Values.database.createSecret.name -}}

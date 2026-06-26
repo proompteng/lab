@@ -23,6 +23,8 @@
 {{- $controlPlaneEnvVars := merge (deepCopy $globalEnvVars) (deepCopy $controlPlaneExplicitEnvVars) -}}
 {{- $controllersEnvVars := merge (deepCopy $globalEnvVars) (deepCopy $controllersExplicitEnvVars) -}}
 {{- $controllersEnabled := .Values.controllers.enabled | default false -}}
+{{- $devShell := .Values.devShell | default dict -}}
+{{- $devShellEnabled := $devShell.enabled | default false -}}
 {{- $envFromSecretRefs := .Values.envFromSecretRefs | default (list) -}}
 {{- $envFromConfigMapRefs := .Values.envFromConfigMapRefs | default (list) -}}
 {{- $reservedEnvKeysEnforced := .Values.validation.reservedEnvKeysEnforced | default false -}}
@@ -130,6 +132,12 @@
 {{- else if $runnerImage.repository -}}
 {{- if not (regexMatch $sha256DigestPattern (toString ($runnerImage.digest | default ""))) -}}
 {{- $errors = append $errors "imagePolicy.requireDigest=true requires runner.image.digest to be a sha256 digest when runner.image.repository is used for Deployment/agents." -}}
+{{- end -}}
+{{- end -}}
+{{- if $devShellEnabled -}}
+{{- $devShellImage := $devShell.image | default dict -}}
+{{- if not (regexMatch $sha256DigestPattern (toString ($devShellImage.digest | default ""))) -}}
+{{- $errors = append $errors "imagePolicy.requireDigest=true requires devShell.image.digest to be a sha256 digest when devShell.enabled=true." -}}
 {{- end -}}
 {{- end -}}
 {{- if $controllersEnabled -}}

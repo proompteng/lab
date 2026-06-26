@@ -34,6 +34,16 @@ runner:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
     tag: d26e313e
     digest: sha256:cbca5f4a2f8dd453b7dd1e36b28028661b23094b7624bb7b939f969a43df777c
+devShell:
+  enabled: true
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-dev-shell
+    tag: 6eed493f
+    digest: sha256:e6adc87f1d7c2210a841a7baf974cd2cfe0ed10bdea755cad2719a8e25a9d581
+  externalSecret:
+    enabled: true
+    remoteRef:
+      key: openai-tunnel-client/agents-control-plane-api-key
 agentRuntime:
   native:
     rerunOrchestration: codex-rerun

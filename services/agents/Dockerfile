@@ -9,6 +9,7 @@ ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE24_VERSION=24.11.1
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
+ARG TUNNEL_CLIENT_VERSION=v0.0.9--context-conduit-topaz
 
 FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
 ARG BUILDARCH
@@ -23,6 +24,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
+  bash \
   build-essential \
   ca-certificates \
   curl \
@@ -68,6 +70,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
+  bash \
   build-essential \
   ca-certificates \
   curl \
@@ -134,6 +137,27 @@ RUN set -eux; \
   install -o root -g root -m 0755 "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}/nats" /usr/local/bin/nats; \
   rm -rf "${NATS_ARCHIVE}" "/tmp/nats-${NATS_VERSION}-linux-${NATS_ARCH}"; \
   nats --version
+
+FROM agents-tools AS tunnel-client
+ARG TUNNEL_CLIENT_VERSION
+WORKDIR /tmp/tunnel-client
+
+RUN set -eux; \
+  ARCH="${TARGETARCH:-$(uname -m)}"; \
+  case "$ARCH" in \
+  amd64|x86_64) TUNNEL_ARCH=amd64 ;; \
+  arm64|aarch64) TUNNEL_ARCH=arm64 ;; \
+  *) echo "Unsupported arch for tunnel-client: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  ASSET="tunnel-client-${TUNNEL_CLIENT_VERSION}-linux-${TUNNEL_ARCH}.zip"; \
+  BASE_URL="https://github.com/openai/tunnel-client/releases/download/${TUNNEL_CLIENT_VERSION}"; \
+  curl -fsSLO "${BASE_URL}/${ASSET}"; \
+  curl -fsSLO "${BASE_URL}/SHA256SUMS.txt"; \
+  grep " ${ASSET}$" SHA256SUMS.txt | sha256sum -c -; \
+  unzip -q "${ASSET}"; \
+  install -o root -g root -m 0755 tunnel-client /usr/local/bin/tunnel-client; \
+  rm -rf /tmp/tunnel-client; \
+  tunnel-client --version
 
 FROM agents-build-tools AS agents-workspace-deps
 WORKDIR /app
@@ -295,3 +319,31 @@ ENV AGENTS_VERSION=${AGENTS_VERSION} \
   AGENTS_COMMIT=${AGENTS_COMMIT}
 
 CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
+
+FROM agents-tools AS dev-shell
+ARG AGENTS_VERSION=""
+ARG AGENTS_COMMIT=""
+
+COPY --from=tunnel-client /usr/local/bin/tunnel-client /usr/local/bin/tunnel-client
+
+WORKDIR /app/services/agents
+COPY --from=agents-build /app/services/agents/package.json ./package.json
+COPY --from=agents-build /app/services/agents/src ./src
+RUN mkdir -p /workspace/.agents-dev-shell \
+  && tunnel-client --version \
+  && python3 --version \
+  && git --version \
+  && kubectl version --client=true
+
+ENV NODE_ENV=production \
+  AGENTS_SERVER_PROFILE=agents-dev-shell \
+  AGENTS_DEV_SHELL_WORKSPACE_ROOT=/workspace \
+  AGENTS_DEV_SHELL_MCP_HOST=127.0.0.1 \
+  AGENTS_DEV_SHELL_MCP_PORT=8090 \
+  AGENTS_DEV_SHELL_AUDIT_LOG_PATH=/workspace/.agents-dev-shell/audit.jsonl
+ENV AGENTS_VERSION=${AGENTS_VERSION} \
+  AGENTS_COMMIT=${AGENTS_COMMIT}
+
+EXPOSE 8090
+
+CMD ["bun", "run", "src/server/dev-shell-mcp.ts"]
