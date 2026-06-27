@@ -74,7 +74,7 @@ args:
   - --gpu-memory-utilization
   - "0.95"
   - --kv-cache-dtype
-  - nvfp4
+  - fp8
   - --max-num-seqs
   - "16"
   - --max-num-batched-tokens

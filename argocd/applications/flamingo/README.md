@@ -27,7 +27,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --dtype bfloat16
 --max-model-len 262144
 --gpu-memory-utilization 0.95
---kv-cache-dtype nvfp4
+--kv-cache-dtype fp8
 --max-num-seqs 16
 --max-num-batched-tokens 16384
 --enable-prefix-caching
@@ -47,6 +47,11 @@ NUMA auto-binding is intentionally disabled. Live rollout proved that vLLM
 `NUMA binding was requested, but vLLM could not detect the GPU-to-NUMA topology
 automatically`. Test NUMA only with explicit `--numa-bind-nodes` values after a
 separate topology readback.
+
+The model weights are NVFP4, but the KV cache uses FP8. Live rollout proved that
+`--kv-cache-dtype nvfp4` fails on this Blackwell Max-Q card with
+`requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
+combination changes and is proven in a separate smoke.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
@@ -200,10 +205,9 @@ bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-nvfp4` | `262144` | `0.95` | `16` | `16384` | Initial production candidate |
+| `context-262k-fp8` | `262144` | `0.95` | `16` | `16384` | Initial production candidate |
 | `context-262k-lowseq` | `262144` | `0.95` | `8` | `8192` | Startup fallback if the initial candidate OOMs |
-| `kv-262k-fp8` | `262144` | `0.95` | `16` | `16384` | Compare only after NVFP4 smokes pass |
-| `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 |
+| `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 smokes pass |
 | `batch-262k-32k` | `262144` | `0.95` | `16` | `32768` | Promote only if TTFT and preemption stay acceptable |
 | `mem-262k-097` | `262144` | `0.97` | `16` | `16384` | Promote only if no OOM or sustained preemption |
 
@@ -218,7 +222,7 @@ KV-cache candidates must be checked against the pinned vLLM image before use:
 
 ```text
 --kv-cache-dtype fp8
---kv-cache-dtype nvfp4
+--kv-cache-dtype auto
 ```
 
 Do not combine MTP, KV-cache dtype, batching, and memory changes after the
