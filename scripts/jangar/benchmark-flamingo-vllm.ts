@@ -923,8 +923,10 @@ async function main(): Promise<void> {
   }
 }
 
-// Guard: do not run `main()` when this file is imported by bun test.
-if (import.meta.main && process.argv[1]?.includes('benchmark-flamingo-vllm')) {
+// Guard: do not run `main()` when this file is imported by bun test
+// or any other module loader. Only execute when this file is the entrypoint.
+const _script = process.argv[1] ?? ''
+if (_script.endsWith('benchmark-flamingo-vllm.ts') && !_script.endsWith('.test.ts')) {
   void main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.stack : error)
     process.exitCode = 1
