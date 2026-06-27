@@ -82,8 +82,78 @@ Local doctor:
 
 ```bash
 nix run .#cache-doctor
-ATTIC_CACHE_URL=http://attic.attic.svc.cluster.local/lab nix run .#cache-doctor
+ATTIC_CACHE_ENDPOINT=https://attic.ide-newton.ts.net nix run .#cache-doctor
+# Run this variant only from ARC or another cluster-capable shell.
+ATTIC_CACHE_ENDPOINT=http://attic.attic.svc.cluster.local nix run .#cache-doctor
 ```
+
+## Bootstrap Cache
+
+Bootstrap is an operator action after the service is healthy. The bootstrap
+token is short-lived and must stay in the operator shell only.
+
+Create the bootstrap token:
+
+```bash
+BOOTSTRAP_TOKEN="$(kubectl -n attic exec deploy/attic -- \
+  atticadm make-token \
+    --sub bootstrap \
+    --validity '2 hours' \
+    --pull lab \
+    --push lab \
+    --create-cache lab \
+    --configure-cache lab)"
+```
+
+Create and publish the cache from the route available to the operator shell:
+
+```bash
+ATTIC_BOOTSTRAP_ENDPOINT=http://attic.attic.svc.cluster.local
+# Use this endpoint instead when operating from a developer host:
+# ATTIC_BOOTSTRAP_ENDPOINT=https://attic.ide-newton.ts.net
+
+attic login lab-bootstrap "$ATTIC_BOOTSTRAP_ENDPOINT" "$BOOTSTRAP_TOKEN"
+attic cache create lab || true
+attic cache configure lab --public
+attic cache info lab
+```
+
+Capture the public key from `attic cache info lab` and store it as a GitHub
+Actions variable:
+
+```bash
+gh variable set ATTIC_PUBLIC_KEY -R proompteng/lab --body '<public-key>'
+```
+
+Do not create `ATTIC_TOKEN` during bootstrap. Push credentials are added only in
+the main-only push phase.
+
+After bootstrap, prove public pull:
+
+```bash
+kubectl -n attic run attic-cache-smoke \
+  --rm -i \
+  --restart=Never \
+  --image=curlimages/curl \
+  -- curl -fsSL http://attic.attic.svc.cluster.local/lab/nix-cache-info
+
+curl -fsSL https://attic.ide-newton.ts.net/lab/nix-cache-info
+```
+
+Prove Nix can build the repo-local smoke derivation with the cache configured:
+
+```bash
+# ARC or another cluster-capable shell:
+NIX_CONFIG=$'extra-substituters = http://attic.attic.svc.cluster.local/lab\nextra-trusted-public-keys = <ATTIC_PUBLIC_KEY>' \
+  nix build .#cacheSmoke --print-build-logs
+
+# Developer host:
+NIX_CONFIG=$'extra-substituters = https://attic.ide-newton.ts.net/lab\nextra-trusted-public-keys = <ATTIC_PUBLIC_KEY>' \
+  nix build .#cacheSmoke --print-build-logs
+```
+
+`.#cacheSmoke` includes repo-local input and flake revision metadata so the
+proof path is not expected to exist in `cache.nixos.org`.
 
 ## Client Configuration
 
