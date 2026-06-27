@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-06-27T21:20:54Z
+    deploy.knative.dev/rollout: 2026-06-27T22:29:42Z
 spec:
   replicas: 1
   strategy:
@@ -57,9 +57,9 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: b721346940c339bd6bd0175d8480506287697ccf
+              value: fd5460d723554752871b00a72c4728e78430bbe9
             - name: JANGAR_GITOPS_REVISION
-              value: b721346940c339bd6bd0175d8480506287697ccf
+              value: fd5460d723554752871b00a72c4728e78430bbe9
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -359,15 +359,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT
               value: "50"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "28301882695"
+              value: "28303702013"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:65b01050415b6889e087dabaab1eb0943c4602da57756883e38babe4364c710a
+              value: sha256:d1481af42f013bec74a1ffce9b6caaad62c09a4acfc2b7311218efb9859f1008
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: b721346940c339bd6bd0175d8480506287697ccf
+              value: fd5460d723554752871b00a72c4728e78430bbe9
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:65b01050415b6889e087dabaab1eb0943c4602da57756883e38babe4364c710a
+              value: sha256:d1481af42f013bec74a1ffce9b6caaad62c09a4acfc2b7311218efb9859f1008
           ports:
             - name: http
               containerPort: 8080
