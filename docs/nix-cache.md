@@ -34,10 +34,11 @@ The API deployment runs database migrations in an init container, then starts
 
 ## Secret Inputs
 
-Create the 1Password item in the `infra` vault before rollout:
+Create this 1Password item and field in the `infra` vault before rollout:
 
 ```text
-attic-cache/token-rs256-secret-base64
+item: attic-cache
+field: token-rs256-secret-base64
 ```
 
 Generate the value with:
