@@ -178,7 +178,7 @@ additionalResources:
         app.kubernetes.io/component: controller
         app.kubernetes.io/part-of: data-platform
     spec:
-      maxUnavailable: 0
+      maxUnavailable: 1
       selector:
         matchLabels:
           app.kubernetes.io/name: altinity-clickhouse-operator
