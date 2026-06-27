@@ -4,7 +4,7 @@ metadata:
   name: coder-cluster
   namespace: coder
 spec:
-  instances: 1
+  instances: 2
   inheritedMetadata:
     annotations:
       reflector.v1.k8s.emberstack.com/reflection-allowed: "true"

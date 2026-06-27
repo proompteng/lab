@@ -28,6 +28,9 @@ distributor:
 
 ingester:
   replicas: 2
+  podDisruptionBudget:
+    enabled: true
+  maxUnavailable: 1
   persistence:
     enabled: false
   extraArgs:
