@@ -1,9 +1,8 @@
-# KubeVirt VM passthrough mode:
-# - Talos does not support GPU Operator installing host drivers/toolkit.
-# - NVIDIA's KubeVirt sandbox device plugin image is amd64-only, but our GPU node (`altra`) is arm64.
-# - KubeVirt's built-in device-plugin advertises passthrough resources
-#   (externalResourceProvider=false in the KubeVirt CR).
-# Do not run GPU Operator VFIO rebinding while a VM owns the passthrough GPU.
+# Talos owns host NVIDIA drivers and the container toolkit through system
+# extensions. This chart provides GPU Operator CRDs/components, while
+# repo-owned node-specific device-plugin DaemonSets advertise GPUs:
+# - `turin-nvidia-device-plugin`: Blackwell on `turin`, time-sliced for shared use.
+# - `altra-nvidia-device-plugin`: RTX 3090 on `talos-192-168-1-85`, exclusive.
 sandboxWorkloads:
   enabled: true
 
@@ -18,7 +17,8 @@ driver:
 toolkit:
   enabled: false
 
-# No container workloads use the GPU on the host.
+# Use repo-owned DaemonSets instead of the chart-wide device plugin so each GPU
+# node can keep different sharing policy.
 devicePlugin:
   enabled: false
 

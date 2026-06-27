@@ -36,12 +36,4 @@ patches:
         configuration:
           developerConfiguration:
             featureGates:
-              - GPU
               - MultiArchitecture
-          permittedHostDevices:
-            pciHostDevices:
-              - pciVendorSelector: "10DE:2204"
-                resourceName: "nvidia.com/GA102_GEFORCE_RTX_3090"
-                # On ARM Talos nodes, NVIDIA's KubeVirt sandbox device plugin isn't available.
-                # KubeVirt's built-in device-plugin exposes this resource instead.
-                externalResourceProvider: false

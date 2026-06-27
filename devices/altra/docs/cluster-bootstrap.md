@@ -76,9 +76,10 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   -f devices/altra/controlplane.yaml \
   --config-patch @devices/altra/manifests/hostname.patch.yaml \
   --config-patch @devices/altra/manifests/install-nvme0n1.patch.yaml \
+  --config-patch @devices/altra/manifests/installer-image.tailscale-nvidia-lts.patch.yaml \
   --config-patch @devices/altra/manifests/ephemeral-volume.patch.yaml \
   --config-patch @devices/altra/manifests/local-path.patch.yaml \
-  --config-patch @devices/altra/manifests/vfio-modules.patch.yaml \
+  --config-patch @devices/altra/manifests/nvidia-kernel-modules.patch.yaml \
   --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
   --config-patch @devices/altra/manifests/kubelet-maxpods.patch.yaml \
@@ -89,9 +90,10 @@ Note:
 
 - The IP can change after reboot/install (DHCP). Use console/KVM to confirm the
   post-install IP if `talosctl` can’t connect.
-- `devices/altra/manifests/vfio-modules.patch.yaml` is required for KubeVirt GPU
-  passthrough on Talos (it preloads `vfio_pci` so the GPU Operator VFIO manager
-  can bind the GPU without `modprobe` privileges).
+- `devices/altra/manifests/installer-image.tailscale-nvidia-lts.patch.yaml` and
+  `devices/altra/manifests/nvidia-kernel-modules.patch.yaml` move the RTX 3090 to
+  the normal container GPU path. Do not apply the retired VFIO passthrough patch
+  when Saigak is running as an embeddings StatefulSet.
 
 ## 3) Update local Talos config to include all 3 nodes
 

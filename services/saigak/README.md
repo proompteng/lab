@@ -1,7 +1,7 @@
 # Saigak
 
-Saigak packages the Ollama throughput tuning + LGTM observability wiring into a
-reproducible setup. It installs Ollama with a localhost bind, runs an
+Saigak packages the Ollama throughput tuning + LGTM observability wiring for the
+dedicated embedding model. It installs Ollama with a localhost bind, runs an
 OpenTelemetry-enabled proxy on port 11434, and ships metrics/traces to the LGTM
 stack via Grafana Alloy.
 
@@ -25,12 +25,11 @@ SAIGAK_GRAFANA_PASSWORD=changeme \
 
 Optional: enable Nginx by setting `SAIGAK_ENABLE_NGINX=1`.
 Optional: pre-pull models by setting `SAIGAK_MODELS` (comma-separated).
-Default base models (used to build service aliases): `qwen3:30b-a3b`, `qwen3-embedding:8b`
-(set `SAIGAK_SKIP_MODELS=1` to skip).
+Default base model: `qwen3-embedding:8b` (set `SAIGAK_SKIP_MODELS=1` to skip).
 Service aliases are created by default (`SAIGAK_CREATE_TUNED_MODELS=1`):
-`qwen3-main-saigak:30b-a3b`, `qwen3-embedding-saigak:8b`.
+`qwen3-embedding-saigak:8b`.
 Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`, and legacy
-`qwen3-coder-saigak:*` / `qwen3-embedding-saigak:0.6b` tags are removed during migration.
+completion tags plus `qwen3-embedding-saigak:0.6b` are removed during migration.
 
 ## Requirements
 
@@ -44,7 +43,7 @@ Base tags are pruned after alias creation unless `SAIGAK_PRUNE_BASE_MODELS=0`, a
 - `services/saigak/config/ollama.env`
   - OLLAMA runtime settings (32K context target, queueing, residency)
 - `services/saigak/config/models/*.modelfile`
-  - Service-owned aliases for `Qwen3-30B-A3B` and `Qwen3-Embedding-8B`
+  - Service-owned alias for `Qwen3-Embedding-8B`
 - `services/saigak/config/alloy/config.alloy`
   - OTLP receiver and exporters to LGTM (`http://mimir/otlp`, `http://tempo`)
 - `services/saigak/config/nginx/nginx.conf`
@@ -61,13 +60,13 @@ Provide the dashboard JSON path via `SAIGAK_GRAFANA_DASHBOARD_JSON`.
 
 ## Load test
 
-Run a quick throughput check against the proxy:
+Run a quick embedding check against the proxy:
 
 ```bash
-./services/saigak/scripts/load-test.py \
-  --model qwen3-main-saigak:30b-a3b \
-  --duration 60 \
-  --concurrency 8
+curl -fsS http://saigak.saigak.svc.cluster.local:11434/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3-embedding-saigak:8b","input":"saigak embedding smoke"}' \
+  | jq '.data[0].embedding | length'
 ```
 
 ## Verify metrics

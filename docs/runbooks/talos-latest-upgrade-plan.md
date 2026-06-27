@@ -104,12 +104,13 @@ extensions:
 | Node profile | Source schematic | Required extensions | Target image form |
 | ------------ | ---------------- | ------------------- | ----------------- |
 | Ryzen / `talos-192-168-1-194` | `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` | Kata Containers, glibc, Tailscale, AMD GPU, AMD ucode | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
-| Altra / `talos-192-168-1-85` | `devices/altra/manifests/altra-tailscale-schematic.yaml` | Tailscale | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
+| Altra / `talos-192-168-1-85` | `devices/altra/manifests/altra-tailscale-nvidia-lts-schematic.yaml` | Tailscale, NVIDIA open LTS kernel modules, NVIDIA toolkit LTS | `factory.talos.dev/metal-installer/<schematic-id>:v1.13.4` |
 | Turin / `turin` | `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml` | Tailscale, NVIDIA open LTS kernel modules, NVIDIA toolkit LTS | already `v1.13.4` |
 
 Do not downgrade Altra or Ryzen to a vanilla installer image. Altra depends on
-node-level Tailscale, and Ryzen depends on Kata Containers, glibc, Tailscale,
-AMD GPU/ucode extensions, and kernel args.
+node-level Tailscale and the NVIDIA extensions for RTX 3090 container GPU
+serving, and Ryzen depends on Kata Containers, glibc, Tailscale, AMD GPU/ucode
+extensions, and kernel args.
 
 Use a `talosctl` version matching the source node version for issuing the
 upgrade when practical. Keep `talosctl v1.13.4` available for post-upgrade

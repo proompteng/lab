@@ -590,7 +590,7 @@ describe('bumba completions', () => {
     }
   }
 
-  it('uses tuned qwen settings for self-hosted completion requests', async () => {
+  it('uses Flamingo for self-hosted completion requests', async () => {
     const previousFetch = globalThis.fetch
     const previousEnv = {
       OPENAI_API_BASE_URL: process.env.OPENAI_API_BASE_URL,
@@ -602,8 +602,8 @@ describe('bumba completions', () => {
       OPENAI_COMPLETION_MAX_OUTPUT_TOKENS: process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS,
     }
 
-    process.env.OPENAI_API_BASE_URL = 'http://127.0.0.1:11434/v1'
-    process.env.OPENAI_COMPLETION_MODEL = 'qwen3-main-saigak:30b-a3b'
+    process.env.OPENAI_API_BASE_URL = 'http://flamingo.flamingo.svc.cluster.local/v1'
+    process.env.OPENAI_COMPLETION_MODEL = 'qwen36-flamingo'
     delete process.env.OPENAI_COMPLETION_TEMPERATURE
     delete process.env.OPENAI_COMPLETION_TOP_P
     delete process.env.OPENAI_COMPLETION_REASONING_EFFORT
@@ -643,13 +643,13 @@ describe('bumba completions', () => {
 
       expect(result.summary).toBe('ok')
       expect(result.enriched).toBe('- tuned')
-      expect(requestUrl).toBe('http://127.0.0.1:11434/v1/chat/completions')
+      expect(requestUrl).toBe('http://flamingo.flamingo.svc.cluster.local/v1/chat/completions')
       if (!requestBody) {
         throw new Error('expected completion request body')
       }
 
       const body = requestBody as Record<string, unknown>
-      expect(body.model).toBe('qwen3-main-saigak:30b-a3b')
+      expect(body.model).toBe('qwen36-flamingo')
       expect(body.temperature).toBe(0.7)
       expect(body.top_p).toBe(0.8)
       expect(body.reasoning_effort).toBe('none')

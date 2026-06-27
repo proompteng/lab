@@ -1,0 +1,172 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: saigak-runtime
+  labels:
+    app.kubernetes.io/name: saigak
+    app.kubernetes.io/component: embeddings
+data:
+  qwen3-embedding-8b.modelfile: |-
+    FROM qwen3-embedding:8b
+    PARAMETER num_ctx 32768
+  proxy.py: |-
+    import json
+    import os
+    import urllib.error
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    upstream = os.environ.get('SAIGAK_UPSTREAM_URL', 'http://127.0.0.1:11435').rstrip('/')
+    embedding_model = os.environ.get('SAIGAK_EMBEDDING_MODEL', 'qwen3-embedding-saigak:8b')
+    embedding_dimension = int(os.environ.get('SAIGAK_EMBEDDING_DIMENSION', '4096'))
+    timeout_seconds = float(os.environ.get('SAIGAK_PROXY_TIMEOUT_SECONDS', '60'))
+
+    blocked_prefixes = (
+      '/api/chat',
+      '/api/generate',
+      '/v1/chat/completions',
+      '/v1/completions',
+    )
+
+    allowed_prefixes = (
+      '/api/embed',
+      '/api/embeddings',
+      '/api/ps',
+      '/api/tags',
+      '/api/version',
+      '/v1/embeddings',
+      '/v1/models',
+    )
+
+    def upstream_request(method, path, body=None, headers=None):
+      request = urllib.request.Request(
+        f'{upstream}{path}',
+        data=body,
+        method=method,
+        headers=headers or {},
+      )
+      return urllib.request.urlopen(request, timeout=timeout_seconds)
+
+    def embedding_vector(payload):
+      if isinstance(payload.get('data'), list) and payload['data']:
+        value = payload['data'][0].get('embedding')
+        return value if isinstance(value, list) else None
+      value = payload.get('embedding')
+      if isinstance(value, list):
+        return value
+      values = payload.get('embeddings')
+      if isinstance(values, list) and values:
+        return values[0] if isinstance(values[0], list) else values
+      return None
+
+    def model_has_vram(payload):
+      models = payload.get('models')
+      if not isinstance(models, list):
+        return False
+      for model in models:
+        if not isinstance(model, dict):
+          continue
+        if model.get('name') != embedding_model and model.get('model') != embedding_model:
+          continue
+        size_vram = model.get('size_vram', 0)
+        try:
+          return int(size_vram) > 0
+        except (TypeError, ValueError):
+          return False
+      return False
+
+    def ready():
+      try:
+        upstream_request('GET', '/api/version').read()
+        body = json.dumps({
+          'model': embedding_model,
+          'input': ['saigak readiness gpu residency check'],
+          'dimensions': embedding_dimension,
+        }).encode()
+        response = upstream_request(
+          'POST',
+          '/v1/embeddings',
+          body,
+          {'content-type': 'application/json'},
+        )
+        payload = json.loads(response.read().decode())
+        vector = embedding_vector(payload)
+        if not isinstance(vector, list) or len(vector) != embedding_dimension:
+          return False, 'embedding dimension mismatch'
+        ps_payload = json.loads(upstream_request('GET', '/api/ps').read().decode())
+        if not model_has_vram(ps_payload):
+          return False, 'embedding model is not resident in GPU VRAM'
+        return True, 'ok'
+      except Exception as error:
+        return False, str(error)
+
+    class Handler(BaseHTTPRequestHandler):
+      server_version = 'saigak-embedding-proxy/1'
+
+      def write_json(self, status, payload):
+        raw = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header('content-type', 'application/json')
+        self.send_header('content-length', str(len(raw)))
+        self.end_headers()
+        self.wfile.write(raw)
+
+      def do_GET(self):
+        if self.path == '/livez':
+          self.write_json(200, {'status': 'ok'})
+          return
+        if self.path == '/readyz':
+          ok, reason = ready()
+          self.write_json(200 if ok else 503, {'status': 'ok' if ok else 'error', 'reason': reason})
+          return
+        self.proxy()
+
+      def do_POST(self):
+        self.proxy()
+
+      def proxy(self):
+        path = self.path
+        if path.startswith(blocked_prefixes):
+          self.write_json(400, {
+            'error': {
+              'message': 'Saigak is embeddings-only; use Flamingo for completions.',
+              'type': 'invalid_request_error',
+              'code': 'completion_disabled',
+            },
+          })
+          return
+        if not path.startswith(allowed_prefixes):
+          self.write_json(404, {'error': {'message': 'unsupported Saigak embeddings endpoint'}})
+          return
+
+        length = int(self.headers.get('content-length', '0'))
+        body = self.rfile.read(length) if length > 0 else None
+        headers = {
+          key: value
+          for key, value in self.headers.items()
+          if key.lower() in {'authorization', 'content-type', 'accept'}
+        }
+        try:
+          response = upstream_request(self.command, path, body, headers)
+          raw = response.read()
+          self.send_response(response.status)
+          for key, value in response.headers.items():
+            if key.lower() not in {'transfer-encoding', 'connection'}:
+              self.send_header(key, value)
+          self.send_header('content-length', str(len(raw)))
+          self.end_headers()
+          self.wfile.write(raw)
+        except urllib.error.HTTPError as error:
+          raw = error.read()
+          self.send_response(error.code)
+          self.send_header('content-type', error.headers.get('content-type', 'application/json'))
+          self.send_header('content-length', str(len(raw)))
+          self.end_headers()
+          self.wfile.write(raw)
+        except Exception as error:
+          self.write_json(502, {'error': {'message': str(error), 'code': 'upstream_unavailable'}})
+
+      def log_message(self, fmt, *args):
+        print('[saigak-proxy]', fmt % args, flush=True)
+
+    ThreadingHTTPServer(('0.0.0.0', 11434), Handler).serve_forever()

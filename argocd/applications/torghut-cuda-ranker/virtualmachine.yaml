@@ -48,9 +48,6 @@ spec:
           requests:
             memory: 48Gi
         devices:
-          gpus:
-            - name: gpu0
-              deviceName: nvidia.com/GA102_GEFORCE_RTX_3090
           disks:
             - name: rootdisk
               disk:
