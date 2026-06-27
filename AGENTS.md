@@ -12,14 +12,18 @@
 
 ## Prereqs
 
+- Prefer `nix develop` from the repo root before running build, test, or infra commands. Run `toolchain-doctor`
+  inside the shell when a tool version looks suspect.
 - Node 24.11.1 + Bun 1.3.14 (root `package.json`).
-- Go 1.24+ for `services/`.
+- Go 1.25.5 for repo parity; Go services support 1.24+.
 - Ruby 3.4.7 + Bundler 2.7+ for `services/dernier`.
 - Python 3.9–3.12 for `apps/alchimie`; 3.11–3.12 for `services/torghut`.
 
-## Tooling Versions (mise)
+## Tooling Versions (Nix)
 
-- Use `mise` to pin tool versions when a specific major is required (e.g. `helm@3` for `kustomize --enable-helm`; helm v4 is not supported there yet).
+- Use `nix develop` to get the pinned repo toolchain. This includes Helm 3 for `kustomize --enable-helm`;
+  helm v4 is not supported there yet.
+- Optional direnv setup is local-only: copy `.envrc.example` to `.envrc` and run `direnv allow`.
 
 ## Build, Test, and Development Commands
 
@@ -170,7 +174,7 @@ Output:
 - If `kubectl` auth fails (`Unauthorized` / `You must be logged in to the server`), refresh the `service-user`
   credential from `/var/run/secrets/kubernetes.io/serviceaccount/token`, set the `in-cluster` CA from
   `/var/run/secrets/kubernetes.io/serviceaccount/ca.crt`, and verify with `kubectl auth whoami` before retrying.
-- Helm charts present: `mise exec helm@3 -- kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
+- Helm charts present: run from `nix develop`, then `kustomize build --enable-helm <path> | kubectl apply -n <ns> -f -`.
 - CNPG access: `kubectl cnpg psql -n <ns> <cluster> -- <psql args>` (psql flags after `--`).
 
 ## AgentRuns (agents namespace)

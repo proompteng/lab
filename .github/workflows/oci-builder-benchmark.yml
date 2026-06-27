@@ -1,0 +1,323 @@
+name: OCI Builder Benchmark
+
+permissions:
+  contents: read
+  id-token: write
+
+on:
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+    paths:
+      - '.github/workflows/oci-builder-benchmark.yml'
+      - '.github/workflows/oci-native-build-common.yml'
+      - '.github/workflows/facteur-build-push.yaml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'services/facteur/**'
+  workflow_dispatch:
+    inputs:
+      image_name:
+        description: Image name under registry.ide-newton.ts.net/lab
+        required: true
+        default: facteur
+      dockerfile:
+        description: Dockerfile path
+        required: true
+        default: services/facteur/Dockerfile
+      context:
+        description: Build context path
+        required: true
+        default: .
+      tag_prefix:
+        description: Benchmark tag prefix
+        required: true
+        default: benchmark
+      build_args_json:
+        description: JSON object of build args
+        required: false
+        default: '{}'
+      run_buildctl:
+        description: Run the experimental direct buildctl benchmark
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: oci-builder-benchmark-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  legacy-buildx-single-runner:
+    name: Legacy Buildx single-runner multi-platform
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
+    runs-on: arc-arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Render build args
+        id: build-args
+        env:
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
+        run: |
+          set -euo pipefail
+          jq -e 'type == "object"' <<< "${BUILD_ARGS_JSON}" >/dev/null
+          {
+            echo 'value<<EOF'
+            jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "${BUILD_ARGS_JSON}"
+            echo EOF
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Start timer
+        run: echo "BENCHMARK_START=$(date +%s)" >> "${GITHUB_ENV}"
+
+      - name: Build benchmark image with legacy single-runner Buildx
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-legacy
+          build-args: ${{ steps.build-args.outputs.value }}
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-legacy-cache
+          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-legacy-cache,mode=max
+
+      - name: Record benchmark result
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          elapsed="$(( $(date +%s) - BENCHMARK_START ))"
+          {
+            echo "legacy_buildx_single_runner_elapsed_seconds=${elapsed}"
+            echo "legacy_buildx_single_runner_digest=${DIGEST}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  docker-buildx-native:
+    name: Docker Buildx native (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: arc-amd64
+          - platform: linux/arm64
+            arch: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Render build args
+        id: build-args
+        env:
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
+        run: |
+          set -euo pipefail
+          jq -e 'type == "object"' <<< "${BUILD_ARGS_JSON}" >/dev/null
+          {
+            echo 'value<<EOF'
+            jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "${BUILD_ARGS_JSON}"
+            echo EOF
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Start timer
+        run: echo "BENCHMARK_START=$(date +%s)" >> "${GITHUB_ENV}"
+
+      - name: Build benchmark image with docker/build-push-action
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-docker-${{ matrix.arch }}
+          build-args: ${{ steps.build-args.outputs.value }}
+          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-docker-cache-${{ matrix.arch }}
+          cache-to: type=registry,ref=registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:benchmark-docker-cache-${{ matrix.arch }},mode=max
+
+      - name: Record benchmark result
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          elapsed="$(( $(date +%s) - BENCHMARK_START ))"
+          {
+            echo "docker_buildx_native_${PLATFORM#linux/}_elapsed_seconds=${elapsed}"
+            echo "docker_buildx_native_${PLATFORM#linux/}_digest=${DIGEST}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  buildctl-native:
+    name: BuildKit buildctl native (${{ matrix.arch }})
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.run_buildctl) ||
+      (
+        github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark') &&
+        contains(github.event.pull_request.labels.*.name, 'run-buildctl-benchmark')
+      )
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: arc-amd64
+          - platform: linux/arm64
+            arch: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install xz for Nix installer
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          elif command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y xz
+          elif ! command -v xz >/dev/null 2>&1; then
+            echo "xz is required to install Nix on this runner." >&2
+            exit 1
+          fi
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Build benchmark image with buildctl
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}
+          TAG: ${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-buildctl-${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+          CONTEXT: ${{ inputs.context || '.' }}
+          DOCKERFILE: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          dockerfile_dir="$(dirname "${DOCKERFILE}")"
+          dockerfile_name="$(basename "${DOCKERFILE}")"
+          buildkit_socket="${RUNNER_TEMP}/buildkitd-${{ matrix.arch }}.sock"
+          mapfile -t build_args < <(
+            nix develop -c jq -r 'to_entries[] | "--opt=build-arg:\(.key)=\(.value)"' <<< "${BUILD_ARGS_JSON}"
+          )
+
+          nix develop -c buildkitd \
+            --addr "unix://${buildkit_socket}" \
+            --oci-worker=true \
+            --containerd-worker=false &
+          buildkitd_pid="$!"
+          trap 'kill "${buildkitd_pid}" >/dev/null 2>&1 || true' EXIT
+
+          for _ in $(seq 1 30); do
+            if nix develop -c buildctl --addr "unix://${buildkit_socket}" debug workers >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          nix develop -c buildctl --addr "unix://${buildkit_socket}" debug workers >/dev/null
+
+          nix develop -c buildctl --addr "unix://${buildkit_socket}" build \
+            --frontend dockerfile.v0 \
+            --local "context=${CONTEXT}" \
+            --local "dockerfile=${dockerfile_dir}" \
+            --opt "filename=${dockerfile_name}" \
+            --opt "platform=${PLATFORM}" \
+            "${build_args[@]}" \
+            --import-cache "type=registry,ref=${IMAGE}:benchmark-buildctl-cache-${{ matrix.arch }}" \
+            --export-cache "type=registry,ref=${IMAGE}:benchmark-buildctl-cache-${{ matrix.arch }},mode=max" \
+            --output "type=image,name=${IMAGE}:${TAG},push=true"
+
+          digest="$(nix develop -c crane digest "${IMAGE}:${TAG}")"
+          elapsed="$(( $(date +%s) - start ))"
+          platform_name="${PLATFORM#linux/}"
+          {
+            echo "buildctl_native_${platform_name}_elapsed_seconds=${elapsed}"
+            echo "buildctl_native_${platform_name}_digest=${digest}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  depot-native:
+    name: Depot native benchmark
+    if: (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark')) && vars.DEPOT_PROJECT_ID != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Depot
+        uses: depot/setup-action@v1
+
+      - name: Render build args
+        id: build-args
+        env:
+          BUILD_ARGS_JSON: ${{ inputs.build_args_json || '{}' }}
+        run: |
+          set -euo pipefail
+          jq -e 'type == "object"' <<< "${BUILD_ARGS_JSON}" >/dev/null
+          {
+            echo 'value<<EOF'
+            jq -r 'to_entries[] | "\(.key)=\(.value)"' <<< "${BUILD_ARGS_JSON}"
+            echo EOF
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build benchmark image with Depot
+        uses: depot/build-push-action@v1
+        with:
+          project: ${{ vars.DEPOT_PROJECT_ID }}
+          context: ${{ inputs.context || '.' }}
+          file: ${{ inputs.dockerfile || 'services/facteur/Dockerfile' }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: registry.ide-newton.ts.net/lab/${{ inputs.image_name || 'facteur' }}:${{ inputs.tag_prefix || 'benchmark-nix-oci-pr' }}-${{ github.run_id }}-depot
+          build-args: ${{ steps.build-args.outputs.value }}
+
+  summarize:
+    if: always() && (github.event_name == 'workflow_dispatch' || contains(github.event.pull_request.labels.*.name, 'run-oci-benchmark'))
+    needs:
+      - legacy-buildx-single-runner
+      - docker-buildx-native
+      - buildctl-native
+      - depot-native
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print benchmark summary
+        run: |
+          {
+            echo '## OCI builder benchmark'
+            echo
+            echo '- Legacy Buildx single-runner result: ${{ needs.legacy-buildx-single-runner.result }}'
+            echo '- Docker Buildx native result: ${{ needs.docker-buildx-native.result }}'
+            echo '- BuildKit buildctl native result: ${{ needs.buildctl-native.result }}'
+            echo '- Depot result: ${{ needs.depot-native.result }}'
+            echo
+            echo 'Inspect pushed benchmark tags before promoting any builder change.'
+          } >> "${GITHUB_STEP_SUMMARY}"

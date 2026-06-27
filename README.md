@@ -60,15 +60,22 @@ TigerBeetle operator code lives in the standalone `proompteng/tigresse` reposito
 
 ### Prerequisites
 
-- Node `24.11.1`
-- Bun `1.3.14`
-- Go `1.24+` for Go services
-- Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
-- Python:
-  - `3.9-3.12` for `apps/alchimie`
-  - `3.11-3.12` for `services/torghut`
+- Nix with flakes enabled. The repo-level toolchain is provided by `nix develop`.
+- Without Nix, install the equivalent tools manually:
+  - Node `24.11.1`
+  - Bun `1.3.14`
+  - Go `1.25.5` for repo parity; Go services support `1.24+`
+  - Ruby `3.4.7` + Bundler `2.7+` for `services/dernier`
+  - Python:
+    - `3.9-3.12` for `apps/alchimie`
+    - `3.11-3.12` for `services/torghut`
 
-Install workspace dependencies:
+Enter the pinned toolchain shell, then install workspace dependencies:
+
+```bash
+nix develop
+toolchain-doctor
+```
 
 ```bash
 bun install
@@ -172,6 +179,8 @@ Service deploy/build/reseal workflows use the typed scripts under `packages/scri
 
 ## Notes
 
-- Use `mise` when a workflow requires a pinned tool major such as `helm@3`.
+- Prefer `nix develop` for repository tooling. The flake pins the default development shell and wrappers for
+  Kubernetes/Argo validation commands.
+- `direnv` is optional. To auto-load the Nix shell, copy `.envrc.example` to `.envrc`, then run `direnv allow`.
 - Generated artifacts and lockfiles are maintained through their owning generators and package managers.
 - For infra changes, default to GitOps under `argocd/` and let Argo CD apply the desired state.

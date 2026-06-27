@@ -5,6 +5,9 @@ on:
     paths:
       - '**/*.yaml'
       - 'scripts/argo-lint.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - '.github/workflows/argo-lint.yml'
   push:
     branches:
@@ -12,6 +15,9 @@ on:
     paths:
       - '**/*.yaml'
       - 'scripts/argo-lint.sh'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -24,25 +30,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v5
 
-      - name: Install Argo CLI
-        run: |
-          set -euo pipefail
-
-          ARGO_VERSION="v4.0.5"
-          ARGO_URL="https://github.com/argoproj/argo-workflows/releases/download/${ARGO_VERSION}/argo-linux-amd64.gz"
-
-          curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors -o argo-linux-amd64.gz "${ARGO_URL}"
-
-          if ! gzip -t argo-linux-amd64.gz; then
-            echo "Downloaded Argo CLI is not a gzip archive; first 200 bytes:"
-            head -c 200 argo-linux-amd64.gz || true
-            exit 1
-          fi
-
-          gunzip -f argo-linux-amd64.gz
-          chmod +x argo-linux-amd64
-          sudo mv argo-linux-amd64 /usr/local/bin/argo
-          argo version
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
 
       - name: Lint Argo workflow manifests
-        run: scripts/argo-lint.sh
+        run: nix run .#lint-argo-workflows

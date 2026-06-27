@@ -74,7 +74,7 @@ Discord command dispatch submits an `AgentRun` to the Agents service at `codex_i
 
 ## Container image
 
-The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow, which cross-builds (linux/amd64 + linux/arm64) using the local Dockerfile and pushes tags for `main`, `latest`, and the commit SHA. Rotate the image in Kubernetes by updating tags in `argocd/applications/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
+The service ships as `registry.ide-newton.ts.net/lab/facteur`. Pushes to `main` that touch `services/facteur/**` or `.github/workflows/facteur-build-push.yaml` trigger the `Facteur Docker Build and Push` workflow. The workflow builds linux/amd64 and linux/arm64 on native ARC runners, publishes per-arch tags, and assembles the final OCI index tags for `sha-<commit>` and `latest`. Rotate the image in Kubernetes by updating tags in `argocd/applications/facteur/overlays/cluster/kustomization.yaml` or allow Argo tooling to reference the desired tag.
 
 ## Deploying
 
