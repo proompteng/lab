@@ -334,6 +334,18 @@ spec:
                   argocd.argoproj.io/sync-wave: "3"
                 automation: manual
                 enabled: "true"
+              - name: attic
+                path: argocd/applications/attic
+                namespace: attic
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
+                automation: auto
+                enabled: "true"
               - name: observability
                 path: argocd/applications/observability
                 namespace: observability

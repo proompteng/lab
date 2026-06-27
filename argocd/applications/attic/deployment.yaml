@@ -1,0 +1,151 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: attic
+  namespace: attic
+  labels:
+    app.kubernetes.io/name: attic
+    app.kubernetes.io/component: nix-cache
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: attic
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: attic
+        app.kubernetes.io/component: nix-cache
+    spec:
+      securityContext:
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: db-migrations
+          image: registry.ide-newton.ts.net/lab/attic:latest
+          imagePullPolicy: Always
+          command:
+            - atticd
+          args:
+            - --config
+            - /etc/attic/server.toml
+            - --mode
+            - db-migrations
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: ATTIC_SERVER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: attic-db-app
+                  key: uri
+            - name: ATTIC_SERVER_TOKEN_RS256_SECRET_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: attic-secrets
+                  key: token-rs256-secret-base64
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: attic-cache
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: attic-cache
+                  key: AWS_SECRET_ACCESS_KEY
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: attic-config
+              mountPath: /etc/attic
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      containers:
+        - name: attic
+          image: registry.ide-newton.ts.net/lab/attic:latest
+          imagePullPolicy: Always
+          command:
+            - atticd
+          args:
+            - --config
+            - /etc/attic/server.toml
+            - --mode
+            - api-server
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: RUST_LOG
+              value: info
+            - name: ATTIC_SERVER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: attic-db-app
+                  key: uri
+            - name: ATTIC_SERVER_TOKEN_RS256_SECRET_BASE64
+              valueFrom:
+                secretKeyRef:
+                  name: attic-secrets
+                  key: token-rs256-secret-base64
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: attic-cache
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: attic-cache
+                  key: AWS_SECRET_ACCESS_KEY
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+          volumeMounts:
+            - name: attic-config
+              mountPath: /etc/attic
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: attic-config
+          configMap:
+            name: attic-config
+        - name: tmp
+          emptyDir: {}
