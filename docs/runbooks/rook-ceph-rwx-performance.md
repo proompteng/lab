@@ -31,12 +31,13 @@ Current GitOps defaults are tuned for safe first-pass RWX investigations:
 1. The live `CephFilesystem` keeps `activeCount: 1` and `activeStandby: true`.
 1. The MDS pods have explicit resources: requests `2 CPU / 8Gi`, limits `4 CPU / 16Gi`.
 1. Both RWX classes set `mountOptions: [noatime]`.
+1. CSI read affinity is enabled with `kubernetes.io/hostname` CRUSH location labels so clients can prefer closer replicas when topology allows it.
 
 These defaults do not remove the known topology ceiling:
 
 1. OSDs are HDD-only on 2 storage hosts.
-1. No fast metadata tier is configured yet.
-1. `readAffinity` is still disabled.
+1. BlueStore DB/WAL is on NVMe for Altra OSDs and is the required restore target for Turin OSDs.
+1. Read affinity reduces avoidable network reads but does not fix HDD latency by itself.
 
 ## Benchmark Assets
 
