@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cache_url="${ATTIC_CACHE_URL:-${NIX_CACHE_URL:-https://attic.ide-newton.ts.net/lab}}"
+cache_name="${ATTIC_CACHE_NAME:-lab}"
+cache_endpoint="${ATTIC_CACHE_ENDPOINT:-https://attic.ide-newton.ts.net}"
+cache_url="${ATTIC_CACHE_URL:-${NIX_CACHE_URL:-${cache_endpoint%/}/${cache_name}}}"
 public_key="${ATTIC_PUBLIC_KEY:-}"
 
 if [[ "${cache_url}" != http://* && "${cache_url}" != https://* ]]; then

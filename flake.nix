@@ -144,6 +144,29 @@
             pkgs.coreutils
           ] (builtins.readFile ./nix/cache-push.sh);
 
+          cacheSmoke =
+            let
+              repoRevision = self.rev or self.dirtyRev or "dirty";
+              repoLastModified = self.lastModifiedDate or "unknown";
+            in
+            pkgs.runCommand "lab-cache-smoke-${repoRevision}" {
+              inherit repoRevision repoLastModified;
+              cacheSmokeInput = ./nix/cache-smoke-input.txt;
+            } ''
+              mkdir -p "$out"
+              cp "$cacheSmokeInput" "$out/input.txt"
+              printf '%s\n' \
+                'lab attic cache smoke' \
+                "repoRevision=$repoRevision" \
+                "repoLastModified=$repoLastModified" \
+                "system=${system}" \
+                > "$out/proof.txt"
+            '';
+
+          cacheSmokeApp = mkShellScript "cache-smoke" [ pkgs.coreutils ] ''
+            cat ${cacheSmoke}/proof.txt
+          '';
+
           createOciIndex = mkOciScript "create-oci-index" ''
             exec bun run packages/scripts/src/shared/oci.ts create-index "$@"
           '';
@@ -200,6 +223,7 @@
               lintArgoWorkflows
               cacheDoctor
               cachePush
+              cacheSmoke
               createOciIndex
               inspectOciImage
               assertOciPlatforms
@@ -217,6 +241,7 @@
             lint-argo-workflows = mkApp lintArgoWorkflows;
             cache-doctor = mkApp cacheDoctor;
             cache-push = mkApp cachePush;
+            cache-smoke = mkApp cacheSmokeApp;
             create-oci-index = mkApp createOciIndex;
             inspect-oci-image = mkApp inspectOciImage;
             assert-oci-platforms = mkApp assertOciPlatforms;
