@@ -3,6 +3,11 @@
 This runbook is for the path where the old external DB device is abandoned and
 the three transferred 24TB HDDs are reused as new Rook/Ceph OSDs on `turin`.
 
+This is a historical emergency recreate path. For the current healthy-cluster
+performance restore, use `docs/runbooks/rook-ceph-on-talos.md` and keep Turin's
+`metadataDevice` on the Kingston 1TB NVMe so replacement HDD OSDs are prepared
+with active BlueStore DB/WAL.
+
 This path is destructive to old OSD IDs `0`, `1`, and `2`. It does not wipe the
 ORICO Talos OS disk.
 
@@ -167,9 +172,13 @@ kubectl --context galactic-tailscale -n rook-ceph delete pod turin-ceph-osd-zap
 
 ## GitOps Change
 
+This section is retained only for the earlier emergency recreate. Do not use it
+for the current healthy-cluster NVMe DB/WAL migration.
+
 Use `devices/turin/docs/rook-ceph-turin-recreate-osds-values-draft.yaml` as the
 replacement shape for the second storage node in
-`argocd/applications/rook-ceph/cluster-values.yaml`.
+`argocd/applications/rook-ceph/cluster-values.yaml` only when intentionally
+abandoning the external DB path.
 
 The intended storage section is:
 

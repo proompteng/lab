@@ -30,6 +30,10 @@ cephClusterSpec:
       osd_pool_default_size: "2"
       osd_pool_default_min_size: "1"
       mon_data_avail_warn: "15"
+    osd:
+      bluestore_cache_autotune: "true"
+      osd_mclock_profile: "balanced"
+      osd_memory_target: "6442450944"
 
   dataDirHostPath: /var/lib/rook
 
@@ -93,6 +97,20 @@ cephClusterSpec:
     osd: system-node-critical
     mgr: system-cluster-critical
 
+  resources:
+    osd:
+      limits:
+        memory: 8Gi
+      requests:
+        cpu: 1000m
+        memory: 6Gi
+
+  csi:
+    readAffinity:
+      enabled: true
+      crushLocationLabels:
+        - kubernetes.io/hostname
+
   storage:
     # Scope OSDs to dedicated storage nodes
     useAllNodes: false
@@ -107,6 +125,9 @@ cephClusterSpec:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
       - name: turin
+        config:
+          metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
+          databaseSizeMB: "300000"
         devices:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M

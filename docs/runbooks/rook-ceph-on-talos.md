@@ -18,13 +18,13 @@ Do not include Talos install disks in the device list.
 Control plane nodes:
 
 1. `talos-192-168-1-85` (altra)
-1. `talos-192-168-1-203` (ampone)
 1. `talos-192-168-1-194` (ryzen)
+1. `turin`
 
 Storage OSD nodes in this configuration:
 
 1. `talos-192-168-1-85`
-1. `talos-192-168-1-203`
+1. `turin`
 
 Monitor placement:
 
@@ -38,17 +38,26 @@ Monitor placement:
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E` (HDD)
 
-The 4TB NVMe (`nvme-CT4000P3PSSD8_2402E88D0863`, `/dev/nvme1n1`) is detected but intentionally excluded while preparing baseline OSDs due historical prepare hangs in this cluster.
+The 4TB NVMe (`nvme-CT4000P3PSSD8_2402E88D0863`, `/dev/nvme1n1`) is the BlueStore DB/WAL metadata device for the three HDD OSDs on this host.
 
 Talos install disk on `talos-192-168-1-85`:
 
 1. `/dev/nvme0n1` (do not use for Ceph)
 
-`talos-192-168-1-203`:
+`turin`:
 
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M` (HDD)
 1. `/dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9` (HDD)
+
+The 1TB Kingston NVMe (`nvme-KINGSTON_SNV3S1000G_50026B76878F0B27`, `/dev/nvme2n1`) is the BlueStore DB/WAL metadata device for Turin's three HDD OSDs.
+
+Talos install and local-only disks on `turin`:
+
+1. `/dev/nvme3n1` (Talos install / EPHEMERAL; do not use for Ceph)
+1. `/dev/nvme0n1` and `/dev/nvme1n1` (single-host NVMe; only use for rebuildable local scratch/cache after explicit Talos local storage configuration)
+
+Do not place replicated Ceph data, databases, registry canonical storage, Kafka data, or Torghut durable state on the single-host 256GB Turin NVMes. They are acceptable only for rebuildable scratch such as CI work directories, model caches, and temporary download paths pinned to Turin.
 
 ## Replication settings (2 storage hosts)
 
@@ -104,6 +113,90 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module ls
 ```
 
 The cluster enables the Ceph mgr `stats` module declaratively so `ceph fs perf stats` is available during RWX investigations.
+
+## Turin BlueStore DB/WAL migration
+
+Use this procedure when Turin OSDs are healthy but still run as single-device HDD BlueStore OSDs with no active `block.db`.
+
+Rook applies `metadataDevice` only when an OSD is prepared. It does not retrofit an existing OSD onto a new DB/WAL device. The safe path is therefore a one-OSD-at-a-time remove, purge, targeted zap, and reprepare cycle after the GitOps spec has the desired `metadataDevice`.
+
+Do not migrate all three Turin OSDs at once. Do not wipe the whole Kingston NVMe. Do not run the historical three-OSD recreate flow unless the cluster is already degraded and the old OSD IDs are intentionally abandoned.
+
+Target mapping for the current Turin migration:
+
+| OSD | HDD by-id | active block device | stale/suspect DB LV observed on `/dev/nvme2n1` |
+| --- | --- | --- | --- |
+| `osd.0` | `ata-ST24000NM000C-3WD103_ZXA0LVM9` | `/dev/sdd` | `osd-db-bee41e04-e080-423b-a493-894495af0579` |
+| `osd.1` | `ata-ST24000NM000C-3WD103_ZXA0MZ1M` | `/dev/sdb` | `osd-db-c515cd50-a905-42bf-bfd2-c4a2125af075` |
+| `osd.2` | `ata-ST24000NM000C-3WD103_ZXA0NL5D` | `/dev/sdc` | `osd-db-98938ffa-1017-4e8d-9ad6-c2f7fe4ce2d5` |
+
+Preflight before each OSD:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph pg stat
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd perf
+```
+
+Required shape before continuing:
+
+1. `HEALTH_OK`.
+1. All PGs are `active+clean`.
+1. No `recovery`, `backfill`, `remapped`, `misplaced`, `degraded`, or `undersized` PGs.
+1. Argo CD has applied the Rook values containing Turin `metadataDevice`, OSD memory target, and CSI read affinity.
+1. The previous OSD migration, if any, already proves `block.db` is active.
+
+Cycle exactly one OSD:
+
+1. Mark the OSD out and wait for `active+clean`:
+
+   ```bash
+   OSD_ID=0
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd out "osd.${OSD_ID}"
+   watch -n 30 'kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s'
+   ```
+
+1. Confirm Ceph says it is safe to destroy:
+
+   ```bash
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd safe-to-destroy "osd.${OSD_ID}"
+   ```
+
+1. Stop the OSD deployment and purge the Ceph identity:
+
+   ```bash
+   kubectl -n rook-ceph scale deploy "rook-ceph-osd-${OSD_ID}" --replicas=0
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd purge "${OSD_ID}" --yes-i-really-mean-it
+   ```
+
+1. Use a temporary privileged Ceph pod pinned to Turin to zap only the matching HDD OSD block LV and the matching stale DB LV, if still present. Confirm with `ceph-volume lvm list --format json` before every zap.
+
+1. Delete the temporary zap pod, restart or rerun the Turin OSD prepare job, and let Rook reprepare the same HDD with `metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27`.
+
+1. Verify the replacement OSD before moving to the next ID:
+
+   ```bash
+   NEW_OSD_ID=<new-or-reused-id>
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd metadata "${NEW_OSD_ID}" --format json-pretty
+   OSD_POD="$(
+     kubectl -n rook-ceph get pod \
+       -l "app=rook-ceph-osd,ceph-osd-id=${NEW_OSD_ID}" \
+       -o jsonpath='{.items[0].metadata.name}'
+   )"
+   kubectl -n rook-ceph exec "$OSD_POD" -- sh -lc 'ls -l /var/lib/ceph/osd/ceph-*/block*'
+   kubectl -n rook-ceph exec "$OSD_POD" -- ceph daemon "osd.${NEW_OSD_ID}" config get bluefs_dedicated_db
+   kubectl -n rook-ceph exec "$OSD_POD" -- ceph daemon "osd.${NEW_OSD_ID}" config get bluefs_single_shared_device
+   ```
+
+Acceptance for each replacement:
+
+1. The OSD is `up` and `in` under host `turin`.
+1. `block.db` exists in the OSD data directory.
+1. `bluefs_dedicated_db=1`.
+1. `bluefs_single_shared_device=0`.
+1. The cluster returns to `HEALTH_OK` and all PGs are `active+clean`.
 
 ## Recovery: Talos node host jump (same disks, new hostname/IP)
 
