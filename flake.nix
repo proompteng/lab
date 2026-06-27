@@ -72,6 +72,7 @@
             pkgs.skopeo
             pkgs.regclient
             pkgs.cosign
+            pkgs.attic-client
           ] ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
             pkgs.libiconv
           ];
@@ -128,6 +129,21 @@
             exec bash scripts/argo-lint.sh
           '';
 
+          cacheDoctor = mkShellScript "cache-doctor" [
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.curl
+            pkgs.gawk
+            pkgs.gnugrep
+            pkgs.nixVersions.nix_2_28
+          ] (builtins.readFile ./nix/cache-doctor.sh);
+
+          cachePush = mkShellScript "cache-push" [
+            pkgs.attic-client
+            pkgs.bash
+            pkgs.coreutils
+          ] (builtins.readFile ./nix/cache-push.sh);
+
           createOciIndex = mkOciScript "create-oci-index" ''
             exec bun run packages/scripts/src/shared/oci.ts create-index "$@"
           '';
@@ -140,6 +156,33 @@
             exec bun run packages/scripts/src/shared/oci.ts assert "$@"
           '';
 
+          linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            "atticd-image" = pkgs.dockerTools.buildLayeredImage {
+              name = "registry.ide-newton.ts.net/lab/attic";
+              tag = "dev";
+              contents = [
+                pkgs.attic-client
+                pkgs.attic-server
+                pkgs.cacert
+              ];
+              config = {
+                Entrypoint = [ "atticd" ];
+                Env = [
+                  "PATH=${lib.makeBinPath [
+                    pkgs.attic-client
+                    pkgs.attic-server
+                    pkgs.coreutils
+                  ]}"
+                  "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
+                ];
+                ExposedPorts = {
+                  "8080/tcp" = { };
+                };
+                User = "65532:65532";
+              };
+            };
+          };
+
           mkApp = drv: {
             type = "app";
             program = lib.getExe drv;
@@ -147,7 +190,7 @@
           };
         in
         {
-          packages = exact // {
+          packages = exact // linuxPackages // {
             default = toolchainDoctor;
             inherit
               toolchainDoctor
@@ -155,10 +198,14 @@
               lintArgocd
               renderHeadlamp
               lintArgoWorkflows
+              cacheDoctor
+              cachePush
               createOciIndex
               inspectOciImage
               assertOciPlatforms
               ;
+            atticClient = pkgs.attic-client;
+            atticServer = pkgs.attic-server;
           };
 
           apps = {
@@ -168,6 +215,8 @@
             lint-argocd = mkApp lintArgocd;
             render-headlamp = mkApp renderHeadlamp;
             lint-argo-workflows = mkApp lintArgoWorkflows;
+            cache-doctor = mkApp cacheDoctor;
+            cache-push = mkApp cachePush;
             create-oci-index = mkApp createOciIndex;
             inspect-oci-image = mkApp inspectOciImage;
             assert-oci-platforms = mkApp assertOciPlatforms;
@@ -177,6 +226,8 @@
             packages = shellPackages ++ [
               toolchainDoctor
               ociDoctor
+              cacheDoctor
+              cachePush
             ];
             shellHook = ''
               export LAB_NIX_TOOLCHAIN=1
