@@ -15,6 +15,8 @@ global:
 
 mimir:
   structuredConfig:
+    alertmanager:
+      external_url: https://mimir.ide-newton.ts.net/alertmanager
     limits:
       ingestion_rate: 20000
       ingestion_burst_size: 400000
