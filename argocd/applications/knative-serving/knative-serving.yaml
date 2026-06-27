@@ -5,6 +5,8 @@ metadata:
   namespace: knative-serving
 spec:
   version: 1.22.0
+  high-availability:
+    replicas: 5
   ingress:
     istio:
       enabled: true
