@@ -33,8 +33,8 @@ Anypi embeds `@earendil-works/pi-coding-agent` with `createAgentSession()`.
   contract includes `bash`, `bun`, `git`, `gh`, `jq`, `node`, `python3`, `rg`,
   `uv`, `mise`, `helm`, and `kustomize`.
 - `ANYPI_MODEL=qwen36-flamingo` targets the Qwen3.6 NVFP4 Flamingo endpoint.
-- `ANYPI_CONTEXT_WINDOW=98304` and `ANYPI_MAX_TOKENS=32768` fit inside the
-  current 128K production serving profile.
+- `ANYPI_CONTEXT_WINDOW=229376` and `ANYPI_MAX_TOKENS=32768` fit inside the
+  current 262K production serving profile.
 - `ANYPI_THINKING_LEVEL=medium` enables Qwen thinking for non-trivial coding
   work.
 - Generated Pi `models.json` marks the model as `reasoning: true` and uses

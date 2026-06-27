@@ -48,23 +48,25 @@ describe('validateFiles', () => {
   })
 
   it('detects multiple forbidden terms in one file', async () => {
-    const path = await mkfile([forbiddenTerms[0], forbiddenTerms[1], forbiddenTerms[2]].join('\n'))
+    const content = [forbiddenTerms[0], forbiddenTerms[1], forbiddenTerms[2]].join('\n')
+    const path = await mkfile(content)
     const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    // 3 forbidden + 3 missing required (qwen3 is substring of qwen3-coder-flamingo)
-    expect(failures.length).toBe(6)
+    const missingRequiredTerms = requiredTerms.filter((term) => !content.includes(term))
+    expect(failures.length).toBe(3 + missingRequiredTerms.length)
     expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "${forbiddenTerms[0]}"`)
     expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "${forbiddenTerms[1]}"`)
     expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "${forbiddenTerms[2]}"`)
   })
 
   it('reports all missing required terms', async () => {
-    const path = await mkfile(requiredTerms[0] + '\n' + forbiddenTerms[0])
+    const content = requiredTerms[0] + '\n' + forbiddenTerms[0]
+    const path = await mkfile(content)
     const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    expect(failures).toContain('active Flamingo surfaces do not contain required term "qwen36-flamingo"')
-    expect(failures).toContain('active Flamingo surfaces do not contain required term "qwen3"')
-    expect(failures).toContain('active Flamingo surfaces do not contain required term "qwen3_coder"')
+    for (const term of requiredTerms.filter((requiredTerm) => !content.includes(requiredTerm))) {
+      expect(failures).toContain(`active Flamingo surfaces do not contain required term "${term}"`)
+    }
     expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "Qwen/Qwen3-Coder-Next-FP8"`)
-    expect(failures.length).toBe(4)
+    expect(failures.length).toBe(1 + requiredTerms.filter((requiredTerm) => !content.includes(requiredTerm)).length)
   })
 
   it('detects Saigak completion routing in active consumers', () => {

@@ -70,13 +70,15 @@ args:
   - --dtype
   - bfloat16
   - --max-model-len
-  - "131072"
+  - "262144"
   - --gpu-memory-utilization
-  - "0.94"
+  - "0.95"
+  - --kv-cache-dtype
+  - nvfp4
   - --max-num-seqs
-  - "128"
+  - "16"
   - --max-num-batched-tokens
-  - "32768"
+  - "16384"
   - --enable-prefix-caching
   - --reasoning-parser
   - qwen3
@@ -85,6 +87,7 @@ args:
   - qwen3_coder
   - --optimization-level
   - "2"
+  - --numa-bind
 ```
 
 Add the parallelism flags for the shape under test.
@@ -266,11 +269,11 @@ Record each run before changing the next variable.
 
 | Run | GPUs | TP | PP | Max model length | GPU memory utilization | Notes |
 | --- | --- | --- | --- | --- | --- | --- |
-| `2g-pp2` | 2 | 1 | 2 | `131072` | `0.94` | First 2-GPU candidate |
-| `2g-tp2` | 2 | 2 | 1 | `131072` | `0.94` | Compare throughput and NCCL stability |
-| `4g-pp4` | 4 | 1 | 4 | `131072` | `0.94` | First 4-GPU candidate |
-| `4g-tp2-pp2` | 4 | 2 | 2 | `131072` | `0.94` | Balanced hybrid candidate |
-| `4g-tp4` | 4 | 4 | 1 | `131072` | `0.94` | Highest PCIe/NCCL risk |
+| `2g-pp2` | 2 | 1 | 2 | `262144` | `0.95` | First 2-GPU candidate |
+| `2g-tp2` | 2 | 2 | 1 | `262144` | `0.95` | Compare throughput and NCCL stability |
+| `4g-pp4` | 4 | 1 | 4 | `262144` | `0.95` | First 4-GPU candidate |
+| `4g-tp2-pp2` | 4 | 2 | 2 | `262144` | `0.95` | Balanced hybrid candidate |
+| `4g-tp4` | 4 | 4 | 1 | `262144` | `0.95` | Highest PCIe/NCCL risk |
 
 Capture:
 

@@ -141,7 +141,7 @@ export const resolveConfig = (env: NodeJS.ProcessEnv = process.env): AnypiConfig
     promptVariant: resolvePromptVariant(env.ANYPI_PROMPT_VARIANT),
     allowSystemPromptOverride: readBoolean(env, 'ANYPI_ALLOW_SYSTEM_PROMPT_OVERRIDE', false),
     thinkingLevel: normalizeThinkingLevel(readEnv(env, 'ANYPI_THINKING_LEVEL', 'medium')),
-    contextWindow: readNumber(env, 'ANYPI_CONTEXT_WINDOW', 98304),
+    contextWindow: readNumber(env, 'ANYPI_CONTEXT_WINDOW', 229376),
     maxTokens: readNumber(env, 'ANYPI_MAX_TOKENS', 32768),
     tools: parseTools(env.ANYPI_TOOLS),
     requiredTools: parseRequiredTools(env.ANYPI_REQUIRED_TOOLS),
