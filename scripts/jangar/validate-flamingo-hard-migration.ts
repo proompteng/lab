@@ -8,7 +8,7 @@ export const requiredTerms = [
   '262144',
   '229376',
   '32768',
-  'nvfp4',
+  'fp8',
 ]
 
 export const forbiddenTerms = [
