@@ -222,18 +222,22 @@ Environment:
   PI_FLAMINGO_BASE_URL             OpenAI-compatible base URL (default: http://flamingo.ide-newton.ts.net/v1)
   PI_FLAMINGO_MODEL                Model id (default: qwen36-flamingo)
   PI_FLAMINGO_API_KEY              Provider API key (default: flamingo-local)
-  PI_FLAMINGO_SERVER_CONTEXT       Expected vLLM max_model_len (default: 131072)
+  PI_FLAMINGO_SERVER_CONTEXT       Expected vLLM max_model_len (default: 262144)
   PI_FLAMINGO_CLIENT_CONTEXT       Pi models.json contextWindow (default follows rollout table)
-  PI_FLAMINGO_MAX_TOKENS           Pi models.json maxTokens (default: 8192 for 64K+, else 2048)
+  PI_FLAMINGO_MAX_TOKENS           Pi models.json maxTokens (default: 32768 for 128K+, else 2048)
   PI_FLAMINGO_COMPACTION_RESERVE   Pi compaction reserveTokens (default: 16384)
   PI_FLAMINGO_KEEP_RECENT          Pi compaction keepRecentTokens (default: 20000)
   PI_FLAMINGO_PROMPT_CHARS         First-turn filler size (default: threshold-sized)
   PI_FLAMINGO_TIMEOUT_MS           Timeout per Pi turn (default: 600000)
   PI_FLAMINGO_KEEP_TMP             Set to 1 to keep temp config/session dirs after success
 
-Current 32K live-server smoke:
+Fast 32K live-server smoke:
   PI_FLAMINGO_SERVER_CONTEXT=32768 PI_FLAMINGO_CLIENT_CONTEXT=24576 PI_FLAMINGO_MAX_TOKENS=2048 \\
   PI_FLAMINGO_COMPACTION_RESERVE=8192 PI_FLAMINGO_KEEP_RECENT=4000 PI_FLAMINGO_PROMPT_CHARS=90000 \\
+  bun run scripts/jangar/validate-pi-flamingo-compaction.ts
+
+Production 262K profile smoke:
+  PI_FLAMINGO_SERVER_CONTEXT=262144 PI_FLAMINGO_CLIENT_CONTEXT=229376 PI_FLAMINGO_MAX_TOKENS=32768 \\
   bun run scripts/jangar/validate-pi-flamingo-compaction.ts`)
 }
 
@@ -247,7 +251,7 @@ async function main(): Promise<void> {
   const provider = process.env.PI_FLAMINGO_PROVIDER ?? 'flamingo'
   const model = process.env.PI_FLAMINGO_MODEL ?? 'qwen36-flamingo'
   const apiKey = process.env.PI_FLAMINGO_API_KEY ?? 'flamingo-local'
-  const serverContext = parseInteger('PI_FLAMINGO_SERVER_CONTEXT', 131072)
+  const serverContext = parseInteger('PI_FLAMINGO_SERVER_CONTEXT', 262144)
   const clientContext = parseInteger('PI_FLAMINGO_CLIENT_CONTEXT', defaultClientContext(serverContext))
   const maxTokens = parseInteger('PI_FLAMINGO_MAX_TOKENS', serverContext >= 131072 ? 32768 : 2048)
   const reserveTokens = parseInteger('PI_FLAMINGO_COMPACTION_RESERVE', 16384)

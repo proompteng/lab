@@ -1,6 +1,16 @@
 import { readFile } from 'node:fs/promises'
 
-export const requiredTerms = ['unsloth/Qwen3.6-35B-A3B-NVFP4', 'qwen36-flamingo', 'qwen3', 'qwen3_coder']
+export const requiredTerms = [
+  'unsloth/Qwen3.6-35B-A3B-NVFP4',
+  'qwen36-flamingo',
+  'qwen3',
+  'qwen3_coder',
+  '262144',
+  '229376',
+  '32768',
+  'nvfp4',
+  'numa-bind',
+]
 
 export const forbiddenTerms = [
   'Qwen/Qwen3-Coder-Next-FP8',
@@ -20,6 +30,7 @@ export const targetFiles = [
   'docs/agents/anypi.md',
   'docs/jangar/pi-agent-flamingo-host-configuration.md',
   'docs/jangar/saigak-to-flamingo-gpu-pod-migration.md',
+  'scripts/jangar/benchmark-flamingo-vllm.ts',
   'scripts/jangar/validate-pi-flamingo-compaction.ts',
   'services/anypi/src/config.ts',
   'services/anypi/src/config.test.ts',

@@ -60,7 +60,7 @@ describe('Anypi config', () => {
     expect(config.promptVariant).toBe('minimal')
     expect(config.allowSystemPromptOverride).toBe(false)
     expect(config.thinkingLevel).toBe('medium')
-    expect(config.contextWindow).toBe(98304)
+    expect(config.contextWindow).toBe(229376)
     expect(config.maxTokens).toBe(32768)
     expect(config.tools).toEqual([...ALL_PI_TOOL_NAMES])
     expect(config.requiredTools).toEqual([...DEFAULT_REQUIRED_RUNTIME_TOOLS])
@@ -85,7 +85,7 @@ describe('Anypi config', () => {
             maxTokensField: 'max_tokens',
             thinkingFormat: 'qwen-chat-template',
           },
-          models: [{ id: 'qwen36-flamingo', reasoning: true, contextWindow: 98304, maxTokens: 32768 }],
+          models: [{ id: 'qwen36-flamingo', reasoning: true, contextWindow: 229376, maxTokens: 32768 }],
         },
       },
     })
@@ -242,7 +242,7 @@ describe('Anypi prompt contract', () => {
         model: 'qwen36-flamingo',
         providerModel: 'flamingo/qwen36-flamingo',
         thinkingLevel: 'medium',
-        contextWindow: 98304,
+        contextWindow: 229376,
         maxTokens: 32768,
         piPromptTimeoutSeconds: 1800,
         promptVariant: 'repair-loop',

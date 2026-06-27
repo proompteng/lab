@@ -25,24 +25,26 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --served-model-name qwen36-flamingo
 --trust-remote-code
 --dtype bfloat16
---max-model-len 131072
---gpu-memory-utilization 0.94
---max-num-seqs 128
+--max-model-len 262144
+--gpu-memory-utilization 0.95
+--kv-cache-dtype nvfp4
+--max-num-seqs 16
 --max-num-batched-tokens 16384
 --enable-prefix-caching
 --reasoning-parser qwen3
 --enable-auto-tool-choice
 --tool-call-parser qwen3_coder
 --optimization-level 2
+--numa-bind
 ```
 
-The production floor is 128K context. If this profile fails, reduce concurrency
-first. Do not restore the old model as the desired state.
+The production target is full 262K server context. If this profile fails,
+reduce concurrency first by moving to `--max-num-seqs 8` and
+`--max-num-batched-tokens 8192`. Do not reduce context below 262K unless both
+vLLM KV/concurrency tuning and an SGLang validation path fail.
 
-NUMA auto-binding is intentionally disabled on Turin. vLLM 0.23.0 cannot
-autodetect the GPU-to-NUMA topology on this node and exits during startup when
-`--numa-bind` is used. Only re-enable CPU locality after validating explicit
-`--numa-bind-nodes` values live.
+NUMA auto-binding is part of the first 262K candidate. Keep it only if the live
+startup, smoke tests, and benchmark comparison beat the no-NUMA profile.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
@@ -169,7 +171,7 @@ Pi and AnyPi must use Qwen chat-template thinking controls for this endpoint:
     {
       "id": "qwen36-flamingo",
       "reasoning": true,
-  "contextWindow": 98304,
+      "contextWindow": 229376,
       "maxTokens": 32768
     }
   ]
@@ -186,14 +188,22 @@ Record each run with the vLLM image digest, model revision, flags, concurrency,
 prompt/output token counts, TTFT, output tokens per second, peak GPU memory, GPU
 power draw, temperature, preemption count, and any OOM or parser failure.
 
+Use the repo runner so output is comparable:
+
+```bash
+bun run flamingo:benchmark --profile=smoke
+bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
+```
+
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
-| `baseline-128k` | `131072` | `0.94` | `128` | `16384` | Current production target |
-| `batch-128k-32k` | `131072` | `0.94` | `128` | `32768` | Promote if TTFT stays acceptable |
-| `seq-128k-256` | `131072` | `0.94` | `256` | `32768` | Promote only if no preemption churn |
-| `mtp-128k` | `131072` | `0.94` | `128` | `32768` | Add MTP flags below if tool calls stay valid |
-| `context-192k` | `196608` | `0.94` | `64` | `32768` | Test after 128K is stable |
-| `context-262k` | `262144` | `0.94` | `64` | `32768` | Promote only if AgentRuns stay stable |
+| `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
+| `context-262k-nvfp4` | `262144` | `0.95` | `16` | `16384` | Initial production candidate |
+| `context-262k-lowseq` | `262144` | `0.95` | `8` | `8192` | Startup fallback if the initial candidate OOMs |
+| `kv-262k-fp8` | `262144` | `0.95` | `16` | `16384` | Compare only after NVFP4 smokes pass |
+| `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 |
+| `batch-262k-32k` | `262144` | `0.95` | `16` | `32768` | Promote only if TTFT and preemption stay acceptable |
+| `mem-262k-097` | `262144` | `0.97` | `16` | `16384` | Promote only if no OOM or sustained preemption |
 
 MTP candidate flags:
 
@@ -209,17 +219,18 @@ KV-cache candidates must be checked against the pinned vLLM image before use:
 --kv-cache-dtype nvfp4
 ```
 
-Do not combine MTP, KV-cache dtype, and context increases in one rollout. Change
-one variable, run the smoke suite, then run a real AnyPi AgentRun.
+Do not combine MTP, KV-cache dtype, batching, and memory changes after the
+initial 262K candidate. Change one variable, run the smoke suite, then run a
+real AnyPi AgentRun.
 
 ## Completion Criteria
 
-- `/v1/models` returns `qwen36-flamingo`.
+- `/v1/models` returns `qwen36-flamingo` with `max_model_len=262144`.
 - Basic chat and structured tool calls work from cluster and tailnet.
 - OpenWebUI defaults to `qwen36-flamingo`.
 - Host Pi defaults to `qwen36-flamingo`.
-- AnyPi provider defaults to `qwen36-flamingo`, 96K input context, 32K max
-  output, and medium Qwen thinking against the 128K server context.
+- AnyPi provider defaults to `qwen36-flamingo`, 229376 input context, 32768 max
+  output, and medium Qwen thinking against the 262K server context.
 - One substantial AnyPi AgentRun produces a real code/test diff and validates.
 - The benchmark table is updated with the final promoted flags.
 

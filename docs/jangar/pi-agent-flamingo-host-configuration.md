@@ -87,14 +87,14 @@ Expected tool-call result:
 
 ## Client Context Budget
 
-Keep Pi's `models.json` budget below the vLLM server context. The current
-production target is 128K server context.
+Keep Pi's `models.json` budget below the vLLM server context. The production
+target is 262K server context.
 
 | vLLM `--max-model-len` | Pi `contextWindow` | Pi `maxTokens` | Status |
 | ---------------------- | -----------------: | -------------: | ------ |
-| `131072`               |            `98304` |        `32768` | Current |
-| `196608`               |           `163840` |        `32768` | Candidate |
-| `262144`               |           `229376` |        `32768` | Candidate |
+| `131072`               |            `98304` |        `32768` | Retired baseline |
+| `196608`               |           `163840` |        `32768` | Fallback only |
+| `262144`               |           `229376` |        `32768` | Current |
 
 Compaction must stay explicit in `settings.json` for Flamingo host runs:
 
@@ -142,7 +142,7 @@ For this host, the permanent local Pi config should look like this:
           "name": "Qwen3.6 Flamingo",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 98304,
+          "contextWindow": 229376,
           "maxTokens": 32768,
           "cost": {
             "input": 0,
@@ -240,7 +240,7 @@ cat > "$PI_TMP_DIR/models.json" <<'JSON'
           "name": "Qwen3.6 Flamingo",
           "reasoning": true,
           "input": ["text"],
-          "contextWindow": 98304,
+          "contextWindow": 229376,
           "maxTokens": 32768,
           "cost": {
             "input": 0,
