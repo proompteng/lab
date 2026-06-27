@@ -35,7 +35,6 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --enable-auto-tool-choice
 --tool-call-parser qwen3_coder
 --optimization-level 2
---numa-bind
 ```
 
 The production target is full 262K server context. If this profile fails,
@@ -43,8 +42,11 @@ reduce concurrency first by moving to `--max-num-seqs 8` and
 `--max-num-batched-tokens 8192`. Do not reduce context below 262K unless both
 vLLM KV/concurrency tuning and an SGLang validation path fail.
 
-NUMA auto-binding is part of the first 262K candidate. Keep it only if the live
-startup, smoke tests, and benchmark comparison beat the no-NUMA profile.
+NUMA auto-binding is intentionally disabled. Live rollout proved that vLLM
+0.23.0 cannot auto-detect Turin's GPU-to-NUMA topology and exits with
+`NUMA binding was requested, but vLLM could not detect the GPU-to-NUMA topology
+automatically`. Test NUMA only with explicit `--numa-bind-nodes` values after a
+separate topology readback.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal

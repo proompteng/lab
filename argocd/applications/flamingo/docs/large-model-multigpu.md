@@ -87,10 +87,13 @@ args:
   - qwen3_coder
   - --optimization-level
   - "2"
-  - --numa-bind
 ```
 
 Add the parallelism flags for the shape under test.
+
+Do not use bare `--numa-bind` on Turin. vLLM 0.23.0 fails startup when it cannot
+auto-detect the GPU-to-NUMA topology. Any NUMA experiment must first capture
+`nvidia-smi topo -m` and use explicit `--numa-bind-nodes` values.
 
 ## Two GPUs
 
