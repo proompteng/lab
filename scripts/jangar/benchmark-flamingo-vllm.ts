@@ -34,7 +34,9 @@ type RunSummary = {
   profile: string
   contextTargets: number[]
   model: string
+  tokenizer: string
   baseUrl: string
+  serverUrl: string
   kubernetes: {
     context: string
     namespace: string
@@ -65,13 +67,19 @@ const kubeContext = args.get('context') ?? process.env.KUBE_CONTEXT ?? 'galactic
 const namespace = args.get('namespace') ?? process.env.FLAMINGO_NAMESPACE ?? 'flamingo'
 const deployment = args.get('deployment') ?? process.env.FLAMINGO_DEPLOYMENT ?? 'flamingo'
 const model = args.get('model') ?? process.env.FLAMINGO_MODEL ?? 'qwen36-flamingo'
+const tokenizer = args.get('tokenizer') ?? process.env.FLAMINGO_BENCH_TOKENIZER ?? 'unsloth/Qwen3.6-35B-A3B-NVFP4'
 const baseUrl = (
   args.get('base-url') ??
   process.env.FLAMINGO_BASE_URL ??
   'http://flamingo.ide-newton.ts.net/v1'
 ).replace(/\/+$/, '')
+const serverUrl = (args.get('server-url') ?? process.env.FLAMINGO_SERVER_URL ?? baseUrl.replace(/\/v1$/, '')).replace(
+  /\/+$/,
+  '',
+)
 const resultDir = resolve(args.get('result-dir') ?? process.env.FLAMINGO_BENCH_RESULT_DIR ?? '/tmp/flamingo-vllm-bench')
 const timeoutMs = Number.parseInt(args.get('timeout-ms') ?? process.env.FLAMINGO_BENCH_TIMEOUT_MS ?? '1800000', 10)
+const benchmarkResultMarker = '__FLAMINGO_BENCH_RESULT_JSON__'
 const contextTargets = (
   args.get('long-targets') ??
   process.env.FLAMINGO_LONG_TARGETS ??
@@ -125,6 +133,10 @@ function kubectl(args: string[]): string[] {
   return ['kubectl', '--context', kubeContext, '-n', namespace, ...args]
 }
 
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`
+}
+
 async function fetchJson(path: string, init?: RequestInit): Promise<unknown> {
   const response = await fetch(`${baseUrl}${path}`, {
     ...init,
@@ -145,7 +157,7 @@ async function fetchJson(path: string, init?: RequestInit): Promise<unknown> {
 }
 
 async function fetchText(path: string): Promise<string> {
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${serverUrl}${path}`, {
     headers: {
       authorization: `Bearer ${process.env.FLAMINGO_API_KEY ?? 'flamingo-local'}`,
     },
@@ -190,6 +202,37 @@ function buildLongPrompt(targetTokens: number, marker: string): string {
 async function runBench(label: string, inputLen: number, outputLen: number, numPrompts: number, concurrency: number) {
   const podDir = `/tmp/flamingo-bench-${Date.now()}-${label}`
   const resultFile = `${label}.json`
+  const benchCommand = [
+    'vllm',
+    'bench',
+    'serve',
+    '--backend',
+    'openai-chat',
+    '--base-url',
+    'http://127.0.0.1:8000',
+    '--endpoint',
+    '/v1/chat/completions',
+    '--model',
+    model,
+    '--tokenizer',
+    tokenizer,
+    '--trust-remote-code',
+    '--dataset-name',
+    'random',
+    '--random-input-len',
+    String(inputLen),
+    '--random-output-len',
+    String(outputLen),
+    '--num-prompts',
+    String(numPrompts),
+    '--max-concurrency',
+    String(concurrency),
+    '--save-result',
+    '--result-dir',
+    podDir,
+    '--result-filename',
+    resultFile,
+  ]
   const command = kubectl([
     'exec',
     `deploy/${deployment}`,
@@ -197,29 +240,18 @@ async function runBench(label: string, inputLen: number, outputLen: number, numP
     'sh',
     '-lc',
     [
-      `mkdir -p ${podDir}`,
-      'vllm bench serve',
-      '--backend openai-chat',
-      '--base-url http://127.0.0.1:8000',
-      '--endpoint /v1/chat/completions',
-      `--model ${model}`,
-      '--dataset-name random',
-      `--random-input-len ${inputLen}`,
-      `--random-output-len ${outputLen}`,
-      `--num-prompts ${numPrompts}`,
-      `--max-concurrency ${concurrency}`,
-      '--save-result',
-      `--result-dir ${podDir}`,
-      `--result-filename ${resultFile}`,
-      `cat ${podDir}/${resultFile}`,
+      `mkdir -p ${shellQuote(podDir)}`,
+      benchCommand.map(shellQuote).join(' '),
+      `printf '\\n${benchmarkResultMarker}\\n'`,
+      `cat ${shellQuote(`${podDir}/${resultFile}`)}`,
     ].join(' && '),
   ])
   const result = await run(command)
   let resultJson: unknown
   try {
-    const jsonStart = result.stdout.lastIndexOf('{')
-    if (jsonStart >= 0) {
-      resultJson = JSON.parse(result.stdout.slice(jsonStart))
+    const markerIndex = result.stdout.lastIndexOf(benchmarkResultMarker)
+    if (markerIndex >= 0) {
+      resultJson = JSON.parse(result.stdout.slice(markerIndex + benchmarkResultMarker.length).trim())
     }
   } catch {
     resultJson = undefined
@@ -240,7 +272,9 @@ async function main(): Promise<void> {
     profile,
     contextTargets,
     model,
+    tokenizer,
     baseUrl,
+    serverUrl,
     kubernetes: { context: kubeContext, namespace, deployment },
     smokes: [],
     benchmarks: [],
@@ -276,7 +310,7 @@ async function main(): Promise<void> {
       model,
       messages: [{ role: 'user', content: 'Reason briefly, then answer exactly: qwen36-thinking-ready' }],
       chat_template_kwargs: { enable_thinking: true },
-      max_tokens: 256,
+      max_tokens: 2048,
       temperature: 0,
     }),
   )
@@ -284,27 +318,27 @@ async function main(): Promise<void> {
   summary.smokes.push(
     await chatSmoke('tool-call', {
       model,
-      messages: [{ role: 'user', content: 'Use the provided tool to add 7 and 35. Do not answer directly.' }],
+      messages: [{ role: 'user', content: 'Use the lookup_status tool for id FLAMINGO-262K and no other tool.' }],
       tools: [
         {
           type: 'function',
           function: {
-            name: 'add',
-            description: 'Add two integers.',
+            name: 'lookup_status',
+            description: 'Look up rollout status by id.',
             strict: true,
             parameters: {
               type: 'object',
               properties: {
-                a: { type: 'integer' },
-                b: { type: 'integer' },
+                id: { type: 'string' },
               },
-              required: ['a', 'b'],
+              required: ['id'],
               additionalProperties: false,
             },
           },
         },
       ],
       tool_choice: 'auto',
+      chat_template_kwargs: { enable_thinking: false },
       max_tokens: 128,
       temperature: 0,
     }),

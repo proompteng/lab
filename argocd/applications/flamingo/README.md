@@ -141,33 +141,33 @@ curl -fsS http://flamingo.ide-newton.ts.net/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d '{
     "model": "qwen36-flamingo",
-    "messages": [{"role": "user", "content": "Use the provided tool to add 7 and 35. Do not answer directly."}],
+    "messages": [{"role": "user", "content": "Use the lookup_status tool for id FLAMINGO-262K and no other tool."}],
     "tools": [{
       "type": "function",
       "function": {
-        "name": "add",
-        "description": "Add two integers.",
+        "name": "lookup_status",
+        "description": "Look up rollout status by id.",
         "strict": true,
         "parameters": {
           "type": "object",
           "properties": {
-            "a": {"type": "integer"},
-            "b": {"type": "integer"}
+            "id": {"type": "string"}
           },
-          "required": ["a", "b"],
+          "required": ["id"],
           "additionalProperties": false
         }
       }
     }],
     "tool_choice": "auto",
+    "chat_template_kwargs": {"enable_thinking": false},
     "max_tokens": 128,
     "temperature": 0
   }' | jq '.choices[0].message.tool_calls'
 ```
 
-Expected: `tool_calls` is a non-empty array and arguments include `7` and `35`.
-If this returns only prose or raw XML, do not accept the rollout; fix the
-generic vLLM serving flags or image first.
+Expected: `tool_calls` is a non-empty array and arguments include
+`{"id":"FLAMINGO-262K"}`. If this returns only prose or raw XML, do not accept
+the rollout; fix the generic vLLM serving flags or image first.
 
 ## Pi And AnyPi Contract
 
@@ -213,11 +213,63 @@ bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8` | `262144` | `0.95` | `16` | `16384` | Initial production candidate |
+| `context-262k-fp8-eager` | `262144` | `0.95` | `16` | `16384` | Promoted production profile |
 | `context-262k-lowseq` | `262144` | `0.95` | `8` | `8192` | Startup fallback if the initial candidate OOMs |
 | `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 smokes pass |
 | `batch-262k-32k` | `262144` | `0.95` | `16` | `32768` | Promote only if TTFT and preemption stay acceptable |
 | `mem-262k-097` | `262144` | `0.97` | `16` | `16384` | Promote only if no OOM or sustained preemption |
+
+### Recorded Production Run
+
+Run timestamp: `2026-06-27T22:37:01Z`.
+
+Result artifact:
+`/tmp/flamingo-vllm-long-20260627T223701Z/flamingo-smoke-2026-06-27T22-37-01-725Z.json`.
+
+Launch profile:
+
+```text
+--max-model-len 262144
+--gpu-memory-utilization 0.95
+--kv-cache-dtype fp8
+--safetensors-load-strategy eager
+--max-num-seqs 16
+--max-num-batched-tokens 16384
+```
+
+Observed startup:
+
+- Lazy baseline loaded the single 23 GiB safetensors shard in `718.30s`.
+- Forced prefetch did not complete the same shard after more than `16m`.
+- Eager loading completed the shard in `26.08s` and full server startup in about
+  `3m16s`.
+- vLLM reported `65.38 GiB` available KV cache and `24.77x` maximum concurrency
+  for 262,144-token requests.
+
+Acceptance smokes:
+
+| Check | Result |
+| --- | --- |
+| `/v1/models` | `qwen36-flamingo`, `max_model_len=262144` |
+| Exact no-thinking chat | `qwen36-ready`, `80ms` |
+| Medium thinking chat | `qwen36-thinking-ready`, `3973ms`, `745` completion tokens |
+| Structured tool call | `lookup_status({"id":"FLAMINGO-262K"})`, `280ms` |
+| Long-context recall | `220053` prompt tokens, `flamingo-long-220000`, `34389ms` |
+
+Short coding-loop smoke benchmark:
+
+| Metric | Value |
+| --- | ---: |
+| Prompts | `4` |
+| Max concurrency | `2` |
+| Total input tokens | `16427` |
+| Total output tokens | `2048` |
+| Mean TTFT | `220.86 ms` |
+| p99 TTFT | `240.96 ms` |
+| Output throughput | `294.09 tok/s` |
+| Total token throughput | `2652.96 tok/s` |
+| Mean TPOT | `6.38 ms` |
+| Failed requests | `0` |
 
 MTP candidate flags:
 
