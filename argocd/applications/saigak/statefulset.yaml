@@ -1,0 +1,202 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: saigak
+  labels:
+    app.kubernetes.io/name: saigak
+    app.kubernetes.io/component: embeddings
+spec:
+  serviceName: saigak
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: saigak
+      app.kubernetes.io/component: embeddings
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: saigak
+        app.kubernetes.io/component: embeddings
+    spec:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: talos-192-168-1-85
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      terminationGracePeriodSeconds: 120
+      initContainers:
+        - name: model-init
+          image: ollama/ollama:0.13.5@sha256:2c9595c555fd70a28363489ac03bd5bf9e7c5bdf2890373c3a830ffd7252ce6d
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+          args:
+            - |
+              set -eu
+              export OLLAMA_HOST=127.0.0.1:11435
+              ollama serve &
+              server_pid="$!"
+              trap 'kill "$server_pid" >/dev/null 2>&1 || true' EXIT
+              for i in $(seq 1 120); do
+                if ollama list >/dev/null 2>&1; then
+                  break
+                fi
+                if [ "$i" = "120" ]; then
+                  echo "ollama did not become ready" >&2
+                  exit 1
+                fi
+                sleep 2
+              done
+              ollama pull qwen3-embedding:8b
+              ollama create qwen3-embedding-saigak:8b -f /config/qwen3-embedding-8b.modelfile
+              ollama show qwen3-embedding-saigak:8b >/dev/null
+              for model in \
+                qwen3-main-saigak:30b-a3b \
+                qwen3-coder-saigak:30b-a3b-q4_K_M \
+                qwen3-coder-saigak:30b \
+                qwen3-embedding-saigak:0.6b \
+                qwen3-coder:30b \
+                qwen3-coder:30b-a3b-q4_K_M \
+                qwen3-embedding:0.6b \
+                qwen3-embedding:8b \
+                qwen3:30b-a3b; do
+                if ollama list | awk 'NR > 1 {print $1}' | grep -Fxq "$model"; then
+                  ollama rm "$model"
+                fi
+              done
+          env:
+            - name: OLLAMA_HOST
+              value: 127.0.0.1:11435
+            - name: OLLAMA_MODELS
+              value: /var/lib/ollama
+          volumeMounts:
+            - name: model-cache
+              mountPath: /var/lib/ollama
+            - name: runtime-config
+              mountPath: /config
+              readOnly: true
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.13.5@sha256:2c9595c555fd70a28363489ac03bd5bf9e7c5bdf2890373c3a830ffd7252ce6d
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OLLAMA_HOST
+              value: 127.0.0.1:11435
+            - name: OLLAMA_MODELS
+              value: /var/lib/ollama
+            - name: OLLAMA_CONTEXT_LENGTH
+              value: "32768"
+            - name: OLLAMA_NUM_PARALLEL
+              value: "1"
+            - name: OLLAMA_MAX_QUEUE
+              value: "512"
+            - name: OLLAMA_KEEP_ALIVE
+              value: 30m
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "1"
+            - name: OLLAMA_FLASH_ATTENTION
+              value: "1"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
+          livenessProbe:
+            exec:
+              command:
+                - ollama
+                - list
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: "2"
+              memory: 16Gi
+              nvidia.com/gpu: "1"
+            limits:
+              cpu: "8"
+              memory: 64Gi
+              nvidia.com/gpu: "1"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: model-cache
+              mountPath: /var/lib/ollama
+        - name: embedding-proxy
+          image: python:3.12-slim@sha256:6c4dd321d176d61ea848dc8c73a4f7dbae8f70e0ee48bb411ea2f045b599fa8e
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /app/proxy.py
+          env:
+            - name: SAIGAK_UPSTREAM_URL
+              value: http://127.0.0.1:11435
+            - name: SAIGAK_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: SAIGAK_EMBEDDING_DIMENSION
+              value: "4096"
+            - name: SAIGAK_PROXY_TIMEOUT_SECONDS
+              value: "120"
+          ports:
+            - name: http
+              containerPort: 11434
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 120
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 10
+            failureThreshold: 2
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: runtime-config
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: runtime-config
+          configMap:
+            name: saigak-runtime
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: saigak-data
+      restartPolicy: Always

@@ -761,14 +761,14 @@ object:
 - With pgvector `0.8.0`, ANN indexes (`ivfflat` / `hnsw`) cannot be created above `2000` dimensions. The 4096d self-hosted path uses plain `vector(4096)` columns without ANN indexes.
 - `JANGAR_BUMBA_TASK_QUEUE` (optional; API queue for enqueued Bumba workflows)
 
-### Ollama embeddings (saigak)
+### Flamingo completions with Saigak embeddings
 
-To use the self-hosted embeddings model on `saigak`:
+To use Flamingo for completions and the self-hosted embeddings model on `saigak`:
 
 ```bash
-export OPENAI_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
+export OPENAI_API_BASE_URL='http://flamingo.flamingo.svc.cluster.local/v1'
 export OPENAI_EMBEDDING_API_BASE_URL='http://saigak.saigak.svc.cluster.local:11434/v1'
 export OPENAI_EMBEDDING_MODEL='qwen3-embedding-saigak:8b'
 export OPENAI_EMBEDDING_DIMENSION='4096'
-# OPENAI_API_KEY is optional for Ollama
+# OPENAI_API_KEY is optional for these in-cluster OpenAI-compatible endpoints
 ```

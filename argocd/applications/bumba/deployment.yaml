@@ -139,9 +139,9 @@ spec:
             - name: PGSSLMODE
               value: require
             - name: OPENAI_API_BASE_URL
-              value: http://saigak.saigak.svc.cluster.local:11434/v1
+              value: http://flamingo.flamingo.svc.cluster.local/v1
             - name: OPENAI_COMPLETION_MODEL
-              value: qwen3-main-saigak:30b-a3b
+              value: qwen36-flamingo
             - name: OPENAI_COMPLETION_REASONING_EFFORT
               value: none
             - name: OPENAI_COMPLETION_TEMPERATURE

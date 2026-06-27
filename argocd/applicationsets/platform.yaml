@@ -169,7 +169,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: manual
-                # Keep disabled until the 3090 is intentionally moved away from saigak.
+                # Keep disabled: the 3090 is reserved for Saigak embeddings as a container GPU.
                 enabled: "false"
                 managedNamespaceMetadata:
                   labels:
@@ -757,15 +757,6 @@ spec:
             - .spec.template.spec.architecture
             - .spec.template.spec.domain.firmware
             - .spec.template.spec.domain.machine
-        - kind: VirtualMachine
-          group: kubevirt.io
-          namespace: saigak
-          name: saigak
-          jqPathExpressions:
-            - .metadata.annotations
-            - .metadata.finalizers
-            - .spec.dataVolumeTemplates[].metadata.creationTimestamp
-            - .spec.template.metadata.creationTimestamp
         - kind: VirtualMachine
           group: kubevirt.io
           namespace: torghut-cuda-ranker

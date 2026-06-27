@@ -7,13 +7,10 @@ metadata:
 spec:
   type: ClusterIP
   selector:
-    kubevirt.io/domain: saigak
+    app.kubernetes.io/name: saigak
+    app.kubernetes.io/component: embeddings
   ports:
     - name: http
       port: 11434
       protocol: TCP
       targetPort: 11434
-    - name: embed
-      port: 11435
-      protocol: TCP
-      targetPort: 11435

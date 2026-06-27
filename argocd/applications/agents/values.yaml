@@ -207,7 +207,7 @@ env:
     AGENTS_DB_POOL_MAX: "4"
     AGENTS_MEMORY_DB_POOL_MAX: "2"
     AGENTS_CONTROLLER_REPO_CONCURRENCY_OVERRIDES: "{}"
-    OPENAI_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
+    OPENAI_API_BASE_URL: http://flamingo.flamingo.svc.cluster.local/v1
     OPENAI_EMBEDDING_API_BASE_URL: http://saigak.saigak.svc.cluster.local:11434/v1
     OPENAI_EMBEDDING_MODEL: qwen3-embedding-saigak:8b
     OPENAI_EMBEDDING_DIMENSION: "4096"

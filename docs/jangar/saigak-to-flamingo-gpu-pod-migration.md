@@ -1,13 +1,14 @@
 # Saigak To Flamingo GPU Pod Migration
 
-This runbook migrates completion traffic from the `saigak` KubeVirt VM to the
-`flamingo` Kubernetes GPU pod. It does not migrate embeddings.
+This runbook records the hard migration where completion traffic moves to the
+`flamingo` Kubernetes GPU pod and `saigak` becomes embeddings-only on the RTX
+3090.
 
 ## Current Roles
 
-`saigak` is a KubeVirt `VirtualMachine` pinned to `talos-192-168-1-85`. It
-serves Ollama on port `11434` and remains the embedding service until a separate
-embedding migration is designed.
+`saigak` is a Kubernetes `StatefulSet` pinned to `talos-192-168-1-85`. It serves
+Ollama through an embeddings-only proxy on port `11434` and must not expose chat
+completion endpoints.
 
 `flamingo` is a normal Kubernetes Deployment pinned to Turin's Blackwell GPU. It
 serves a vLLM OpenAI-compatible API on:
@@ -23,16 +24,14 @@ The served completion model name is:
 qwen36-flamingo
 ```
 
-## Do Not Move Embeddings Yet
+## Embedding Contract
 
-Keep embedding traffic on `saigak` until a separate embedding migration handles
-model choice, dimensions, index rebuilds, and database compatibility.
-
-Keep these values unchanged during this migration:
+Keep embedding traffic on `saigak` with the existing 4096-dimensional model:
 
 ```text
 OPENAI_EMBEDDING_API_BASE_URL=http://saigak.saigak.svc.cluster.local:11434/v1
 OPENAI_EMBEDDING_MODEL=qwen3-embedding-saigak:8b
+OPENAI_EMBEDDING_DIMENSION=4096
 ```
 
 ## Completion Migration Order
@@ -96,8 +95,7 @@ Flamingo first and the Jangar gateway second as a separate hosted-model path:
 OPENAI_API_BASE_URLS=http://flamingo.flamingo.svc.cluster.local/v1;http://jangar.jangar.svc.cluster.local/openai/v1
 OPENAI_API_KEYS=;
 DEFAULT_MODELS=qwen36-flamingo
-ENABLE_OLLAMA_API=true
-OLLAMA_BASE_URLS=http://saigak.saigak.svc.cluster.local:11434
+ENABLE_OLLAMA_API=false
 ```
 
 Validation:
@@ -105,7 +103,7 @@ Validation:
 ```bash
 argocd --core app sync jangar --timeout 900
 kubectl -n jangar rollout status statefulset/open-webui --timeout=10m
-kubectl -n jangar exec open-webui-0 -- printenv OPENAI_API_BASE_URLS DEFAULT_MODELS OLLAMA_BASE_URLS
+kubectl -n jangar exec open-webui-0 -- printenv OPENAI_API_BASE_URLS DEFAULT_MODELS ENABLE_OLLAMA_API
 ```
 
 ## Failure Handling
@@ -118,7 +116,8 @@ as normal desired state. If the Qwen3.6 endpoint fails:
 - test the documented MTP/KV-cache profiles one at a time,
 - or switch Flamingo to SGLang for the same model and service contract.
 
-Keep Saigak serving embeddings while completion serving is repaired.
+Keep Saigak serving embeddings while completion serving is repaired. Do not
+restore the retired Saigak completion model as desired state.
 
 ## Validation Per Consumer
 
@@ -144,14 +143,12 @@ For host-side consumers:
 curl -fsS http://flamingo.ide-newton.ts.net/v1/models
 ```
 
-## Saigak Decommission Criteria
+## Saigak Completion Decommission Criteria
 
-Do not decommission `saigak` until all of these are true:
+Do not treat completion migration as complete until all of these are true:
 
-- No completion consumer depends on Saigak's Ollama completion model.
-- Embeddings have a separately validated replacement or embeddings explicitly
-  remain on a smaller dedicated service.
-- OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been
-  audited.
-- `saigak` PVC contents have been backed up or declared disposable.
+- No completion consumer depends on Saigak's Ollama model store.
+- OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been audited.
+- Saigak rejects `/v1/chat/completions` and `/api/generate`.
+- Saigak `/v1/embeddings` returns 4096 dimensions and `/api/ps` shows GPU VRAM residency.
 - A stability window has passed with Flamingo stable under normal agent load.
