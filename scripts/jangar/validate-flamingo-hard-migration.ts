@@ -9,7 +9,6 @@ export const requiredTerms = [
   '229376',
   '32768',
   'nvfp4',
-  'numa-bind',
 ]
 
 export const forbiddenTerms = [
