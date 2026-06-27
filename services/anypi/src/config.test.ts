@@ -49,6 +49,7 @@ import {
   renderPullRequestBody,
   shouldRunCiRepair,
 } from './run'
+import { validatePullRequestBody, validationErrorToMessage } from './pr-body-validator'
 
 describe('Anypi config', () => {
   test('defaults to Flamingo and all Pi coding tools', () => {
@@ -740,6 +741,186 @@ describe('Anypi prompt contract', () => {
 
       expect(plan.sources).toEqual(['run-spec'])
       expect(plan.commands).toEqual(['run-spec command 1', 'run-spec command 2'])
+    })
+  })
+
+  // ------------------------------------------------------------------------
+  // PR body validation
+  // ------------------------------------------------------------------------
+
+  describe('PR body validation', () => {
+    test('valid rendered body passes without errors', () => {
+      const body = [
+        '## Summary',
+        '',
+        '- Improved the feature',
+        '- Fixed edge cases',
+        '',
+        '## Testing',
+        '',
+        '- ran bun test',
+        '',
+        '## Checklist',
+        '',
+        '- [x] All tests pass.',
+        '- [x] Documentation updated.',
+      ].join('\n')
+      expect(validatePullRequestBody(body)).toBeNull()
+    })
+
+    test('renders from template produce a clean body that passes validation', () => {
+      const body = renderPullRequestBody({
+        runSpec: { implementation: { summary: 'Fix PR body validation' } },
+        status: {
+          provider: 'anypi',
+          status: 'running' as const,
+          startedAt: '2026-06-16T00:00:00.000Z',
+          runName: 'anypi-foo',
+          namespace: 'agents',
+          model: 'qwen36-flamingo',
+          providerModel: 'flamingo/qwen36-flamingo',
+          thinkingLevel: 'medium' as const,
+          contextWindow: 229376,
+          maxTokens: 32768,
+          piPromptTimeoutSeconds: 1800,
+          promptVariant: 'minimal',
+          promptHash: '0123456789abcdef',
+          tools: [],
+          requiredTools: [],
+          validations: [],
+          validationPlan: { policy: 'append', sources: [], commands: [] },
+          agentAttempts: 1,
+          validationAttempts: 1,
+          ciAttempts: 1,
+          promptChars: 0,
+          ci: {
+            ok: true,
+            status: 'passed' as const,
+            requiredOnly: true,
+            attempts: 1,
+            durationMs: 100,
+            checks: [],
+            summary: '0 passed/skipped, 0 pending, 0 failed/cancelled',
+          },
+        },
+        git: {
+          repository: 'proompteng/lab',
+          baseBranch: 'main',
+          headBranch: 'codex/test',
+          cloneUrl: 'https://github.com/proompteng/lab.git',
+          webUrl: 'https://github.com/proompteng/lab',
+          worktree: '/tmp/lab',
+          env: {},
+          writeEnabled: true,
+          pullRequestsEnabled: true,
+        },
+        piText: 'done',
+        template: [
+          '## Summary',
+          '',
+          '## Related Issues',
+          '',
+          '## Testing',
+          '',
+          '## Screenshots (if applicable)',
+          '',
+          '## Breaking Changes',
+          '',
+          '## Checklist',
+          '',
+          '- [ ] Testing section documents the exact validation performed.',
+          '- [ ] Screenshots and Breaking Changes sections are handled appropriately.',
+          '- [ ] Documentation updated.',
+        ].join('\n'),
+      })
+      expect(validatePullRequestBody(body)).toBeNull()
+    })
+
+    test('rejects HTML comments from template scaffolding', () => {
+      const body = [
+        '## Summary',
+        '',
+        '<!-- 3-5 concise bullets describing what changed. -->',
+        '',
+        '- Did the thing.',
+      ].join('\n')
+      const err = validatePullRequestBody(body)
+      expect(err).not.toBeNull()
+      expect(err!.issues).toContain('html-comment')
+      expect(validationErrorToMessage(err!)).toContain('html-comment')
+    })
+
+    test('rejects bare TODO and TBD keywords', () => {
+      const body = ['## Summary', '', '- Improve this TODO section before merge.', '- TBD: finalize the changes.'].join(
+        '\n',
+      )
+      const err = validatePullRequestBody(body)
+      expect(err).not.toBeNull()
+      expect(err!.issues).toContain('TODO/TBD placeholder')
+    })
+
+    test('rejects angle-bracket placeholders', () => {
+      const body = ['## Summary', '', '- Improved <feature name>.', '- Updated <component> to handle edge cases.'].join(
+        '\n',
+      )
+      const err = validatePullRequestBody(body)
+      expect(err).not.toBeNull()
+      expect(err!.issues.some((issue) => issue.includes('angle-bracket'))).toBe(true)
+    })
+
+    test('rejects unchecked checklist items', () => {
+      const body = [
+        '## Summary',
+        '',
+        '- Fixed the bug.',
+        '',
+        '## Checklist',
+        '',
+        '- [ ] Testing section documents validation.',
+        '- [x] Screenshots handled.',
+      ].join('\n')
+      const err = validatePullRequestBody(body)
+      expect(err).not.toBeNull()
+      expect(err!.issues.some((issue) => issue.includes('unchecked checklist'))).toBe(true)
+    })
+
+    test('rejects bare-dash placeholders used as bullet scaffolding', () => {
+      const body = ['## Summary', '', '- Fixed things.', '', '- ', '- '].join('\n')
+      const err = validatePullRequestBody(body)
+      expect(err).not.toBeNull()
+      expect(err!.issues.some((issue) => issue.includes('bare-dash'))).toBe(true)
+    })
+
+    test('rejects combined scaffolding in one pass', () => {
+      const body = [
+        '## Summary',
+        '',
+        '<!-- TODO: write summary -->',
+        '',
+        '- <feature name>',
+        '',
+        '- ',
+        '- ',
+        '',
+        '## Checklist',
+        '',
+        '- [ ] Testing done.',
+      ].join('\n')
+      const err = validatePullRequestBody(body)
+      expect(err).not.toBeNull()
+      expect(err!.issues).toContain('html-comment')
+      expect(err!.issues).toContain('TODO/TBD placeholder')
+      expect(err!.issues.some((issue) => issue.includes('angle-bracket'))).toBe(true)
+      expect(err!.issues.some((issue) => issue.includes('bare-dash'))).toBe(true)
+      expect(err!.issues.some((issue) => issue.includes('unchecked checklist'))).toBe(true)
+    })
+
+    test('validation error message is human readable', () => {
+      const err = validatePullRequestBody('<!-- placeholder -->')
+      const msg = validationErrorToMessage(err!)
+      expect(msg).toContain('PR body validation failed')
+      expect(msg).toContain('html-comment')
+      expect(msg).toContain('remove all HTML comments')
     })
   })
 })

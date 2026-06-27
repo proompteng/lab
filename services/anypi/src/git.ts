@@ -4,6 +4,7 @@ import { dirname, resolve } from 'node:path'
 
 import { runCommand, runShell } from './command'
 import type { AnypiConfig } from './config'
+import { validatePullRequestBody, validationErrorToMessage } from './pr-body-validator'
 import type {
   AgentRunSpecPayload,
   CiCheck,
@@ -333,6 +334,12 @@ export const createOrUpdatePullRequest = async (
   },
 ): Promise<PullRequestResult> => {
   if (!git.pullRequestsEnabled) return { enabled: false }
+
+  // Validate the PR body before any GitHub mutation.
+  const validation = validatePullRequestBody(input.body)
+  if (validation) {
+    throw new Error(validationErrorToMessage(validation))
+  }
   const owner = repositoryOwner(git.repository)
   const endpoint = `repos/${git.repository}/pulls`
   const view = await runCommand(
