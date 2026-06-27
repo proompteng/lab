@@ -1,0 +1,17 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: torghut-clickhouse
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut-clickhouse
+    app.kubernetes.io/part-of: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      clickhouse.altinity.com/chi: torghut-clickhouse
+      clickhouse.altinity.com/cluster: default
+

@@ -8,4 +8,5 @@ resources:
   - clickhouse-guardrails-exporter-configmap.yaml
   - clickhouse-guardrails-exporter.yaml
   - clickhouse-cluster.yaml
+  - clickhouse-pdb.yaml
   - clickhouse-service.yaml
