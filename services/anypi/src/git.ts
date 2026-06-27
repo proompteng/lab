@@ -415,7 +415,7 @@ export const parseCiChecksResult = (result: CommandResult): CiCheck[] => {
 
 export const isNoChecksReportedResult = (result: CommandResult) => {
   if (result.exitCode === 0) return false
-  return /no checks reported/i.test(`${result.stderr}\n${result.stdout}`)
+  return /no (?:required )?checks reported/i.test(`${result.stderr}\n${result.stdout}`)
 }
 
 export const isNoRequiredChecksResult = isNoChecksReportedResult
