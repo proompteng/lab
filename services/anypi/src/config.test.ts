@@ -47,6 +47,7 @@ import {
   hasWorktreeProgress,
   normalizeConventionalSummary,
   renderPullRequestBody,
+  shouldRunCiRepair,
 } from './run'
 
 describe('Anypi config', () => {
@@ -392,6 +393,44 @@ describe('Anypi prompt contract', () => {
     })
   })
 
+  test('only treats failed or cancelled GitHub checks as CI-repairable', () => {
+    expect(
+      shouldRunCiRepair({
+        ok: false,
+        status: 'failed',
+        requiredOnly: false,
+        attempts: 1,
+        durationMs: 100,
+        checks: [{ name: 'scripts', workflow: 'CI', bucket: 'fail' }],
+        summary: '0 passed/skipped, 0 pending, 1 failed/cancelled',
+      }),
+    ).toBe(true)
+
+    expect(
+      shouldRunCiRepair({
+        ok: false,
+        status: 'failed',
+        requiredOnly: false,
+        attempts: 1,
+        durationMs: 100,
+        checks: [{ name: 'scripts', workflow: 'CI', bucket: 'pending' }],
+        summary: '0 passed/skipped, 1 pending, 0 failed/cancelled',
+      }),
+    ).toBe(false)
+
+    expect(
+      shouldRunCiRepair({
+        ok: false,
+        status: 'unavailable',
+        requiredOnly: true,
+        attempts: 1,
+        durationMs: 100,
+        checks: [],
+        summary: "gh pr checks failed (1): no required checks reported on the 'codex/example' branch",
+      }),
+    ).toBe(false)
+  })
+
   test('rejects generated artifact and lockfile drift before commit', async () => {
     expect(classifyRestrictedChangedFile('bun.lock')).toBe('lockfile')
     expect(classifyRestrictedChangedFile('services/anypi/dist/index.js')).toBe('generated-artifact')
@@ -464,7 +503,7 @@ describe('Anypi prompt contract', () => {
         args: ['pr', 'checks', 'branch', '--required', '--json', 'name,workflow,state,bucket,link'],
         exitCode: 1,
         stdout: '',
-        stderr: "no checks reported on the 'codex/example' branch",
+        stderr: "no required checks reported on the 'codex/example' branch",
         durationMs: 12,
       }),
     ).toBe(true)

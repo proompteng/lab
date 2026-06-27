@@ -209,6 +209,9 @@ const formatValidationError = (result: ValidationResult) =>
 
 const formatCiError = (ci: CiWaitResult) => `ci checks ${ci.status}: ${ci.summary}`
 
+export const shouldRunCiRepair = (ci: CiWaitResult) =>
+  ci.status === 'failed' && ci.checks.some((check) => ['fail', 'cancel'].includes(check.bucket ?? ''))
+
 const formatCiRepairSummary = (ci: CiWaitResult) => {
   const checks = ci.checks
     .map(
@@ -402,6 +405,7 @@ export const runAnypi = async (env: NodeJS.ProcessEnv = process.env): Promise<An
           status.ci = ci
           await writeStatus(config.statusPath, status)
           if (ci.ok) break
+          if (!shouldRunCiRepair(ci)) throw new Error(formatCiError(ci))
           if (attempt >= config.ciRepairAttempts) throw new Error(formatCiError(ci))
 
           await logger.error(`${formatCiError(ci)}; starting ci repair ${attempt + 1}/${config.ciRepairAttempts}`)
