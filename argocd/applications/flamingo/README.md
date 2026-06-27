@@ -28,7 +28,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --max-model-len 262144
 --gpu-memory-utilization 0.95
 --kv-cache-dtype fp8
---safetensors-load-strategy prefetch
+--safetensors-load-strategy eager
 --max-num-seqs 16
 --max-num-batched-tokens 16384
 --enable-prefix-caching
@@ -54,11 +54,12 @@ The model weights are NVFP4, but the KV cache uses FP8. Live rollout proved that
 `requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
 combination changes and is proven in a separate smoke.
 
-Safetensors prefetch is forced because the model cache is RBD-backed but appears
-to vLLM as local EXT4, which disables automatic prefetching. Live rollout proved
-lazy checkpoint loading can block for minutes in disk I/O before the HTTP server
-starts; `--safetensors-load-strategy prefetch` makes the 23 GiB weight read
-explicit and repeatable.
+Safetensors eager loading is forced because the model cache is RBD-backed but
+appears to vLLM as local EXT4. Live rollout proved lazy checkpoint loading can
+block for about 12 minutes in disk I/O before the HTTP server starts, and
+`--safetensors-load-strategy prefetch` was slower than the lazy baseline on the
+single 23 GiB shard. `eager` uses a different vLLM loader path that reads the
+whole shard into RAM before yielding tensors.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
