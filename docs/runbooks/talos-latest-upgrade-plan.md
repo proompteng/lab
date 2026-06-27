@@ -13,7 +13,7 @@ or while drain blockers remain unresolved.
 - Cluster: `ryzen` / Kubernetes `galactic`.
 - Primary Kubernetes context: `galactic-lan`.
 
-Sources checked on 2026-06-17; live status refreshed on 2026-06-19:
+Sources checked on 2026-06-17; live status refreshed on 2026-06-27:
 
 - Talos releases: <https://github.com/siderolabs/talos/releases>
 - Talos upgrade guide:
@@ -29,7 +29,8 @@ Kubernetes minor versions as part of this runbook.
 
 ## Live snapshot
 
-Read-only checks after the Ryzen window on 2026-06-19 showed this state:
+Read-only checks after the Ryzen window showed this state; Altra was refreshed
+again on 2026-06-27 during the Saigak 3090 container-GPU cutover:
 
 | Kubernetes node        | IP              | Talos | Kubernetes | Role          | Upgrade action |
 | ---------------------- | --------------- | ----- | ---------- | ------------- | -------------- |
@@ -42,12 +43,18 @@ Current Altra gates:
 1. `talos-192-168-1-85` is still running Talos `v1.12.4`, while its live
    machine config already points `machine.install.image` at a `v1.13.4` Image
    Factory installer. Do not trust that drift blindly. Regenerate the Altra
-   target image from `devices/altra/manifests/altra-tailscale-schematic.yaml`
-   and patch the machine config immediately before the actual upgrade.
-1. A server-side drain dry-run on 2026-06-19 still hit PDB blockers on Altra:
-   `tsag-db-1`, `jangar-db-1`, `posthog-db-1`, Knative `activator` and
-   `webhook`, Tempo ingesters, `torghut-tigerbeetle-0`, the ClickHouse
-   operator, and `forgejo-runners-arm64-0`.
+   target image from
+   `devices/altra/manifests/altra-tailscale-nvidia-lts-schematic.yaml` and
+   patch the machine config immediately before the actual upgrade.
+1. A server-side drain dry-run on 2026-06-27 still hit PDB blockers on Altra:
+   CNPG primaries `coder-cluster-1`, `keycloak-db-1`, `tsag-db-1`,
+   `jangar-db-1`, and `posthog-db-1`; Kafka brokers `kafka-pool-a-0`,
+   `kafka-pool-a-2`, `kafka-pool-b-4`, and `kafka-pool-b-5`; Knative
+   `activator` and `webhook`; Tempo ingesters; `torghut-tigerbeetle-0`;
+   `torghut-ta`; `torghut-hyperliquid-runtime`; the ClickHouse operator;
+   `forgejo-runners-arm64-0`; and
+   `torghut/chi-torghut-clickhouse-default-0-0-0`, which currently matches
+   more than one PDB and cannot be evicted through the eviction subresource.
 1. The CNPG blockers have a known zero-data-loss pattern from Ryzen: create
    replicas, wait for them, promote a replica off the target node, drain, then
    restore the singleton posture after acceptance.
@@ -268,7 +275,7 @@ printf '%s\n' "$RYZEN_IMAGE"
 ```bash
 ALTRA_SCHEMATIC_ID="$(
   curl -sS -X POST \
-    --data-binary @devices/altra/manifests/altra-tailscale-schematic.yaml \
+    --data-binary @devices/altra/manifests/altra-tailscale-nvidia-lts-schematic.yaml \
     https://factory.talos.dev/schematics \
     | jq -r .id
 )"
@@ -294,7 +301,7 @@ printf '%s\n' "$TURIN_IMAGE"
 ```
 
 The Altra source is tracked at
-`devices/altra/manifests/altra-tailscale-schematic.yaml`.
+`devices/altra/manifests/altra-tailscale-nvidia-lts-schematic.yaml`.
 
 ## Node upgrade commands
 
@@ -363,6 +370,8 @@ talosctl upgrade \
 Expected post-upgrade extension set includes:
 
 1. `tailscale`
+1. `nvidia-open-gpu-kernel-modules-lts`
+1. `nvidia-container-toolkit-lts`
 
 Do not pass deprecated upgrade flags. For `v1.13`, prefer the streaming upgrade
 API used by current `talosctl upgrade`.
@@ -387,7 +396,7 @@ mkdir -p "$EVIDENCE_DIR"
 
 export ALTRA_SCHEMATIC_ID="$(
   curl -sS -X POST \
-    --data-binary @devices/altra/manifests/altra-tailscale-schematic.yaml \
+    --data-binary @devices/altra/manifests/altra-tailscale-nvidia-lts-schematic.yaml \
     https://factory.talos.dev/schematics \
     | jq -r .id
 )"
@@ -418,20 +427,28 @@ kubectl --context "$CTX" -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd du
   | tee "$EVIDENCE_DIR/ceph-osd-dump.before.json"
 ```
 
-Known Altra drain blockers from the 2026-06-19 dry-run:
+Known Altra drain blockers from the 2026-06-27 dry-run:
 
-1. CNPG singleton primaries: `jangar/jangar-db`, `posthog/posthog-db`,
-   `tsag/tsag-db`.
+1. CNPG singleton primaries: `coder/coder-cluster`, `keycloak/keycloak-db`,
+   `jangar/jangar-db`, `posthog/posthog-db`, and `tsag/tsag-db`.
+1. Kafka: brokers `kafka-pool-a-0`, `kafka-pool-a-2`, `kafka-pool-b-4`, and
+   `kafka-pool-b-5`; do not proceed while the Kafka PDB reports
+   `disruptionsAllowed=0`.
 1. Knative: `activator` and `webhook` PDBs.
 1. Observability: Tempo ingester PDBs.
-1. Torghut: `torghut-tigerbeetle-0`.
-1. ClickHouse: ClickHouse operator PDB.
+1. Torghut: `torghut-tigerbeetle-0`, `torghut-ta`, and
+   `torghut-hyperliquid-runtime`.
+1. ClickHouse: ClickHouse operator PDB and the Torghut ClickHouse pod
+   `chi-torghut-clickhouse-default-0-0-0`, which currently matches multiple
+   PDBs.
 1. Forgejo runners: `forgejo-runners-arm64-0`.
 
 Resolve CNPG the same way Ryzen was resolved:
 
 ```bash
 cat >"$EVIDENCE_DIR/cnpg-altra-targets.tsv" <<'EOF'
+coder	coder-cluster
+keycloak	keycloak-db
 jangar	jangar-db
 posthog	posthog-db
 tsag	tsag-db
@@ -458,6 +475,28 @@ done <"$EVIDENCE_DIR/cnpg-altra-targets.tsv"
 Resolve the non-CNPG blockers explicitly. Save original objects before every
 temporary patch, and pause Argo automation for the owning apps at the
 ApplicationSet/root layer before applying live changes.
+
+Kafka has four brokers on Altra in the 2026-06-27 readback and its PDB reported
+`disruptionsAllowed=0`. Do not bypass that PDB. Move or rebalance brokers
+through Strimzi first, then prove the Kafka app and broker ISR are healthy
+before attempting the node drain:
+
+```bash
+kubectl --context "$CTX" -n kafka get kafka,kafkanodepool,pods -o wide \
+  | tee "$EVIDENCE_DIR/kafka.before.txt"
+kubectl --context "$CTX" -n kafka get pdb kafka-kafka -o yaml \
+  >"$EVIDENCE_DIR/kafka-pdb.before.yaml"
+
+# Choose a Strimzi-supported broker movement or capacity action for the current
+# cluster state. Do not delete broker pods or relax the Kafka PDB as a shortcut.
+kubectl --context "$CTX" -n kafka get kafka kafka -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason} {.message}{"\n"}{end}' \
+  | tee "$EVIDENCE_DIR/kafka-status.before-drain.txt"
+kubectl --context "$CTX" -n kafka get pdb kafka-kafka \
+  | tee "$EVIDENCE_DIR/kafka-pdb.before-drain.txt"
+```
+
+Proceed only when `kafka-kafka` allows at least one disruption and the brokers
+that would be evicted are no longer concentrated on Altra.
 
 Knative Serving uses `80%` PDBs for singleton `activator` and `webhook`
 deployments. Use the operator HA knob, then prove both PDBs allow at least one
@@ -506,6 +545,26 @@ kubectl --context "$CTX" -n clickhouse-operator get pods -o wide \
   | tee "$EVIDENCE_DIR/clickhouse-operator-pods.after-scale.txt"
 ```
 
+Torghut ClickHouse currently has a pod that matches multiple PDBs, which makes
+the eviction subresource refuse the drain even before PDB budget is considered.
+Fix the overlapping PDBs through GitOps or a documented temporary patch before
+the maintenance window:
+
+```bash
+kubectl --context "$CTX" -n torghut get pdb -o yaml \
+  >"$EVIDENCE_DIR/torghut-pdb.before-clickhouse-overlap.yaml"
+kubectl --context "$CTX" -n torghut describe pod chi-torghut-clickhouse-default-0-0-0 \
+  >"$EVIDENCE_DIR/torghut-clickhouse-pod.before-overlap-fix.txt"
+
+# After the owning PDB definitions are corrected, this must not emit
+# MultiplePodDisruptionBudgets for the ClickHouse pod.
+kubectl --context "$CTX" -n torghut get events --field-selector type=Warning --sort-by=.lastTimestamp \
+  | grep -E 'MultiplePodDisruptionBudgets|chi-torghut-clickhouse-default-0-0-0' \
+  | tee "$EVIDENCE_DIR/torghut-clickhouse-pdb-overlap-events.txt"
+```
+
+Do not continue while the ClickHouse pod still has multiple matching PDBs.
+
 `torghut-tigerbeetle-0` has no replica-first path in this runbook. Treat it as
 a maintenance outage unless a separate TigerBeetle HA plan exists. If the outage
 is accepted, temporarily relax only its PDB:
@@ -514,6 +573,25 @@ is accepted, temporarily relax only its PDB:
 kubectl --context "$CTX" -n torghut get pdb torghut-tigerbeetle -o yaml \
   >"$EVIDENCE_DIR/torghut-tigerbeetle-pdb.before-temp-patch.yaml"
 kubectl --context "$CTX" -n torghut patch pdb torghut-tigerbeetle \
+  --type merge -p '{"spec":{"minAvailable":0}}'
+```
+
+`torghut-ta` and `torghut-hyperliquid-runtime` were also PDB blockers in the
+2026-06-27 dry-run. Prefer scaling or moving replicas so their PDBs allow one
+disruption. If the maintenance decision accepts temporary downtime, save and
+relax only those PDBs, then restore them after acceptance:
+
+```bash
+kubectl --context "$CTX" -n torghut get pdb torghut-ta torghut-hyperliquid-runtime -o yaml \
+  >"$EVIDENCE_DIR/torghut-runtime-pdbs.before-temp-patch.yaml"
+kubectl --context "$CTX" -n torghut get deploy torghut-ta torghut-hyperliquid-runtime -o wide \
+  | tee "$EVIDENCE_DIR/torghut-runtime-deployments.before.txt"
+
+# Prefer replica/capacity repair. Only patch these PDBs after a written
+# maintenance decision accepts the impact.
+kubectl --context "$CTX" -n torghut patch pdb torghut-ta \
+  --type merge -p '{"spec":{"minAvailable":0}}'
+kubectl --context "$CTX" -n torghut patch pdb torghut-hyperliquid-runtime \
   --type merge -p '{"spec":{"minAvailable":0}}'
 ```
 
@@ -601,6 +679,10 @@ kubectl --context "$CTX" -n clickhouse-operator patch pdb clickhouse-operator \
 
 kubectl --context "$CTX" -n torghut patch pdb torghut-tigerbeetle \
   --type merge -p '{"spec":{"minAvailable":1}}'
+kubectl --context "$CTX" -n torghut patch pdb torghut-ta \
+  --type merge -p '{"spec":{"minAvailable":1}}'
+kubectl --context "$CTX" -n torghut patch pdb torghut-hyperliquid-runtime \
+  --type merge -p '{"spec":{"minAvailable":1}}'
 kubectl --context "$CTX" -n forgejo-runners patch pdb forgejo-runners-arm64 \
   --type merge -p '{"spec":{"minAvailable":1}}'
 ```
@@ -613,7 +695,10 @@ kubectl --context "$CTX" -n knative-serving get pdb activator-pdb webhook-pdb
 kubectl --context "$CTX" -n observability get statefulset observability-tempo-ingester
 kubectl --context "$CTX" -n observability get pdb observability-tempo-ingester
 kubectl --context "$CTX" -n clickhouse-operator get deployment,pdb,pods -o wide
-kubectl --context "$CTX" -n torghut get pdb torghut-tigerbeetle
+kubectl --context "$CTX" -n kafka get kafka,kafkanodepool,pods,pdb -o wide
+kubectl --context "$CTX" -n torghut get pdb torghut-tigerbeetle torghut-ta torghut-hyperliquid-runtime
+kubectl --context "$CTX" -n torghut get events --field-selector type=Warning --sort-by=.lastTimestamp \
+  | grep -E 'MultiplePodDisruptionBudgets|chi-torghut-clickhouse-default-0-0-0' || true
 kubectl --context "$CTX" -n forgejo-runners get pdb forgejo-runners-arm64
 ```
 
@@ -675,7 +760,9 @@ Final success criteria:
    flags.
 1. Node-level Tailscale still works, including image pulls from
    `registry.ide-newton.ts.net`.
-1. GPU-related extensions remain loaded on the Ryzen and Turin hardware profiles.
+1. GPU-related extensions remain loaded on the Ryzen, Altra, and Turin hardware
+   profiles. Altra must advertise `nvidia.com/gpu: 1` before the Saigak GPU pod
+   rollout is accepted.
 1. Argo CD and critical stateful namespaces have returned to their pre-window
    health posture or better.
 
