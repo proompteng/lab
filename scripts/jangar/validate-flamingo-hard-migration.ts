@@ -9,6 +9,8 @@ export const requiredTerms = [
   '229376',
   '32768',
   'fp8',
+  'safetensors-load-strategy',
+  'prefetch',
 ]
 
 export const forbiddenTerms = [

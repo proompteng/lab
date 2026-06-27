@@ -75,6 +75,8 @@ args:
   - "0.95"
   - --kv-cache-dtype
   - fp8
+  - --safetensors-load-strategy
+  - prefetch
   - --max-num-seqs
   - "16"
   - --max-num-batched-tokens
