@@ -111,6 +111,9 @@ spec:
             httpGet:
               path: /
               port: http
+              httpHeaders:
+                - name: Host
+                  value: attic.attic.svc.cluster.local
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 3
@@ -118,6 +121,9 @@ spec:
             httpGet:
               path: /
               port: http
+              httpHeaders:
+                - name: Host
+                  value: attic.attic.svc.cluster.local
             initialDelaySeconds: 30
             periodSeconds: 30
             timeoutSeconds: 5

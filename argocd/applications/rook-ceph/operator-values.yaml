@@ -30,6 +30,10 @@ pspEnable: false
 
 allowLoopDevices: false
 
+# RGW admin paths can exceed the chart default during HDD compaction/recovery.
+# Keep OBC provisioning fail-closed, but do not interrupt healthy admin lookups.
+cephCommandsTimeoutSeconds: "120"
+
 csi:
   rookUseCsiOperator: true
   enableRbdDriver: true
