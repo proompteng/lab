@@ -364,6 +364,55 @@ describe('agents-shell MCP tools', () => {
     await server.close()
   })
 
+  it('searches workspace files with ripgrep instead of empty piped stdin', async () => {
+    const config = makeConfig()
+    mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
+    writeFileSync(
+      join(config.workspaceRoot, 'lab', 'src', 'agents-shell.ts'),
+      'export const createAgentsShellServer = true\n',
+    )
+    const bin = join(config.workspaceRoot, 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(
+      join(bin, 'rg'),
+      '#!/bin/sh\nprintf "%s\\n" "src/agents-shell.ts:1:export const createAgentsShellServer = true"\n',
+    )
+    chmodSync(join(bin, 'rg'), 0o755)
+
+    const previousPath = process.env.PATH
+    process.env.PATH = `${bin}:${previousPath ?? ''}`
+
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const result = await client.callTool({
+        name: 'workspace_search',
+        arguments: { query: 'createAgentsShellServer', path: 'lab', fixedStrings: true },
+      })
+      const content = result.structuredContent as {
+        command?: string
+        exitCode?: number
+        stdout?: string
+      }
+      expect(content.command).toBe(
+        'rg --line-number --no-heading --color=never --hidden -g !.git --fixed-strings createAgentsShellServer .',
+      )
+      expect(content.exitCode).toBe(0)
+      expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+
+      if (previousPath == null) {
+        delete process.env.PATH
+      } else {
+        process.env.PATH = previousPath
+      }
+    }
+  })
+
   it('returns an OAuth challenge when a tool lacks required scope', async () => {
     const config = makeConfig()
     const { client, server, clientTransport, serverTransport } = await connectServer(
