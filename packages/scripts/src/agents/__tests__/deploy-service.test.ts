@@ -56,6 +56,38 @@ describe('agents deploy-service helpers', () => {
     ])
   })
 
+  it('uses native image plans when per-arch CI disables explicit platforms', () => {
+    process.env.AGENTS_IMAGE_TAG = 'abc123-amd64'
+    process.env.AGENTS_IMAGE_PLATFORMS = 'native'
+
+    const options = __private.resolveOptions()
+
+    expect(options.platforms).toEqual([])
+    expect(__private.buildAgentsServiceImagePlans(options)).toEqual([
+      {
+        registry: 'registry.ide-newton.ts.net',
+        repository: 'lab/agents-controller',
+        tag: 'abc123-amd64',
+        target: 'controller',
+        platforms: [],
+      },
+      {
+        registry: 'registry.ide-newton.ts.net',
+        repository: 'lab/agents-control-plane',
+        tag: 'abc123-amd64',
+        target: 'control-plane',
+        platforms: [],
+      },
+      {
+        registry: 'registry.ide-newton.ts.net',
+        repository: 'lab/agents-shell',
+        tag: 'abc123-amd64',
+        target: 'agents-shell',
+        platforms: [],
+      },
+    ])
+  })
+
   it('treats local Codex auth as optional for runner image builds', () => {
     const previousHome = process.env.HOME
     const dir = mkdtempSync(join(tmpdir(), 'agents-codex-auth-'))

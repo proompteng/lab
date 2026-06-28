@@ -230,20 +230,32 @@ describe('agents build-image helpers', () => {
           repository: 'lab/agents-controller',
           tag: 'abc123-amd64',
           target: 'controller',
+          platforms: [],
         },
         {
           registry: 'registry.example',
           repository: 'lab/agents-control-plane',
           tag: 'abc123-amd64',
           target: 'control-plane',
+          platforms: [],
+        },
+        {
+          registry: 'registry.example',
+          repository: 'lab/agents-shell',
+          tag: 'abc123-amd64',
+          target: 'agents-shell',
+          platforms: [],
         },
       ])
 
       expect(results.map((result) => result.image)).toEqual([
         'registry.example/lab/agents-controller:abc123-amd64',
         'registry.example/lab/agents-control-plane:abc123-amd64',
+        'registry.example/lab/agents-shell:abc123-amd64',
       ])
       expect(commands.map((command) => command.slice(0, 2))).toEqual([
+        ['docker', 'build'],
+        ['docker', 'push'],
         ['docker', 'build'],
         ['docker', 'push'],
         ['docker', 'build'],

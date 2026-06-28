@@ -39,8 +39,13 @@ type BuildConfiguration = {
   buildArgs: Record<string, string>
 }
 
+const nativePlatformValues = new Set(['0', 'false', 'host', 'local', 'native', 'none', 'off'])
+
 const parsePlatforms = (value: string | undefined): string[] | undefined => {
   if (!value) return undefined
+  const normalized = value.trim().toLowerCase()
+  if (nativePlatformValues.has(normalized)) return []
+
   const platforms = value
     .split(',')
     .map((platform) => platform.trim())
