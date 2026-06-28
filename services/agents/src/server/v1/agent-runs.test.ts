@@ -227,7 +227,7 @@ describe('AgentRun v1 API', () => {
           binary: '/usr/local/bin/anypi-runner',
           workload: {
             image:
-              'registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990',
+              'registry.ide-newton.ts.net/lab/anypi:a5796fc2b@sha256:4e4e7ac9f646c061baaa7478ae42bf3acefc2ab46b2640ffa52b677cb8ed86ca',
           },
         },
       })
@@ -258,7 +258,7 @@ describe('AgentRun v1 API', () => {
       dryRun: true,
       providerName: 'anypi',
       resolvedWorkloadImage:
-        'registry.ide-newton.ts.net/lab/anypi:9cd6ed580@sha256:b6f90e286832458ee228472a066ba1249536bef2d53618014164f70b85e01990',
+        'registry.ide-newton.ts.net/lab/anypi:a5796fc2b@sha256:4e4e7ac9f646c061baaa7478ae42bf3acefc2ab46b2640ffa52b677cb8ed86ca',
       resolvedWorkloadImageSource: 'provider',
     })
     expect(kube.apply).not.toHaveBeenCalled()
