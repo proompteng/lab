@@ -168,7 +168,6 @@ const SCOPES = {
 
 const READ_SCOPES = [SCOPES.read, SCOPES.write, SCOPES.admin]
 const WRITE_SCOPES = [SCOPES.write, SCOPES.admin]
-const OAUTH_SESSION_SCOPES = [SCOPES.offlineAccess]
 
 const readOnlyAnnotations: ToolAnnotations = {
   readOnlyHint: true,
@@ -799,7 +798,7 @@ const summarizeJob = (
 }
 
 const toolSecurityMeta = (scopes: string[]) => {
-  const requestedScopes = Array.from(new Set([...scopes, ...OAUTH_SESSION_SCOPES]))
+  const requestedScopes = Array.from(new Set(scopes))
   const securitySchemes = [
     {
       type: 'oauth2',
