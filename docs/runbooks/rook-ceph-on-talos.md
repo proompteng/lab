@@ -118,7 +118,10 @@ The cluster enables the Ceph mgr `stats` module declaratively so `ceph fs perf s
 
 Use this procedure when Turin OSDs are healthy but still run as single-device HDD BlueStore OSDs with no active `block.db`.
 
-Rook applies `metadataDevice` only when an OSD is prepared. It does not retrofit an existing OSD onto a new DB/WAL device. The safe path is therefore a one-OSD-at-a-time remove, purge, targeted zap, and reprepare cycle after the GitOps spec has the desired `metadataDevice`.
+The preferred current procedure is the faster raw BlueStore DB attach/migrate runbook:
+`docs/runbooks/rook-ceph-turin-bluestore-db-fast-migration.md`.
+
+Rook applies `metadataDevice` when an OSD is prepared. It does not automatically retrofit an existing OSD onto a new DB/WAL device. For current raw-device Turin OSDs, prefer the BlueStore `block.db` attach/migrate path in the dedicated runbook. The remove, purge, targeted zap, and reprepare cycle below is a fallback only when the fast path cannot attach or migrate the DB device, or when the OSD must be rebuilt for another reason.
 
 Do not migrate all three Turin OSDs at once. Do not wipe the whole Kingston NVMe. Do not run the historical three-OSD recreate flow unless the cluster is already degraded and the old OSD IDs are intentionally abandoned.
 
