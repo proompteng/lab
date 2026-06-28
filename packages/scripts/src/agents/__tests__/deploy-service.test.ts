@@ -27,6 +27,7 @@ describe('agents deploy-service helpers', () => {
         registry: 'registry.example',
         repository: 'lab/agents-controller',
         controlPlaneRepository: 'lab/agents-control-plane',
+        agentsShellRepository: 'lab/agents-shell',
         tag: 'abc1234',
         platforms: ['linux/arm64'],
       }),
@@ -43,6 +44,13 @@ describe('agents deploy-service helpers', () => {
         repository: 'lab/agents-control-plane',
         tag: 'abc1234',
         target: 'control-plane',
+        platforms: ['linux/arm64'],
+      },
+      {
+        registry: 'registry.example',
+        repository: 'lab/agents-shell',
+        tag: 'abc1234',
+        target: 'agents-shell',
         platforms: ['linux/arm64'],
       },
     ])
@@ -160,6 +168,11 @@ runner:
     repository: old/runner
     tag: old
     digest: sha256:old-runner
+agentsShell:
+  image:
+    repository: old/shell
+    tag: old
+    digest: sha256:old-shell
 `,
     )
 
@@ -171,6 +184,9 @@ runner:
       'registry.example/lab/agents-control-plane',
       'abc123',
       'sha256:control-plane',
+      'registry.example/lab/agents-shell',
+      'abc123',
+      'sha256:shell',
       'registry.example/lab/agents-codex-runner',
       'abc123',
       'sha256:runner',
@@ -189,8 +205,10 @@ runner:
     expect(updated).toContain('repository: registry.example/lab/agents-controller')
     expect(updated).not.toContain('old/controllers-override')
     expect(updated).toContain('repository: registry.example/lab/agents-control-plane')
+    expect(updated).toContain('repository: registry.example/lab/agents-shell')
     expect(updated).toContain('repository: registry.example/lab/agents-codex-runner')
     expect(updated).toContain('digest: sha256:controller')
+    expect(updated).toContain('digest: sha256:shell')
     expect(updated).toContain('digest: sha256:runner')
     expect(updated).toContain('AGENTS_SOURCE_HEAD_SHA: abcdef1234567890')
     expect(updated).toContain('AGENTS_SOURCE_CI_RUN_ID: "12345"')

@@ -148,6 +148,12 @@
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- if .Values.agentsShell.enabled -}}
+{{- $agentsShellImage := .Values.agentsShell.image | default dict -}}
+{{- if not (regexMatch $sha256DigestPattern (toString ($agentsShellImage.digest | default ""))) -}}
+{{- $errors = append $errors "imagePolicy.requireDigest=true requires agentsShell.image.digest to be a sha256 digest when agentsShell.enabled=true." -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.argocdHooks.enabled -}}
 {{- $argocdHookImage := .Values.argocdHooks.image | default dict -}}
 {{- if not (regexMatch $sha256DigestPattern (toString ($argocdHookImage.digest | default ""))) -}}

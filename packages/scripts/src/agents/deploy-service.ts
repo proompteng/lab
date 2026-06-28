@@ -23,6 +23,7 @@ type Options = {
   registry: string
   repository: string
   controlPlaneRepository: string
+  agentsShellRepository: string
   runnerRepository: string
   runnerDockerfile: string
   codexAuthPath?: string
@@ -53,11 +54,15 @@ type DatabaseSecretRequirement = {
   name: string
 }
 
-const CONTROLLER_DOCKER_TARGET = 'controller'
 const CONTROL_PLANE_DOCKER_TARGET = 'control-plane'
+const CONTROLLER_DOCKER_TARGET = 'controller'
+const AGENTS_SHELL_DOCKER_TARGET = 'agents-shell'
 
 const buildAgentsServiceImagePlans = (
-  options: Pick<Options, 'registry' | 'repository' | 'controlPlaneRepository' | 'tag' | 'platforms'>,
+  options: Pick<
+    Options,
+    'registry' | 'repository' | 'controlPlaneRepository' | 'agentsShellRepository' | 'tag' | 'platforms'
+  >,
 ): BuildImageOptions[] => [
   {
     registry: options.registry,
@@ -71,6 +76,13 @@ const buildAgentsServiceImagePlans = (
     repository: options.controlPlaneRepository,
     tag: options.tag,
     target: CONTROL_PLANE_DOCKER_TARGET,
+    platforms: options.platforms,
+  },
+  {
+    registry: options.registry,
+    repository: options.agentsShellRepository,
+    tag: options.tag,
+    target: AGENTS_SHELL_DOCKER_TARGET,
     platforms: options.platforms,
   },
 ]
@@ -211,6 +223,7 @@ const resolveOptions = (): Options => {
     'lab/agents-controller'
   const controlPlaneRepository =
     args.controlPlaneRepository ?? process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ?? 'lab/agents-control-plane'
+  const agentsShellRepository = process.env.AGENTS_SHELL_IMAGE_REPOSITORY ?? 'lab/agents-shell'
   const runnerRepository =
     args.runnerRepository ??
     process.env.AGENTS_RUNNER_IMAGE_REPOSITORY ??
@@ -234,6 +247,7 @@ const resolveOptions = (): Options => {
     registry,
     repository,
     controlPlaneRepository,
+    agentsShellRepository,
     runnerRepository,
     runnerDockerfile: resolve(repoRoot, runnerDockerfile),
     codexAuthPath,
@@ -376,6 +390,9 @@ const updateValuesFile = (
   controlPlaneImageRepository: string,
   controlPlaneTag: string,
   controlPlaneDigest: string,
+  agentsShellImageRepository: string,
+  agentsShellTag: string,
+  agentsShellDigest: string,
   runnerImageRepository: string,
   runnerTag: string,
   runnerDigest: string,
@@ -401,6 +418,12 @@ const updateValuesFile = (
   doc.controlPlane.image.tag = controlPlaneTag
   doc.controlPlane.image.digest = controlPlaneDigest
 
+  doc.agentsShell ??= {}
+  doc.agentsShell.image ??= {}
+  doc.agentsShell.image.repository = agentsShellImageRepository
+  doc.agentsShell.image.tag = agentsShellTag
+  doc.agentsShell.image.digest = agentsShellDigest
+
   doc.runner ??= {}
   doc.runner.image ??= {}
   doc.runner.image.repository = runnerImageRepository
@@ -422,7 +445,7 @@ const updateValuesFile = (
 
   writeFileSync(valuesPath, YAML.stringify(doc, { lineWidth: 120 }))
   console.log(
-    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}, ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}, and ${runnerImageRepository}:${runnerTag}@${runnerDigest}`,
+    `Updated ${valuesPath} with ${imageRepository}:${tag}@${digest}, ${controlPlaneImageRepository}:${controlPlaneTag}@${controlPlaneDigest}, ${agentsShellImageRepository}:${agentsShellTag}@${agentsShellDigest}, and ${runnerImageRepository}:${runnerTag}@${runnerDigest}`,
   )
 }
 
@@ -535,6 +558,8 @@ const main = async () => {
   const image = `${imageName}:${options.tag}`
   const controlPlaneImageName = `${options.registry}/${options.controlPlaneRepository}`
   const controlPlaneImage = `${controlPlaneImageName}:${options.tag}`
+  const agentsShellImageName = `${options.registry}/${options.agentsShellRepository}`
+  const agentsShellImage = `${agentsShellImageName}:${options.tag}`
   const runnerImageName = `${options.registry}/${options.runnerRepository}`
   const runnerImage = `${runnerImageName}:${options.tag}`
 
@@ -564,6 +589,10 @@ const main = async () => {
   const controlPlaneDigest = controlPlaneRepoDigest.includes('@')
     ? controlPlaneRepoDigest.split('@')[1]
     : controlPlaneRepoDigest
+  const agentsShellRepoDigest = inspectImageDigest(agentsShellImage)
+  const agentsShellDigest = agentsShellRepoDigest.includes('@')
+    ? agentsShellRepoDigest.split('@')[1]
+    : agentsShellRepoDigest
   const runnerRepoDigest = options.buildRunner ? inspectImageDigest(runnerImage) : runnerPin?.digest
   const runnerDigest =
     (runnerRepoDigest?.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest) ??
@@ -577,6 +606,9 @@ const main = async () => {
     controlPlaneImageName,
     options.tag,
     controlPlaneDigest,
+    agentsShellImageName,
+    options.tag,
+    agentsShellDigest,
     runnerPin?.repository ?? runnerImageName,
     runnerPin?.tag ?? options.tag,
     runnerDigest,
