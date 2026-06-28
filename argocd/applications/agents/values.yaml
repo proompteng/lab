@@ -1,8 +1,8 @@
 replicaCount: 1
 image:
   repository: registry.ide-newton.ts.net/lab/agents-controller
-  tag: 18f8e2c6
-  digest: sha256:7e1d2d386ec7c419c593dca374d918c4fe6e0afea8cfaefe61bb3d4cdf5ebac9
+  tag: 7ef1c14c
+  digest: sha256:48d4b9fb950595e0e0443f34a2f0c858363ee117481924136dcf12ec38b49a7d
   pullPolicy: IfNotPresent
 imagePolicy:
   requireDigest: true
@@ -14,32 +14,32 @@ tolerations:
 controlPlane:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-control-plane
-    tag: 18f8e2c6
-    digest: sha256:6f35c026fd9788b08d1fab7316a674ce40e4aec9e76d15ba96b30027b35095c6
+    tag: 7ef1c14c
+    digest: sha256:40fe86b74e26c440fba46792d3eee84c72f418b1fc5d99df320fe92cb8659414
   env:
     vars:
       AGENTS_CONTROL_PLANE_CACHE_ENABLED: "true"
       AGENTS_CONTROL_PLANE_CACHE_ALLOW_STALE: "false"
       AGENTS_CONTROL_PLANE_CACHE_RESYNC_SECONDS: "60"
       AGENTS_CONTROL_PLANE_CACHE_MAX_PENDING_WRITES: "5000"
-      AGENTS_SOURCE_HEAD_SHA: 18f8e2c66d116fb5ccdb4645568706d719ff5520
-      AGENTS_GITOPS_REVISION: 18f8e2c66d116fb5ccdb4645568706d719ff5520
-      AGENTS_SOURCE_CI_RUN_ID: "28321188508"
+      AGENTS_SOURCE_HEAD_SHA: 7ef1c14c3453e17520c362ba2d0a48630bcb5109
+      AGENTS_GITOPS_REVISION: 7ef1c14c3453e17520c362ba2d0a48630bcb5109
+      AGENTS_SOURCE_CI_RUN_ID: "28322417264"
       AGENTS_SOURCE_CI_CONCLUSION: success
-      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:6f35c026fd9788b08d1fab7316a674ce40e4aec9e76d15ba96b30027b35095c6
-      AGENTS_SERVING_BUILD_COMMIT: 18f8e2c66d116fb5ccdb4645568706d719ff5520
-      AGENTS_SERVING_IMAGE_DIGEST: sha256:6f35c026fd9788b08d1fab7316a674ce40e4aec9e76d15ba96b30027b35095c6
+      AGENTS_MANIFEST_IMAGE_DIGEST: sha256:40fe86b74e26c440fba46792d3eee84c72f418b1fc5d99df320fe92cb8659414
+      AGENTS_SERVING_BUILD_COMMIT: 7ef1c14c3453e17520c362ba2d0a48630bcb5109
+      AGENTS_SERVING_IMAGE_DIGEST: sha256:40fe86b74e26c440fba46792d3eee84c72f418b1fc5d99df320fe92cb8659414
 runner:
   image:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
-    tag: 18f8e2c6
-    digest: sha256:9f010be6cd3b59c2d58ccef8dd06d61b677a751f3df65831aa6395942bb3b11d
+    tag: 7ef1c14c
+    digest: sha256:2a8ac61ceed3376552b0752c3c7570241af978bfe32272c86b087a279e215ee7
 agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: 18f8e2c6
-    digest: sha256:d946490cac7bd0cc7735c96ef026e48b551c6e7b405f7b074ddc392554cea690
+    tag: 7ef1c14c
+    digest: sha256:2513c2b4fa764f0e02971a3df187181410ab4af79e70732b2e44ffdb671b7a6d
     pullPolicy: IfNotPresent
   env:
     vars:
@@ -140,8 +140,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: 18f8e2c6
-    digest: sha256:7e1d2d386ec7c419c593dca374d918c4fe6e0afea8cfaefe61bb3d4cdf5ebac9
+    tag: 7ef1c14c
+    digest: sha256:48d4b9fb950595e0e0443f34a2f0c858363ee117481924136dcf12ec38b49a7d
   autoscaling:
     enabled: false
 swarm:
