@@ -125,11 +125,11 @@ cephClusterSpec:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LKW9
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0HS7E
       - name: turin
-        config:
-          metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
-          databaseSizeMB: "300000"
         devices:
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
+            config:
+              metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
+              databaseSizeMB: "300000"
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
 
