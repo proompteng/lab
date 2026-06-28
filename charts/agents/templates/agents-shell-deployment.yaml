@@ -72,7 +72,11 @@ spec:
             - name: GIT_TARGET_PATH
               value: {{ required "agentsShell.workspace.bootstrap.targetPath is required when bootstrap is enabled" $workspaceBootstrap.targetPath | quote }}
             - name: GIT_DEPTH
-              value: {{ default 1 $workspaceBootstrap.depth | quote }}
+              {{- if hasKey $workspaceBootstrap "depth" }}
+              value: {{ $workspaceBootstrap.depth | quote }}
+              {{- else }}
+              value: "1"
+              {{- end }}
             {{- with $workspaceBootstrap.tokenSecret }}
             {{- if .name }}
             - name: GIT_TOKEN
