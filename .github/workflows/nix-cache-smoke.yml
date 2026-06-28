@@ -117,7 +117,11 @@ jobs:
             experimental-features = nix-command flakes
             extra-substituters = http://attic.attic.svc.cluster.local/lab
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
-            max-jobs = 0
 
       - name: Prove cache smoke substitutes without local build
+        env:
+          NIX_CONFIG: |
+            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            max-jobs = 0
         run: nix build .#cacheSmoke --no-link --print-build-logs
