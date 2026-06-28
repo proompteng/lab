@@ -945,6 +945,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       if (args.fixedStrings) rgArgs.push('--fixed-strings')
       if (args.caseSensitive === false) rgArgs.push('--ignore-case')
       rgArgs.push(args.query)
+      rgArgs.push('.')
       const result = await runner.runProcess({
         command: 'rg',
         args: rgArgs,
