@@ -1,0 +1,230 @@
+name: Nix OCI Build Common
+
+permissions:
+  contents: read
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+      package_attr:
+        required: true
+        type: string
+      tag:
+        required: true
+        type: string
+      latest:
+        required: false
+        type: boolean
+        default: false
+      release_artifact_name:
+        required: false
+        type: string
+        default: ''
+    outputs:
+      image:
+        value: ${{ jobs.publish-index.outputs.image }}
+      tag:
+        value: ${{ jobs.publish-index.outputs.tag }}
+      digest:
+        value: ${{ jobs.publish-index.outputs.digest }}
+      platform_digest_amd64:
+        value: ${{ jobs.publish-index.outputs.platform_digest_amd64 }}
+      platform_digest_arm64:
+        value: ${{ jobs.publish-index.outputs.platform_digest_arm64 }}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.image_name }}-${{ inputs.tag }}
+  cancel-in-progress: true
+
+jobs:
+  build-platform:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            arch: amd64
+            runner: arc-amd64
+          - platform: linux/arm64
+            arch: arm64
+            runner: arc-arm64
+    runs-on: ${{ matrix.runner }}
+    env:
+      ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Require Attic public key
+        run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Install xz for Nix installer
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          elif command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y xz
+          elif ! command -v xz >/dev/null 2>&1; then
+            echo "xz is required to install Nix on this runner." >&2
+            exit 1
+          fi
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Build Nix image archive
+        id: build
+        env:
+          PACKAGE_ATTR: ${{ inputs.package_attr }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          out_link="result-${ARCH}"
+          nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+          image_tar="$(readlink -f "${out_link}")"
+          if [ ! -f "${image_tar}" ]; then
+            echo "Nix image output is not a tar file: ${image_tar}" >&2
+            exit 1
+          fi
+          echo "image_tar=${image_tar}" >> "${GITHUB_OUTPUT}"
+          echo "Built ${PACKAGE_ATTR} for ${{ matrix.platform }} at ${image_tar}."
+
+      - name: Inspect Nix image archive
+        env:
+          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+        run: nix run .#inspect-oci-archive -- "${IMAGE_TAR}"
+
+      - name: Push platform image without Docker
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        id: push
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
+          TAG: ${{ inputs.tag }}
+          ARCH: ${{ matrix.arch }}
+          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+          LATEST: ${{ inputs.latest }}
+        run: |
+          set -euo pipefail
+          args=(
+            nix run .#oci-push --
+            --image "${IMAGE}"
+            --tag "${TAG}-${ARCH}"
+            --tar "${IMAGE_TAR}"
+          )
+          if [ "${LATEST}" = "true" ]; then
+            args+=(--latest-tag "latest-${ARCH}")
+          fi
+          "${args[@]}"
+
+      - name: Push real image closure to Attic
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+          ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+        run: |
+          set -euo pipefail
+          test -n "${ATTIC_TOKEN}"
+          nix run .#cache-push -- "${IMAGE_TAR}"
+
+  publish-index:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-platform
+    runs-on: arc-arm64
+    outputs:
+      image: ${{ steps.oci.outputs.image }}
+      tag: ${{ steps.oci.outputs.tag }}
+      digest: ${{ steps.oci.outputs.digest }}
+      platform_digest_amd64: ${{ steps.oci.outputs.platform_digest_amd64 }}
+      platform_digest_arm64: ${{ steps.oci.outputs.platform_digest_arm64 }}
+    env:
+      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Require Attic public key
+        run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Install xz for Nix installer
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          elif command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y xz
+          elif ! command -v xz >/dev/null 2>&1; then
+            echo "xz is required to install Nix on this runner." >&2
+            exit 1
+          fi
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Create OCI image index
+        id: oci
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
+          TAG: ${{ inputs.tag }}
+          LATEST: ${{ inputs.latest }}
+        run: |
+          set -euo pipefail
+          args=(
+            nix run .#create-oci-index --
+            --image "${IMAGE}"
+            --tag "${TAG}"
+            --arch-tag "linux/amd64=${TAG}-amd64"
+            --arch-tag "linux/arm64=${TAG}-arm64"
+          )
+          if [ "${LATEST}" = "true" ]; then
+            args+=(--latest)
+          fi
+          "${args[@]}"
+
+      - name: Verify OCI image index platforms
+        env:
+          IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
+          TAG: ${{ inputs.tag }}
+        run: nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+
+      - name: Write release contract
+        if: inputs.release_artifact_name != ''
+        env:
+          IMAGE: ${{ steps.oci.outputs.image }}
+          TAG: ${{ steps.oci.outputs.tag }}
+          DIGEST: ${{ steps.oci.outputs.digest }}
+          REFERENCE: ${{ steps.oci.outputs.reference }}
+          PACKAGE_ATTR: ${{ inputs.package_attr }}
+        run: |
+          set -euo pipefail
+          nix run .#write-oci-release-contract -- .artifacts/${{ inputs.image_name }}/release-contract.json
+
+      - name: Upload release contract
+        if: inputs.release_artifact_name != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.release_artifact_name }}
+          path: .artifacts/${{ inputs.image_name }}/release-contract.json

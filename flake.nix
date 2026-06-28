@@ -32,6 +32,9 @@
             if actual == expected then pkg else throw "${name} expected ${expected}, got ${actual}";
 
           exact = import ./nix/packages.nix { inherit pkgs lib system; };
+          repoRevision = self.rev or self.dirtyRev or "dirty";
+          repoShortRevision =
+            if builtins.stringLength repoRevision >= 12 then builtins.substring 0 12 repoRevision else repoRevision;
 
           nodejs = assertVersion "nodejs_24" "24.11.1" pkgs.nodejs_24;
           go = exact.go;
@@ -144,28 +147,34 @@
             pkgs.coreutils
           ] (builtins.readFile ./nix/cache-push.sh);
 
-          cacheSmoke =
-            let
-              repoRevision = self.rev or self.dirtyRev or "dirty";
-              repoLastModified = self.lastModifiedDate or "unknown";
-            in
-            pkgs.runCommand "lab-cache-smoke-${repoRevision}" {
-              inherit repoRevision repoLastModified;
-              cacheSmokeInput = ./nix/cache-smoke-input.txt;
-            } ''
-              mkdir -p "$out"
-              cp "$cacheSmokeInput" "$out/input.txt"
-              printf '%s\n' \
-                'lab attic cache smoke' \
-                "repoRevision=$repoRevision" \
-                "repoLastModified=$repoLastModified" \
-                "system=${system}" \
-                > "$out/proof.txt"
-            '';
+          ociPush = mkShellScript "oci-push" [
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.go-containerregistry
+            pkgs.skopeo
+          ] (builtins.readFile ./nix/oci-push.sh);
 
-          cacheSmokeApp = mkShellScript "cache-smoke" [ pkgs.coreutils ] ''
-            cat ${cacheSmoke}/proof.txt
-          '';
+          inspectOciArchive = mkShellScript "inspect-oci-archive" [
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.jq
+            pkgs.skopeo
+          ] (builtins.readFile ./nix/oci-inspect-archive.sh);
+
+          writeOciReleaseContract = mkShellScript "write-oci-release-contract" [
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.jq
+          ] (builtins.readFile ./nix/oci-release-contract.sh);
+
+          resolveAtticReleaseMetadata = mkShellScript "resolve-attic-release-metadata" [
+            pkgs.bash
+            pkgs.coreutils
+            pkgs.git
+            pkgs.gnugrep
+            pkgs.go-containerregistry
+            pkgs.jq
+          ] (builtins.readFile ./nix/attic-release-metadata.sh);
 
           createOciIndex = mkOciScript "create-oci-index" ''
             exec bun run packages/scripts/src/shared/oci.ts create-index "$@"
@@ -180,30 +189,7 @@
           '';
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-            "atticd-image" = pkgs.dockerTools.buildLayeredImage {
-              name = "registry.ide-newton.ts.net/lab/attic";
-              tag = "dev";
-              contents = [
-                pkgs.attic-client
-                pkgs.attic-server
-                pkgs.cacert
-              ];
-              config = {
-                Entrypoint = [ "atticd" ];
-                Env = [
-                  "PATH=${lib.makeBinPath [
-                    pkgs.attic-client
-                    pkgs.attic-server
-                    pkgs.coreutils
-                  ]}"
-                  "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
-                ];
-                ExposedPorts = {
-                  "8080/tcp" = { };
-                };
-                User = "65532:65532";
-              };
-            };
+            "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
           };
 
           mkApp = drv: {
@@ -223,7 +209,10 @@
               lintArgoWorkflows
               cacheDoctor
               cachePush
-              cacheSmoke
+              ociPush
+              inspectOciArchive
+              writeOciReleaseContract
+              resolveAtticReleaseMetadata
               createOciIndex
               inspectOciImage
               assertOciPlatforms
@@ -241,7 +230,10 @@
             lint-argo-workflows = mkApp lintArgoWorkflows;
             cache-doctor = mkApp cacheDoctor;
             cache-push = mkApp cachePush;
-            cache-smoke = mkApp cacheSmokeApp;
+            oci-push = mkApp ociPush;
+            inspect-oci-archive = mkApp inspectOciArchive;
+            write-oci-release-contract = mkApp writeOciReleaseContract;
+            resolve-attic-release-metadata = mkApp resolveAtticReleaseMetadata;
             create-oci-index = mkApp createOciIndex;
             inspect-oci-image = mkApp inspectOciImage;
             assert-oci-platforms = mkApp assertOciPlatforms;
@@ -253,6 +245,10 @@
               ociDoctor
               cacheDoctor
               cachePush
+              ociPush
+              inspectOciArchive
+              writeOciReleaseContract
+              resolveAtticReleaseMetadata
             ];
             shellHook = ''
               export LAB_NIX_TOOLCHAIN=1
