@@ -242,7 +242,7 @@ describe('agents-shell MCP tools', () => {
 
     const shellRun = tools.tools.find((tool) => tool.name === 'shell_run')
     expect(shellRun?.annotations?.destructiveHint).toBe(false)
-    expect(shellRun?.annotations?.openWorldHint).toBe(true)
+    expect(shellRun?.annotations?.openWorldHint).toBe(false)
 
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
