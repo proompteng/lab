@@ -8,6 +8,7 @@ fi
 
 cache_name="${ATTIC_CACHE_NAME:-lab}"
 cache_endpoint="${ATTIC_CACHE_ENDPOINT:-http://attic.attic.svc.cluster.local}"
+server_name="${ATTIC_SERVER_NAME:-lab-ci}"
 
 if [[ "$#" -eq 0 ]]; then
   echo "Usage: cache-push <store-path> [<store-path> ...]" >&2
@@ -24,7 +25,7 @@ for path in "$@"; do
 done
 
 echo "Logging in to Attic endpoint ${cache_endpoint} for cache ${cache_name}."
-attic login "${cache_name}" "${cache_endpoint}" "${ATTIC_TOKEN}" >/dev/null
+attic login --set-default "${server_name}" "${cache_endpoint}" "${ATTIC_TOKEN}" >/dev/null
 
 echo "Pushing ${#paths[@]} path(s) to Attic cache ${cache_name}."
-attic push "${cache_name}" "${paths[@]}"
+attic push "${server_name}:${cache_name}" "${paths[@]}"
