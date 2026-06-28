@@ -221,7 +221,9 @@ describe('agents-shell MCP tools', () => {
         'shell_kill',
         'shell_status',
         'git',
+        'git_write',
         'kubectl',
+        'kubectl_admin',
       ]),
     )
     expect(tools.tools.map((tool) => tool.name)).not.toEqual(
@@ -239,20 +241,35 @@ describe('agents-shell MCP tools', () => {
     })
 
     const shellRun = tools.tools.find((tool) => tool.name === 'shell_run')
-    expect(shellRun?.annotations?.destructiveHint).toBe(true)
+    expect(shellRun?.annotations?.destructiveHint).toBe(false)
     expect(shellRun?.annotations?.openWorldHint).toBe(true)
 
     const git = tools.tools.find((tool) => tool.name === 'git')
-    expect(git?.annotations?.destructiveHint).toBe(true)
+    expect(git?.annotations?.readOnlyHint).toBe(true)
+    expect(git?.annotations?.destructiveHint).toBe(false)
     expect(git?._meta).toMatchObject({
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }],
+    })
+
+    const gitWrite = tools.tools.find((tool) => tool.name === 'git_write')
+    expect(gitWrite?.annotations?.destructiveHint).toBe(true)
+    expect(gitWrite?._meta).toMatchObject({
       securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write', 'offline_access'] }],
     })
 
     const kubectl = tools.tools.find((tool) => tool.name === 'kubectl')
-    expect(kubectl?.annotations?.destructiveHint).toBe(true)
+    expect(kubectl?.annotations?.readOnlyHint).toBe(true)
+    expect(kubectl?.annotations?.destructiveHint).toBe(false)
     expect(kubectl?.annotations?.openWorldHint).toBe(true)
     expect(kubectl?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }],
+    })
+
+    const kubectlAdmin = tools.tools.find((tool) => tool.name === 'kubectl_admin')
+    expect(kubectlAdmin?.annotations?.destructiveHint).toBe(true)
+    expect(kubectlAdmin?.annotations?.openWorldHint).toBe(true)
+    expect(kubectlAdmin?._meta).toMatchObject({
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.admin', 'offline_access'] }],
     })
 
     await clientTransport.close()
@@ -292,7 +309,7 @@ describe('agents-shell MCP tools', () => {
     ])
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
-    expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.write', 'offline_access'] }])
+    expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }])
     expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
   })
 
@@ -369,7 +386,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
   })
 
-  it('forwards generic kubectl argv without app-level command policy blocks', async () => {
+  it('forwards generic read-only kubectl argv without using the admin tool', async () => {
     const config = makeConfig()
     const bin = join(config.workspaceRoot, 'bin')
     mkdirSync(bin, { recursive: true })
@@ -379,15 +396,35 @@ describe('agents-shell MCP tools', () => {
     const previousPath = process.env.PATH
     process.env.PATH = `${bin}:${previousPath ?? ''}`
 
-    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+    const { client, server, clientTransport, serverTransport } = await connectServer(
+      config,
+      makeAuth(['agents-shell.read', 'agents-shell.write', 'agents-shell.admin']),
+    )
 
     try {
       const result = await client.callTool({
         name: 'kubectl',
-        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+        arguments: { args: ['get', 'pods', '-n', 'agents', '-o', 'wide'] },
       })
       expect(result.isError).not.toBe(true)
       expect((result.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
+        'get\npods\n-n\nagents\n-o\nwide\n',
+      )
+
+      const blocked = await client.callTool({
+        name: 'kubectl',
+        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+      })
+      expect(blocked.isError).toBe(true)
+      const blockedContent = blocked.content as Array<{ type: string; text?: string }>
+      expect(blockedContent[0]?.text ?? '').toContain('use kubectl_admin')
+
+      const admin = await client.callTool({
+        name: 'kubectl_admin',
+        arguments: { args: ['exec', 'pod/example', '--', 'echo', 'ok'] },
+      })
+      expect(admin.isError).not.toBe(true)
+      expect((admin.structuredContent as { stdout?: string } | undefined)?.stdout).toBe(
         'exec\npod/example\n--\necho\nok\n',
       )
     } finally {

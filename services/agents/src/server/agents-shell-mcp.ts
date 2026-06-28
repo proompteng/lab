@@ -144,7 +144,7 @@ const writeAnnotations: ToolAnnotations = {
 
 const shellAnnotations: ToolAnnotations = {
   readOnlyHint: false,
-  destructiveHint: true,
+  destructiveHint: false,
   openWorldHint: true,
 }
 
@@ -181,7 +181,12 @@ const shellJobSchema = commandResultSchema.extend({
 })
 
 const shellInputSchema = {
-  command: z.string().min(1).describe('Shell command executed with /bin/bash -lc inside the agents-shell container.'),
+  command: z
+    .string()
+    .min(1)
+    .describe(
+      'Short user-requested bash command executed with /bin/bash -lc inside the private agents-shell container.',
+    ),
   cwd: z.string().optional().describe('Working directory under /workspace. Defaults to /workspace.'),
   timeoutSeconds: z.number().int().min(1).optional().describe('Timeout in seconds, capped by server policy.'),
   maxOutputBytes: z
@@ -401,6 +406,43 @@ const normalizeCliArgs = (toolName: string, rawArgs: string[]) => {
   const args = rawArgs.map((arg) => arg.trim()).filter(Boolean)
   if (args.length === 0) throw new Error(`${toolName} args must not be empty`)
   return args
+}
+
+const READ_ONLY_GIT_COMMANDS = new Set(['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'grep', 'describe'])
+const READ_ONLY_KUBECTL_COMMANDS = new Set([
+  'api-resources',
+  'api-versions',
+  'auth',
+  'cluster-info',
+  'describe',
+  'events',
+  'explain',
+  'get',
+  'logs',
+  'top',
+  'version',
+])
+const READ_ONLY_KUBECTL_AUTH_COMMANDS = new Set(['can-i', 'whoami'])
+const READ_ONLY_KUBECTL_ROLLOUT_COMMANDS = new Set(['history', 'status'])
+
+const requireReadOnlyGitArgs = (args: string[]) => {
+  const command = args[0]
+  if (READ_ONLY_GIT_COMMANDS.has(command)) return
+  throw new Error(`git supports read-only repository inspection only; use git_write for git ${command}`)
+}
+
+const requireReadOnlyKubectlArgs = (args: string[]) => {
+  const command = args[0]
+  if (READ_ONLY_KUBECTL_COMMANDS.has(command)) {
+    if (command === 'auth' && !READ_ONLY_KUBECTL_AUTH_COMMANDS.has(args[1] ?? '')) {
+      throw new Error(
+        'kubectl auth supports read-only subcommands only; use kubectl_admin for other kubectl auth calls',
+      )
+    }
+    return
+  }
+  if (command === 'rollout' && READ_ONLY_KUBECTL_ROLLOUT_COMMANDS.has(args[1] ?? '')) return
+  throw new Error(`kubectl supports read-only cluster inspection only; use kubectl_admin for kubectl ${command}`)
 }
 
 const toProcessResult = (
@@ -867,7 +909,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     },
     {
       instructions:
-        'Agents-shell is a private tool-only ChatGPT app for bounded agentic work inside /workspace. Use workspace tools for file search/read/patch operations. Use shell_run for short commands and shell_start/shell_read/shell_kill for long-running scripts. Use git and kubectl for generic argv-based CLI calls when structured arguments help; otherwise use shell_run. Always inspect state before mutating. The shell and CLI tools are bounded by OAuth scopes, audit logging, cwd, timeout, output caps, and the Kubernetes ServiceAccount RBAC.',
+        'Agents-shell is a private tool-only ChatGPT app for bounded agentic work inside /workspace. Use workspace tools for file search/read/patch operations. Use shell_run for short user-requested commands and shell_start/shell_read/shell_kill for long-running scripts. Use git and kubectl for generic read-only argv-based repository and Kubernetes inspection. Use git_write or kubectl_admin only when the user explicitly asks for a mutation or admin operation. Always inspect state before mutating. The shell and CLI tools are bounded by OAuth scopes, audit logging, cwd, timeout, output caps, and the Kubernetes ServiceAccount RBAC.',
       capabilities: {
         tools: {},
       },
@@ -1004,7 +1046,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Run shell command',
       description:
-        'Use this when executing a short shell command or script inside the private agents-shell container. It can modify files, access networks, and affect cluster state through installed CLIs.',
+        'Use this for a short, user-requested bash command inside the private agents-shell container, such as diagnostics, tests, build scripts, Python scripts, or other workspace automation. It returns stdout, stderr, exit code, and job metadata. The server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging. Prefer workspace_search, workspace_read_file, git, and kubectl for read-only inspection before running a shell command.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
@@ -1027,7 +1069,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Start shell job',
       description:
-        'Use this when starting a long-running shell command or script inside agents-shell. Poll it later with shell_read and terminate it with shell_kill.',
+        'Use this for a long-running, user-requested bash command inside agents-shell, such as a dev server, test suite, or script. Poll the job with shell_read and stop it with shell_kill. The server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
@@ -1128,9 +1170,9 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
   server.registerTool(
     'git',
     {
-      title: 'Run git',
+      title: 'Inspect git repository',
       description:
-        'Use this when running git inside /workspace. Pass args exactly as argv after git, for example ["status","--short","--branch"] or ["diff","--","path"]. It is generic and may modify repository state depending on args.',
+        'Use this when running read-only git inspection inside /workspace. Pass args exactly as argv after git, for example ["status","--short","--branch"], ["diff","--","path"], ["log","--oneline","-5"], or ["show","HEAD:path"]. This is a generic argv wrapper for repository inspection; use git_write only for commits, checkout, reset, merge, or other repository mutations.',
       inputSchema: {
         args: z.array(z.string().min(1)).min(1).describe('Arguments passed to git, excluding the git executable.'),
         cwd: z.string().optional(),
@@ -1138,34 +1180,74 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         maxOutputBytes: z.number().int().min(1024).optional(),
       },
       outputSchema: commandResultSchema,
-      annotations: shellAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      annotations: openReadOnlyAnnotations,
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
       auth,
-      WRITE_SCOPES,
-      async (args) =>
-        jsonTextResult(
+      READ_SCOPES,
+      async (args) => {
+        const gitArgs = normalizeCliArgs('git', args.args)
+        requireReadOnlyGitArgs(gitArgs)
+        return jsonTextResult(
           await runner.runProcess({
             command: 'git',
-            args: normalizeCliArgs('git', args.args),
+            args: gitArgs,
             cwd: args.cwd,
             timeoutSeconds: args.timeoutSeconds,
             maxOutputBytes: args.maxOutputBytes,
             auth,
             auditEvent: 'git',
           }),
-        ),
+        )
+      },
+    ),
+  )
+
+  server.registerTool(
+    'git_write',
+    {
+      title: 'Run mutating git',
+      description:
+        'Use this only when the user explicitly asks for a repository-changing git operation inside /workspace. Pass args exactly as argv after git. This is the unrestricted generic git wrapper for operations such as checkout, add, commit, merge, reset, rebase, fetch, pull, or push.',
+      inputSchema: {
+        args: z.array(z.string().min(1)).min(1).describe('Arguments passed to git, excluding the git executable.'),
+        cwd: z.string().optional(),
+        timeoutSeconds: z.number().int().min(1).optional(),
+        maxOutputBytes: z.number().int().min(1024).optional(),
+      },
+      outputSchema: commandResultSchema,
+      annotations: destructiveAnnotations,
+      ...toolSecurityMeta([SCOPES.write]),
+    },
+    withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
+      config,
+      auth,
+      WRITE_SCOPES,
+      async (args) => {
+        const gitArgs = normalizeCliArgs('git_write', args.args)
+        return jsonTextResult(
+          await runner.runProcess({
+            command: 'git',
+            args: gitArgs,
+            cwd: args.cwd,
+            timeoutSeconds: args.timeoutSeconds,
+            maxOutputBytes: args.maxOutputBytes,
+            auth,
+            auditEvent: 'git_write',
+          }),
+        )
+      },
     ),
   )
 
   server.registerTool(
     'kubectl',
     {
-      title: 'Run kubectl',
+      title: 'Inspect Kubernetes with kubectl',
       description:
-        'Use this when running kubectl inside the agents-shell container. Pass args exactly as argv after kubectl, for example ["get","pods","-n","agents"] or ["rollout","status","deployment/agents-shell","-n","agents"]. This is a generic kubectl wrapper; authorization is controlled by OAuth scopes and the Kubernetes ServiceAccount RBAC.',
+        'Use this when running read-only Kubernetes inspection with kubectl inside the agents-shell container. Pass args exactly as argv after kubectl, for example ["get","pods","-n","agents","-o","wide"], ["describe","pod","name","-n","agents"], ["logs","deployment/agents-shell","-n","agents"], or ["rollout","status","deployment/agents-shell","-n","agents"]. This is a generic argv wrapper for inspection; use kubectl_admin only for apply, delete, patch, scale, exec, port-forward, or other cluster mutations.',
       inputSchema: {
         args: z
           .array(z.string().min(1))
@@ -1176,15 +1258,16 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         maxOutputBytes: z.number().int().min(1024).optional(),
       },
       outputSchema: commandResultSchema,
-      annotations: shellAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      annotations: openReadOnlyAnnotations,
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
       auth,
-      WRITE_SCOPES,
+      READ_SCOPES,
       async (args) => {
         const kubectlArgs = normalizeCliArgs('kubectl', args.args)
+        requireReadOnlyKubectlArgs(kubectlArgs)
         return jsonTextResult(
           await runner.runProcess({
             command: 'kubectl',
@@ -1195,6 +1278,47 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
             okExitCodes: kubectlArgs[0] === 'diff' ? [0, 1] : [0],
             auth,
             auditEvent: 'kubectl',
+          }),
+        )
+      },
+    ),
+  )
+
+  server.registerTool(
+    'kubectl_admin',
+    {
+      title: 'Run admin kubectl',
+      description:
+        'Use this only when the user explicitly asks for a Kubernetes mutation or admin operation. Pass args exactly as argv after kubectl. This is the unrestricted generic kubectl wrapper for apply, delete, patch, scale, exec, port-forward, rollout restart, and other operations allowed by the agents-shell ServiceAccount RBAC.',
+      inputSchema: {
+        args: z
+          .array(z.string().min(1))
+          .min(1)
+          .describe('Arguments passed to kubectl, excluding the kubectl executable.'),
+        cwd: z.string().optional(),
+        timeoutSeconds: z.number().int().min(1).optional(),
+        maxOutputBytes: z.number().int().min(1024).optional(),
+      },
+      outputSchema: commandResultSchema,
+      annotations: destructiveAnnotations,
+      ...toolSecurityMeta([SCOPES.admin]),
+    },
+    withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
+      config,
+      auth,
+      [SCOPES.admin],
+      async (args) => {
+        const kubectlArgs = normalizeCliArgs('kubectl_admin', args.args)
+        return jsonTextResult(
+          await runner.runProcess({
+            command: 'kubectl',
+            args: kubectlArgs,
+            cwd: args.cwd,
+            timeoutSeconds: args.timeoutSeconds,
+            maxOutputBytes: args.maxOutputBytes,
+            okExitCodes: kubectlArgs[0] === 'diff' ? [0, 1] : [0],
+            auth,
+            auditEvent: 'kubectl_admin',
           }),
         )
       },
