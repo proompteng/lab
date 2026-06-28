@@ -19,6 +19,7 @@ on:
       - 'packages/scripts/src/shared/__tests__/oci.test.ts'
       - 'argocd/**/*.yaml'
       - '.github/workflows/nix-toolchain.yml'
+      - '.github/workflows/nix-cache-smoke.yml'
       - '.github/workflows/oci-native-build-common.yml'
       - '.github/workflows/oci-builder-benchmark.yml'
       - '.github/workflows/kubeconform.yml'
@@ -43,6 +44,7 @@ on:
       - 'packages/scripts/src/shared/__tests__/oci.test.ts'
       - 'argocd/**/*.yaml'
       - '.github/workflows/nix-toolchain.yml'
+      - '.github/workflows/nix-cache-smoke.yml'
       - '.github/workflows/oci-native-build-common.yml'
       - '.github/workflows/oci-builder-benchmark.yml'
       - '.github/workflows/kubeconform.yml'
@@ -58,10 +60,32 @@ concurrency:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    runs-on: arc-arm64
+    env:
+      ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v5
+
+      - name: Ensure Attic public key is configured
+        run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Install xz for Nix installer
+        run: |
+          if command -v xz >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          if command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          else
+            echo "No supported package manager found to install xz." >&2
+            exit 1
+          fi
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
@@ -69,6 +93,8 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
+            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
       - name: Check flake
         run: nix flake check --print-build-logs
