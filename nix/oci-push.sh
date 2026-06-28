@@ -65,14 +65,26 @@ if [[ "${image}" != registry.ide-newton.ts.net/lab/* ]]; then
   exit 1
 fi
 
+policy_json="$(mktemp)"
+trap 'rm -f "${policy_json}"' EXIT
+cat > "${policy_json}" <<'EOF'
+{
+  "default": [
+    {
+      "type": "insecureAcceptAnything"
+    }
+  ]
+}
+EOF
+
 reference="${image}:${tag}"
 echo "Pushing Nix-built OCI image tar to ${reference}."
-skopeo copy --format oci "docker-archive:${resolved_tar_path}" "docker://${reference}"
+skopeo --policy "${policy_json}" copy --format oci "docker-archive:${resolved_tar_path}" "docker://${reference}"
 
 if [[ -n "${latest_tag}" ]]; then
   latest_reference="${image}:${latest_tag}"
   echo "Tagging ${reference} as ${latest_reference}."
-  skopeo copy --format oci "docker://${reference}" "docker://${latest_reference}"
+  skopeo --policy "${policy_json}" copy --format oci "docker://${reference}" "docker://${latest_reference}"
 fi
 
 digest="$(crane digest "${reference}")"
