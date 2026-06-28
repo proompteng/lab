@@ -356,7 +356,26 @@
             "size": { "type": "string" },
             "storageClassName": { "type": "string" },
             "annotations": { "type": "object", "additionalProperties": { "type": "string" } },
-            "labels": { "type": "object", "additionalProperties": { "type": "string" } }
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "bootstrap": {
+              "type": "object",
+              "properties": {
+                "enabled": { "type": "boolean" },
+                "repository": { "type": "string" },
+                "branch": { "type": "string" },
+                "targetPath": { "type": "string" },
+                "depth": { "type": "integer", "minimum": 1 },
+                "tokenSecret": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "key": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
           },
           "additionalProperties": false
         },

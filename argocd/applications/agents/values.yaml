@@ -77,6 +77,15 @@ agentsShell:
     kubernetes.io/arch: amd64
   workspace:
     size: 20Gi
+    bootstrap:
+      enabled: true
+      repository: https://github.com/proompteng/lab.git
+      branch: main
+      targetPath: /workspace/lab
+      depth: 1
+      tokenSecret:
+        name: github-token
+        key: token
 agentRuntime:
   native:
     rerunOrchestration: codex-rerun
