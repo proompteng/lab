@@ -102,7 +102,8 @@ BOOTSTRAP_TOKEN="$(kubectl -n attic exec deploy/attic -- \
     --pull lab \
     --push lab \
     --create-cache lab \
-    --configure-cache lab)"
+    --configure-cache lab \
+    --configure-cache-retention lab)"
 ```
 
 Create and publish the cache from the route available to the operator shell:
