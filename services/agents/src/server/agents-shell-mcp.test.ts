@@ -256,6 +256,7 @@ describe('agents-shell MCP tools', () => {
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
     expect(git?.annotations?.destructiveHint).toBe(false)
+    expect(git?.annotations?.openWorldHint).toBe(false)
     expect(git?._meta).toMatchObject({
       securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
@@ -540,9 +541,11 @@ fi
         exitCode?: number
         stdout?: string
       }
-      expect(content.command).toBe(
-        'rg --line-number --no-heading --color=never --hidden -g !.git --fixed-strings createAgentsShellServer .',
-      )
+      expect(content.command).toContain('rg --line-number --no-heading --color=never --hidden')
+      expect(content.command).toContain('-g !.git/**')
+      expect(content.command).toContain('-g !node_modules/**')
+      expect(content.command).toContain('-g !schemas/custom/**')
+      expect(content.command).toContain('--fixed-strings createAgentsShellServer .')
       expect(content.exitCode).toBe(0)
       expect(content.stdout).toContain('src/agents-shell.ts:1:export const createAgentsShellServer = true')
     } finally {

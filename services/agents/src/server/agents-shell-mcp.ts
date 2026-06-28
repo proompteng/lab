@@ -143,6 +143,21 @@ const DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT = 'agents-sa'
 const DEFAULT_AGENT_SECRETS = ['github-token', 'codex-auth']
 const DEFAULT_AGENT_TOKEN_BUDGET = 250_000
 const DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED = 86_400
+const DEFAULT_WORKSPACE_SEARCH_EXCLUDES = [
+  '.git',
+  'node_modules',
+  '.next',
+  '.turbo',
+  '.cache',
+  'dist',
+  'build',
+  'coverage',
+  'target',
+  'vendor',
+  '.venv',
+  'venv',
+  'schemas/custom',
+]
 
 const AGENT_GUIDE = `Use agents-shell as a production coding agent for /workspace/lab.
 
@@ -1072,7 +1087,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Search workspace',
       description:
-        'Use this when searching text or file contents under /workspace. It runs ripgrep with bounded output and never modifies files.',
+        'Use this when searching text or file contents under /workspace. It runs ripgrep with bounded output, skips standard dependency/cache/generated directories, and never modifies files.',
       inputSchema: {
         query: z.string().min(1),
         path: z.string().optional(),
@@ -1092,7 +1107,10 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       maxOutputBytes?: number
     }>(config, auth, READ_SCOPES, async (args) => {
       const cwd = resolveExistingDirectory(config.workspaceRoot, args.path)
-      const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden', '-g', '!.git']
+      const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden']
+      for (const exclude of DEFAULT_WORKSPACE_SEARCH_EXCLUDES) {
+        rgArgs.push('-g', `!${exclude}/**`)
+      }
       if (args.fixedStrings) rgArgs.push('--fixed-strings')
       if (args.caseSensitive === false) rgArgs.push('--ignore-case')
       rgArgs.push(args.query)
@@ -1331,7 +1349,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Inspect git repository',
       description:
-        'Use this when running read-only git inspection inside /workspace. Pass args exactly as argv after git, for example ["status","--short","--branch"], ["diff","--","path"], ["log","--oneline","-5"], or ["show","HEAD:path"]. This is a generic argv wrapper for repository inspection; use git_write only for commits, checkout, reset, merge, or other repository mutations.',
+        'Use this for read-only repository inspection inside /workspace. Pass args exactly as argv after git. The server accepts only read-only subcommands and returns stdout, stderr, exit code, and timeout status.',
       inputSchema: {
         args: z.array(z.string().min(1)).min(1).describe('Arguments passed to git, excluding the git executable.'),
         cwd: z.string().optional(),
@@ -1339,7 +1357,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         maxOutputBytes: z.number().int().min(1024).optional(),
       },
       outputSchema: commandResultSchema,
-      annotations: openReadOnlyAnnotations,
+      annotations: readOnlyAnnotations,
       ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
