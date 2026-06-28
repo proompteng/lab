@@ -41,8 +41,18 @@ jobs:
 
       - name: Install xz for Nix installer
         run: |
+          if command -v xz >/dev/null 2>&1; then
+            exit 0
+          fi
+
           if command -v apk >/dev/null 2>&1; then
             sudo apk add --no-cache xz
+          elif command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          else
+            echo "No supported package manager found to install xz." >&2
+            exit 1
           fi
 
       - name: Install Nix with Attic pull substituter
