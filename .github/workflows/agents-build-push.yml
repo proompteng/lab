@@ -34,11 +34,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
-            arch: amd64
+          - arch: amd64
             runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
+          - arch: arm64
             runner: arc-arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
