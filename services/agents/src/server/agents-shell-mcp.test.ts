@@ -9,11 +9,13 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   AgentsShellRunner,
   buildBearerChallenge,
+  createAgentsShellRequestHandler,
   createAgentsShellServer,
   defaultAgentsShellConfigFromEnv,
   normalizeMcpAcceptHeader,
   oauthProtectedResourceMetadata,
   resolveWorkspacePath,
+  startAgentsShellServer,
   type AgentsShellConfig,
   type AuthContext,
 } from './agents-shell-mcp'
@@ -45,6 +47,8 @@ const makeAuth = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthCon
     scope: scopes.join(' '),
   },
 })
+
+const randomListenPort = () => 30_000 + Math.floor(Math.random() * 20_000)
 
 const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
   const runner = new AgentsShellRunner(config)
@@ -146,6 +150,52 @@ describe('agents-shell MCP OAuth metadata', () => {
     expect(normalizeMcpAcceptHeader('*/*')).toBe('application/json, text/event-stream')
     expect(normalizeMcpAcceptHeader('application/json, text/event-stream')).toBe('application/json, text/event-stream')
   })
+
+  it('serves MCP over a fetch-native HTTP handler', async () => {
+    const config = makeConfig()
+    const handler = createAgentsShellRequestHandler(config)
+
+    const response = await handler(
+      new Request('https://agents-shell.example.test/mcp', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+      }),
+    )
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
+    expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+  })
+
+  it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(
+    'serves MCP through Bun.serve without hanging',
+    async () => {
+      const config = { ...makeConfig(), host: '127.0.0.1', port: randomListenPort() }
+      const server = startAgentsShellServer(config)
+
+      try {
+        const response = await fetch(`http://${server.hostname}:${server.port}/mcp`, {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} }),
+          signal: AbortSignal.timeout(2000),
+        })
+
+        expect(response.status).toBe(200)
+        const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
+        expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+      } finally {
+        server.stop(true)
+      }
+    },
+  )
 
   it('rejects workspace paths outside the configured root', () => {
     const config = makeConfig()

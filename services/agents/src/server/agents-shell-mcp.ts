@@ -2,14 +2,11 @@ import { randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
-import type { IncomingMessage } from 'node:http'
 import type { Readable } from 'node:stream'
 
-import express, { type Request, type Response } from 'express'
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
-import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js'
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import {
   ListToolsRequestSchema,
   type CallToolResult,
@@ -340,23 +337,14 @@ export const normalizeMcpAcceptHeader = (accept: string | string[] | undefined) 
   return 'application/json, text/event-stream'
 }
 
-const normalizeMcpRequestAcceptHeader = (request: Request) => {
-  const accept = normalizeMcpAcceptHeader(request.headers.accept)
-  request.headers.accept = accept
-  request.headers['accept'] = accept
-
-  const incoming = request as IncomingMessage
-  const rawHeaders = incoming.rawHeaders
-  const acceptIndex = rawHeaders.findIndex((value, index) => index % 2 === 0 && value.toLowerCase() === 'accept')
-  if (acceptIndex >= 0) {
-    rawHeaders[acceptIndex + 1] = accept
-  } else {
-    rawHeaders.push('Accept', accept)
-  }
+const withNormalizedMcpAcceptHeader = (request: Request) => {
+  const headers = new Headers(request.headers)
+  headers.set('accept', normalizeMcpAcceptHeader(headers.get('accept') ?? undefined))
+  return new Request(request, { headers })
 }
 
 const bearerTokenFromRequest = (request: Request) => {
-  const header = request.header('authorization')
+  const header = request.headers.get('authorization')
   const match = header?.match(/^Bearer\s+(.+)$/i)
   return match?.[1] ?? null
 }
@@ -1225,106 +1213,135 @@ const anonymousAuthContext = (): AuthContext => ({
   payload: {},
 })
 
-export const createAgentsShellApp = (config: AgentsShellConfig, runner = new AgentsShellRunner(config)) => {
-  const app = createMcpExpressApp({ host: config.host })
-  const verifier = new AuthVerifier(config)
-
-  app.use(express.json({ limit: '4mb' }))
-  app.use((request, response, next) => {
-    if (request.path !== '/mcp' && request.path !== PROTECTED_RESOURCE_PATH) {
-      next()
-      return
-    }
-
-    const startedAt = Date.now()
-    response.on('finish', () => {
-      const body = request.body as { method?: unknown } | undefined
-      console.log(
-        JSON.stringify({
-          msg: 'agents-shell http request',
-          method: request.method,
-          path: request.path,
-          status: response.statusCode,
-          durationMs: Date.now() - startedAt,
-          mcpMethod: typeof body?.method === 'string' ? body.method : null,
-          userAgent: request.header('user-agent') ?? null,
-        }),
-      )
-    })
-    next()
+const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
+  new Response(JSON.stringify(payload), {
+    ...init,
+    headers: {
+      'content-type': 'application/json',
+      ...init.headers,
+    },
   })
-  app.get('/healthz', (_request, response) => response.json({ ok: true }))
-  app.get('/readyz', (_request, response) =>
-    response.json({
-      ok: true,
-      resource: config.resource,
-      issuer: config.issuer,
-      workspaceRoot: resolve(config.workspaceRoot),
-      runningJobs: runner.runningJobs().length,
+
+const logAgentsShellRequest = (request: Request, status: number, startedAt: number) => {
+  const { pathname } = new URL(request.url)
+  if (pathname !== '/mcp' && pathname !== PROTECTED_RESOURCE_PATH) return
+
+  console.log(
+    JSON.stringify({
+      msg: 'agents-shell http request',
+      method: request.method,
+      path: pathname,
+      status,
+      durationMs: Date.now() - startedAt,
+      userAgent: request.headers.get('user-agent'),
     }),
   )
-  app.get(PROTECTED_RESOURCE_PATH, (_request, response) => response.json(oauthProtectedResourceMetadata(config)))
+}
 
-  const handleMcp = async (request: Request, response: Response) => {
+export const createAgentsShellRequestHandler = (config: AgentsShellConfig, runner = new AgentsShellRunner(config)) => {
+  const verifier = new AuthVerifier(config)
+
+  const handleMcp = async (request: Request): Promise<Response> => {
     const token = bearerTokenFromRequest(request)
     let auth = anonymousAuthContext()
     if (token) {
       try {
         auth = await verifier.verify(token)
       } catch (error) {
-        response.setHeader(
-          'WWW-Authenticate',
-          buildBearerChallenge(config, 'invalid_token', 'The access token is invalid or expired.'),
+        return jsonResponse(
+          { error: 'invalid_token', detail: error instanceof Error ? error.message : String(error) },
+          {
+            status: 401,
+            headers: {
+              'WWW-Authenticate': buildBearerChallenge(
+                config,
+                'invalid_token',
+                'The access token is invalid or expired.',
+              ),
+            },
+          },
         )
-        response
-          .status(401)
-          .json({ error: 'invalid_token', detail: error instanceof Error ? error.message : String(error) })
-        return
       }
     }
 
     const server = createAgentsShellServer(config, runner, auth)
-    normalizeMcpRequestAcceptHeader(request)
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true })
-    response.on('close', () => {
-      void transport.close()
-      void server.close()
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
     })
 
     try {
       await server.connect(transport)
-      await transport.handleRequest(request as IncomingMessage & { auth?: never }, response, request.body)
+      const response = await transport.handleRequest(withNormalizedMcpAcceptHeader(request))
+      await transport.close()
+      await server.close()
+      return response
     } catch (error) {
-      if (!response.headersSent) {
-        response
-          .status(500)
-          .json({ error: 'mcp_request_failed', detail: error instanceof Error ? error.message : String(error) })
-      }
+      await transport.close().catch(() => undefined)
+      await server.close().catch(() => undefined)
+      return jsonResponse(
+        { error: 'mcp_request_failed', detail: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      )
     }
   }
 
-  app.post('/mcp', handleMcp)
-  app.get('/mcp', handleMcp)
-  app.delete('/mcp', handleMcp)
+  return async (request: Request): Promise<Response> => {
+    const startedAt = Date.now()
+    const { pathname } = new URL(request.url)
+    let response: Response
+
+    if (pathname === '/healthz' && request.method === 'GET') {
+      response = jsonResponse({ ok: true })
+    } else if (pathname === '/readyz' && request.method === 'GET') {
+      response = jsonResponse({
+        ok: true,
+        resource: config.resource,
+        issuer: config.issuer,
+        workspaceRoot: resolve(config.workspaceRoot),
+        runningJobs: runner.runningJobs().length,
+      })
+    } else if (pathname === PROTECTED_RESOURCE_PATH && request.method === 'GET') {
+      response = jsonResponse(oauthProtectedResourceMetadata(config))
+    } else if (pathname === '/mcp' && ['DELETE', 'GET', 'POST'].includes(request.method)) {
+      response = await handleMcp(request)
+    } else if (pathname === '/mcp') {
+      response = new Response('Method Not Allowed', { status: 405 })
+    } else {
+      response = new Response('Not Found', { status: 404 })
+    }
+
+    logAgentsShellRequest(request, response.status, startedAt)
+    return response
+  }
+}
+
+export const startAgentsShellServer = (config = defaultAgentsShellConfigFromEnv()) => {
+  const runner = new AgentsShellRunner(config)
+  const handleRequest = createAgentsShellRequestHandler(config, runner)
 
   process.once('SIGTERM', () => runner.shutdown())
   process.once('SIGINT', () => runner.shutdown())
 
-  return app
+  const server = Bun.serve({
+    port: config.port,
+    hostname: config.host,
+    fetch: handleRequest,
+  })
+
+  console.log(
+    JSON.stringify({
+      msg: 'agents-shell MCP listening',
+      host: server.hostname,
+      port: server.port,
+      resource: config.resource,
+      issuer: config.issuer,
+    }),
+  )
+
+  return server
 }
 
 if (import.meta.main) {
-  const config = defaultAgentsShellConfigFromEnv()
-  const app = createAgentsShellApp(config)
-  app.listen(config.port, config.host, () => {
-    console.log(
-      JSON.stringify({
-        msg: 'agents-shell MCP listening',
-        host: config.host,
-        port: config.port,
-        resource: config.resource,
-        issuer: config.issuer,
-      }),
-    )
-  })
+  startAgentsShellServer()
 }
