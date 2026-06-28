@@ -20,6 +20,7 @@ on:
       - 'argocd/**/*.yaml'
       - '.github/workflows/nix-toolchain.yml'
       - '.github/workflows/nix-cache-smoke.yml'
+      - '.github/workflows/nix-cache-warm.yml'
       - '.github/workflows/oci-native-build-common.yml'
       - '.github/workflows/oci-builder-benchmark.yml'
       - '.github/workflows/kubeconform.yml'
@@ -45,6 +46,7 @@ on:
       - 'argocd/**/*.yaml'
       - '.github/workflows/nix-toolchain.yml'
       - '.github/workflows/nix-cache-smoke.yml'
+      - '.github/workflows/nix-cache-warm.yml'
       - '.github/workflows/oci-native-build-common.yml'
       - '.github/workflows/oci-builder-benchmark.yml'
       - '.github/workflows/kubeconform.yml'
@@ -113,28 +115,3 @@ jobs:
 
       - name: Lint Argo Workflow manifests
         run: nix run .#lint-argo-workflows
-
-      - name: Resolve warm cache store paths
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          nix build --no-link --print-out-paths \
-            .#cacheSmoke \
-            .#toolchainDoctor \
-            .#ociDoctor \
-            .#lintArgocd \
-            .#renderHeadlamp \
-            .#lintArgoWorkflows \
-            .#cachePush \
-            .#createOciIndex \
-            .#inspectOciImage \
-            .#assertOciPlatforms \
-            > /tmp/attic-warm-cache-paths
-          echo "Resolved $(wc -l < /tmp/attic-warm-cache-paths) store path(s)."
-
-      - name: Push warm cache closures
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-        run: |
-          mapfile -t paths < /tmp/attic-warm-cache-paths
-          nix run .#cache-push -- "${paths[@]}"

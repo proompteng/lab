@@ -181,6 +181,20 @@ available.
 Pushes require `ATTIC_TOKEN` and must be restricted to trusted `main` branch
 workflows.
 
+Cache correctness is proven by `.github/workflows/nix-cache-smoke.yml`:
+
+- pull requests consume the public Attic cache without `ATTIC_TOKEN`
+- `main` pushes publish only the repo-local `cacheSmoke` closure
+- `main` then runs a fresh substitute-only proof with `max-jobs = 0`
+
+Selected helper closure warming runs separately in
+`.github/workflows/nix-cache-warm.yml`. That workflow is main-only, uses the
+in-cluster endpoint, pushes selected helper outputs with `--no-closure`, and has
+an explicit timeout so large first-warm uploads cannot pin the required
+`nix-toolchain` check. The default `cache.nixos.org` fallback remains available
+for Nixpkgs dependencies, so the warm workflow should not duplicate the upstream
+Nixpkgs closure into Attic.
+
 The helper refuses to run without a token:
 
 ```bash
