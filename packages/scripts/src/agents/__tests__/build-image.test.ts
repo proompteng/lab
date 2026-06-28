@@ -207,4 +207,51 @@ describe('agents build-image helpers', () => {
       rmSync(dir, { recursive: true, force: true })
     }
   })
+
+  it('uses native docker build and push when batch targets do not need Buildx', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'agents-native-context-'))
+    const commands: string[][] = []
+    try {
+      process.env.AGENTS_BUILD_CACHE_REF = 'false'
+      process.env.AGENTS_BUILD_CONTEXT = dir
+      Bun.which = ((binary: string) => (binary === 'docker' ? '/usr/bin/docker' : null)) as typeof Bun.which
+      Bun.spawn = ((command: Parameters<typeof Bun.spawn>[0]) => {
+        commands.push(typeof command === 'string' ? [command] : [...command])
+        return {
+          exited: Promise.resolve(0),
+          stdout: new Response('').body,
+          stderr: new Response('').body,
+        } as ReturnType<typeof Bun.spawn>
+      }) as typeof Bun.spawn
+
+      const results = await buildImages([
+        {
+          registry: 'registry.example',
+          repository: 'lab/agents-controller',
+          tag: 'abc123-amd64',
+          target: 'controller',
+        },
+        {
+          registry: 'registry.example',
+          repository: 'lab/agents-control-plane',
+          tag: 'abc123-amd64',
+          target: 'control-plane',
+        },
+      ])
+
+      expect(results.map((result) => result.image)).toEqual([
+        'registry.example/lab/agents-controller:abc123-amd64',
+        'registry.example/lab/agents-control-plane:abc123-amd64',
+      ])
+      expect(commands.map((command) => command.slice(0, 2))).toEqual([
+        ['docker', 'build'],
+        ['docker', 'push'],
+        ['docker', 'build'],
+        ['docker', 'push'],
+      ])
+      expect(commands.flat()).not.toContain('buildx')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 })

@@ -69,7 +69,6 @@ jobs:
           AGENTS_BUILD_RUNNER: 'true'
           AGENTS_DOCKERFILE: services/agents/Dockerfile
           AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
-          AGENTS_IMAGE_PLATFORMS: ${{ matrix.platform }}
           AGENTS_BUILD_CACHE_REF: 'false'
           AGENTS_RUNNER_BUILD_CACHE_REF: 'false'
           AGENTS_BUILD_CACHE_MODE: min
