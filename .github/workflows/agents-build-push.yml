@@ -34,11 +34,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: linux/amd64
-            arch: amd64
+          - arch: amd64
             runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
+          - arch: arm64
             runner: arc-arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
@@ -69,7 +67,6 @@ jobs:
           AGENTS_BUILD_RUNNER: 'true'
           AGENTS_DOCKERFILE: services/agents/Dockerfile
           AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
-          AGENTS_IMAGE_PLATFORMS: ${{ matrix.platform }}
           AGENTS_BUILD_CACHE_REF: 'false'
           AGENTS_RUNNER_BUILD_CACHE_REF: 'false'
           AGENTS_BUILD_CACHE_MODE: min

@@ -321,9 +321,10 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
     image: `${target.registry}/${target.repository}:${target.tag}`,
   }))
 
-  const needsBuildx = targets.some(
-    (target) => target.useBuildx !== false || Boolean(target.cacheRef) || Boolean(target.platforms?.length),
-  )
+  const attestations = resolveBuildAttestations()
+  const needsBuildx =
+    attestations.length > 0 ||
+    targets.some((target) => target.useBuildx === true || Boolean(target.cacheRef) || Boolean(target.platforms?.length))
   if (!needsBuildx || !isDockerBuildxAvailable()) {
     if (needsBuildx) {
       console.warn('docker buildx is unavailable; falling back to sequential docker build + push.')
@@ -339,7 +340,6 @@ export const buildAndPushDockerImages = async (options: DockerBakeOptions): Prom
 
   const ghTokenEnv = process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN
   const dockerEnv = { ...process.env, DOCKER_BUILDKIT: process.env.DOCKER_BUILDKIT ?? '1' } as Record<string, string>
-  const attestations = resolveBuildAttestations()
   const secretSpecs = [
     ...new Set(
       targets.flatMap((target) => {
