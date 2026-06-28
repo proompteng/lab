@@ -29,14 +29,6 @@ spec:
             - arc-arm64
           minRunners: 1
           maxRunners: 3
-          containerMode:
-            type: "kubernetes"
-            kubernetesModeWorkVolumeClaim:
-              accessModes: ["ReadWriteOnce"]
-              storageClassName: "rook-ceph-block"
-              resources:
-                requests:
-                  storage: 20Gi
           listenerTemplate:
             spec:
               dnsConfig:
@@ -167,14 +159,6 @@ spec:
             - arc-amd64
           minRunners: 0
           maxRunners: 2
-          containerMode:
-            type: "kubernetes"
-            kubernetesModeWorkVolumeClaim:
-              accessModes: ["ReadWriteOnce"]
-              storageClassName: "rook-ceph-block"
-              resources:
-                requests:
-                  storage: 20Gi
           listenerTemplate:
             spec:
               dnsConfig:
@@ -302,14 +286,6 @@ spec:
             - arc-arm64
           minRunners: 0
           maxRunners: 2
-          containerMode:
-            type: "kubernetes"
-            kubernetesModeWorkVolumeClaim:
-              accessModes: ["ReadWriteOnce"]
-              storageClassName: "rook-ceph-block"
-              resources:
-                requests:
-                  storage: 20Gi
           listenerTemplate:
             spec:
               dnsConfig:
