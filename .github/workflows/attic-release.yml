@@ -1,0 +1,156 @@
+name: attic-release
+
+on:
+  workflow_run:
+    workflows:
+      - attic-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote (defaults to current main HEAD)
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote (defaults to source short SHA)
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...)
+        required: false
+        type: string
+
+concurrency:
+  group: attic-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: attic-release-contract
+          path: .artifacts/attic
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install xz for Nix installer
+        run: |
+          set -euo pipefail
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          elif command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v dnf >/dev/null 2>&1; then
+            sudo dnf install -y xz
+          elif ! command -v xz >/dev/null 2>&1; then
+            echo "xz is required to install Nix on this runner." >&2
+            exit 1
+          fi
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          IMAGE_DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: nix run .#resolve-attic-release-metadata
+
+      - name: Verify promoted OCI index
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64
+
+      - name: Update Attic manifests
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          image_ref="${IMAGE}@${DIGEST}"
+          for path in argocd/applications/attic/deployment.yaml argocd/applications/attic/gc-cronjob.yaml; do
+            perl -0pi -e 's#image: registry\.ide-newton\.ts\.net/lab/attic(?::latest|@sha256:[0-9a-f]{64})#image: '"${image_ref}"'#g' "${path}"
+            grep -F "image: ${image_ref}" "${path}" >/dev/null
+          done
+
+      - name: Create Attic release pull request
+        if: steps.meta.outputs.promote == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: codex/attic-release-${{ steps.meta.outputs.tag }}
+          title: 'chore(attic): promote image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(attic): promote image ${{ steps.meta.outputs.tag }}'
+          body: |
+            ## Summary
+
+            - Promote Attic to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`.
+            - Built by the Nix OCI image workflow without Docker Buildx.
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - `nix run .#assert-oci-platforms -- "${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}" linux/amd64 linux/arm64`
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            None
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed (or `N/A` with justification).
+            - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+            - [x] Documentation, release notes, and follow-ups are updated or tracked.
+          labels: |
+            automated-pr
+            attic
+          add-paths: |
+            argocd/applications/attic/deployment.yaml
+            argocd/applications/attic/gc-cronjob.yaml
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale Attic promotion because source SHA is not current for Attic build inputs.'

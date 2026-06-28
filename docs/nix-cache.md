@@ -21,7 +21,8 @@ Backends:
 - database: `Cluster/attic-db`, app secret `attic-db-app`
 - object storage: `ObjectBucketClaim/attic-cache`
 - signing key: `ExternalSecret/attic-secrets`
-- image: `registry.ide-newton.ts.net/lab/attic:latest`
+- image: `registry.ide-newton.ts.net/lab/attic@sha256:...`, pinned by the
+  Attic release workflow after a Nix-built OCI image passes platform checks
 
 The Attic config uses an explicit allowed-host list:
 
@@ -141,20 +142,20 @@ kubectl -n attic run attic-cache-smoke \
 curl -fsSL https://attic.ide-newton.ts.net/lab/nix-cache-info
 ```
 
-Prove Nix can build the repo-local smoke derivation with the cache configured:
+Prove Nix can build real repo derivations with the cache configured:
 
 ```bash
 # ARC or another cluster-capable shell:
 NIX_CONFIG=$'extra-substituters = http://attic.attic.svc.cluster.local/lab\nextra-trusted-public-keys = <ATTIC_PUBLIC_KEY>' \
-  nix build .#cacheSmoke --print-build-logs
+  nix build .#atticd-image --print-build-logs
 
 # Developer host:
 NIX_CONFIG=$'extra-substituters = https://attic.ide-newton.ts.net/lab\nextra-trusted-public-keys = <ATTIC_PUBLIC_KEY>' \
-  nix build .#cacheSmoke --print-build-logs
+  nix build .#atticd-image --print-build-logs
 ```
 
-`.#cacheSmoke` includes repo-local input and flake revision metadata so the
-proof path is not expected to exist in `cache.nixos.org`.
+The proof path must use a real image derivation such as `.#atticd-image`, not a
+synthetic cache-smoke derivation.
 
 ## Client Configuration
 
@@ -181,19 +182,17 @@ available.
 Pushes require `ATTIC_TOKEN` and must be restricted to trusted `main` branch
 workflows.
 
-Cache correctness is proven by `.github/workflows/nix-cache-smoke.yml`:
+Cache correctness is proven by real Nix image workflows:
 
 - pull requests consume the public Attic cache without `ATTIC_TOKEN`
-- `main` pushes publish only the repo-local `cacheSmoke` closure
-- `main` then runs a fresh substitute-only proof with `max-jobs = 0`
+- `main` builds real image derivations such as `.#atticd-image`
+- `main` pushes only those real image output paths to Attic
+- registry publication is handled by Skopeo from the Nix-built tarball, not by
+  Docker Buildx
 
-Selected helper closure warming runs separately in
-`.github/workflows/nix-cache-warm.yml`. That workflow is main-only, uses the
-in-cluster endpoint, pushes selected helper outputs with `--no-closure`, and has
-an explicit timeout so large first-warm uploads cannot pin the required
-`nix-toolchain` check. The default `cache.nixos.org` fallback remains available
-for Nixpkgs dependencies, so the warm workflow should not duplicate the upstream
-Nixpkgs closure into Attic.
+The default `cache.nixos.org` fallback remains available for Nixpkgs
+dependencies, so CI should not duplicate broad upstream Nixpkgs closures into
+Attic.
 
 The helper refuses to run without a token:
 

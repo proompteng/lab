@@ -10,8 +10,11 @@ on:
       - 'flake.lock'
       - 'nix/**'
       - 'docs/nix-cache.md'
+      - 'docs/nix-oci-real-image-build-adoption-plan.md'
       - 'argocd/applications/attic/**'
       - '.github/workflows/attic-build-push.yaml'
+      - '.github/workflows/attic-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
   push:
     branches:
       - main
@@ -20,8 +23,11 @@ on:
       - 'flake.lock'
       - 'nix/**'
       - 'docs/nix-cache.md'
+      - 'docs/nix-oci-real-image-build-adoption-plan.md'
       - 'argocd/applications/attic/**'
       - '.github/workflows/attic-build-push.yaml'
+      - '.github/workflows/attic-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
   workflow_dispatch:
 
 concurrency:
@@ -29,121 +35,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-platform:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install xz for Nix installer
-        run: |
-          set -euo pipefail
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y xz-utils
-          elif command -v apk >/dev/null 2>&1; then
-            sudo apk add --no-cache xz
-          elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y xz
-          elif ! command -v xz >/dev/null 2>&1; then
-            echo "xz is required to install Nix on this runner." >&2
-            exit 1
-          fi
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Build Attic image
-        run: nix build .#atticd-image --print-build-logs
-
-      - name: Load and smoke image
-        run: |
-          set -euo pipefail
-          docker load < result
-          docker run --rm --platform '${{ matrix.platform }}' registry.ide-newton.ts.net/lab/attic:dev --version
-
-      - name: Resolve image tag
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: meta
-        run: echo "tag=sha-$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Push platform image
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          IMAGE: registry.ide-newton.ts.net/lab/attic
-          TAG: ${{ steps.meta.outputs.tag }}
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          docker tag "${IMAGE}:dev" "${IMAGE}:${TAG}-${ARCH}"
-          docker tag "${IMAGE}:dev" "${IMAGE}:latest-${ARCH}"
-          docker push "${IMAGE}:${TAG}-${ARCH}"
-          docker push "${IMAGE}:latest-${ARCH}"
-
-  publish-index:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build-platform
-    runs-on: arc-arm64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Install xz for Nix installer
-        run: |
-          set -euo pipefail
-          if command -v apt-get >/dev/null 2>&1; then
-            sudo apt-get update
-            sudo apt-get install -y xz-utils
-          elif command -v apk >/dev/null 2>&1; then
-            sudo apk add --no-cache xz
-          elif command -v dnf >/dev/null 2>&1; then
-            sudo dnf install -y xz
-          elif ! command -v xz >/dev/null 2>&1; then
-            echo "xz is required to install Nix on this runner." >&2
-            exit 1
-          fi
-
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
-        with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=sha-$(git rev-parse --short=12 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Create OCI image index
-        id: oci
-        env:
-          IMAGE: registry.ide-newton.ts.net/lab/attic
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          set -euo pipefail
-          nix run .#create-oci-index -- \
-            --image "${IMAGE}" \
-            --tag "${TAG}" \
-            --arch-tag "linux/amd64=${TAG}-amd64" \
-            --arch-tag "linux/arm64=${TAG}-arm64" \
-            --latest
-
-      - name: Verify OCI image index platforms
-        env:
-          IMAGE: registry.ide-newton.ts.net/lab/attic
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+  build-and-push:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: attic
+      package_attr: atticd-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      release_artifact_name: attic-release-contract
+    secrets: inherit
