@@ -1,0 +1,322 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-agents-shell-client-bootstrap
+  namespace: keycloak
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    app.kubernetes.io/name: keycloak
+spec:
+  backoffLimit: 6
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: keycloak
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: python:3.12-alpine
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              python - <<'PY'
+              import json
+              import os
+              import time
+              import urllib.error
+              import urllib.parse
+              import urllib.request
+
+
+              def require_env(name):
+                value = os.environ.get(name, '').strip()
+                if not value:
+                  raise RuntimeError(f'Missing required environment variable {name}')
+                return value
+
+
+              base_url = require_env('KEYCLOAK_ADMIN_URL').rstrip('/')
+              realm = require_env('KEYCLOAK_REALM')
+              realm_path = urllib.parse.quote(realm, safe='')
+              admin_username = require_env('KEYCLOAK_ADMIN_USERNAME')
+              admin_password = require_env('KEYCLOAK_ADMIN_PASSWORD')
+              client_id = require_env('AGENTS_SHELL_OIDC_CLIENT_ID')
+              client_secret = require_env('AGENTS_SHELL_OIDC_CLIENT_SECRET')
+              resource_audience = require_env('AGENTS_SHELL_RESOURCE_AUDIENCE')
+              chatgpt_username = require_env('AGENTS_SHELL_CHATGPT_USERNAME')
+              chatgpt_email = require_env('AGENTS_SHELL_CHATGPT_EMAIL')
+              chatgpt_password = require_env('AGENTS_SHELL_CHATGPT_PASSWORD')
+
+
+              def request(method, path, token=None, data=None, expected=(200,)):
+                body = None
+                headers = {}
+                if data is not None:
+                  body = json.dumps(data).encode('utf-8')
+                  headers['Content-Type'] = 'application/json'
+                if token:
+                  headers['Authorization'] = f'Bearer {token}'
+
+                req = urllib.request.Request(f'{base_url}{path}', data=body, headers=headers, method=method)
+                try:
+                  with urllib.request.urlopen(req, timeout=30) as response:
+                    payload = response.read()
+                    status = response.status
+                except urllib.error.HTTPError as error:
+                  payload = error.read()
+                  if error.code in expected:
+                    return None
+                  raise RuntimeError(
+                    f'{method} {path} failed with HTTP {error.code}: {payload.decode("utf-8", "replace")}',
+                  ) from error
+
+                if status not in expected:
+                  raise RuntimeError(
+                    f'{method} {path} returned HTTP {status}, expected {expected}: '
+                    f'{payload.decode("utf-8", "replace")}',
+                  )
+                if not payload:
+                  return None
+                return json.loads(payload.decode('utf-8'))
+
+
+              def request_token():
+                form = urllib.parse.urlencode(
+                  {
+                    'grant_type': 'password',
+                    'client_id': 'admin-cli',
+                    'username': admin_username,
+                    'password': admin_password,
+                  },
+                ).encode('utf-8')
+                req = urllib.request.Request(
+                  f'{base_url}/realms/master/protocol/openid-connect/token',
+                  data=form,
+                  headers={'Content-Type': 'application/x-www-form-urlencoded'},
+                  method='POST',
+                )
+                with urllib.request.urlopen(req, timeout=30) as response:
+                  return json.loads(response.read().decode('utf-8'))['access_token']
+
+
+              token = None
+              for attempt in range(120):
+                try:
+                  token = request_token()
+                  break
+                except Exception:
+                  if attempt == 119:
+                    raise
+                  time.sleep(5)
+
+              clients_path = f'/admin/realms/{realm_path}/clients'
+              client_doc = {
+                'clientId': client_id,
+                'name': 'ChatGPT agents-shell',
+                'description': 'OAuth client for the ChatGPT agents-shell MCP connector.',
+                'enabled': True,
+                'protocol': 'openid-connect',
+                'publicClient': False,
+                'clientAuthenticatorType': 'client-secret',
+                'secret': client_secret,
+                'standardFlowEnabled': True,
+                'directAccessGrantsEnabled': False,
+                'implicitFlowEnabled': False,
+                'serviceAccountsEnabled': False,
+                'fullScopeAllowed': False,
+                'redirectUris': ['https://chatgpt.com/connector/oauth/*'],
+                'webOrigins': ['https://chatgpt.com'],
+                'attributes': {
+                  'access.token.lifespan': '28800',
+                  'client.session.idle.timeout': '28800',
+                  'client.session.max.lifespan': '86400',
+                  'pkce.code.challenge.required': 'true',
+                  'pkce.code.challenge.method': 'S256',
+                },
+              }
+
+              query_client_id = urllib.parse.quote(client_id, safe='')
+              clients = request('GET', f'{clients_path}?clientId={query_client_id}', token=token)
+              if clients:
+                client_resource_id = clients[0]['id']
+                existing_client = request('GET', f'{clients_path}/{client_resource_id}', token=token)
+                existing_client.update(client_doc)
+                request('PUT', f'{clients_path}/{client_resource_id}', token=token, data=existing_client, expected=(204,))
+              else:
+                request('POST', clients_path, token=token, data=client_doc, expected=(201, 204))
+                clients = request('GET', f'{clients_path}?clientId={query_client_id}', token=token)
+                if not clients:
+                  raise RuntimeError(f'Failed to resolve Keycloak client resource ID for {client_id}')
+                client_resource_id = clients[0]['id']
+
+              client_scopes_path = f'/admin/realms/{realm_path}/client-scopes'
+              existing_scopes = request('GET', client_scopes_path, token=token)
+              scope_ids = {}
+              for scope_name in ('agents-shell.read', 'agents-shell.write', 'agents-shell.admin', 'offline_access'):
+                match = next((scope for scope in existing_scopes if scope.get('name') == scope_name), None)
+                if not match:
+                  if scope_name == 'offline_access':
+                    raise RuntimeError('Keycloak realm is missing built-in client scope offline_access')
+                  request(
+                    'POST',
+                    client_scopes_path,
+                    token=token,
+                    data={'name': scope_name, 'protocol': 'openid-connect', 'attributes': {'include.in.token.scope': 'true'}},
+                    expected=(201, 204),
+                  )
+                  existing_scopes = request('GET', client_scopes_path, token=token)
+                  match = next((scope for scope in existing_scopes if scope.get('name') == scope_name), None)
+                  if not match:
+                    raise RuntimeError(f'Failed to create client scope {scope_name}')
+                scope_ids[scope_name] = match['id']
+
+              default_scope_names = {'agents-shell.read', 'agents-shell.write', 'offline_access'}
+              for scope_name, scope_id in scope_ids.items():
+                scope_path_kind = 'default-client-scopes' if scope_name in default_scope_names else 'optional-client-scopes'
+                other_scope_path_kind = 'optional-client-scopes' if scope_name in default_scope_names else 'default-client-scopes'
+                scope_id_quoted = urllib.parse.quote(scope_id, safe='')
+                request(
+                  'DELETE',
+                  f'{clients_path}/{client_resource_id}/{other_scope_path_kind}/{scope_id_quoted}',
+                  token=token,
+                  expected=(204, 404),
+                )
+                request(
+                  'PUT',
+                  f'{clients_path}/{client_resource_id}/{scope_path_kind}/{scope_id_quoted}',
+                  token=token,
+                  expected=(204, 409),
+                )
+
+              mapper_path = f'{clients_path}/{client_resource_id}/protocol-mappers/models'
+              for mapper in request('GET', mapper_path, token=token):
+                if mapper.get('name') == 'agents-shell-audience':
+                  mapper_id = urllib.parse.quote(mapper['id'], safe='')
+                  request('DELETE', f'{mapper_path}/{mapper_id}', token=token, expected=(204,))
+
+              mapper_doc = {
+                'name': 'agents-shell-audience',
+                'protocol': 'openid-connect',
+                'protocolMapper': 'oidc-audience-mapper',
+                'consentRequired': False,
+                'config': {
+                  'included.custom.audience': resource_audience,
+                  'access.token.claim': 'true',
+                  'id.token.claim': 'false',
+                  'userinfo.token.claim': 'false',
+                  'introspection.token.claim': 'true',
+                  'lightweight.claim': 'false',
+                },
+              }
+              request('POST', mapper_path, token=token, data=mapper_doc, expected=(201, 204))
+
+              configured = [
+                mapper
+                for mapper in request('GET', mapper_path, token=token)
+                if mapper.get('name') == 'agents-shell-audience'
+              ]
+              if len(configured) != 1 or configured[0].get('config', {}) != mapper_doc['config']:
+                raise RuntimeError(f'Failed to configure agents-shell audience mapper: {configured!r}')
+
+              users_path = f'/admin/realms/{realm_path}/users'
+              query_username = urllib.parse.urlencode({'username': chatgpt_username, 'exact': 'true'})
+              users = request('GET', f'{users_path}?{query_username}', token=token)
+              user_doc = {
+                'username': chatgpt_username,
+                'email': chatgpt_email,
+                'firstName': 'Agents Shell',
+                'lastName': 'ChatGPT',
+                'enabled': True,
+                'emailVerified': True,
+                'requiredActions': [],
+              }
+              if users:
+                user_resource_id = users[0]['id']
+                existing_user = request('GET', f'{users_path}/{urllib.parse.quote(user_resource_id, safe="")}', token=token)
+                existing_user.update(user_doc)
+                request(
+                  'PUT',
+                  f'{users_path}/{urllib.parse.quote(user_resource_id, safe="")}',
+                  token=token,
+                  data=existing_user,
+                  expected=(204,),
+                )
+              else:
+                request('POST', users_path, token=token, data=user_doc, expected=(201, 204))
+                users = request('GET', f'{users_path}?{query_username}', token=token)
+                if not users:
+                  raise RuntimeError(f'Failed to resolve Keycloak user resource ID for {chatgpt_username}')
+                user_resource_id = users[0]['id']
+
+              request(
+                'PUT',
+                f'{users_path}/{urllib.parse.quote(user_resource_id, safe="")}/reset-password',
+                token=token,
+                data={'type': 'password', 'value': chatgpt_password, 'temporary': False},
+                expected=(204,),
+              )
+
+              print(f'Configured Keycloak client {client_id} and user {chatgpt_username} in realm {realm}')
+              PY
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: KEYCLOAK_ADMIN_URL
+              value: http://keycloak:8080
+            - name: KEYCLOAK_REALM
+              value: master
+            - name: AGENTS_SHELL_RESOURCE_AUDIENCE
+              value: https://agents-shell.proompteng.ai
+            - name: AGENTS_SHELL_CHATGPT_USERNAME
+              value: agents-shell-chatgpt
+            - name: AGENTS_SHELL_CHATGPT_EMAIL
+              value: agents-shell-chatgpt@proompteng.ai
+            - name: KEYCLOAK_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: username
+            - name: KEYCLOAK_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-admin
+                  key: password
+            - name: AGENTS_SHELL_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-agents-shell-client
+                  key: AGENTS_SHELL_OIDC_CLIENT_ID
+            - name: AGENTS_SHELL_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-agents-shell-client
+                  key: AGENTS_SHELL_OIDC_CLIENT_SECRET
+            - name: AGENTS_SHELL_CHATGPT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: keycloak-agents-shell-user
+                  key: AGENTS_SHELL_CHATGPT_PASSWORD
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

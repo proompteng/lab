@@ -34,6 +34,49 @@ runner:
     repository: registry.ide-newton.ts.net/lab/agents-codex-runner
     tag: d26e313e
     digest: sha256:cbca5f4a2f8dd453b7dd1e36b28028661b23094b7624bb7b939f969a43df777c
+agentsShell:
+  enabled: true
+  image:
+    repository: registry.ide-newton.ts.net/lab/agents-shell
+    tag: agents-shell-fetch-amd64-20260627215516
+    digest: sha256:7480d1a698a3c862179a2cb729f2827d8de99700edd0b527e61d76d95d1b7941
+    pullPolicy: IfNotPresent
+  env:
+    vars:
+      AGENTS_SHELL_RESOURCE: https://agents-shell.proompteng.ai
+      AGENTS_SHELL_OAUTH_ISSUER: https://auth.proompteng.ai/realms/master
+      AGENTS_SHELL_ALLOWED_EMAILS: greg@proompteng.ai,agents-shell-chatgpt@proompteng.ai
+      AGENTS_SHELL_ALLOWED_K8S_NAMESPACES: ""
+      AGENTS_SHELL_WORKSPACE_ROOT: /workspace
+      AGENTS_SHELL_AUDIT_LOG_PATH: /workspace/.agents-shell/audit.jsonl
+      AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS: "60"
+      AGENTS_SHELL_MAX_TIMEOUT_SECONDS: "1800"
+      AGENTS_SHELL_DEFAULT_OUTPUT_BYTES: "20000"
+      AGENTS_SHELL_MAX_OUTPUT_BYTES: "200000"
+      AGENTS_SHELL_MAX_CONCURRENT_JOBS: "4"
+      AGENTS_SHELL_ENABLE_K8S_APPLY: "true"
+  rbac:
+    clusterAdmin: true
+    extraReadNamespaces:
+      - torghut
+  ingressRoute:
+    enabled: true
+    host: agents-shell.proompteng.ai
+    entryPoints:
+      - web
+      - websecure
+  networkPolicy:
+    enabled: true
+    ingressNamespaces:
+      - traefik
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  nodeSelector:
+    kubernetes.io/arch: amd64
+  workspace:
+    size: 20Gi
 agentRuntime:
   native:
     rerunOrchestration: codex-rerun

@@ -41,6 +41,16 @@ app.kubernetes.io/name: {{ include "agents.controllersName" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "agents.agentsShellName" -}}
+{{- printf "%s-shell" (include "agents.name" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+
+{{- define "agents.agentsShellSelectorLabels" -}}
+app.kubernetes.io/name: {{ include "agents.agentsShellName" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: agents-shell
+{{- end -}}
+
 {{- define "agents.rolloutChecksumAnnotations" -}}
 {{- if not .Values.rolloutChecksums.enabled -}}
 {{- else -}}
@@ -109,6 +119,26 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- .Values.runnerServiceAccount.name -}}
 {{- else if .Values.runnerServiceAccount.create -}}
 {{- printf "%s-runner" (include "agents.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "agents.agentsShellServiceAccountName" -}}
+{{- if .Values.agentsShell.serviceAccount.name -}}
+{{- .Values.agentsShell.serviceAccount.name -}}
+{{- else if .Values.agentsShell.serviceAccount.create -}}
+{{- printf "%s-shell" (include "agents.fullname" .) | trunc 63 | trimSuffix "-" -}}
+{{- else -}}
+{{- default "default" .Values.agentsShell.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "agents.agentsShellWorkspaceClaimName" -}}
+{{- if .Values.agentsShell.workspace.existingClaim -}}
+{{- .Values.agentsShell.workspace.existingClaim -}}
+{{- else if .Values.agentsShell.workspace.claimName -}}
+{{- .Values.agentsShell.workspace.claimName -}}
+{{- else -}}
+{{- printf "%s-workspace" (include "agents.agentsShellName" .) | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 {{- end -}}
 

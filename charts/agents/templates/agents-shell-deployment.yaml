@@ -1,0 +1,129 @@
+{{- if .Values.agentsShell.enabled -}}
+{{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
+{{- $image := .Values.agentsShell.image | default dict -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agents.agentsShellName" . }}
+  namespace: {{ $namespace }}
+  labels:
+    {{- include "agents.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agents-shell
+spec:
+  replicas: {{ .Values.agentsShell.replicaCount }}
+  {{- with .Values.agentsShell.deploymentStrategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "agents.agentsShellSelectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agents.agentsShellSelectorLabels" . | nindent 8 }}
+        {{- with .Values.agentsShell.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.agentsShell.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "agents.agentsShellServiceAccountName" . }}
+      {{- if $image.pullSecrets }}
+      imagePullSecrets:
+        {{- range $image.pullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- with .Values.agentsShell.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentsShell.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentsShell.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.agentsShell.securityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: {{ .Values.agentsShell.terminationGracePeriodSeconds }}
+      containers:
+        - name: agents-shell
+          image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- with .Values.agentsShell.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: AGENTS_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            {{- range $name, $value := .Values.agentsShell.env.vars }}
+            - name: {{ $name }}
+              value: {{ $value | quote }}
+            {{- end }}
+            {{- range .Values.agentsShell.env.secrets }}
+            - name: {{ .name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName }}
+                  key: {{ .key | default "value" }}
+            {{- end }}
+            {{- range .Values.agentsShell.env.config }}
+            - name: {{ .name }}
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .configMapName }}
+                  key: {{ .key | default .name }}
+            {{- end }}
+            {{- range .Values.agentsShell.env.extra }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          {{- if .Values.agentsShell.livenessProbe.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.agentsShell.livenessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.agentsShell.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.agentsShell.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.agentsShell.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.agentsShell.livenessProbe.failureThreshold }}
+          {{- end }}
+          {{- if .Values.agentsShell.readinessProbe.enabled }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.agentsShell.readinessProbe.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.agentsShell.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.agentsShell.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.agentsShell.readinessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.agentsShell.readinessProbe.failureThreshold }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.agentsShell.resources | nindent 12 }}
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          {{- if .Values.agentsShell.workspace.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "agents.agentsShellWorkspaceClaimName" . }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}

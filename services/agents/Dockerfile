@@ -68,13 +68,18 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   export DEBIAN_FRONTEND=noninteractive; \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
+  bash \
   build-essential \
   ca-certificates \
   curl \
+  gh \
   git \
+  jq \
   python3 \
+  ripgrep \
   unzip \
-  xz-utils; \
+  xz-utils \
+  yq; \
   rm -rf /var/lib/apt/lists/*
 
 RUN set -eux; \
@@ -295,3 +300,38 @@ ENV AGENTS_VERSION=${AGENTS_VERSION} \
   AGENTS_COMMIT=${AGENTS_COMMIT}
 
 CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
+
+FROM controller AS agents-shell
+
+RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
+  --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
+  set -eux; \
+  export DEBIAN_FRONTEND=noninteractive; \
+  apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
+  apt-get install -y --no-install-recommends \
+  bash \
+  ca-certificates \
+  curl \
+  gh \
+  git \
+  jq \
+  python3 \
+  ripgrep \
+  yq; \
+  ln -sf /usr/bin/python3 /usr/local/bin/python; \
+  rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/services/agents
+RUN mkdir -p /workspace /workspace/.agents-shell
+
+ENV AGENTS_SERVER_PROFILE=agents-shell \
+  AGENTS_GRPC_ENABLED=0 \
+  AGENTS_AGENT_COMMS_SUBSCRIBER_DISABLED=true \
+  AGENTS_RUNTIME_SERVICE=agents-shell \
+  AGENTS_SHELL_WORKSPACE_ROOT=/workspace \
+  AGENTS_SHELL_AUDIT_LOG_PATH=/workspace/.agents-shell/audit.jsonl \
+  AGENTS_SHELL_RESOURCE=https://agents-shell.proompteng.ai \
+  AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master \
+  AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents
+
+CMD ["bun", "run", "start:agents-shell"]

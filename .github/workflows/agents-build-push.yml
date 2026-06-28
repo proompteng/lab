@@ -113,6 +113,7 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           CONTROLLER_IMAGE: registry.ide-newton.ts.net/lab/agents-controller
           CONTROL_PLANE_IMAGE: registry.ide-newton.ts.net/lab/agents-control-plane
+          AGENTS_SHELL_IMAGE: registry.ide-newton.ts.net/lab/agents-shell
           RUNNER_IMAGE: registry.ide-newton.ts.net/lab/agents-codex-runner
         run: |
           set -euo pipefail
@@ -156,11 +157,13 @@ jobs:
 
           create_index "${CONTROLLER_IMAGE}"
           create_index "${CONTROL_PLANE_IMAGE}"
+          create_index "${AGENTS_SHELL_IMAGE}"
           create_index "${RUNNER_IMAGE}"
 
           {
             echo "controller_digest=$(resolve_digest "${CONTROLLER_IMAGE}")"
             echo "control_plane_digest=$(resolve_digest "${CONTROL_PLANE_IMAGE}")"
+            echo "agents_shell_digest=$(resolve_digest "${AGENTS_SHELL_IMAGE}")"
             echo "runner_digest=$(resolve_digest "${RUNNER_IMAGE}")"
           } >> "$GITHUB_OUTPUT"
 
@@ -169,6 +172,7 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
           CONTROLLER_DIGEST: ${{ steps.digests.outputs.controller_digest }}
           CONTROL_PLANE_DIGEST: ${{ steps.digests.outputs.control_plane_digest }}
+          AGENTS_SHELL_DIGEST: ${{ steps.digests.outputs.agents_shell_digest }}
           RUNNER_DIGEST: ${{ steps.digests.outputs.runner_digest }}
         run: |
           bun run packages/scripts/src/agents/update-values.ts \
@@ -178,6 +182,8 @@ jobs:
             --controller-digest "${CONTROLLER_DIGEST}" \
             --control-plane-repository registry.ide-newton.ts.net/lab/agents-control-plane \
             --control-plane-digest "${CONTROL_PLANE_DIGEST}" \
+            --agents-shell-repository registry.ide-newton.ts.net/lab/agents-shell \
+            --agents-shell-digest "${AGENTS_SHELL_DIGEST}" \
             --runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner \
             --runner-digest "${RUNNER_DIGEST}" \
             --source-sha "${GITHUB_SHA}" \

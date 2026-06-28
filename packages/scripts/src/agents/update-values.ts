@@ -14,6 +14,8 @@ type Options = {
   controllerDigest?: string
   controlPlaneRepository?: string
   controlPlaneDigest?: string
+  agentsShellRepository?: string
+  agentsShellDigest?: string
   runnerRepository?: string
   runnerDigest?: string
   sourceSha?: string
@@ -53,6 +55,12 @@ const parseArgs = (argv: string[]): Options => {
         break
       case '--control-plane-digest':
         options.controlPlaneDigest = normalizeDigest(value)
+        break
+      case '--agents-shell-repository':
+        options.agentsShellRepository = value
+        break
+      case '--agents-shell-digest':
+        options.agentsShellDigest = normalizeDigest(value)
         break
       case '--runner-repository':
         options.runnerRepository = value
@@ -112,6 +120,9 @@ export const updateAgentsValuesFromCliOptions = (options: Options) => {
     requireValue(options, 'controlPlaneRepository'),
     tag,
     controlPlaneDigest,
+    requireValue(options, 'agentsShellRepository'),
+    tag,
+    requireDigest(options, 'agentsShellDigest'),
     requireValue(options, 'runnerRepository'),
     tag,
     requireDigest(options, 'runnerDigest'),
