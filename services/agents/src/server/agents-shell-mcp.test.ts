@@ -235,7 +235,7 @@ describe('agents-shell MCP tools', () => {
     const search = tools.tools.find((tool) => tool.name === 'workspace_search')
     expect(search?.annotations?.readOnlyHint).toBe(true)
     expect(search?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
       ui: { visibility: ['model'] },
       'openai/visibility': 'public',
       'openai/toolInvocation/invoking': 'Running tool',
@@ -250,20 +250,20 @@ describe('agents-shell MCP tools', () => {
     expect(applyPatch?.annotations?.readOnlyHint).toBe(false)
     expect(applyPatch?.annotations?.destructiveHint).toBe(false)
     expect(applyPatch?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
     })
 
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
     expect(git?.annotations?.destructiveHint).toBe(false)
     expect(git?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
 
     const gitWrite = tools.tools.find((tool) => tool.name === 'git_write')
     expect(gitWrite?.annotations?.destructiveHint).toBe(true)
     expect(gitWrite?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
     })
 
     const kubectl = tools.tools.find((tool) => tool.name === 'kubectl')
@@ -271,14 +271,14 @@ describe('agents-shell MCP tools', () => {
     expect(kubectl?.annotations?.destructiveHint).toBe(false)
     expect(kubectl?.annotations?.openWorldHint).toBe(true)
     expect(kubectl?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
 
     const kubectlAdmin = tools.tools.find((tool) => tool.name === 'kubectl_admin')
     expect(kubectlAdmin?.annotations?.destructiveHint).toBe(true)
     expect(kubectlAdmin?.annotations?.openWorldHint).toBe(true)
     expect(kubectlAdmin?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.admin', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.admin'] }],
     })
 
     const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
@@ -292,9 +292,9 @@ describe('agents-shell MCP tools', () => {
 
     const rawTools = await listToolsOnWire(config)
     const rawSearch = rawTools.find((tool) => tool.name === 'workspace_search')
-    expect(rawSearch?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }])
+    expect(rawSearch?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
     expect(rawSearch?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
       ui: { visibility: ['model'] },
       'openai/visibility': 'public',
       'openai/toolInvocation/invoking': 'Running tool',
@@ -314,7 +314,7 @@ describe('agents-shell MCP tools', () => {
     expect(rawShellRunOutputProperties.exitCode.type).toEqual(['integer', 'null'])
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
-    expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }])
+    expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
     expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
   })
 
