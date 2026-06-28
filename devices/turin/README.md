@@ -31,6 +31,7 @@ Docs:
 - `devices/turin/docs/nvidia-gpu-on-talos.md` (NVIDIA driver/runtime plan)
 - `devices/turin/docs/kubevirt-on-turin.md` (KubeVirt runtime and canary checks)
 - `devices/turin/docs/ceph-recreate-three-osds.md` (destructive no-Kingston OSD recreate runbook)
+- `devices/turin/docs/local-nvme-scratch.md` (single-host NVMe scratch/cache runbook)
 - `devices/turin/docs/rook-ceph-turin-recreate-osds-values-draft.yaml` (draft-only Rook storage node snippet; not an Argo input)
 
 Manifests:
@@ -46,6 +47,8 @@ Manifests:
 - `devices/turin/manifests/tailscale-dns.patch.yaml` (Talos DNS settings for node-level Tailscale)
 - `devices/turin/manifests/tailscale-extension-service.template.yaml` (template for generated, gitignored Tailscale auth config)
 - `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml` (Image Factory schematic source)
+- `devices/turin/manifests/local-path-scratch-intel.patch.yaml` (gated local-only scratch user volume on the Intel 256GB NVMe)
+- `devices/turin/manifests/local-path-scratch-transcend.patch.yaml` (gated local-only scratch user volume on the Transcend 256GB NVMe)
 
 Related:
 
