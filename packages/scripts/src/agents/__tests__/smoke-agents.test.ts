@@ -473,6 +473,23 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(smokeRunSpec, 'secrets')).toEqual(['codex-auth'])
   })
 
+  it('preserves the agents-shell full-depth workspace bootstrap value', () => {
+    const values = readYamlObjects('argocd/applications/agents/values.yaml')[0]
+    const agentsShell = objectAt(values, 'agentsShell')
+    const workspace = objectAt(agentsShell, 'workspace')
+    const bootstrap = objectAt(workspace, 'bootstrap')
+    const deploymentTemplate = readFileSync(
+      resolve(process.cwd(), 'charts/agents/templates/agents-shell-deployment.yaml'),
+      'utf8',
+    )
+
+    expect(objectAt(bootstrap, 'enabled')).toBe(true)
+    expect(objectAt(bootstrap, 'depth')).toBe(0)
+    expect(deploymentTemplate).toContain('hasKey $workspaceBootstrap "depth"')
+    expect(deploymentTemplate).toContain('value: {{ $workspaceBootstrap.depth | quote }}')
+    expect(deploymentTemplate).not.toContain('default 1 $workspaceBootstrap.depth')
+  })
+
   it('keeps checked-in workflow AgentRuns runnable with explicit steps', () => {
     const provider = readYamlObjects('argocd/applications/agents/agents-primitives-agentprovider.yaml').find(
       (manifest) => objectAt(manifest, 'kind') === 'AgentProvider',
