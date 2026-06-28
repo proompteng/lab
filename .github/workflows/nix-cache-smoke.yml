@@ -1,0 +1,71 @@
+name: nix-cache-smoke
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'docs/nix-cache.md'
+      - '.github/workflows/nix-cache-smoke.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'docs/nix-cache.md'
+      - '.github/workflows/nix-cache-smoke.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pull-only:
+    runs-on: arc-arm64
+    env:
+      ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+      ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Ensure Attic public key is configured
+        run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Install xz for Nix installer
+        run: |
+          if command -v xz >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          if command -v apk >/dev/null 2>&1; then
+            sudo apk add --no-cache xz
+          elif command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xz-utils
+          else
+            echo "No supported package manager found to install xz." >&2
+            exit 1
+          fi
+
+      - name: Install Nix with Attic pull substituter
+        uses: cachix/install-nix-action@v31
+        with:
+          github_access_token: ${{ secrets.GITHUB_TOKEN }}
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Check Attic cache endpoint
+        run: nix run .#cache-doctor
+
+      - name: Build cache smoke derivation
+        run: nix build .#cacheSmoke --print-build-logs
