@@ -15,6 +15,7 @@ const atticReleaseMetadataScript = readRepoFile('nix/attic-release-metadata.sh')
 const flake = readRepoFile('flake.nix')
 const inspectOciArchiveScript = readRepoFile('nix/oci-inspect-archive.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
+const ociPushScript = readRepoFile('nix/oci-push.sh')
 
 afterEach(() => {
   __private.setSpawnSync()
@@ -199,6 +200,12 @@ describe('native OCI build workflows', () => {
     expect(inspectOciArchiveScript).toContain('(.Architecture | type == "string" and length > 0)')
     expect(inspectOciArchiveScript).toContain('(.Os | type == "string" and length > 0)')
     expect(inspectOciArchiveScript).not.toContain('(.RepoTags | length >= 1)')
+  })
+
+  it('gives Skopeo an explicit containers policy on ARC runners', () => {
+    expect(ociPushScript).toContain('policy_json="$(mktemp)"')
+    expect(ociPushScript).toContain('"type": "insecureAcceptAnything"')
+    expect(ociPushScript).toContain('skopeo --policy "${policy_json}" copy --format oci')
   })
 
   it('does not use Docker Buildx or docker daemon commands in migrated workflows', () => {
