@@ -119,6 +119,15 @@ agentsShell:
     storageClassName: ''
     annotations: {}
     labels: {}
+    bootstrap:
+      enabled: false
+      repository: https://github.com/proompteng/lab.git
+      branch: main
+      targetPath: /workspace/lab
+      depth: 1
+      tokenSecret:
+        name: ''
+        key: token
   service:
     enabled: true
     type: ClusterIP

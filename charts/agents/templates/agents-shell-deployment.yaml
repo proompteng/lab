@@ -1,6 +1,7 @@
 {{- if .Values.agentsShell.enabled -}}
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $image := .Values.agentsShell.image | default dict -}}
+{{- $workspaceBootstrap := .Values.agentsShell.workspace.bootstrap | default dict -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -54,6 +55,72 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       terminationGracePeriodSeconds: {{ .Values.agentsShell.terminationGracePeriodSeconds }}
+      {{- if $workspaceBootstrap.enabled }}
+      initContainers:
+        - name: bootstrap-workspace
+          image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
+          imagePullPolicy: {{ $image.pullPolicy }}
+          {{- with .Values.agentsShell.containerSecurityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          env:
+            - name: GIT_REPOSITORY
+              value: {{ required "agentsShell.workspace.bootstrap.repository is required when bootstrap is enabled" $workspaceBootstrap.repository | quote }}
+            - name: GIT_BRANCH
+              value: {{ default "main" $workspaceBootstrap.branch | quote }}
+            - name: GIT_TARGET_PATH
+              value: {{ required "agentsShell.workspace.bootstrap.targetPath is required when bootstrap is enabled" $workspaceBootstrap.targetPath | quote }}
+            - name: GIT_DEPTH
+              value: {{ default 1 $workspaceBootstrap.depth | quote }}
+            {{- with $workspaceBootstrap.tokenSecret }}
+            {{- if .name }}
+            - name: GIT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .name }}
+                  key: {{ .key | default "token" }}
+            {{- end }}
+            {{- end }}
+          command:
+            - /bin/bash
+            - -ec
+          args:
+            - |
+              set -euo pipefail
+
+              export HOME=/tmp/git-home
+              mkdir -p "${HOME}" "$(dirname "${GIT_TARGET_PATH}")" /workspace/.agents-shell
+
+              if [[ -n "${GIT_TOKEN:-}" ]]; then
+                umask 077
+                printf 'https://x-access-token:%s@github.com\n' "${GIT_TOKEN}" > /tmp/git-credentials
+                git config --global credential.helper 'store --file=/tmp/git-credentials'
+              fi
+
+              if [[ -d "${GIT_TARGET_PATH}/.git" ]]; then
+                git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
+                git -C "${GIT_TARGET_PATH}" fetch --depth="${GIT_DEPTH}" origin "${GIT_BRANCH}"
+                if git -C "${GIT_TARGET_PATH}" diff --quiet && git -C "${GIT_TARGET_PATH}" diff --cached --quiet; then
+                  git -C "${GIT_TARGET_PATH}" checkout -B "${GIT_BRANCH}" FETCH_HEAD
+                  git -C "${GIT_TARGET_PATH}" reset --hard FETCH_HEAD
+                else
+                  echo "workspace repository has local changes; leaving checkout unchanged"
+                fi
+              elif [[ -e "${GIT_TARGET_PATH}" && -n "$(find "${GIT_TARGET_PATH}" -mindepth 1 -maxdepth 1 -print -quit)" ]]; then
+                echo "workspace target exists and is not an empty git checkout: ${GIT_TARGET_PATH}" >&2
+                exit 1
+              else
+                rm -rf "${GIT_TARGET_PATH}"
+                git clone --depth="${GIT_DEPTH}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"
+              fi
+
+              git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
+              rm -f /tmp/git-credentials
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      {{- end }}
       containers:
         - name: agents-shell
           image: "{{ $image.repository }}:{{ $image.tag }}{{- if $image.digest }}@{{ $image.digest }}{{ end }}"
