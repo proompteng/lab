@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -210,11 +210,12 @@ describe('agents-shell MCP tools', () => {
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
     const tools = await client.listTools()
-    expect(tools.tools.map((tool) => tool.name)).toEqual(
-      expect.arrayContaining([
+    expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
+      [
         'workspace_search',
         'workspace_read_file',
-        'workspace_apply_patch',
+        'apply_patch',
+        'agent_guide',
         'shell_run',
         'shell_start',
         'shell_read',
@@ -224,10 +225,11 @@ describe('agents-shell MCP tools', () => {
         'git_write',
         'kubectl',
         'kubectl_admin',
-      ]),
-    )
-    expect(tools.tools.map((tool) => tool.name)).not.toEqual(
-      expect.arrayContaining(['git_status', 'git_diff', 'k8s_get', 'k8s_apply']),
+        'agent_start',
+        'agent_status',
+        'agent_read',
+        'agent_cancel',
+      ].sort(),
     )
 
     const search = tools.tools.find((tool) => tool.name === 'workspace_search')
@@ -242,7 +244,14 @@ describe('agents-shell MCP tools', () => {
 
     const shellRun = tools.tools.find((tool) => tool.name === 'shell_run')
     expect(shellRun?.annotations?.destructiveHint).toBe(false)
-    expect(shellRun?.annotations?.openWorldHint).toBe(false)
+    expect(shellRun?.annotations?.openWorldHint).toBe(true)
+
+    const applyPatch = tools.tools.find((tool) => tool.name === 'apply_patch')
+    expect(applyPatch?.annotations?.readOnlyHint).toBe(false)
+    expect(applyPatch?.annotations?.destructiveHint).toBe(false)
+    expect(applyPatch?._meta).toMatchObject({
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write', 'offline_access'] }],
+    })
 
     const git = tools.tools.find((tool) => tool.name === 'git')
     expect(git?.annotations?.readOnlyHint).toBe(true)
@@ -272,6 +281,10 @@ describe('agents-shell MCP tools', () => {
       securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.admin', 'offline_access'] }],
     })
 
+    const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
+    expect(agentStart?.annotations?.destructiveHint).toBe(true)
+    expect(agentStart?.annotations?.openWorldHint).toBe(true)
+
     await clientTransport.close()
     await serverTransport.close()
     await client.close()
@@ -291,22 +304,14 @@ describe('agents-shell MCP tools', () => {
     expect(rawSearch?.inputSchema?.additionalProperties).toBe(false)
 
     const rawShellRun = rawTools.find((tool) => tool.name === 'shell_run')
-    expect(
-      (rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>).timeoutSeconds.maximum,
-    ).toBeUndefined()
-    expect(
-      (rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>).maxOutputBytes.maximum,
-    ).toBeUndefined()
-    expect(
-      (rawShellRun?.outputSchema?.properties as Record<string, Record<string, unknown>>).exitCode.minimum,
-    ).toBeUndefined()
-    expect(
-      (rawShellRun?.outputSchema?.properties as Record<string, Record<string, unknown>>).exitCode.anyOf,
-    ).toBeUndefined()
-    expect((rawShellRun?.outputSchema?.properties as Record<string, Record<string, unknown>>).exitCode.type).toEqual([
-      'integer',
-      'null',
-    ])
+    expect(rawShellRun).toBeDefined()
+    const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
+    const rawShellRunOutputProperties = rawShellRun?.outputSchema?.properties as Record<string, Record<string, unknown>>
+    expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
+    expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
+    expect(rawShellRunOutputProperties.exitCode.minimum).toBeUndefined()
+    expect(rawShellRunOutputProperties.exitCode.anyOf).toBeUndefined()
+    expect(rawShellRunOutputProperties.exitCode.type).toEqual(['integer', 'null'])
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
     expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }])
@@ -335,8 +340,9 @@ describe('agents-shell MCP tools', () => {
     await server.close()
   })
 
-  it('reads files and blocks patch paths outside /workspace', async () => {
+  it('reads files and blocks apply_patch paths outside /workspace', async () => {
     const config = makeConfig()
+    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
     writeFileSync(join(config.workspaceRoot, 'hello.txt'), 'hello from agents-shell\n')
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
@@ -347,10 +353,9 @@ describe('agents-shell MCP tools', () => {
     expect((read.structuredContent as { content?: string } | undefined)?.content).toBe('hello from agents-shell\n')
 
     const blocked = await client.callTool({
-      name: 'workspace_apply_patch',
+      name: 'apply_patch',
       arguments: {
-        patch:
-          'diff --git a/../escape.txt b/../escape.txt\n--- a/../escape.txt\n+++ b/../escape.txt\n@@ -0,0 +1 @@\n+nope\n',
+        patch: '*** Begin Patch\n*** Update File: ../../escape.txt\n@@\n-old\n+new\n*** End Patch\n',
       },
     })
     expect(blocked.isError).toBe(true)
@@ -362,6 +367,138 @@ describe('agents-shell MCP tools', () => {
     await serverTransport.close()
     await client.close()
     await server.close()
+  })
+
+  it('applies Codex patch syntax through the apply_patch executable', async () => {
+    const config = makeConfig()
+    mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
+    const bin = join(config.workspaceRoot, 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(
+      join(bin, 'apply_patch'),
+      '#!/bin/sh\ncat > .patch-input\nprintf "%s\\n" "Success. Updated the following files:" "M src/example.ts"\n',
+    )
+    chmodSync(join(bin, 'apply_patch'), 0o755)
+
+    const previousPath = process.env.PATH
+    process.env.PATH = `${bin}:${previousPath ?? ''}`
+
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const result = await client.callTool({
+        name: 'apply_patch',
+        arguments: {
+          cwd: 'lab',
+          patch: '*** Begin Patch\n*** Add File: src/example.ts\n+export const value = 1\n*** End Patch\n',
+        },
+      })
+      expect(result.isError).not.toBe(true)
+      const content = result.structuredContent as { command?: string; changedFiles?: string[]; stdout?: string }
+      expect(content.command).toBe('apply_patch')
+      expect(content.changedFiles).toEqual(['src/example.ts'])
+      expect(content.stdout).toContain('Success. Updated the following files')
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+
+      if (previousPath == null) {
+        delete process.env.PATH
+      } else {
+        process.env.PATH = previousPath
+      }
+    }
+  })
+
+  it('starts and observes delegated AgentRun lifecycle through generic kubectl', async () => {
+    const config = makeConfig()
+    const bin = join(config.workspaceRoot, 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(
+      join(bin, 'kubectl'),
+      `#!/bin/sh
+printf '%s\\n' "$@" >> "\${PWD}/kubectl-calls.txt"
+if [ "$1" = "apply" ]; then
+  cat > "\${PWD}/kubectl-stdin.json"
+  printf '%s\\n' 'agentrun.agents.proompteng.ai/created configured'
+elif [ "$1" = "get" ] && [ "$2" = "agentrun" ]; then
+  printf '%s\\n' '{"status":{"phase":"Running","vcs":{"headBranch":"codex/demo"}}}'
+elif [ "$1" = "get" ] && [ "$2" = "jobs" ]; then
+  printf '%s\\n' '{"items":[{"metadata":{"name":"job-1"}}]}'
+elif [ "$1" = "logs" ]; then
+  printf '%s\\n' 'delegated log line'
+elif [ "$1" = "delete" ]; then
+  printf '%s\\n' 'agentrun deleted'
+fi
+`,
+    )
+    chmodSync(join(bin, 'kubectl'), 0o755)
+
+    const previousPath = process.env.PATH
+    process.env.PATH = `${bin}:${previousPath ?? ''}`
+
+    const { client, server, clientTransport, serverTransport } = await connectServer(
+      config,
+      makeAuth(['agents-shell.read', 'agents-shell.write', 'agents-shell.admin']),
+    )
+
+    try {
+      const start = await client.callTool({
+        name: 'agent_start',
+        arguments: {
+          task: 'Make a small repo change, test it, commit, push, create a PR, and monitor CI.',
+          headBranch: 'codex/demo',
+        },
+      })
+      expect(start.isError).not.toBe(true)
+      const startContent = start.structuredContent as {
+        agentRunName?: string
+        headBranch?: string
+        apply?: { stdout?: string }
+      }
+      expect(startContent.headBranch).toBe('codex/demo')
+      expect(startContent.apply?.stdout).toContain('agentrun.agents.proompteng.ai/created configured')
+
+      const manifest = JSON.parse(readFileSync(join(config.workspaceRoot, 'kubectl-stdin.json'), 'utf8')) as {
+        spec?: {
+          implementation?: { inline?: { text?: string } }
+          parameters?: { repository?: string; base?: string; head?: string }
+          vcsPolicy?: { mode?: string }
+        }
+      }
+      expect(manifest.spec?.implementation?.inline?.text).toContain('Make a small repo change')
+      expect(manifest.spec?.parameters).toMatchObject({
+        repository: 'proompteng/lab',
+        base: 'main',
+        head: 'codex/demo',
+      })
+      expect(manifest.spec?.vcsPolicy?.mode).toBe('read-write')
+
+      const agentRunName = startContent.agentRunName!
+      const status = await client.callTool({ name: 'agent_status', arguments: { agentRunName } })
+      expect((status.structuredContent as { agentRun?: { status?: { phase?: string } } }).agentRun?.status?.phase).toBe(
+        'Running',
+      )
+
+      const logs = await client.callTool({ name: 'agent_read', arguments: { agentRunName } })
+      expect((logs.structuredContent as { stdout?: string }).stdout).toContain('delegated log line')
+
+      const cancel = await client.callTool({ name: 'agent_cancel', arguments: { agentRunName } })
+      expect((cancel.structuredContent as { stdout?: string }).stdout).toContain('agentrun deleted')
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+
+      if (previousPath == null) {
+        delete process.env.PATH
+      } else {
+        process.env.PATH = previousPath
+      }
+    }
   })
 
   it('searches workspace files with ripgrep instead of empty piped stdin', async () => {

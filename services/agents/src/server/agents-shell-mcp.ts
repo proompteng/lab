@@ -63,6 +63,19 @@ type ProcessResult = {
   stderrTruncated: boolean
 }
 
+type AgentStartInput = {
+  task: string
+  headBranch?: string
+  baseBranch?: string
+  repository?: string
+  agentName?: string
+  tokenBudget?: number
+  ttlSecondsAfterFinished?: number
+  acceptanceCriteria?: string[]
+  timeoutSeconds?: number
+  maxOutputBytes?: number
+}
+
 type OAuth2SecurityScheme = {
   type: 'oauth2'
   scopes: string[]
@@ -104,6 +117,15 @@ export type AgentsShellConfig = {
   auditLogPath: string | null
   allowedK8sNamespaces: Set<string>
   k8sApplyEnabled: boolean
+  agentNamespace: string
+  agentName: string
+  agentRepository: string
+  agentBaseBranch: string
+  agentVcsRef: string
+  agentRuntimeServiceAccount: string
+  agentSecrets: string[]
+  agentDefaultTokenBudget: number
+  agentDefaultTtlSecondsAfterFinished: number
   port: number
   host: string
 }
@@ -112,6 +134,30 @@ const AGENTS_SHELL_VERSION = '0.1.0'
 const DEFAULT_RESOURCE = 'https://agents-shell.proompteng.ai'
 const DEFAULT_ISSUER = 'https://auth.proompteng.ai/realms/master'
 const PROTECTED_RESOURCE_PATH = '/.well-known/oauth-protected-resource'
+const DEFAULT_AGENT_NAMESPACE = 'agents'
+const DEFAULT_AGENT_NAME = 'codex-agent'
+const DEFAULT_AGENT_REPOSITORY = 'proompteng/lab'
+const DEFAULT_AGENT_BASE_BRANCH = 'main'
+const DEFAULT_AGENT_VCS_REF = 'github'
+const DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT = 'agents-sa'
+const DEFAULT_AGENT_SECRETS = ['github-token', 'codex-auth']
+const DEFAULT_AGENT_TOKEN_BUDGET = 250_000
+const DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED = 86_400
+
+const AGENT_GUIDE = `Use agents-shell as a production coding agent for /workspace/lab.
+
+Default repo workflow:
+1. Inspect state first with git status, rg, file reads, and targeted commands.
+2. Create a codex/... branch from fresh origin/main.
+3. Edit files with apply_patch using Codex patch syntax.
+4. Run focused tests, lint, type checks, or smoke commands that prove the change.
+5. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
+6. Continue until the task is complete, CI status is checked, and the PR URL is available.
+
+Use shell_run for short commands, shell_start/read/status/kill for long commands, git and git_write for repository operations, kubectl and kubectl_admin for cluster operations, and agent_start/status/read/cancel for delegated long-running Codex AgentRun work. Report blockers only with exact tool calls, timestamps, logs, and the layer that failed.`
+
+const SERVER_INSTRUCTIONS =
+  'Agents-shell is a private tool-only ChatGPT app for end-to-end agentic work inside /workspace/lab. Inspect with rg/git/read tools, edit only with apply_patch, test, commit as Greg Konush, push, create PRs with gh, monitor CI, and use agent_start for non-trivial delegated work. Continue until completion or an evidence-backed blocker. Tools are bounded by OAuth scopes, audit logs, cwd, timeout, output caps, and Kubernetes RBAC.'
 
 const SCOPES = {
   read: 'agents-shell.read',
@@ -145,7 +191,7 @@ const writeAnnotations: ToolAnnotations = {
 const shellAnnotations: ToolAnnotations = {
   readOnlyHint: false,
   destructiveHint: false,
-  openWorldHint: false,
+  openWorldHint: true,
 }
 
 const destructiveAnnotations: ToolAnnotations = {
@@ -208,6 +254,11 @@ const parseList = (value: string | undefined) =>
       .map((item) => item.trim())
       .filter(Boolean),
   )
+
+const parseArray = (value: string | undefined, fallback: string[]) => {
+  const parsed = Array.from(parseList(value))
+  return parsed.length > 0 ? parsed : fallback
+}
 
 const parseListenPort = (env: NodeJS.ProcessEnv) => {
   const raw = env.PORT ?? env.AGENTS_SHELL_LISTEN_PORT ?? '8080'
@@ -313,6 +364,17 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     auditLogPath: env.AGENTS_SHELL_AUDIT_LOG_PATH ?? '/workspace/.agents-shell/audit.jsonl',
     allowedK8sNamespaces: parseList(env.AGENTS_SHELL_ALLOWED_K8S_NAMESPACES ?? 'agents'),
     k8sApplyEnabled: env.AGENTS_SHELL_ENABLE_K8S_APPLY === 'true',
+    agentNamespace: env.AGENTS_SHELL_AGENT_NAMESPACE ?? DEFAULT_AGENT_NAMESPACE,
+    agentName: env.AGENTS_SHELL_AGENT_NAME ?? DEFAULT_AGENT_NAME,
+    agentRepository: env.AGENTS_SHELL_AGENT_REPOSITORY ?? DEFAULT_AGENT_REPOSITORY,
+    agentBaseBranch: env.AGENTS_SHELL_AGENT_BASE_BRANCH ?? DEFAULT_AGENT_BASE_BRANCH,
+    agentVcsRef: env.AGENTS_SHELL_AGENT_VCS_REF ?? DEFAULT_AGENT_VCS_REF,
+    agentRuntimeServiceAccount: env.AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT ?? DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT,
+    agentSecrets: parseArray(env.AGENTS_SHELL_AGENT_SECRETS, DEFAULT_AGENT_SECRETS),
+    agentDefaultTokenBudget: Number(env.AGENTS_SHELL_AGENT_DEFAULT_TOKEN_BUDGET ?? DEFAULT_AGENT_TOKEN_BUDGET),
+    agentDefaultTtlSecondsAfterFinished: Number(
+      env.AGENTS_SHELL_AGENT_DEFAULT_TTL_SECONDS_AFTER_FINISHED ?? DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED,
+    ),
     port: parseListenPort(env),
     host: env.HOST ?? env.AGENTS_SHELL_HOST ?? '0.0.0.0',
   }
@@ -872,32 +934,123 @@ const withToolErrors =
     }
   }
 
-const extractPatchPaths = (patch: string) => {
+const extractCodexPatchPaths = (patch: string) => {
   const paths = new Set<string>()
   for (const line of patch.split('\n')) {
-    const diffMatch = line.match(/^diff --git a\/(.+) b\/(.+)$/)
-    if (diffMatch) {
-      paths.add(diffMatch[1])
-      paths.add(diffMatch[2])
-      continue
-    }
-    const fileMatch = line.match(/^(?:---|\+\+\+) (?:a\/|b\/)?(.+)$/)
-    if (fileMatch && fileMatch[1] !== '/dev/null') {
-      paths.add(fileMatch[1].split('\t')[0])
-      continue
-    }
+    const fileMatch = line.match(/^\*\*\* (?:Add File|Update File|Delete File|Move to): (.+)$/)
+    if (fileMatch) paths.add(fileMatch[1].trim())
   }
   return Array.from(paths)
 }
 
-const validatePatchPaths = (workspaceRoot: string, cwd: string, patch: string) => {
-  const paths = extractPatchPaths(patch)
-  if (paths.length === 0) throw new Error('patch does not contain recognizable file paths')
+const validateCodexPatch = (workspaceRoot: string, cwd: string, patch: string) => {
+  if (!patch.trimStart().startsWith('*** Begin Patch')) {
+    throw new Error("patch must start with '*** Begin Patch'")
+  }
+  if (!patch.trimEnd().endsWith('*** End Patch')) {
+    throw new Error("patch must end with '*** End Patch'")
+  }
+  const paths = extractCodexPatchPaths(patch)
+  if (paths.length === 0) throw new Error('patch does not contain recognizable Codex patch file paths')
   for (const path of paths) {
     const candidate = resolve(cwd, path)
     if (!isInsidePath(resolve(workspaceRoot), candidate)) {
       throw new Error(`patch path must stay under workspace: ${path}`)
     }
+  }
+  return paths
+}
+
+const slugifyKubernetesName = (value: string) => {
+  const slug = value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return slug || 'task'
+}
+
+const boundedKubernetesName = (parts: string[]) => {
+  const suffix = randomUUID().slice(0, 8)
+  const prefix = parts.map(slugifyKubernetesName).filter(Boolean).join('-')
+  const maxPrefixLength = 63 - suffix.length - 1
+  return `${prefix.slice(0, maxPrefixLength).replace(/-+$/g, '')}-${suffix}`
+}
+
+const agentRunNameFromInput = (task: string) => boundedKubernetesName(['agents-shell', task])
+
+const buildAgentRunManifest = (config: AgentsShellConfig, args: AgentStartInput) => {
+  const agentRunName = agentRunNameFromInput(args.task)
+  const baseBranch = args.baseBranch ?? config.agentBaseBranch
+  const headBranch = args.headBranch ?? `codex/${agentRunName}`
+  const repository = args.repository ?? config.agentRepository
+  const agentName = args.agentName ?? config.agentName
+  const tokenBudget = asPositiveInteger(args.tokenBudget, 'tokenBudget', config.agentDefaultTokenBudget, 1_000_000, 1)
+  const ttlSecondsAfterFinished = asPositiveInteger(
+    args.ttlSecondsAfterFinished,
+    'ttlSecondsAfterFinished',
+    config.agentDefaultTtlSecondsAfterFinished,
+    604_800,
+    0,
+  )
+
+  return {
+    apiVersion: 'agents.proompteng.ai/v1alpha1',
+    kind: 'AgentRun',
+    metadata: {
+      name: agentRunName,
+      namespace: config.agentNamespace,
+      labels: {
+        'app.kubernetes.io/name': 'agents-shell',
+        'app.kubernetes.io/component': 'delegated-agent',
+      },
+    },
+    spec: {
+      agentRef: { name: agentName },
+      implementation: {
+        inline: {
+          summary: `agents-shell delegated work: ${args.task.slice(0, 200)}`,
+          text: args.task,
+          acceptanceCriteria: args.acceptanceCriteria,
+          source: {
+            provider: 'custom',
+            externalId: `${repository}:${headBranch}`,
+            url: config.resource,
+          },
+          vcsRef: { name: config.agentVcsRef },
+        },
+      },
+      goal: {
+        objective: args.task,
+        tokenBudget,
+      },
+      ttlSecondsAfterFinished,
+      parameters: {
+        repository,
+        base: baseBranch,
+        head: headBranch,
+        stage: 'implementation',
+      },
+      runtime: {
+        type: 'job',
+        config: {
+          serviceAccountName: config.agentRuntimeServiceAccount,
+        },
+      },
+      secrets: config.agentSecrets,
+      vcsRef: { name: config.agentVcsRef },
+      vcsPolicy: {
+        required: true,
+        mode: 'read-write',
+      },
+    },
+  }
+}
+
+const parseJsonOrNull = (value: string) => {
+  try {
+    return value.trim() ? (JSON.parse(value) as unknown) : null
+  } catch {
+    return null
   }
 }
 
@@ -908,8 +1061,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       version: config.version,
     },
     {
-      instructions:
-        'Agents-shell is a private tool-only ChatGPT app for bounded agentic work inside /workspace. Use workspace tools for file search/read/patch operations. Use shell_run for short user-requested commands and shell_start/shell_read/shell_kill for long-running scripts. Use git and kubectl for generic read-only argv-based repository and Kubernetes inspection. Use git_write or kubectl_admin only when the user explicitly asks for a mutation or admin operation. Always inspect state before mutating. The shell and CLI tools are bounded by OAuth scopes, audit logging, cwd, timeout, output caps, and the Kubernetes ServiceAccount RBAC.',
+      instructions: SERVER_INSTRUCTIONS,
       capabilities: {
         tools: {},
       },
@@ -994,18 +1146,20 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
   )
 
   server.registerTool(
-    'workspace_apply_patch',
+    'apply_patch',
     {
-      title: 'Apply workspace patch',
+      title: 'Apply Codex patch',
       description:
-        'Use this when applying a unified diff to files under /workspace. It validates paths, runs git apply --check, then applies the patch.',
+        'Use this when editing files under /workspace with Codex patch syntax. Pass the complete patch text beginning with *** Begin Patch and ending with *** End Patch. This is the default file-editing tool for repo work.',
       inputSchema: {
         patch: z.string().min(1),
-        cwd: z.string().optional(),
+        cwd: z.string().optional().describe('Working directory under /workspace. Defaults to /workspace/lab.'),
         timeoutSeconds: z.number().int().min(1).optional(),
         maxOutputBytes: z.number().int().min(1024).optional(),
       },
-      outputSchema: commandResultSchema,
+      outputSchema: commandResultSchema.extend({
+        changedFiles: z.array(z.string()),
+      }),
       annotations: writeAnnotations,
       ...toolSecurityMeta([SCOPES.write]),
     },
@@ -1015,31 +1169,36 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       timeoutSeconds?: number
       maxOutputBytes?: number
     }>(config, auth, WRITE_SCOPES, async (args) => {
-      const cwd = resolveExistingDirectory(config.workspaceRoot, args.cwd)
-      validatePatchPaths(config.workspaceRoot, cwd, args.patch)
-      const check = await runner.runProcess({
-        command: 'git',
-        args: ['apply', '--check', '-'],
-        cwd: relative(resolve(config.workspaceRoot), cwd) || '.',
-        stdin: args.patch,
-        timeoutSeconds: args.timeoutSeconds,
-        maxOutputBytes: args.maxOutputBytes,
-        auth,
-        auditEvent: 'workspace_apply_patch_check',
-      })
-      if (!check.ok) return jsonTextResult(check)
+      const cwd = resolveExistingDirectory(config.workspaceRoot, args.cwd ?? 'lab')
+      const changedFiles = validateCodexPatch(config.workspaceRoot, cwd, args.patch)
       const result = await runner.runProcess({
-        command: 'git',
-        args: ['apply', '-'],
+        command: 'apply_patch',
+        args: [],
         cwd: relative(resolve(config.workspaceRoot), cwd) || '.',
         stdin: args.patch,
         timeoutSeconds: args.timeoutSeconds,
         maxOutputBytes: args.maxOutputBytes,
         auth,
-        auditEvent: 'workspace_apply_patch',
+        auditEvent: 'apply_patch',
       })
-      return jsonTextResult(result)
+      return jsonTextResult({ ...result, changedFiles })
     }),
+  )
+
+  server.registerTool(
+    'agent_guide',
+    {
+      title: 'Read agent guide',
+      description:
+        'Use this when starting non-trivial repo work or when deciding whether to use direct tools or a delegated AgentRun. It returns the agents-shell operating guide.',
+      inputSchema: {},
+      outputSchema: z.object({ guide: z.string() }),
+      annotations: readOnlyAnnotations,
+      ...toolSecurityMeta([SCOPES.read]),
+    },
+    withToolErrors<Record<string, never>>(config, auth, READ_SCOPES, async () =>
+      jsonTextResult({ guide: AGENT_GUIDE }),
+    ),
   )
 
   server.registerTool(
@@ -1323,6 +1482,212 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
           }),
         )
       },
+    ),
+  )
+
+  server.registerTool(
+    'agent_start',
+    {
+      title: 'Start delegated agent',
+      description:
+        'Use this when a non-trivial repo task should continue server-side until it is complete. It creates a real AgentRun for proompteng/lab with read-write VCS, GitHub credentials, and Codex runtime defaults.',
+      inputSchema: {
+        task: z.string().min(1).describe('Complete task prompt for the delegated coding agent.'),
+        headBranch: z.string().min(1).optional().describe('Optional branch name. Defaults to codex/<generated-name>.'),
+        baseBranch: z.string().min(1).optional().describe('Base branch. Defaults to main.'),
+        repository: z.string().min(1).optional().describe('Repository in owner/name form. Defaults to proompteng/lab.'),
+        agentName: z.string().min(1).optional().describe('Agent resource name. Defaults to codex-agent.'),
+        tokenBudget: z.number().int().min(1).optional(),
+        ttlSecondsAfterFinished: z.number().int().min(0).optional(),
+        acceptanceCriteria: z.array(z.string().min(1)).max(50).optional(),
+        timeoutSeconds: z.number().int().min(1).optional(),
+        maxOutputBytes: z.number().int().min(1024).optional(),
+      },
+      outputSchema: z.object({
+        ok: z.boolean(),
+        agentRunName: z.string(),
+        namespace: z.string(),
+        repository: z.string(),
+        baseBranch: z.string(),
+        headBranch: z.string(),
+        apply: commandResultSchema,
+      }),
+      annotations: destructiveAnnotations,
+      ...toolSecurityMeta([SCOPES.admin]),
+    },
+    withToolErrors<AgentStartInput>(config, auth, [SCOPES.admin], async (args) => {
+      const manifest = buildAgentRunManifest(config, args)
+      const spec = manifest.spec as {
+        parameters: { repository: string; base: string; head: string }
+      }
+      const result = await runner.runProcess({
+        command: 'kubectl',
+        args: ['apply', '-n', config.agentNamespace, '-f', '-'],
+        stdin: JSON.stringify(manifest, null, 2),
+        timeoutSeconds: args.timeoutSeconds,
+        maxOutputBytes: args.maxOutputBytes,
+        auth,
+        auditEvent: 'agent_start',
+      })
+      return jsonTextResult({
+        ok: result.ok,
+        agentRunName: manifest.metadata.name,
+        namespace: config.agentNamespace,
+        repository: spec.parameters.repository,
+        baseBranch: spec.parameters.base,
+        headBranch: spec.parameters.head,
+        apply: result,
+      })
+    }),
+  )
+
+  server.registerTool(
+    'agent_status',
+    {
+      title: 'Read delegated agent status',
+      description:
+        'Use this when checking a delegated AgentRun. It returns the live AgentRun object and matching Jobs so ChatGPT can continue from exact runtime evidence.',
+      inputSchema: {
+        agentRunName: z.string().min(1),
+        namespace: z.string().min(1).optional(),
+        timeoutSeconds: z.number().int().min(1).optional(),
+        maxOutputBytes: z.number().int().min(1024).optional(),
+      },
+      outputSchema: z.object({
+        ok: z.boolean(),
+        agentRunName: z.string(),
+        namespace: z.string(),
+        agentRun: z.unknown().nullable(),
+        jobs: z.unknown().nullable(),
+        getAgentRun: commandResultSchema,
+        getJobs: commandResultSchema,
+      }),
+      annotations: openReadOnlyAnnotations,
+      ...toolSecurityMeta([SCOPES.read]),
+    },
+    withToolErrors<{
+      agentRunName: string
+      namespace?: string
+      timeoutSeconds?: number
+      maxOutputBytes?: number
+    }>(config, auth, READ_SCOPES, async (args) => {
+      const namespace = args.namespace ?? config.agentNamespace
+      const getAgentRun = await runner.runProcess({
+        command: 'kubectl',
+        args: ['get', 'agentrun', args.agentRunName, '-n', namespace, '-o', 'json'],
+        timeoutSeconds: args.timeoutSeconds,
+        maxOutputBytes: args.maxOutputBytes,
+        auth,
+        auditEvent: 'agent_status_get_agentrun',
+      })
+      const getJobs = await runner.runProcess({
+        command: 'kubectl',
+        args: [
+          'get',
+          'jobs',
+          '-n',
+          namespace,
+          '-l',
+          `agents.proompteng.ai/agent-run=${args.agentRunName}`,
+          '-o',
+          'json',
+        ],
+        timeoutSeconds: args.timeoutSeconds,
+        maxOutputBytes: args.maxOutputBytes,
+        auth,
+        auditEvent: 'agent_status_get_jobs',
+      })
+      return jsonTextResult({
+        ok: getAgentRun.ok,
+        agentRunName: args.agentRunName,
+        namespace,
+        agentRun: parseJsonOrNull(getAgentRun.stdout),
+        jobs: parseJsonOrNull(getJobs.stdout),
+        getAgentRun,
+        getJobs,
+      })
+    }),
+  )
+
+  server.registerTool(
+    'agent_read',
+    {
+      title: 'Read delegated agent logs',
+      description: 'Use this when reading retained logs from a delegated AgentRun job. It never starts a new AgentRun.',
+      inputSchema: {
+        agentRunName: z.string().min(1),
+        namespace: z.string().min(1).optional(),
+        tailLines: z.number().int().min(1).max(5000).optional(),
+        timeoutSeconds: z.number().int().min(1).optional(),
+        maxOutputBytes: z.number().int().min(1024).optional(),
+      },
+      outputSchema: commandResultSchema,
+      annotations: openReadOnlyAnnotations,
+      ...toolSecurityMeta([SCOPES.read]),
+    },
+    withToolErrors<{
+      agentRunName: string
+      namespace?: string
+      tailLines?: number
+      timeoutSeconds?: number
+      maxOutputBytes?: number
+    }>(config, auth, READ_SCOPES, async (args) => {
+      const namespace = args.namespace ?? config.agentNamespace
+      const tailLines = asPositiveInteger(args.tailLines, 'tailLines', 200, 5000, 1)
+      return jsonTextResult(
+        await runner.runProcess({
+          command: 'kubectl',
+          args: [
+            'logs',
+            '-n',
+            namespace,
+            '-l',
+            `agents.proompteng.ai/agent-run=${args.agentRunName}`,
+            '--all-containers=true',
+            '--tail',
+            String(tailLines),
+          ],
+          timeoutSeconds: args.timeoutSeconds,
+          maxOutputBytes: args.maxOutputBytes,
+          auth,
+          auditEvent: 'agent_read',
+        }),
+      )
+    }),
+  )
+
+  server.registerTool(
+    'agent_cancel',
+    {
+      title: 'Cancel delegated agent',
+      description:
+        'Use this when stopping a delegated AgentRun. It deletes the AgentRun resource so the controller can clean up owned runtime resources.',
+      inputSchema: {
+        agentRunName: z.string().min(1),
+        namespace: z.string().min(1).optional(),
+        timeoutSeconds: z.number().int().min(1).optional(),
+        maxOutputBytes: z.number().int().min(1024).optional(),
+      },
+      outputSchema: commandResultSchema,
+      annotations: destructiveAnnotations,
+      ...toolSecurityMeta([SCOPES.admin]),
+    },
+    withToolErrors<{
+      agentRunName: string
+      namespace?: string
+      timeoutSeconds?: number
+      maxOutputBytes?: number
+    }>(config, auth, [SCOPES.admin], async (args) =>
+      jsonTextResult(
+        await runner.runProcess({
+          command: 'kubectl',
+          args: ['delete', 'agentrun', args.agentRunName, '-n', args.namespace ?? config.agentNamespace],
+          timeoutSeconds: args.timeoutSeconds,
+          maxOutputBytes: args.maxOutputBytes,
+          auth,
+          auditEvent: 'agent_cancel',
+        }),
+      ),
     ),
   )
 
