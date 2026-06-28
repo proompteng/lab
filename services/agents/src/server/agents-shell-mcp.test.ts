@@ -562,6 +562,27 @@ fi
     }
   })
 
+  it('returns Codex-style operating guidance for the current ChatGPT model', async () => {
+    const config = makeConfig()
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const result = await client.callTool({ name: 'agent_guide', arguments: {} })
+      const content = result.structuredContent as { guide?: string }
+      expect(content.guide).toContain('current ChatGPT model')
+      expect(content.guide).toContain('AGENTS.md')
+      expect(content.guide).toContain('Respect dirty worktrees')
+      expect(content.guide).toContain('apply_patch')
+      expect(content.guide).toContain('Commit as Greg Konush')
+      expect(content.guide).toContain('create a pull request with gh')
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+    }
+  })
+
   it('returns an OAuth challenge when a tool lacks required scope', async () => {
     const config = makeConfig()
     const { client, server, clientTransport, serverTransport } = await connectServer(
