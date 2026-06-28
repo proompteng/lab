@@ -1460,12 +1460,12 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       },
       outputSchema: commandResultSchema,
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.admin]),
+      ...toolSecurityMeta([SCOPES.write]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
       auth,
-      [SCOPES.admin],
+      WRITE_SCOPES,
       async (args) => {
         const kubectlArgs = normalizeCliArgs('kubectl_admin', args.args)
         return jsonTextResult(
@@ -1512,9 +1512,9 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         apply: commandResultSchema,
       }),
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.admin]),
+      ...toolSecurityMeta([SCOPES.write]),
     },
-    withToolErrors<AgentStartInput>(config, auth, [SCOPES.admin], async (args) => {
+    withToolErrors<AgentStartInput>(config, auth, WRITE_SCOPES, async (args) => {
       const manifest = buildAgentRunManifest(config, args)
       const spec = manifest.spec as {
         parameters: { repository: string; base: string; head: string }
@@ -1669,14 +1669,14 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       },
       outputSchema: commandResultSchema,
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.admin]),
+      ...toolSecurityMeta([SCOPES.write]),
     },
     withToolErrors<{
       agentRunName: string
       namespace?: string
       timeoutSeconds?: number
       maxOutputBytes?: number
-    }>(config, auth, [SCOPES.admin], async (args) =>
+    }>(config, auth, WRITE_SCOPES, async (args) =>
       jsonTextResult(
         await runner.runProcess({
           command: 'kubectl',

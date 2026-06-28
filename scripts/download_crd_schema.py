@@ -14,7 +14,9 @@ group = sys.argv[2]
 version = sys.argv[3]
 kind = sys.argv[4]
 kind_slug = kind.lower()
+short_group = group.split(".", 1)[0] if group else ""
 kind_suffix = f"-{group}-{version}" if group else f"-{version}"
+short_kind_suffix = f"-{short_group}-{version}" if short_group else f"-{version}"
 
 import yaml
 
@@ -45,19 +47,18 @@ for version_entry in crd.get("spec", {}).get("versions", []):
             Path(f"schemas/custom/{group}/{version}/{kind}.json"),
             Path(f"schemas/custom/{group}/{kind}_{version}.json"),
         ]
-        legacy_paths = [
-            Path(f"schemas/custom/{group}_{version}_{kind_slug}.json"),
-            Path(f"schemas/custom/{kind_slug}{kind_suffix}.json"),
-            Path(f"schemas/custom/{kind_slug}-{version}.json"),
-            Path(f"schemas/custom/{kind_slug}_{version}.json"),
-            Path(f"schemas/custom/{kind_slug}_{group}_{version}.json"),
-            Path(f"schemas/custom/{kind_slug}.json"),
-            Path(f"schemas/custom/{group}/{version}/{kind_slug}.json"),
-            Path(f"schemas/custom/{group}/{kind_slug}_{version}.json"),
-        ]
-        for legacy_path in legacy_paths:
-            if legacy_path.exists():
-                legacy_path.unlink()
+        lowercase_paths = []
+        if short_group:
+            lowercase_paths.extend(
+                [
+                    Path(f"schemas/custom/{short_group}_{version}_{kind_slug}.json"),
+                    Path(f"schemas/custom/{kind_slug}{short_kind_suffix}.json"),
+                    Path(f"schemas/custom/{kind_slug}_{short_group}_{version}.json"),
+                    Path(f"schemas/custom/{short_group}/{version}/{kind_slug}.json"),
+                    Path(f"schemas/custom/{short_group}/{kind_slug}_{version}.json"),
+                ]
+            )
+        out_paths.extend(lowercase_paths)
         for out_path in out_paths:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(output))

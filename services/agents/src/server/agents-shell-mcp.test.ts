@@ -278,12 +278,15 @@ describe('agents-shell MCP tools', () => {
     expect(kubectlAdmin?.annotations?.destructiveHint).toBe(true)
     expect(kubectlAdmin?.annotations?.openWorldHint).toBe(true)
     expect(kubectlAdmin?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.admin'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
     })
 
     const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
     expect(agentStart?.annotations?.destructiveHint).toBe(true)
     expect(agentStart?.annotations?.openWorldHint).toBe(true)
+    expect(agentStart?._meta).toMatchObject({
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
+    })
 
     await clientTransport.close()
     await serverTransport.close()
@@ -316,6 +319,12 @@ describe('agents-shell MCP tools', () => {
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
     expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
     expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
+
+    for (const tool of rawTools) {
+      expect(tool.securitySchemes).not.toEqual(
+        expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['agents-shell.admin']) })]),
+      )
+    }
   })
 
   it('lists tools before OAuth but challenges protected tool calls', async () => {
@@ -441,7 +450,7 @@ fi
 
     const { client, server, clientTransport, serverTransport } = await connectServer(
       config,
-      makeAuth(['agents-shell.read', 'agents-shell.write', 'agents-shell.admin']),
+      makeAuth(['agents-shell.read', 'agents-shell.write']),
     )
 
     try {
@@ -584,7 +593,7 @@ fi
 
     const { client, server, clientTransport, serverTransport } = await connectServer(
       config,
-      makeAuth(['agents-shell.read', 'agents-shell.write', 'agents-shell.admin']),
+      makeAuth(['agents-shell.read', 'agents-shell.write']),
     )
 
     try {
