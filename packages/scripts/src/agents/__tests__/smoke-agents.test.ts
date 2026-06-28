@@ -488,6 +488,11 @@ describe('scheduled AgentRun templates', () => {
     expect(deploymentTemplate).toContain('hasKey $workspaceBootstrap "depth"')
     expect(deploymentTemplate).toContain('value: {{ $workspaceBootstrap.depth | quote }}')
     expect(deploymentTemplate).not.toContain('default 1 $workspaceBootstrap.depth')
+    expect(deploymentTemplate).toContain('git -C "${GIT_TARGET_PATH}" fetch --unshallow origin "${GIT_BRANCH}"')
+    expect(deploymentTemplate).toContain('timeout 60s git -C "${GIT_TARGET_PATH}" diff --quiet')
+    expect(deploymentTemplate).toContain('/workspace/.agents-shell/checkouts')
+    expect(deploymentTemplate).toContain('preserve_checkout "local changes or git dirty-check timeout"')
+    expect(deploymentTemplate).toContain('preserve_checkout "target exists and is not an empty git checkout"')
   })
 
   it('keeps checked-in workflow AgentRuns runnable with explicit steps', () => {
