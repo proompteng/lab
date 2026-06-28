@@ -315,14 +315,33 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   gh \
   git \
   jq \
+  openssh-client \
+  procps \
   python3 \
   ripgrep \
+  wget \
   yq; \
   ln -sf /usr/bin/python3 /usr/local/bin/python; \
   rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/services/agents
-RUN mkdir -p /workspace /workspace/.agents-shell
+RUN install -o root -g root -m 0755 ./scripts/apply_patch.py /usr/local/bin/apply_patch \
+  && chmod +x ./scripts/agents-shell-entrypoint.sh \
+  && mkdir -p /workspace /workspace/.agents-shell \
+  && command -v bash git gh rg curl jq yq python3 ps wget kubectl apply_patch \
+  && tmp="$(mktemp -d)" \
+  && cd "$tmp" \
+  && printf '%s\n' old > smoke.txt \
+  && printf '%s\n' \
+    '*** Begin Patch' \
+    '*** Update File: smoke.txt' \
+    '@@' \
+    '-old' \
+    '+new' \
+    '*** End Patch' \
+    | apply_patch \
+  && grep -qx new smoke.txt \
+  && rm -rf "$tmp"
 
 ENV AGENTS_SERVER_PROFILE=agents-shell \
   AGENTS_GRPC_ENABLED=0 \
@@ -334,4 +353,4 @@ ENV AGENTS_SERVER_PROFILE=agents-shell \
   AGENTS_SHELL_OAUTH_ISSUER=https://auth.proompteng.ai/realms/master \
   AGENTS_SHELL_ALLOWED_K8S_NAMESPACES=agents
 
-CMD ["bun", "run", "start:agents-shell"]
+CMD ["./scripts/agents-shell-entrypoint.sh"]

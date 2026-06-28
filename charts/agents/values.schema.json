@@ -364,7 +364,7 @@
                 "repository": { "type": "string" },
                 "branch": { "type": "string" },
                 "targetPath": { "type": "string" },
-                "depth": { "type": "integer", "minimum": 1 },
+                "depth": { "type": "integer", "minimum": 0 },
                 "tokenSecret": {
                   "type": "object",
                   "properties": {

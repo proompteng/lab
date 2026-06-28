@@ -98,9 +98,16 @@ spec:
                 git config --global credential.helper 'store --file=/tmp/git-credentials'
               fi
 
+              fetch_args=()
+              clone_args=()
+              if [[ "${GIT_DEPTH}" != "0" ]]; then
+                fetch_args=(--depth="${GIT_DEPTH}")
+                clone_args=(--depth="${GIT_DEPTH}")
+              fi
+
               if [[ -d "${GIT_TARGET_PATH}/.git" ]]; then
                 git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
-                git -C "${GIT_TARGET_PATH}" fetch --depth="${GIT_DEPTH}" origin "${GIT_BRANCH}"
+                git -C "${GIT_TARGET_PATH}" fetch "${fetch_args[@]}" origin "${GIT_BRANCH}"
                 if git -C "${GIT_TARGET_PATH}" diff --quiet && git -C "${GIT_TARGET_PATH}" diff --cached --quiet; then
                   git -C "${GIT_TARGET_PATH}" checkout -B "${GIT_BRANCH}" FETCH_HEAD
                   git -C "${GIT_TARGET_PATH}" reset --hard FETCH_HEAD
@@ -112,10 +119,12 @@ spec:
                 exit 1
               else
                 rm -rf "${GIT_TARGET_PATH}"
-                git clone --depth="${GIT_DEPTH}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"
+                git clone "${clone_args[@]}" --branch="${GIT_BRANCH}" "${GIT_REPOSITORY}" "${GIT_TARGET_PATH}"
               fi
 
               git -C "${GIT_TARGET_PATH}" remote set-url origin "${GIT_REPOSITORY}"
+              git -C "${GIT_TARGET_PATH}" config user.name "Greg Konush"
+              git -C "${GIT_TARGET_PATH}" config user.email "greg@proompteng.ai"
               rm -f /tmp/git-credentials
           volumeMounts:
             - name: workspace

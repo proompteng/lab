@@ -106,6 +106,16 @@ agentsShell:
       AGENTS_SHELL_WORKSPACE_ROOT: /workspace
       AGENTS_SHELL_AUDIT_LOG_PATH: /workspace/.agents-shell/audit.jsonl
       AGENTS_SHELL_ENABLE_K8S_APPLY: 'false'
+      HOME: /workspace/.agents-shell/home
+      AGENTS_SHELL_GIT_USER_NAME: Greg Konush
+      AGENTS_SHELL_GIT_USER_EMAIL: greg@proompteng.ai
+      AGENTS_SHELL_AGENT_NAMESPACE: agents
+      AGENTS_SHELL_AGENT_NAME: codex-agent
+      AGENTS_SHELL_AGENT_REPOSITORY: proompteng/lab
+      AGENTS_SHELL_AGENT_BASE_BRANCH: main
+      AGENTS_SHELL_AGENT_VCS_REF: github
+      AGENTS_SHELL_AGENT_RUNTIME_SERVICE_ACCOUNT: agents-sa
+      AGENTS_SHELL_AGENT_SECRETS: github-token,codex-auth
     secrets: []
     config: []
     extra: []
@@ -124,7 +134,7 @@ agentsShell:
       repository: https://github.com/proompteng/lab.git
       branch: main
       targetPath: /workspace/lab
-      depth: 1
+      depth: 0
       tokenSecret:
         name: ''
         key: token
