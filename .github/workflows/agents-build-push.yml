@@ -70,8 +70,8 @@ jobs:
           AGENTS_DOCKERFILE: services/agents/Dockerfile
           AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
           AGENTS_IMAGE_PLATFORMS: ${{ matrix.platform }}
-          AGENTS_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/agents-buildcache:${{ matrix.arch }}
-          AGENTS_RUNNER_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/agents-codex-runner:buildcache-${{ matrix.arch }}
+          AGENTS_BUILD_CACHE_REF: 'false'
+          AGENTS_RUNNER_BUILD_CACHE_REF: 'false'
           AGENTS_BUILD_CACHE_MODE: min
           AGENTS_BUILD_NODE_OPTIONS: --max-old-space-size=4096
           AGENTS_BUILD_SOURCEMAP: '0'

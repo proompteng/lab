@@ -78,6 +78,23 @@ describe('agents build-image helpers', () => {
     )
   })
 
+  it('allows CI to disable registry cache refs explicitly', () => {
+    process.env.AGENTS_BUILD_CACHE_REF = 'false'
+
+    expect(
+      __private.resolveBuildConfiguration({
+        registry: 'registry.example',
+        repository: 'lab/agents-controller',
+        tag: 'abc123',
+        commit: 'abcdef',
+      }).cacheRef,
+    ).toBeUndefined()
+    expect(__private.resolveCacheRef(undefined, 'off', 'registry.example/cache:latest')).toBeUndefined()
+    expect(__private.resolveCacheRef(undefined, undefined, 'registry.example/cache:latest')).toBe(
+      'registry.example/cache:latest',
+    )
+  })
+
   it('uses the Agents workspace as the default control-plane prune scope', () => {
     expect(__private.parsePruneScopes(undefined, 'control-plane')).toEqual([
       '@proompteng/agents',

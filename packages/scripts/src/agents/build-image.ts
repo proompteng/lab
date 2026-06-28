@@ -33,7 +33,7 @@ type BuildConfiguration = {
   version: string
   commit: string
   codexAuthPath: string
-  cacheRef: string
+  cacheRef?: string
   cacheMode?: DockerCacheMode
   platforms?: string[]
   buildArgs: Record<string, string>
@@ -47,6 +47,18 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
     .filter(Boolean)
 
   return platforms.length > 0 ? platforms : undefined
+}
+
+const disabledCacheRefValues = new Set(['', '0', 'false', 'none', 'off', 'disabled'])
+
+export const resolveCacheRef = (optionValue: string | undefined, envValue: string | undefined, fallback: string) => {
+  const raw = optionValue ?? envValue
+  if (raw === undefined) return fallback
+
+  const normalized = raw.trim()
+  if (disabledCacheRefValues.has(normalized.toLowerCase())) return undefined
+
+  return normalized
 }
 
 const defaultPruneScopesForTarget = (_target: string | undefined): string[] => [
@@ -183,7 +195,11 @@ const resolveBuildConfiguration = (options: BuildImageOptions = {}): BuildConfig
   const commit = options.commit ?? process.env.AGENTS_COMMIT ?? execGit(['rev-parse', 'HEAD'])
   const codexAuthPath =
     options.codexAuthPath ?? process.env.CODEX_AUTH_PATH ?? resolve(process.env.HOME ?? '', '.codex/auth.json')
-  const cacheRef = options.cacheRef ?? process.env.AGENTS_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const cacheRef = resolveCacheRef(
+    options.cacheRef,
+    process.env.AGENTS_BUILD_CACHE_REF,
+    `${registry}/${repository}:buildcache`,
+  )
   const cacheMode = options.cacheMode ?? parseCacheMode(process.env.AGENTS_BUILD_CACHE_MODE)
   const platforms =
     options.platforms ??
@@ -289,7 +305,7 @@ export const buildImages = async (options: BuildImageOptions[]) => {
         target: config.target,
         buildArgs: config.buildArgs,
         codexAuthPath: codexAuthPathForDocker,
-        cacheRef: cacheRefForBatchTarget(config.cacheRef, targetName, hasSharedCacheRef),
+        cacheRef: config.cacheRef ? cacheRefForBatchTarget(config.cacheRef, targetName, hasSharedCacheRef) : undefined,
         cacheMode: config.cacheMode,
         platforms: config.platforms,
       }
@@ -323,6 +339,7 @@ export const __private = {
   execGit,
   parsePlatforms,
   parsePruneScopes,
+  resolveCacheRef,
   resolveBuildConfiguration,
   removeNestedNodeModules,
 }

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
-import { buildImages, type BuildImageOptions } from './build-image'
+import { buildImages, resolveCacheRef, type BuildImageOptions } from './build-image'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
@@ -576,8 +576,11 @@ const main = async () => {
       context: repoRoot,
       dockerfile: options.runnerDockerfile,
       codexAuthPath: options.codexAuthPath,
-      cacheRef:
-        process.env.AGENTS_RUNNER_BUILD_CACHE_REF ?? `${options.registry}/${options.runnerRepository}:buildcache`,
+      cacheRef: resolveCacheRef(
+        undefined,
+        process.env.AGENTS_RUNNER_BUILD_CACHE_REF,
+        `${options.registry}/${options.runnerRepository}:buildcache`,
+      ),
       platforms: options.platforms,
     })
   }
