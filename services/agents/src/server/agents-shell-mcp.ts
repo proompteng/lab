@@ -143,21 +143,45 @@ const DEFAULT_AGENT_RUNTIME_SERVICE_ACCOUNT = 'agents-sa'
 const DEFAULT_AGENT_SECRETS = ['github-token', 'codex-auth']
 const DEFAULT_AGENT_TOKEN_BUDGET = 250_000
 const DEFAULT_AGENT_TTL_SECONDS_AFTER_FINISHED = 86_400
+const DEFAULT_WORKSPACE_SEARCH_EXCLUDES = [
+  '.git',
+  'node_modules',
+  '.next',
+  '.turbo',
+  '.cache',
+  'dist',
+  'build',
+  'coverage',
+  'target',
+  'vendor',
+  '.venv',
+  'venv',
+  'schemas/custom',
+]
 
 const AGENT_GUIDE = `Use agents-shell as a production coding agent for /workspace/lab.
 
+Operate like Codex:
+- Apply these instructions to the current ChatGPT model in this chat; do not rely on stale model-specific prompt text.
+- Persist until the request is complete or an evidence-backed blocker remains.
+- Inspect before editing: read repo state, relevant files, tests, and applicable AGENTS.md instructions.
+- Respect dirty worktrees: do not revert, overwrite, or discard changes you did not make.
+- Use rg for search, workspace_read_file for reads, and apply_patch with Codex patch syntax for edits.
+- Use destructive git, Kubernetes, or filesystem operations only when the user request clearly requires them.
+- Validate from focused tests to broader checks, then summarize exact commands and results.
+
 Default repo workflow:
-1. Inspect state first with git status, rg, file reads, and targeted commands.
-2. Create a codex/... branch from fresh origin/main.
-3. Edit files with apply_patch using Codex patch syntax.
+1. Confirm /workspace/lab is on a fresh origin/main base or preserve and report existing dirty work.
+2. Create a codex/... branch for the task.
+3. Search with workspace_search, inspect with workspace_read_file and git, and make scoped edits with apply_patch.
 4. Run focused tests, lint, type checks, or smoke commands that prove the change.
 5. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
-6. Continue until the task is complete, CI status is checked, and the PR URL is available.
+6. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
 
-Use shell_run for short commands, shell_start/read/status/kill for long commands, git and git_write for repository operations, kubectl and kubectl_admin for cluster operations, and agent_start/status/read/cancel for delegated long-running Codex AgentRun work. Report blockers only with exact tool calls, timestamps, logs, and the layer that failed.`
+Use shell_run for short commands, shell_start/read/status/kill for long commands, git and git_write for repository operations, kubectl and kubectl_admin for cluster operations, and agent_start/status/read/cancel for delegated long-running Codex AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
 
 const SERVER_INSTRUCTIONS =
-  'Agents-shell is a private tool-only ChatGPT app for end-to-end agentic work inside /workspace/lab. Inspect with rg/git/read tools, edit only with apply_patch, test, commit as Greg Konush, push, create PRs with gh, monitor CI, and use agent_start for non-trivial delegated work. Continue until completion or an evidence-backed blocker. Tools are bounded by OAuth scopes, audit logs, cwd, timeout, output caps, and Kubernetes RBAC.'
+  'Agents-shell is a private tool-only ChatGPT app for end-to-end Codex-style repo work inside /workspace/lab. Apply these instructions to the current ChatGPT model in this chat; do not rely on stale model-specific prompt text. Persist until completion or an evidence-backed blocker. Inspect repo state and applicable AGENTS.md instructions before editing. Respect dirty worktrees and never discard user changes. Search with rg, read files directly, edit with apply_patch, validate with focused tests before broader checks, commit as Greg Konush, push branches, create PRs with gh, and monitor CI. Use shell tools for terminal work, git tools for repo work, kubectl tools for cluster work, and agent_start for delegated long-running Codex AgentRun work. Tools are bounded by OAuth scopes, audit logs, cwd, timeout, output caps, and Kubernetes RBAC.'
 
 const SCOPES = {
   read: 'agents-shell.read',
@@ -1072,7 +1096,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Search workspace',
       description:
-        'Use this when searching text or file contents under /workspace. It runs ripgrep with bounded output and never modifies files.',
+        'Use this when searching text or file contents under /workspace. It runs ripgrep with bounded output, skips standard dependency/cache/generated directories, and never modifies files.',
       inputSchema: {
         query: z.string().min(1),
         path: z.string().optional(),
@@ -1092,7 +1116,10 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       maxOutputBytes?: number
     }>(config, auth, READ_SCOPES, async (args) => {
       const cwd = resolveExistingDirectory(config.workspaceRoot, args.path)
-      const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden', '-g', '!.git']
+      const rgArgs = ['--line-number', '--no-heading', '--color=never', '--hidden']
+      for (const exclude of DEFAULT_WORKSPACE_SEARCH_EXCLUDES) {
+        rgArgs.push('-g', `!${exclude}/**`)
+      }
       if (args.fixedStrings) rgArgs.push('--fixed-strings')
       if (args.caseSensitive === false) rgArgs.push('--ignore-case')
       rgArgs.push(args.query)
@@ -1331,7 +1358,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Inspect git repository',
       description:
-        'Use this when running read-only git inspection inside /workspace. Pass args exactly as argv after git, for example ["status","--short","--branch"], ["diff","--","path"], ["log","--oneline","-5"], or ["show","HEAD:path"]. This is a generic argv wrapper for repository inspection; use git_write only for commits, checkout, reset, merge, or other repository mutations.',
+        'Use this for read-only repository inspection inside /workspace. Pass args exactly as argv after git. The server accepts only read-only subcommands and returns stdout, stderr, exit code, and timeout status.',
       inputSchema: {
         args: z.array(z.string().min(1)).min(1).describe('Arguments passed to git, excluding the git executable.'),
         cwd: z.string().optional(),
@@ -1339,7 +1366,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         maxOutputBytes: z.number().int().min(1024).optional(),
       },
       outputSchema: commandResultSchema,
-      annotations: openReadOnlyAnnotations,
+      annotations: readOnlyAnnotations,
       ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
