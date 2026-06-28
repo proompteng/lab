@@ -249,6 +249,7 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('platform: linux/')
     expect(workflow).not.toContain('AGENTS_IMAGE_PLATFORMS: ${{ matrix.platform }}')
     expect(workflow).not.toContain('AGENTS_IMAGE_PLATFORMS: linux/amd64,linux/arm64')
+    expect(workflow).toContain('AGENTS_IMAGE_PLATFORMS: native')
     expect(workflow).toContain("AGENTS_BUILD_CACHE_REF: 'false'")
     expect(workflow).toContain("AGENTS_RUNNER_BUILD_CACHE_REF: 'false'")
     expect(workflow).toContain("BUILDX_NO_DEFAULT_ATTESTATIONS: '1'")
