@@ -148,6 +148,51 @@ Required shape before continuing:
 1. Argo CD has applied the Rook values containing Turin `metadataDevice`, OSD memory target, and CSI read affinity.
 1. The previous OSD migration, if any, already proves `block.db` is active.
 
+Pause GitOps and Rook reconciliation before manual OSD work. `rook-ceph` is
+ApplicationSet-managed, and Argo CD is self-managed, so a child Application edit
+or a raw `kubectl scale` can be reverted while maintenance is still running.
+This follows Argo CD's documented skip-reconcile annotation, Rook's OSD removal
+guidance to stop the operator when it may recreate an OSD, and Ceph's
+`safe-to-destroy` gate for OSD removal.
+
+```bash
+kubectl -n argocd annotate application root argocd.argoproj.io/skip-reconcile=true --overwrite
+kubectl -n argocd annotate application argocd argocd.argoproj.io/skip-reconcile=true --overwrite
+kubectl -n argocd annotate application rook-ceph argocd.argoproj.io/skip-reconcile=true --overwrite
+kubectl -n argocd scale deploy argocd-applicationset-controller --replicas=0
+kubectl -n argocd scale statefulset argocd-application-controller --replicas=0
+```
+
+Set `scaleDownOperator: true` in
+`argocd/applications/rook-ceph/operator-values.yaml` and render/apply only the
+Rook operator Deployment, or patch the live Deployment replica count after Argo
+is paused:
+
+```bash
+kubectl -n rook-ceph patch deploy rook-ceph-operator --type=merge -p '{"spec":{"replicas":0}}'
+kubectl -n rook-ceph wait --for=delete pod -l app=rook-ceph-operator --timeout=180s
+```
+
+Verify the pause is actually held before touching any OSD:
+
+```bash
+kubectl -n argocd get sts argocd-application-controller -o custom-columns=NAME:.metadata.name,SPEC:.spec.replicas,READY:.status.readyReplicas
+kubectl -n argocd get deploy argocd-applicationset-controller -o custom-columns=NAME:.metadata.name,SPEC:.spec.replicas,READY:.status.readyReplicas
+kubectl -n rook-ceph get deploy rook-ceph-operator -o custom-columns=NAME:.metadata.name,SPEC:.spec.replicas,READY:.status.readyReplicas
+```
+
+All three must show `SPEC` `0`. If any controller returns to `1`, stop and fix
+the pause first. Do not wait on Ceph while controllers are still able to re-add
+or reweight the OSD.
+
+While the operator is intentionally paused, operator-dependent helper commands
+such as `kubectl rook-ceph ceph ...` may wait forever for an
+`app=rook-ceph-operator` pod. Run Ceph commands through the toolbox instead:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+```
+
 Cycle exactly one OSD:
 
 1. Mark the OSD out and wait for `active+clean`:
@@ -155,14 +200,22 @@ Cycle exactly one OSD:
    ```bash
    OSD_ID=0
    kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd out "osd.${OSD_ID}"
-   watch -n 30 'kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s'
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd crush reweight "osd.${OSD_ID}" 0
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd reweight "${OSD_ID}" 0
    ```
 
 1. Confirm Ceph says it is safe to destroy:
 
    ```bash
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph pg dump pgs_brief --format json \
+     | jq --argjson osd "${OSD_ID}" '[.pg_stats[] | select((.up|index($osd)) or (.acting|index($osd)))] | length'
    kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd safe-to-destroy "osd.${OSD_ID}"
    ```
+
+   The PG mapping check should return `0`, but it does not replace
+   `safe-to-destroy`. If `safe-to-destroy` reports that the cluster is not
+   `active+clean`, continue only after accepting temporary reduced-redundancy
+   risk. The default production path is to wait.
 
 1. Stop the OSD deployment and purge the Ceph identity:
 
