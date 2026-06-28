@@ -77,8 +77,8 @@ jobs:
           AGENTS_BUILD_SOURCEMAP: '0'
           AGENTS_BUILD_CI: 'true'
           AGENTS_BUILD_LOG_LEVEL: warn
-          DOCKER_BUILD_PROVENANCE: min
-          DOCKER_BUILD_SBOM: 'true'
+          DOCKER_BUILD_PROVENANCE: 'false'
+          DOCKER_BUILD_SBOM: 'false'
         run: bun run agents:deploy -- --no-apply
 
   publish-index:
