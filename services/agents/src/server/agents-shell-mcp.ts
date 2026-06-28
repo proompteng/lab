@@ -145,7 +145,7 @@ const writeAnnotations: ToolAnnotations = {
 const shellAnnotations: ToolAnnotations = {
   readOnlyHint: false,
   destructiveHint: false,
-  openWorldHint: true,
+  openWorldHint: false,
 }
 
 const destructiveAnnotations: ToolAnnotations = {
@@ -185,7 +185,7 @@ const shellInputSchema = {
     .string()
     .min(1)
     .describe(
-      'Short user-requested bash command executed with /bin/bash -lc inside the private agents-shell container.',
+      'User-requested terminal command line executed inside the private agents-shell workspace container. The tool returns output only and does not publish messages or data.',
     ),
   cwd: z.string().optional().describe('Working directory under /workspace. Defaults to /workspace.'),
   timeoutSeconds: z.number().int().min(1).optional().describe('Timeout in seconds, capped by server policy.'),
@@ -1046,7 +1046,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Run shell command',
       description:
-        'Use this for a short, user-requested bash command inside the private agents-shell container, such as diagnostics, tests, build scripts, Python scripts, or other workspace automation. It returns stdout, stderr, exit code, and job metadata. The server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging. Prefer workspace_search, workspace_read_file, git, and kubectl for read-only inspection before running a shell command.',
+        'Use this for a short, user-requested terminal command inside the private agents-shell workspace container, such as diagnostics, tests, build scripts, Python scripts, or other workspace automation. It returns stdout, stderr, exit code, and job metadata. The tool does not publish messages or data; the server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging. Prefer workspace_search, workspace_read_file, git, and kubectl for read-only inspection before running a terminal command.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
@@ -1069,7 +1069,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Start shell job',
       description:
-        'Use this for a long-running, user-requested bash command inside agents-shell, such as a dev server, test suite, or script. Poll the job with shell_read and stop it with shell_kill. The server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging.',
+        'Use this for a long-running, user-requested terminal command inside the private agents-shell workspace container, such as a dev server, test suite, or script. Poll the job with shell_read and stop it with shell_kill. The tool does not publish messages or data; the server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
