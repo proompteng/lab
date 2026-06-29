@@ -20,6 +20,13 @@ data:
           "paths":["/var/mnt/local-path-provisioner"]
         },
         {
+          "node":"turin",
+          "paths":[
+            "/var/mnt/turin-nvme-intel",
+            "/var/mnt/turin-nvme-transcend"
+          ]
+        },
+        {
           "node":"DEFAULT_PATH_FOR_NON_LISTED_NODES",
           "paths":["/var/local-path-provisioner"]
         }
