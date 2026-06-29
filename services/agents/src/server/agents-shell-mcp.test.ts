@@ -415,6 +415,60 @@ describe('agents-shell MCP tools', () => {
     await server.close()
   })
 
+  it('finishes process tools when a git descendant keeps stdio open after child exit', async () => {
+    const config = makeConfig()
+    mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
+    const bin = join(config.workspaceRoot, 'bin')
+    mkdirSync(bin, { recursive: true })
+    writeFileSync(
+      join(bin, 'git'),
+      `#!/bin/sh
+if [ "$1" = "fetch" ]; then
+  (sleep 3) &
+  printf '%s\\n' 'fetched origin main'
+  exit 0
+fi
+printf '%s\\n' "$@"
+`,
+    )
+    chmodSync(join(bin, 'git'), 0o755)
+
+    const previousPath = process.env.PATH
+    process.env.PATH = `${bin}:${previousPath ?? ''}`
+
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    try {
+      const startedAt = Date.now()
+      const result = await client.callTool({
+        name: 'git_write',
+        arguments: { args: ['fetch', 'origin', 'main'], cwd: 'lab', timeoutSeconds: 1 },
+      })
+      const elapsedMs = Date.now() - startedAt
+      expect(result.isError).not.toBe(true)
+      const content = result.structuredContent as {
+        exitCode?: number | null
+        stdout?: string
+        timedOut?: boolean
+      }
+      expect(content.exitCode).toBe(0)
+      expect(content.timedOut).toBe(false)
+      expect(content.stdout).toContain('fetched origin main')
+      expect(elapsedMs).toBeLessThan(2_000)
+    } finally {
+      await clientTransport.close()
+      await serverTransport.close()
+      await client.close()
+      await server.close()
+
+      if (previousPath == null) {
+        delete process.env.PATH
+      } else {
+        process.env.PATH = previousPath
+      }
+    }
+  })
+
   it('reads files and blocks apply_patch paths outside /workspace', async () => {
     const config = makeConfig()
     mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })
