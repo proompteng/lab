@@ -189,7 +189,7 @@ Default repo workflow:
 Use shell_run for short commands, shell_start/read/status/kill for long commands, git and git_write for repository operations, kubectl and kubectl_admin for cluster operations, and agent_start/status/read/cancel for delegated long-running Codex AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
 
 const SERVER_INSTRUCTIONS =
-  'Agents-shell is a private tool-only ChatGPT app for end-to-end Codex-style repo work inside /workspace/lab. Apply these instructions to the current ChatGPT model in this chat; do not rely on stale model-specific prompt text. Persist until completion or an evidence-backed blocker. Inspect repo state and applicable AGENTS.md instructions before editing. Respect dirty worktrees and never discard user changes. Search with rg, read files directly, edit with apply_patch, validate with focused tests before broader checks, commit as Greg Konush, push branches, create PRs with gh, and monitor CI. Use shell tools for terminal work, git tools for repo work, kubectl tools for cluster work, and agent_start for delegated long-running Codex AgentRun work. Tools are bounded by OAuth scopes, audit logs, cwd, timeout, output caps, and Kubernetes RBAC.'
+  'Private Codex-style repo agent for /workspace/lab. Inspect first, respect dirty work, edit with apply_patch, validate, commit as Greg Konush, push, create PRs with gh, monitor CI, and report evidence-backed blockers only.'
 
 const SCOPES = {
   read: 'agents-shell.read',
@@ -1032,7 +1032,7 @@ const installOpenAiToolsListHandler = (server: McpServer) => {
           title: tool.title,
           description: tool.description,
           inputSchema: objectJsonSchema(tool.inputSchema, 'input'),
-          ...(tool.outputSchema ? { outputSchema: objectJsonSchema(tool.outputSchema, 'output') } : {}),
+          // Keep connector discovery compact; tool calls still return structured content.
           annotations: tool.annotations,
           ...(securitySchemes ? { securitySchemes } : {}),
           _meta: tool._meta,
@@ -1203,7 +1203,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Search files',
       description:
-        'Use this when searching text or file contents under the private workspace root. It runs ripgrep with bounded output, skips standard dependency/cache/generated directories, and never modifies files.',
+        'Search text under /workspace with rg. Output is bounded and dependency/cache/generated dirs are skipped.',
       inputSchema: {
         query: z.string().min(1),
         path: z.string().optional(),
@@ -1249,8 +1249,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'read_file',
     {
       title: 'Read file',
-      description:
-        'Use this when reading a specific file under the private workspace root. It returns a bounded UTF-8 text prefix and never modifies files.',
+      description: 'Read a bounded UTF-8 prefix from a file under /workspace.',
       inputSchema: {
         path: z.string().min(1),
         maxBytes: z.number().int().min(1).optional(),
@@ -1283,7 +1282,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Apply Codex patch',
       description:
-        'Use this when editing files under /workspace with Codex patch syntax. Pass the complete patch text beginning with *** Begin Patch and ending with *** End Patch. This is the default file-editing tool for repo work.',
+        'Edit files under /workspace with Codex patch syntax. Pass the full *** Begin Patch / *** End Patch document.',
       inputSchema: {
         patch: z.string().min(1),
         cwd: z.string().optional().describe('Working directory under /workspace. Defaults to /workspace/lab.'),
@@ -1322,8 +1321,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'agent_guide',
     {
       title: 'Read agent guide',
-      description:
-        'Use this when starting non-trivial repo work or when deciding whether to use direct tools or a delegated AgentRun. It returns the agents-shell operating guide.',
+      description: 'Read the repo-agent workflow guide for direct tools and delegated AgentRuns.',
       inputSchema: {},
       outputSchema: z.object({ guide: z.string() }),
       annotations: readOnlyAnnotations,
@@ -1339,7 +1337,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Run shell command',
       description:
-        'Use this for a short, user-requested terminal command inside the private agents-shell workspace container, such as diagnostics, tests, build scripts, Python scripts, or other workspace automation. It returns stdout, stderr, exit code, and job metadata. The tool does not publish messages or data; the server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging. Prefer search, read_file, git, and kubectl for read-only inspection before running a terminal command.',
+        'Run a short shell command in the agents-shell container. Returns stdout, stderr, exit code, and job metadata.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
@@ -1361,8 +1359,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'shell_start',
     {
       title: 'Start shell job',
-      description:
-        'Use this for a long-running, user-requested terminal command inside the private agents-shell workspace container, such as a dev server, test suite, or script. Poll the job with shell_read and stop it with shell_kill. The tool does not publish messages or data; the server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging.',
+      description: 'Start a long-running shell command. Poll with shell_read/status and stop with shell_kill.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
@@ -1384,8 +1381,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'shell_read',
     {
       title: 'Read shell job',
-      description:
-        'Use this when reading status and retained stdout/stderr output for a shell_start job. It never starts a new command.',
+      description: 'Read status and retained stdout/stderr for a shell_start job.',
       inputSchema: {
         ...jobIdSchema,
         stdoutOffset: z.number().int().min(0).optional(),
@@ -1422,7 +1418,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'shell_kill',
     {
       title: 'Kill shell job',
-      description: 'Use this when terminating a running shell_start job inside agents-shell.',
+      description: 'Terminate a running shell_start job.',
       inputSchema: {
         ...jobIdSchema,
         signal: z.string().optional(),
@@ -1441,7 +1437,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'shell_status',
     {
       title: 'List shell jobs',
-      description: 'Use this when inspecting recent shell job status in agents-shell. It never starts a command.',
+      description: 'List recent shell jobs or inspect one job by id.',
       inputSchema: {
         jobId: z.string().optional(),
         limit: z.number().int().min(1).max(100).optional(),
@@ -1464,8 +1460,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'git',
     {
       title: 'Inspect git repository',
-      description:
-        'Use this for read-only repository inspection inside /workspace. Pass args exactly as argv after git. The server accepts only read-only subcommands and returns stdout, stderr, exit code, and timeout status.',
+      description: 'Run read-only git commands under /workspace. Pass argv after git.',
       inputSchema: {
         args: z.array(z.string().min(1)).min(1).describe('Arguments passed to git, excluding the git executable.'),
         cwd: z.string().optional(),
@@ -1502,8 +1497,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'git_write',
     {
       title: 'Run mutating git',
-      description:
-        'Use this only when the user explicitly asks for a repository-changing git operation inside /workspace. Pass args exactly as argv after git. This is the unrestricted generic git wrapper for operations such as checkout, add, commit, merge, reset, rebase, fetch, pull, or push.',
+      description: 'Run repository-changing git commands under /workspace. Pass argv after git.',
       inputSchema: {
         args: z.array(z.string().min(1)).min(1).describe('Arguments passed to git, excluding the git executable.'),
         cwd: z.string().optional(),
@@ -1539,8 +1533,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'kubectl',
     {
       title: 'Inspect Kubernetes with kubectl',
-      description:
-        'Use this when running read-only Kubernetes inspection with kubectl inside the agents-shell container. Pass args exactly as argv after kubectl, for example ["get","pods","-n","agents","-o","wide"], ["describe","pod","name","-n","agents"], ["logs","deployment/agents-shell","-n","agents"], or ["rollout","status","deployment/agents-shell","-n","agents"]. This is a generic argv wrapper for inspection; use kubectl_admin only for apply, delete, patch, scale, exec, port-forward, or other cluster mutations.',
+      description: 'Run read-only kubectl inspection. Pass argv after kubectl.',
       inputSchema: {
         args: z
           .array(z.string().min(1))
@@ -1581,8 +1574,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'kubectl_admin',
     {
       title: 'Run admin kubectl',
-      description:
-        'Use this only when the user explicitly asks for a Kubernetes mutation or admin operation. Pass args exactly as argv after kubectl. This is the unrestricted generic kubectl wrapper for apply, delete, patch, scale, exec, port-forward, rollout restart, and other operations allowed by the agents-shell ServiceAccount RBAC.',
+      description: 'Run admin kubectl operations allowed by the agents-shell ServiceAccount. Pass argv after kubectl.',
       inputSchema: {
         args: z
           .array(z.string().min(1))
@@ -1622,8 +1614,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'agent_start',
     {
       title: 'Start delegated agent',
-      description:
-        'Use this when a non-trivial repo task should continue server-side until it is complete. It creates a real AgentRun for proompteng/lab with read-write VCS, GitHub credentials, and Codex runtime defaults.',
+      description: 'Create a read-write Codex AgentRun for proompteng/lab.',
       inputSchema: {
         task: z.string().min(1).describe('Complete task prompt for the delegated coding agent.'),
         headBranch: z.string().min(1).optional().describe('Optional branch name. Defaults to codex/<generated-name>.'),
@@ -1678,8 +1669,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'agent_status',
     {
       title: 'Read delegated agent status',
-      description:
-        'Use this when checking a delegated AgentRun. It returns the live AgentRun object and matching Jobs so ChatGPT can continue from exact runtime evidence.',
+      description: 'Read a delegated AgentRun object and matching Jobs.',
       inputSchema: {
         agentRunName: z.string().min(1),
         namespace: z.string().min(1).optional(),
@@ -1746,7 +1736,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'agent_read',
     {
       title: 'Read delegated agent logs',
-      description: 'Use this when reading retained logs from a delegated AgentRun job. It never starts a new AgentRun.',
+      description: 'Read retained logs from a delegated AgentRun job.',
       inputSchema: {
         agentRunName: z.string().min(1),
         namespace: z.string().min(1).optional(),
@@ -1793,8 +1783,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     'agent_cancel',
     {
       title: 'Cancel delegated agent',
-      description:
-        'Use this when stopping a delegated AgentRun. It deletes the AgentRun resource so the controller can clean up owned runtime resources.',
+      description: 'Delete a delegated AgentRun so owned runtime resources are cleaned up.',
       inputSchema: {
         agentRunName: z.string().min(1),
         namespace: z.string().min(1).optional(),
