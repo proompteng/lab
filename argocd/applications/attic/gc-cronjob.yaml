@@ -27,7 +27,7 @@ spec:
               type: RuntimeDefault
           containers:
             - name: attic-gc
-              image: registry.ide-newton.ts.net/lab/attic:latest
+              image: registry.ide-newton.ts.net/lab/attic@sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747
               imagePullPolicy: Always
               command:
                 - atticd
