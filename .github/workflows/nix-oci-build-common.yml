@@ -93,12 +93,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "${NIX_OCI_LOG_DIR}"
-          helper_attrs=(.#inspect-oci-archive)
+          helper_attrs=(.#inspectOciArchive)
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            helper_attrs+=(.#oci-push .#cache-push)
+            helper_attrs+=(.#ociPush .#cachePush)
           fi
           bash nix/ci-run-timed.sh "prime-build-platform-helpers-${ARCH}" "${NIX_OCI_LOG_DIR}/prime-helpers-${ARCH}.log" \
-            bash -lc 'nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"' \
+            bash -lc 'set -euo pipefail; output_file="${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"; nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${output_file}"; test -s "${output_file}"' \
             bash "${helper_attrs[@]}"
 
       - name: Build Nix image archive
@@ -161,6 +161,10 @@ jobs:
           set -euo pipefail
           test -n "${ATTIC_TOKEN}"
           mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"
+          if [[ "${#helper_paths[@]}" -eq 0 ]]; then
+            echo "No build-platform helper closure paths were captured." >&2
+            exit 2
+          fi
           bash nix/ci-run-timed.sh "push-build-platform-closures-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-${ARCH}.log" \
             nix run .#cache-push -- "${IMAGE_TAR}" "${helper_paths[@]}"
 
@@ -214,13 +218,13 @@ jobs:
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
       - name: Prime OCI index helper closures
-        env:
-          HELPER_ATTRS: '.#create-oci-index .#assert-oci-platforms .#write-oci-release-contract .#cache-push'
         run: |
           set -euo pipefail
           mkdir -p "${NIX_OCI_LOG_DIR}"
+          helper_attrs=(.#createOciIndex .#assertOciPlatforms .#writeOciReleaseContract .#cachePush)
           bash nix/ci-run-timed.sh "prime-index-helpers" "${NIX_OCI_LOG_DIR}/prime-index-helpers.log" \
-            bash -lc 'nix build --print-build-logs --no-link --print-out-paths ${HELPER_ATTRS} | tee "${NIX_OCI_LOG_DIR}/index-helper-paths.txt"'
+            bash -lc 'set -euo pipefail; output_file="${NIX_OCI_LOG_DIR}/index-helper-paths.txt"; nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${output_file}"; test -s "${output_file}"' \
+            bash "${helper_attrs[@]}"
 
       - name: Create OCI image index
         id: oci
@@ -271,6 +275,10 @@ jobs:
           set -euo pipefail
           test -n "${ATTIC_TOKEN}"
           mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/index-helper-paths.txt"
+          if [[ "${#helper_paths[@]}" -eq 0 ]]; then
+            echo "No index helper closure paths were captured." >&2
+            exit 2
+          fi
           bash nix/ci-run-timed.sh "push-index-helper-closures" "${NIX_OCI_LOG_DIR}/cache-push-index-helpers.log" \
             nix run .#cache-push -- "${helper_paths[@]}"
 

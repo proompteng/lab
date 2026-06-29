@@ -200,12 +200,15 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
     expect(nixOciWorkflow).toContain('nix build --print-build-logs --no-link --print-out-paths "$@"')
-    expect(nixOciWorkflow).toContain('helper_attrs=(.#inspect-oci-archive)')
-    expect(nixOciWorkflow).toContain('helper_attrs+=(.#oci-push .#cache-push)')
+    expect(nixOciWorkflow).toContain('helper_attrs=(.#inspectOciArchive)')
+    expect(nixOciWorkflow).toContain('helper_attrs+=(.#ociPush .#cachePush)')
+    expect(nixOciWorkflow).toContain('test -s "${output_file}"')
+    expect(nixOciWorkflow).toContain('No build-platform helper closure paths were captured.')
+    expect(nixOciWorkflow).toContain('No index helper closure paths were captured.')
     expect(nixOciWorkflow).toContain('nix/ci-run-timed.sh')
     expect(nixOciWorkflow).toContain('nix/ci-nix-oci-summary.sh')
     expect(nixOciWorkflow).toContain(
-      '.#create-oci-index .#assert-oci-platforms .#write-oci-release-contract .#cache-push',
+      'helper_attrs=(.#createOciIndex .#assertOciPlatforms .#writeOciReleaseContract .#cachePush)',
     )
     expect(nixOciWorkflow).not.toContain('nix develop -c')
   })
