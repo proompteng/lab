@@ -170,12 +170,13 @@ nix run .#cache-doctor
 For ARC CI jobs:
 
 ```text
-extra-substituters = http://attic.attic.svc.cluster.local/lab
+substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
 extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 ```
 
-Use `extra-*` settings so the default `cache.nixos.org` fallback remains
-available.
+Keep Attic first so repo-built closures are attempted before the public cache,
+while keeping `cache.nixos.org` as an explicit fallback for upstream Nixpkgs
+dependencies.
 
 ## Push Boundary
 
@@ -187,8 +188,14 @@ Cache correctness is proven by real Nix image workflows:
 - pull requests consume the public Attic cache without `ATTIC_TOKEN`
 - `main` builds real image derivations such as `.#atticd-image`
 - `main` pushes only those real image output paths to Attic
+- `main` also pushes the real OCI helper closures used by that workflow, such
+  as `.#inspect-oci-archive`, `.#oci-push`, `.#create-oci-index`,
+  `.#assert-oci-platforms`, `.#write-oci-release-contract`, and `.#cache-push`
 - registry publication is handled by Skopeo from the Nix-built tarball, not by
   Docker Buildx
+- the workflow summary records Attic substitutions, `cache.nixos.org`
+  substitutions, local derivation builds, and phase timings for each real image
+  run
 
 The default `cache.nixos.org` fallback remains available for Nixpkgs
 dependencies, so CI should not duplicate broad upstream Nixpkgs closures into

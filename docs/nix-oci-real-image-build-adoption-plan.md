@@ -24,6 +24,11 @@ Public references:
 - Add `.github/workflows/nix-oci-build-common.yml` for real multi-arch Nix image builds on ARC runners.
 - Migrate the live Attic image workflow off Docker Buildx.
 - Add `attic-release` to pin `argocd/applications/attic/deployment.yaml` and `gc-cronjob.yaml` to the built digest.
+- Keep release-only manifest PRs from retriggering full image builds.
+- Prefer Attic before `cache.nixos.org` for Nix OCI jobs while keeping
+  `cache.nixos.org` as fallback.
+- Push real OCI helper closures from trusted `main` runs and emit cache/timing
+  summaries from the real image workflow.
 - Do not migrate disabled or non-live application image workflows in this PR.
 
 ## Rollout
@@ -61,9 +66,13 @@ Pass criteria:
 - Attic deployment and GC CronJob reference the Nix-built digest.
 - Cache endpoint works from the cluster and from the host.
 - Migrated workflows contain no Docker Buildx, `docker load`, `docker run`, `docker tag`, or `docker push`.
+- Attic release-only manifest PRs do not retrigger `attic-build-push`.
+- The real image workflow summary reports cache-hit counts and phase timings.
 
 ## Next Phases
 
+- Build and roll out custom ARC runner images with Nix and base tools preinstalled.
+  This is a separate runner-image rollout, not an Attic service or storage change.
 - Migrate additional enabled simple static Go services after the Attic rollout proves the full path.
 - Migrate Torghut only after its current app health/drift is clean and a uv/Nix packaging path is proven.
 - Migrate Bun/Turbo and Headlamp images only after dedicated Nix derivations exist.
