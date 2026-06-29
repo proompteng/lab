@@ -39,6 +39,12 @@ spec:
               env:
                 - name: RUST_LOG
                   value: info
+                - name: AWS_REGION
+                  value: us-east-1
+                - name: AWS_DEFAULT_REGION
+                  value: us-east-1
+                - name: AWS_EC2_METADATA_DISABLED
+                  value: "true"
                 - name: ATTIC_SERVER_DATABASE_URL
                   valueFrom:
                     secretKeyRef:

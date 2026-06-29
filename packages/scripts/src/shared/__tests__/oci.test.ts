@@ -12,8 +12,12 @@ const repoFileExists = (path: string): boolean => existsSync(new URL(path, repoR
 const atticWorkflow = readRepoFile('.github/workflows/attic-build-push.yaml')
 const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
 const atticReleaseMetadataScript = readRepoFile('nix/attic-release-metadata.sh')
+const atticDeployment = readRepoFile('argocd/applications/attic/deployment.yaml')
+const atticGcCronJob = readRepoFile('argocd/applications/attic/gc-cronjob.yaml')
 const flake = readRepoFile('flake.nix')
 const inspectOciArchiveScript = readRepoFile('nix/oci-inspect-archive.sh')
+const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
+const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const ociPushScript = readRepoFile('nix/oci-push.sh')
 
@@ -177,6 +181,7 @@ describe('native OCI build workflows', () => {
     expect(atticWorkflow).toContain('package_attr: atticd-image')
     expect(atticWorkflow).not.toContain('needs: meta')
     expect(atticWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(atticWorkflow).not.toContain('argocd/applications/attic/**')
     expect(flake).not.toContain('facteur-image')
     expect(repoFileExists('.github/workflows/facteur-build-push.yaml')).toBe(false)
     expect(repoFileExists('nix/images/facteur.nix')).toBe(false)
@@ -192,7 +197,27 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('nix run .#assert-oci-platforms --')
     expect(nixOciWorkflow).toContain('nix run .#cache-push -- "${IMAGE_TAR}"')
     expect(nixOciWorkflow).toContain('nix run .#write-oci-release-contract --')
+    expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
+    expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
+    expect(nixOciWorkflow).toContain('nix build --print-build-logs --no-link --print-out-paths "$@"')
+    expect(nixOciWorkflow).toContain('helper_attrs=(.#inspect-oci-archive)')
+    expect(nixOciWorkflow).toContain('helper_attrs+=(.#oci-push .#cache-push)')
+    expect(nixOciWorkflow).toContain('nix/ci-run-timed.sh')
+    expect(nixOciWorkflow).toContain('nix/ci-nix-oci-summary.sh')
+    expect(nixOciWorkflow).toContain(
+      '.#create-oci-index .#assert-oci-platforms .#write-oci-release-contract .#cache-push',
+    )
     expect(nixOciWorkflow).not.toContain('nix develop -c')
+  })
+
+  it('records real Nix OCI timing and cache-hit summaries', () => {
+    expect(ciRunTimedScript).toContain('printf')
+    expect(ciRunTimedScript).toContain('timings.tsv')
+    expect(ciRunTimedScript).toContain('PIPESTATUS[0]')
+    expect(ciNixOciSummaryScript).toContain('Attic substitutions')
+    expect(ciNixOciSummaryScript).toContain('cache.nixos.org substitutions')
+    expect(ciNixOciSummaryScript).toContain('Local derivation builds')
+    expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
   it('allows Nix dockerTools archives without Docker repo tags', () => {
@@ -238,9 +263,24 @@ describe('native OCI build workflows', () => {
     expect(atticReleaseWorkflow).toContain('nix run .#resolve-attic-release-metadata')
     expect(atticReleaseWorkflow).toContain('export IMAGE_REF="${IMAGE}@${DIGEST}"')
     expect(atticReleaseWorkflow).toContain('image: $ENV{IMAGE_REF}')
+    expect(atticReleaseWorkflow).toContain(
+      'substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/',
+    )
     expect(atticReleaseWorkflow).not.toContain('image: \'"${image_ref}"\'')
     expect(atticReleaseWorkflow).not.toContain('nix develop -c')
     expect(atticReleaseMetadataScript).toContain('"${builder}" != \'nix-dockerTools-skopeo\'')
     expect(atticReleaseMetadataScript).toContain('crane digest "${image}:${tag}"')
+  })
+
+  it('disables AWS metadata lookups for the Attic S3 client without changing storage resources', () => {
+    for (const manifest of [atticDeployment, atticGcCronJob]) {
+      expect(manifest).toContain('name: AWS_REGION')
+      expect(manifest).toContain('value: us-east-1')
+      expect(manifest).toContain('name: AWS_DEFAULT_REGION')
+      expect(manifest).toContain('name: AWS_EC2_METADATA_DISABLED')
+      expect(manifest).toContain('value: "true"')
+    }
+    expect(atticDeployment).not.toContain('ObjectBucketClaim')
+    expect(atticGcCronJob).not.toContain('ObjectBucketClaim')
   })
 })

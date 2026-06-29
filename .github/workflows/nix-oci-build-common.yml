@@ -55,6 +55,7 @@ jobs:
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+      NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -83,8 +84,22 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Prime OCI helper closures
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          mkdir -p "${NIX_OCI_LOG_DIR}"
+          helper_attrs=(.#inspect-oci-archive)
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+            helper_attrs+=(.#oci-push .#cache-push)
+          fi
+          bash nix/ci-run-timed.sh "prime-build-platform-helpers-${ARCH}" "${NIX_OCI_LOG_DIR}/prime-helpers-${ARCH}.log" \
+            bash -lc 'nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"' \
+            bash "${helper_attrs[@]}"
 
       - name: Build Nix image archive
         id: build
@@ -94,7 +109,8 @@ jobs:
         run: |
           set -euo pipefail
           out_link="result-${ARCH}"
-          nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+          bash nix/ci-run-timed.sh "build-image-${ARCH}" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}.log" \
+            nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
             echo "Nix image output is not a tar file: ${image_tar}" >&2
@@ -106,7 +122,11 @@ jobs:
       - name: Inspect Nix image archive
         env:
           IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
-        run: nix run .#inspect-oci-archive -- "${IMAGE_TAR}"
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
+            nix run .#inspect-oci-archive -- "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -128,7 +148,7 @@ jobs:
           if [ "${LATEST}" = "true" ]; then
             args+=(--latest-tag "latest-${ARCH}")
           fi
-          "${args[@]}"
+          bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
       - name: Push real image closure to Attic
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -136,10 +156,17 @@ jobs:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
           IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
+          ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           test -n "${ATTIC_TOKEN}"
-          nix run .#cache-push -- "${IMAGE_TAR}"
+          mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"
+          bash nix/ci-run-timed.sh "push-build-platform-closures-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-${ARCH}.log" \
+            nix run .#cache-push -- "${IMAGE_TAR}" "${helper_paths[@]}"
+
+      - name: Summarize Nix OCI cache use
+        if: always()
+        run: bash nix/ci-nix-oci-summary.sh
 
   publish-index:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -153,6 +180,8 @@ jobs:
       platform_digest_arm64: ${{ steps.oci.outputs.platform_digest_arm64 }}
     env:
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+      ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+      NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-publish-index
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -181,8 +210,17 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Prime OCI index helper closures
+        env:
+          HELPER_ATTRS: '.#create-oci-index .#assert-oci-platforms .#write-oci-release-contract .#cache-push'
+        run: |
+          set -euo pipefail
+          mkdir -p "${NIX_OCI_LOG_DIR}"
+          bash nix/ci-run-timed.sh "prime-index-helpers" "${NIX_OCI_LOG_DIR}/prime-index-helpers.log" \
+            bash -lc 'nix build --print-build-logs --no-link --print-out-paths ${HELPER_ATTRS} | tee "${NIX_OCI_LOG_DIR}/index-helper-paths.txt"'
 
       - name: Create OCI image index
         id: oci
@@ -202,13 +240,16 @@ jobs:
           if [ "${LATEST}" = "true" ]; then
             args+=(--latest)
           fi
-          "${args[@]}"
+          bash nix/ci-run-timed.sh "create-oci-index" "${NIX_OCI_LOG_DIR}/create-oci-index.log" "${args[@]}"
 
       - name: Verify OCI image index platforms
         env:
           IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
           TAG: ${{ inputs.tag }}
-        run: nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+        run: |
+          set -euo pipefail
+          bash nix/ci-run-timed.sh "assert-oci-platforms" "${NIX_OCI_LOG_DIR}/assert-oci-platforms.log" \
+            nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64
 
       - name: Write release contract
         if: inputs.release_artifact_name != ''
@@ -220,7 +261,18 @@ jobs:
           PACKAGE_ATTR: ${{ inputs.package_attr }}
         run: |
           set -euo pipefail
-          nix run .#write-oci-release-contract -- .artifacts/${{ inputs.image_name }}/release-contract.json
+          bash nix/ci-run-timed.sh "write-release-contract" "${NIX_OCI_LOG_DIR}/write-release-contract.log" \
+            nix run .#write-oci-release-contract -- .artifacts/${{ inputs.image_name }}/release-contract.json
+
+      - name: Push OCI index helper closures to Attic
+        env:
+          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "${ATTIC_TOKEN}"
+          mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/index-helper-paths.txt"
+          bash nix/ci-run-timed.sh "push-index-helper-closures" "${NIX_OCI_LOG_DIR}/cache-push-index-helpers.log" \
+            nix run .#cache-push -- "${helper_paths[@]}"
 
       - name: Upload release contract
         if: inputs.release_artifact_name != ''
@@ -228,3 +280,7 @@ jobs:
         with:
           name: ${{ inputs.release_artifact_name }}
           path: .artifacts/${{ inputs.image_name }}/release-contract.json
+
+      - name: Summarize Nix OCI cache use
+        if: always()
+        run: bash nix/ci-nix-oci-summary.sh

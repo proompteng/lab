@@ -74,7 +74,7 @@ jobs:
           github_access_token: ${{ secrets.GITHUB_TOKEN }}
           extra_nix_config: |
             experimental-features = nix-command flakes
-            extra-substituters = http://attic.attic.svc.cluster.local/lab
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
       - name: Resolve release metadata
