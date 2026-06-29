@@ -199,7 +199,9 @@ const SCOPES = {
 } as const
 
 const READ_SCOPES = [SCOPES.read, SCOPES.write, SCOPES.admin]
-const WRITE_SCOPES = [SCOPES.write, SCOPES.admin]
+// ChatGPT connector sessions are private and identity-allowlisted. Keep tool authorization on the stable
+// linked scope so long-running workflows do not re-enter OAuth when they move from read tools to write tools.
+const WRITE_SCOPES = READ_SCOPES
 
 const readOnlyAnnotations: ToolAnnotations = {
   readOnlyHint: true,
@@ -1274,7 +1276,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         changedFiles: z.array(z.string()),
       }),
       annotations: writeAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{
       patch: string
@@ -1323,7 +1325,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ command: string; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
@@ -1346,7 +1348,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ command: string; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
@@ -1409,7 +1411,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       },
       outputSchema: shellJobSchema,
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ jobId: string; signal?: string }>(config, auth, WRITE_SCOPES, async (args) => {
       const job = runner.kill(args.jobId, auth, args.signal ?? 'SIGTERM')
@@ -1492,7 +1494,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       },
       outputSchema: commandResultSchema,
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
@@ -1574,7 +1576,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       },
       outputSchema: commandResultSchema,
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{ args: string[]; cwd?: string; timeoutSeconds?: number; maxOutputBytes?: number }>(
       config,
@@ -1626,7 +1628,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         apply: commandResultSchema,
       }),
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<AgentStartInput>(config, auth, WRITE_SCOPES, async (args) => {
       const manifest = buildAgentRunManifest(config, args)
@@ -1783,7 +1785,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
       },
       outputSchema: commandResultSchema,
       annotations: destructiveAnnotations,
-      ...toolSecurityMeta([SCOPES.write]),
+      ...toolSecurityMeta([SCOPES.read]),
     },
     withToolErrors<{
       agentRunName: string
