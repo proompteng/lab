@@ -856,11 +856,21 @@ export class AgentsShellRunner {
     }, timeoutSeconds * 1000)
 
     const result = await new Promise<{ exitCode: number | null; signal: string | null }>((resolvePromise, reject) => {
-      child.on('error', reject)
-      child.on('close', (exitCode, signal) => resolvePromise({ exitCode, signal }))
+      let settled = false
+      const finish = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+        if (settled) return
+        settled = true
+        child.stdout.destroy()
+        child.stderr.destroy()
+        resolvePromise({ exitCode, signal })
+      }
+
+      child.once('error', reject)
+      child.once('exit', (exitCode, signal) => setImmediate(() => finish(exitCode, signal)))
+      child.once('close', (exitCode, signal) => finish(exitCode, signal))
     }).finally(() => clearTimeout(timeout))
 
-    return toProcessResult(
+    const processResult = toProcessResult(
       commandLine,
       cwd,
       result.exitCode,
@@ -871,6 +881,14 @@ export class AgentsShellRunner {
       maxOutputBytes,
       new Set(options.okExitCodes ?? [0]),
     )
+    this.audit(`${options.auditEvent}_finished`, options.auth, {
+      command: commandLine,
+      cwd,
+      exitCode: result.exitCode,
+      signal: result.signal,
+      timedOut,
+    })
+    return processResult
   }
 
   shutdown() {
