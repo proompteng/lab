@@ -276,8 +276,8 @@ describe('agents-shell MCP tools', () => {
     const tools = await client.listTools()
     expect(tools.tools.map((tool) => tool.name).sort()).toEqual(
       [
-        'workspace_search',
-        'workspace_read_file',
+        'search',
+        'read_file',
         'apply_patch',
         'agent_guide',
         'shell_run',
@@ -296,7 +296,7 @@ describe('agents-shell MCP tools', () => {
       ].sort(),
     )
 
-    const search = tools.tools.find((tool) => tool.name === 'workspace_search')
+    const search = tools.tools.find((tool) => tool.name === 'search')
     expect(search?.annotations?.readOnlyHint).toBe(true)
     expect(search?._meta).toMatchObject({
       securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
@@ -359,7 +359,7 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
-    const rawSearch = rawTools.find((tool) => tool.name === 'workspace_search')
+    const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
     expect(rawSearch?._meta).toMatchObject({
       securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
@@ -421,7 +421,7 @@ describe('agents-shell MCP tools', () => {
     const { client, server, clientTransport, serverTransport } = await connectServer(config)
 
     const read = await client.callTool({
-      name: 'workspace_read_file',
+      name: 'read_file',
       arguments: { path: 'hello.txt' },
     })
     expect((read.structuredContent as { content?: string } | undefined)?.content).toBe('hello from agents-shell\n')
@@ -575,7 +575,7 @@ fi
     }
   })
 
-  it('searches workspace files with ripgrep instead of empty piped stdin', async () => {
+  it('searches files with ripgrep instead of empty piped stdin', async () => {
     const config = makeConfig()
     mkdirSync(join(config.workspaceRoot, 'lab', 'src'), { recursive: true })
     writeFileSync(
@@ -597,7 +597,7 @@ fi
 
     try {
       const result = await client.callTool({
-        name: 'workspace_search',
+        name: 'search',
         arguments: { query: 'createAgentsShellServer', path: 'lab', fixedStrings: true },
       })
       const content = result.structuredContent as {

@@ -174,14 +174,14 @@ Operate like Codex:
 - Persist until the request is complete or an evidence-backed blocker remains.
 - Inspect before editing: read repo state, relevant files, tests, and applicable AGENTS.md instructions.
 - Respect dirty worktrees: do not revert, overwrite, or discard changes you did not make.
-- Use rg for search, workspace_read_file for reads, and apply_patch with Codex patch syntax for edits.
+- Use search for repo/file discovery, read_file for bounded file reads, and apply_patch with Codex patch syntax for edits.
 - Use destructive git, Kubernetes, or filesystem operations only when the user request clearly requires them.
 - Validate from focused tests to broader checks, then summarize exact commands and results.
 
 Default repo workflow:
 1. Confirm /workspace/lab is on a fresh origin/main base or preserve and report existing dirty work.
 2. Create a codex/... branch for the task.
-3. Search with workspace_search, inspect with workspace_read_file and git, and make scoped edits with apply_patch.
+3. Search with search, inspect with read_file and git, and make scoped edits with apply_patch.
 4. Run focused tests, lint, type checks, or smoke commands that prove the change.
 5. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
 6. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
@@ -1179,11 +1179,11 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
   )
 
   server.registerTool(
-    'workspace_search',
+    'search',
     {
-      title: 'Search workspace',
+      title: 'Search files',
       description:
-        'Use this when searching text or file contents under /workspace. It runs ripgrep with bounded output, skips standard dependency/cache/generated directories, and never modifies files.',
+        'Use this when searching text or file contents under the private workspace root. It runs ripgrep with bounded output, skips standard dependency/cache/generated directories, and never modifies files.',
       inputSchema: {
         query: z.string().min(1),
         path: z.string().optional(),
@@ -1219,18 +1219,18 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
         maxOutputBytes: args.maxOutputBytes,
         okExitCodes: [0, 1],
         auth,
-        auditEvent: 'workspace_search',
+        auditEvent: 'search',
       })
       return jsonTextResult(result)
     }),
   )
 
   server.registerTool(
-    'workspace_read_file',
+    'read_file',
     {
-      title: 'Read workspace file',
+      title: 'Read file',
       description:
-        'Use this when reading a specific file under /workspace. It returns a bounded UTF-8 text prefix and never modifies files.',
+        'Use this when reading a specific file under the private workspace root. It returns a bounded UTF-8 text prefix and never modifies files.',
       inputSchema: {
         path: z.string().min(1),
         maxBytes: z.number().int().min(1).optional(),
@@ -1319,7 +1319,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
     {
       title: 'Run shell command',
       description:
-        'Use this for a short, user-requested terminal command inside the private agents-shell workspace container, such as diagnostics, tests, build scripts, Python scripts, or other workspace automation. It returns stdout, stderr, exit code, and job metadata. The tool does not publish messages or data; the server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging. Prefer workspace_search, workspace_read_file, git, and kubectl for read-only inspection before running a terminal command.',
+        'Use this for a short, user-requested terminal command inside the private agents-shell workspace container, such as diagnostics, tests, build scripts, Python scripts, or other workspace automation. It returns stdout, stderr, exit code, and job metadata. The tool does not publish messages or data; the server enforces /workspace cwd bounds, timeout caps, output caps, OAuth scopes, and audit logging. Prefer search, read_file, git, and kubectl for read-only inspection before running a terminal command.',
       inputSchema: shellInputSchema,
       outputSchema: shellJobSchema,
       annotations: shellAnnotations,
