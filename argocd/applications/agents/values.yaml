@@ -38,8 +38,8 @@ agentsShell:
   enabled: true
   image:
     repository: registry.ide-newton.ts.net/lab/agents-shell
-    tag: adbb128c5
-    digest: sha256:fd406d8ed0b0faa8f2507c2cdd09a03ef5853e7b6d8c1cc6318e6013e344b306
+    tag: 58c7cf8cf
+    digest: sha256:e2e2dd0dff6dc316a6beb3e22e8a46d1d7d6af0a10b57b95e5cf8f31924b48c6
     pullPolicy: IfNotPresent
   env:
     vars:
