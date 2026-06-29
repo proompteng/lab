@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   AgentsShellRunner,
@@ -169,6 +169,56 @@ describe('agents-shell MCP OAuth metadata', () => {
     expect(response.status).toBe(200)
     const body = (await response.json()) as { result?: { tools?: Array<{ name?: string }> } }
     expect(body.result?.tools?.map((tool) => tool.name)).toEqual(expect.arrayContaining(['shell_run', 'kubectl']))
+  })
+
+  it('keeps invalid bearer tokens inside the MCP challenge flow with safe diagnostics', async () => {
+    const config = makeConfig()
+    const handler = createAgentsShellRequestHandler(config)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      const response = await handler(
+        new Request('https://agents-shell.example.test/mcp', {
+          method: 'POST',
+          headers: {
+            accept: 'application/json',
+            authorization: 'Bearer not-a-jwt',
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'tools/call',
+            params: {
+              name: 'shell_run',
+              arguments: { command: 'echo should-not-run' },
+            },
+          }),
+        }),
+      )
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as {
+        result?: { isError?: boolean; _meta?: Record<string, unknown> }
+      }
+      expect(body.result?.isError).toBe(true)
+      expect(body.result?._meta?.['mcp/www_authenticate']).toEqual([
+        'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource", error="invalid_token", error_description="The access token is invalid or expired."',
+      ])
+
+      const diagnostic = warn.mock.calls
+        .map(([message]) => (typeof message === 'string' ? JSON.parse(message) : null))
+        .find((entry) => entry?.msg === 'agents-shell oauth token rejected')
+      expect(diagnostic).toMatchObject({
+        msg: 'agents-shell oauth token rejected',
+        method: 'POST',
+        path: '/mcp',
+        token: { decodeError: expect.any(String) },
+      })
+      expect(JSON.stringify(diagnostic)).not.toContain('not-a-jwt')
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it.skipIf(typeof (globalThis as { Bun?: unknown }).Bun === 'undefined')(

@@ -1,10 +1,10 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve } from 'node:path'
 import { spawn, type ChildProcessByStdio } from 'node:child_process'
 import type { Readable } from 'node:stream'
 
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose'
+import { createRemoteJWKSet, decodeJwt, decodeProtectedHeader, jwtVerify, type JWTPayload } from 'jose'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js'
 import {
@@ -97,6 +97,12 @@ export type AuthContext = {
   email: string | null
   scopes: Set<string>
   payload: JWTPayload
+  authError?: OAuthChallenge
+}
+
+type OAuthChallenge = {
+  error: string
+  description: string
 }
 
 export type AgentsShellConfig = {
@@ -439,6 +445,74 @@ const bearerTokenFromRequest = (request: Request) => {
   return match?.[1] ?? null
 }
 
+const hashJwtSubject = (subject: unknown) =>
+  typeof subject === 'string' ? createHash('sha256').update(subject).digest('hex').slice(0, 12) : null
+
+const normalizeJwtAudience = (audience: unknown) => {
+  if (Array.isArray(audience)) return audience.filter((value): value is string => typeof value === 'string')
+  return typeof audience === 'string' ? audience : null
+}
+
+const decodeSafeJwtDiagnostics = (token: string) => {
+  try {
+    const header = decodeProtectedHeader(token)
+    const payload = decodeJwt(token)
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    return {
+      header: {
+        alg: header.alg,
+        typ: typeof header.typ === 'string' ? header.typ : undefined,
+      },
+      claims: {
+        iss: payload.iss,
+        aud: normalizeJwtAudience(payload.aud),
+        azp: typeof payload.azp === 'string' ? payload.azp : undefined,
+        scope: typeof payload.scope === 'string' ? payload.scope : undefined,
+        subHash: hashJwtSubject(payload.sub),
+        exp: payload.exp,
+        iat: payload.iat,
+        nbf: payload.nbf,
+        expiresInSeconds: typeof payload.exp === 'number' ? payload.exp - nowSeconds : undefined,
+        tokenAgeSeconds: typeof payload.iat === 'number' ? nowSeconds - payload.iat : undefined,
+      },
+    }
+  } catch (error) {
+    return {
+      decodeError: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+const logOAuthFailure = (request: Request, requestId: string, token: string, error: unknown) => {
+  const { pathname } = new URL(request.url)
+  const typedError = error as { code?: unknown }
+  console.warn(
+    JSON.stringify({
+      msg: 'agents-shell oauth token rejected',
+      requestId,
+      method: request.method,
+      path: pathname,
+      errorName: error instanceof Error ? error.name : undefined,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      joseCode: typeof typedError.code === 'string' ? typedError.code : undefined,
+      token: decodeSafeJwtDiagnostics(token),
+      userAgent: request.headers.get('user-agent'),
+    }),
+  )
+}
+
+class AuthChallengeError extends Error {
+  readonly oauthError: string
+  readonly oauthDescription: string
+
+  constructor(challenge: OAuthChallenge) {
+    super(challenge.description)
+    this.name = 'AuthChallengeError'
+    this.oauthError = challenge.error
+    this.oauthDescription = challenge.description
+  }
+}
+
 class AuthVerifier {
   readonly config: AgentsShellConfig
   private readonly jwks: ReturnType<typeof createRemoteJWKSet>
@@ -479,6 +553,9 @@ const scopesSatisfied = (auth: AuthContext, acceptedScopes: string[]) =>
   acceptedScopes.some((scope) => auth.scopes.has(scope))
 
 const requireScopes = (auth: AuthContext, acceptedScopes: string[]) => {
+  if (auth.authError) {
+    throw new AuthChallengeError(auth.authError)
+  }
   if (!scopesSatisfied(auth, acceptedScopes)) {
     throw new Error(`missing required OAuth scope; one of ${acceptedScopes.join(', ')} is required`)
   }
@@ -946,14 +1023,12 @@ const withToolErrors =
       return await handler(args)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      return errorResult(
-        message,
-        buildBearerChallenge(
-          config,
-          'insufficient_scope',
-          'The requested agents-shell tool requires additional OAuth scopes.',
-        ),
-      )
+      const oauthError = error instanceof AuthChallengeError ? error.oauthError : 'insufficient_scope'
+      const oauthDescription =
+        error instanceof AuthChallengeError
+          ? error.oauthDescription
+          : 'The requested agents-shell tool requires additional OAuth scopes.'
+      return errorResult(message, buildBearerChallenge(config, oauthError, oauthDescription))
     }
   }
 
@@ -1722,11 +1797,12 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
   return server
 }
 
-const anonymousAuthContext = (): AuthContext => ({
+const anonymousAuthContext = (authError?: OAuthChallenge): AuthContext => ({
   subject: 'unauthenticated',
   email: null,
   scopes: new Set(),
   payload: {},
+  authError,
 })
 
 const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
@@ -1738,13 +1814,14 @@ const jsonResponse = (payload: unknown, init: ResponseInit = {}) =>
     },
   })
 
-const logAgentsShellRequest = (request: Request, status: number, startedAt: number) => {
+const logAgentsShellRequest = (request: Request, status: number, startedAt: number, requestId: string) => {
   const { pathname } = new URL(request.url)
   if (pathname !== '/mcp' && pathname !== PROTECTED_RESOURCE_PATH) return
 
   console.log(
     JSON.stringify({
       msg: 'agents-shell http request',
+      requestId,
       method: request.method,
       path: pathname,
       status,
@@ -1757,26 +1834,18 @@ const logAgentsShellRequest = (request: Request, status: number, startedAt: numb
 export const createAgentsShellRequestHandler = (config: AgentsShellConfig, runner = new AgentsShellRunner(config)) => {
   const verifier = new AuthVerifier(config)
 
-  const handleMcp = async (request: Request): Promise<Response> => {
+  const handleMcp = async (request: Request, requestId: string): Promise<Response> => {
     const token = bearerTokenFromRequest(request)
     let auth = anonymousAuthContext()
     if (token) {
       try {
         auth = await verifier.verify(token)
       } catch (error) {
-        return jsonResponse(
-          { error: 'invalid_token', detail: error instanceof Error ? error.message : String(error) },
-          {
-            status: 401,
-            headers: {
-              'WWW-Authenticate': buildBearerChallenge(
-                config,
-                'invalid_token',
-                'The access token is invalid or expired.',
-              ),
-            },
-          },
-        )
+        logOAuthFailure(request, requestId, token, error)
+        auth = anonymousAuthContext({
+          error: 'invalid_token',
+          description: 'The access token is invalid or expired.',
+        })
       }
     }
 
@@ -1804,6 +1873,7 @@ export const createAgentsShellRequestHandler = (config: AgentsShellConfig, runne
 
   return async (request: Request): Promise<Response> => {
     const startedAt = Date.now()
+    const requestId = randomUUID()
     const { pathname } = new URL(request.url)
     let response: Response
 
@@ -1820,14 +1890,14 @@ export const createAgentsShellRequestHandler = (config: AgentsShellConfig, runne
     } else if (pathname === PROTECTED_RESOURCE_PATH && request.method === 'GET') {
       response = jsonResponse(oauthProtectedResourceMetadata(config))
     } else if (pathname === '/mcp' && ['DELETE', 'GET', 'POST'].includes(request.method)) {
-      response = await handleMcp(request)
+      response = await handleMcp(request, requestId)
     } else if (pathname === '/mcp') {
       response = new Response('Method Not Allowed', { status: 405 })
     } else {
       response = new Response('Not Found', { status: 404 })
     }
 
-    logAgentsShellRequest(request, response.status, startedAt)
+    logAgentsShellRequest(request, response.status, startedAt, requestId)
     return response
   }
 }
