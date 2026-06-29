@@ -13,6 +13,7 @@ import {
   createAgentsShellServer,
   defaultAgentsShellConfigFromEnv,
   normalizeMcpAcceptHeader,
+  oauthIdentityAllowed,
   oauthProtectedResourceMetadata,
   resolveWorkspacePath,
   startAgentsShellServer,
@@ -40,10 +41,12 @@ const makeConfig = (): AgentsShellConfig => {
 const makeAuth = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthContext => ({
   subject: 'user-1',
   email: 'greg@proompteng.ai',
+  username: 'greg',
   scopes: new Set(scopes),
   payload: {
     sub: 'user-1',
     email: 'greg@proompteng.ai',
+    preferred_username: 'greg',
     scope: scopes.join(' '),
   },
 })
@@ -143,6 +146,17 @@ describe('agents-shell MCP OAuth metadata', () => {
     expect(buildBearerChallenge(config)).toBe(
       'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource"',
     )
+  })
+
+  it('allows a configured Keycloak username when the token has no email claim', () => {
+    const config = defaultAgentsShellConfigFromEnv({
+      AGENTS_SHELL_ALLOWED_EMAILS: 'greg@proompteng.ai',
+      AGENTS_SHELL_ALLOWED_USERNAMES: 'admin,agents-shell-chatgpt',
+    })
+
+    expect(oauthIdentityAllowed(config, { subject: 'user-1', email: 'greg@proompteng.ai', username: null })).toBe(true)
+    expect(oauthIdentityAllowed(config, { subject: 'user-2', email: null, username: 'admin' })).toBe(true)
+    expect(oauthIdentityAllowed(config, { subject: 'user-3', email: null, username: 'unknown' })).toBe(false)
   })
 
   it('normalizes MCP Accept headers for ChatGPT metadata clients', () => {

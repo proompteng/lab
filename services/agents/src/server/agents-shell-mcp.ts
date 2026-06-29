@@ -95,6 +95,7 @@ type RegisteredToolForList = {
 export type AuthContext = {
   subject: string
   email: string | null
+  username: string | null
   scopes: Set<string>
   payload: JWTPayload
   authError?: OAuthChallenge
@@ -113,6 +114,7 @@ export type AgentsShellConfig = {
   jwksUrl: string
   supportedScopes: string[]
   allowedEmails: Set<string>
+  allowedUsernames: Set<string>
   allowedSubjects: Set<string>
   workspaceRoot: string
   defaultTimeoutSeconds: number
@@ -383,6 +385,7 @@ export const defaultAgentsShellConfigFromEnv = (env: NodeJS.ProcessEnv = process
     jwksUrl: env.AGENTS_SHELL_JWKS_URL ?? `${issuer.replace(/\/$/, '')}/protocol/openid-connect/certs`,
     supportedScopes: ['openid', 'email', 'profile', SCOPES.offlineAccess, SCOPES.read, SCOPES.write, SCOPES.admin],
     allowedEmails: parseList(env.AGENTS_SHELL_ALLOWED_EMAILS),
+    allowedUsernames: parseList(env.AGENTS_SHELL_ALLOWED_USERNAMES),
     allowedSubjects: parseList(env.AGENTS_SHELL_ALLOWED_SUBJECTS),
     workspaceRoot: env.AGENTS_SHELL_WORKSPACE_ROOT ?? '/workspace',
     defaultTimeoutSeconds: Number(env.AGENTS_SHELL_DEFAULT_TIMEOUT_SECONDS ?? '60'),
@@ -417,6 +420,18 @@ export const oauthProtectedResourceMetadata = (config: AgentsShellConfig) => ({
 })
 
 const quoteAuthParam = (value: string) => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+
+export const oauthIdentityAllowed = (
+  config: AgentsShellConfig,
+  identity: { subject: string; email: string | null; username: string | null },
+) => {
+  if (config.allowedSubjects.size > 0 && !config.allowedSubjects.has(identity.subject)) return false
+  if (config.allowedEmails.size === 0 && config.allowedUsernames.size === 0) return true
+  return (
+    (identity.email ? config.allowedEmails.has(identity.email) : false) ||
+    (identity.username ? config.allowedUsernames.has(identity.username) : false)
+  )
+}
 
 export const buildBearerChallenge = (config: AgentsShellConfig, error?: string, errorDescription?: string) => {
   const metadataUrl = `${config.resource.replace(/\/$/, '')}${PROTECTED_RESOURCE_PATH}`
@@ -532,12 +547,8 @@ class AuthVerifier {
     if (!subject) throw new Error('token is missing subject')
 
     const email = typeof payload.email === 'string' ? payload.email : null
-    if (this.config.allowedSubjects.size > 0 && !this.config.allowedSubjects.has(subject)) {
-      throw new Error('subject is not allowed')
-    }
-    if (this.config.allowedEmails.size > 0 && (!email || !this.config.allowedEmails.has(email))) {
-      throw new Error('email is not allowed')
-    }
+    const username = typeof payload.preferred_username === 'string' ? payload.preferred_username : null
+    if (!oauthIdentityAllowed(this.config, { subject, email, username })) throw new Error('identity is not allowed')
 
     const scopes = new Set(
       String(payload.scope ?? '')
@@ -545,7 +556,7 @@ class AuthVerifier {
         .map((scope) => scope.trim())
         .filter(Boolean),
     )
-    return { subject, email, scopes, payload }
+    return { subject, email, username, scopes, payload }
   }
 }
 
@@ -677,6 +688,7 @@ export class AgentsShellRunner {
       event,
       subject: auth?.subject ?? null,
       email: auth?.email ?? null,
+      username: auth?.username ?? null,
       ...payload,
     })
     try {
@@ -1800,6 +1812,7 @@ export const createAgentsShellServer = (config: AgentsShellConfig, runner: Agent
 const anonymousAuthContext = (authError?: OAuthChallenge): AuthContext => ({
   subject: 'unauthenticated',
   email: null,
+  username: null,
   scopes: new Set(),
   payload: {},
   authError,

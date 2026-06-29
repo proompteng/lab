@@ -46,6 +46,7 @@ agentsShell:
       AGENTS_SHELL_RESOURCE: https://agents-shell.proompteng.ai
       AGENTS_SHELL_OAUTH_ISSUER: https://auth.proompteng.ai/realms/master
       AGENTS_SHELL_ALLOWED_EMAILS: greg@proompteng.ai,agents-shell-chatgpt@proompteng.ai
+      AGENTS_SHELL_ALLOWED_USERNAMES: admin,agents-shell-chatgpt
       AGENTS_SHELL_ALLOWED_K8S_NAMESPACES: ""
       AGENTS_SHELL_WORKSPACE_ROOT: /workspace
       AGENTS_SHELL_AUDIT_LOG_PATH: /workspace/.agents-shell/audit.jsonl
