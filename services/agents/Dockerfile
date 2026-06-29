@@ -9,6 +9,7 @@ ARG BUN_BASE_IMAGE=mirror.gcr.io/oven/bun
 ARG NODE24_VERSION=24.11.1
 ARG KUBECTL_VERSION=1.34.3
 ARG NATSCLI_VERSION=v0.4.0
+ARG UV_VERSION=0.11.14
 
 FROM --platform=$BUILDPLATFORM ${BUN_BASE_IMAGE}:${BUN_VERSION} AS agents-build-tools
 ARG BUILDARCH
@@ -302,6 +303,7 @@ ENV AGENTS_VERSION=${AGENTS_VERSION} \
 CMD ["bun", "run", "src/server/controller-entrypoint.ts"]
 
 FROM controller AS agents-shell
+ARG UV_VERSION
 
 RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   --mount=type=cache,sharing=locked,target=/var/lib/apt/lists \
@@ -310,6 +312,7 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   apt-get update -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20; \
   apt-get install -y --no-install-recommends \
   bash \
+  build-essential \
   ca-certificates \
   curl \
   gh \
@@ -317,6 +320,9 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   jq \
   openssh-client \
   procps \
+  python3-dev \
+  python3-pip \
+  python3-venv \
   python3 \
   ripgrep \
   wget \
@@ -324,11 +330,14 @@ RUN --mount=type=cache,sharing=locked,target=/var/cache/apt \
   ln -sf /usr/bin/python3 /usr/local/bin/python; \
   rm -rf /var/lib/apt/lists/*
 
+RUN python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}" \
+  && uv --version
+
 WORKDIR /app/services/agents
 RUN install -o root -g root -m 0755 ./scripts/apply_patch.py /usr/local/bin/apply_patch \
   && chmod +x ./scripts/agents-shell-entrypoint.sh \
   && mkdir -p /workspace /workspace/.agents-shell \
-  && command -v bash git gh rg curl jq yq python3 ps wget kubectl apply_patch \
+  && command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch \
   && tmp="$(mktemp -d)" \
   && cd "$tmp" \
   && printf '%s\n' old > smoke.txt \
