@@ -60,6 +60,15 @@ describe('Agents control-plane image layout', () => {
     expect(dockerfileTarget('controller')).toContain('AGENTS_SERVER_PROFILE=agents-controllers')
   })
 
+  it('bundles repo-work Python tooling in the agents-shell target', () => {
+    const content = dockerfileTarget('agents-shell')
+
+    expect(content).toContain('python3-pip')
+    expect(content).toContain('python3-venv')
+    expect(content).toContain('python3 -m pip install --break-system-packages --no-cache-dir "uv==${UV_VERSION}"')
+    expect(content).toContain('command -v bash git gh rg curl jq yq python3 uv ps wget kubectl apply_patch')
+  })
+
   it('runs package builds on the build platform while keeping runtime dependencies target-native', () => {
     const content = dockerfile()
 
