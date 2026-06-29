@@ -314,7 +314,7 @@ describe('agents-shell MCP tools', () => {
     expect(applyPatch?.annotations?.readOnlyHint).toBe(false)
     expect(applyPatch?.annotations?.destructiveHint).toBe(false)
     expect(applyPatch?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
 
     const git = tools.tools.find((tool) => tool.name === 'git')
@@ -328,7 +328,7 @@ describe('agents-shell MCP tools', () => {
     const gitWrite = tools.tools.find((tool) => tool.name === 'git_write')
     expect(gitWrite?.annotations?.destructiveHint).toBe(true)
     expect(gitWrite?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
 
     const kubectl = tools.tools.find((tool) => tool.name === 'kubectl')
@@ -343,14 +343,14 @@ describe('agents-shell MCP tools', () => {
     expect(kubectlAdmin?.annotations?.destructiveHint).toBe(true)
     expect(kubectlAdmin?.annotations?.openWorldHint).toBe(true)
     expect(kubectlAdmin?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
 
     const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
     expect(agentStart?.annotations?.destructiveHint).toBe(true)
     expect(agentStart?.annotations?.openWorldHint).toBe(true)
     expect(agentStart?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.write'] }],
+      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
     })
 
     await clientTransport.close()
@@ -386,6 +386,7 @@ describe('agents-shell MCP tools', () => {
     expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
 
     for (const tool of rawTools) {
+      expect(tool.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
       expect(tool.securitySchemes).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['agents-shell.admin']) })]),
       )
@@ -647,12 +648,9 @@ fi
     }
   })
 
-  it('returns an OAuth challenge when a tool lacks required scope', async () => {
+  it('returns an OAuth challenge when auth lacks the linked agents-shell scope', async () => {
     const config = makeConfig()
-    const { client, server, clientTransport, serverTransport } = await connectServer(
-      config,
-      makeAuth(['agents-shell.read']),
-    )
+    const { client, server, clientTransport, serverTransport } = await connectServer(config, makeAuth(['openid']))
 
     const result = await client.callTool({
       name: 'shell_run',
