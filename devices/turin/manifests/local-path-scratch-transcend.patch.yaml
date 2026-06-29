@@ -1,11 +1,11 @@
 apiVersion: v1alpha1
 kind: UserVolumeConfig
-name: local-path-provisioner-turin-scratch-transcend
+name: turin-nvme-transcend
 provisioning:
   # Turin-local scratch only. This disk is single-host and must not hold durable state.
-  # Live by-id proof on 2026-06-28:
-  # /dev/disk/by-id/nvme-TS256GMTE652T2_I203860329 -> /dev/nvme1n1
+  # Live by-id proof on 2026-06-29:
+  # /dev/disk/by-id/nvme-TS256GMTE652T2_I203860329 -> /dev/nvme0n1
   diskSelector:
-    match: disk.dev_path == '/dev/nvme1n1'
+    match: "'/dev/disk/by-id/nvme-TS256GMTE652T2_I203860329' in disk.symlinks && !system_disk"
   minSize: 100GB
   grow: true
