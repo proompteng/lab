@@ -10,6 +10,7 @@ import ai.proompteng.dorvud.ta.stream.OptionsSnapshotPayload
 import ai.proompteng.dorvud.ta.stream.OptionsSurfaceFeaturePayload
 import ai.proompteng.dorvud.ta.stream.OptionsTaStatusPayload
 import ai.proompteng.dorvud.ta.stream.OptionsTradePayload
+import ai.proompteng.dorvud.ta.stream.parseInstantOrNull
 import ai.proompteng.dorvud.ta.stream.parseOptionsContractIdentity
 import kotlinx.serialization.builtins.serializer
 import org.apache.flink.api.common.eventtime.SerializableTimestampAssigner
@@ -723,6 +724,7 @@ data class OptionsBarAccumulator(
   var volume: Double = 0.0,
   var count: Long = 0L,
   var sawQuote: Boolean = false,
+  var sawSnapshot: Boolean = false,
 ) : Serializable {
   fun updateTrade(value: OptionsTradePayload) {
     underlyingSymbol = value.underlyingSymbol
@@ -743,6 +745,11 @@ data class OptionsBarAccumulator(
   fun markQuote(value: OptionsQuotePayload) {
     underlyingSymbol = value.underlyingSymbol
     sawQuote = true
+  }
+
+  fun markSnapshot(value: OptionsSnapshotPayload) {
+    underlyingSymbol = value.underlyingSymbol
+    sawSnapshot = true
   }
 }
 
@@ -774,6 +781,51 @@ data class OptionsSnapshotState(
   val midPrice: Double?,
   val underlyingSymbol: String,
 ) : Serializable
+
+internal fun snapshotQuoteState(
+  snapshot: OptionsSnapshotPayload,
+  fallbackEventMs: Long,
+): OptionsQuoteState? {
+  val bidPrice = snapshot.latestBidPrice.positiveOrNull() ?: return null
+  val askPrice = snapshot.latestAskPrice.positiveOrNull() ?: return null
+  val bidSize = snapshot.latestBidSize?.takeIf { it >= 0.0 } ?: return null
+  val askSize = snapshot.latestAskSize?.takeIf { it >= 0.0 } ?: return null
+  val quoteEventMs = parseInstantOrNull(snapshot.latestQuoteTs)?.toEpochMilli() ?: fallbackEventMs
+  return OptionsQuoteState(
+    eventMs = quoteEventMs,
+    bidPrice = bidPrice,
+    bidSize = bidSize,
+    askPrice = askPrice,
+    askSize = askSize,
+    underlyingSymbol = snapshot.underlyingSymbol,
+  )
+}
+
+internal fun snapshotReferencePrice(
+  snapshot: OptionsSnapshotPayload,
+  quote: OptionsQuoteState?,
+): Double? =
+  snapshot.markPrice.positiveOrNull()
+    ?: snapshot.midPrice.positiveOrNull()
+    ?: quote?.midPrice()?.positiveOrNull()
+
+internal fun snapshotAnalyticsBucket(
+  existing: OptionsBarAccumulator?,
+  snapshot: OptionsSnapshotPayload,
+  quote: OptionsQuoteState?,
+  windowStartMs: Long,
+  windowEndMs: Long,
+): OptionsBarAccumulator? {
+  if (snapshotReferencePrice(snapshot, quote) == null) return null
+  val bucket = existing ?: OptionsBarAccumulator(windowStartMs, windowEndMs, snapshot.underlyingSymbol)
+  bucket.markSnapshot(snapshot)
+  return bucket
+}
+
+internal fun optionsOutputSource(bucket: OptionsBarAccumulator): String =
+  if (bucket.count == 0L && bucket.sawSnapshot) "flink-snapshot" else "flink"
+
+private fun Double?.positiveOrNull(): Double? = this?.takeIf { it.isFinite() && it > 0.0 }
 
 data class OptionsBarHistoryEntry(
   val eventMs: Long,
@@ -857,6 +909,24 @@ private class OptionsContractAnalyticsProcessFunction(
 
     value.snapshot?.let { envelope ->
       val snapshot = envelope.payload
+      val snapshotQuote = snapshotQuoteState(snapshot, envelope.eventTs.toEpochMilli())
+      if (snapshotQuote != null) {
+        val quotes = quoteHistoryState.get().toMutableList()
+        quotes.add(snapshotQuote)
+        quoteHistoryState.update(pruneQuotes(quotes, windowEndMs))
+      }
+      val snapshotBucket =
+        snapshotAnalyticsBucket(
+          existing = bucketState.get(windowStartMs),
+          snapshot = snapshot,
+          quote = snapshotQuote,
+          windowStartMs = windowStartMs,
+          windowEndMs = windowEndMs,
+        )
+      if (snapshotBucket != null) {
+        bucketState.put(windowStartMs, snapshotBucket)
+        ctx.timerService().registerEventTimeTimer(windowEndMs)
+      }
       val snapshots = snapshotHistoryState.get().toMutableList()
       snapshots.add(
         OptionsSnapshotState(
@@ -1037,6 +1107,7 @@ private class OptionsContractAnalyticsProcessFunction(
         start = Instant.ofEpochMilli(windowStartMs).toString(),
         end = eventTs.toString(),
       )
+    val outputSource = optionsOutputSource(bucket)
 
     out.collect(
       OptionsAnalyticsEmission(
@@ -1050,7 +1121,7 @@ private class OptionsContractAnalyticsProcessFunction(
             seq = seq,
             payload = barPayload,
             isFinal = true,
-            source = "flink",
+            source = outputSource,
             window = window,
             version = 1,
           ),
@@ -1064,7 +1135,7 @@ private class OptionsContractAnalyticsProcessFunction(
             seq = seq,
             payload = featurePayload,
             isFinal = true,
-            source = "flink",
+            source = outputSource,
             window = window,
             version = 1,
           ),
