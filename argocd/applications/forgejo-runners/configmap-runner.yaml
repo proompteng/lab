@@ -10,30 +10,30 @@ data:
 
     runner:
       file: /data/.runner
-      capacity: 2
+      capacity: 1
       timeout: 3h
       shutdown_timeout: 5m
       insecure: false
-      fetch_timeout: 5s
-      fetch_interval: 2s
-      report_interval: 1s
+      fetch_timeout: 30s
+      fetch_interval: 10s
+      report_interval: 10s
 
     cache:
       enabled: true
       dir: /data/cache
-      host: ''
-      external_server: ''
-      secret: ''
-      actions_cache_url_override: ''
+      host: ""
+      external_server: ""
+      secret: ""
+      actions_cache_url_override: ""
 
     container:
-      network: ''
+      network: ""
       enable_ipv6: false
       privileged: false
-      options: ''
+      options: ""
       workdir_parent: /data/workspace
       valid_volumes:
-        - '**'
+        - "**"
       docker_host: unix:///var/run/docker.sock
       force_pull: false
       force_rebuild: false
