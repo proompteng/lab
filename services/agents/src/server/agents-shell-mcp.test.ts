@@ -72,6 +72,7 @@ const listToolsOnWire = async (config: AgentsShellConfig, auth = makeAuth()) => 
     result?: {
       tools?: Array<{
         name?: string
+        description?: string
         inputSchema?: Record<string, unknown>
         outputSchema?: Record<string, unknown>
         securitySchemes?: unknown
@@ -87,6 +88,7 @@ const listToolsOnWire = async (config: AgentsShellConfig, auth = makeAuth()) => 
           result?: {
             tools?: Array<{
               name?: string
+              description?: string
               inputSchema?: Record<string, unknown>
               outputSchema?: Record<string, unknown>
               securitySchemes?: unknown
@@ -359,6 +361,8 @@ describe('agents-shell MCP tools', () => {
     await server.close()
 
     const rawTools = await listToolsOnWire(config)
+    expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(18_000)
+
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
     expect(rawSearch?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
     expect(rawSearch?._meta).toMatchObject({
@@ -374,18 +378,16 @@ describe('agents-shell MCP tools', () => {
     const rawShellRun = rawTools.find((tool) => tool.name === 'shell_run')
     expect(rawShellRun).toBeDefined()
     const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
-    const rawShellRunOutputProperties = rawShellRun?.outputSchema?.properties as Record<string, Record<string, unknown>>
     expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
     expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
-    expect(rawShellRunOutputProperties.exitCode.minimum).toBeUndefined()
-    expect(rawShellRunOutputProperties.exitCode.anyOf).toBeUndefined()
-    expect(rawShellRunOutputProperties.exitCode.type).toEqual(['integer', 'null'])
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
     expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
     expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
 
     for (const tool of rawTools) {
+      expect(tool.description?.length ?? 0).toBeLessThanOrEqual(140)
+      expect(tool.outputSchema).toBeUndefined()
       expect(tool.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
       expect(tool.securitySchemes).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['agents-shell.admin']) })]),
