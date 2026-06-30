@@ -347,7 +347,9 @@ describe('native OCI build workflows', () => {
     expect(froussardKnativeService).toContain(
       'serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller',
     )
-    expect(froussardKnativeService).toContain('serving.knative.dev/lastModifier: admin')
+    expect(froussardKnativeService).toContain(
+      'serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller',
+    )
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {
