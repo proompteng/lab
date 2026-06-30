@@ -177,6 +177,25 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             resources,
         )
 
+    def test_empirical_artifacts_retention_cronjob_is_bounded(self) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "17 4 * * *")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
+        self.assertEqual(job_spec.get("backoffLimit"), 0)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 1800)
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn('mc find "empirical/${BUCKET_NAME}"', args)
+        self.assertIn('--older-than "${RETENTION_DAYS}d"', args)
+
     def test_generated_resource_retention_cronjob_prunes_only_stale_residue(
         self,
     ) -> None:

@@ -127,6 +127,9 @@ describe('Torghut manifest scheduling', () => {
         const jobSpec = getAtPath(manifest, ['spec', 'jobTemplate', 'spec'])
         expect(spec.failedJobsHistoryLimit, path).toBe(2)
         expect(jobSpec.ttlSecondsAfterFinished, path).toBe(86400)
+        expect(typeof jobSpec.backoffLimit, path).toBe('number')
+        expect(jobSpec.backoffLimit, path).toBeGreaterThanOrEqual(0)
+        expect(jobSpec.activeDeadlineSeconds, path).toBeGreaterThan(0)
         checkedCronJobs += 1
       }
     }
