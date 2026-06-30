@@ -110,6 +110,27 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             {"name": "torghut-clickhouse-auth", "key": "torghut_password"},
         )
 
+    def test_direct_torghut_deployments_bound_replica_set_history(self) -> None:
+        deployment_paths = [
+            "argocd/applications/torghut/alloy-deployment.yaml",
+            "argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml",
+            "argocd/applications/torghut/llm-guardrails-exporter.yaml",
+            "argocd/applications/torghut/ws/deployment.yaml",
+            "argocd/applications/torghut-options/catalog/deployment.yaml",
+            "argocd/applications/torghut-options/enricher/deployment.yaml",
+            "argocd/applications/torghut-options/ws/deployment.yaml",
+        ]
+
+        for path in deployment_paths:
+            with self.subTest(path=path):
+                deployment = next(
+                    item
+                    for item in _load_yaml_mappings(path)
+                    if item.get("kind") == "Deployment"
+                )
+                spec = cast(Mapping[str, object], deployment.get("spec", {}))
+                self.assertEqual(spec.get("revisionHistoryLimit"), 2)
+
     def test_whitepaper_semantic_backfill_runs_on_arm_nodes(self) -> None:
         manifest = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
