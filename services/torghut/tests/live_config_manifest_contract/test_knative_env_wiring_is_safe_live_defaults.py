@@ -550,7 +550,10 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
 
         self.assertEqual(live_env.get("TRADING_MODE"), "live")
         self.assertTrue(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
-        self.assertNotIn("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT", live_env)
+        self.assertNotIn(
+            "TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT",
+            live_env,
+        )
         self.assertTrue(
             _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
             "live proof floor requires lifecycle telemetry even while submit stays disabled",
@@ -567,7 +570,9 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "torghut-order-feed-live-default",
         )
         self.assertEqual(live_env.get("TRADING_ORDER_FEED_ASSIGNMENT_MODE"), "manual")
-        self.assertEqual(live_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"), "earliest")
+        self.assertEqual(
+            live_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"), "earliest"
+        )
         self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_WORKFLOW_ENABLED"))
         self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_KAFKA_ENABLED"))
         self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_AGENTRUN_AUTO_DISPATCH"))
