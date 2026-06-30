@@ -17,7 +17,7 @@ export type SymphonyReleaseContract = {
   tag: string
   digest: string
   image: string
-  createdAt: string
+  createdAt?: string
 }
 
 type ContractField = keyof SymphonyReleaseContract
@@ -125,10 +125,10 @@ const assertValidContract = (contract: SymphonyReleaseContract) => {
   if (!contract.image.trim()) {
     throw new Error('image cannot be empty')
   }
-  if (!contract.createdAt.trim()) {
-    throw new Error('createdAt cannot be empty')
+  if (contract.createdAt !== undefined && !contract.createdAt.trim()) {
+    throw new Error('createdAt cannot be empty when set')
   }
-  if (Number.isNaN(Date.parse(contract.createdAt))) {
+  if (contract.createdAt !== undefined && Number.isNaN(Date.parse(contract.createdAt))) {
     throw new Error(`Invalid createdAt '${contract.createdAt}'`)
   }
 }
@@ -150,7 +150,7 @@ export const readReleaseContract = (path: string): SymphonyReleaseContract => {
     tag: parsed.tag ?? '',
     digest: normalizeDigest(parsed.digest ?? ''),
     image: parsed.image ?? '',
-    createdAt: parsed.createdAt ?? '',
+    ...(parsed.createdAt === undefined ? {} : { createdAt: parsed.createdAt }),
   }
   assertValidContract(contract)
   return contract

@@ -1,9 +1,6 @@
 #!/usr/bin/env bun
 
-import { resolve } from 'node:path'
-
-import { repoRoot } from '../shared/cli'
-import { buildAndPushDockerImage } from '../shared/docker'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -13,31 +10,34 @@ export type BuildImageOptions = {
   context?: string
   dockerfile?: string
   cacheRef?: string
+  dryRun?: boolean
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.SYMPHONY_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.SYMPHONY_IMAGE_REPOSITORY ?? 'lab/symphony'
   const tag = options.tag ?? process.env.SYMPHONY_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const context = resolve(repoRoot, options.context ?? process.env.SYMPHONY_BUILD_CONTEXT ?? '.')
-  const dockerfile = resolve(
-    repoRoot,
-    options.dockerfile ?? process.env.SYMPHONY_DOCKERFILE ?? 'services/symphony/Dockerfile',
-  )
-  const cacheRef = options.cacheRef ?? process.env.SYMPHONY_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const commit = execGit(['rev-parse', 'HEAD'])
 
-  return buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'symphony',
+    imageName: 'symphony',
+    packageAttr: 'symphony-image',
     registry,
     repository,
     tag,
-    context,
-    dockerfile,
-    cacheRef,
+    sourceSha: commit,
+    latestTag: 'latest',
+    dryRun: options.dryRun,
   })
+
+  return { image: `${registry}/${repository}:${tag}`, digest: result.reference, commit }
 }
 
 if (import.meta.main) {
-  buildImage().catch((error) => {
+  const args = process.argv.slice(2)
+  const cliTag = args[0]?.trim() && !args[0]?.startsWith('-') ? args[0] : undefined
+  buildImage({ tag: cliTag, dryRun: args.includes('--dry-run') }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })

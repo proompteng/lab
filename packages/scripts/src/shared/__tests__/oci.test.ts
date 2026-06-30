@@ -27,6 +27,7 @@ const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-pr
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
+const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
@@ -41,9 +42,12 @@ const productImageModules = [
   readRepoFile('nix/images/proompteng.nix'),
   readRepoFile('nix/images/synthesis.nix'),
 ]
+const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
+const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-image.ts')
+const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
 const productBuildScripts = [
   readRepoFile('packages/scripts/src/app/build-image.ts'),
   readRepoFile('packages/scripts/src/docs/build-image.ts'),
@@ -271,11 +275,15 @@ describe('native OCI build workflows', () => {
     }
 
     expect(productNixWorkflow).not.toContain("'nix/**'")
-    for (const workflow of [agentsBuildWorkflow, jangarBuildWorkflow, symphonyBuildWorkflow]) {
+    for (const workflow of [agentsBuildWorkflow, jangarBuildWorkflow]) {
       expect(workflow).toContain("'packages/scripts/src/shared/cli.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/docker.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/git.ts'")
     }
+    expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/cli.ts'")
+    expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/git.ts'")
+    expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
+    expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
 
     expect(productNixWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
@@ -309,6 +317,8 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       enabledProductReleaseWorkflow,
+      symphonyBuildWorkflow,
+      symphonyReleaseWorkflow,
     ]
     for (const workflow of migratedWorkflows) {
       expect(workflow).not.toContain('docker/build-push-action')
@@ -354,6 +364,29 @@ describe('native OCI build workflows', () => {
     }
   })
 
+  it('routes the enabled Symphony fleet image through a real Nix OCI attr', () => {
+    expect(flake).toContain('"symphony-image"')
+    expect(repoFileExists('nix/images/symphony.nix')).toBe(true)
+    expect(symphonyImageModule).toContain('pname = "openai-codex-cli"')
+    expect(symphonyImageModule).toContain('version = codexVersion')
+    expect(symphonyImageModule).toContain('dependencyClosure = "bunCache";')
+    expect(symphonyImageModule).toContain('"@proompteng/symphony"')
+    expect(symphonyImageModule).toContain('pkgs.uv')
+
+    expect(symphonyBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(symphonyBuildWorkflow).toContain('image_name: symphony')
+    expect(symphonyBuildWorkflow).toContain('package_attr: symphony-image')
+    expect(symphonyBuildWorkflow).toContain('symphony-release-contract')
+    expect(symphonyBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(symphonyBuildWorkflow).not.toContain('oven-sh/setup-bun')
+    expect(symphonyBuildWorkflow).not.toContain('docker/setup-buildx-action')
+
+    expect(symphonyReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(symphonyReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
+    expect(symphonyReleaseWorkflow).not.toContain('docker buildx')
+    expect(symphonyReleaseWorkflow).not.toContain('docker/setup-buildx-action')
+  })
+
   it('routes enabled product app image builds through real Nix OCI attrs', () => {
     for (const [service, packageAttr] of [
       ['proompteng', 'proompteng-image'],
@@ -385,6 +418,10 @@ describe('native OCI build workflows', () => {
     }
     expect(bunWorkspaceServiceModule).toContain('cp -R ${depsSource}/. "$TMPDIR/work/"')
     expect(bunWorkspaceServiceModule).toContain('--cache-dir "$BUN_INSTALL_CACHE_DIR"')
+    expect(bunWorkspaceServiceModule).toContain('for attempt in 1 2 3')
+    expect(bunWorkspaceServiceModule).toContain('IntegrityCheckFailed|Integrity check failed')
+    expect(bunWorkspaceServiceModule).toContain('rm -rf "$BUN_INSTALL_CACHE_DIR"')
+    expect(bunWorkspaceServiceModule).toContain("find . -path '*/node_modules' -prune -exec rm -rf {} +")
   })
 
   it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
@@ -398,7 +435,13 @@ describe('native OCI build workflows', () => {
   })
 
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
-    for (const script of [oiratBuildScript, bumbaBuildScript, froussardDeployScript, ...productBuildScripts]) {
+    for (const script of [
+      oiratBuildScript,
+      bumbaBuildScript,
+      froussardDeployScript,
+      symphonyBuildScript,
+      ...productBuildScripts,
+    ]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")
       expect(script).not.toContain("from '../shared/docker'")
       expect(script).not.toContain('buildAndPushDockerImage')
@@ -411,6 +454,11 @@ describe('native OCI build workflows', () => {
       expect(script).toContain('noApply')
       expect(script).toContain('digest:')
     }
+    expect(symphonyDeployScript).not.toContain("from '../shared/docker'")
+    expect(symphonyDeployScript).not.toContain('inspectImageDigest')
+    expect(symphonyDeployScript).toContain('dryRun')
+    expect(symphonyDeployScript).toContain('noApply')
+    expect(symphonyDeployScript).toContain('digest:')
 
     expect(nixOciDeployScript).toContain("await run('nix', ['build', `.#${packageAttr}`")
     expect(nixOciDeployScript).toContain("await run('nix', pushArgs")
@@ -457,6 +505,9 @@ describe('native OCI build workflows', () => {
       'argocd/applications/oirat/kustomization.yaml',
       'argocd/applications/olden/kustomization.yaml',
       'argocd/applications/proompteng/kustomization.yaml',
+      'argocd/applications/symphony/kustomization.yaml',
+      'argocd/applications/symphony-jangar/kustomization.yaml',
+      'argocd/applications/symphony-torghut/kustomization.yaml',
       'argocd/applications/synthesis/kustomization.yaml',
     ]) {
       expect(autoPrReleaseBranchesWorkflow).toContain(`"${path}"`)

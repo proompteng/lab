@@ -22,9 +22,16 @@ on:
       - '.github/workflows/symphony-post-deploy-verify.yml'
       - '.github/workflows/symphony-deploy-automerge.yml'
       - '.github/workflows/torghut-post-deploy-verify.yml'
-      - '.github/workflows/docker-build-common.yaml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
+      - 'nix/images/symphony.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'package.json'
       - 'bun.lock'
+      - 'flake.nix'
+      - 'flake.lock'
       - 'tsconfig.base.json'
   workflow_dispatch:
 
