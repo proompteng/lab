@@ -244,6 +244,11 @@ describe('native OCI build workflows', () => {
     expect(ociPushScript).toContain('skopeo --policy "${policy_json}" copy --format oci')
   })
 
+  it('tags platform latest refs without re-copying image layers', () => {
+    expect(ociPushScript).toContain('crane tag "${reference}" "${latest_tag}"')
+    expect(ociPushScript).not.toContain('skopeo --policy "${policy_json}" copy --format oci "docker://${reference}"')
+  })
+
   it('does not use Docker Buildx or docker daemon commands in migrated workflows', () => {
     const migratedWorkflows = [atticWorkflow, nixOciWorkflow, oiratWorkflow, bumbaWorkflow, froussardWorkflow]
     for (const workflow of migratedWorkflows) {

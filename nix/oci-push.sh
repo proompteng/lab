@@ -84,7 +84,7 @@ skopeo --policy "${policy_json}" copy --format oci "docker-archive:${resolved_ta
 if [[ -n "${latest_tag}" ]]; then
   latest_reference="${image}:${latest_tag}"
   echo "Tagging ${reference} as ${latest_reference}."
-  skopeo --policy "${policy_json}" copy --format oci "docker://${reference}" "docker://${latest_reference}"
+  crane tag "${reference}" "${latest_tag}"
 fi
 
 digest="$(crane digest "${reference}")"
