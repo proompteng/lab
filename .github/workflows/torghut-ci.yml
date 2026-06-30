@@ -22,6 +22,7 @@ on:
       - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
   pull_request:
     paths:
       - 'services/torghut/**'
@@ -42,6 +43,7 @@ on:
       - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
+      - 'argocd/applications/torghut-hyperliquid-runtime/**'
   workflow_dispatch:
 
 permissions:
@@ -130,7 +132,7 @@ jobs:
           if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|docker|git)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release|hyperliquid-feed-release|ta-release|ws-release)\.yml$|\.github/workflows/torghut-(build-push|hyperliquid-feed-build-push|ta-build-push|ws-build-push)\.yaml$)'; then
             service=true
           fi
-          if matches_any '^argocd/applications/(torghut|torghut-options)/'; then
+          if matches_any '^argocd/applications/(torghut|torghut-options|torghut-hyperliquid-runtime)/'; then
             manifests=true
           fi
 
@@ -154,6 +156,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           BASE_REF: ${{ github.base_ref }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
           git init "${GITHUB_WORKSPACE}"
@@ -161,8 +164,19 @@ jobs:
           git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           if [ "${EVENT_NAME}" = "pull_request" ]; then
             git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
-            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
-            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            if git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"; then
+              git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            elif git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/head:refs/remotes/origin/pull/${PR_NUMBER}/head"; then
+              echo "Pull request merge ref is unavailable; checking out pull request head ref."
+              git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/head"
+            elif [ -n "${PR_HEAD_SHA}" ]; then
+              echo "Pull request refs are unavailable; checking out recorded head SHA ${PR_HEAD_SHA}."
+              git fetch --no-tags --prune origin "${PR_HEAD_SHA}"
+              git checkout --force "${PR_HEAD_SHA}"
+            else
+              echo "Unable to fetch pull request merge ref, head ref, or head SHA for #${PR_NUMBER}" >&2
+              exit 1
+            fi
           else
             git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
             git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow

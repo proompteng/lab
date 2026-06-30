@@ -378,6 +378,7 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          RELEASE_LANE: ${{ steps.gates.outputs.release_lane }}
         run: |
           set -euo pipefail
 
@@ -387,6 +388,9 @@ jobs:
             'argo-lint|lint'
             'kubeconform|validate'
           )
+          if [ "${RELEASE_LANE}" != 'hyperliquid-feed' ]; then
+            required_checks+=('torghut-ci|Release manifest changes')
+          fi
 
           deadline=$((SECONDS + 600))
           while true; do
