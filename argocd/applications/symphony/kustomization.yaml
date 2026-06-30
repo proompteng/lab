@@ -7,7 +7,6 @@ configMapGenerator:
       - WORKFLOW.md
 resources:
   - ../symphony-base
-  - codex-auth-sealedsecret.yaml
   - linear-api-key-sealedsecret.yaml
   - posthog-sealedsecret.yaml
   - target-argocd-role.yaml

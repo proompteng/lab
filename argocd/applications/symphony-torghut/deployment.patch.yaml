@@ -50,4 +50,4 @@ spec:
             name: symphony-workflow-torghut
         - name: codex-auth
           secret:
-            secretName: codex-auth-torghut
+            secretName: codex-auth

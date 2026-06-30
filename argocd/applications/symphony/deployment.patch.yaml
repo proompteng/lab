@@ -11,4 +11,4 @@ spec:
       volumes:
         - name: codex-auth
           secret:
-            secretName: codex-auth-symphony
+            secretName: codex-auth

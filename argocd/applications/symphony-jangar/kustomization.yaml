@@ -14,7 +14,6 @@ configMapGenerator:
       - WORKFLOW.md
 resources:
   - ../symphony-base
-  - codex-auth-sealedsecret.yaml
   - linear-api-key-sealedsecret.yaml
   - target-argocd-role.yaml
   - target-argocd-rolebinding.yaml

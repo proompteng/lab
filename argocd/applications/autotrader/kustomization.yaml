@@ -3,7 +3,7 @@ kind: Kustomization
 resources:
   - autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml
   - autonomous-trader-agents-artifacts-sealedsecret.yaml
-  - autonomous-trader-codex-auth-sealedsecret.yaml
+  - codex-auth-externalsecret.yaml
   - autonomous-trader-github-token-sealedsecret.yaml
   - autonomous-trader-system-prompt-configmap.yaml
   - autonomous-trader-serviceaccount.yaml

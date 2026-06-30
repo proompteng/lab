@@ -655,7 +655,12 @@ crossProductDescribe('autonomous trader provider', () => {
       'synthesis-deep-alpha-agentrun-template.yaml',
     ])
     expect((synthesisAgentResources ?? []).join('\n')).not.toContain('autonomous-trader')
-    expect(autotraderResources?.every((resource) => resource.startsWith('autonomous-trader-'))).toBe(true)
+    expect(
+      autotraderResources?.every(
+        (resource) => resource.startsWith('autonomous-trader-') || resource === 'codex-auth-externalsecret.yaml',
+      ),
+    ).toBe(true)
+    expect(autotraderResources).toContain('codex-auth-externalsecret.yaml')
     expect(autotraderResources).toContain('autonomous-trader-schedule.yaml')
     expect(autotraderResources).toContain('autonomous-trader-scorecard-readback-schedule.yaml')
   })
@@ -749,6 +754,7 @@ crossProductDescribe('autonomous trader provider', () => {
 
     expect(resources).toContain('autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml')
     expect(resources).not.toContain('autonomous-trader-alpaca-mcp-sealedsecret.yaml')
+    expect(resources).toContain('codex-auth-externalsecret.yaml')
     expect(resources).toContain('autonomous-trader-schedule.yaml')
     expect(resources).toContain('autonomous-trader-agentrun-template.yaml')
     expect(resources).toContain('autonomous-trader-green-system-prompt-configmap.yaml')
@@ -765,7 +771,6 @@ crossProductDescribe('autonomous trader provider', () => {
     for (const path of [
       'argocd/applications/autotrader/autonomous-trader-dedicated-alpaca-mcp-sealedsecret.yaml',
       'argocd/applications/autotrader/autonomous-trader-agents-artifacts-sealedsecret.yaml',
-      'argocd/applications/autotrader/autonomous-trader-codex-auth-sealedsecret.yaml',
       'argocd/applications/autotrader/autonomous-trader-github-token-sealedsecret.yaml',
     ]) {
       const sealedSecret = readYamlObjects(path).find((manifest) => objectAt(manifest, 'kind') === 'SealedSecret')
@@ -774,6 +779,37 @@ crossProductDescribe('autonomous trader provider', () => {
       expect(objectAt(labels, 'app.kubernetes.io/component')).toBe('autonomous-trader')
       expect(objectAt(labels, 'app.kubernetes.io/part-of')).toBe('autotrader')
     }
+    const codexAuthExternalSecret = readYamlObjects(
+      'argocd/applications/autotrader/codex-auth-externalsecret.yaml',
+    ).find((manifest) => objectAt(manifest, 'kind') === 'ExternalSecret')
+    const codexAuthExternalSecretSpec = objectAt(codexAuthExternalSecret, 'spec')
+    const codexAuthSecretStoreRef = objectAt(codexAuthExternalSecretSpec, 'secretStoreRef')
+    const codexAuthTarget = objectAt(codexAuthExternalSecretSpec, 'target')
+    const codexAuthData = objectAt(codexAuthExternalSecretSpec, 'data') as Record<string, unknown>[] | undefined
+
+    expect(objectAt(objectAt(codexAuthExternalSecret, 'metadata'), 'name')).toBe('codex-auth')
+    expect(objectAt(objectAt(codexAuthExternalSecret, 'metadata'), 'namespace')).toBe('synthesis')
+    expect(codexAuthSecretStoreRef).toEqual({
+      name: 'onepassword-infra',
+      kind: 'ClusterSecretStore',
+    })
+    expect(codexAuthTarget).toEqual({
+      name: 'codex-auth',
+      creationPolicy: 'Owner',
+      deletionPolicy: 'Retain',
+    })
+    expect(codexAuthData).toEqual([
+      expect.objectContaining({
+        secretKey: 'auth.json',
+        remoteRef: {
+          key: 'codex-auth/auth.json',
+          conversionStrategy: 'Default',
+          decodingStrategy: 'None',
+          metadataPolicy: 'None',
+          nullBytePolicy: 'Ignore',
+        },
+      }),
+    ])
     expect(
       existsSync(resolve(process.cwd(), 'argocd/applications/autotrader/autonomous-trader-agentrun-template.yaml')),
     ).toBe(true)

@@ -3,7 +3,7 @@ kind: Kustomization
 namespace: agents
 resources:
   - postgres-cluster.yaml
-  - codex-auth-sealedsecret.yaml
+  - codex-auth-externalsecret.yaml
   - hf-router-token-sealedsecret.yaml
   - codex-secretbinding.yaml
   - codex-agent.yaml
