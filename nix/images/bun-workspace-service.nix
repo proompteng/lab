@@ -118,6 +118,7 @@ let
       nodejs
       pkgs.bash
       pkgs.coreutils
+      pkgs.findutils
     ];
 
     dontConfigure = true;
@@ -149,6 +150,8 @@ let
         else
           runtimeInstallPhase
       }
+
+      find "$out/app" -path '*/node_modules/.bun/node_modules' -type d -exec find {} -xtype l -delete \;
 
       runHook postInstall
     '';

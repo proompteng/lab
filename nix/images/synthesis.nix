@@ -12,7 +12,7 @@ import ./bun-workspace-service.nix {
   packageName = "synthesis";
   depsHash = {
     x86_64-linux = "sha256-vGwrOet63H8vdbGcvgJG6i/NZFfFXLXEfZJeIow8Ixg=";
-    aarch64-linux = "sha256-cxmxMneb7G4ytwglibeeFiZ9vGdQqMfbbM5u6Dw4Oa8=";
+    aarch64-linux = "sha256-Bxjkj44xeUZIak/1tlfgrVMiav76NTWfVNxlwyT/FIA=";
   };
   installFilters = [
     "@proompteng/design"
@@ -31,6 +31,8 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/synthesis/public" ]; then
       cp -R "$TMPDIR/work/apps/synthesis/public" "$out/app/apps/synthesis/public"
     fi
+    mkdir -p "$out/app/packages"
+    cp -R "$TMPDIR/work/packages/design" "$out/app/packages/design"
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
     if [ -d "$TMPDIR/work/apps/synthesis/node_modules" ]; then
       cp -R "$TMPDIR/work/apps/synthesis/node_modules" "$out/app/apps/synthesis/node_modules"

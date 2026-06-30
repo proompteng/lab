@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "app";
   packageName = "app";
   depsHash = {
-    x86_64-linux = lib.fakeHash;
-    aarch64-linux = lib.fakeHash;
+    x86_64-linux = "sha256-gH/vkUNGcDRNhqbmnmklTadBxVkwBcJI94+rok3RZXs=";
+    aarch64-linux = "sha256-CbGk8vcCegTydIkJzAJzjmCUNSBOOphjcAvvlNDAyHQ=";
   };
   installFilters = [
     "@proompteng/source"
@@ -32,6 +32,8 @@ import ./bun-workspace-service.nix {
     if [ -d "$TMPDIR/work/apps/app/public" ]; then
       cp -R "$TMPDIR/work/apps/app/public" "$out/app/apps/app/public"
     fi
+    mkdir -p "$out/app/packages"
+    cp -R "$TMPDIR/work/packages/design" "$out/app/packages/design"
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
     if [ -d "$TMPDIR/work/apps/app/node_modules" ]; then
       cp -R "$TMPDIR/work/apps/app/node_modules" "$out/app/apps/app/node_modules"
