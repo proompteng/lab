@@ -12,6 +12,7 @@
   sourcePaths,
   buildCommands ? [ ],
   runtimeInstallPhase ? null,
+  depsName ? serviceName,
   dependencyClosure ? "nodeModules",
   command,
   env ? [ ],
@@ -77,7 +78,7 @@ let
       depsHash;
 
   deps = pkgs.stdenvNoCC.mkDerivation {
-    pname = "${serviceName}-bun-deps";
+    pname = "${depsName}-bun-deps";
     version = "0";
     src = depsSource;
 

@@ -47,8 +47,8 @@ let
   };
 
   depsHash = {
-    x86_64-linux = lib.fakeHash;
-    aarch64-linux = lib.fakeHash;
+    x86_64-linux = "sha256-iddP+lrH0Q/EOtoysehoOu/e3IzE+t9KLvL7f4LTVjI=";
+    aarch64-linux = "sha256-uJhRjODpWIn1mYfC6bAkpji4/dfa7RbqRvKMs1wVhPQ=";
   };
 
   installFilters = [
@@ -165,6 +165,7 @@ let
         extraContents
         exposedPorts
         ;
+      depsName = "agents-controller";
       packageName = "@proompteng/agents";
       inherit serviceName imageName;
       dependencyClosure = "bunCache";
