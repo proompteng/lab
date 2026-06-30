@@ -186,4 +186,10 @@ class ReadinessClassifierTest {
       ),
     )
   }
+
+  @Test
+  fun `options event starvation remains readiness only`() {
+    assertEquals(false, ReadinessErrorClass.OptionsEventStarvation.shouldEscalateToLivenessFailure())
+    assertEquals(true, ReadinessErrorClass.AlpacaAuth.shouldEscalateToLivenessFailure())
+  }
 }

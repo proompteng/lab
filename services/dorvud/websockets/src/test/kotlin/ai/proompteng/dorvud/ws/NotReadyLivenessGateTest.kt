@@ -42,4 +42,20 @@ class NotReadyLivenessGateTest {
     now += 5_000
     assertTrue(gate.shouldFailLiveness())
   }
+
+  @Test
+  fun `non-restartable not-ready transition clears liveness timer`() {
+    var now = 1_000L
+    val gate = NotReadyLivenessGate(killAfterMs = 5_000) { now }
+
+    gate.recordReadiness(false)
+    now += 3_000
+    gate.recordReadiness(false, livenessFailureEligible = false)
+    now += 10_000
+    assertFalse(gate.shouldFailLiveness())
+
+    gate.recordReadiness(false)
+    now += 5_000
+    assertTrue(gate.shouldFailLiveness())
+  }
 }

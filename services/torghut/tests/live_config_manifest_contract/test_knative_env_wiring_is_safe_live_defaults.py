@@ -23,6 +23,7 @@ from tests.live_config_manifest_contract.support import (
     _load_yaml_mapping,
     _manifest_bool,
     _params,
+    _repo_root,
     _strategy_decimal,
     cast,
 )
@@ -663,61 +664,20 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertNotIn(
             "bounded-paper-route-target-materialization-cronjob.yaml", resources
         )
-        self.assertIn(
+        self.assertNotIn(
             "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml",
             resources,
         )
 
-    def test_whitepaper_autoresearch_replay_materialization_cronworkflow_feeds_renewal(
+    def test_whitepaper_autoresearch_replay_materialization_cronworkflow_is_removed(
         self,
     ) -> None:
-        manifest = _load_yaml_mapping(
-            "argocd/applications/torghut/"
-            "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
+        self.assertFalse(
+            (
+                _repo_root() / "argocd/applications/torghut/"
+                "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
+            ).exists()
         )
-
-        self.assertEqual(manifest.get("kind"), "CronWorkflow")
-        metadata = cast(Mapping[str, object], manifest.get("metadata", {}))
-        self.assertEqual(metadata.get("name"), "torghut-replay-source-materialization")
-        self.assertLessEqual(len(str(metadata.get("name"))), 52)
-        spec = cast(Mapping[str, object], manifest.get("spec", {}))
-        self.assertEqual(spec.get("schedules"), ["5 5 * * 2-6"])
-        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(spec.get("startingDeadlineSeconds"), 900)
-
-        workflow_spec = cast(Mapping[str, object], spec.get("workflowSpec", {}))
-        self.assertEqual(
-            workflow_spec.get("workflowTemplateRef"),
-            {"name": "torghut-whitepaper-autoresearch-profit-target"},
-        )
-        arguments = cast(Mapping[str, object], workflow_spec.get("arguments", {}))
-        parameters = {
-            str(item.get("name")): str(item.get("value"))
-            for item in cast(
-                list[Mapping[str, object]], arguments.get("parameters", [])
-            )
-        }
-        self.assertEqual(parameters["fullWindowStartDate"], "2026-05-18")
-        self.assertEqual(parameters["fullWindowEndDate"], "2026-05-29")
-        self.assertEqual(parameters["expectedLastTradingDay"], "2026-05-29")
-        self.assertEqual(parameters["trainDays"], "3")
-        self.assertEqual(parameters["holdoutDays"], "2")
-        self.assertEqual(parameters["secondOosDays"], "0")
-        self.assertEqual(parameters["replayTapePreviewTopK"], "8")
-        self.assertEqual(parameters["replayTapePreviewMinRows"], "2")
-        self.assertEqual(parameters["latestCompleteWindowMinDays"], "5")
-        self.assertEqual(parameters["minExecutableRowsPerSymbolDay"], "1")
-        self.assertEqual(parameters["minQuoteValidRatio"], "0")
-        self.assertEqual(parameters["maxCoverageSpreadBps"], "1000000000")
-        self.assertEqual(parameters["maxExecutableGapSeconds"], "999999")
-        self.assertEqual(parameters["maxCandidates"], "16")
-        self.assertEqual(parameters["topK"], "8")
-        self.assertEqual(parameters["explorationSlots"], "2")
-        self.assertEqual(parameters["feedbackBlockReauditSlots"], "2")
-        self.assertEqual(parameters["maxTotalFrontierCandidates"], "6")
-        self.assertEqual(parameters["realReplayTimeoutSeconds"], "1800")
-        self.assertEqual(parameters["realReplayShardWorkers"], "2")
-        self.assertEqual(parameters["persistResults"], "true")
 
     def test_torghut_knative_manifests_enable_tigerbeetle_journal(self) -> None:
         expected = {

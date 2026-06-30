@@ -1,0 +1,55 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-generated-resource-retention
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: generated-resource-retention
+spec:
+  schedule: "43 3 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 900
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: torghut-generated-resource-retention
+          containers:
+            - name: prune-generated-residue
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:441503b721325a24b7da86b000767f843a41c9a32b92c1d83ceac84f0fae798a
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                  ephemeral-storage: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 256Mi
+                  ephemeral-storage: 256Mi
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  /opt/venv/bin/python scripts/prune_kubernetes_residue.py \
+                    --namespace torghut \
+                    --analysis-run-prefix torghut-sim- \
+                    --analysis-run-max-age-hours 168 \
+                    --ownerless-job-prefix torghut-tigerbeetle-journal- \
+                    --ownerless-job-max-age-hours 168 \
+                    --apply \
+                    --json

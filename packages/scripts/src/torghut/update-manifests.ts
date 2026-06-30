@@ -26,6 +26,8 @@ const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysi
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
 const defaultZeroNotionalDriftRepairManifestPath = 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml'
 const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
+const defaultGeneratedResourceRetentionManifestPath =
+  'argocd/applications/torghut/generated-resource-retention-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
   'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
@@ -57,6 +59,7 @@ type UpdateManifestsOptions = {
   empiricalBackfillManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
+  generatedResourceRetentionManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
@@ -87,6 +90,7 @@ type CliOptions = {
   empiricalBackfillManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
+  generatedResourceRetentionManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
@@ -342,6 +346,11 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.paperAccountFlattenManifestPath ?? defaultPaperAccountFlattenManifestPath,
     'torghut-paper-account-flatten image reference',
   )
+  const generatedResourceRetention = updateImageOnlyManifest(
+    options,
+    options.generatedResourceRetentionManifestPath ?? defaultGeneratedResourceRetentionManifestPath,
+    'torghut-generated-resource-retention image reference',
+  )
   const whitepaperSemanticBackfill = updateImageOnlyManifest(
     options,
     options.whitepaperSemanticBackfillManifestPath ?? defaultWhitepaperSemanticBackfillManifestPath,
@@ -397,6 +406,7 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     empiricalBackfill,
     zeroNotionalDriftRepair,
     paperAccountFlatten,
+    generatedResourceRetention,
     whitepaperSemanticBackfill,
     tigerBeetleSmoke,
     hyperliquidRuntime,
@@ -441,6 +451,7 @@ Options:
   --empirical-backfill-manifest-path <path>
   --zero-notional-drift-repair-manifest-path <path>
   --paper-account-flatten-manifest-path <path>
+  --generated-resource-retention-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
@@ -530,6 +541,9 @@ Options:
       case '--paper-account-flatten-manifest-path':
         options.paperAccountFlattenManifestPath = value
         break
+      case '--generated-resource-retention-manifest-path':
+        options.generatedResourceRetentionManifestPath = value
+        break
       case '--whitepaper-semantic-backfill-manifest-path':
         options.whitepaperSemanticBackfillManifestPath = value
         break
@@ -611,6 +625,8 @@ const main = (cliOptions?: CliOptions) => {
       parsed.zeroNotionalDriftRepairManifestPath ?? process.env.TORGHUT_ZERO_NOTIONAL_DRIFT_REPAIR_MANIFEST_PATH,
     paperAccountFlattenManifestPath:
       parsed.paperAccountFlattenManifestPath ?? process.env.TORGHUT_PAPER_ACCOUNT_FLATTEN_MANIFEST_PATH,
+    generatedResourceRetentionManifestPath:
+      parsed.generatedResourceRetentionManifestPath ?? process.env.TORGHUT_GENERATED_RESOURCE_RETENTION_MANIFEST_PATH,
     whitepaperSemanticBackfillManifestPath:
       parsed.whitepaperSemanticBackfillManifestPath ?? process.env.TORGHUT_WHITEPAPER_SEMANTIC_BACKFILL_MANIFEST_PATH,
     tigerBeetleSmokeManifestPath:

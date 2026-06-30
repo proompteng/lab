@@ -21,6 +21,7 @@ const createFixture = () => {
   const empiricalBackfillManifestPath = join(dir, 'empirical-jobs-backfill-job.yaml')
   const zeroNotionalDriftRepairManifestPath = join(dir, 'zero-notional-drift-repair-cronjob.yaml')
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
+  const generatedResourceRetentionManifestPath = join(dir, 'generated-resource-retention-cronjob.yaml')
   const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const hyperliquidRuntimeManifestPath = join(dir, 'hyperliquid-runtime-deployment.yaml')
@@ -100,6 +101,7 @@ spec:
     empiricalBackfillManifestPath,
     zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
+    generatedResourceRetentionManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
   ]) {
@@ -197,6 +199,7 @@ spec:
     empiricalBackfillManifestPath,
     zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
+    generatedResourceRetentionManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
     hyperliquidRuntimeManifestPath,
@@ -230,6 +233,7 @@ const updateOptionsForFixture = (
   empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
   zeroNotionalDriftRepairManifestPath: relative(repoRoot, fixture.zeroNotionalDriftRepairManifestPath),
   paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
+  generatedResourceRetentionManifestPath: relative(repoRoot, fixture.generatedResourceRetentionManifestPath),
   whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
   hyperliquidRuntimeManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeManifestPath),
@@ -308,6 +312,7 @@ describe('update-manifests', () => {
     const empiricalBackfillManifest = readFileSync(fixture.empiricalBackfillManifestPath, 'utf8')
     const zeroNotionalDriftRepairManifest = readFileSync(fixture.zeroNotionalDriftRepairManifestPath, 'utf8')
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
+    const generatedResourceRetentionManifest = readFileSync(fixture.generatedResourceRetentionManifestPath, 'utf8')
     const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const hyperliquidRuntimeManifest = readFileSync(fixture.hyperliquidRuntimeManifestPath, 'utf8')
@@ -347,6 +352,7 @@ describe('update-manifests', () => {
       empiricalBackfillManifest,
       zeroNotionalDriftRepairManifest,
       paperAccountFlattenManifest,
+      generatedResourceRetentionManifest,
       whitepaperSemanticBackfillManifest,
       tigerBeetleSmokeManifest,
       hyperliquidRuntimeManifest,
@@ -371,7 +377,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(19)
+    expect(result.changedPaths.length).toBe(20)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -393,7 +399,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(17)
+    expect(result.changedPaths.length).toBe(18)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

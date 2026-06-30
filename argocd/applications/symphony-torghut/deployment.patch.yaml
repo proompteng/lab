@@ -3,6 +3,7 @@ kind: Deployment
 metadata:
   name: symphony
 spec:
+  revisionHistoryLimit: 2
   template:
     metadata:
       annotations:
