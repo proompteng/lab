@@ -17,5 +17,5 @@ patches:
 images:
   - name: registry.ide-newton.ts.net/lab/symphony
     newName: registry.ide-newton.ts.net/lab/symphony
-    newTag: "352edeaa"
-    digest: sha256:17c9824e56a6737c3eb25e20fc8c524f3ef74343c237e76601734dba59503060
+    newTag: "2c1b0d01"
+    digest: sha256:fbf4dedfd4fa02bddb371bcd476324944393f1f99f8ba8aef4cb4003ce37eb44
