@@ -59,6 +59,12 @@ subjects:
   - kind: ServiceAccount
     name: arc-arm64-gha-rs-kube-mode
     namespace: arc
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-no-permission
+    namespace: arc
+  - kind: ServiceAccount
+    name: arc-amd64-gha-rs-no-permission
+    namespace: arc
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -111,6 +117,12 @@ metadata:
 subjects:
   - kind: ServiceAccount
     name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-no-permission
+    namespace: arc
+  - kind: ServiceAccount
+    name: arc-amd64-gha-rs-no-permission
     namespace: arc
 roleRef:
   apiGroup: rbac.authorization.k8s.io
