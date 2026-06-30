@@ -21,6 +21,15 @@ class MissingTransferLookupClient(FakeTigerBeetleClient):
         return []
 
 
+class ClosableFakeTigerBeetleClient(FakeTigerBeetleClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class TestVerifyTigerBeetleLedger(TestCase):
     def test_run_smoke_proves_protocol_probe_idempotent_writes_and_lookup(
         self,
@@ -44,6 +53,17 @@ class TestVerifyTigerBeetleLedger(TestCase):
         self.assertIn("create_transfers idempotent ok", output)
         self.assertIn("lookup_transfers ok", output)
         self.assertIn("reconciliation ok", output)
+
+    def test_run_smoke_closes_owned_client(self) -> None:
+        client = ClosableFakeTigerBeetleClient()
+
+        with patch(
+            "scripts.verify_tigerbeetle_ledger.create_tigerbeetle_client",
+            return_value=client,
+        ):
+            run_smoke(Settings(TORGHUT_TIGERBEETLE_ENABLED=True))
+
+        self.assertTrue(client.closed)
 
     def test_run_smoke_fails_when_account_lookup_is_missing(self) -> None:
         with patch(
