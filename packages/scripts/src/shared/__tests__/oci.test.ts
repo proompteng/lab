@@ -299,6 +299,16 @@ describe('native OCI build workflows', () => {
     }
   })
 
+  it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
+    expect(oiratWorkflow).not.toContain("'argocd/applications/oirat/**'")
+    expect(bumbaWorkflow).not.toContain("'argocd/applications/bumba/**'")
+    expect(bumbaWorkflow).not.toContain("'argocd/applicationsets/product.yaml'")
+    expect(froussardWorkflow).not.toContain("'argocd/applications/froussard/**'")
+    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/oirat argocd/applications/oirat')
+    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/bumba argocd/applications/bumba')
+    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/froussard argocd/applications/froussard')
+  })
+
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
     for (const script of [oiratBuildScript, bumbaBuildScript, froussardDeployScript]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")

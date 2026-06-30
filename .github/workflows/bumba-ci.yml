@@ -27,8 +27,6 @@ on:
     paths:
       - 'services/bumba/**'
       - 'packages/scripts/src/bumba/**'
-      - 'argocd/applications/bumba/**'
-      - 'argocd/applicationsets/product.yaml'
       - '.github/workflows/bumba-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/enabled-simple-nix-release.yml'

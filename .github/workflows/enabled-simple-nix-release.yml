@@ -135,13 +135,13 @@ jobs:
 
           case "${SERVICE}" in
             oirat)
-              paths=(services/oirat packages/discord packages/scripts/src/oirat argocd/applications/oirat nix/images flake.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/oirat packages/discord packages/scripts/src/oirat nix/images flake.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
               ;;
             bumba)
-              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba argocd/applications/bumba nix/images flake.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba nix/images flake.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
               ;;
             froussard)
-              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard argocd/applications/froussard nix/images flake.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard nix/images flake.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
               ;;
           esac
 
