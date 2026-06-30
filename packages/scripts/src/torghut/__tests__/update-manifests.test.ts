@@ -19,16 +19,12 @@ const createFixture = () => {
   const analysisTeardownManifestPath = join(dir, 'analysis-template-teardown-clean.yaml')
   const analysisArtifactManifestPath = join(dir, 'analysis-template-artifact-bundle.yaml')
   const empiricalBackfillManifestPath = join(dir, 'empirical-jobs-backfill-job.yaml')
-  const empiricalPromotionRenewalManifestPath = join(dir, 'empirical-promotion-renewal-cronjob.yaml')
-  const executionTcaRefreshManifestPath = join(dir, 'execution-tca-refresh-cronjob.yaml')
-  const orderFeedSourceWindowRepairManifestPath = join(dir, 'order-feed-source-window-repair-cronjob.yaml')
   const zeroNotionalDriftRepairManifestPath = join(dir, 'zero-notional-drift-repair-cronjob.yaml')
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
   const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const hyperliquidRuntimeManifestPath = join(dir, 'hyperliquid-runtime-deployment.yaml')
   const hyperliquidRuntimeMigrationManifestPath = join(dir, 'hyperliquid-runtime-db-migrations-job.yaml')
-  const hyperliquidProofVerifierManifestPath = join(dir, 'hyperliquid-runtime-proof-verifier-cronjob.yaml')
   const optionsCatalogManifestPath = join(dir, 'options-catalog-deployment.yaml')
   const optionsEnricherManifestPath = join(dir, 'options-enricher-deployment.yaml')
   writeFileSync(
@@ -102,16 +98,13 @@ spec:
     analysisTeardownManifestPath,
     analysisArtifactManifestPath,
     empiricalBackfillManifestPath,
-    empiricalPromotionRenewalManifestPath,
-    executionTcaRefreshManifestPath,
-    orderFeedSourceWindowRepairManifestPath,
     zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
   ]) {
     const metadataEnv =
-      path === whitepaperAutoresearchWorkflowManifestPath || path === empiricalPromotionRenewalManifestPath
+      path === whitepaperAutoresearchWorkflowManifestPath
         ? `            - name: TORGHUT_COMMIT
               value: old-commit
 `
@@ -189,21 +182,6 @@ spec:
 `,
     'utf8',
   )
-  writeFileSync(
-    hyperliquidProofVerifierManifestPath,
-    `apiVersion: batch/v1
-kind: CronJob
-spec:
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          containers:
-            - name: verify
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
-`,
-    'utf8',
-  )
   return {
     dir,
     serviceManifestPath,
@@ -217,16 +195,12 @@ spec:
     analysisTeardownManifestPath,
     analysisArtifactManifestPath,
     empiricalBackfillManifestPath,
-    empiricalPromotionRenewalManifestPath,
-    executionTcaRefreshManifestPath,
-    orderFeedSourceWindowRepairManifestPath,
     zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
     whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
     hyperliquidRuntimeManifestPath,
     hyperliquidRuntimeMigrationManifestPath,
-    hyperliquidProofVerifierManifestPath,
     optionsCatalogManifestPath,
     optionsEnricherManifestPath,
   }
@@ -254,16 +228,12 @@ const updateOptionsForFixture = (
   analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
   analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
   empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
-  empiricalPromotionRenewalManifestPath: relative(repoRoot, fixture.empiricalPromotionRenewalManifestPath),
-  executionTcaRefreshManifestPath: relative(repoRoot, fixture.executionTcaRefreshManifestPath),
-  orderFeedSourceWindowRepairManifestPath: relative(repoRoot, fixture.orderFeedSourceWindowRepairManifestPath),
   zeroNotionalDriftRepairManifestPath: relative(repoRoot, fixture.zeroNotionalDriftRepairManifestPath),
   paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
   whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
   hyperliquidRuntimeManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeManifestPath),
   hyperliquidRuntimeMigrationManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeMigrationManifestPath),
-  hyperliquidProofVerifierManifestPath: relative(repoRoot, fixture.hyperliquidProofVerifierManifestPath),
   optionsCatalogManifestPath: relative(repoRoot, fixture.optionsCatalogManifestPath),
   optionsEnricherManifestPath: relative(repoRoot, fixture.optionsEnricherManifestPath),
   ...overrides,
@@ -336,16 +306,12 @@ describe('update-manifests', () => {
     const analysisTeardownManifest = readFileSync(fixture.analysisTeardownManifestPath, 'utf8')
     const analysisArtifactManifest = readFileSync(fixture.analysisArtifactManifestPath, 'utf8')
     const empiricalBackfillManifest = readFileSync(fixture.empiricalBackfillManifestPath, 'utf8')
-    const empiricalPromotionRenewalManifest = readFileSync(fixture.empiricalPromotionRenewalManifestPath, 'utf8')
-    const executionTcaRefreshManifest = readFileSync(fixture.executionTcaRefreshManifestPath, 'utf8')
-    const orderFeedSourceWindowRepairManifest = readFileSync(fixture.orderFeedSourceWindowRepairManifestPath, 'utf8')
     const zeroNotionalDriftRepairManifest = readFileSync(fixture.zeroNotionalDriftRepairManifestPath, 'utf8')
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
     const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const hyperliquidRuntimeManifest = readFileSync(fixture.hyperliquidRuntimeManifestPath, 'utf8')
     const hyperliquidRuntimeMigrationManifest = readFileSync(fixture.hyperliquidRuntimeMigrationManifestPath, 'utf8')
-    const hyperliquidProofVerifierManifest = readFileSync(fixture.hyperliquidProofVerifierManifestPath, 'utf8')
     const optionsCatalogManifest = readFileSync(fixture.optionsCatalogManifestPath, 'utf8')
     const optionsEnricherManifest = readFileSync(fixture.optionsEnricherManifestPath, 'utf8')
     expect(serviceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
@@ -379,9 +345,6 @@ describe('update-manifests', () => {
       analysisTeardownManifest,
       analysisArtifactManifest,
       empiricalBackfillManifest,
-      empiricalPromotionRenewalManifest,
-      executionTcaRefreshManifest,
-      orderFeedSourceWindowRepairManifest,
       zeroNotionalDriftRepairManifest,
       paperAccountFlattenManifest,
       whitepaperSemanticBackfillManifest,
@@ -395,12 +358,8 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e')
     }
     expect(whitepaperAutoresearchWorkflowManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
-    expect(empiricalPromotionRenewalManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeMigrationManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
-    expect(hyperliquidProofVerifierManifest).toContain(
-      'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
-    )
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
       expect(manifest).toContain(
         'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
@@ -412,7 +371,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(23)
+    expect(result.changedPaths.length).toBe(19)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -434,7 +393,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(21)
+    expect(result.changedPaths.length).toBe(17)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

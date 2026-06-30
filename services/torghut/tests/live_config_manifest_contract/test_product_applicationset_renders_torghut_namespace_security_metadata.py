@@ -121,88 +121,17 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             {"kubernetes.io/arch": "arm64"},
         )
 
-    def test_execution_tca_refresh_cronjob_keeps_readiness_evidence_fresh(
+    def test_execution_tca_refresh_cronjob_is_removed_from_gitops(
         self,
     ) -> None:
-        manifest = _load_yaml_mapping(
-            "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml"
+        relative_path = "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml"
+        self.assertFalse((_repo_root() / relative_path).exists())
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
         )
-        spec = cast(Mapping[str, object], manifest.get("spec", {}))
-        job_template = cast(Mapping[str, object], spec.get("jobTemplate", {}))
-        job_spec = cast(Mapping[str, object], job_template.get("spec", {}))
-        template = cast(Mapping[str, object], job_spec.get("template", {}))
-        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        containers = cast(list[Mapping[str, object]], pod_spec.get("containers", []))
-
-        self.assertEqual(spec.get("schedule"), "*/5 * * * *")
-        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
-        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertNotIn("nodeSelector", pod_spec)
-        self.assertTrue(containers)
-
-        container = containers[0]
-        self.assertIn(
-            "registry.ide-newton.ts.net/lab/torghut@sha256:",
-            str(container.get("image")),
-        )
-        resources = cast(Mapping[str, object], container.get("resources", {}))
-        self.assertEqual(
-            resources,
-            {
-                "requests": {
-                    "cpu": "100m",
-                    "memory": "256Mi",
-                    "ephemeral-storage": "128Mi",
-                },
-                "limits": {
-                    "cpu": "500m",
-                    "memory": "1Gi",
-                    "ephemeral-storage": "512Mi",
-                },
-            },
-        )
-        env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], container.get("env", []))
-        }
-        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
-        value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
-        self.assertEqual(
-            value_from.get("secretKeyRef"),
-            {"name": "torghut-db-app", "key": "uri"},
-        )
-        self.assertEqual(
-            env["SIM_DB_DSN"].get("value"),
-            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
-            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
-        )
-        for name, key in {
-            "TORGHUT_SIM_DB_HOST": "host",
-            "TORGHUT_SIM_DB_PORT": "port",
-            "TORGHUT_SIM_DB_USER": "username",
-            "TORGHUT_SIM_DB_PASSWORD": "password",
-        }.items():
-            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
-            self.assertEqual(
-                value_from.get("secretKeyRef"),
-                {"name": "torghut-db-app", "key": key},
-            )
-
-        args = "\n".join(str(item) for item in container.get("args", []))
-        self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
-        self.assertIn("--dsn-env DB_DSN", args)
-        self.assertIn("--dsn-env SIM_DB_DSN", args)
-        self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertLess(args.index("dsn_env=SIM_DB_DSN"), args.index("dsn_env=DB_DSN"))
-        self.assertLess(
-            args.index("--dsn-env SIM_DB_DSN"), args.index("--dsn-env DB_DSN")
-        )
-        self.assertIn("--older-than-seconds 900", args)
-        self.assertIn("--batch-size 1000", args)
-        self.assertIn("--max-batches 5", args)
-        self.assertIn("--apply", args)
-        self.assertEqual(args.count("scripts/refresh_execution_tca_metrics.py"), 2)
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
+        self.assertNotIn("execution-tca-refresh-cronjob.yaml", resources)
 
     def test_zero_notional_drift_repair_cronjob_runs_capital_safe_repair_endpoint(
         self,
@@ -395,122 +324,19 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertIn("--apply", args)
         self.assertIn("--json", args)
 
-    def test_order_feed_source_window_repair_cronjob_is_bounded_live_and_sim(
+    def test_order_feed_source_window_repair_cronjob_is_removed_from_gitops(
         self,
     ) -> None:
-        spec, container = _load_cronjob_container(
+        relative_path = (
             "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml"
         )
-
-        self.assertEqual(spec.get("schedule"), "13,43 * * * *")
-        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
-        self.assertEqual(spec.get("startingDeadlineSeconds"), 300)
-        job_spec = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        self.assertFalse((_repo_root() / relative_path).exists())
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
         )
-        template = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], job_spec.get("template", {})),
-        )
-        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
-        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
-        self.assertEqual(pod_spec.get("serviceAccountName"), "torghut-runtime")
-        self.assertNotIn("nodeSelector", pod_spec)
-        resources = cast(Mapping[str, object], container.get("resources", {}))
-        self.assertEqual(
-            resources,
-            {
-                "requests": {
-                    "cpu": "100m",
-                    "memory": "256Mi",
-                    "ephemeral-storage": "128Mi",
-                },
-                "limits": {
-                    "cpu": "500m",
-                    "memory": "1Gi",
-                    "ephemeral-storage": "512Mi",
-                },
-            },
-        )
-        self.assertIn(
-            "registry.ide-newton.ts.net/lab/torghut@sha256:",
-            str(container.get("image")),
-        )
-
-        env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], container.get("env", []))
-        }
-        self.assertEqual(env["PYTHONUNBUFFERED"].get("value"), "1")
-        self.assertEqual(
-            env["SIM_DB_DSN"].get("value"),
-            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
-            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
-        )
-        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
-        db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
-        self.assertEqual(
-            db_value_from.get("secretKeyRef"),
-            {"name": "torghut-db-app", "key": "uri"},
-        )
-        for name, key in {
-            "TORGHUT_SIM_DB_HOST": "host",
-            "TORGHUT_SIM_DB_PORT": "port",
-            "TORGHUT_SIM_DB_USER": "username",
-            "TORGHUT_SIM_DB_PASSWORD": "password",
-        }.items():
-            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
-            self.assertEqual(
-                value_from.get("secretKeyRef"),
-                {"name": "torghut-db-app", "key": key},
-            )
-
-        args = "\n".join(str(item) for item in container.get("args", []))
-        self.assertIn("scripts/reconcile_cross_dsn_order_feed_links.py", args)
-        self.assertIn("--event-dsn-env DB_DSN", args)
-        self.assertIn("--canonical-dsn-env SIM_DB_DSN", args)
-        self.assertIn("--source-account-label PA3SX7FYNUTF", args)
-        self.assertIn("--canonical-account-label TORGHUT_SIM", args)
-        self.assertIn('--window-start "${WINDOW_START}"', args)
-        self.assertIn('--window-end "${WINDOW_END}"', args)
-        self.assertLess(
-            args.index("scripts/reconcile_cross_dsn_order_feed_links.py"),
-            args.index("scripts/repair_order_feed_source_windows.py"),
-        )
-        self.assertIn("scripts/repair_order_feed_source_windows.py", args)
-        self.assertIn("--dsn-env DB_DSN", args)
-        self.assertIn("--account-label PA3SX7FYNUTF", args)
-        self.assertIn("--canonical-account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 1000", args)
-        self.assertIn("--max-batches 1", args)
-        self.assertIn("--dsn-env SIM_DB_DSN", args)
-        self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 100", args)
-        self.assertIn("--max-batches 4", args)
-        self.assertIn("--account-label TORGHUT_REPLAY", args)
-        self.assertEqual(
-            args.count("scripts/reconcile_cross_dsn_order_feed_links.py"),
-            1,
-        )
-        self.assertEqual(args.count("scripts/repair_order_feed_source_windows.py"), 3)
-        self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 2)
-        self.assertEqual(args.count("--backfill-execution-events"), 2)
-        self.assertIn("--apply", args)
-        self.assertNotIn("scripts/journal_tigerbeetle_order_events.py", args)
-        self.assertNotIn("--reconcile-limit 1000", args)
-        self.assertIn("--json", args)
-        security_context = cast(
-            Mapping[str, object],
-            container.get("securityContext", {}),
-        )
-        seccomp_profile = cast(
-            Mapping[str, object],
-            security_context.get("seccompProfile", {}),
-        )
-        self.assertEqual(seccomp_profile.get("type"), "Unconfined")
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
+        self.assertNotIn("order-feed-source-window-repair-cronjob.yaml", resources)
 
     def test_bounded_paper_route_target_materialization_is_on_demand_operator_tool(
         self,
@@ -619,10 +445,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
     ) -> None:
         cronjob_paths = (
             "argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml",
-            "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml",
-            "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml",
             "argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml",
-            "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml",
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml",
         )
         checked_cronjobs = 0
@@ -639,7 +462,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
                 )
                 self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
                 checked_cronjobs += 1
-        self.assertEqual(checked_cronjobs, 6)
+        self.assertEqual(checked_cronjobs, 3)
 
         replay_cronworkflow = _load_yaml_mapping(
             "argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"

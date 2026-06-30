@@ -24,11 +24,6 @@ const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultEmpiricalBackfillManifestPath = 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml'
-const defaultEmpiricalPromotionRenewalManifestPath =
-  'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml'
-const defaultExecutionTcaRefreshManifestPath = 'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml'
-const defaultOrderFeedSourceWindowRepairManifestPath =
-  'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml'
 const defaultZeroNotionalDriftRepairManifestPath = 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml'
 const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
 const defaultWhitepaperSemanticBackfillManifestPath =
@@ -37,8 +32,6 @@ const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbe
 const defaultHyperliquidRuntimeManifestPath = 'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml'
 const defaultHyperliquidRuntimeMigrationManifestPath =
   'argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml'
-const defaultHyperliquidProofVerifierManifestPath =
-  'argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml'
 const defaultOptionsCatalogManifestPath = 'argocd/applications/torghut-options/catalog/deployment.yaml'
 const defaultOptionsEnricherManifestPath = 'argocd/applications/torghut-options/enricher/deployment.yaml'
 const defaultRequiredImagePlatforms = 'linux/amd64,linux/arm64'
@@ -62,16 +55,12 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
-  empiricalPromotionRenewalManifestPath?: string
-  executionTcaRefreshManifestPath?: string
-  orderFeedSourceWindowRepairManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
-  hyperliquidProofVerifierManifestPath?: string
   includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -96,16 +85,12 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   empiricalBackfillManifestPath?: string
-  empiricalPromotionRenewalManifestPath?: string
-  executionTcaRefreshManifestPath?: string
-  orderFeedSourceWindowRepairManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
   paperAccountFlattenManifestPath?: string
   whitepaperSemanticBackfillManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
   hyperliquidRuntimeMigrationManifestPath?: string
-  hyperliquidProofVerifierManifestPath?: string
   includeOptionsManifests?: boolean
   optionsCatalogManifestPath?: string
   optionsEnricherManifestPath?: string
@@ -347,21 +332,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.empiricalBackfillManifestPath ?? defaultEmpiricalBackfillManifestPath,
     'torghut-empirical-jobs-backfill image reference',
   )
-  const empiricalPromotionRenewal = updateImageOnlyManifest(
-    options,
-    options.empiricalPromotionRenewalManifestPath ?? defaultEmpiricalPromotionRenewalManifestPath,
-    'torghut-empirical-promotion-renewal image reference',
-  )
-  const executionTcaRefresh = updateImageOnlyManifest(
-    options,
-    options.executionTcaRefreshManifestPath ?? defaultExecutionTcaRefreshManifestPath,
-    'torghut-execution-tca-refresh image reference',
-  )
-  const orderFeedSourceWindowRepair = updateImageOnlyManifest(
-    options,
-    options.orderFeedSourceWindowRepairManifestPath ?? defaultOrderFeedSourceWindowRepairManifestPath,
-    'torghut-order-feed-source-window-repair image reference',
-  )
   const zeroNotionalDriftRepair = updateImageOnlyManifest(
     options,
     options.zeroNotionalDriftRepairManifestPath ?? defaultZeroNotionalDriftRepairManifestPath,
@@ -391,11 +361,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options,
     options.hyperliquidRuntimeMigrationManifestPath ?? defaultHyperliquidRuntimeMigrationManifestPath,
     'torghut-hyperliquid-runtime-db-migrations image reference',
-  )
-  const hyperliquidProofVerifier = updateImageOnlyManifest(
-    options,
-    options.hyperliquidProofVerifierManifestPath ?? defaultHyperliquidProofVerifierManifestPath,
-    'torghut-hyperliquid-runtime-proof-verifier image reference',
   )
   const includeOptionsManifests = options.includeOptionsManifests ?? true
   const optionalResults = includeOptionsManifests
@@ -430,16 +395,12 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     empiricalBackfill,
-    empiricalPromotionRenewal,
-    executionTcaRefresh,
-    orderFeedSourceWindowRepair,
     zeroNotionalDriftRepair,
     paperAccountFlatten,
     whitepaperSemanticBackfill,
     tigerBeetleSmoke,
     hyperliquidRuntime,
     hyperliquidRuntimeMigration,
-    hyperliquidProofVerifier,
     ...optionalResults,
   ]
     .filter((entry) => entry.changed)
@@ -478,16 +439,12 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --empirical-backfill-manifest-path <path>
-  --empirical-promotion-renewal-manifest-path <path>
-  --execution-tca-refresh-manifest-path <path>
-  --order-feed-source-window-repair-manifest-path <path>
   --zero-notional-drift-repair-manifest-path <path>
   --paper-account-flatten-manifest-path <path>
   --whitepaper-semantic-backfill-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
   --hyperliquid-runtime-migration-manifest-path <path>
-  --hyperliquid-proof-verifier-manifest-path <path>
   --include-options-manifests
   --options-catalog-manifest-path <path>
   --options-enricher-manifest-path <path>`)
@@ -567,15 +524,6 @@ Options:
       case '--empirical-backfill-manifest-path':
         options.empiricalBackfillManifestPath = value
         break
-      case '--empirical-promotion-renewal-manifest-path':
-        options.empiricalPromotionRenewalManifestPath = value
-        break
-      case '--execution-tca-refresh-manifest-path':
-        options.executionTcaRefreshManifestPath = value
-        break
-      case '--order-feed-source-window-repair-manifest-path':
-        options.orderFeedSourceWindowRepairManifestPath = value
-        break
       case '--zero-notional-drift-repair-manifest-path':
         options.zeroNotionalDriftRepairManifestPath = value
         break
@@ -593,9 +541,6 @@ Options:
         break
       case '--hyperliquid-runtime-migration-manifest-path':
         options.hyperliquidRuntimeMigrationManifestPath = value
-        break
-      case '--hyperliquid-proof-verifier-manifest-path':
-        options.hyperliquidProofVerifierManifestPath = value
         break
       case '--include-options-manifests':
         options.includeOptionsManifests = true
@@ -662,13 +607,6 @@ const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     empiricalBackfillManifestPath:
       parsed.empiricalBackfillManifestPath ?? process.env.TORGHUT_EMPIRICAL_BACKFILL_MANIFEST_PATH,
-    empiricalPromotionRenewalManifestPath:
-      parsed.empiricalPromotionRenewalManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_RENEWAL_MANIFEST_PATH,
-    executionTcaRefreshManifestPath:
-      parsed.executionTcaRefreshManifestPath ?? process.env.TORGHUT_EXECUTION_TCA_REFRESH_MANIFEST_PATH,
-    orderFeedSourceWindowRepairManifestPath:
-      parsed.orderFeedSourceWindowRepairManifestPath ??
-      process.env.TORGHUT_ORDER_FEED_SOURCE_WINDOW_REPAIR_MANIFEST_PATH,
     zeroNotionalDriftRepairManifestPath:
       parsed.zeroNotionalDriftRepairManifestPath ?? process.env.TORGHUT_ZERO_NOTIONAL_DRIFT_REPAIR_MANIFEST_PATH,
     paperAccountFlattenManifestPath:

@@ -234,8 +234,8 @@ The helper prints:
 
 ## Runtime-ledger proof packet after the paper-route window
 
-The scheduled `torghut-empirical-promotion-renewal` CronJob is the canonical post-window proof conductor. It runs after
-the live paper-route target plan says the session is closed and settled, then writes a durable
+Runtime-ledger proof packet collection is an explicit operator workflow, not a scheduled Torghut CronJob. Run it only
+after the live paper-route target plan says the session is closed and settled, then persist a durable
 `runtime-ledger-proof-packet.json`.
 
 Read these fields before deciding the next action:

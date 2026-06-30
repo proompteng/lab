@@ -8,7 +8,6 @@ from tests.live_config_manifest_contract.support import (
     _TestLiveConfigManifestContractBase,
     _assert_exact_live_execution_chip_universe,
     _assert_exact_quote_covered_paper_strategy_universe,
-    _load_cronjob_container,
     _load_torghut_feature_flags,
     _load_torghut_knative_env,
     _load_torghut_knative_manifest,
@@ -127,236 +126,19 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertFalse(sim_runtime_command.skip_reconcile)
         self.assertTrue(sim_runtime_command.reconcile_empty_selection)
 
-    def test_empirical_promotion_renewal_imports_authoritative_live_paper_plan_and_sim_db(
+    def test_empirical_promotion_renewal_cronjob_is_removed_from_gitops(
         self,
     ) -> None:
-        spec, container = _load_cronjob_container(
+        relative_path = (
             "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml"
         )
-
-        self.assertEqual(spec.get("schedule"), "23 8,21 * * *")
-        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
-        self.assertEqual(spec.get("startingDeadlineSeconds"), 900)
-        job_spec = cast(
-            Mapping[str, object],
-            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        self.assertFalse((_repo_root() / relative_path).exists())
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
         )
-        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 900)
-        resources = cast(Mapping[str, object], container.get("resources", {}))
-        self.assertEqual(
-            resources,
-            {
-                "requests": {
-                    "cpu": "100m",
-                    "memory": "512Mi",
-                    "ephemeral-storage": "256Mi",
-                },
-                "limits": {
-                    "cpu": "1",
-                    "memory": "2Gi",
-                    "ephemeral-storage": "2Gi",
-                },
-            },
-        )
-        env = {
-            item.get("name"): item
-            for item in cast(list[Mapping[str, object]], container.get("env", []))
-        }
-        self.assertRegex(str(env["TORGHUT_COMMIT"].get("value")), r"^[0-9a-f]{40}$")
-        self.assertRegex(
-            str(env["TORGHUT_IMAGE_DIGEST"].get("value")),
-            r"^sha256:[0-9a-f]{64}$",
-        )
-        db_dsn = cast(Mapping[str, object], env["DB_DSN"])
-        db_value_from = cast(Mapping[str, object], db_dsn.get("valueFrom", {}))
-        self.assertEqual(
-            db_value_from.get("secretKeyRef"),
-            {"name": "torghut-db-app", "key": "uri"},
-        )
-        self.assertEqual(
-            env["SIM_DB_DSN"].get("value"),
-            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
-            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
-        )
-        for name, key in {
-            "TORGHUT_SIM_DB_HOST": "host",
-            "TORGHUT_SIM_DB_PORT": "port",
-            "TORGHUT_SIM_DB_USER": "username",
-            "TORGHUT_SIM_DB_PASSWORD": "password",
-        }.items():
-            value_from = cast(Mapping[str, object], env[name].get("valueFrom", {}))
-            self.assertEqual(
-                value_from.get("secretKeyRef"),
-                {"name": "torghut-db-app", "key": key},
-            )
-
-        args = "\n".join(str(item) for item in container.get("args", []))
-        self.assertIn("scripts/reconcile_cross_dsn_order_feed_links.py", args)
-        self.assertIn("--event-dsn-env DB_DSN", args)
-        self.assertIn("--canonical-dsn-env SIM_DB_DSN", args)
-        self.assertIn("--source-account-label PA3SX7FYNUTF", args)
-        self.assertIn("--canonical-account-label TORGHUT_SIM", args)
-        self.assertIn('--window-start "${WINDOW_START}"', args)
-        self.assertIn('--window-end "${WINDOW_END}"', args)
-        self.assertIn("scripts/repair_order_feed_source_windows.py", args)
-        self.assertIn("--dsn-env SIM_DB_DSN", args)
-        self.assertIn("--account-label TORGHUT_SIM", args)
-        self.assertIn("--batch-size 1000", args)
-        self.assertIn("--max-batches 2", args)
-        self.assertIn("--account-label TORGHUT_REPLAY", args)
-        self.assertIn("--backfill-execution-events", args)
-        self.assertEqual(args.count("--backfill-execution-events"), 2)
-        self.assertEqual(
-            args.count("scripts/reconcile_cross_dsn_order_feed_links.py"),
-            1,
-        )
-        self.assertEqual(args.count("scripts/repair_order_feed_source_windows.py"), 2)
-        self.assertIn("scripts/refresh_execution_tca_metrics.py", args)
-        self.assertIn("--older-than-seconds 0", args)
-        self.assertIn("--max-batches 5", args)
-        self.assertEqual(args.count("scripts/refresh_execution_tca_metrics.py"), 1)
-        self.assertEqual(args.count("--dsn-env SIM_DB_DSN"), 3)
-        self.assertLess(
-            args.index("scripts/reconcile_cross_dsn_order_feed_links.py"),
-            args.index("scripts/repair_order_feed_source_windows.py"),
-        )
-        self.assertLess(
-            args.index("scripts/refresh_execution_tca_metrics.py"),
-            args.index("scripts/renew_latest_empirical_promotion_jobs.py"),
-        )
-        self.assertIn("scripts/renew_latest_empirical_promotion_jobs.py", args)
-        self.assertIn(
-            "--runtime-window-target-plan-url "
-            "'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=5'",
-            args,
-        )
-        self.assertNotIn(
-            "--runtime-window-target-plan-url "
-            "'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=auto&limit=5'",
-            args,
-        )
-        self.assertIn(
-            "--runtime-window-target-plan-url "
-            "'http://torghut.torghut.svc.cluster.local/trading/status'",
-            args,
-        )
-        self.assertIn("--runtime-window-target-plan-url-timeout-seconds 45", args)
-        self.assertIn("--runtime-window-target-plan-url-attempts 3", args)
-        self.assertIn(
-            "--runtime-window-target-plan-url-retry-backoff-seconds 5",
-            args,
-        )
-        self.assertNotIn(
-            "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
-            args,
-        )
-        self.assertNotIn(
-            "--runtime-window-target-plan-url "
-            "http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
-            args,
-        )
-        self.assertNotIn(
-            "--runtime-window-target-plan-url "
-            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=auto&limit=20",
-            args,
-        )
-        self.assertIn("--runtime-window-target-plan-exclusive", args)
-        self.assertNotIn("--runtime-window-target-plan-required", args)
-        self.assertIn("--runtime-window-target-plan-settlement-seconds 3600", args)
-        self.assertNotIn("--runtime-window-targets-from-latest-autoresearch", args)
-        self.assertNotIn("--runtime-window-targets-from-registry", args)
-        self.assertIn(
-            "--strategy-spec-ref microbar_cross_sectional_pairs_v1@research", args
-        )
-        self.assertIn("--runtime-window-hypothesis-id H-PAIRS-01", args)
-        self.assertIn("--runtime-window-candidate-id c88421d619759b2cfaa6f4d0", args)
-        self.assertIn(
-            "--runtime-window-strategy-family microbar_cross_sectional_pairs", args
-        )
-        self.assertIn(
-            "--runtime-window-strategy-name microbar-cross-sectional-pairs-v1", args
-        )
-        self.assertIn(
-            "--runtime-window-source-manifest-ref config/trading/hypotheses/h-pairs-01.json",
-            args,
-        )
-        self.assertNotIn("--runtime-window-hypothesis-id H-TSMOM-01", args)
-        self.assertNotIn('--runtime-window-target \'{"hypothesis_id"', args)
-        renewal_args = args[
-            args.index("scripts/renew_latest_empirical_promotion_jobs.py") :
-        ]
-        self.assertNotIn("PA3SX7FYNUTF", renewal_args)
-        self.assertIn("--runtime-window-account-label TORGHUT_SIM", args)
-        self.assertIn("--runtime-window-observed-stage paper", args)
-        self.assertIn("--runtime-window-source-dsn-env SIM_DB_DSN", args)
-        self.assertIn("--runtime-window-target-dsn-env SIM_DB_DSN", args)
-        self.assertNotIn(
-            '"source_kind":"live_runtime_observed"',
-            args,
-        )
-        self.assertNotIn('"evidence_collection_stage":"live"', args)
-        self.assertNotIn(
-            '"runtime_window_import_promotion_blockers":["drift_checks_not_ok"]',
-            args,
-        )
-        self.assertIn(
-            "RENEWAL_OUTPUT=/tmp/torghut-empirical-renewal/runtime-window-renewal.json",
-            args,
-        )
-        self.assertIn(
-            "PROOF_PACKET_OUTPUT=/tmp/torghut-empirical-renewal/runtime-ledger-proof-packet.json",
-            args,
-        )
-        self.assertIn(
-            "HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT=/tmp/torghut-empirical-renewal/hpairs-source-proof-census.json",
-            args,
-        )
-        self.assertIn(
-            'mkdir -p "$(dirname "${RENEWAL_OUTPUT}")" "$(dirname "${PROOF_PACKET_OUTPUT}")" "$(dirname "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}")"',
-            args,
-        )
-        self.assertIn("scripts/audit_hpairs_source_proof_census.py", args)
-        self.assertIn('--dsn "${SIM_DB_DSN}"', args)
-        self.assertIn("--source-account-label TORGHUT_SIM", args)
-        self.assertIn('> "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}"', args)
-        self.assertIn(
-            '--hpairs-source-proof-census-file "${HPAIRS_SOURCE_PROOF_CENSUS_OUTPUT}"',
-            args,
-        )
-        self.assertIn("scripts/assemble_runtime_ledger_proof_packet.py", args)
-        self.assertIn(
-            "--status-service-base-url http://torghut.torghut.svc.cluster.local",
-            args,
-        )
-        self.assertIn(
-            "--paper-route-service-base-url http://torghut-sim.torghut.svc.cluster.local",
-            args,
-        )
-        self.assertNotIn(
-            "--paper-route-service-base-url http://torghut.torghut.svc.cluster.local",
-            args,
-        )
-        self.assertIn(
-            "--completion-service-base-url http://torghut.torghut.svc.cluster.local",
-            args,
-        )
-        self.assertIn("--timeout-seconds 30", args)
-        self.assertIn("--proof-mode authority", args)
-        self.assertIn('--runtime-window-import-file "${RENEWAL_OUTPUT}"', args)
-        self.assertIn("--min-runtime-ledger-net-pnl 10000", args)
-        self.assertIn("--min-runtime-ledger-daily-net-pnl 500", args)
-        self.assertIn("--min-runtime-ledger-trading-days 20", args)
-        self.assertIn("--max-runtime-ledger-drawdown-pct-equity 0.03", args)
-        self.assertIn("--max-runtime-ledger-best-day-share 0.25", args)
-        self.assertIn("--max-runtime-ledger-symbol-concentration-share 0.35", args)
-        self.assertIn('--output-file "${PROOF_PACKET_OUTPUT}"', args)
-        self.assertIn(
-            "--artifact-prefix 'runtime-ledger-proof-packets/{run_id}'",
-            args,
-        )
-        self.assertIn("--require-artifact-upload", args)
-        self.assertIn("--allow-blocked-exit-zero", args)
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
+        self.assertNotIn("empirical-promotion-renewal-cronjob.yaml", resources)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
         manifest = _load_yaml_mapping(
