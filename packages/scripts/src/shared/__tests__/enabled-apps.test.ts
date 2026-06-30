@@ -63,10 +63,15 @@ describe('enabled app inventory', () => {
     }
   })
 
-  it('marks PR 3 simple enabled app migrations with concrete Nix attrs', () => {
+  it('marks migrated enabled app waves with concrete Nix attrs', () => {
     expect(entry('oirat').nixImageAttr).toBe('oirat-image')
     expect(entry('bumba').nixImageAttr).toBe('bumba-image')
     expect(entry('froussard').nixImageAttr).toBe('froussard-image')
+    expect(entry('docs').nixImageAttr).toBe('docs-image')
+    expect(entry('app').nixImageAttr).toBe('app-image')
+    expect(entry('proompteng').nixImageAttr).toBe('proompteng-image')
+    expect(entry('olden').nixImageAttr).toBe('olden-image')
+    expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
   })
 
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {

@@ -66,10 +66,15 @@ const deferredApps = new Map<string, string>([
 ])
 
 const appToNixAttr = new Map<string, string>([
+  ['app', 'app-image'],
   ['attic', 'atticd-image'],
   ['bumba', 'bumba-image'],
+  ['docs', 'docs-image'],
   ['froussard', 'froussard-image'],
   ['oirat', 'oirat-image'],
+  ['olden', 'olden-image'],
+  ['proompteng', 'proompteng-image'],
+  ['synthesis', 'synthesis-image'],
 ])
 
 const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort()

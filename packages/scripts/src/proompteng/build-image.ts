@@ -7,10 +7,6 @@ export type BuildImageOptions = {
   registry?: string
   repository?: string
   tag?: string
-  context?: string
-  dockerfile?: string
-  platforms?: string[]
-  cacheRef?: string
   dryRun?: boolean
 }
 
@@ -22,15 +18,15 @@ const parseTagArg = (args: string[]): string | undefined => {
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
-  const registry = options.registry ?? process.env.DOCS_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
-  const repository = options.repository ?? process.env.DOCS_IMAGE_REPOSITORY ?? 'lab/docs'
-  const tag = options.tag ?? process.env.DOCS_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
+  const registry = options.registry ?? process.env.PROOMPTENG_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
+  const repository = options.repository ?? process.env.PROOMPTENG_IMAGE_REPOSITORY ?? 'lab/proompteng'
+  const tag = options.tag ?? process.env.PROOMPTENG_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
   const commit = execGit(['rev-parse', 'HEAD'])
 
   const result = await buildAndPushNixImage({
-    service: 'docs',
-    imageName: 'docs',
-    packageAttr: 'docs-image',
+    service: 'proompteng',
+    imageName: 'proompteng',
+    packageAttr: 'proompteng-image',
     registry,
     repository,
     tag,

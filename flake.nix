@@ -225,6 +225,31 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "docs-image" = import ./nix/images/docs.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "olden-image" = import ./nix/images/olden.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "proompteng-image" = import ./nix/images/proompteng.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "app-image" = import ./nix/images/app.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "synthesis-image" = import ./nix/images/synthesis.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
           };
 
           mkApp = drv: {

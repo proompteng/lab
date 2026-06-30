@@ -100,7 +100,13 @@ jobs:
           )
 
           migrated_nix_image_paths=(
+            "argocd/applications/app/kustomization.yaml"
             "argocd/applications/bumba/kustomization.yaml"
+            "argocd/applications/docs/kustomization.yaml"
+            "argocd/applications/oirat/kustomization.yaml"
+            "argocd/applications/olden/kustomization.yaml"
+            "argocd/applications/proompteng/kustomization.yaml"
+            "argocd/applications/synthesis/kustomization.yaml"
           )
 
           for path in "${changed_files[@]}"; do

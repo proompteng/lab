@@ -11,6 +11,7 @@
   installFilters,
   sourcePaths,
   buildCommands ? [ ],
+  runtimeInstallPhase ? null,
   command,
   env ? [ ],
   extraContents ? [ ],
@@ -140,7 +141,14 @@ let
       runHook preInstall
 
       mkdir -p "$out/app"
-      cp -R "$TMPDIR/work/." "$out/app/"
+      ${
+        if runtimeInstallPhase == null then
+          ''
+            cp -R "$TMPDIR/work/." "$out/app/"
+          ''
+        else
+          runtimeInstallPhase
+      }
 
       runHook postInstall
     '';

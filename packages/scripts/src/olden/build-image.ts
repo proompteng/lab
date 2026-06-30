@@ -1,9 +1,6 @@
 #!/usr/bin/env bun
 
-import { resolve } from 'node:path'
-
-import { repoRoot } from '../shared/cli'
-import { buildAndPushDockerImage } from '../shared/docker'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 import { execGit } from '../shared/git'
 
 export type BuildImageOptions = {
@@ -14,6 +11,7 @@ export type BuildImageOptions = {
   dockerfile?: string
   platforms?: string[]
   cacheRef?: string
+  dryRun?: boolean
 }
 
 const parseTagArg = (args: string[]): string | undefined => {
@@ -27,26 +25,27 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.OLDEN_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.OLDEN_IMAGE_REPOSITORY ?? 'lab/olden'
   const tag = options.tag ?? process.env.OLDEN_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const context = resolve(repoRoot, options.context ?? process.env.OLDEN_BUILD_CONTEXT ?? '.')
-  const dockerfile = resolve(repoRoot, options.dockerfile ?? process.env.OLDEN_DOCKERFILE ?? 'apps/olden/Dockerfile')
-  const platforms = options.platforms ??
-    process.env.OLDEN_IMAGE_PLATFORMS?.split(',').map((platform) => platform.trim()) ?? ['linux/arm64']
-  const cacheRef = options.cacheRef ?? process.env.OLDEN_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const commit = execGit(['rev-parse', 'HEAD'])
 
-  return buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'olden',
+    imageName: 'olden',
+    packageAttr: 'olden-image',
     registry,
     repository,
     tag,
-    context,
-    dockerfile,
-    platforms,
-    cacheRef,
+    sourceSha: commit,
+    latestTag: 'latest',
+    dryRun: options.dryRun,
   })
+
+  return { image: `${registry}/${repository}:${tag}`, digest: result.reference, commit }
 }
 
 if (import.meta.main) {
-  const cliTag = parseTagArg(process.argv.slice(2))
-  buildImage({ tag: cliTag }).catch((error) => {
+  const args = process.argv.slice(2)
+  const cliTag = parseTagArg(args)
+  buildImage({ tag: cliTag, dryRun: args.includes('--dry-run') }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })

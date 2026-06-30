@@ -21,6 +21,8 @@ const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
 const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
+const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.yml')
+const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
@@ -30,6 +32,20 @@ const froussardKnativeService = readRepoFile('argocd/applications/froussard/knat
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
+const productBuildScripts = [
+  readRepoFile('packages/scripts/src/app/build-image.ts'),
+  readRepoFile('packages/scripts/src/docs/build-image.ts'),
+  readRepoFile('packages/scripts/src/proompteng/build-image.ts'),
+  readRepoFile('packages/scripts/src/olden/build-image.ts'),
+  readRepoFile('packages/scripts/src/synthesis/build-image.ts'),
+]
+const productDeployScripts = [
+  readRepoFile('packages/scripts/src/app/deploy-service.ts'),
+  readRepoFile('packages/scripts/src/docs/deploy-service.ts'),
+  readRepoFile('packages/scripts/src/proompteng/deploy-service.ts'),
+  readRepoFile('packages/scripts/src/olden/deploy-service.ts'),
+  readRepoFile('packages/scripts/src/synthesis/deploy-service.ts'),
+]
 const nixOciDeployScript = readRepoFile('packages/scripts/src/shared/nix-oci-deploy.ts')
 const ociPushScript = readRepoFile('nix/oci-push.sh')
 
@@ -255,7 +271,15 @@ describe('native OCI build workflows', () => {
   })
 
   it('does not use Docker Buildx or docker daemon commands in migrated workflows', () => {
-    const migratedWorkflows = [atticWorkflow, nixOciWorkflow, oiratWorkflow, bumbaWorkflow, froussardWorkflow]
+    const migratedWorkflows = [
+      atticWorkflow,
+      nixOciWorkflow,
+      oiratWorkflow,
+      bumbaWorkflow,
+      froussardWorkflow,
+      productNixWorkflow,
+      enabledProductReleaseWorkflow,
+    ]
     for (const workflow of migratedWorkflows) {
       expect(workflow).not.toContain('docker/build-push-action')
       expect(workflow).not.toContain('docker load')
@@ -272,6 +296,7 @@ describe('native OCI build workflows', () => {
     expect(repoFileExists('.github/workflows/nix-toolchain.yml')).toBe(false)
     expect(repoFileExists('.github/workflows/oci-native-build-common.yml')).toBe(false)
     expect(repoFileExists('.github/workflows/oci-builder-benchmark.yml')).toBe(false)
+    expect(repoFileExists('.github/workflows/docker-build-push.yaml')).toBe(false)
     expect(repoFileExists('nix/cache-smoke-input.txt')).toBe(false)
     expect(flake).not.toContain('cacheSmoke')
     expect(flake).not.toContain('cache-smoke')
@@ -299,6 +324,33 @@ describe('native OCI build workflows', () => {
     }
   })
 
+  it('routes enabled product app image builds through real Nix OCI attrs', () => {
+    for (const [service, packageAttr] of [
+      ['proompteng', 'proompteng-image'],
+      ['app', 'app-image'],
+      ['synthesis', 'synthesis-image'],
+      ['docs', 'docs-image'],
+      ['olden', 'olden-image'],
+    ] as const) {
+      expect(flake).toContain(`"${packageAttr}"`)
+      expect(repoFileExists(`nix/images/${service}.nix`)).toBe(true)
+      expect(productNixWorkflow).toContain(`image_name: ${service}`)
+      expect(productNixWorkflow).toContain(`package_attr: ${packageAttr}`)
+      expect(productNixWorkflow).toContain(`${service}-release-contract`)
+    }
+
+    expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(productNixWorkflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
+    expect(productNixWorkflow).not.toContain('mathieudutour/github-tag-action')
+    expect(productNixWorkflow).not.toContain('ncipollo/release-action')
+    expect(productNixWorkflow).not.toContain("'argocd/applications/docs/**'")
+    expect(productNixWorkflow).not.toContain("'argocd/applications/app/**'")
+    expect(productNixWorkflow).not.toContain("'argocd/applications/proompteng/**'")
+    expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
+    expect(productNixWorkflow).not.toContain("'argocd/applications/synthesis/**'")
+  })
+
   it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
     expect(oiratWorkflow).not.toContain("'argocd/applications/oirat/**'")
     expect(bumbaWorkflow).not.toContain("'argocd/applications/bumba/**'")
@@ -310,11 +362,18 @@ describe('native OCI build workflows', () => {
   })
 
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
-    for (const script of [oiratBuildScript, bumbaBuildScript, froussardDeployScript]) {
+    for (const script of [oiratBuildScript, bumbaBuildScript, froussardDeployScript, ...productBuildScripts]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")
       expect(script).not.toContain("from '../shared/docker'")
       expect(script).not.toContain('buildAndPushDockerImage')
       expect(script).not.toContain('inspectImageDigest')
+    }
+    for (const script of productDeployScripts) {
+      expect(script).not.toContain("from '../shared/docker'")
+      expect(script).not.toContain('inspectImageDigest')
+      expect(script).toContain('dryRun')
+      expect(script).toContain('noApply')
+      expect(script).toContain('digest:')
     }
 
     expect(nixOciDeployScript).toContain("await run('nix', ['build', `.#${packageAttr}`")
@@ -338,12 +397,37 @@ describe('native OCI build workflows', () => {
     expect(enabledSimpleReleaseWorkflow).not.toContain('docker buildx')
   })
 
+  it('opens digest-pinning release PRs for enabled product app Nix builds', () => {
+    expect(enabledProductReleaseWorkflow).toContain('workflows:')
+    expect(enabledProductReleaseWorkflow).toContain('- product-nix-images')
+    for (const service of ['proompteng', 'app', 'synthesis', 'docs', 'olden']) {
+      expect(enabledProductReleaseWorkflow).toContain(`argocd/applications/${service}/kustomization.yaml`)
+    }
+    expect(enabledProductReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/${SERVICE}')
+    expect(enabledProductReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/${service}')
+    expect(enabledProductReleaseWorkflow).toContain('${service}-image')
+    expect(enabledProductReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${image}@${digest}"')
+    expect(enabledProductReleaseWorkflow).toContain('service build inputs changed after')
+    expect(enabledProductReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
+    expect(enabledProductReleaseWorkflow).not.toContain('docker buildx')
+  })
+
   it('blocks stale Docker-era release PRs for migrated simple Nix image apps', () => {
     expect(autoPrReleaseBranchesWorkflow).toContain('migrated_nix_image_paths=(')
-    expect(autoPrReleaseBranchesWorkflow).toContain('"argocd/applications/bumba/kustomization.yaml"')
+    for (const path of [
+      'argocd/applications/app/kustomization.yaml',
+      'argocd/applications/bumba/kustomization.yaml',
+      'argocd/applications/docs/kustomization.yaml',
+      'argocd/applications/oirat/kustomization.yaml',
+      'argocd/applications/olden/kustomization.yaml',
+      'argocd/applications/proompteng/kustomization.yaml',
+      'argocd/applications/synthesis/kustomization.yaml',
+    ]) {
+      expect(autoPrReleaseBranchesWorkflow).toContain(`"${path}"`)
+      expect(releasePrAutomergeWorkflow).not.toContain(`'${path}'`)
+      expect(releasePrAutomergeWorkflow).not.toContain(`"${path}"`)
+    }
     expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
-    expect(releasePrAutomergeWorkflow).not.toContain("'argocd/applications/bumba/kustomization.yaml'")
-    expect(releasePrAutomergeWorkflow).not.toContain('"argocd/applications/bumba/kustomization.yaml"')
   })
 
   it('keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply', () => {
