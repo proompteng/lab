@@ -319,6 +319,7 @@ describe('native OCI build workflows', () => {
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/oirat/kustomization.yaml')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/froussard/knative-service.yaml')
+    expect(enabledSimpleReleaseWorkflow).toContain('\\@sha256:[0-9a-f]{64}')
     expect(enabledSimpleReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
     expect(enabledSimpleReleaseWorkflow).not.toContain('docker buildx')
   })
