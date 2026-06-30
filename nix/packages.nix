@@ -89,28 +89,40 @@ let
     x86_64-linux = {
       archiveRoot = "linux-amd64";
       src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-linux-amd64.tar.gz";
+        urls = [
+          "https://get.helm.sh/helm-v${helmVersion}-linux-amd64.tar.gz"
+          "https://github.com/helm/helm/releases/download/v${helmVersion}/helm-v${helmVersion}-linux-amd64.tar.gz"
+        ];
         hash = "sha256-pYRO8sOO9t3ztaj32R5+Do68OaOLs/yAE9Ypwe8pwlk=";
       };
     };
     aarch64-linux = {
       archiveRoot = "linux-arm64";
       src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-linux-arm64.tar.gz";
+        urls = [
+          "https://get.helm.sh/helm-v${helmVersion}-linux-arm64.tar.gz"
+          "https://github.com/helm/helm/releases/download/v${helmVersion}/helm-v${helmVersion}-linux-arm64.tar.gz"
+        ];
         hash = "sha256-ETzMU7fFfCq6DNCqVgtVAIQbGLUhDXhkGs/dxT2sirI=";
       };
     };
     x86_64-darwin = {
       archiveRoot = "darwin-amd64";
       src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-darwin-amd64.tar.gz";
+        urls = [
+          "https://get.helm.sh/helm-v${helmVersion}-darwin-amd64.tar.gz"
+          "https://github.com/helm/helm/releases/download/v${helmVersion}/helm-v${helmVersion}-darwin-amd64.tar.gz"
+        ];
         hash = "sha256-c0NK6sNq0GjOLlWCuIUaKG3GKOrhZJSibirQskpxmfk=";
       };
     };
     aarch64-darwin = {
       archiveRoot = "darwin-arm64";
       src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-darwin-arm64.tar.gz";
+        urls = [
+          "https://get.helm.sh/helm-v${helmVersion}-darwin-arm64.tar.gz"
+          "https://github.com/helm/helm/releases/download/v${helmVersion}/helm-v${helmVersion}-darwin-arm64.tar.gz"
+        ];
         hash = "sha256-YenFRV8Gsq0KEoCXW/ZYkucHrcGddmsM9OkAbjt7S2w=";
       };
     };

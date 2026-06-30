@@ -5,6 +5,8 @@ FROM ${ACTIONS_RUNNER_BASE}
 
 ARG DEBIAN_FRONTEND=noninteractive
 ARG LAB_GIT_SHA=unknown
+ARG LAB_NIX_EXTRA_SUBSTITUTERS=
+ARG LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=
 ARG NIX_INSTALL_URL=https://releases.nixos.org/nix/nix-2.28.5/install
 
 LABEL org.opencontainers.image.title="lab-arc-runner"
@@ -23,7 +25,6 @@ RUN apt-get update \
 
 USER runner
 ENV USER=runner
-ENV NIX_CONFIG="experimental-features = nix-command flakes"
 ENV PATH="/home/runner/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
 
 WORKDIR /tmp/lab-nix-toolchain
@@ -33,6 +34,13 @@ COPY --chown=runner:runner nix ./nix
 RUN curl --proto '=https' --tlsv1.2 -fsSL "${NIX_INSTALL_URL}" -o /tmp/install-nix.sh \
   && sh /tmp/install-nix.sh --no-daemon --yes --no-channel-add --no-modify-profile \
   && rm /tmp/install-nix.sh \
+  && mkdir -p "${HOME}/.config/nix" \
+  && { \
+    echo "experimental-features = nix-command flakes"; \
+    if [ -n "${LAB_NIX_EXTRA_SUBSTITUTERS}" ]; then echo "extra-substituters = ${LAB_NIX_EXTRA_SUBSTITUTERS}"; fi; \
+    if [ -n "${LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS}" ]; then echo "extra-trusted-public-keys = ${LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS}"; fi; \
+  } > "${HOME}/.config/nix/nix.conf" \
+  && export NIX_CONFIG="$(cat "${HOME}/.config/nix/nix.conf")" \
   && nix profile install .#ciToolchain --priority 4 \
   && toolchain-doctor \
   && oci-doctor \

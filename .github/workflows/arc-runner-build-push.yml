@@ -58,6 +58,11 @@ jobs:
         id: meta
         run: echo "tag=sha-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
 
+      - name: Require Attic public key
+        env:
+          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+        run: test -n "${ATTIC_PUBLIC_KEY}"
+
       - name: Prepare minimal runner image context
         run: |
           set -euo pipefail
@@ -72,13 +77,16 @@ jobs:
           ARCH: ${{ matrix.arch }}
           TAG: ${{ steps.meta.outputs.tag }}
           IMAGE: registry.ide-newton.ts.net/lab/arc-runner
+          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           args=(
             docker buildx build
             --platform "${PLATFORM}"
             --file images/arc-runner/Dockerfile
-              --build-arg "LAB_GIT_SHA=${GITHUB_SHA}"
+            --build-arg "LAB_GIT_SHA=${GITHUB_SHA}"
+            --build-arg "LAB_NIX_EXTRA_SUBSTITUTERS=http://attic.attic.svc.cluster.local/lab"
+            --build-arg "LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=${ATTIC_PUBLIC_KEY}"
             )
           if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
             args+=(

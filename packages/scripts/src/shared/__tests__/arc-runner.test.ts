@@ -17,6 +17,7 @@ const kubeconformWorkflow = readRepoFile('.github/workflows/kubeconform.yml')
 const khoshutWorkflow = readRepoFile('.github/workflows/khoshut-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
 const flake = readRepoFile('flake.nix')
+const nixPackages = readRepoFile('nix/packages.nix')
 
 describe('ARC Nix runner toolchain', () => {
   it('keeps ARC storage and Docker sidecar unchanged while making runner images releasable by digest', () => {
@@ -41,6 +42,10 @@ describe('ARC Nix runner toolchain', () => {
     )
     expect(arcRunnerDockerfile).not.toContain('ghcr.io/actions/actions-runner:latest')
     expect(arcRunnerDockerfile).toContain('https://releases.nixos.org/nix/nix-2.28.5/install')
+    expect(arcRunnerDockerfile).toContain('ARG LAB_NIX_EXTRA_SUBSTITUTERS=')
+    expect(arcRunnerDockerfile).toContain('ARG LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=')
+    expect(arcRunnerDockerfile).toContain('extra-substituters = ${LAB_NIX_EXTRA_SUBSTITUTERS}')
+    expect(arcRunnerDockerfile).toContain('extra-trusted-public-keys = ${LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS}')
     expect(arcRunnerDockerfile).toContain('COPY --chown=runner:runner flake.nix flake.lock ./')
     expect(arcRunnerDockerfile).toContain('COPY --chown=runner:runner nix ./nix')
     expect(arcRunnerDockerfile).toContain(
@@ -53,6 +58,10 @@ describe('ARC Nix runner toolchain', () => {
     expect(flake).toContain('name = "lab-ci-toolchain"')
     expect(flake).toContain('pathsToLink = [ "/bin" ]')
     expect(flake).toContain('ignoreCollisions = true')
+    expect(nixPackages).toContain('https://get.helm.sh/helm-v${helmVersion}-linux-amd64.tar.gz')
+    expect(nixPackages).toContain(
+      'https://github.com/helm/helm/releases/download/v${helmVersion}/helm-v${helmVersion}-linux-amd64.tar.gz',
+    )
   })
 
   it('publishes multi-arch ARC runner images and opens a digest-pinning release PR', () => {
@@ -60,6 +69,12 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('runner: arc-arm64')
     expect(arcRunnerBuildWorkflow).toContain('Prepare minimal runner image context')
     expect(arcRunnerBuildWorkflow).toContain('cp flake.nix flake.lock .artifacts/arc-runner-context/')
+    expect(arcRunnerBuildWorkflow).toContain('Require Attic public key')
+    expect(arcRunnerBuildWorkflow).toContain('ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}')
+    expect(arcRunnerBuildWorkflow).toContain(
+      '--build-arg "LAB_NIX_EXTRA_SUBSTITUTERS=http://attic.attic.svc.cluster.local/lab"',
+    )
+    expect(arcRunnerBuildWorkflow).toContain('--build-arg "LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=${ATTIC_PUBLIC_KEY}"')
     expect(arcRunnerBuildWorkflow).toContain('docker buildx build')
     expect(arcRunnerBuildWorkflow).toContain('--platform "${PLATFORM}"')
     expect(arcRunnerBuildWorkflow).toContain('--push')
