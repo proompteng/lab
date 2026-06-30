@@ -4,7 +4,7 @@ namespace: sag
 resources:
   - serviceaccount.yaml
   - rbac.yaml
-  - codex-auth-sealedsecret.yaml
+  - codex-auth-externalsecret.yaml
   - postgres-cluster.yaml
   - deployment.yaml
   - service.yaml

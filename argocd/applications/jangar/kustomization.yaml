@@ -8,7 +8,7 @@ resources:
   - deployment.yaml
   - service.yaml
   - github-token.yaml
-  - codex-auth-sealedsecret.yaml
+  - codex-auth-externalsecret.yaml
   - discord-codex-bot-sealedsecret.yaml
   - discord-success-channel-sealedsecret.yaml
   - app-tailscale-service.yaml
