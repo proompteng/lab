@@ -10,6 +10,14 @@ const agentsCiClusterRbac = readFileSync(
   new URL('../../../../../argocd/applications/agents-ci/runner-rbac-cluster.yaml', import.meta.url),
   'utf8',
 )
+const arcApplication = readFileSync(
+  new URL('../../../../../argocd/applications/arc/application.yaml', import.meta.url),
+  'utf8',
+)
+const arcKubeModeServiceAccount = readFileSync(
+  new URL('../../../../../argocd/applications/arc/kube-mode-serviceaccount.yaml', import.meta.url),
+  'utf8',
+)
 
 describe('torghut post-deploy verifier workflow', () => {
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
@@ -150,6 +158,14 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('serving.knative.dev')
     expect(agentsCiClusterRbac).toContain('resources:\n      - pods')
     expect(agentsCiClusterRbac).toContain('arc-arm64-gha-rs-kube-mode')
+  })
+
+  it('runs arm64 workflows with the kube-mode service account that receives post-deploy RBAC', () => {
+    expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
+    expect(arcApplication).toContain('serviceAccountName: arc-arm64-gha-rs-kube-mode')
+    expect(arcKubeModeServiceAccount).toContain('kind: ServiceAccount')
+    expect(arcKubeModeServiceAccount).toContain('name: arc-arm64-gha-rs-kube-mode')
+    expect(arcKubeModeServiceAccount).toContain('namespace: arc')
   })
 
   it('grants the ARC runner patch access for explicit Argo refreshes', () => {
