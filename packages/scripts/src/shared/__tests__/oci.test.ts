@@ -28,6 +28,7 @@ const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.ym
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
 const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
+const symphonyReleaseMetadataScript = readRepoFile('packages/scripts/src/symphony/resolve-release-metadata.ts')
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
 const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
@@ -305,6 +306,35 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
     expect(enabledProductReleaseWorkflow).toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+  })
+
+  it('does not fan out migrated image builds on unrelated flake attr changes', () => {
+    for (const workflow of [
+      atticWorkflow,
+      oiratWorkflow,
+      bumbaWorkflow,
+      froussardWorkflow,
+      productNixWorkflow,
+      symphonyBuildWorkflow,
+      sagBuildWorkflow,
+    ]) {
+      expect(workflow).not.toContain("- 'flake.nix'")
+      expect(workflow).not.toContain('- flake.nix')
+    }
+
+    for (const workflow of [enabledSimpleReleaseWorkflow, enabledProductReleaseWorkflow, sagReleaseWorkflow]) {
+      expect(workflow).not.toContain(' flake.nix ')
+      expect(workflow).not.toContain('\n              flake.nix\n')
+    }
+
+    expect(symphonyReleaseMetadataScript).not.toContain('flake\\.nix$')
+    expect(symphonyReleaseMetadataScript).toContain('nix\\/images\\/openai-codex-cli\\.nix$')
+    for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow, productNixWorkflow, sagBuildWorkflow]) {
+      expect(workflow).toContain("- 'flake.lock'")
+      expect(workflow).toContain("- 'nix/images/bun-workspace-service.nix'")
+    }
+    expect(atticWorkflow).toContain("- 'flake.lock'")
+    expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
   })
 
   it('allows Nix dockerTools archives without Docker repo tags', () => {

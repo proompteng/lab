@@ -135,13 +135,13 @@ jobs:
 
           case "${SERVICE}" in
             oirat)
-              paths=(services/oirat packages/discord packages/scripts/src/oirat nix/images flake.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/oirat packages/discord packages/scripts/src/oirat nix/images/oirat.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
               ;;
             bumba)
-              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba nix/images flake.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba nix/images/bumba.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
               ;;
             froussard)
-              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard nix/images flake.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard nix/images/froussard.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
               ;;
           esac
 
