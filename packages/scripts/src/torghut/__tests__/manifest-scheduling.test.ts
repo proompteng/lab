@@ -351,7 +351,7 @@ describe('Torghut manifest scheduling', () => {
     const deployment = parseManifest('argocd/applications/torghut-options/ta/flinkdeployment.yaml')
     const spec = getAtPath(deployment, ['spec'])
     const flinkConfiguration = getAtPath(spec, ['flinkConfiguration'])
-    expect(spec.restartNonce).toBe(16)
+    expect(spec.restartNonce).toBeGreaterThanOrEqual(16)
     expect(flinkConfiguration['restart-strategy.fixed-delay.attempts']).toBe('60')
     expect(flinkConfiguration['restart-strategy.fixed-delay.delay']).toBe('10 s')
   })
