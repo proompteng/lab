@@ -18,11 +18,9 @@ const createFixture = () => {
   const analysisActivityManifestPath = join(dir, 'analysis-template-activity.yaml')
   const analysisTeardownManifestPath = join(dir, 'analysis-template-teardown-clean.yaml')
   const analysisArtifactManifestPath = join(dir, 'analysis-template-artifact-bundle.yaml')
-  const empiricalBackfillManifestPath = join(dir, 'empirical-jobs-backfill-job.yaml')
   const zeroNotionalDriftRepairManifestPath = join(dir, 'zero-notional-drift-repair-cronjob.yaml')
   const paperAccountFlattenManifestPath = join(dir, 'paper-account-flatten-cronjob.yaml')
   const generatedResourceRetentionManifestPath = join(dir, 'generated-resource-retention-cronjob.yaml')
-  const whitepaperSemanticBackfillManifestPath = join(dir, 'whitepaper-semantic-backfill-job.yaml')
   const tigerBeetleSmokeManifestPath = join(dir, 'tigerbeetle-smoke-job.yaml')
   const hyperliquidRuntimeManifestPath = join(dir, 'hyperliquid-runtime-deployment.yaml')
   const hyperliquidRuntimeMigrationManifestPath = join(dir, 'hyperliquid-runtime-db-migrations-job.yaml')
@@ -98,11 +96,9 @@ spec:
     analysisActivityManifestPath,
     analysisTeardownManifestPath,
     analysisArtifactManifestPath,
-    empiricalBackfillManifestPath,
     zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
     generatedResourceRetentionManifestPath,
-    whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
   ]) {
     const metadataEnv =
@@ -196,11 +192,9 @@ spec:
     analysisActivityManifestPath,
     analysisTeardownManifestPath,
     analysisArtifactManifestPath,
-    empiricalBackfillManifestPath,
     zeroNotionalDriftRepairManifestPath,
     paperAccountFlattenManifestPath,
     generatedResourceRetentionManifestPath,
-    whitepaperSemanticBackfillManifestPath,
     tigerBeetleSmokeManifestPath,
     hyperliquidRuntimeManifestPath,
     hyperliquidRuntimeMigrationManifestPath,
@@ -230,11 +224,9 @@ const updateOptionsForFixture = (
   analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
   analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
   analysisArtifactManifestPath: relative(repoRoot, fixture.analysisArtifactManifestPath),
-  empiricalBackfillManifestPath: relative(repoRoot, fixture.empiricalBackfillManifestPath),
   zeroNotionalDriftRepairManifestPath: relative(repoRoot, fixture.zeroNotionalDriftRepairManifestPath),
   paperAccountFlattenManifestPath: relative(repoRoot, fixture.paperAccountFlattenManifestPath),
   generatedResourceRetentionManifestPath: relative(repoRoot, fixture.generatedResourceRetentionManifestPath),
-  whitepaperSemanticBackfillManifestPath: relative(repoRoot, fixture.whitepaperSemanticBackfillManifestPath),
   tigerBeetleSmokeManifestPath: relative(repoRoot, fixture.tigerBeetleSmokeManifestPath),
   hyperliquidRuntimeManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeManifestPath),
   hyperliquidRuntimeMigrationManifestPath: relative(repoRoot, fixture.hyperliquidRuntimeMigrationManifestPath),
@@ -282,16 +274,6 @@ describe('update-manifests', () => {
     expect(migrationManifest).not.toContain('GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA public')
   })
 
-  it('keeps the whitepaper semantic backfill hook on arm64 nodes', () => {
-    const backfillManifest = readFileSync(
-      join(repoRoot, 'argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml'),
-      'utf8',
-    )
-
-    expect(backfillManifest).toContain('nodeSelector:')
-    expect(backfillManifest).toContain('kubernetes.io/arch: arm64')
-  })
-
   it('updates service and migration image digest, rollout timestamp, and metadata env values', () => {
     const fixture = createFixture()
     const result = __private.updateTorghutManifests(updateOptionsForFixture(fixture))
@@ -309,11 +291,9 @@ describe('update-manifests', () => {
     const analysisActivityManifest = readFileSync(fixture.analysisActivityManifestPath, 'utf8')
     const analysisTeardownManifest = readFileSync(fixture.analysisTeardownManifestPath, 'utf8')
     const analysisArtifactManifest = readFileSync(fixture.analysisArtifactManifestPath, 'utf8')
-    const empiricalBackfillManifest = readFileSync(fixture.empiricalBackfillManifestPath, 'utf8')
     const zeroNotionalDriftRepairManifest = readFileSync(fixture.zeroNotionalDriftRepairManifestPath, 'utf8')
     const paperAccountFlattenManifest = readFileSync(fixture.paperAccountFlattenManifestPath, 'utf8')
     const generatedResourceRetentionManifest = readFileSync(fixture.generatedResourceRetentionManifestPath, 'utf8')
-    const whitepaperSemanticBackfillManifest = readFileSync(fixture.whitepaperSemanticBackfillManifestPath, 'utf8')
     const tigerBeetleSmokeManifest = readFileSync(fixture.tigerBeetleSmokeManifestPath, 'utf8')
     const hyperliquidRuntimeManifest = readFileSync(fixture.hyperliquidRuntimeManifestPath, 'utf8')
     const hyperliquidRuntimeMigrationManifest = readFileSync(fixture.hyperliquidRuntimeMigrationManifestPath, 'utf8')
@@ -349,11 +329,9 @@ describe('update-manifests', () => {
       analysisActivityManifest,
       analysisTeardownManifest,
       analysisArtifactManifest,
-      empiricalBackfillManifest,
       zeroNotionalDriftRepairManifest,
       paperAccountFlattenManifest,
       generatedResourceRetentionManifest,
-      whitepaperSemanticBackfillManifest,
       tigerBeetleSmokeManifest,
       hyperliquidRuntimeManifest,
       hyperliquidRuntimeMigrationManifest,
@@ -377,7 +355,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(20)
+    expect(result.changedPaths.length).toBe(18)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -399,7 +377,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(18)
+    expect(result.changedPaths.length).toBe(16)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

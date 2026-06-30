@@ -131,16 +131,21 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
                 spec = cast(Mapping[str, object], deployment.get("spec", {}))
                 self.assertEqual(spec.get("revisionHistoryLimit"), 2)
 
-    def test_whitepaper_semantic_backfill_runs_on_arm_nodes(self) -> None:
-        manifest = _load_yaml_mapping(
-            "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml"
+    def test_stale_backfill_hooks_are_removed_from_gitops(self) -> None:
+        removed_paths = [
+            "argocd/applications/torghut/empirical-jobs-backfill-job.yaml",
+            "argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml",
+        ]
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
         )
-        pod_spec = manifest.get("spec", {}).get("template", {}).get("spec", {})
-        self.assertIsInstance(pod_spec, Mapping)
-        self.assertEqual(
-            cast(Mapping[str, object], pod_spec).get("nodeSelector"),
-            {"kubernetes.io/arch": "arm64"},
-        )
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
+
+        for relative_path in removed_paths:
+            with self.subTest(relative_path=relative_path):
+                self.assertFalse((_repo_root() / relative_path).exists())
+                self.assertNotIn(relative_path.rsplit("/", 1)[-1], resources)
 
     def test_execution_tca_refresh_cronjob_is_removed_from_gitops(
         self,
