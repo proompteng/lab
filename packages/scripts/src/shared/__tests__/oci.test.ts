@@ -14,6 +14,7 @@ const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
 const atticReleaseMetadataScript = readRepoFile('nix/attic-release-metadata.sh')
 const atticDeployment = readRepoFile('argocd/applications/attic/deployment.yaml')
 const atticGcCronJob = readRepoFile('argocd/applications/attic/gc-cronjob.yaml')
+const productApplicationSet = readRepoFile('argocd/applicationsets/product.yaml')
 const flake = readRepoFile('flake.nix')
 const inspectOciArchiveScript = readRepoFile('nix/oci-inspect-archive.sh')
 const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
@@ -332,6 +333,16 @@ describe('native OCI build workflows', () => {
     expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
     expect(releasePrAutomergeWorkflow).not.toContain("'argocd/applications/bumba/kustomization.yaml'")
     expect(releasePrAutomergeWorkflow).not.toContain('"argocd/applications/bumba/kustomization.yaml"')
+  })
+
+  it('keeps Froussard Knative digest rollouts on client-side apply', () => {
+    const match = productApplicationSet.match(/- name: froussard[\s\S]*?automation: manual/)
+    expect(match).not.toBeNull()
+    const froussardBlock = match?.[0] ?? ''
+    expect(froussardBlock).toContain('syncOptions:')
+    expect(froussardBlock).toContain('- RespectIgnoreDifferences=true')
+    expect(froussardBlock).toContain('- ApplyOutOfSyncOnly=true')
+    expect(froussardBlock).not.toContain('- ServerSideApply=true')
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {
