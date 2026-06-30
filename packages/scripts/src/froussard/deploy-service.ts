@@ -4,14 +4,11 @@ import { relative, resolve } from 'node:path'
 import process from 'node:process'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 
 const defaultManifestPath = 'argocd/applications/froussard/knative-service.yaml'
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/froussard'
-const defaultDockerfile = 'apps/froussard/Dockerfile'
-const defaultContext = '.'
-const defaultPlatforms = ['linux/arm64']
 
 const execGit = (args: string[]): string => {
   const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot })
@@ -70,55 +67,37 @@ type ImageBuildConfig = {
   registry: string
   repository: string
   tag: string
-  dockerfile: string
-  context: string
-  platforms: string[]
 }
 
 const resolveImageBuildConfig = ({ version }: VersionMetadata): ImageBuildConfig => {
   const registry = process.env.FROUSSARD_IMAGE_REGISTRY?.trim() || defaultRegistry
   const repository = process.env.FROUSSARD_IMAGE_REPOSITORY?.trim() || defaultRepository
   const tag = process.env.FROUSSARD_IMAGE_TAG?.trim() || sanitizeTag(version)
-  const dockerfile = resolve(repoRoot, process.env.FROUSSARD_DOCKERFILE?.trim() || defaultDockerfile)
-  const context = resolve(repoRoot, process.env.FROUSSARD_BUILD_CONTEXT?.trim() || defaultContext)
-  const platforms = (process.env.FROUSSARD_PLATFORMS ?? defaultPlatforms.join(','))
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0)
 
   return {
     registry,
     repository,
     tag,
-    dockerfile,
-    context,
-    platforms: platforms.length > 0 ? platforms : defaultPlatforms,
   }
 }
 
-const buildFroussardImage = async (
-  config: ImageBuildConfig,
-  { version, commit }: VersionMetadata,
-): Promise<BuildResult> => {
+const buildFroussardImage = async (config: ImageBuildConfig, { commit }: VersionMetadata): Promise<BuildResult> => {
   console.log(`Building image ${config.registry}/${config.repository}:${config.tag}`)
 
-  const result = await buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'froussard',
+    imageName: 'froussard',
+    packageAttr: 'froussard-image',
     registry: config.registry,
     repository: config.repository,
     tag: config.tag,
-    dockerfile: config.dockerfile,
-    context: config.context,
-    platforms: config.platforms,
-    buildArgs: {
-      FROUSSARD_VERSION: version,
-      FROUSSARD_COMMIT: commit,
-    },
+    sourceSha: commit,
+    latestTag: 'latest',
   })
 
-  const digest = inspectImageDigest(result.image)
-  console.log(`Published ${result.image} (${digest})`)
+  console.log(`Published ${result.image}:${result.tag} (${result.reference})`)
 
-  return { image: result.image, digest }
+  return { image: `${result.image}:${result.tag}`, digest: result.reference }
 }
 
 type ManifestUpdateOptions = {
@@ -179,7 +158,6 @@ export const main = async () => {
   if (dryRun) {
     console.log('Running in dry-run mode; skipping Docker push and kubectl apply.')
   } else {
-    ensureCli('docker')
     ensureCli('kubectl')
   }
 

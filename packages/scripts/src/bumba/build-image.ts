@@ -1,12 +1,7 @@
 #!/usr/bin/env bun
 
-import { copyFileSync, mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { resolve } from 'node:path'
-
-import { ensureCli, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 
 export type BuildImageOptions = {
   registry?: string
@@ -17,25 +12,7 @@ export type BuildImageOptions = {
   version?: string
   commit?: string
   cacheRef?: string
-}
-
-const createPrunedContext = async (): Promise<{ dir: string; cleanup: () => void }> => {
-  ensureCli('bunx')
-
-  const dir = mkdtempSync(resolve(tmpdir(), 'bumba-prune-'))
-  const cleanup = () => rmSync(dir, { recursive: true, force: true })
-
-  try {
-    await run('bunx', ['turbo', 'prune', '--scope=@proompteng/bumba', '--docker', `--out-dir=${dir}`], {
-      cwd: repoRoot,
-    })
-
-    copyFileSync(resolve(repoRoot, 'tsconfig.base.json'), resolve(dir, 'tsconfig.base.json'))
-    return { dir, cleanup }
-  } catch (error) {
-    cleanup()
-    throw error
-  }
+  dryRun?: boolean
 }
 
 const resolveBuildArgs = (version: string, commit: string) => ({
@@ -48,42 +25,22 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.BUMBA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.BUMBA_IMAGE_REPOSITORY ?? 'lab/bumba'
   const tag = options.tag ?? process.env.BUMBA_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const usePrune = options.context === undefined && process.env.BUMBA_BUILD_CONTEXT === undefined
-
-  const dockerfile = resolve(
-    repoRoot,
-    options.dockerfile ?? process.env.BUMBA_DOCKERFILE ?? 'services/bumba/Dockerfile',
-  )
   const version = options.version ?? process.env.BUMBA_VERSION ?? execGit(['describe', '--tags', '--always'])
   const commit = options.commit ?? process.env.BUMBA_COMMIT ?? execGit(['rev-parse', 'HEAD'])
-  const cacheRef = options.cacheRef ?? process.env.BUMBA_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
 
-  let context: string
-  let pruneCleanup: (() => void) | undefined
+  const result = await buildAndPushNixImage({
+    service: 'bumba',
+    imageName: 'bumba',
+    packageAttr: 'bumba-image',
+    registry,
+    repository,
+    tag,
+    sourceSha: commit,
+    latestTag: 'latest',
+    dryRun: options.dryRun,
+  })
 
-  try {
-    if (usePrune) {
-      const pruned = await createPrunedContext()
-      context = pruned.dir
-      pruneCleanup = pruned.cleanup
-    } else {
-      context = resolve(repoRoot, options.context ?? process.env.BUMBA_BUILD_CONTEXT ?? '.')
-    }
-
-    const result = await buildAndPushDockerImage({
-      registry,
-      repository,
-      tag,
-      context,
-      dockerfile,
-      buildArgs: resolveBuildArgs(version, commit),
-      cacheRef,
-    })
-
-    return { ...result, version, commit }
-  } finally {
-    pruneCleanup?.()
-  }
+  return { image: `${registry}/${repository}:${tag}`, digest: result.reference, version, commit }
 }
 
 if (import.meta.main) {

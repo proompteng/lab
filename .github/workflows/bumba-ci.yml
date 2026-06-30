@@ -8,7 +8,19 @@ on:
       - 'services/bumba/**'
       - 'packages/scripts/src/bumba/**'
       - '.github/workflows/bumba-ci.yml'
-      - '.github/workflows/docker-build-common.yaml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/images/bumba.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
   pull_request:
@@ -18,7 +30,19 @@ on:
       - 'argocd/applications/bumba/**'
       - 'argocd/applicationsets/product.yaml'
       - '.github/workflows/bumba-ci.yml'
-      - '.github/workflows/docker-build-common.yaml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/images/bumba.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
   workflow_dispatch:
@@ -41,20 +65,22 @@ jobs:
       test-command: bun run --cwd services/bumba tsc && bun run --cwd services/bumba test
     secrets: inherit
 
-  deploy-main:
+  nix-image:
     if: >-
       ${{
-        github.event_name == 'push' &&
-        github.ref == 'refs/heads/main' &&
-        !contains(github.event.head_commit.message || '', 'automated release PR')
+        github.event_name == 'pull_request' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          !contains(github.event.head_commit.message || '', 'automated release PR')
+        )
       }}
-    uses: ./.github/workflows/docker-build-common.yaml
+    uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: bumba
-      dockerfile: ./services/bumba/Dockerfile
-      context: .
-      new_tag: ${{ github.sha }}
-      turbo_scope: '@proompteng/bumba'
-      turbo_copy: 'tsconfig.base.json'
-      bun_version: 1.3.14
+      package_attr: bumba-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'bumba-release-contract' || '' }}
     secrets: inherit
