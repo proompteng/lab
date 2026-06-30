@@ -22,6 +22,7 @@ const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
 const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.yml')
+const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service.nix')
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
@@ -30,6 +31,13 @@ const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
+const productImageModules = [
+  appImageModule,
+  readRepoFile('nix/images/docs.nix'),
+  readRepoFile('nix/images/olden.nix'),
+  readRepoFile('nix/images/proompteng.nix'),
+  readRepoFile('nix/images/synthesis.nix'),
+]
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
@@ -351,6 +359,11 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
     expect(productNixWorkflow).not.toContain("'argocd/applications/synthesis/**'")
     expect(appImageModule).toContain('"@proompteng/source"')
+    for (const imageModule of productImageModules) {
+      expect(imageModule).toContain('dependencyClosure = "bunCache";')
+    }
+    expect(bunWorkspaceServiceModule).toContain('cp -R ${depsSource}/. "$TMPDIR/work/"')
+    expect(bunWorkspaceServiceModule).toContain('--cache-dir "$BUN_INSTALL_CACHE_DIR"')
   })
 
   it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {

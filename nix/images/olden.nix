@@ -11,9 +11,10 @@ import ./bun-workspace-service.nix {
   serviceName = "olden";
   packageName = "olden";
   depsHash = {
-    x86_64-linux = "sha256-Pe1PrO+FBr+ZClvxp9pVGzVwMEaISpH3MizBywngFG8=";
-    aarch64-linux = "sha256-e2rM9XEgmgAt6YZZxPQR4w4jrL4jCFqkRiGVI2z1OGE=";
+    x86_64-linux = "sha256-mVmJHnibB0eBjNCWLHwiPqZ1wcE4A590r0Le/pYckwo=";
+    aarch64-linux = "sha256-ObYDWyqG74ftNnBXZCu60JktViNYrMTrD9cMig4xUjA=";
   };
+  dependencyClosure = "bunCache";
   installFilters = [
     "@proompteng/design"
     "olden"
