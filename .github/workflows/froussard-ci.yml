@@ -7,7 +7,6 @@ on:
     paths:
       - 'apps/froussard/**'
       - 'packages/scripts/src/froussard/**'
-      - 'argocd/applications/froussard/**'
       - '.github/workflows/froussard-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/enabled-simple-nix-release.yml'
@@ -28,7 +27,6 @@ on:
     paths:
       - 'apps/froussard/**'
       - 'packages/scripts/src/froussard/**'
-      - 'argocd/applications/froussard/**'
       - '.github/workflows/froussard-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/enabled-simple-nix-release.yml'

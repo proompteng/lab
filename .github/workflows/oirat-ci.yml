@@ -7,7 +7,6 @@ on:
     paths:
       - 'services/oirat/**'
       - 'packages/scripts/src/oirat/**'
-      - 'argocd/applications/oirat/**'
       - '.github/workflows/oirat-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/enabled-simple-nix-release.yml'
@@ -28,7 +27,6 @@ on:
     paths:
       - 'services/oirat/**'
       - 'packages/scripts/src/oirat/**'
-      - 'argocd/applications/oirat/**'
       - '.github/workflows/oirat-ci.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/enabled-simple-nix-release.yml'
