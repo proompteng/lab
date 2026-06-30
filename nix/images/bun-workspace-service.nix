@@ -90,6 +90,7 @@ let
       pkgs.bash
       pkgs.coreutils
       pkgs.findutils
+      pkgs.gnugrep
     ];
 
     dontConfigure = true;
@@ -105,16 +106,48 @@ let
       mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$out"
       cp -R . "$out/"
       cd "$out"
-      bun install \
-        --cache-dir "$BUN_INSTALL_CACHE_DIR" \
-        --frozen-lockfile \
-        --ignore-scripts \
-        --backend=copyfile \
-        --linker=isolated \
-        --network-concurrency=1 \
-        --no-progress \
-        --no-summary \
-        ${installFilterArgs}
+
+      run_bun_install() {
+        local attempt
+        local log
+        local status
+
+        for attempt in 1 2 3; do
+          log="$TMPDIR/bun-install-attempt-$attempt.log"
+          rm -f "$log"
+
+          set +e
+          bun install \
+            --cache-dir "$BUN_INSTALL_CACHE_DIR" \
+            --frozen-lockfile \
+            --ignore-scripts \
+            --backend=copyfile \
+            --linker=isolated \
+            --network-concurrency=1 \
+            --no-progress \
+            --no-summary \
+            ${installFilterArgs} 2>&1 | tee "$log"
+          status=''${PIPESTATUS[0]}
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            return 0
+          fi
+
+          if ! grep -Eq "IntegrityCheckFailed|Integrity check failed" "$log"; then
+            return "$status"
+          fi
+
+          echo "bun install failed an integrity check on attempt $attempt; clearing Bun cache before retry" >&2
+          rm -rf "$BUN_INSTALL_CACHE_DIR"
+          mkdir -p "$BUN_INSTALL_CACHE_DIR"
+          find . -path '*/node_modules' -prune -exec rm -rf {} +
+        done
+
+        return "$status"
+      }
+
+      run_bun_install
 
       if [ "${dependencyClosure}" = "bunCache" ]; then
         cd "$TMPDIR"

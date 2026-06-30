@@ -418,6 +418,10 @@ describe('native OCI build workflows', () => {
     }
     expect(bunWorkspaceServiceModule).toContain('cp -R ${depsSource}/. "$TMPDIR/work/"')
     expect(bunWorkspaceServiceModule).toContain('--cache-dir "$BUN_INSTALL_CACHE_DIR"')
+    expect(bunWorkspaceServiceModule).toContain('for attempt in 1 2 3')
+    expect(bunWorkspaceServiceModule).toContain('IntegrityCheckFailed|Integrity check failed')
+    expect(bunWorkspaceServiceModule).toContain('rm -rf "$BUN_INSTALL_CACHE_DIR"')
+    expect(bunWorkspaceServiceModule).toContain("find . -path '*/node_modules' -prune -exec rm -rf {} +")
   })
 
   it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
