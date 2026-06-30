@@ -89,18 +89,20 @@ describe('enabled app inventory', () => {
   })
 
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
-    for (const name of [
-      'agents',
-      'jangar',
-      'symphony-jangar',
-      'symphony-torghut',
-      'bilig',
-      'analysis',
-      'torghut',
-      'torghut-options',
-    ]) {
+    for (const name of ['agents', 'jangar', 'symphony-jangar', 'symphony-torghut', 'torghut', 'torghut-options']) {
       expect(entry(name).class).toBe('deferred')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
+      expect(entry(name).deferredReason).toBeTruthy()
+    }
+  })
+
+  it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
+    for (const name of ['analysis', 'bilig']) {
+      expect(entry(name).class).toBe('vendor-manifest')
+      expect(entry(name).repoImages.length).toBeGreaterThan(0)
+      expect(entry(name).buildScriptPath).toBeUndefined()
+      expect(entry(name).deployScriptPath).toBeUndefined()
+      expect(entry(name).nixImageAttr).toBeUndefined()
       expect(entry(name).deferredReason).toBeTruthy()
     }
   })
