@@ -617,8 +617,7 @@ private fun setNullableTimestamp(
   index: Int,
   value: Instant?,
 ) {
-  val finite = value?.takeIf { it.isFinite() }
-  if (finite == null) {
+  if (value == null) {
     statement.setNull(index, Types.TIMESTAMP)
   } else {
     statement.setTimestamp(index, Timestamp.from(value))
@@ -642,7 +641,7 @@ private fun setNullableDouble(
   index: Int,
   value: Double?,
 ) {
-  val finite = value?.takeIf { it.isFinite() }
+  val finite = value?.takeIf { !it.isNaN() && !it.isInfinite() }
   if (finite == null) {
     statement.setNull(index, Types.DOUBLE)
   } else {
