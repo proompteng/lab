@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "synthesis";
   packageName = "synthesis";
   depsHash = {
-    x86_64-linux = "sha256-vGwrOet63H8vdbGcvgJG6i/NZFfFXLXEfZJeIow8Ixg=";
-    aarch64-linux = "sha256-Bxjkj44xeUZIak/1tlfgrVMiav76NTWfVNxlwyT/FIA=";
+    x86_64-linux = lib.fakeHash;
+    aarch64-linux = lib.fakeHash;
   };
   installFilters = [
     "@proompteng/design"

@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-smA0POpgLMRpl+pChTyk6z0LdPi4iTx7SmU8FbrBIOg=";
-    aarch64-linux = "sha256-LPFvbr9LJkcEjmt11hvNQHpViL3porbE+xA8nbUNvpg=";
+    x86_64-linux = lib.fakeHash;
+    aarch64-linux = lib.fakeHash;
   };
   installFilters = [
     "@proompteng/backend"

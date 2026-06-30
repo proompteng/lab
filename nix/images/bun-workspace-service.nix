@@ -102,7 +102,15 @@ let
       mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$out"
       cp -R . "$out/"
       cd "$out"
-      bun install --frozen-lockfile --ignore-scripts ${installFilterArgs}
+      bun install \
+        --frozen-lockfile \
+        --ignore-scripts \
+        --backend=copyfile \
+        --linker=isolated \
+        --network-concurrency=1 \
+        --no-progress \
+        --no-summary \
+        ${installFilterArgs}
 
       runHook postInstall
     '';

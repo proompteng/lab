@@ -11,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "docs";
   packageName = "docs";
   depsHash = {
-    x86_64-linux = "sha256-CZuf9swJwaP8Ah4k+/ooMspdAbMwzom5Wmk4SaUMrFw=";
-    aarch64-linux = "sha256-nXh2gvh7I1yunriuTDmpgXd4dDQBx20ZHYUsH3SrikM=";
+    x86_64-linux = lib.fakeHash;
+    aarch64-linux = lib.fakeHash;
   };
   installFilters = [
     "@proompteng/design"
