@@ -8,7 +8,7 @@ import { fatal, repoRoot } from '../shared/cli'
 import { execGit } from '../shared/git'
 import { readReleaseContract } from './release-contract'
 
-const defaultContractPath = '.artifacts/symphony/symphony-release-contract.json'
+const defaultContractPath = '.artifacts/symphony/release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/symphony'
 
 const buildTriggerPathRegex =
