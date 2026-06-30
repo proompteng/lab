@@ -101,10 +101,12 @@ let
 
       export HOME="$TMPDIR/home"
       export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
+      export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
       mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$out"
       cp -R . "$out/"
       cd "$out"
       bun install \
+        --cache-dir "$BUN_INSTALL_CACHE_DIR" \
         --frozen-lockfile \
         --ignore-scripts \
         --backend=copyfile \
@@ -145,11 +147,14 @@ let
 
       export HOME="$TMPDIR/home"
       export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
+      export BUN_CONFIG_CACHE_DIR="$BUN_INSTALL_CACHE_DIR"
       mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
       ${
         if useBunCacheClosure then
           ''
             cp -R ${deps}/. "$BUN_INSTALL_CACHE_DIR/"
+            cp -R ${depsSource}/. "$TMPDIR/work/"
+            chmod -R u+w "$TMPDIR/work"
             cp -R . "$TMPDIR/work/"
             chmod -R u+w "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
           ''
@@ -165,6 +170,7 @@ let
         if useBunCacheClosure then
           ''
             bun install \
+              --cache-dir "$BUN_INSTALL_CACHE_DIR" \
               --offline \
               --frozen-lockfile \
               --ignore-scripts \

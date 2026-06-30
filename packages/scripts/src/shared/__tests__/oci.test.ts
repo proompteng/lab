@@ -22,6 +22,7 @@ const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
 const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.yml')
+const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service.nix')
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
@@ -361,6 +362,8 @@ describe('native OCI build workflows', () => {
     for (const imageModule of productImageModules) {
       expect(imageModule).toContain('dependencyClosure = "bunCache";')
     }
+    expect(bunWorkspaceServiceModule).toContain('cp -R ${depsSource}/. "$TMPDIR/work/"')
+    expect(bunWorkspaceServiceModule).toContain('--cache-dir "$BUN_INSTALL_CACHE_DIR"')
   })
 
   it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
