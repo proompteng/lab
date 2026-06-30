@@ -1,0 +1,95 @@
+name: setup-nix-toolchain
+description: Validate the ARC preinstalled Nix toolchain and fall back to installing Nix when needed.
+
+inputs:
+  github-token:
+    description: GitHub token passed to the fallback Nix installer.
+    required: false
+    default: ''
+  extra-nix-config:
+    description: Nix configuration written for the current runner.
+    required: false
+    default: |
+      experimental-features = nix-command flakes
+  install-ci-toolchain:
+    description: Install and validate the repo CI toolchain when the runner image does not already provide it.
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Detect preinstalled Nix
+      id: detect
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v nix >/dev/null 2>&1; then
+          echo "nix_available=true" >> "${GITHUB_OUTPUT}"
+          nix --version
+        else
+          echo "nix_available=false" >> "${GITHUB_OUTPUT}"
+        fi
+
+    - name: Install xz for fallback Nix installer
+      if: steps.detect.outputs.nix_available != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v apt-get >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y xz-utils
+        elif command -v apk >/dev/null 2>&1; then
+          sudo apk add --no-cache xz
+        elif command -v dnf >/dev/null 2>&1; then
+          sudo dnf install -y xz
+        elif ! command -v xz >/dev/null 2>&1; then
+          echo "xz is required to install Nix on this runner." >&2
+          exit 1
+        fi
+
+    - name: Install fallback Nix
+      if: steps.detect.outputs.nix_available != 'true'
+      uses: cachix/install-nix-action@v31
+      with:
+        github_access_token: ${{ inputs.github-token }}
+        extra_nix_config: ${{ inputs.extra-nix-config }}
+
+    - name: Configure Nix
+      shell: bash
+      env:
+        EXTRA_NIX_CONFIG: ${{ inputs.extra-nix-config }}
+      run: |
+        set -euo pipefail
+        mkdir -p "${HOME}/.config/nix"
+        printf '%s\n' "${EXTRA_NIX_CONFIG}" > "${HOME}/.config/nix/nix.conf"
+        {
+          echo 'NIX_CONFIG<<__LAB_NIX_CONFIG__'
+          printf '%s\n' "${EXTRA_NIX_CONFIG}"
+          echo '__LAB_NIX_CONFIG__'
+        } >> "${GITHUB_ENV}"
+        {
+          echo "${HOME}/.nix-profile/bin"
+          echo "/nix/var/nix/profiles/default/bin"
+        } >> "${GITHUB_PATH}"
+        export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+        nix --version
+
+    - name: Ensure repo CI toolchain
+      if: inputs.install-ci-toolchain == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+        missing=0
+        for cmd in nix skopeo crane cosign jq yq kustomize docker docker-buildx; do
+          if ! command -v "${cmd}" >/dev/null 2>&1; then
+            missing=1
+            break
+          fi
+        done
+        if [ "${missing}" -eq 1 ]; then
+          nix profile install .#ciToolchain --priority 4
+        fi
+        toolchain-doctor
+        oci-doctor

@@ -41,6 +41,7 @@
           ruby = assertVersion "ruby_3_4" "3.4.7" pkgs.ruby_3_4;
 
           shellPackages = [
+            pkgs.nixVersions.nix_2_28
             nodejs
             exact.bun
             go
@@ -188,6 +189,25 @@
             exec bun run packages/scripts/src/shared/oci.ts assert "$@"
           '';
 
+          ciToolchain = pkgs.buildEnv {
+            name = "lab-ci-toolchain";
+            paths = shellPackages ++ [
+              toolchainDoctor
+              ociDoctor
+              cacheDoctor
+              cachePush
+              ociPush
+              inspectOciArchive
+              writeOciReleaseContract
+              resolveAtticReleaseMetadata
+              createOciIndex
+              inspectOciImage
+              assertOciPlatforms
+            ];
+            pathsToLink = [ "/bin" ];
+            ignoreCollisions = true;
+          };
+
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
           };
@@ -216,6 +236,7 @@
               createOciIndex
               inspectOciImage
               assertOciPlatforms
+              ciToolchain
               ;
             atticClient = pkgs.attic-client;
             atticServer = pkgs.attic-server;

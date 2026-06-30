@@ -1,0 +1,180 @@
+name: arc-runner-release
+
+on:
+  workflow_run:
+    workflows:
+      - arc-runner-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote.
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote.
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...).
+        required: false
+        type: string
+
+concurrency:
+  group: arc-runner-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: arc-runner-release-contract
+          path: .artifacts/arc-runner
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          cache-binary: false
+
+      - name: Resolve release metadata
+        id: meta
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          IMAGE_DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          image='registry.ide-newton.ts.net/lab/arc-runner'
+          contract='.artifacts/arc-runner/release-contract.json'
+
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            source_sha="$(jq -r '.sourceSha' "${contract}")"
+            tag="$(jq -r '.tag' "${contract}")"
+            digest="$(jq -r '.digest' "${contract}")"
+          else
+            source_sha="${COMMIT_SHA_INPUT:-$(git rev-parse HEAD)}"
+            tag="${IMAGE_TAG_INPUT:-sha-${source_sha}}"
+            digest="${IMAGE_DIGEST_INPUT:-}"
+            if [[ -z "${digest}" ]]; then
+              manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image}:${tag}")"
+              digest="$(jq -r '.manifest.digest // empty' <<< "${manifest_json}")"
+            fi
+          fi
+
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid ARC runner digest: ${digest}" >&2
+            exit 1
+          fi
+          if [[ "${source_sha}" != "$(git rev-parse HEAD)" ]]; then
+            echo "promote=false" >> "${GITHUB_OUTPUT}"
+            echo "Stale ARC runner build ${source_sha}; current main is $(git rev-parse HEAD)." >&2
+            exit 0
+          fi
+
+          {
+            echo "promote=true"
+            echo "image=${image}"
+            echo "tag=${tag}"
+            echo "digest=${digest}"
+            echo "source_sha=${source_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Verify promoted ARC runner index
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}@${DIGEST}")"
+          for platform in linux/amd64 linux/arm64; do
+            found="$(
+              jq -r --arg platform "${platform}" \
+                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
+                <<< "${manifest_json}" | head -n 1
+            )"
+            test -n "${found}"
+          done
+
+      - name: Update ARC runner images
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          export IMAGE_REF="${IMAGE}@${DIGEST}"
+          perl -0pi -e 's#image:\s+(?:ghcr\.io/actions/actions-runner:latest|registry\.ide-newton\.ts\.net/lab/arc-runner@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' argocd/applications/arc/application.yaml
+          test "$(grep -cF "image: ${IMAGE_REF}" argocd/applications/arc/application.yaml)" -eq 6
+          grep -F 'image: docker:dind' argocd/applications/arc/application.yaml >/dev/null
+          grep -F 'storageClassName: "rook-ceph-block"' argocd/applications/arc/application.yaml >/dev/null
+
+      - name: Create ARC runner release pull request
+        if: steps.meta.outputs.promote == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: codex/arc-runner-release-${{ steps.meta.outputs.tag }}
+          title: 'chore(arc): promote runner image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(arc): promote runner image ${{ steps.meta.outputs.tag }}'
+          body: |
+            ## Summary
+
+            - Promote ARC runner containers to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`.
+            - Keep `docker:dind`, runner PVC settings, and storage classes unchanged.
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - `docker buildx imagetools inspect "${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}"`
+            - Verified `linux/amd64` and `linux/arm64` manifest entries.
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            None
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed (or `N/A` with justification).
+            - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+            - [x] Documentation, release notes, and follow-ups are updated or tracked.
+          labels: |
+            automated-pr
+            arc
+          add-paths: |
+            argocd/applications/arc/application.yaml
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale ARC runner promotion because source SHA is not current for runner build inputs.'

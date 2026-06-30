@@ -29,10 +29,11 @@ expect_contains() {
   esac
 }
 
-for cmd in node bun go ruby python3.11 python3.12 uv tofu helm kustomize kubeconform kubectl argo argocd buf gh shellcheck jq yq rg fd fzf; do
+for cmd in nix node bun go ruby python3.11 python3.12 uv tofu helm kustomize kubeconform kubectl argo argocd buf gh shellcheck jq yq rg fd fzf; do
   have "$cmd"
 done
 
+expect_contains nix "nix (Nix) 2.28." "$(nix --version)"
 expect_eq node v24.11.1 "$(node --version)"
 expect_eq bun 1.3.14 "$(bun --version)"
 expect_eq go go1.25.5 "$(go version | awk '{print $3}')"
