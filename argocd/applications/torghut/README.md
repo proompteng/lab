@@ -21,14 +21,28 @@ The empirical workflow depends on the namespace-local sealed secret
 `rook-ceph-rgw-argo-workflows` for Argo archive-log uploads. Keep that secret managed here so
 workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.
 
-Runtime-ledger proof packet assembly is no longer scheduled by a Torghut CronJob. Use the explicit operator/API repair
-paths and Argo workflow submissions for bounded proof collection; do not reintroduce a GitOps CronJob that silently
-promotes or imports runtime-window evidence on a timer.
+The `torghut-empirical-promotion-renewal` CronJob is also the scheduled runtime-ledger proof packet conductor for the
+paper-route proof lane. It first repairs sim source-window lineage, refreshes sim execution TCA rows from `SIM_DB_DSN`,
+then runs `renew_latest_empirical_promotion_jobs.py` with the sim
+`/trading/proofs?kind=runtime_window&window=latest_closed&full_audit=true&limit=5` proof payload, and finally runs
+`assemble_runtime_ledger_proof_packet.py` in explicit
+`authority` mode and uploads the packet under `runtime-ledger-proof-packets/{run_id}`. The scheduled packet uses the
+final authority thresholds: 20 runtime-ledger trading days, $10,000 total post-cost net PnL, $500/day post-cost net PnL,
+3% max drawdown/equity, 25% best-day share, and 35% symbol concentration. When the paper-route window is import-ready,
+the packet now requires the live closed-window proof from `/trading/proofs` and carries
+source-activity blockers such as `paper_route_source_activity_missing`, `source_decisions_missing`,
+`source_executions_missing`, and `source_tca_missing` into the final verdict. Treat those as the next repair target
+before rerunning import; do not collapse them into a generic runtime-ledger-missing diagnosis.
+
+The renewal conductor also carries an explicit live H-PAIRS runtime-window target for account `PA3SX7FYNUTF`. That target
+uses `DB_DSN` for source and target reads/writes and is a separate scope from the sim paper-route target. It is expected
+to remain blocked until live execution-eligible decisions, executions, order events, TCA rows, and durable runtime-ledger
+buckets exist; the target makes those blockers visible in the scheduled proof packet without granting promotion.
 
 The `torghut-paper-account-flatten` CronJob runs at 09:05, 09:15, 09:20, and 09:25 America/New_York before the regular
 session, then repeats those minutes during the post-close 16:00 hour.
-The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before explicit
-operator proof collection turns a closed paper-route window into authority-checkable runtime-ledger evidence.
+The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before the
+21:23 UTC renewal/import conductor can turn a closed paper-route window into authority-checkable runtime-ledger evidence.
 
 The live TigerBeetle journal CronJob uses small supervised source slices. Keep the execution batch and order-event
 max-batch settings conservative enough to finish under the watchdog; failed slices do not grant accounting authority and

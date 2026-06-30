@@ -1,0 +1,91 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-execution-tca-refresh
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: execution-tca-refresh
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: torghut-runtime
+          containers:
+            - name: refresh-execution-tca
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:441503b721325a24b7da86b000767f843a41c9a32b92c1d83ceac84f0fae798a
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+                  ephemeral-storage: 512Mi
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: TORGHUT_EXECUTION_TCA_ACTIVITY_LOOKBACK_SECONDS
+                  value: "86400"
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  echo "stage=refresh_execution_tca_metrics dsn_env=SIM_DB_DSN account=TORGHUT_SIM started_at=$(date -Iseconds)"
+                  /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
+                    --dsn-env SIM_DB_DSN \
+                    --account-label TORGHUT_SIM \
+                    --older-than-seconds 900 \
+                    --batch-size 1000 \
+                    --max-batches 5 \
+                    --apply \
+                    --json
+                  echo "stage=refresh_execution_tca_metrics dsn_env=DB_DSN started_at=$(date -Iseconds)"
+                  /opt/venv/bin/python scripts/refresh_execution_tca_metrics.py \
+                    --dsn-env DB_DSN \
+                    --older-than-seconds 900 \
+                    --batch-size 1000 \
+                    --max-batches 5 \
+                    --apply \
+                    --json
