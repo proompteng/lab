@@ -43,6 +43,40 @@ class ForwarderSubscriptionTest {
   }
 
   @Test
+  fun `subscription updates unsubscribe before subscribing to avoid transient provider cap breaches`() {
+    val updates =
+      subscriptionUpdates(
+        desired = listOf("AAPL", "MSFT", "GOOGL"),
+        subscribed = listOf("NVDA", "AMD", "AAPL"),
+      )
+
+    assertEquals(
+      listOf(
+        SubscriptionUpdate(SubscriptionAction.Unsubscribe, listOf("NVDA", "AMD")),
+        SubscriptionUpdate(SubscriptionAction.Subscribe, listOf("MSFT", "GOOGL")),
+      ),
+      updates,
+    )
+  }
+
+  @Test
+  fun `subscription updates normalize symbols and preserve desired add order`() {
+    val updates =
+      subscriptionUpdates(
+        desired = listOf(" aapl ", "msft", "MSFT", "googl"),
+        subscribed = listOf("AAPL", " nvda "),
+      )
+
+    assertEquals(
+      listOf(
+        SubscriptionUpdate(SubscriptionAction.Unsubscribe, listOf("NVDA")),
+        SubscriptionUpdate(SubscriptionAction.Subscribe, listOf("MSFT", "GOOGL")),
+      ),
+      updates,
+    )
+  }
+
+  @Test
   fun `options event starvation requires options subscriptions during regular market hours`() {
     val now = Instant.parse("2026-06-18T15:00:00Z")
     val stale = now.minusSeconds(120)
