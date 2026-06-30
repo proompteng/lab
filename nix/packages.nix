@@ -84,38 +84,6 @@ let
       '';
     };
 
-  helmVersion = "3.14.4";
-  helmSource = sourceFor "helm" {
-    x86_64-linux = {
-      archiveRoot = "linux-amd64";
-      src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-linux-amd64.tar.gz";
-        hash = "sha256-pYRO8sOO9t3ztaj32R5+Do68OaOLs/yAE9Ypwe8pwlk=";
-      };
-    };
-    aarch64-linux = {
-      archiveRoot = "linux-arm64";
-      src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-linux-arm64.tar.gz";
-        hash = "sha256-ETzMU7fFfCq6DNCqVgtVAIQbGLUhDXhkGs/dxT2sirI=";
-      };
-    };
-    x86_64-darwin = {
-      archiveRoot = "darwin-amd64";
-      src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-darwin-amd64.tar.gz";
-        hash = "sha256-c0NK6sNq0GjOLlWCuIUaKG3GKOrhZJSibirQskpxmfk=";
-      };
-    };
-    aarch64-darwin = {
-      archiveRoot = "darwin-arm64";
-      src = fetchurl {
-        url = "https://get.helm.sh/helm-v${helmVersion}-darwin-arm64.tar.gz";
-        hash = "sha256-YenFRV8Gsq0KEoCXW/ZYkucHrcGddmsM9OkAbjt7S2w=";
-      };
-    };
-  };
-
   kustomizeVersion = "5.8.0";
   kustomizeSource = sourceFor "kustomize" {
     x86_64-linux = {
@@ -355,12 +323,15 @@ in
 {
   inherit bun;
 
-  helm = mkTarballBin {
-    pname = "helm";
-    version = helmVersion;
-    source = helmSource;
-    installPath = "helm";
-  };
+  helm =
+    let
+      helm = pkgs.kubernetes-helm;
+      major = lib.versions.major (lib.getVersion helm);
+    in
+    if major == "3" then
+      helm
+    else
+      throw "kubernetes-helm must stay on Helm 3, got ${lib.getVersion helm}";
 
   kustomize = mkTarballBin {
     pname = "kustomize";

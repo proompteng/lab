@@ -53,11 +53,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Nix
-        uses: cachix/install-nix-action@v31
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
         with:
-          github_access_token: ${{ secrets.GITHUB_TOKEN }}
-          extra_nix_config: |
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          extra-nix-config: |
             experimental-features = nix-command flakes
 
       - name: Validate Argo CD manifests
