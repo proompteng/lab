@@ -6,6 +6,8 @@ metadata:
   namespace: froussard
   annotations:
     serving.knative.dev/revision-history-limit: "3"
+    serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
+    serving.knative.dev/lastModifier: admin
     argocd.argoproj.io/tracking-id: froussard:serving.knative.dev/Service:froussard/froussard
     argocd.argoproj.io/compare-options: IgnoreExtraneous
 spec:

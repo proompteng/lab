@@ -26,6 +26,7 @@ const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-au
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
+const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
@@ -343,6 +344,10 @@ describe('native OCI build workflows', () => {
     expect(froussardBlock).toContain('- ServerSideApply=true')
     expect(froussardBlock).toContain('- ApplyOutOfSyncOnly=true')
     expect(froussardBlock).not.toContain('- RespectIgnoreDifferences=true')
+    expect(froussardKnativeService).toContain(
+      'serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller',
+    )
+    expect(froussardKnativeService).toContain('serving.knative.dev/lastModifier: admin')
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {
