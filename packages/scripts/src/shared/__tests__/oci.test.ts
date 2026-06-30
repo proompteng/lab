@@ -48,6 +48,7 @@ const productImageModules = [
 ]
 const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const sagImageModule = readRepoFile('nix/images/sag.nix')
+const agentsImageModule = readRepoFile('nix/images/agents.nix')
 const openaiCodexCliModule = readRepoFile('nix/images/openai-codex-cli.nix')
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
@@ -56,6 +57,7 @@ const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-im
 const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
 const sagBuildScript = readRepoFile('packages/scripts/src/sag/build-image.ts')
 const sagDeployScript = readRepoFile('packages/scripts/src/sag/deploy-service.ts')
+const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
 const productBuildScripts = [
   readRepoFile('packages/scripts/src/app/build-image.ts'),
   readRepoFile('packages/scripts/src/docs/build-image.ts'),
@@ -289,7 +291,10 @@ describe('native OCI build workflows', () => {
     }
 
     expect(productNixWorkflow).not.toContain("'nix/**'")
-    for (const workflow of [agentsBuildWorkflow, jangarBuildWorkflow]) {
+    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
+    expect(agentsBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
+
+    for (const workflow of [jangarBuildWorkflow]) {
       expect(workflow).toContain("'packages/scripts/src/shared/cli.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/docker.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/git.ts'")
@@ -315,6 +320,7 @@ describe('native OCI build workflows', () => {
       bumbaWorkflow,
       froussardWorkflow,
       productNixWorkflow,
+      agentsBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
     ]) {
@@ -329,7 +335,14 @@ describe('native OCI build workflows', () => {
 
     expect(symphonyReleaseMetadataScript).not.toContain('flake\\.nix$')
     expect(symphonyReleaseMetadataScript).toContain('nix\\/images\\/openai-codex-cli\\.nix$')
-    for (const workflow of [oiratWorkflow, bumbaWorkflow, froussardWorkflow, productNixWorkflow, sagBuildWorkflow]) {
+    for (const workflow of [
+      oiratWorkflow,
+      bumbaWorkflow,
+      froussardWorkflow,
+      productNixWorkflow,
+      agentsBuildWorkflow,
+      sagBuildWorkflow,
+    ]) {
       expect(workflow).toContain("- 'flake.lock'")
       expect(workflow).toContain("- 'nix/images/bun-workspace-service.nix'")
     }
@@ -364,6 +377,7 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       enabledProductReleaseWorkflow,
+      agentsBuildWorkflow,
       symphonyBuildWorkflow,
       symphonyReleaseWorkflow,
       sagBuildWorkflow,
@@ -462,6 +476,39 @@ describe('native OCI build workflows', () => {
     expect(sagPostDeployVerifyWorkflow).toContain('desired_replicas=')
   })
 
+  it('routes the enabled Agents service images through real Nix OCI attrs', () => {
+    for (const [imageName, packageAttr, artifact] of [
+      ['agents-controller', 'agents-controller-image', 'agents-controller-release-contract'],
+      ['agents-control-plane', 'agents-control-plane-image', 'agents-control-plane-release-contract'],
+      ['agents-shell', 'agents-shell-image', 'agents-shell-release-contract'],
+    ] as const) {
+      expect(agentsImageModule).toContain(`"${packageAttr}"`)
+      expect(agentsBuildWorkflow).toContain(`image_name: ${imageName}`)
+      expect(agentsBuildWorkflow).toContain(`package_attr: ${packageAttr}`)
+      expect(agentsBuildWorkflow).toContain(artifact)
+    }
+
+    expect(flake).toContain('import ./nix/images/agents.nix')
+    expect(agentsBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(agentsBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(agentsBuildWorkflow).toContain('Resolve preserved runner image pin')
+    expect(agentsBuildWorkflow).toContain('--runner-tag "${RUNNER_TAG}"')
+    expect(agentsBuildWorkflow).toContain("'charts/agents/crds/**'")
+    expect(agentsBuildWorkflow).not.toContain("'charts/agents/**'")
+    expect(agentsBuildWorkflow).not.toContain("'argocd/applications/agents/**'")
+    expect(agentsBuildWorkflow).not.toContain('oven-sh/setup-bun')
+    expect(agentsBuildWorkflow).not.toContain('docker/setup-buildx-action')
+    expect(agentsBuildWorkflow).not.toContain('docker buildx')
+
+    expect(agentsImageModule).toContain('dependencyClosure = "bunCache";')
+    expect(agentsImageModule).toContain('"@proompteng/agents"')
+    expect(agentsImageModule).toContain('"@proompteng/cx-tools"')
+    expect(agentsImageModule).toContain('"charts/agents/crds"')
+    expect(agentsImageModule).toContain('"agents-controller-image"')
+    expect(agentsImageModule).toContain('"agents-control-plane-image"')
+    expect(agentsImageModule).toContain('"agents-shell-image"')
+  })
+
   it('routes enabled product app image builds through real Nix OCI attrs', () => {
     for (const [service, packageAttr] of [
       ['proompteng', 'proompteng-image'],
@@ -516,6 +563,7 @@ describe('native OCI build workflows', () => {
       froussardDeployScript,
       symphonyBuildScript,
       sagBuildScript,
+      agentsDeployScript,
       ...productBuildScripts,
     ]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")
@@ -540,6 +588,11 @@ describe('native OCI build workflows', () => {
     expect(sagDeployScript).toContain('dryRun')
     expect(sagDeployScript).toContain('noApply')
     expect(sagDeployScript).toContain('digest:')
+    expect(agentsDeployScript).not.toContain("from '../shared/docker'")
+    expect(agentsDeployScript).not.toContain('inspectImageDigest')
+    expect(agentsDeployScript).toContain("from '../shared/nix-oci-deploy'")
+    expect(agentsDeployScript).toContain('dryRun')
+    expect(agentsDeployScript).toContain('readRunnerImagePin')
 
     expect(nixOciDeployScript).toContain("await run('nix', ['build', `.#${packageAttr}`")
     expect(nixOciDeployScript).toContain("await run('nix', pushArgs")

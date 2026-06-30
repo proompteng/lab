@@ -125,12 +125,14 @@ jobs:
           add-paths: argocd/applications/agents/values.yaml
           body: |
             ## Summary
-            Promote Agents controller and control-plane images into GitOps manifests.
+            Promote Agents Nix-built service images into GitOps manifests.
 
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Agents build run: `${{ steps.meta.outputs.run_id }}`
             - Promotion source: `${{ steps.meta.outputs.promotion_source }}`
+            - Service images: `agents-controller`, `agents-control-plane`, `agents-shell`
+            - Runner image: preserved from the previous GitOps pin
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

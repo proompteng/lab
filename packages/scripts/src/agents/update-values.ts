@@ -17,6 +17,7 @@ type Options = {
   agentsShellRepository?: string
   agentsShellDigest?: string
   runnerRepository?: string
+  runnerTag?: string
   runnerDigest?: string
   sourceSha?: string
   runId?: string
@@ -64,6 +65,9 @@ const parseArgs = (argv: string[]): Options => {
         break
       case '--runner-repository':
         options.runnerRepository = value
+        break
+      case '--runner-tag':
+        options.runnerTag = value
         break
       case '--runner-digest':
         options.runnerDigest = normalizeDigest(value)
@@ -124,7 +128,7 @@ export const updateAgentsValuesFromCliOptions = (options: Options) => {
     tag,
     requireDigest(options, 'agentsShellDigest'),
     requireValue(options, 'runnerRepository'),
-    tag,
+    options.runnerTag ?? tag,
     requireDigest(options, 'runnerDigest'),
     {
       sourceHeadSha: sourceSha,
