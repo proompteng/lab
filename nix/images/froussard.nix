@@ -10,7 +10,10 @@ import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
   serviceName = "froussard";
   packageName = "froussard";
-  depsHash = lib.fakeHash;
+  depsHash = {
+    x86_64-linux = "sha256-xV36LxSU1858vNjUrs4FK0yI8GXLZzY7tH7CNpBrytI=";
+    aarch64-linux = "sha256-btXQPUK+PtMcHn6qRGkYimUExN0n1zy3vyhZQye021Q=";
+  };
   installFilters = [
     "@proompteng/agent-contracts"
     "@proompteng/codex"
