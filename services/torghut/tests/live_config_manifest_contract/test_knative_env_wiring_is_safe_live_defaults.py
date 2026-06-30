@@ -550,10 +550,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
 
         self.assertEqual(live_env.get("TRADING_MODE"), "live")
         self.assertTrue(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
-        self.assertEqual(
-            live_env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
-            "2026-06-22T20:05:00Z",
-        )
+        self.assertNotIn("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT", live_env)
         self.assertTrue(
             _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
             "live proof floor requires lifecycle telemetry even while submit stays disabled",
@@ -561,18 +558,16 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertTrue(_manifest_bool(live_env, "TRADING_ORDER_FEED_ENABLED"))
         self.assertEqual(
             live_env.get("TRADING_ORDER_FEED_TOPIC"),
-            "",
-            "live telemetry should consume account-labelled v2 envelopes only",
+            "torghut.trade-updates.v2",
+            "live telemetry should make account-labelled v2 envelopes the explicit primary topic",
         )
-        self.assertEqual(
-            live_env.get("TRADING_ORDER_FEED_TOPIC_V2"), "torghut.trade-updates.v2"
-        )
+        self.assertNotIn("TRADING_ORDER_FEED_TOPIC_V2", live_env)
         self.assertEqual(
             live_env.get("TRADING_ORDER_FEED_GROUP_ID"),
             "torghut-order-feed-live-default",
         )
         self.assertEqual(live_env.get("TRADING_ORDER_FEED_ASSIGNMENT_MODE"), "manual")
-        self.assertEqual(live_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"), "latest")
+        self.assertEqual(live_env.get("TRADING_ORDER_FEED_AUTO_OFFSET_RESET"), "earliest")
         self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_WORKFLOW_ENABLED"))
         self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_KAFKA_ENABLED"))
         self.assertFalse(_manifest_bool(live_env, "WHITEPAPER_AGENTRUN_AUTO_DISPATCH"))

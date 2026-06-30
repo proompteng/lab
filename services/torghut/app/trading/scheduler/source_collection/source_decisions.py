@@ -277,12 +277,11 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         if not settings.trading_simple_submit_enabled:
             return "simple_submit_disabled"
         activation = live_submit_activation_status(now=now)
-        if activation.get("configured") is not True:
-            return "live_submit_activation_missing"
-        if activation.get("valid") is not True:
-            return str(activation.get("reason") or "live_submit_activation_invalid")
-        if activation.get("expired") is True:
-            return str(activation.get("reason") or "live_submit_activation_expired")
+        if activation.get("configured") is True:
+            if activation.get("valid") is not True:
+                return str(activation.get("reason") or "live_submit_activation_invalid")
+            if activation.get("expired") is True:
+                return str(activation.get("reason") or "live_submit_activation_expired")
         max_notional = _optional_decimal(
             settings.trading_simple_paper_route_probe_max_notional
         )
