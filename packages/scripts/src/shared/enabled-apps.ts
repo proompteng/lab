@@ -53,8 +53,6 @@ const earlyNixImageApps = new Set([
 
 const deferredApps = new Map<string, string>([
   ['agents', 'complex multi-image runtime; migrate after simple services prove the shared Nix contract'],
-  ['analysis', 'repo image is tracked by image updater, but no local build/deploy script is wired in this repo'],
-  ['bilig', 'complex application image; requires a dedicated derivation and rollout proof'],
   ['jangar', 'complex service plus OpenWebUI chart; requires a dedicated derivation and rollout proof'],
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
@@ -77,6 +75,11 @@ const appToNixAttr = new Map<string, string>([
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
   ['synthesis', 'synthesis-image'],
+])
+
+const manifestOnlyRepoImageApps = new Map<string, string>([
+  ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
+  ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
 ])
 
 const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort()
@@ -255,6 +258,11 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
 const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
   if (entry.repoURL !== labRepoURL) {
     return { ...entry, class: 'external-source' }
+  }
+
+  const manifestOnlyReason = manifestOnlyRepoImageApps.get(entry.name)
+  if (manifestOnlyReason) {
+    return { ...entry, class: 'vendor-manifest', deferredReason: manifestOnlyReason }
   }
 
   const deferredReason = deferredApps.get(entry.name)

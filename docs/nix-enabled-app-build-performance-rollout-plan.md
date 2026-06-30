@@ -8,6 +8,11 @@ The current inventory shape is:
 
 - 71 enabled ApplicationSet entries.
 - 1 direct root-managed Application in the same directory: `home-root`.
+- 11 migrated `nix-image` apps.
+- 25 Helm/chart apps.
+- 24 vendor/manifest apps, including manifest-only repo-image references where this checkout does not own the image build.
+- 2 external-source apps.
+- 10 deferred repo-image apps that need separate service-specific migration work or clean live health first.
 - Helm/chart-only and vendor-manifest apps are not image-build migration targets.
 - Repo-image apps are only migration candidates after source ownership and a build/deploy path are proven.
 
@@ -32,7 +37,7 @@ No Ceph, Rook, ObjectBucketClaim, PVC, or storage changes are in scope.
 2. PR 2: ARC runner toolchain speedup with pinned Nix, `skopeo`, `crane`, `cosign`, `jq`, `yq`, and `kustomize`. No storage changes.
 3. PR 3: migrate clean simple build-owning apps first: `oirat`, `bumba`, and `froussard`.
 4. PR 4: migrate enabled frontend/product build-owning apps: `docs`, `app`, `proompteng`, `olden`, and `synthesis`.
-5. PR 5+: migrate complex build-owning apps only after service-specific derivations are proven: `agents`, `jangar`, `symphony`, `bilig`, `sag`, `analysis`, and `autotrader`.
+5. PR 5+: migrate complex build-owning apps only after service-specific derivations are proven. Completed examples include `symphony` and `sag`; remaining complex candidates include `agents`, `jangar`, and `arc`. `analysis` and `bilig` are manifest-only in this checkout until their owning source/build path is present here, and `autotrader` is a vendor-manifest app without a repo image build.
 6. Defer Torghut-family image migration until live app health is clean.
 
 ## Test Plan
