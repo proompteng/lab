@@ -20,9 +20,11 @@ internal class ForwarderMetrics(
   private val kafkaProduceSuccessCounters = ConcurrentHashMap<String, Counter>()
   private val kafkaMetadataErrorCounters = ConcurrentHashMap<String, Counter>()
   private val desiredSymbolsFetchFailureCounters = ConcurrentHashMap<String, Counter>()
+  private val providerMessageCounters = ConcurrentHashMap<String, Counter>()
 
   private val readinessStatus = AtomicInteger(0)
   private val desiredSymbolsFetchDegraded = AtomicInteger(0)
+  private val optionsEventStarvation = AtomicInteger(0)
   private val desiredSymbolsFetchLastSuccessEpochMs = AtomicLong(0)
   private val desiredSymbolsFetchLastFailureEpochMs = AtomicLong(0)
   private val readinessErrorClassGauge =
@@ -60,6 +62,11 @@ internal class ForwarderMetrics(
 
     Gauge
       .builder("torghut_ws_desired_symbols_fetch_degraded", desiredSymbolsFetchDegraded) { it.get().toDouble() }
+      .register(registry)
+
+    Gauge
+      .builder("torghut_ws_options_event_starvation", optionsEventStarvation) { it.get().toDouble() }
+      .description("1 when options websocket is subscribed during regular market hours but has not received quote or trade events")
       .register(registry)
 
     Gauge
@@ -175,6 +182,25 @@ internal class ForwarderMetrics(
           .tag("channel", dedupChannel)
           .register(registry)
       }.increment()
+  }
+
+  fun recordProviderMessage(
+    marketType: AlpacaMarketType,
+    channel: String,
+  ) {
+    providerMessageCounters
+      .computeIfAbsent("${marketType.name}|$channel") { key ->
+        val parts = key.split("|", limit = 2)
+        Counter
+          .builder("torghut_ws_provider_messages_total")
+          .tag("market_type", parts[0].lowercase())
+          .tag("channel", parts[1])
+          .register(registry)
+      }.increment()
+  }
+
+  fun setOptionsEventStarvation(starved: Boolean) {
+    optionsEventStarvation.set(if (starved) 1 else 0)
   }
 
   fun recordDesiredSymbolsFetchSuccess() {

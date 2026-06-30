@@ -19,6 +19,7 @@ enum class ReadinessErrorClass(
 ) {
   Alpaca406SecondConnection("alpaca_406_second_connection"),
   AlpacaAuth("alpaca_auth"),
+  OptionsEventStarvation("options_event_starvation"),
   KafkaAuth("kafka_auth"),
   KafkaMetadata("kafka_metadata"),
   KafkaProduce("kafka_produce"),

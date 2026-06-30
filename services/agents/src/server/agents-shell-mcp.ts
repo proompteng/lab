@@ -178,15 +178,21 @@ Operate like Codex:
 - Use destructive git, Kubernetes, or filesystem operations only when the user request clearly requires them.
 - Validate from focused tests to broader checks, then summarize exact commands and results.
 
-Default repo workflow:
-1. Confirm /workspace/lab is on a fresh origin/main base or preserve and report existing dirty work.
-2. Create a codex/... branch for the task.
-3. Search with search, inspect with read_file and git, and make scoped edits with apply_patch.
-4. Run focused tests, lint, type checks, or smoke commands that prove the change.
-5. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
-6. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
+Default direct ChatGPT repo workflow:
+1. Treat /workspace/lab as the read-only seed checkout for direct ChatGPT sessions.
+2. Start from fresh origin/main in a unique worktree:
+   git -C /workspace/lab fetch origin main
+   mkdir -p /workspace/worktrees/lab
+   git -C /workspace/lab worktree add -B codex/<task-slug> /workspace/worktrees/lab/<branch-slug> origin/main
+3. Use cwd: "worktrees/lab/<branch-slug>" for search, read_file, apply_patch, shell, git, tests, and any repo-local kubectl or gh command.
+4. Never share a worktree or branch between concurrent ChatGPT sessions.
+5. Do not edit /workspace/lab directly for multi-session work; only use it to fetch and create isolated worktrees.
+6. Search with search, inspect with read_file and git, and make scoped edits with apply_patch.
+7. Run focused tests, lint, type checks, or smoke commands that prove the change.
+8. Commit as Greg Konush, push the branch, create a pull request with gh, and monitor CI.
+9. Fix failures and continue until the task is complete, CI status is checked, and the PR URL is available.
 
-Use shell_run for short commands, shell_start/read/status/kill for long commands, git and git_write for repository operations, kubectl and kubectl_admin for cluster operations, and agent_start/status/read/cancel for delegated long-running Codex AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
+Use shell_run for short commands, shell_start/read/status/kill for long commands, git and git_write for repository operations, and kubectl and kubectl_admin for cluster operations. Do not use agent_start/status/read/cancel for direct multi-session ChatGPT work unless the user explicitly requests delegated AgentRun work. Report blockers only with exact tool calls, arguments, timestamps, server logs, audit entries, live environment state, and the layer that failed.`
 
 const SERVER_INSTRUCTIONS =
   'Private Codex-style repo agent for /workspace/lab. Inspect first, respect dirty work, edit with apply_patch, validate, commit as Greg Konush, push, create PRs with gh, monitor CI, and report evidence-backed blockers only.'

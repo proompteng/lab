@@ -75,4 +75,39 @@ class ForwarderMetricsTest {
         ?.value()
     assertTrue((lastSuccessTs ?: 0.0) > 0.0)
   }
+
+  @Test
+  fun `records provider messages and options event starvation gauge`() {
+    val registry = SimpleMeterRegistry()
+    val metrics = ForwarderMetrics(registry)
+
+    metrics.recordProviderMessage(AlpacaMarketType.OPTIONS, "quote")
+    metrics.setOptionsEventStarvation(true)
+
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_provider_messages_total")
+        .tag("market_type", "options")
+        .tag("channel", "quote")
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_options_event_starvation")
+        .gauge()
+        ?.value(),
+    )
+
+    metrics.setOptionsEventStarvation(false)
+    assertEquals(
+      0.0,
+      registry
+        .find("torghut_ws_options_event_starvation")
+        .gauge()
+        ?.value(),
+    )
+  }
 }

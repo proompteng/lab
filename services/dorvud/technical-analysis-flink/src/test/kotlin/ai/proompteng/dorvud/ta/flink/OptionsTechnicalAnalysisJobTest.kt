@@ -1,10 +1,15 @@
 package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.ta.stream.OptionsContractFeaturePayload
+import ai.proompteng.dorvud.ta.stream.OptionsSnapshotPayload
 import org.apache.flink.connector.base.DeliveryGuarantee
+import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class OptionsTechnicalAnalysisJobTest {
   @Test
@@ -22,6 +27,89 @@ class OptionsTechnicalAnalysisJobTest {
     assertEquals(
       DeliveryGuarantee.AT_LEAST_ONCE,
       parseOptionsDeliveryGuarantee("bad-value", DeliveryGuarantee.AT_LEAST_ONCE),
+    )
+  }
+
+  @Test
+  fun `snapshot quote state uses provider latest quote timestamp and quote prices`() {
+    val quoteTs = Instant.parse("2026-06-18T20:03:44Z")
+    val fallbackTs = Instant.parse("2026-06-18T20:03:45Z")
+    val quote =
+      snapshotQuoteState(
+        snapshot(
+          latestBidPrice = 1.25,
+          latestBidSize = 10.0,
+          latestAskPrice = 1.35,
+          latestAskSize = 12.0,
+          latestQuoteTs = quoteTs.toString(),
+        ),
+        fallbackTs.toEpochMilli(),
+      )
+
+    assertNotNull(quote)
+    assertEquals(quoteTs.toEpochMilli(), quote.eventMs)
+    assertEquals(1.25, quote.bidPrice)
+    assertEquals(10.0, quote.bidSize)
+    assertEquals(1.35, quote.askPrice)
+    assertEquals(12.0, quote.askSize)
+    assertEquals("AAPL", quote.underlyingSymbol)
+  }
+
+  @Test
+  fun `snapshot reference price ignores latest trade price without mark mid or quote`() {
+    val snapshot = snapshot(latestTradePrice = 99.0)
+
+    assertNull(snapshotReferencePrice(snapshot, null))
+  }
+
+  @Test
+  fun `snapshot reference price uses mark then mid then quote mid`() {
+    val quote =
+      snapshotQuoteState(
+        snapshot(
+          latestBidPrice = 1.20,
+          latestBidSize = 10.0,
+          latestAskPrice = 1.40,
+          latestAskSize = 12.0,
+        ),
+        Instant.parse("2026-06-18T20:03:45Z").toEpochMilli(),
+      )
+
+    assertEquals(2.50, snapshotReferencePrice(snapshot(markPrice = 2.50, midPrice = 2.40), quote))
+    assertEquals(2.40, snapshotReferencePrice(snapshot(midPrice = 2.40), quote))
+    assertEquals(1.30, requireNotNull(snapshotReferencePrice(snapshot(), quote)), 1e-9)
+  }
+
+  @Test
+  fun `snapshot only quote or mark data opens analytics bucket without synthetic trades`() {
+    val bucket =
+      snapshotAnalyticsBucket(
+        existing = null,
+        snapshot = snapshot(markPrice = 2.50),
+        quote = null,
+        windowStartMs = 1_000L,
+        windowEndMs = 2_000L,
+      )
+
+    assertNotNull(bucket)
+    assertEquals("AAPL", bucket.underlyingSymbol)
+    assertEquals(0L, bucket.count)
+    assertEquals(0.0, bucket.volume)
+    assertTrue(bucket.sawSnapshot)
+    assertFalse(bucket.sawQuote)
+    assertEquals("flink-snapshot", optionsOutputSource(bucket))
+  }
+
+  @Test
+  fun `snapshot without quote mark or mid does not open analytics bucket`() {
+    assertNull(
+      snapshotAnalyticsBucket(
+        existing = null,
+        snapshot = snapshot(latestTradePrice = 99.0),
+        quote = null,
+        windowStartMs = 1_000L,
+        windowEndMs = 2_000L,
+      ),
     )
   }
 
@@ -109,5 +197,29 @@ class OptionsTechnicalAnalysisJobTest {
       staleQuote = false,
       staleSnapshot = staleSnapshot,
       featureQualityStatus = if (staleSnapshot) "stale_snapshot" else "ok",
+    )
+
+  private fun snapshot(
+    latestTradePrice: Double? = null,
+    latestBidPrice: Double? = null,
+    latestBidSize: Double? = null,
+    latestAskPrice: Double? = null,
+    latestAskSize: Double? = null,
+    latestQuoteTs: String? = null,
+    markPrice: Double? = null,
+    midPrice: Double? = null,
+  ): OptionsSnapshotPayload =
+    OptionsSnapshotPayload(
+      contractSymbol = "AAPL260320C00100000",
+      underlyingSymbol = "AAPL",
+      latestTradePrice = latestTradePrice,
+      latestBidPrice = latestBidPrice,
+      latestBidSize = latestBidSize,
+      latestAskPrice = latestAskPrice,
+      latestAskSize = latestAskSize,
+      latestQuoteTs = latestQuoteTs,
+      markPrice = markPrice,
+      midPrice = midPrice,
+      snapshotClass = "snapshot",
     )
 }
