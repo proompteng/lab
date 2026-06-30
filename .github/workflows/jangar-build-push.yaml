@@ -10,7 +10,9 @@ on:
     paths:
       - 'services/jangar/**'
       - 'packages/scripts/src/jangar/**'
-      - 'packages/scripts/src/shared/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/docker.ts'
+      - 'packages/scripts/src/shared/git.ts'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'

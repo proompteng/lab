@@ -24,6 +24,9 @@ const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-sim
 const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.yml')
 const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service.nix')
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
+const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
+const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
+const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
@@ -259,6 +262,24 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('cache.nixos.org substitutions')
     expect(ciNixOciSummaryScript).toContain('Local derivation builds')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
+  })
+
+  it('does not fan out expensive image builds on unrelated shared script changes', () => {
+    for (const workflow of [agentsBuildWorkflow, jangarBuildWorkflow, symphonyBuildWorkflow, productNixWorkflow]) {
+      expect(workflow).not.toContain("'packages/scripts/src/shared/**'")
+      expect(workflow).not.toContain('- packages/scripts/src/shared/**')
+    }
+
+    expect(productNixWorkflow).not.toContain("'nix/**'")
+    for (const workflow of [agentsBuildWorkflow, jangarBuildWorkflow, symphonyBuildWorkflow]) {
+      expect(workflow).toContain("'packages/scripts/src/shared/cli.ts'")
+      expect(workflow).toContain("'packages/scripts/src/shared/docker.ts'")
+      expect(workflow).toContain("'packages/scripts/src/shared/git.ts'")
+    }
+
+    expect(productNixWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
+    expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
+    expect(enabledProductReleaseWorkflow).toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
   })
 
   it('allows Nix dockerTools archives without Docker repo tags', () => {
