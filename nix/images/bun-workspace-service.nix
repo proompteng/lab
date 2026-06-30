@@ -11,6 +11,7 @@
   installFilters,
   sourcePaths,
   buildCommands ? [ ],
+  runtimeInstallPhase ? null,
   command,
   env ? [ ],
   extraContents ? [ ],
@@ -101,7 +102,15 @@ let
       mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$out"
       cp -R . "$out/"
       cd "$out"
-      bun install --frozen-lockfile --ignore-scripts ${installFilterArgs}
+      bun install \
+        --frozen-lockfile \
+        --ignore-scripts \
+        --backend=copyfile \
+        --linker=isolated \
+        --network-concurrency=1 \
+        --no-progress \
+        --no-summary \
+        ${installFilterArgs}
 
       runHook postInstall
     '';
@@ -117,6 +126,7 @@ let
       nodejs
       pkgs.bash
       pkgs.coreutils
+      pkgs.findutils
     ];
 
     dontConfigure = true;
@@ -140,7 +150,16 @@ let
       runHook preInstall
 
       mkdir -p "$out/app"
-      cp -R "$TMPDIR/work/." "$out/app/"
+      ${
+        if runtimeInstallPhase == null then
+          ''
+            cp -R "$TMPDIR/work/." "$out/app/"
+          ''
+        else
+          runtimeInstallPhase
+      }
+
+      find "$out/app" -path '*/node_modules/.bun/node_modules' -type d -exec find {} -xtype l -delete \;
 
       runHook postInstall
     '';

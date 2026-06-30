@@ -1,0 +1,267 @@
+name: product-nix-images
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'apps/app/**'
+      - 'apps/docs/**'
+      - 'apps/landing/**'
+      - 'apps/olden/**'
+      - 'apps/synthesis/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/app/**'
+      - 'packages/scripts/src/docs/**'
+      - 'packages/scripts/src/proompteng/**'
+      - 'packages/scripts/src/olden/**'
+      - 'packages/scripts/src/synthesis/**'
+      - 'packages/scripts/src/shared/**'
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      - 'package.json'
+      - '.github/workflows/product-nix-images.yml'
+      - '.github/workflows/enabled-product-nix-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'apps/app/**'
+      - 'apps/docs/**'
+      - 'apps/landing/**'
+      - 'apps/olden/**'
+      - 'apps/synthesis/**'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/app/**'
+      - 'packages/scripts/src/docs/**'
+      - 'packages/scripts/src/proompteng/**'
+      - 'packages/scripts/src/olden/**'
+      - 'packages/scripts/src/synthesis/**'
+      - 'packages/scripts/src/shared/**'
+      - 'nix/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'bun.lock'
+      - 'package.json'
+      - '.github/workflows/product-nix-images.yml'
+      - '.github/workflows/enabled-product-nix-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
+  workflow_dispatch:
+    inputs:
+      build_proompteng:
+        description: Build and publish apps/landing image
+        required: false
+        type: boolean
+        default: true
+      build_app:
+        description: Build and publish apps/app image
+        required: false
+        type: boolean
+        default: true
+      build_synthesis:
+        description: Build and publish apps/synthesis image
+        required: false
+        type: boolean
+        default: true
+      build_docs:
+        description: Build and publish apps/docs image
+        required: false
+        type: boolean
+        default: true
+      build_olden:
+        description: Build and publish apps/olden image
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: product-nix-images-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: arc-amd64
+    permissions:
+      contents: read
+    outputs:
+      proompteng: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.proompteng || steps.filter.outputs.proompteng }}
+      app: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.app || steps.filter.outputs.app }}
+      synthesis: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.synthesis || steps.filter.outputs.synthesis }}
+      docs: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.docs || steps.filter.outputs.docs }}
+      olden: ${{ github.event_name == 'workflow_dispatch' && steps.manual.outputs.olden || steps.filter.outputs.olden }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check for product image input changes
+        if: github.event_name != 'workflow_dispatch'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            proompteng:
+              - 'apps/landing/**'
+              - 'packages/backend/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/proompteng/**'
+              - 'packages/scripts/src/shared/**'
+              - 'nix/images/proompteng.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/oci-*.sh'
+              - 'nix/ci-*.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '.github/workflows/product-nix-images.yml'
+              - '.github/workflows/enabled-product-nix-release.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
+              - '.github/actions/setup-nix-toolchain/**'
+            app:
+              - 'apps/app/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/app/**'
+              - 'packages/scripts/src/shared/**'
+              - 'nix/images/app.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/oci-*.sh'
+              - 'nix/ci-*.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '.github/workflows/product-nix-images.yml'
+              - '.github/workflows/enabled-product-nix-release.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
+              - '.github/actions/setup-nix-toolchain/**'
+            synthesis:
+              - 'apps/synthesis/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/synthesis/**'
+              - 'packages/scripts/src/shared/**'
+              - 'nix/images/synthesis.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/oci-*.sh'
+              - 'nix/ci-*.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '.github/workflows/product-nix-images.yml'
+              - '.github/workflows/enabled-product-nix-release.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
+              - '.github/actions/setup-nix-toolchain/**'
+            docs:
+              - 'apps/docs/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/docs/**'
+              - 'packages/scripts/src/shared/**'
+              - 'nix/images/docs.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/oci-*.sh'
+              - 'nix/ci-*.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '.github/workflows/product-nix-images.yml'
+              - '.github/workflows/enabled-product-nix-release.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
+              - '.github/actions/setup-nix-toolchain/**'
+            olden:
+              - 'apps/olden/**'
+              - 'packages/design/**'
+              - 'packages/scripts/src/olden/**'
+              - 'packages/scripts/src/shared/**'
+              - 'nix/images/olden.nix'
+              - 'nix/images/bun-workspace-service.nix'
+              - 'nix/oci-*.sh'
+              - 'nix/ci-*.sh'
+              - 'flake.nix'
+              - 'flake.lock'
+              - 'bun.lock'
+              - 'package.json'
+              - '.github/workflows/product-nix-images.yml'
+              - '.github/workflows/enabled-product-nix-release.yml'
+              - '.github/workflows/nix-oci-build-common.yml'
+              - '.github/actions/setup-nix-toolchain/**'
+
+      - name: Manual build selection
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          {
+            echo "proompteng=${{ github.event.inputs.build_proompteng }}"
+            echo "app=${{ github.event.inputs.build_app }}"
+            echo "synthesis=${{ github.event.inputs.build_synthesis }}"
+            echo "docs=${{ github.event.inputs.build_docs }}"
+            echo "olden=${{ github.event.inputs.build_olden }}"
+          } >> "$GITHUB_OUTPUT"
+
+  build-proompteng:
+    needs: changes
+    if: needs.changes.outputs.proompteng == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: proompteng
+      package_attr: proompteng-image
+      tag: sha-${{ github.sha }}
+      latest: true
+      release_artifact_name: proompteng-release-contract
+    secrets: inherit
+
+  build-app:
+    needs: changes
+    if: needs.changes.outputs.app == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: app
+      package_attr: app-image
+      tag: sha-${{ github.sha }}
+      latest: true
+      release_artifact_name: app-release-contract
+    secrets: inherit
+
+  build-synthesis:
+    needs: changes
+    if: needs.changes.outputs.synthesis == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: synthesis
+      package_attr: synthesis-image
+      tag: sha-${{ github.sha }}
+      latest: true
+      release_artifact_name: synthesis-release-contract
+    secrets: inherit
+
+  build-docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: docs
+      package_attr: docs-image
+      tag: sha-${{ github.sha }}
+      latest: true
+      release_artifact_name: docs-release-contract
+    secrets: inherit
+
+  build-olden:
+    needs: changes
+    if: needs.changes.outputs.olden == 'true'
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: olden
+      package_attr: olden-image
+      tag: sha-${{ github.sha }}
+      latest: true
+      release_artifact_name: olden-release-contract
+    secrets: inherit

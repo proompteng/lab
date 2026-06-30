@@ -14,10 +14,10 @@ export const main = async () => {
 
   ensureCli('kubectl')
 
-  const registry = process.env.DOCS_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
-  const repository = process.env.DOCS_IMAGE_REPOSITORY ?? 'lab/docs'
+  const registry = process.env.PROOMPTENG_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
+  const repository = process.env.PROOMPTENG_IMAGE_REPOSITORY ?? 'lab/proompteng'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
-  const tag = process.env.DOCS_IMAGE_TAG ?? defaultTag
+  const tag = process.env.PROOMPTENG_IMAGE_TAG ?? defaultTag
 
   const imageResult = await buildImage({ registry, repository, tag, dryRun })
   console.log(`Image digest: ${imageResult.digest}`)
@@ -29,19 +29,19 @@ export const main = async () => {
 
   updateManifests({ imageDigest: imageResult.digest })
 
-  const kustomizePath = resolve(repoRoot, process.env.DOCS_KUSTOMIZE_PATH ?? 'argocd/applications/docs')
+  const kustomizePath = resolve(repoRoot, process.env.PROOMPTENG_KUSTOMIZE_PATH ?? 'argocd/applications/proompteng')
   if (noApply) {
     console.log('Skipping kubectl apply because --no-apply was requested.')
     return
   }
   await run('kubectl', ['apply', '-k', kustomizePath])
   const namespace = resolveDeploymentNamespace(kustomizePath)
-  const deploymentName = process.env.DOCS_K8S_DEPLOYMENT ?? 'docs'
+  const deploymentName = process.env.PROOMPTENG_K8S_DEPLOYMENT ?? 'proompteng'
   await run('kubectl', ['rollout', 'status', `deployment/${deploymentName}`, '-n', namespace])
 }
 
 if (import.meta.main) {
-  main().catch((error) => fatal('Failed to build and deploy docs', error))
+  main().catch((error) => fatal('Failed to build and deploy proompteng', error))
 }
 
 export const __private = {
@@ -55,18 +55,18 @@ type ManifestUpdateOptions = {
 function updateManifests(options: ManifestUpdateOptions) {
   const digest = options.imageDigest.split('@')[1]
   if (!digest?.startsWith('sha256:')) {
-    throw new Error(`Expected docs image digest reference, got ${options.imageDigest}`)
+    throw new Error(`Expected proompteng image digest reference, got ${options.imageDigest}`)
   }
 
-  const kustomizationPath = resolve(repoRoot, 'argocd/applications/docs/kustomization.yaml')
+  const kustomizationPath = resolve(repoRoot, 'argocd/applications/proompteng/kustomization.yaml')
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const updatedKustomization = kustomization.replace(
-    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/docs\s*\n\s*)(?:newTag|digest):\s*.*/,
+    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/proompteng\s*\n\s*)(?:newTag|digest):\s*.*/,
     (_, prefix) => `${prefix}digest: ${digest}`,
   )
 
   if (kustomization === updatedKustomization) {
-    console.warn('Warning: docs kustomization was not updated; pattern may have changed.')
+    console.warn('Warning: proompteng kustomization was not updated; pattern may have changed.')
   } else {
     writeFileSync(kustomizationPath, updatedKustomization)
     console.log(`Updated ${kustomizationPath} with digest ${digest}`)
@@ -74,7 +74,7 @@ function updateManifests(options: ManifestUpdateOptions) {
 }
 
 function resolveDeploymentNamespace(kustomizePath: string) {
-  const envNamespace = process.env.DOCS_K8S_NAMESPACE?.trim()
+  const envNamespace = process.env.PROOMPTENG_K8S_NAMESPACE?.trim()
   if (envNamespace) return envNamespace
   try {
     const kustomization = readFileSync(resolve(kustomizePath, 'kustomization.yaml'), 'utf8')
@@ -90,5 +90,5 @@ function resolveDeploymentNamespace(kustomizePath: string) {
   } catch {
     // fall through to default below
   }
-  return 'docs'
+  return 'proompteng'
 }
