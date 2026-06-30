@@ -208,7 +208,7 @@
             ignoreCollisions = true;
           };
 
-          linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux ({
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
             "oirat-image" = import ./nix/images/oirat.nix {
               inherit pkgs lib nodejs;
@@ -260,7 +260,16 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
-          };
+          } // (import ./nix/images/agents.nix {
+            inherit
+              pkgs
+              lib
+              nodejs
+              exact
+              ;
+            repoRoot = ./.;
+            bun = exact.bun;
+          }));
 
           mkApp = drv: {
             type = "app";

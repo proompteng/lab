@@ -4,26 +4,64 @@ permissions:
   contents: read
 
 on:
-  push:
-    branches:
-      - main
+  pull_request:
     paths:
-      - 'charts/agents/**'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
       - 'packages/otel/**'
       - 'packages/scripts/src/agents/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
-      - 'skills/**'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
+      - 'flake.lock'
+      - 'nix/images/agents.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
       - '.github/workflows/agents-build-push.yml'
-      - '.github/workflows/agents-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/cx-tools/**'
+      - 'packages/otel/**'
+      - 'packages/scripts/src/agents/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/git.ts'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
+      - 'packages/temporal-bun-sdk/**'
+      - 'services/agents/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
+      - 'flake.lock'
+      - 'nix/images/agents.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
+      - '.github/workflows/agents-build-push.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:
@@ -31,151 +69,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-platform:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - arch: amd64
-            runner: arc-amd64
-          - arch: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
+  controller-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: agents-controller
+      package_attr: agents-controller-image
+      tag: sha-${{ github.sha }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'agents-controller-release-contract' || '' }}
+    secrets: inherit
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
+  control-plane-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: agents-control-plane
+      package_attr: agents-control-plane-image
+      tag: sha-${{ github.sha }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'agents-control-plane-release-contract' || '' }}
+    secrets: inherit
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          cache-binary: false
+  agents-shell-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: agents-shell
+      package_attr: agents-shell-image
+      tag: sha-${{ github.sha }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'agents-shell-release-contract' || '' }}
+    secrets: inherit
 
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/agents
-
-      - name: Build and push native Agents images
-        env:
-          AGENTS_APPLY: 'false'
-          AGENTS_BUILD_RUNNER: 'true'
-          AGENTS_DOCKERFILE: services/agents/Dockerfile
-          AGENTS_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
-          AGENTS_IMAGE_PLATFORMS: native
-          AGENTS_BUILD_CACHE_REF: 'false'
-          AGENTS_RUNNER_BUILD_CACHE_REF: 'false'
-          AGENTS_BUILD_CACHE_MODE: min
-          AGENTS_BUILD_NODE_OPTIONS: --max-old-space-size=4096
-          AGENTS_BUILD_SOURCEMAP: '0'
-          AGENTS_BUILD_CI: 'true'
-          AGENTS_BUILD_LOG_LEVEL: warn
-          BUILDX_NO_DEFAULT_ATTESTATIONS: '1'
-          DOCKER_BUILD_PROVENANCE: 'false'
-          DOCKER_BUILD_SBOM: 'false'
-        run: bun run agents:deploy -- --no-apply
-
-  publish-index:
-    needs: build-platform
+  write-values:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - controller-image
+      - control-plane-image
+      - agents-shell-image
     runs-on: arc-arm64
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
         with:
-          bun-version: 1.3.14
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          cache-binary: false
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
-
-      - name: Create multi-arch Agents image indexes
-        id: digests
-        shell: bash
-        env:
-          TAG: ${{ steps.meta.outputs.tag }}
-          CONTROLLER_IMAGE: registry.ide-newton.ts.net/lab/agents-controller
-          CONTROL_PLANE_IMAGE: registry.ide-newton.ts.net/lab/agents-control-plane
-          AGENTS_SHELL_IMAGE: registry.ide-newton.ts.net/lab/agents-shell
-          RUNNER_IMAGE: registry.ide-newton.ts.net/lab/agents-codex-runner
+      - name: Resolve preserved runner image pin
+        id: published
         run: |
-          set -euo pipefail
-
-          create_index() {
-            local image="$1"
-            docker buildx imagetools create \
-              -t "${image}:${TAG}" \
-              "${image}:${TAG}-amd64" \
-              "${image}:${TAG}-arm64"
-          }
-
-          resolve_digest() {
-            local image="$1"
-            local manifest_json
-            manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image}:${TAG}")"
-            local digest
-            digest="$(jq -r '.manifest.digest // empty' <<< "${manifest_json}")"
-            if ! printf '%s' "${digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Failed to resolve digest for ${image}:${TAG}" >&2
-              docker buildx imagetools inspect "${image}:${TAG}" >&2
-              exit 1
-            fi
-
-            for platform in linux/amd64 linux/arm64; do
-              local platform_digest
-              platform_digest="$(
-                jq -r --arg platform "${platform}" \
-                  '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                  <<< "${manifest_json}" | head -n 1
-              )"
-              if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-                echo "Image ${image}:${TAG} is missing required platform ${platform}" >&2
-                docker buildx imagetools inspect "${image}:${TAG}" >&2
-                exit 1
-              fi
-            done
-
-            printf '%s' "${digest}"
-          }
-
-          create_index "${CONTROLLER_IMAGE}"
-          create_index "${CONTROL_PLANE_IMAGE}"
-          create_index "${AGENTS_SHELL_IMAGE}"
-          create_index "${RUNNER_IMAGE}"
-
-          {
-            echo "controller_digest=$(resolve_digest "${CONTROLLER_IMAGE}")"
-            echo "control_plane_digest=$(resolve_digest "${CONTROL_PLANE_IMAGE}")"
-            echo "agents_shell_digest=$(resolve_digest "${AGENTS_SHELL_IMAGE}")"
-            echo "runner_digest=$(resolve_digest "${RUNNER_IMAGE}")"
-          } >> "$GITHUB_OUTPUT"
+          bun run packages/scripts/src/agents/resolve-published-agents-images.ts \
+            --values-path argocd/applications/agents/values.yaml \
+            --output "${GITHUB_OUTPUT}"
 
       - name: Write rendered Agents values
         env:
-          TAG: ${{ steps.meta.outputs.tag }}
-          CONTROLLER_DIGEST: ${{ steps.digests.outputs.controller_digest }}
-          CONTROL_PLANE_DIGEST: ${{ steps.digests.outputs.control_plane_digest }}
-          AGENTS_SHELL_DIGEST: ${{ steps.digests.outputs.agents_shell_digest }}
-          RUNNER_DIGEST: ${{ steps.digests.outputs.runner_digest }}
+          TAG: sha-${{ github.sha }}
+          CONTROLLER_DIGEST: ${{ needs.controller-image.outputs.digest }}
+          CONTROL_PLANE_DIGEST: ${{ needs.control-plane-image.outputs.digest }}
+          AGENTS_SHELL_DIGEST: ${{ needs.agents-shell-image.outputs.digest }}
+          RUNNER_REPOSITORY: ${{ steps.published.outputs.runner_image_repository }}
+          RUNNER_TAG: ${{ steps.published.outputs.runner_image_tag }}
+          RUNNER_DIGEST: ${{ steps.published.outputs.runner_image_digest }}
         run: |
+          set -euo pipefail
+          test -n "${RUNNER_REPOSITORY}"
+          test -n "${RUNNER_TAG}"
+          test -n "${RUNNER_DIGEST}"
           bun run packages/scripts/src/agents/update-values.ts \
             --values argocd/applications/agents/values.yaml \
             --tag "${TAG}" \
@@ -185,7 +151,8 @@ jobs:
             --control-plane-digest "${CONTROL_PLANE_DIGEST}" \
             --agents-shell-repository registry.ide-newton.ts.net/lab/agents-shell \
             --agents-shell-digest "${AGENTS_SHELL_DIGEST}" \
-            --runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner \
+            --runner-repository "${RUNNER_REPOSITORY}" \
+            --runner-tag "${RUNNER_TAG}" \
             --runner-digest "${RUNNER_DIGEST}" \
             --source-sha "${GITHUB_SHA}" \
             --run-id "${GITHUB_RUN_ID}" \

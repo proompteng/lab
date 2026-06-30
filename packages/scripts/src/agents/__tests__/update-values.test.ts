@@ -55,6 +55,7 @@ controllers:
         agentsShellRepository: 'registry.example/lab/agents-shell',
         agentsShellDigest,
         runnerRepository: 'registry.example/lab/agents-codex-runner',
+        runnerTag: 'runner-old',
         runnerDigest,
         sourceSha: sha,
         runId: '123456',
@@ -67,6 +68,7 @@ controllers:
       expect(updated).toContain('repository: registry.example/lab/agents-shell')
       expect(updated).toContain('repository: registry.example/lab/agents-codex-runner')
       expect(updated).toContain('tag: abc12345')
+      expect(updated).toContain('tag: runner-old')
       expect(updated).toContain(`digest: ${controllerDigest}`)
       expect(updated).toContain(`digest: ${controlPlaneDigest}`)
       expect(updated).toContain(`digest: ${agentsShellDigest}`)

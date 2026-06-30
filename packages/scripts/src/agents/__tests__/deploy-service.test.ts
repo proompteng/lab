@@ -1,11 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { __private } from '../deploy-service'
 
-const envKeys = ['AGENTS_IMAGE_TAG', 'AGENTS_IMAGE_PLATFORMS']
+const envKeys = ['AGENTS_BUILD_RUNNER', 'AGENTS_DRY_RUN', 'AGENTS_IMAGE_TAG', 'AGENTS_IMAGE_PLATFORMS']
 
 afterEach(() => {
   for (const key of envKeys) {
@@ -14,14 +14,15 @@ afterEach(() => {
 })
 
 describe('agents deploy-service helpers', () => {
-  it('parses runner and apply rollout flags', () => {
-    expect(__private.parseArgs(['--skip-runner', '--no-apply'])).toMatchObject({
+  it('parses runner, apply, and dry-run rollout flags', () => {
+    expect(__private.parseArgs(['--skip-runner', '--no-apply', '--dry-run'])).toMatchObject({
       buildRunner: false,
       apply: false,
+      dryRun: true,
     })
   })
 
-  it('builds controller and control-plane images from distinct Docker targets', () => {
+  it('builds controller, control-plane, and shell images from distinct Nix attrs', () => {
     expect(
       __private.buildAgentsServiceImagePlans({
         registry: 'registry.example',
@@ -33,83 +34,60 @@ describe('agents deploy-service helpers', () => {
       }),
     ).toEqual([
       {
-        registry: 'registry.example',
+        service: 'agents-controller',
+        imageName: 'agents-controller',
+        packageAttr: 'agents-controller-image',
         repository: 'lab/agents-controller',
         tag: 'abc1234',
-        target: 'controller',
-        platforms: ['linux/arm64'],
       },
       {
-        registry: 'registry.example',
+        service: 'agents-control-plane',
+        imageName: 'agents-control-plane',
+        packageAttr: 'agents-control-plane-image',
         repository: 'lab/agents-control-plane',
         tag: 'abc1234',
-        target: 'control-plane',
-        platforms: ['linux/arm64'],
       },
       {
-        registry: 'registry.example',
+        service: 'agents-shell',
+        imageName: 'agents-shell',
+        packageAttr: 'agents-shell-image',
         repository: 'lab/agents-shell',
         tag: 'abc1234',
-        target: 'agents-shell',
-        platforms: ['linux/arm64'],
       },
     ])
   })
 
-  it('uses native image plans when per-arch CI disables explicit platforms', () => {
+  it('defaults to preserving the currently pinned runner image', () => {
     process.env.AGENTS_IMAGE_TAG = 'abc123-amd64'
     process.env.AGENTS_IMAGE_PLATFORMS = 'native'
 
     const options = __private.resolveOptions()
 
     expect(options.platforms).toEqual([])
+    expect(options.buildRunner).toBeFalse()
     expect(__private.buildAgentsServiceImagePlans(options)).toEqual([
       {
-        registry: 'registry.ide-newton.ts.net',
+        service: 'agents-controller',
+        imageName: 'agents-controller',
+        packageAttr: 'agents-controller-image',
         repository: 'lab/agents-controller',
         tag: 'abc123-amd64',
-        target: 'controller',
-        platforms: [],
       },
       {
-        registry: 'registry.ide-newton.ts.net',
+        service: 'agents-control-plane',
+        imageName: 'agents-control-plane',
+        packageAttr: 'agents-control-plane-image',
         repository: 'lab/agents-control-plane',
         tag: 'abc123-amd64',
-        target: 'control-plane',
-        platforms: [],
       },
       {
-        registry: 'registry.ide-newton.ts.net',
+        service: 'agents-shell',
+        imageName: 'agents-shell',
+        packageAttr: 'agents-shell-image',
         repository: 'lab/agents-shell',
         tag: 'abc123-amd64',
-        target: 'agents-shell',
-        platforms: [],
       },
     ])
-  })
-
-  it('treats local Codex auth as optional for runner image builds', () => {
-    const previousHome = process.env.HOME
-    const dir = mkdtempSync(join(tmpdir(), 'agents-codex-auth-'))
-    try {
-      process.env.HOME = dir
-      expect(__private.resolveCodexAuthPath()).toBeUndefined()
-
-      const authDir = join(dir, '.codex')
-      const authPath = join(authDir, 'auth.json')
-      mkdirSync(authDir, { recursive: true })
-      writeFileSync(authPath, '{}\n')
-
-      expect(__private.resolveCodexAuthPath()).toBe(authPath)
-      expect(__private.resolveCodexAuthPath(authPath)).toBe(authPath)
-    } finally {
-      if (previousHome === undefined) {
-        delete process.env.HOME
-      } else {
-        process.env.HOME = previousHome
-      }
-      rmSync(dir, { recursive: true, force: true })
-    }
   })
 
   it('drops Argo CD hook resources from direct kubectl apply manifests', () => {

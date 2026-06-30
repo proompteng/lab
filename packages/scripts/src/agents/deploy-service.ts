@@ -1,15 +1,14 @@
 #!/usr/bin/env bun
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import process from 'node:process'
 import YAML from 'yaml'
-import { buildImages, resolveCacheRef, type BuildImageOptions } from './build-image'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 
 type KubernetesManifest = {
   metadata?: {
@@ -24,13 +23,11 @@ type Options = {
   repository: string
   controlPlaneRepository: string
   agentsShellRepository: string
-  runnerRepository: string
-  runnerDockerfile: string
-  codexAuthPath?: string
   tag: string
   platforms: string[]
   buildRunner: boolean
   apply: boolean
+  dryRun: boolean
 }
 
 type ImagePin = {
@@ -54,36 +51,40 @@ type DatabaseSecretRequirement = {
   name: string
 }
 
-const CONTROL_PLANE_DOCKER_TARGET = 'control-plane'
-const CONTROLLER_DOCKER_TARGET = 'controller'
-const AGENTS_SHELL_DOCKER_TARGET = 'agents-shell'
+type AgentsServiceImagePlan = {
+  service: string
+  imageName: string
+  packageAttr: string
+  repository: string
+  tag: string
+}
 
 const buildAgentsServiceImagePlans = (
   options: Pick<
     Options,
     'registry' | 'repository' | 'controlPlaneRepository' | 'agentsShellRepository' | 'tag' | 'platforms'
   >,
-): BuildImageOptions[] => [
+): AgentsServiceImagePlan[] => [
   {
-    registry: options.registry,
+    service: 'agents-controller',
+    imageName: 'agents-controller',
+    packageAttr: 'agents-controller-image',
     repository: options.repository,
     tag: options.tag,
-    target: CONTROLLER_DOCKER_TARGET,
-    platforms: options.platforms,
   },
   {
-    registry: options.registry,
+    service: 'agents-control-plane',
+    imageName: 'agents-control-plane',
+    packageAttr: 'agents-control-plane-image',
     repository: options.controlPlaneRepository,
     tag: options.tag,
-    target: CONTROL_PLANE_DOCKER_TARGET,
-    platforms: options.platforms,
   },
   {
-    registry: options.registry,
+    service: 'agents-shell',
+    imageName: 'agents-shell',
+    packageAttr: 'agents-shell-image',
     repository: options.agentsShellRepository,
     tag: options.tag,
-    target: AGENTS_SHELL_DOCKER_TARGET,
-    platforms: options.platforms,
   },
 ]
 
@@ -107,19 +108,6 @@ const parsePlatforms = (value: string | undefined): string[] | undefined => {
     .map((platform) => platform.trim())
     .filter(Boolean)
   return platforms.length > 0 ? platforms : undefined
-}
-
-const resolveCodexAuthPath = (explicitPath?: string): string | undefined => {
-  if (explicitPath) {
-    const resolved = resolve(explicitPath)
-    if (!existsSync(resolved)) {
-      fatal(`Codex auth not found at explicit path ${resolved}.`)
-    }
-    return resolved
-  }
-
-  const defaultPath = resolve(process.env.HOME ?? '', '.codex/auth.json')
-  return existsSync(defaultPath) ? defaultPath : undefined
 }
 
 const parseArgs = (argv: string[]): Partial<Options> => {
@@ -171,33 +159,6 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       options.controlPlaneRepository = arg.slice('--control-plane-repository='.length)
       continue
     }
-    if (arg === '--runner-repository') {
-      options.runnerRepository = argv[i + 1]
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--runner-repository=')) {
-      options.runnerRepository = arg.slice('--runner-repository='.length)
-      continue
-    }
-    if (arg === '--runner-dockerfile') {
-      options.runnerDockerfile = argv[i + 1]
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--runner-dockerfile=')) {
-      options.runnerDockerfile = arg.slice('--runner-dockerfile='.length)
-      continue
-    }
-    if (arg === '--codex-auth-path') {
-      options.codexAuthPath = argv[i + 1]
-      i += 1
-      continue
-    }
-    if (arg.startsWith('--codex-auth-path=')) {
-      options.codexAuthPath = arg.slice('--codex-auth-path='.length)
-      continue
-    }
     if (arg === '--tag') {
       options.tag = argv[i + 1]
       i += 1
@@ -208,6 +169,11 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       continue
     }
     if (arg === '--no-apply') {
+      options.apply = false
+      continue
+    }
+    if (arg === '--dry-run') {
+      options.dryRun = true
       options.apply = false
       continue
     }
@@ -229,14 +195,6 @@ const resolveOptions = (): Options => {
   const controlPlaneRepository =
     args.controlPlaneRepository ?? process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ?? 'lab/agents-control-plane'
   const agentsShellRepository = process.env.AGENTS_SHELL_IMAGE_REPOSITORY ?? 'lab/agents-shell'
-  const runnerRepository =
-    args.runnerRepository ??
-    process.env.AGENTS_RUNNER_IMAGE_REPOSITORY ??
-    process.env.AGENTS_CODEX_RUNNER_IMAGE_REPOSITORY ??
-    'lab/agents-codex-runner'
-  const runnerDockerfile =
-    args.runnerDockerfile ?? process.env.AGENTS_RUNNER_DOCKERFILE ?? 'services/agents/Dockerfile.codex-runner'
-  const codexAuthPath = resolveCodexAuthPath(args.codexAuthPath ?? process.env.CODEX_AUTH_PATH)
   const tag = args.tag ?? process.env.AGENTS_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
   const platforms = parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ?? ['linux/amd64', 'linux/arm64']
 
@@ -253,13 +211,11 @@ const resolveOptions = (): Options => {
     repository,
     controlPlaneRepository,
     agentsShellRepository,
-    runnerRepository,
-    runnerDockerfile: resolve(repoRoot, runnerDockerfile),
-    codexAuthPath,
     tag,
     platforms,
-    buildRunner: args.buildRunner ?? parseBoolean(process.env.AGENTS_BUILD_RUNNER, true),
+    buildRunner: args.buildRunner ?? parseBoolean(process.env.AGENTS_BUILD_RUNNER, false),
     apply: args.apply ?? parseBoolean(process.env.AGENTS_APPLY, true),
+    dryRun: args.dryRun ?? parseBoolean(process.env.AGENTS_DRY_RUN, false),
   }
 }
 
@@ -470,6 +426,42 @@ const readRunnerImagePin = (valuesPath: string): ImagePin => {
   return { repository, tag, digest }
 }
 
+const normalizeDigest = (value: string): string => {
+  const trimmed = value.trim()
+  return trimmed.includes('@') ? trimmed.slice(trimmed.lastIndexOf('@') + 1) : trimmed
+}
+
+const buildAgentsServiceImages = async (options: Options) => {
+  const sourceSha = execGit(['rev-parse', 'HEAD'])
+  const plans = buildAgentsServiceImagePlans(options)
+
+  const pins: Record<string, ImagePin> = {}
+  for (const plan of plans) {
+    const result = await buildAndPushNixImage({
+      service: plan.service,
+      imageName: plan.imageName,
+      packageAttr: plan.packageAttr,
+      registry: options.registry,
+      repository: plan.repository,
+      tag: plan.tag,
+      sourceSha,
+      dryRun: options.dryRun,
+      contractPath: `.artifacts/agents/${plan.service}-manual-release-contract.json`,
+    })
+    pins[plan.service] = {
+      repository: result.image,
+      tag: result.tag,
+      digest: normalizeDigest(result.digest),
+    }
+  }
+
+  return {
+    controller: pins['agents-controller'] ?? fatal('agents-controller Nix image result was not produced'),
+    controlPlane: pins['agents-control-plane'] ?? fatal('agents-control-plane Nix image result was not produced'),
+    agentsShell: pins['agents-shell'] ?? fatal('agents-shell Nix image result was not produced'),
+  }
+}
+
 const resolveDatabaseSecretRequirement = (
   values: unknown,
   namespace = process.env.AGENTS_NAMESPACE ?? 'agents',
@@ -555,79 +547,42 @@ const renderAndApply = async (kustomizePath: string) => {
 
 const main = async () => {
   const options = resolveOptions()
-  ensureCli('docker')
-  ensureCli('curl')
-  ensureCli('tar')
-
-  const imageName = `${options.registry}/${options.repository}`
-  const image = `${imageName}:${options.tag}`
-  const controlPlaneImageName = `${options.registry}/${options.controlPlaneRepository}`
-  const controlPlaneImage = `${controlPlaneImageName}:${options.tag}`
-  const agentsShellImageName = `${options.registry}/${options.agentsShellRepository}`
-  const agentsShellImage = `${agentsShellImageName}:${options.tag}`
-  const runnerImageName = `${options.registry}/${options.runnerRepository}`
-  const runnerImage = `${runnerImageName}:${options.tag}`
-
-  await buildImages(buildAgentsServiceImagePlans(options))
-  const runnerPin = options.buildRunner ? undefined : readRunnerImagePin(options.valuesPath)
   if (options.buildRunner) {
-    if (!options.codexAuthPath) {
-      console.warn('Codex auth not found at ~/.codex/auth.json; runner image will rely on runtime codex-auth mount.')
-    }
-    await buildAndPushDockerImage({
-      registry: options.registry,
-      repository: options.runnerRepository,
-      tag: options.tag,
-      context: repoRoot,
-      dockerfile: options.runnerDockerfile,
-      codexAuthPath: options.codexAuthPath,
-      cacheRef: resolveCacheRef(
-        undefined,
-        process.env.AGENTS_RUNNER_BUILD_CACHE_REF,
-        `${options.registry}/${options.runnerRepository}:buildcache`,
-      ),
-      platforms: options.platforms,
-    })
+    fatal(
+      'agents:deploy no longer builds the agents-codex-runner image. The service image migration preserves the currently pinned runner image; migrate the runner through its own package once its Python/Codex runtime contract is proven.',
+    )
   }
 
-  const repoDigest = inspectImageDigest(image)
-  const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
+  const servicePins = await buildAgentsServiceImages(options)
+  if (options.dryRun) {
+    console.log('Dry run complete; Agents values and cluster state were not changed.')
+    return
+  }
 
-  const controlPlaneRepoDigest = inspectImageDigest(controlPlaneImage)
-  const controlPlaneDigest = controlPlaneRepoDigest.includes('@')
-    ? controlPlaneRepoDigest.split('@')[1]
-    : controlPlaneRepoDigest
-  const agentsShellRepoDigest = inspectImageDigest(agentsShellImage)
-  const agentsShellDigest = agentsShellRepoDigest.includes('@')
-    ? agentsShellRepoDigest.split('@')[1]
-    : agentsShellRepoDigest
-  const runnerRepoDigest = options.buildRunner ? inspectImageDigest(runnerImage) : runnerPin?.digest
-  const runnerDigest =
-    (runnerRepoDigest?.includes('@') ? runnerRepoDigest.split('@')[1] : runnerRepoDigest) ??
-    fatal('Agents runner digest is empty.')
+  const runnerPin = readRunnerImagePin(options.valuesPath)
 
   updateValuesFile(
     options.valuesPath,
-    imageName,
-    options.tag,
-    digest,
-    controlPlaneImageName,
-    options.tag,
-    controlPlaneDigest,
-    agentsShellImageName,
-    options.tag,
-    agentsShellDigest,
-    runnerPin?.repository ?? runnerImageName,
-    runnerPin?.tag ?? options.tag,
-    runnerDigest,
+    servicePins.controller.repository,
+    servicePins.controller.tag,
+    servicePins.controller.digest,
+    servicePins.controlPlane.repository,
+    servicePins.controlPlane.tag,
+    servicePins.controlPlane.digest,
+    servicePins.agentsShell.repository,
+    servicePins.agentsShell.tag,
+    servicePins.agentsShell.digest,
+    runnerPin.repository,
+    runnerPin.tag,
+    runnerPin.digest,
     {
       sourceHeadSha: execGit(['rev-parse', 'HEAD']),
       gitopsRevision: execGit(['rev-parse', 'HEAD']),
       sourceCiRunId: process.env.GITHUB_RUN_ID,
       sourceCiConclusion: process.env.AGENTS_SOURCE_CI_CONCLUSION ?? 'success',
-      manifestImageDigest: controlPlaneDigest,
+      manifestImageDigest: servicePins.controlPlane.digest,
       servingBuildCommit: execGit(['rev-parse', 'HEAD']),
-      servingImageDigest: controlPlaneDigest,
+      servingImageDigest: servicePins.controlPlane.digest,
     },
   )
 
@@ -647,11 +602,11 @@ export const __private = {
   parseArgs,
   parseBoolean,
   resolveOptions,
-  resolveCodexAuthPath,
   filterDirectApplyManifests,
   isArgoHookManifest,
   renderAndApply,
   updateValuesFile,
   readRunnerImagePin,
+  buildAgentsServiceImages,
   resolveDatabaseSecretRequirement,
 }

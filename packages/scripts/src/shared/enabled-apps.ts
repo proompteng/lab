@@ -52,7 +52,10 @@ const earlyNixImageApps = new Set([
 ])
 
 const deferredApps = new Map<string, string>([
-  ['agents', 'complex multi-image runtime; migrate after simple services prove the shared Nix contract'],
+  [
+    'agents',
+    'service images are Nix OCI migrated; app remains deferred until the separate agents-codex-runner Python/Codex runtime image is migrated',
+  ],
   ['jangar', 'complex service plus OpenWebUI chart; requires a dedicated derivation and rollout proof'],
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],

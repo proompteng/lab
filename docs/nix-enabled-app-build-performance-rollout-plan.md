@@ -37,7 +37,7 @@ No Ceph, Rook, ObjectBucketClaim, PVC, or storage changes are in scope.
 2. PR 2: ARC runner toolchain speedup with pinned Nix, `skopeo`, `crane`, `cosign`, `jq`, `yq`, and `kustomize`. No storage changes.
 3. PR 3: migrate clean simple build-owning apps first: `oirat`, `bumba`, and `froussard`.
 4. PR 4: migrate enabled frontend/product build-owning apps: `docs`, `app`, `proompteng`, `olden`, and `synthesis`.
-5. PR 5+: migrate complex build-owning apps only after service-specific derivations are proven. Completed examples include `symphony` and `sag`; remaining complex candidates include `agents`, `jangar`, and `arc`. `analysis` and `bilig` are manifest-only in this checkout until their owning source/build path is present here, and `autotrader` is a vendor-manifest app without a repo image build.
+5. PR 5+: migrate complex build-owning apps only after service-specific derivations are proven. Completed examples include `symphony` and `sag`; `agents` service images (`agents-controller`, `agents-control-plane`, and `agents-shell`) now use Nix OCI service-image builds while the separate `agents-codex-runner` image remains explicitly deferred until its Python/Codex runtime contract is packaged without Docker. Remaining complex candidates include `jangar` and `arc`. `analysis` and `bilig` are manifest-only in this checkout until their owning source/build path is present here, and `autotrader` is a vendor-manifest app without a repo image build.
 6. Defer Torghut-family image migration until live app health is clean.
 
 ## Test Plan
