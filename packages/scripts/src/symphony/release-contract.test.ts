@@ -7,6 +7,13 @@ import { repoRoot } from '../shared/cli'
 import { readReleaseContract, writeReleaseContract } from './release-contract'
 
 describe('symphony release contract', () => {
+  it('uses the generic Nix OCI artifact filename for release metadata', () => {
+    const resolver = readFileSync(join(repoRoot, 'packages/scripts/src/symphony/resolve-release-metadata.ts'), 'utf8')
+
+    expect(resolver).toContain("const defaultContractPath = '.artifacts/symphony/release-contract.json'")
+    expect(resolver).not.toContain('.artifacts/symphony/symphony-release-contract.json')
+  })
+
   it('round-trips normalized contract data', () => {
     const dir = mkdtempSync(join(tmpdir(), 'symphony-release-contract-'))
     const path = join(dir, 'contract.json')
