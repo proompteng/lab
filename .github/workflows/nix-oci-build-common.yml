@@ -230,11 +230,13 @@ jobs:
       - name: Write release contract
         if: inputs.release_artifact_name != ''
         env:
+          SERVICE: ${{ inputs.image_name }}
           IMAGE: ${{ steps.oci.outputs.image }}
           TAG: ${{ steps.oci.outputs.tag }}
           DIGEST: ${{ steps.oci.outputs.digest }}
           REFERENCE: ${{ steps.oci.outputs.reference }}
           PACKAGE_ATTR: ${{ inputs.package_attr }}
+          PLATFORMS: linux/amd64,linux/arm64
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "write-release-contract" "${NIX_OCI_LOG_DIR}/write-release-contract.log" \

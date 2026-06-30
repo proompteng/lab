@@ -210,6 +210,21 @@
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
+            "oirat-image" = import ./nix/images/oirat.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "bumba-image" = import ./nix/images/bumba.nix {
+              inherit pkgs lib nodejs repoRevision;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "froussard-image" = import ./nix/images/froussard.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
           };
 
           mkApp = drv: {

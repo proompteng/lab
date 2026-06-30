@@ -63,6 +63,12 @@ describe('enabled app inventory', () => {
     }
   })
 
+  it('marks PR 3 simple enabled app migrations with concrete Nix attrs', () => {
+    expect(entry('oirat').nixImageAttr).toBe('oirat-image')
+    expect(entry('bumba').nixImageAttr).toBe('bumba-image')
+    expect(entry('froussard').nixImageAttr).toBe('froussard-image')
+  })
+
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
     for (const name of ['agents', 'jangar', 'sag', 'symphony', 'bilig', 'analysis', 'torghut', 'torghut-options']) {
       expect(entry(name).class).toBe('deferred')

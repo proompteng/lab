@@ -9,7 +9,11 @@ on:
       - 'packages/scripts/src/oirat/**'
       - 'argocd/applications/oirat/**'
       - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/docker-build-common.yaml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - 'package.json'
       - 'bun.lock'
   pull_request:
@@ -18,7 +22,11 @@ on:
       - 'packages/scripts/src/oirat/**'
       - 'argocd/applications/oirat/**'
       - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/docker-build-common.yaml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
       - 'package.json'
       - 'bun.lock'
   workflow_dispatch:
@@ -41,15 +49,13 @@ jobs:
       test-command: bun run --filter @proompteng/oirat test
     secrets: inherit
 
-  deploy-main:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    uses: ./.github/workflows/docker-build-common.yaml
+  nix-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: oirat
-      dockerfile: ./services/oirat/Dockerfile
-      context: .
-      new_tag: ${{ github.sha }}
-      turbo_scope: '@proompteng/oirat'
-      turbo_copy: 'tsconfig.base.json'
-      bun_version: 1.3.14
+      package_attr: oirat-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
     secrets: inherit

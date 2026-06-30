@@ -3,7 +3,6 @@
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 import { buildImage } from './build-image'
 
@@ -14,14 +13,12 @@ export const main = async () => {
   const repository = process.env.OIRAT_IMAGE_REPOSITORY ?? 'lab/oirat'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
   const tag = process.env.OIRAT_IMAGE_TAG ?? defaultTag
-  const image = `${registry}/${repository}:${tag}`
 
-  await buildImage({ registry, repository, tag })
+  const imageResult = await buildImage({ registry, repository, tag })
 
-  const repoDigest = inspectImageDigest(image)
-  console.log(`Image digest: ${repoDigest}`)
+  console.log(`Image digest: ${imageResult.digest}`)
 
-  updateManifests({ tag, rolloutTimestamp: new Date().toISOString() })
+  updateManifests({ imageDigest: imageResult.digest, rolloutTimestamp: new Date().toISOString() })
 
   const kustomizePath = resolve(repoRoot, process.env.OIRAT_KUSTOMIZE_PATH ?? 'argocd/applications/oirat')
   await run('kubectl', ['apply', '-k', kustomizePath])
@@ -36,24 +33,28 @@ export const __private = {
 }
 
 type ManifestUpdateOptions = {
-  tag: string
+  imageDigest: string
   rolloutTimestamp: string
 }
 
 function updateManifests(options: ManifestUpdateOptions) {
-  const { tag, rolloutTimestamp } = options
+  const { imageDigest, rolloutTimestamp } = options
+  const digest = imageDigest.split('@')[1]
+  if (!digest?.startsWith('sha256:')) {
+    throw new Error(`Expected oirat image digest reference, got ${imageDigest}`)
+  }
 
   const kustomizationPath = resolve(repoRoot, 'argocd/applications/oirat/kustomization.yaml')
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const updatedKustomization = kustomization.replace(
-    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/oirat\s*\n\s*newTag:\s*).*/,
-    (_, prefix) => `${prefix}"${tag}"`,
+    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/oirat\s*\n\s*)(?:newTag|digest):\s*.*/,
+    (_, prefix) => `${prefix}digest: ${digest}`,
   )
   if (kustomization === updatedKustomization) {
     console.warn('Warning: Oirat kustomization was not updated; pattern may have changed.')
   } else {
     writeFileSync(kustomizationPath, updatedKustomization)
-    console.log(`Updated ${kustomizationPath} with tag ${tag}`)
+    console.log(`Updated ${kustomizationPath} with digest ${digest}`)
   }
 
   const deploymentPath = resolve(repoRoot, 'argocd/applications/oirat/deployment.yaml')

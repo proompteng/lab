@@ -1,0 +1,246 @@
+name: enabled-simple-nix-release
+
+on:
+  workflow_run:
+    workflows:
+      - oirat
+      - bumba
+      - froussard
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Enabled app to promote
+        required: true
+        type: choice
+        options:
+          - oirat
+          - bumba
+          - froussard
+      commit_sha:
+        description: Commit SHA to promote
+        required: true
+        type: string
+      image_digest:
+        description: Image digest to promote (sha256:...)
+        required: true
+        type: string
+      image_tag:
+        description: Image tag to promote
+        required: false
+        type: string
+
+concurrency:
+  group: enabled-simple-nix-release-${{ github.event.workflow_run.name || inputs.service }}-${{ github.event.workflow_run.head_sha || inputs.commit_sha }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Resolve service
+        id: service
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+          SERVICE_INPUT: ${{ inputs.service }}
+        run: |
+          set -euo pipefail
+          service="${SERVICE_INPUT}"
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            service="${WORKFLOW_NAME}"
+          fi
+          case "${service}" in
+            oirat | bumba | froussard) ;;
+            *)
+              echo "Unsupported service: ${service}" >&2
+              exit 2
+              ;;
+          esac
+          echo "service=${service}" >> "${GITHUB_OUTPUT}"
+          echo "artifact=${service}-release-contract" >> "${GITHUB_OUTPUT}"
+
+      - name: Download release contract
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.service.outputs.artifact }}
+          path: .artifacts/${{ steps.service.outputs.service }}
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SERVICE: ${{ steps.service.outputs.service }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST_INPUT: ${{ inputs.image_digest }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          contract_path=".artifacts/${SERVICE}/release-contract.json"
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            test -s "${contract_path}"
+            image="$(jq -r '.image' "${contract_path}")"
+            tag="$(jq -r '.tag' "${contract_path}")"
+            digest="$(jq -r '.digest' "${contract_path}")"
+            source_sha="$(jq -r '.sourceSha' "${contract_path}")"
+            package_attr="$(jq -r '.packageAttr' "${contract_path}")"
+          else
+            image="registry.ide-newton.ts.net/lab/${SERVICE}"
+            digest="${IMAGE_DIGEST_INPUT}"
+            source_sha="${COMMIT_SHA_INPUT}"
+            tag="${IMAGE_TAG_INPUT:-sha-${COMMIT_SHA_INPUT}}"
+            package_attr="${SERVICE}-image"
+          fi
+
+          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid digest: ${digest}" >&2
+            exit 2
+          fi
+          if ! git merge-base --is-ancestor "${source_sha}" HEAD; then
+            echo "promote=false" >> "${GITHUB_OUTPUT}"
+            echo "reason=source commit is not an ancestor of main" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          case "${SERVICE}" in
+            oirat)
+              paths=(services/oirat packages/discord packages/scripts/src/oirat argocd/applications/oirat nix/images flake.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
+              ;;
+            bumba)
+              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba argocd/applications/bumba nix/images flake.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
+              ;;
+            froussard)
+              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard argocd/applications/froussard nix/images flake.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
+              ;;
+          esac
+
+          if ! git diff --quiet "${source_sha}..HEAD" -- "${paths[@]}"; then
+            echo "promote=false" >> "${GITHUB_OUTPUT}"
+            echo "reason=service build inputs changed after source commit" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          {
+            echo "promote=true"
+            echo "service=${SERVICE}"
+            echo "image=${image}"
+            echo "tag=${tag}"
+            echo "digest=${digest}"
+            echo "source_sha=${source_sha}"
+            echo "package_attr=${package_attr}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Verify promoted OCI index
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64
+
+      - name: Update GitOps manifest
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          SERVICE: ${{ steps.meta.outputs.service }}
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+          SOURCE_SHA: ${{ steps.meta.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          case "${SERVICE}" in
+            oirat)
+              path="argocd/applications/oirat/kustomization.yaml"
+              perl -0pi -e 's#(-\s*name:\s+registry\.ide-newton\.ts\.net/lab/oirat\s*\n\s*)(?:newTag|digest):\s*.*#$1digest: $ENV{DIGEST}#g' "${path}"
+              grep -F "digest: ${DIGEST}" "${path}"
+              ;;
+            bumba)
+              path="argocd/applications/bumba/kustomization.yaml"
+              perl -0pi -e 's#(-\s*name:\s+registry\.ide-newton\.ts\.net/lab/bumba\s*\n\s*)(?:newTag|digest):\s*.*#$1digest: $ENV{DIGEST}#g' "${path}"
+              grep -F "digest: ${DIGEST}" "${path}"
+              ;;
+            froussard)
+              image_ref="${IMAGE}@${DIGEST}"
+              path="argocd/applications/froussard/knative-service.yaml"
+              IMAGE_REF="${image_ref}" perl -0pi -e 's#image:\s+registry\.ide-newton\.ts\.net/lab/froussard(?::[A-Za-z0-9_.-]+|@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' "${path}"
+              SOURCE_SHA="${SOURCE_SHA}" perl -0pi -e 's#(name:\s+FROUSSARD_COMMIT\s*\n\s*value:\s*).*#$1$ENV{SOURCE_SHA}#g' "${path}"
+              grep -F "image: ${image_ref}" "${path}"
+              ;;
+          esac
+
+      - name: Create release pull request
+        if: steps.meta.outputs.promote == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: codex/${{ steps.meta.outputs.service }}-nix-release-${{ steps.meta.outputs.tag }}
+          title: 'chore(${{ steps.meta.outputs.service }}): promote nix image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(${{ steps.meta.outputs.service }}): promote nix image ${{ steps.meta.outputs.tag }}'
+          body: |
+            ## Summary
+
+            - Promote `${{ steps.meta.outputs.service }}` to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`.
+            - Built by the shared Nix OCI workflow without Docker Buildx.
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - `nix run .#assert-oci-platforms -- "${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}" linux/amd64 linux/arm64`
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            None
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed (or `N/A` with justification).
+            - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+            - [x] Documentation, release notes, and follow-ups are updated or tracked.
+          labels: |
+            automated-pr
+            nix-oci
+            ${{ steps.meta.outputs.service }}
+          add-paths: |
+            argocd/applications/${{ steps.meta.outputs.service }}
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: |
+          echo "Skipping ${{ steps.service.outputs.service }} promotion: ${{ steps.meta.outputs.reason }}"

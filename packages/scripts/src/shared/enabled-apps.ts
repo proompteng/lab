@@ -65,7 +65,12 @@ const deferredApps = new Map<string, string>([
   ['torghut-options', 'Torghut-family image; deferred until live app health is clean'],
 ])
 
-const appToNixAttr = new Map<string, string>([['attic', 'atticd-image']])
+const appToNixAttr = new Map<string, string>([
+  ['attic', 'atticd-image'],
+  ['bumba', 'bumba-image'],
+  ['froussard', 'froussard-image'],
+  ['oirat', 'oirat-image'],
+])
 
 const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort()
 

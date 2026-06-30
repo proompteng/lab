@@ -19,6 +19,14 @@ const inspectOciArchiveScript = readRepoFile('nix/oci-inspect-archive.sh')
 const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
 const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
+const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
+const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
+const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
+const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
+const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
+const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
+const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
+const nixOciDeployScript = readRepoFile('packages/scripts/src/shared/nix-oci-deploy.ts')
 const ociPushScript = readRepoFile('nix/oci-push.sh')
 
 afterEach(() => {
@@ -237,7 +245,7 @@ describe('native OCI build workflows', () => {
   })
 
   it('does not use Docker Buildx or docker daemon commands in migrated workflows', () => {
-    const migratedWorkflows = [atticWorkflow, nixOciWorkflow]
+    const migratedWorkflows = [atticWorkflow, nixOciWorkflow, oiratWorkflow, bumbaWorkflow, froussardWorkflow]
     for (const workflow of migratedWorkflows) {
       expect(workflow).not.toContain('docker/build-push-action')
       expect(workflow).not.toContain('docker load')
@@ -257,6 +265,56 @@ describe('native OCI build workflows', () => {
     expect(repoFileExists('nix/cache-smoke-input.txt')).toBe(false)
     expect(flake).not.toContain('cacheSmoke')
     expect(flake).not.toContain('cache-smoke')
+  })
+
+  it('routes enabled simple app image builds through real Nix OCI attrs', () => {
+    expect(flake).toContain('"oirat-image"')
+    expect(flake).toContain('"bumba-image"')
+    expect(flake).toContain('"froussard-image"')
+    expect(repoFileExists('nix/images/oirat.nix')).toBe(true)
+    expect(repoFileExists('nix/images/bumba.nix')).toBe(true)
+    expect(repoFileExists('nix/images/froussard.nix')).toBe(true)
+
+    for (const [workflow, imageName, packageAttr, artifact] of [
+      [oiratWorkflow, 'oirat', 'oirat-image', 'oirat-release-contract'],
+      [bumbaWorkflow, 'bumba', 'bumba-image', 'bumba-release-contract'],
+      [froussardWorkflow, 'froussard', 'froussard-image', 'froussard-release-contract'],
+    ] as const) {
+      expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+      expect(workflow).toContain(`image_name: ${imageName}`)
+      expect(workflow).toContain(`package_attr: ${packageAttr}`)
+      expect(workflow).toContain(`'${artifact}'`)
+      expect(workflow).toContain('tag: sha-${{ github.sha }}')
+      expect(workflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
+    }
+  })
+
+  it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
+    for (const script of [oiratBuildScript, bumbaBuildScript, froussardDeployScript]) {
+      expect(script).toContain("from '../shared/nix-oci-deploy'")
+      expect(script).not.toContain("from '../shared/docker'")
+      expect(script).not.toContain('buildAndPushDockerImage')
+      expect(script).not.toContain('inspectImageDigest')
+    }
+
+    expect(nixOciDeployScript).toContain("await run('nix', ['build', `.#${packageAttr}`")
+    expect(nixOciDeployScript).toContain("await run('nix', pushArgs")
+    expect(nixOciDeployScript).toContain("runCapture('crane', ['digest'")
+    expect(nixOciDeployScript).toContain('Nix OCI image pushes must stay in')
+  })
+
+  it('opens digest-pinning release PRs for enabled simple app Nix builds', () => {
+    expect(enabledSimpleReleaseWorkflow).toContain('workflows:')
+    expect(enabledSimpleReleaseWorkflow).toContain('- oirat')
+    expect(enabledSimpleReleaseWorkflow).toContain('- bumba')
+    expect(enabledSimpleReleaseWorkflow).toContain('- froussard')
+    expect(enabledSimpleReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
+    expect(enabledSimpleReleaseWorkflow).toContain('service build inputs changed after source commit')
+    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/oirat/kustomization.yaml')
+    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
+    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/froussard/knative-service.yaml')
+    expect(enabledSimpleReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
+    expect(enabledSimpleReleaseWorkflow).not.toContain('docker buildx')
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {

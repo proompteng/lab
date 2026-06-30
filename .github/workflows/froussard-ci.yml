@@ -6,11 +6,30 @@ on:
       - main
     paths:
       - 'apps/froussard/**'
+      - 'packages/scripts/src/froussard/**'
+      - 'argocd/applications/froussard/**'
       - '.github/workflows/froussard-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'package.json'
+      - 'bun.lock'
   pull_request:
     paths:
       - 'apps/froussard/**'
+      - 'packages/scripts/src/froussard/**'
+      - 'argocd/applications/froussard/**'
       - '.github/workflows/froussard-ci.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - 'package.json'
+      - 'bun.lock'
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -25,4 +44,15 @@ jobs:
       oxlint-command: bun run --cwd apps/froussard lint:oxlint
       oxlint-type-command: bun run --cwd apps/froussard lint:oxlint:type
       test-command: bun run --filter froussard test -- --coverage && node scripts/report-coverage.mjs
+    secrets: inherit
+
+  nix-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: froussard
+      package_attr: froussard-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'froussard-release-contract' || '' }}
     secrets: inherit
