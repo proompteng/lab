@@ -38,6 +38,9 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                 automation: auto
                 enabled: "true"
               - name: autotrader
@@ -150,6 +153,9 @@ spec:
                 namespace: jangar
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                 automation: auto
                 enabled: "true"
               - name: agents
@@ -157,6 +163,9 @@ spec:
                 namespace: agents
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                 automation: auto
                 enabled: "true"
               - name: agents-ci
@@ -261,6 +270,9 @@ spec:
                 renderWithLovely: false
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                 automation: manual
                 enabled: "true"
               - name: torghut
