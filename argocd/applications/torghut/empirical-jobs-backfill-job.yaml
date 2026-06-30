@@ -7,9 +7,6 @@ metadata:
     argocd.argoproj.io/hook: PostSync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
-  ttlSecondsAfterFinished: 600
-  backoffLimit: 2
-  activeDeadlineSeconds: 600
   template:
     spec:
       restartPolicy: OnFailure
