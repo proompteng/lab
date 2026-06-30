@@ -12,7 +12,7 @@ const defaultContractPath = '.artifacts/symphony/symphony-release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/symphony'
 
 const buildTriggerPathRegex =
-  /^(services\/symphony\/|packages\/scripts\/src\/symphony\/|packages\/scripts\/src\/shared\/|packages\/codex\/|package\.json$|bun\.lock$|tsconfig\.base\.json$|\.github\/workflows\/symphony(?:-build-push|-release|-post-deploy-verify|-deploy-automerge|-ci)\.ya?ml$)/
+  /^(services\/symphony\/|packages\/scripts\/src\/symphony\/|packages\/scripts\/src\/shared\/|packages\/codex\/|packages\/otel\/|nix\/images\/symphony\.nix$|nix\/images\/bun-workspace-service\.nix$|nix\/packages\.nix$|nix\/oci-release-contract\.sh$|flake\.nix$|flake\.lock$|package\.json$|bun\.lock$|tsconfig\.base\.json$|\.github\/workflows\/nix-oci-build-common\.yml$|\.github\/actions\/setup-nix-toolchain\/|\.github\/workflows\/symphony(?:-build-push|-release|-post-deploy-verify|-deploy-automerge|-ci)\.ya?ml$)/
 
 type CliOptions = {
   eventName?: string

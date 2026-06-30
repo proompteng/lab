@@ -4,7 +4,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 import { buildImage } from './build-image'
 import { updateSymphonyManifests } from './update-manifests'
@@ -69,25 +68,36 @@ const resolveDeployTargets = () => {
 }
 
 export const main = async () => {
+  const args = new Set(process.argv.slice(2))
+  const dryRun = args.has('--dry-run')
+  const noApply = dryRun || args.has('--no-apply')
+
   ensureCli('kubectl')
 
   const registry = process.env.SYMPHONY_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.SYMPHONY_IMAGE_REPOSITORY ?? 'lab/symphony'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
   const tag = process.env.SYMPHONY_IMAGE_TAG ?? defaultTag
-  const image = `${registry}/${repository}:${tag}`
 
-  await buildImage({ registry, repository, tag })
+  const imageResult = await buildImage({ registry, repository, tag, dryRun })
+  console.log(`Image digest: ${imageResult.digest}`)
 
-  const repoDigest = inspectImageDigest(image)
-  console.log(`Image digest: ${repoDigest}`)
+  if (dryRun) {
+    console.log('Dry run complete; manifests and cluster state were not changed.')
+    return
+  }
 
   updateSymphonyManifests({
     imageName: 'registry.ide-newton.ts.net/lab/symphony',
     tag,
-    digest: repoDigest,
+    digest: imageResult.digest,
     rolloutTimestamp: new Date().toISOString(),
   })
+
+  if (noApply) {
+    console.log('Skipping kubectl apply because --no-apply was requested.')
+    return
+  }
 
   for (const target of resolveDeployTargets()) {
     const kustomizePath = resolve(repoRoot, target.kustomizePath)

@@ -57,7 +57,18 @@ describe('enabled app inventory', () => {
   })
 
   it('marks only approved early build-owning apps as Nix image candidates', () => {
-    for (const name of ['oirat', 'bumba', 'froussard', 'docs', 'app', 'proompteng', 'olden', 'synthesis', 'attic']) {
+    for (const name of [
+      'oirat',
+      'bumba',
+      'froussard',
+      'docs',
+      'app',
+      'proompteng',
+      'olden',
+      'synthesis',
+      'attic',
+      'symphony',
+    ]) {
       expect(entry(name).class).toBe('nix-image')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
     }
@@ -72,10 +83,21 @@ describe('enabled app inventory', () => {
     expect(entry('proompteng').nixImageAttr).toBe('proompteng-image')
     expect(entry('olden').nixImageAttr).toBe('olden-image')
     expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
+    expect(entry('symphony').nixImageAttr).toBe('symphony-image')
   })
 
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
-    for (const name of ['agents', 'jangar', 'sag', 'symphony', 'bilig', 'analysis', 'torghut', 'torghut-options']) {
+    for (const name of [
+      'agents',
+      'jangar',
+      'sag',
+      'symphony-jangar',
+      'symphony-torghut',
+      'bilig',
+      'analysis',
+      'torghut',
+      'torghut-options',
+    ]) {
       expect(entry(name).class).toBe('deferred')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
       expect(entry(name).deferredReason).toBeTruthy()

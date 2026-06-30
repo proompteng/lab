@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
 
-import { parseArgoApplicationStatus, type ArgoApplicationStatus as ArgoStatus } from '../shared/argo'
+import { parseArgoApplicationStatus } from '../shared/argo'
 import { ensureCli, fatal, repoRoot } from '../shared/cli'
 
 type CliOptions = {

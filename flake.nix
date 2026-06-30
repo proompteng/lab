@@ -250,6 +250,11 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "symphony-image" = import ./nix/images/symphony.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
           };
 
           mkApp = drv: {
