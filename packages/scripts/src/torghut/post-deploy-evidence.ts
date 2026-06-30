@@ -27,7 +27,10 @@ type PostDeployEvidenceInput = {
   simPaperRouteEvidence?: unknown
 }
 
-type LiveSubmitContract = 'bounded_live_submit_active' | 'expired_activation_blocked'
+type LiveSubmitContract =
+  | 'bounded_live_submit_active'
+  | 'expired_activation_blocked'
+  | 'shadow_zero_notional_gate_closed'
 
 export type PostDeployEvidenceResult = {
   readyzAcceptedReason: 'healthy_2xx' | 'repair_only_zero_notional' | 'core_dependencies_only_gate_closed'
@@ -122,6 +125,33 @@ const collectDependencyFailureNames = (digest: JsonObject): Set<string> => {
   )
 }
 
+const assertRepairOnlyZeroNotionalDigest = (digest: JsonObject, expectedReadyzStatus?: 'degraded') => {
+  if (digest.business_state !== 'repair_only' || digest.revenue_ready !== false) {
+    throw new Error('revenue repair digest must report repair_only and revenue_ready=false')
+  }
+
+  const health = requireObject(digest.health, 'torghut revenue repair digest health')
+  if (expectedReadyzStatus && health.readyz_status !== expectedReadyzStatus) {
+    throw new Error(`revenue repair digest must mirror ${expectedReadyzStatus} readyz state`)
+  }
+
+  const capital = requireObject(digest.capital, 'torghut revenue repair digest capital')
+  if (
+    capital.live_submission_allowed !== false ||
+    capital.capital_state !== 'zero_notional' ||
+    formatScalar(capital.max_notional, '') !== '0'
+  ) {
+    throw new Error('repair-only rollout acceptance requires live submission disabled with max_notional=0')
+  }
+
+  const allowedFailureNames = new Set(['live_submission_gate', 'profitability_proof_floor'])
+  const failureNames = collectDependencyFailureNames(digest)
+  const unexpectedFailures = [...failureNames].filter((name) => !allowedFailureNames.has(name))
+  if (unexpectedFailures.length > 0) {
+    throw new Error(`unexpected readyz dependency failures: ${unexpectedFailures.join(', ')}`)
+  }
+}
+
 const assertRepairOnlyZeroNotionalReadyz = (readyz: JsonObject, digest: JsonObject) => {
   if (readyz.status !== 'degraded') {
     throw new Error('non-2xx /readyz is only accepted when payload.status is degraded')
@@ -153,22 +183,10 @@ const assertRepairOnlyZeroNotionalReadyz = (readyz: JsonObject, digest: JsonObje
     throw new Error('repair-only rollout acceptance requires profitability_proof_floor repair_only zero_notional')
   }
 
-  if (digest.business_state !== 'repair_only' || digest.revenue_ready !== false) {
-    throw new Error('revenue repair digest must report repair_only and revenue_ready=false')
-  }
-
+  assertRepairOnlyZeroNotionalDigest(digest, 'degraded')
   const health = requireObject(digest.health, 'torghut revenue repair digest health')
-  if (health.readyz_status !== 'degraded' || health.readyz_ok !== false) {
+  if (health.readyz_ok !== false) {
     throw new Error('revenue repair digest must mirror degraded readyz state')
-  }
-
-  const capital = requireObject(digest.capital, 'torghut revenue repair digest capital')
-  if (
-    capital.live_submission_allowed !== false ||
-    capital.capital_state !== 'zero_notional' ||
-    formatScalar(capital.max_notional, '') !== '0'
-  ) {
-    throw new Error('repair-only rollout acceptance requires live submission disabled with max_notional=0')
   }
 
   const allowedFailureNames = new Set(['live_submission_gate', 'profitability_proof_floor'])
@@ -204,6 +222,29 @@ const assertLiveSubmitActivationContract = (activation: JsonObject): LiveSubmitC
     throw new Error('torghut live_submit_activation.reason must be empty before expiry')
   }
   return 'bounded_live_submit_active'
+}
+
+const assertSimpleLaneCaps = (status: JsonObject, liveSubmissionGate: JsonObject) => {
+  const simpleLane = requireObject(liveSubmissionGate.simple_lane, 'torghut status live_submission_gate.simple_lane')
+  const simpleLaneStatus = requireObject(status.simple_lane_status, 'torghut status simple_lane_status')
+  if (requireBoolean(simpleLane.submit_enabled, 'torghut live_submission_gate.simple_lane.submit_enabled') !== true) {
+    throw new Error('torghut simple live submit must be enabled for bounded live-submit rollout')
+  }
+  if (requireBoolean(simpleLaneStatus.submit_enabled, 'torghut simple_lane_status.submit_enabled') !== true) {
+    throw new Error('torghut simple_lane_status.submit_enabled must be true')
+  }
+  if (
+    requireBoolean(
+      simpleLaneStatus.paper_route_probe_allow_live_mode,
+      'torghut simple_lane_status.paper_route_probe_allow_live_mode',
+    ) !== true
+  ) {
+    throw new Error('torghut simple_lane_status.paper_route_probe_allow_live_mode must be true')
+  }
+  requireScalarValue(simpleLaneStatus.paper_route_probe_max_notional, '100', 'torghut paper_route_probe_max_notional')
+  requireScalarValue(simpleLaneStatus.max_notional_per_order, '100', 'torghut max_notional_per_order')
+  requireScalarValue(simpleLaneStatus.max_notional_per_symbol, '250', 'torghut max_notional_per_symbol')
+  requireScalarValue(simpleLaneStatus.max_gross_exposure_pct_equity, '0.05', 'torghut max_gross_exposure_pct_equity')
 }
 
 const assertCoreDependenciesOnlyReadyz = (readyz: JsonObject) => {
@@ -265,8 +306,6 @@ const assertCoreDependenciesOnlyReadyz = (readyz: JsonObject) => {
 
 const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract => {
   const liveSubmissionGate = requireObject(status.live_submission_gate, 'torghut status live_submission_gate')
-  const simpleLane = requireObject(liveSubmissionGate.simple_lane, 'torghut status live_submission_gate.simple_lane')
-  const simpleLaneStatus = requireObject(status.simple_lane_status, 'torghut status simple_lane_status')
   const activation = requireObject(
     liveSubmissionGate.live_submit_activation,
     'torghut status live_submission_gate.live_submit_activation',
@@ -276,12 +315,7 @@ const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract
   if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
     throw new Error('torghut status autonomy_enabled must be false for bounded live-submit rollout')
   }
-  if (requireBoolean(simpleLane.submit_enabled, 'torghut live_submission_gate.simple_lane.submit_enabled') !== true) {
-    throw new Error('torghut simple live submit must be enabled for bounded live-submit rollout')
-  }
-  if (requireBoolean(simpleLaneStatus.submit_enabled, 'torghut simple_lane_status.submit_enabled') !== true) {
-    throw new Error('torghut simple_lane_status.submit_enabled must be true')
-  }
+  assertSimpleLaneCaps(status, liveSubmissionGate)
   const liveSubmitContract = assertLiveSubmitActivationContract(activation)
   if (liveSubmitContract === 'expired_activation_blocked') {
     if (requireBoolean(liveSubmissionGate.allowed, 'torghut status live_submission_gate.allowed') !== false) {
@@ -298,23 +332,85 @@ const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract
       'torghut live_submission_gate.blocked_reasons',
     )
   }
-  if (
-    requireBoolean(
-      simpleLaneStatus.paper_route_probe_allow_live_mode,
-      'torghut simple_lane_status.paper_route_probe_allow_live_mode',
-    ) !== true
-  ) {
-    throw new Error('torghut simple_lane_status.paper_route_probe_allow_live_mode must be true')
-  }
-  requireScalarValue(simpleLaneStatus.paper_route_probe_max_notional, '100', 'torghut paper_route_probe_max_notional')
-  requireScalarValue(simpleLaneStatus.max_notional_per_order, '100', 'torghut max_notional_per_order')
-  requireScalarValue(simpleLaneStatus.max_notional_per_symbol, '250', 'torghut max_notional_per_symbol')
-  requireScalarValue(simpleLaneStatus.max_gross_exposure_pct_equity, '0.05', 'torghut max_gross_exposure_pct_equity')
   if (requireBoolean(empiricalJobs.ready, 'torghut empirical_jobs.ready') !== true) {
     throw new Error('torghut empirical jobs must be fresh before bounded live-submit rollout acceptance')
   }
   requireScalarValue(empiricalJobs.status, 'healthy', 'torghut empirical_jobs.status')
   return liveSubmitContract
+}
+
+const assertShadowZeroNotionalGateClosedContract = (status: JsonObject, digest: JsonObject): LiveSubmitContract => {
+  const liveSubmissionGate = requireObject(status.live_submission_gate, 'torghut status live_submission_gate')
+  const activation = requireObject(
+    liveSubmissionGate.live_submit_activation,
+    'torghut status live_submission_gate.live_submit_activation',
+  )
+
+  assertRepairOnlyZeroNotionalDigest(digest)
+  if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
+    throw new Error('torghut status autonomy_enabled must be false for shadow zero-notional rollout')
+  }
+  if (requireBoolean(liveSubmissionGate.allowed, 'torghut status live_submission_gate.allowed') !== false) {
+    throw new Error('shadow zero-notional rollout acceptance requires live_submission_gate.allowed=false')
+  }
+  const reason = formatScalar(liveSubmissionGate.reason, '').trim()
+  if (!reason) {
+    throw new Error('shadow zero-notional rollout acceptance requires a live_submission_gate reason')
+  }
+  if (requireArray(liveSubmissionGate.blocked_reasons, 'torghut live_submission_gate.blocked_reasons').length === 0) {
+    throw new Error('shadow zero-notional rollout acceptance requires blocked live_submission_gate reasons')
+  }
+  assertSimpleLaneCaps(status, liveSubmissionGate)
+  if (requireBoolean(activation.configured, 'torghut live_submit_activation.configured') !== false) {
+    throw new Error('shadow zero-notional rollout acceptance requires live_submit_activation.configured=false')
+  }
+  if (requireBoolean(activation.valid, 'torghut live_submit_activation.valid') !== true) {
+    throw new Error('torghut live_submit_activation.valid must be true')
+  }
+  if (requireBoolean(activation.expired, 'torghut live_submit_activation.expired') !== false) {
+    throw new Error('shadow zero-notional rollout acceptance requires live_submit_activation.expired=false')
+  }
+  const activationReason = formatScalar(activation.reason, '')
+  if (activation.reason !== null && activation.reason !== undefined && activationReason !== '') {
+    throw new Error('shadow zero-notional rollout acceptance requires empty live_submit_activation.reason')
+  }
+  if (
+    activation.expires_at !== null &&
+    activation.expires_at !== undefined &&
+    formatScalar(activation.expires_at, '') !== ''
+  ) {
+    throw new Error('shadow zero-notional rollout acceptance requires empty live_submit_activation.expires_at')
+  }
+
+  return 'shadow_zero_notional_gate_closed'
+}
+
+const isRepairOnlyZeroNotionalCandidate = (status: JsonObject, digest: JsonObject): boolean => {
+  const capital =
+    digest.capital && typeof digest.capital === 'object' && !Array.isArray(digest.capital)
+      ? (digest.capital as JsonObject)
+      : {}
+  const liveSubmissionGate =
+    status.live_submission_gate &&
+    typeof status.live_submission_gate === 'object' &&
+    !Array.isArray(status.live_submission_gate)
+      ? (status.live_submission_gate as JsonObject)
+      : {}
+  const activation =
+    liveSubmissionGate.live_submit_activation &&
+    typeof liveSubmissionGate.live_submit_activation === 'object' &&
+    !Array.isArray(liveSubmissionGate.live_submit_activation)
+      ? (liveSubmissionGate.live_submit_activation as JsonObject)
+      : {}
+  return (
+    digest.business_state === 'repair_only' &&
+    digest.revenue_ready === false &&
+    capital.live_submission_allowed === false &&
+    capital.capital_state === 'zero_notional' &&
+    formatScalar(capital.max_notional, '') === '0' &&
+    liveSubmissionGate.allowed === false &&
+    activation.configured === false
+  )
 }
 
 type PaperRouteTargetEnvelope = {
@@ -657,7 +753,12 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
       readyzAcceptedReason = 'core_dependencies_only_gate_closed'
     }
   } else {
-    liveSubmitContract = assertBoundedLiveSubmitContract(status)
+    if (isRepairOnlyZeroNotionalCandidate(status, digest)) {
+      liveSubmitContract = assertShadowZeroNotionalGateClosedContract(status, digest)
+      readyzAcceptedReason = 'repair_only_zero_notional'
+    } else {
+      liveSubmitContract = assertBoundedLiveSubmitContract(status)
+    }
   }
 
   const routeBoard = requireObject(status.route_reacquisition_board, 'torghut status route_reacquisition_board')
