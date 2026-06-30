@@ -207,6 +207,66 @@ describe('validatePostDeployEvidence', () => {
     expect(result.summaryLines.join('\n')).toContain('Live submit contract: `bounded_live_submit_active`')
   })
 
+  it('accepts 2xx readyz with a closed shadow zero-notional gate', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: {
+        ...baseDigest,
+        blockers: [{ reason: 'alpha_readiness_not_promotion_eligible' }, { reason: 'empirical_jobs_not_ready' }],
+        capital: {
+          ...baseDigest.capital,
+          capital_stage: 'shadow',
+          configured_live_promotion: false,
+        },
+        health: {
+          ...baseDigest.health,
+          readyz_status: 'ok',
+          readyz_ok: true,
+          dependency_failures: [
+            { name: 'live_submission_gate', detail: 'alpha_readiness_not_promotion_eligible' },
+            { name: 'profitability_proof_floor', detail: 'repair_only' },
+          ],
+        },
+        repair_queue: [],
+      },
+      tradingStatus: {
+        ...baseTradingStatus,
+        empirical_jobs: {
+          ready: false,
+          status: 'degraded',
+          authority: 'empirical',
+          blocked_reasons: [],
+        },
+        live_submission_gate: {
+          ...baseTradingStatus.live_submission_gate,
+          allowed: false,
+          reason: 'alpha_readiness_not_promotion_eligible',
+          blocked_reasons: [
+            'empirical_jobs_not_ready',
+            'alpha_readiness_not_promotion_eligible',
+            'runtime_ledger_profit_target_source_collection_pending',
+            'runtime_ledger_source_collection_pending',
+          ],
+          capital_stage: 'shadow',
+          capital_state: 'observe',
+          configured_live_promotion: false,
+          live_submit_activation: {
+            configured: false,
+            valid: true,
+            expired: false,
+            expires_at: null,
+            reason: null,
+          },
+        },
+      },
+    })
+
+    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
+    expect(result.liveSubmitContract).toBe('shadow_zero_notional_gate_closed')
+    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `shadow_zero_notional_gate_closed`')
+  })
+
   it('accepts healthy readyz after live submit activation expiry when live submit is blocked', () => {
     const result = validatePostDeployEvidence({
       readyzHttpStatus: '200',
