@@ -7,7 +7,6 @@ metadata:
     app.kubernetes.io/name: torghut-llm-guardrails-exporter
     app.kubernetes.io/part-of: torghut
 spec:
-  revisionHistoryLimit: 2
   replicas: 1
   selector:
     matchLabels:
