@@ -128,7 +128,7 @@ jobs:
         run: |
           set -euo pipefail
           export IMAGE_REF="${IMAGE}@${DIGEST}"
-          perl -0pi -e 's#image:\s+(?:ghcr\.io/actions/actions-runner:latest|registry\.ide-newton\.ts\.net/lab/arc-runner@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' argocd/applications/arc/application.yaml
+          perl -0pi -e 's#image:\s+(?:ghcr\.io/actions/actions-runner:latest|registry\.ide-newton\.ts\.net/lab/arc-runner\@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' argocd/applications/arc/application.yaml
           test "$(grep -cF "image: ${IMAGE_REF}" argocd/applications/arc/application.yaml)" -eq 6
           grep -F 'image: docker:dind' argocd/applications/arc/application.yaml >/dev/null
           grep -F 'storageClassName: "rook-ceph-block"' argocd/applications/arc/application.yaml >/dev/null

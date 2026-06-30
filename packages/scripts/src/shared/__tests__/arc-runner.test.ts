@@ -29,6 +29,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcApplication).toContain('storageClassName: "rook-ceph-block"')
     expect(arcApplication).toContain('volumeClaimTemplate:')
     expect(arcRunnerReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/arc-runner')
+    expect(arcRunnerReleaseWorkflow).toContain('arc-runner\\@sha256')
     expect(arcRunnerReleaseWorkflow).toContain('test "$(grep -cF "image: ${IMAGE_REF}"')
     expect(arcRunnerReleaseWorkflow).toContain("grep -F 'image: docker:dind'")
     expect(arcRunnerReleaseWorkflow).toContain('grep -F \'storageClassName: "rook-ceph-block"\'')
