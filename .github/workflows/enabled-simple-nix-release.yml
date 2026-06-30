@@ -192,7 +192,7 @@ jobs:
             froussard)
               image_ref="${IMAGE}@${DIGEST}"
               path="argocd/applications/froussard/knative-service.yaml"
-              IMAGE_REF="${image_ref}" perl -0pi -e 's#image:\s+registry\.ide-newton\.ts\.net/lab/froussard(?::[A-Za-z0-9_.-]+|@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' "${path}"
+              IMAGE_REF="${image_ref}" perl -0pi -e 's#image:\s+registry\.ide-newton\.ts\.net/lab/froussard(?::[A-Za-z0-9_.-]+|\@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' "${path}"
               SOURCE_SHA="${SOURCE_SHA}" perl -0pi -e 's#(name:\s+FROUSSARD_COMMIT\s*\n\s*value:\s*).*#$1$ENV{SOURCE_SHA}#g' "${path}"
               grep -F "image: ${image_ref}" "${path}"
               ;;
