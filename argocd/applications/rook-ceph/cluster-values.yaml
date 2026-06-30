@@ -34,6 +34,8 @@ cephClusterSpec:
       bluestore_cache_autotune: "true"
       osd_mclock_profile: "high_recovery_ops"
       osd_memory_target: "6442450944"
+      osd_max_backfills: "16"
+      osd_recovery_max_active: "32"
 
   dataDirHostPath: /var/lib/rook
 
