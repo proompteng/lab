@@ -7,6 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut-alloy
     app.kubernetes.io/component: observability
 spec:
+  revisionHistoryLimit: 2
   replicas: 1
   selector:
     matchLabels:
