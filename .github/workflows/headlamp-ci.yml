@@ -11,7 +11,8 @@ on:
       - 'docs/headlamp-setup.md'
       - 'flake.nix'
       - 'flake.lock'
-      - 'nix/**'
+      - 'nix/packages.nix'
+      - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/headlamp-ci.yml'
   push:
     branches:
@@ -20,7 +21,8 @@ on:
       - 'services/headlamp/**'
       - 'flake.nix'
       - 'flake.lock'
-      - 'nix/**'
+      - 'nix/packages.nix'
+      - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/headlamp-ci.yml'
   workflow_dispatch:
 
