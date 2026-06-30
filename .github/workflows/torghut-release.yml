@@ -275,22 +275,18 @@ jobs:
             argocd/applications/torghut/db-migrations-job.yaml \
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml \
             argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml \
-            argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml \
             argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml \
             argocd/applications/torghut/analysis-template-runtime-ready.yaml \
             argocd/applications/torghut/analysis-template-activity.yaml \
             argocd/applications/torghut/analysis-template-teardown-clean.yaml \
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
-            argocd/applications/torghut/execution-tca-refresh-cronjob.yaml \
-            argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml \
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml \
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml \
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml \
-            argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml \
             argocd/applications/torghut-options/catalog/deployment.yaml \
             argocd/applications/torghut-options/enricher/deployment.yaml; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -321,22 +317,18 @@ jobs:
             argocd/applications/torghut/db-migrations-job.yaml
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
             argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
-            argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml
             argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml
             argocd/applications/torghut/analysis-template-runtime-ready.yaml
             argocd/applications/torghut/analysis-template-activity.yaml
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
-            argocd/applications/torghut/execution-tca-refresh-cronjob.yaml
-            argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
-            argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
@@ -347,7 +339,7 @@ jobs:
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
             - Migration change detected under `services/torghut/migrations/**`
-            - Manifests: core Torghut, simulation, jobs/workflows, Hyperliquid runtime, proof verifier, options catalog, options enricher
+            - Manifests: core Torghut, simulation, jobs/workflows, Hyperliquid runtime, options catalog, options enricher
             - Added `do-not-automerge`; manual DB migration approval required before merge
 
       - name: Create deploy pull request (auto-merge eligible)
@@ -371,22 +363,18 @@ jobs:
             argocd/applications/torghut/db-migrations-job.yaml
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
             argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
-            argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml
             argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml
             argocd/applications/torghut/analysis-template-runtime-ready.yaml
             argocd/applications/torghut/analysis-template-activity.yaml
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
-            argocd/applications/torghut/execution-tca-refresh-cronjob.yaml
-            argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
             argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml
-            argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml
             argocd/applications/torghut-options/catalog/deployment.yaml
             argocd/applications/torghut-options/enricher/deployment.yaml
           body: |
@@ -396,7 +384,7 @@ jobs:
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
-            - Manifests: core Torghut, simulation, jobs/workflows, Hyperliquid runtime, proof verifier, options catalog, options enricher
+            - Manifests: core Torghut, simulation, jobs/workflows, Hyperliquid runtime, options catalog, options enricher
 
       - name: No manifest changes detected
         if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'

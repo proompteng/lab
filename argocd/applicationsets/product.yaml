@@ -430,6 +430,14 @@ spec:
                 namespace: froussard
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
+                # RespectIgnoreDifferences can preserve stale Knative metadata annotations
+                # during apply and block image/env digest rollouts from reconciling.
+                syncOptions:
+                  - CreateNamespace=true
+                  - ServerSideApply=true
+                  - ApplyOutOfSyncOnly=true
+                  - PruneLast=true
+                  - ClientSideApplyMigration=false
                 ignoreDifferences:
                   - group: serving.knative.dev
                     kind: Service

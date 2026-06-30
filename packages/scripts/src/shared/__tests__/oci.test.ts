@@ -14,6 +14,7 @@ const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
 const atticReleaseMetadataScript = readRepoFile('nix/attic-release-metadata.sh')
 const atticDeployment = readRepoFile('argocd/applications/attic/deployment.yaml')
 const atticGcCronJob = readRepoFile('argocd/applications/attic/gc-cronjob.yaml')
+const productApplicationSet = readRepoFile('argocd/applicationsets/product.yaml')
 const flake = readRepoFile('flake.nix')
 const inspectOciArchiveScript = readRepoFile('nix/oci-inspect-archive.sh')
 const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
@@ -25,6 +26,7 @@ const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-au
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
+const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
@@ -297,6 +299,16 @@ describe('native OCI build workflows', () => {
     }
   })
 
+  it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
+    expect(oiratWorkflow).not.toContain("'argocd/applications/oirat/**'")
+    expect(bumbaWorkflow).not.toContain("'argocd/applications/bumba/**'")
+    expect(bumbaWorkflow).not.toContain("'argocd/applicationsets/product.yaml'")
+    expect(froussardWorkflow).not.toContain("'argocd/applications/froussard/**'")
+    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/oirat argocd/applications/oirat')
+    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/bumba argocd/applications/bumba')
+    expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/froussard argocd/applications/froussard')
+  })
+
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
     for (const script of [oiratBuildScript, bumbaBuildScript, froussardDeployScript]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")
@@ -332,6 +344,22 @@ describe('native OCI build workflows', () => {
     expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
     expect(releasePrAutomergeWorkflow).not.toContain("'argocd/applications/bumba/kustomization.yaml'")
     expect(releasePrAutomergeWorkflow).not.toContain('"argocd/applications/bumba/kustomization.yaml"')
+  })
+
+  it('keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply', () => {
+    const match = productApplicationSet.match(/- name: froussard[\s\S]*?automation: manual/)
+    expect(match).not.toBeNull()
+    const froussardBlock = match?.[0] ?? ''
+    expect(froussardBlock).toContain('syncOptions:')
+    expect(froussardBlock).toContain('- ServerSideApply=true')
+    expect(froussardBlock).toContain('- ApplyOutOfSyncOnly=true')
+    expect(froussardBlock).not.toContain('- RespectIgnoreDifferences=true')
+    expect(froussardKnativeService).toContain(
+      'serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller',
+    )
+    expect(froussardKnativeService).toContain(
+      'serving.knative.dev/lastModifier: system:serviceaccount:argocd:argocd-application-controller',
+    )
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {
