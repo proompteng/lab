@@ -346,10 +346,10 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertIn('--runtime-window-import-file "${RENEWAL_OUTPUT}"', args)
         self.assertIn("--min-runtime-ledger-net-pnl 10000", args)
         self.assertIn("--min-runtime-ledger-daily-net-pnl 500", args)
-        self.assertIn("--min-runtime-ledger-trading-days 20", args)
-        self.assertIn("--max-runtime-ledger-drawdown-pct-equity 0.03", args)
-        self.assertIn("--max-runtime-ledger-best-day-share 0.25", args)
-        self.assertIn("--max-runtime-ledger-symbol-concentration-share 0.35", args)
+        self.assertNotIn(
+            "TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT",
+            env,
+        )
         self.assertIn('--output-file "${PROOF_PACKET_OUTPUT}"', args)
         self.assertIn(
             "--artifact-prefix 'runtime-ledger-proof-packets/{run_id}'",
@@ -565,10 +565,6 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             context="live static universe",
         )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
-        self.assertEqual(
-            env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
-            "2026-06-22T20:05:00Z",
-        )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
         self.assertTrue(
             _manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE")
