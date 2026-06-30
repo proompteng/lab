@@ -349,7 +349,8 @@ def _submission_dependency_context(
         ),
         empirical_ready=(
             bool(empirical_jobs_status.get("ready"))
-            if isinstance(empirical_jobs_status, Mapping)
+            if settings.trading_empirical_jobs_health_required
+            and isinstance(empirical_jobs_status, Mapping)
             else None
         ),
         dspy_mode=dspy_mode,

@@ -88,6 +88,66 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             "2000-01-01T00:00:00+00:00",
         )
 
+    def test_stale_empirical_jobs_are_informational_when_health_not_required(
+        self,
+    ) -> None:
+        settings.trading_empirical_jobs_health_required = False
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": False, "status": "degraded"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        self.assertNotIn("empirical_jobs_not_ready", result["blocked_reasons"])
+        self.assertIsNone(result["empirical_jobs_ready"])
+        self.assertEqual(
+            result["segment_summary"]["empirical"]["state"],
+            "ok",
+        )
+
+    def test_stale_empirical_jobs_block_when_health_required(self) -> None:
+        settings.trading_empirical_jobs_health_required = True
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": False, "status": "degraded"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        self.assertIn("empirical_jobs_not_ready", result["blocked_reasons"])
+        self.assertFalse(result["empirical_jobs_ready"])
+        self.assertEqual(
+            result["segment_summary"]["empirical"]["reason_codes"],
+            ["empirical_jobs_not_ready"],
+        )
+
     def test_bounded_live_paper_collection_gate_fails_closed_without_explicit_contract(
         self,
     ) -> None:

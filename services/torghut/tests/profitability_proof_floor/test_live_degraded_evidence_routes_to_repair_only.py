@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.config import settings
 from app.trading.route_reacquisition import build_route_reacquisition_book
 
 from tests.profitability_proof_floor.support import (
@@ -15,6 +16,78 @@ from tests.profitability_proof_floor.support import (
     build_profitability_proof_floor_receipt,
     cast,
 )
+
+
+def test_stale_empirical_jobs_are_informational_when_health_not_required() -> None:
+    original = settings.trading_empirical_jobs_health_required
+    settings.trading_empirical_jobs_health_required = False
+    try:
+        receipt = build_profitability_proof_floor_receipt(
+            account_label="PA3SX7FYNUTF",
+            torghut_revision="torghut-00245",
+            trading_mode="live",
+            market_session_open=True,
+            live_submission_gate={
+                "allowed": True,
+                "reason": "live_submission_ready",
+                "blocked_reasons": [],
+                "capital_stage": "0.10x canary",
+            },
+            hypothesis_payload=_healthy_hypothesis_payload(),
+            empirical_jobs_status={"ready": False, "status": "degraded"},
+            quant_evidence=_healthy_quant_evidence(),
+            market_context_status=_healthy_market_context(),
+            tca_summary=_fresh_tca_summary(),
+            simple_lane_status=_simple_lane_status(),
+            now=NOW,
+        )
+    finally:
+        settings.trading_empirical_jobs_health_required = original
+
+    dimensions = {
+        cast(str, item["dimension"]): item for item in receipt["proof_dimensions"]
+    }
+    assert dimensions["empirical"]["state"] == "informational"
+    assert "degraded" not in receipt["blocking_reasons"]
+    assert all(
+        item["code"] != "repair_empirical_jobs" for item in receipt["repair_ladder"]
+    )
+
+
+def test_stale_empirical_jobs_block_when_health_required() -> None:
+    original = settings.trading_empirical_jobs_health_required
+    settings.trading_empirical_jobs_health_required = True
+    try:
+        receipt = build_profitability_proof_floor_receipt(
+            account_label="PA3SX7FYNUTF",
+            torghut_revision="torghut-00245",
+            trading_mode="live",
+            market_session_open=True,
+            live_submission_gate={
+                "allowed": True,
+                "reason": "live_submission_ready",
+                "blocked_reasons": [],
+                "capital_stage": "0.10x canary",
+            },
+            hypothesis_payload=_healthy_hypothesis_payload(),
+            empirical_jobs_status={"ready": False, "status": "degraded"},
+            quant_evidence=_healthy_quant_evidence(),
+            market_context_status=_healthy_market_context(),
+            tca_summary=_fresh_tca_summary(),
+            simple_lane_status=_simple_lane_status(),
+            now=NOW,
+        )
+    finally:
+        settings.trading_empirical_jobs_health_required = original
+
+    dimensions = {
+        cast(str, item["dimension"]): item for item in receipt["proof_dimensions"]
+    }
+    assert dimensions["empirical"]["state"] == "degraded"
+    assert "degraded" in receipt["blocking_reasons"]
+    assert any(
+        item["code"] == "repair_empirical_jobs" for item in receipt["repair_ladder"]
+    )
 
 
 def test_live_degraded_evidence_routes_to_repair_only() -> None:

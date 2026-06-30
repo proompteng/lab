@@ -168,6 +168,7 @@ class SubmissionCouncilTestCase(TestCase):
             "trading_jangar_control_plane_status_url": settings.trading_jangar_control_plane_status_url,
             "trading_market_context_url": settings.trading_market_context_url,
             "trading_drift_live_promotion_max_evidence_age_seconds": settings.trading_drift_live_promotion_max_evidence_age_seconds,
+            "trading_empirical_jobs_health_required": settings.trading_empirical_jobs_health_required,
         }
         _QUANT_HEALTH_CACHE.clear()
         settings.trading_enabled = True
@@ -227,6 +228,9 @@ class SubmissionCouncilTestCase(TestCase):
                 "trading_drift_live_promotion_max_evidence_age_seconds"
             ]
         )
+        settings.trading_empirical_jobs_health_required = self._settings_snapshot[
+            "trading_empirical_jobs_health_required"
+        ]
         _QUANT_HEALTH_CACHE.clear()
 
     def _metric_window(
