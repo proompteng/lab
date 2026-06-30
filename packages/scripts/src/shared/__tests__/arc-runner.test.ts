@@ -58,9 +58,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(flake).toContain('name = "lab-ci-toolchain"')
     expect(flake).toContain('pathsToLink = [ "/bin" ]')
     expect(flake).toContain('ignoreCollisions = true')
-    expect(nixPackages).toContain('https://get.helm.sh/helm-v${helmVersion}-linux-amd64.tar.gz')
-    expect(nixPackages).toContain(
-      'https://github.com/helm/helm/releases/download/v${helmVersion}/helm-v${helmVersion}-linux-amd64.tar.gz',
+    expect(nixPackages.indexOf('https://github.com/helm/helm/releases/download/v${helmVersion}/')).toBeLessThan(
+      nixPackages.indexOf('https://get.helm.sh/helm-v${helmVersion}-'),
     )
   })
 
