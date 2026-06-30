@@ -8,6 +8,7 @@ metadata:
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
 spec:
   backoffLimit: 2
+  activeDeadlineSeconds: 120
   ttlSecondsAfterFinished: 300
   template:
     spec:
@@ -62,21 +63,3 @@ spec:
             - |
               mc alias set ceph "http://${BUCKET_HOST}:${BUCKET_PORT}" "${AWS_ACCESS_KEY_ID}" "${AWS_SECRET_ACCESS_KEY}"
               mc stat "ceph/${BUCKET_NAME}" >/dev/null 2>&1 || mc mb "ceph/${BUCKET_NAME}"
-
-              for prefix in \
-                "raw/github" \
-                "raw/arxiv" \
-                "raw/ssrn" \
-                "normalized/pdf" \
-                "extracted/text" \
-                "extracted/sections" \
-                "metadata/documents" \
-                "metadata/processing" \
-                "synthesis" \
-                "verdicts" \
-                "design-prs" \
-                "index/manifests" \
-                "ops/failed" \
-                "ops/quarantine"; do
-                printf "" | mc pipe "ceph/${BUCKET_NAME}/${prefix}/.keep"
-              done

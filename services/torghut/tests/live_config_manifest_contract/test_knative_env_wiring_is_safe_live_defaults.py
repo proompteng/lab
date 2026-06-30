@@ -757,3 +757,19 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             env.get("TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES"),
             "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
         )
+        self.assertEqual(env.get("TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS"), "30")
+
+    def test_torghut_whitepaper_bootstrap_only_ensures_bucket(self) -> None:
+        spec, container = _load_job_container(
+            "argocd/applications/torghut/whitepapers-bucket-bootstrap-job.yaml"
+        )
+        args = container.get("command")
+        rendered_command = "\n".join(str(item) for item in args or [])
+
+        self.assertEqual(spec.get("backoffLimit"), 2)
+        self.assertEqual(spec.get("activeDeadlineSeconds"), 120)
+        self.assertEqual(spec.get("ttlSecondsAfterFinished"), 300)
+        self.assertIn("mc stat", rendered_command)
+        self.assertIn("mc mb", rendered_command)
+        self.assertNotIn("mc pipe", rendered_command)
+        self.assertNotIn(".keep", rendered_command)

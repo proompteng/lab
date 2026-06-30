@@ -47,43 +47,50 @@ def _smoke_accounts(settings: Settings) -> list[TigerBeetleAccountSpec]:
 
 def run_smoke(settings: Settings) -> dict[str, Any]:
     client = create_tigerbeetle_client(settings)
-    accounts = _smoke_accounts(settings)
-    transfer = TigerBeetleTransferSpec(
-        transfer_id=stable_u128(
-            "torghut.tigerbeetle.smoke.transfer",
-            f"{settings.tigerbeetle_cluster_id}:torghut-smoke",
-        ),
-        transfer_kind=TRANSFER_KIND_SMOKE,
-        debit_account_id=accounts[0].account_id,
-        credit_account_id=accounts[1].account_id,
-        amount=1,
-        ledger=LEDGER_USD_MICRO,
-        code=TRANSFER_CODE_SMOKE,
-    )
+    try:
+        accounts = _smoke_accounts(settings)
+        transfer = TigerBeetleTransferSpec(
+            transfer_id=stable_u128(
+                "torghut.tigerbeetle.smoke.transfer",
+                f"{settings.tigerbeetle_cluster_id}:torghut-smoke",
+            ),
+            transfer_kind=TRANSFER_KIND_SMOKE,
+            debit_account_id=accounts[0].account_id,
+            credit_account_id=accounts[1].account_id,
+            amount=1,
+            ledger=LEDGER_USD_MICRO,
+            code=TRANSFER_CODE_SMOKE,
+        )
 
-    client.nop()
-    print("protocol probe ok")
-    client.create_accounts(accounts)
-    client.create_accounts(accounts)
-    looked_up_accounts = client.lookup_accounts([item.account_id for item in accounts])
-    if len(looked_up_accounts) != len(accounts):
-        raise RuntimeError("create_accounts idempotent replay failed")
-    print("create_accounts idempotent ok")
-    client.create_transfers([transfer])
-    client.create_transfers([transfer])
-    looked_up_transfers = client.lookup_transfers([transfer.transfer_id])
-    if len(looked_up_transfers) != 1:
-        raise RuntimeError("lookup_transfers failed")
-    print("create_transfers idempotent ok")
-    print("lookup_transfers ok")
-    print("reconciliation ok")
-    return {
-        "schema_version": "torghut.tigerbeetle-smoke.v1",
-        "ok": True,
-        "cluster_id": settings.tigerbeetle_cluster_id,
-        "account_ids": [str(item.account_id) for item in accounts],
-        "transfer_id": str(transfer.transfer_id),
-    }
+        client.nop()
+        print("protocol probe ok")
+        client.create_accounts(accounts)
+        client.create_accounts(accounts)
+        looked_up_accounts = client.lookup_accounts(
+            [item.account_id for item in accounts]
+        )
+        if len(looked_up_accounts) != len(accounts):
+            raise RuntimeError("create_accounts idempotent replay failed")
+        print("create_accounts idempotent ok")
+        client.create_transfers([transfer])
+        client.create_transfers([transfer])
+        looked_up_transfers = client.lookup_transfers([transfer.transfer_id])
+        if len(looked_up_transfers) != 1:
+            raise RuntimeError("lookup_transfers failed")
+        print("create_transfers idempotent ok")
+        print("lookup_transfers ok")
+        print("reconciliation ok")
+        return {
+            "schema_version": "torghut.tigerbeetle-smoke.v1",
+            "ok": True,
+            "cluster_id": settings.tigerbeetle_cluster_id,
+            "account_ids": [str(item.account_id) for item in accounts],
+            "transfer_id": str(transfer.transfer_id),
+        }
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
 
 
 def main() -> int:
