@@ -18,6 +18,7 @@ const khoshutWorkflow = readRepoFile('.github/workflows/khoshut-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
 const flake = readRepoFile('flake.nix')
 const nixPackages = readRepoFile('nix/packages.nix')
+const toolchainDoctor = readRepoFile('nix/toolchain-doctor.sh')
 
 describe('ARC Nix runner toolchain', () => {
   it('keeps ARC storage and Docker sidecar unchanged while making runner images releasable by digest', () => {
@@ -63,6 +64,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(nixPackages).toContain('kubernetes-helm must stay on Helm 3')
     expect(nixPackages).not.toContain('https://github.com/helm/helm/releases/download/v${helmVersion}/')
     expect(nixPackages).not.toContain('https://get.helm.sh/helm-v${helmVersion}-')
+    expect(toolchainDoctor).toContain('expect_prefix helm v3.')
+    expect(toolchainDoctor).not.toContain('expect_eq helm v3.14.4')
   })
 
   it('publishes multi-arch ARC runner images and opens a digest-pinning release PR', () => {

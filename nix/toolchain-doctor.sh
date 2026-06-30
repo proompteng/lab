@@ -29,6 +29,16 @@ expect_contains() {
   esac
 }
 
+expect_prefix() {
+  name="$1"
+  expected="$2"
+  actual="$3"
+  case "$actual" in
+    "$expected"*) printf '%-18s %s\n' "$name" "$actual" ;;
+    *) fail "$name expected output starting with $expected, got $actual" ;;
+  esac
+}
+
 for cmd in nix node bun go ruby python3.11 python3.12 uv tofu helm kustomize kubeconform kubectl argo argocd buf gh shellcheck jq yq rg fd fzf; do
   have "$cmd"
 done
@@ -42,7 +52,7 @@ expect_contains python3.11 "Python 3.11." "$(python3.11 --version)"
 expect_contains python3.12 "Python 3.12." "$(python3.12 --version)"
 printf '%-18s %s\n' uv "$(uv --version | head -n 1)"
 printf '%-18s %s\n' tofu "$(tofu version | head -n 1)"
-expect_eq helm v3.14.4 "$(helm version --template '{{ .Version }}')"
+expect_prefix helm v3. "$(helm version --template '{{ .Version }}')"
 expect_contains kustomize "v5.8.0" "$(kustomize version)"
 expect_contains kubeconform "v0.7.0" "$(kubeconform -v)"
 expect_contains kubectl "v1.29.4" "$(kubectl version --client=true --output=yaml | awk '/gitVersion:/ {print $2; exit}')"
