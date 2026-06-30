@@ -14,12 +14,43 @@ This runbook covers the in-cluster Keycloak deployment used for OIDC, plus the i
 
 For Headlamp-specific wiring (OIDC secret, RBAC, control-plane OIDC args), see `docs/headlamp-setup.md`.
 
+## OIDC client for ChatGPT agents-shell
+
+The ChatGPT MCP connector uses the confidential `agents-shell` OIDC client bootstrapped by
+`argocd/applications/keycloak/agents-shell-client-bootstrap-job.yaml`.
+
+Capabilities:
+
+- Client authentication: On
+- Standard flow: On
+- Direct access grants: Off
+- Implicit flow: Off
+- Service accounts roles: Off
+- PKCE: `S256`
+- Valid redirect URI: `https://chatgpt.com/connector/oauth/*`
+- Web origin: `https://chatgpt.com`
+
+Required scopes and role mapping:
+
+- Default client scopes: `agents-shell.read`, `agents-shell.write`, `offline_access`
+- Optional client scope: `agents-shell.admin`
+- User: `agents-shell-chatgpt`
+- Realm role: `offline_access`
+
+The `offline_access` client scope alone is not enough for durable ChatGPT connector sessions. The ChatGPT user must
+also have the realm `offline_access` role, otherwise Keycloak can issue ordinary access/refresh tokens but will not
+issue offline refresh tokens for long-lived reconnect-free sessions.
+
 ## Operations model
 
 - Keycloak itself is GitOps-managed from `argocd/applications/keycloak`.
 - The `kubernetes` OIDC client used by Headlamp and the kube-apiserver is GitOps-managed by:
   - `argocd/applications/keycloak/headlamp-client-sealedsecret.yaml`
   - `argocd/applications/keycloak/headlamp-client-bootstrap-job.yaml`
+- The ChatGPT agents-shell OIDC client is GitOps-managed by:
+  - `argocd/applications/keycloak/agents-shell-client-sealedsecret.yaml`
+  - `argocd/applications/keycloak/agents-shell-user-sealedsecret.yaml`
+  - `argocd/applications/keycloak/agents-shell-client-bootstrap-job.yaml`
 - That bootstrap job also enforces the realm session defaults Headlamp depends on:
   - Access token lifespan `300`
   - SSO session idle `28800`

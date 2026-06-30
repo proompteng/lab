@@ -265,6 +265,25 @@ spec:
                 expected=(204,),
               )
 
+              offline_access_role = request(
+                'GET',
+                f'/admin/realms/{realm_path}/roles/offline_access',
+                token=token,
+              )
+              assigned_realm_roles = request(
+                'GET',
+                f'{users_path}/{urllib.parse.quote(user_resource_id, safe="")}/role-mappings/realm',
+                token=token,
+              )
+              if not any(role.get('name') == 'offline_access' for role in assigned_realm_roles):
+                request(
+                  'POST',
+                  f'{users_path}/{urllib.parse.quote(user_resource_id, safe="")}/role-mappings/realm',
+                  token=token,
+                  data=[{'id': offline_access_role['id'], 'name': offline_access_role['name']}],
+                  expected=(204,),
+                )
+
               print(f'Configured Keycloak client {client_id} and user {chatgpt_username} in realm {realm}')
               PY
           securityContext:
