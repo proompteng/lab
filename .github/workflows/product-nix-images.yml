@@ -88,7 +88,7 @@ concurrency:
 
 jobs:
   changes:
-    runs-on: arc-arm64
+    runs-on: arc-amd64
     permissions:
       contents: read
     outputs:
