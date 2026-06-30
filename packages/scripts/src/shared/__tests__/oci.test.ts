@@ -335,14 +335,14 @@ describe('native OCI build workflows', () => {
     expect(releasePrAutomergeWorkflow).not.toContain('"argocd/applications/bumba/kustomization.yaml"')
   })
 
-  it('keeps Froussard Knative digest rollouts on client-side apply', () => {
+  it('keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply', () => {
     const match = productApplicationSet.match(/- name: froussard[\s\S]*?automation: manual/)
     expect(match).not.toBeNull()
     const froussardBlock = match?.[0] ?? ''
     expect(froussardBlock).toContain('syncOptions:')
-    expect(froussardBlock).toContain('- RespectIgnoreDifferences=true')
+    expect(froussardBlock).toContain('- ServerSideApply=true')
     expect(froussardBlock).toContain('- ApplyOutOfSyncOnly=true')
-    expect(froussardBlock).not.toContain('- ServerSideApply=true')
+    expect(froussardBlock).not.toContain('- RespectIgnoreDifferences=true')
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {

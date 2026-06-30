@@ -430,11 +430,11 @@ spec:
                 namespace: froussard
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
-                # Froussard's Knative Service has historical client-side apply ownership.
-                # Server-side apply reports a successful sync but preserves the old image/env.
+                # RespectIgnoreDifferences can preserve stale Knative metadata annotations
+                # during apply and block image/env digest rollouts from reconciling.
                 syncOptions:
                   - CreateNamespace=true
-                  - RespectIgnoreDifferences=true
+                  - ServerSideApply=true
                   - ApplyOutOfSyncOnly=true
                   - PruneLast=true
                   - ClientSideApplyMigration=false
