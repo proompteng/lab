@@ -396,24 +396,29 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd unset noout
 
 ## GitOps Follow-Up
 
-After `osd.0` and `osd.1` are migrated, update
-`argocd/applications/rook-ceph/cluster-values.yaml` so future OSD prepares use
-the same desired DB device. Use per-device config, not node-wide config:
+After each OSD is migrated, update
+`argocd/applications/rook-ceph/cluster-values.yaml` before Argo CD is allowed
+to reconcile again. Use per-device config, not node-wide config.
+
+For a fresh empty metadata NVMe, the raw by-id Kingston device is acceptable.
+After the Kingston NVMe already has BlueStore DB LVs, Rook may not inventory the
+parent NVMe as an available metadata device during later prepares. This matches
+the failure mode tracked in [rook/rook#13634](https://github.com/rook/rook/issues/13634).
+In that case, pre-create or reuse the target DB LV and point `metadataDevice`
+at the LV path directly.
+
+Live OSD0 example after the 2026-06-30 recreate:
 
 ```yaml
 - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
   config:
-    metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
-    databaseSizeMB: "300000"
-- name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
-  config:
-    metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
-    databaseSizeMB: "300000"
-- name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0NL5D
-  config:
-    metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
+    metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-osd1
     databaseSizeMB: "300000"
 ```
+
+Repeat this for `osd.1` only after its target DB LV is known. Do not resume
+Argo with a raw Kingston parent path for the OSD currently being recreated if
+Rook has already failed inventory against that parent device.
 
 Validate:
 
