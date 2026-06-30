@@ -61,6 +61,7 @@ let
   ];
 
   sourcePaths = [
+    "charts/agents/crds"
     "packages/agent-contracts"
     "packages/codex"
     "packages/cx-tools"
