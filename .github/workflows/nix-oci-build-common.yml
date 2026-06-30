@@ -136,12 +136,11 @@ jobs:
           fi
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
-      - name: Push real image closure to Attic
+      - name: Push reusable helper closures to Attic
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
-          IMAGE_TAR: ${{ steps.build.outputs.image_tar }}
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
@@ -152,7 +151,7 @@ jobs:
             exit 2
           fi
           bash nix/ci-run-timed.sh "push-build-platform-closures-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-${ARCH}.log" \
-            nix run .#cache-push -- "${IMAGE_TAR}" "${helper_paths[@]}"
+            nix run .#cache-push -- "${helper_paths[@]}"
 
       - name: Summarize Nix OCI cache use
         if: always()
