@@ -6,6 +6,7 @@ on:
       - 'release/**'
     paths:
       - 'argocd/applications/*/kustomization.yaml'
+      - 'argocd/sag/kustomization.yaml'
   workflow_dispatch:
     inputs:
       head_branch:
@@ -106,6 +107,7 @@ jobs:
             "argocd/applications/oirat/kustomization.yaml"
             "argocd/applications/olden/kustomization.yaml"
             "argocd/applications/proompteng/kustomization.yaml"
+            "argocd/sag/kustomization.yaml"
             "argocd/applications/symphony/kustomization.yaml"
             "argocd/applications/symphony-jangar/kustomization.yaml"
             "argocd/applications/symphony-torghut/kustomization.yaml"

@@ -1,4 +1,4 @@
-name: symphony-build-push
+name: sag-build-push
 
 permissions:
   contents: read
@@ -6,10 +6,9 @@ permissions:
 on:
   pull_request:
     paths:
-      - 'services/symphony/**'
+      - 'services/sag/**'
       - 'packages/codex/**'
-      - 'packages/otel/**'
-      - 'packages/scripts/src/symphony/**'
+      - 'packages/scripts/src/sag/**'
       - 'packages/scripts/src/shared/cli.ts'
       - 'packages/scripts/src/shared/git.ts'
       - 'packages/scripts/src/shared/nix-oci-deploy.ts'
@@ -18,7 +17,7 @@ on:
       - 'tsconfig.base.json'
       - 'flake.nix'
       - 'flake.lock'
-      - 'nix/images/symphony.nix'
+      - 'nix/images/sag.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
@@ -28,18 +27,18 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
-      - '.github/workflows/symphony-build-push.yaml'
-      - '.github/workflows/symphony-release.yml'
+      - '.github/workflows/sag-build-push.yaml'
+      - '.github/workflows/sag-release.yml'
+      - '.github/workflows/sag-post-deploy-verify.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
     paths:
-      - 'services/symphony/**'
+      - 'services/sag/**'
       - 'packages/codex/**'
-      - 'packages/otel/**'
-      - 'packages/scripts/src/symphony/**'
+      - 'packages/scripts/src/sag/**'
       - 'packages/scripts/src/shared/cli.ts'
       - 'packages/scripts/src/shared/git.ts'
       - 'packages/scripts/src/shared/nix-oci-deploy.ts'
@@ -48,7 +47,7 @@ on:
       - 'tsconfig.base.json'
       - 'flake.nix'
       - 'flake.lock'
-      - 'nix/images/symphony.nix'
+      - 'nix/images/sag.nix'
       - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
@@ -58,8 +57,9 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
-      - '.github/workflows/symphony-build-push.yaml'
-      - '.github/workflows/symphony-release.yml'
+      - '.github/workflows/sag-build-push.yaml'
+      - '.github/workflows/sag-release.yml'
+      - '.github/workflows/sag-post-deploy-verify.yml'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
@@ -73,9 +73,9 @@ jobs:
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
-      image_name: symphony
-      package_attr: symphony-image
+      image_name: sag
+      package_attr: sag-image
       tag: sha-${{ github.sha }}
       latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'symphony-release-contract' || '' }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'sag-release-contract' || '' }}
     secrets: inherit
