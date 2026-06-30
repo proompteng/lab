@@ -1,0 +1,350 @@
+#!/usr/bin/env bun
+
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { basename, join, relative, resolve } from 'node:path'
+
+import YAML from 'yaml'
+
+import { fatal, repoRoot } from './cli'
+
+export type EnabledAppClass = 'nix-image' | 'helm-chart' | 'vendor-manifest' | 'external-source' | 'deferred'
+
+export type EnabledAppInventoryEntry = {
+  name: string
+  path: string
+  repoURL: string
+  sourceFile: string
+  sourceKind: 'applicationset-element' | 'direct-application'
+  class: EnabledAppClass
+  enabled: boolean
+  hasHelmChart: boolean
+  repoImages: string[]
+  buildScriptPath?: string
+  deployScriptPath?: string
+  workflowPaths: string[]
+  nixImageAttr?: string
+  deferredReason?: string
+}
+
+export type EnabledAppInventory = {
+  entries: EnabledAppInventoryEntry[]
+  applicationSetEntryCount: number
+  directApplicationCount: number
+}
+
+type JsonRecord = Record<string, unknown>
+
+const labRepoURL = 'https://github.com/proompteng/lab.git'
+const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
+
+const earlyNixImageApps = new Set([
+  'app',
+  'attic',
+  'bumba',
+  'docs',
+  'froussard',
+  'oirat',
+  'olden',
+  'proompteng',
+  'synthesis',
+])
+
+const deferredApps = new Map<string, string>([
+  ['agents', 'complex multi-image runtime; migrate after simple services prove the shared Nix contract'],
+  ['analysis', 'repo image is tracked by image updater, but no local build/deploy script is wired in this repo'],
+  ['bilig', 'complex application image; requires a dedicated derivation and rollout proof'],
+  ['jangar', 'complex service plus OpenWebUI chart; requires a dedicated derivation and rollout proof'],
+  ['sag', 'complex app; migrate after simple Bun/Node services'],
+  ['symphony', 'complex service with multiple Argo apps sharing one image'],
+  ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
+  ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
+  ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
+  ['torghut', 'deferred until live GitOps/app health is clean'],
+  ['torghut-hyperliquid-feed', 'Torghut-family image; deferred until live app health is clean'],
+  ['torghut-hyperliquid-runtime', 'Torghut-family image; deferred until live app health is clean'],
+  ['torghut-options', 'Torghut-family image; deferred until live app health is clean'],
+])
+
+const appToNixAttr = new Map<string, string>([['attic', 'atticd-image']])
+
+const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort()
+
+const isRecord = (value: unknown): value is JsonRecord =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const asString = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
+
+const walk = (value: unknown, visit: (record: JsonRecord) => void): void => {
+  if (Array.isArray(value)) {
+    for (const entry of value) walk(entry, visit)
+    return
+  }
+  if (!isRecord(value)) return
+
+  visit(value)
+  for (const child of Object.values(value)) {
+    walk(child, visit)
+  }
+}
+
+const readYamlDocuments = (path: string): unknown[] => {
+  const raw = readFileSync(path, 'utf8')
+  return YAML.parseAllDocuments(raw)
+    .filter((document) => !document.errors.length)
+    .map((document) => document.toJSON())
+    .filter((document) => document !== null)
+}
+
+const listYamlFiles = (dir: string): string[] => {
+  if (!existsSync(dir)) return []
+
+  const entries: string[] = []
+  for (const name of readdirSync(dir)) {
+    const path = join(dir, name)
+    const stat = statSync(path)
+    if (stat.isDirectory()) {
+      entries.push(...listYamlFiles(path))
+    } else if (stat.isFile() && /\.(ya?ml)$/.test(name)) {
+      entries.push(path)
+    }
+  }
+  return entries.sort()
+}
+
+const isEnabledValue = (value: unknown): boolean => {
+  const normalized =
+    typeof value === 'string'
+      ? value.trim().toLowerCase()
+      : typeof value === 'boolean' || typeof value === 'number'
+        ? String(value).toLowerCase()
+        : 'true'
+  return normalized !== 'false' && normalized !== '0'
+}
+
+const collectApplicationSetElements = (document: unknown, sourceFile: string): EnabledAppInventoryEntry[] => {
+  const entries: EnabledAppInventoryEntry[] = []
+  walk(document, (record) => {
+    const elements = record.elements
+    if (!Array.isArray(elements)) return
+
+    for (const element of elements) {
+      if (!isRecord(element)) continue
+
+      const name = asString(element.name)
+      const path = asString(element.path)
+      if (!name || !path || !isEnabledValue(element.enabled)) continue
+
+      entries.push({
+        name,
+        path,
+        repoURL: asString(element.repoURL) ?? labRepoURL,
+        sourceFile,
+        sourceKind: 'applicationset-element',
+        class: 'vendor-manifest',
+        enabled: true,
+        hasHelmChart: false,
+        repoImages: [],
+        workflowPaths: [],
+      })
+    }
+  })
+  return entries
+}
+
+const collectDirectApplications = (document: unknown, sourceFile: string): EnabledAppInventoryEntry[] => {
+  if (!isRecord(document) || document.kind !== 'Application') return []
+  const metadata = isRecord(document.metadata) ? document.metadata : {}
+  const spec = isRecord(document.spec) ? document.spec : {}
+  const source = isRecord(spec.source) ? spec.source : {}
+  const name = asString(metadata.name)
+  const path = asString(source.path)
+  if (!name || !path || name === 'root') return []
+
+  return [
+    {
+      name,
+      path,
+      repoURL: asString(source.repoURL) ?? labRepoURL,
+      sourceFile,
+      sourceKind: 'direct-application',
+      class: 'vendor-manifest',
+      enabled: true,
+      hasHelmChart: false,
+      repoImages: [],
+      workflowPaths: [],
+    },
+  ]
+}
+
+const collectRepoImages = (yamlPath: string, document: unknown): string[] => {
+  const images = new Set<string>()
+  walk(document, (record) => {
+    const image = asString(record.image)
+    if (image?.startsWith(labImagePrefix)) images.add(image)
+
+    const repository = asString(record.repository)
+    if (repository?.startsWith(labImagePrefix)) images.add(repository)
+
+    if (basename(yamlPath) === 'kustomization.yaml' && Array.isArray(record.images)) {
+      for (const entry of record.images) {
+        if (!isRecord(entry)) continue
+        for (const key of ['name', 'newName']) {
+          const value = asString(entry[key])
+          if (value?.startsWith(labImagePrefix)) images.add(value)
+        }
+      }
+    }
+  })
+  return [...images]
+}
+
+const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
+  if (entry.repoURL !== labRepoURL) {
+    return entry
+  }
+
+  const absolutePath = resolve(root, entry.path)
+  const yamlFiles = listYamlFiles(absolutePath)
+  const repoImages = new Set<string>()
+  let hasHelmChart = false
+
+  for (const yamlPath of yamlFiles) {
+    for (const document of readYamlDocuments(yamlPath)) {
+      walk(document, (record) => {
+        if (Array.isArray(record.helmCharts) || record.kind === 'HelmRelease') {
+          hasHelmChart = true
+        }
+      })
+      for (const image of collectRepoImages(yamlPath, document)) repoImages.add(image)
+    }
+  }
+
+  const buildScriptPath = `packages/scripts/src/${entry.name}/build-image.ts`
+  const deployScriptPath = `packages/scripts/src/${entry.name}/deploy-service.ts`
+  const workflowPaths = listYamlFiles(resolve(root, '.github/workflows')).filter((path) => {
+    const workflow = readFileSync(path, 'utf8')
+    return (
+      workflow.includes(`image_name: ${entry.name}`) ||
+      workflow.includes(`registry.ide-newton.ts.net/lab/${entry.name}`)
+    )
+  })
+
+  return {
+    ...entry,
+    hasHelmChart,
+    repoImages: uniqueSorted(repoImages),
+    buildScriptPath: existsSync(resolve(root, buildScriptPath)) ? buildScriptPath : undefined,
+    deployScriptPath: existsSync(resolve(root, deployScriptPath)) ? deployScriptPath : undefined,
+    workflowPaths: workflowPaths.map((path) => relative(root, path)).sort(),
+    nixImageAttr: appToNixAttr.get(entry.name),
+  }
+}
+
+const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
+  if (entry.repoURL !== labRepoURL) {
+    return { ...entry, class: 'external-source' }
+  }
+
+  const deferredReason = deferredApps.get(entry.name)
+  if (deferredReason) {
+    return { ...entry, class: 'deferred', deferredReason }
+  }
+
+  if (entry.repoImages.length > 0) {
+    if (earlyNixImageApps.has(entry.name)) {
+      return { ...entry, class: 'nix-image' }
+    }
+    return {
+      ...entry,
+      class: 'deferred',
+      deferredReason: 'repo image is present but this app is not in the approved early Nix migration wave',
+    }
+  }
+
+  if (entry.hasHelmChart) {
+    return { ...entry, class: 'helm-chart' }
+  }
+
+  return { ...entry, class: 'vendor-manifest' }
+}
+
+export const loadEnabledAppInventory = (root = repoRoot): EnabledAppInventory => {
+  const applicationsetsDir = resolve(root, 'argocd/applicationsets')
+  const sourceFiles = listYamlFiles(applicationsetsDir)
+  const rawEntries: EnabledAppInventoryEntry[] = []
+
+  for (const path of sourceFiles) {
+    const sourceFile = relative(root, path)
+    for (const document of readYamlDocuments(path)) {
+      rawEntries.push(...collectApplicationSetElements(document, sourceFile))
+      rawEntries.push(...collectDirectApplications(document, sourceFile))
+    }
+  }
+
+  const deduped = new Map<string, EnabledAppInventoryEntry>()
+  for (const entry of rawEntries) {
+    deduped.set(`${entry.sourceKind}:${entry.name}:${entry.path}:${entry.repoURL}`, entry)
+  }
+
+  const entries = [...deduped.values()]
+    .map((entry) => classify(inspectApplicationPath(root, entry)))
+    .sort((a, b) => a.name.localeCompare(b.name))
+
+  return {
+    entries,
+    applicationSetEntryCount: entries.filter((entry) => entry.sourceKind === 'applicationset-element').length,
+    directApplicationCount: entries.filter((entry) => entry.sourceKind === 'direct-application').length,
+  }
+}
+
+export const assertEnabledAppBuildPolicy = (inventory: EnabledAppInventory): void => {
+  const invalid = inventory.entries.filter(
+    (entry) =>
+      (entry.class === 'helm-chart' || entry.class === 'vendor-manifest' || entry.class === 'external-source') &&
+      (entry.nixImageAttr || entry.buildScriptPath),
+  )
+
+  if (invalid.length > 0) {
+    throw new Error(
+      `Non-build app(s) have image build state: ${invalid.map((entry) => `${entry.name}:${entry.class}`).join(', ')}`,
+    )
+  }
+
+  const chartBuilds = inventory.entries.filter((entry) => entry.class === 'helm-chart' && entry.repoImages.length > 0)
+  if (chartBuilds.length > 0) {
+    throw new Error(
+      `Helm-chart app(s) unexpectedly own lab images: ${chartBuilds.map((entry) => entry.name).join(', ')}`,
+    )
+  }
+}
+
+const printTable = (inventory: EnabledAppInventory): void => {
+  for (const entry of inventory.entries) {
+    console.log(
+      [entry.class, entry.name, entry.path, entry.repoURL, entry.repoImages.join(','), entry.deferredReason ?? ''].join(
+        '\t',
+      ),
+    )
+  }
+}
+
+const runCli = (): void => {
+  const args = process.argv.slice(2)
+  const inventory = loadEnabledAppInventory()
+  if (args.includes('--assert')) {
+    assertEnabledAppBuildPolicy(inventory)
+  }
+  if (args.includes('--json')) {
+    console.log(JSON.stringify(inventory, null, 2))
+    return
+  }
+  printTable(inventory)
+}
+
+if (import.meta.main) {
+  try {
+    runCli()
+  } catch (error) {
+    fatal('Enabled app inventory check failed', error)
+  }
+}
