@@ -1,10 +1,7 @@
 #!/usr/bin/env bun
 
-import { resolve } from 'node:path'
-
-import { repoRoot } from '../shared/cli'
-import { buildAndPushDockerImage } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 
 export type BuildImageOptions = {
   registry?: string
@@ -12,33 +9,35 @@ export type BuildImageOptions = {
   tag?: string
   context?: string
   dockerfile?: string
-  platforms?: string[]
   cacheRef?: string
+  dryRun?: boolean
 }
 
 export const buildImage = async (options: BuildImageOptions = {}) => {
   const registry = options.registry ?? process.env.SAG_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = options.repository ?? process.env.SAG_IMAGE_REPOSITORY ?? 'lab/sag'
   const tag = options.tag ?? process.env.SAG_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
-  const context = resolve(repoRoot, options.context ?? process.env.SAG_BUILD_CONTEXT ?? '.')
-  const dockerfile = resolve(repoRoot, options.dockerfile ?? process.env.SAG_DOCKERFILE ?? 'services/sag/Dockerfile')
-  const platforms = options.platforms ??
-    process.env.SAG_IMAGE_PLATFORMS?.split(',').map((platform) => platform.trim()) ?? ['linux/amd64']
-  const cacheRef = options.cacheRef ?? process.env.SAG_BUILD_CACHE_REF ?? `${registry}/${repository}:buildcache`
+  const commit = execGit(['rev-parse', 'HEAD'])
 
-  return buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'sag',
+    imageName: 'sag',
+    packageAttr: 'sag-image',
     registry,
     repository,
     tag,
-    context,
-    dockerfile,
-    platforms,
-    cacheRef,
+    sourceSha: commit,
+    latestTag: 'latest',
+    dryRun: options.dryRun,
   })
+
+  return { image: `${registry}/${repository}:${tag}`, digest: result.reference, commit }
 }
 
 if (import.meta.main) {
-  buildImage().catch((error) => {
+  const args = process.argv.slice(2)
+  const cliTag = args[0]?.trim() && !args[0]?.startsWith('-') ? args[0] : undefined
+  buildImage({ tag: cliTag, dryRun: args.includes('--dry-run') }).catch((error) => {
     console.error(error instanceof Error ? error.message : String(error))
     process.exit(1)
   })

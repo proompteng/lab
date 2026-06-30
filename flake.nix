@@ -255,6 +255,11 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "sag-image" = import ./nix/images/sag.nix {
+              inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
           };
 
           mkApp = drv: {

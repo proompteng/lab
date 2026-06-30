@@ -4,27 +4,37 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 import { buildImage } from './build-image'
 
 export const main = async () => {
+  const args = new Set(process.argv.slice(2))
+  const dryRun = args.has('--dry-run')
+  const noApply = dryRun || args.has('--no-apply')
+
   ensureCli('kubectl')
 
   const registry = process.env.SAG_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.SAG_IMAGE_REPOSITORY ?? 'lab/sag'
   const defaultTag = execGit(['rev-parse', '--short', 'HEAD'])
   const tag = process.env.SAG_IMAGE_TAG ?? defaultTag
-  const image = `${registry}/${repository}:${tag}`
 
-  await buildImage({ registry, repository, tag })
-  const digest = inspectImageDigest(image)
-  console.log(`Image digest: ${digest}`)
+  const imageResult = await buildImage({ registry, repository, tag, dryRun })
+  console.log(`Image digest: ${imageResult.digest}`)
 
-  updateManifests({ tag })
+  if (dryRun) {
+    console.log('Dry run complete; manifests and cluster state were not changed.')
+    return
+  }
+
+  updateManifests({ imageDigest: imageResult.digest })
 
   await ensureNamespace()
   const kustomizePath = resolve(repoRoot, process.env.SAG_KUSTOMIZE_PATH ?? 'argocd/sag')
+  if (noApply) {
+    console.log('Skipping kubectl apply because --no-apply was requested.')
+    return
+  }
   await run('kubectl', ['apply', '-k', kustomizePath])
   await run('kubectl', ['rollout', 'status', 'deployment/sag', '-n', 'sag', '--timeout=180s'])
 }
@@ -33,12 +43,17 @@ if (import.meta.main) {
   main().catch((error) => fatal('Failed to build and deploy sag', error))
 }
 
-function updateManifests({ tag }: { tag: string }) {
+function updateManifests({ imageDigest }: { imageDigest: string }) {
+  const digest = imageDigest.split('@')[1]
+  if (!digest?.startsWith('sha256:')) {
+    throw new Error(`Expected sag image digest reference, got ${imageDigest}`)
+  }
+
   const kustomizationPath = resolve(repoRoot, 'argocd/sag/kustomization.yaml')
   const kustomization = readFileSync(kustomizationPath, 'utf8')
   const updated = kustomization.replace(
-    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/sag\s*\n\s*newName:\s+registry\.ide-newton\.ts\.net\/lab\/sag\s*\n\s*newTag:\s*).*/,
-    (_, prefix) => `${prefix}"${tag}"`,
+    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/sag\s*\n\s*(?:newName:\s+registry\.ide-newton\.ts\.net\/lab\/sag\s*\n\s*)?)(?:newTag|digest):\s*.*/,
+    (_, prefix) => `${prefix}digest: ${digest}`,
   )
 
   if (updated === kustomization) {
@@ -46,7 +61,7 @@ function updateManifests({ tag }: { tag: string }) {
   }
 
   writeFileSync(kustomizationPath, updated)
-  console.log(`Updated ${kustomizationPath} with tag ${tag}`)
+  console.log(`Updated ${kustomizationPath} with digest ${digest}`)
 }
 
 async function ensureNamespace() {

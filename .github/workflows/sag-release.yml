@@ -1,0 +1,215 @@
+name: sag-release
+
+on:
+  workflow_run:
+    workflows:
+      - sag-build-push
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote (defaults to current main HEAD)
+        required: false
+        type: string
+      image_tag:
+        description: Image tag to promote (defaults to sha-<commit_sha>)
+        required: false
+        type: string
+      image_digest:
+        description: Image digest override (sha256:...)
+        required: false
+        type: string
+
+concurrency:
+  group: sag-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Download release contract artifact from triggering build
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: sag-release-contract
+          path: .artifacts/sag
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+          DIGEST_INPUT: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+
+          image="registry.ide-newton.ts.net/lab/sag"
+          main_head="$(git rev-parse origin/main)"
+          promote=true
+          contract_digest=""
+
+          if [ "${EVENT_NAME}" = "workflow_run" ]; then
+            contract_path=".artifacts/sag/release-contract.json"
+            test -f "${contract_path}"
+
+            service="$(jq -r '.service' "${contract_path}")"
+            package_attr="$(jq -r '.packageAttr' "${contract_path}")"
+            contract_image="$(jq -r '.image' "${contract_path}")"
+            source_sha="$(jq -r '.sourceSha' "${contract_path}")"
+            tag="$(jq -r '.tag' "${contract_path}")"
+            contract_digest="$(jq -r '.digest' "${contract_path}")"
+
+            test "${service}" = "sag"
+            test "${package_attr}" = "sag-image"
+            test "${contract_image}" = "${image}"
+            test "${source_sha}" = "${WORKFLOW_RUN_HEAD_SHA}"
+
+            input_paths=(
+              services/sag
+              packages/codex
+              packages/scripts/src/sag
+              packages/scripts/src/shared/cli.ts
+              packages/scripts/src/shared/git.ts
+              packages/scripts/src/shared/nix-oci-deploy.ts
+              nix/images/sag.nix
+              nix/images/openai-codex-cli.nix
+              nix/images/bun-workspace-service.nix
+              nix/packages.nix
+              flake.nix
+              flake.lock
+              bun.lock
+              package.json
+              tsconfig.base.json
+              .github/workflows/sag-build-push.yaml
+              .github/workflows/sag-release.yml
+              .github/workflows/nix-oci-build-common.yml
+              .github/actions/setup-nix-toolchain
+            )
+
+            if ! git merge-base --is-ancestor "${source_sha}" "${main_head}"; then
+              promote=false
+              reason="source-not-ancestor"
+            elif ! git diff --quiet "${source_sha}..${main_head}" -- "${input_paths[@]}"; then
+              promote=false
+              reason="newer-main-has-sag-build-inputs"
+            else
+              reason="eligible"
+            fi
+          else
+            source_sha="${COMMIT_SHA_INPUT:-${main_head}}"
+            tag="${IMAGE_TAG_INPUT:-sha-${source_sha}}"
+            reason="manual-or-dispatch"
+          fi
+
+          digest="${DIGEST_INPUT:-${contract_digest}}"
+          if [ "${promote}" = "true" ] && [ -z "${digest}" ]; then
+            digest="$(crane digest "${image}:${tag}")"
+          fi
+
+          {
+            echo "image=${image}"
+            echo "source_sha=${source_sha}"
+            echo "tag=${tag}"
+            echo "digest=${digest}"
+            echo "promote=${promote}"
+            echo "reason=${reason}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Checkout source revision
+        if: steps.meta.outputs.promote == 'true'
+        run: git checkout --force "${{ steps.meta.outputs.source_sha }}"
+
+      - name: Verify image digest and platforms
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if ! [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid Sag digest: ${DIGEST}" >&2
+            exit 2
+          fi
+          nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64
+
+      - name: Update Sag manifest
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          SAG_DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          perl -0pi -e 's#(-\s*name:\s+registry\.ide-newton\.ts\.net/lab/sag\s*\n\s*(?:newName:\s+registry\.ide-newton\.ts\.net/lab/sag\s*\n\s*)?)(?:newTag|digest):\s*.*#$1digest: '"${SAG_DIGEST}"'#g' argocd/sag/kustomization.yaml
+          grep -F "digest: ${SAG_DIGEST}" argocd/sag/kustomization.yaml
+
+      - name: Check for manifest changes
+        if: steps.meta.outputs.promote == 'true'
+        id: changes
+        run: |
+          if git diff --quiet -- argocd/sag/kustomization.yaml; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create deploy pull request
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
+          branch: codex/sag-release-${{ steps.meta.outputs.tag }}
+          base: main
+          title: 'chore(sag): promote image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(sag): promote image ${{ steps.meta.outputs.tag }}'
+          delete-branch: true
+          add-paths: |
+            argocd/sag/kustomization.yaml
+          body: |
+            ## Summary
+            Promote the Sag image into GitOps manifests.
+
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`
+            - Image tag: `${{ steps.meta.outputs.tag }}`
+            - Image digest: `${{ steps.meta.outputs.digest }}`
+
+      - name: No manifest changes detected
+        if: steps.meta.outputs.promote == 'true' && steps.changes.outputs.changed != 'true'
+        run: echo 'No Sag manifest changes detected.'
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: |
+          echo 'Skipping Sag promotion: ${{ steps.meta.outputs.reason }}'

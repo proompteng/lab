@@ -1,0 +1,127 @@
+name: sag-post-deploy-verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'argocd/sag/**'
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Optional full commit SHA expected in Argo sync revision
+        required: false
+        type: string
+
+concurrency:
+  group: sag-post-deploy-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: arc-arm64
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.2
+
+      - name: Configure in-cluster kubeconfig when context is missing
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if kubectl config current-context >/dev/null 2>&1; then
+            echo "Kubectl context already configured"
+            exit 0
+          fi
+
+          if [ -z "${KUBERNETES_SERVICE_HOST:-}" ] || [ -z "${KUBERNETES_SERVICE_PORT:-}" ]; then
+            echo "KUBERNETES_SERVICE_HOST/PORT are not set and no kubectl context exists"
+            exit 1
+          fi
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/token
+          test -f /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+
+          KUBECONFIG_PATH="${RUNNER_TEMP}/kubeconfig"
+          echo "KUBECONFIG=${KUBECONFIG_PATH}" >> "${GITHUB_ENV}"
+
+          kubectl config set-cluster in-cluster \
+            --server="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}" \
+            --certificate-authority=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt \
+            --embed-certs=true \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-credentials gha-runner \
+            --token="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)" \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config set-context in-cluster \
+            --cluster=in-cluster \
+            --user=gha-runner \
+            --namespace=sag \
+            --kubeconfig="${KUBECONFIG_PATH}"
+
+          kubectl config use-context in-cluster --kubeconfig="${KUBECONFIG_PATH}"
+
+      - name: Verify Sag Argo health and deployment digest
+        shell: bash
+        env:
+          EXPECTED_REVISION_INPUT: ${{ inputs.expected_revision || '' }}
+        run: |
+          set -euo pipefail
+
+          expected_digest="$(
+            awk '
+              $0 ~ /name:[[:space:]]*registry\.ide-newton\.ts\.net\/lab\/sag/ { in_image = 1; next }
+              in_image && $1 == "digest:" {
+                print $2
+                exit
+              }
+            ' argocd/sag/kustomization.yaml
+          )"
+          if ! [[ "${expected_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Unable to resolve expected Sag digest from argocd/sag/kustomization.yaml" >&2
+            exit 2
+          fi
+
+          expected_revision="${EXPECTED_REVISION_INPUT:-${GITHUB_SHA}}"
+          for attempt in $(seq 1 90); do
+            app_json="$(kubectl -n argocd get application sag -o json)"
+            sync_status="$(jq -r '.status.sync.status // ""' <<< "${app_json}")"
+            health_status="$(jq -r '.status.health.status // ""' <<< "${app_json}")"
+            revision="$(jq -r '.status.sync.revision // ""' <<< "${app_json}")"
+
+            if [ "${sync_status}" = "Synced" ] && [ "${health_status}" = "Healthy" ] &&
+              { [ "${revision}" = "${expected_revision}" ] || git merge-base --is-ancestor "${expected_revision}" "${revision}" 2>/dev/null; }; then
+              break
+            fi
+
+            if [ "${attempt}" -eq 90 ]; then
+              echo "Sag Argo did not become Synced/Healthy at expected revision." >&2
+              echo "${app_json}" | jq '{sync:.status.sync.status, health:.status.health.status, revision:.status.sync.revision}'
+              exit 1
+            fi
+
+            sleep 10
+          done
+
+          kubectl -n sag rollout status deployment/sag --timeout=180s
+          live_image="$(kubectl -n sag get deployment sag -o json | jq -r '.spec.template.spec.containers[] | select(.name=="sag") | .image')"
+          echo "live_image=${live_image}"
+          if [[ "${live_image}" != *"@${expected_digest}"* ]]; then
+            echo "Sag deployment image does not contain expected digest ${expected_digest}" >&2
+            exit 1
+          fi
+
+          desired_replicas="$(kubectl -n sag get deployment sag -o json | jq -r '.spec.replicas // 1')"
+          available_replicas="$(kubectl -n sag get deployment sag -o json | jq -r '.status.availableReplicas // 0')"
+          echo "desired_replicas=${desired_replicas}"
+          echo "available_replicas=${available_replicas}"

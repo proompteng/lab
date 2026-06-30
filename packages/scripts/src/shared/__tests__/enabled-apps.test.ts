@@ -67,6 +67,7 @@ describe('enabled app inventory', () => {
       'olden',
       'synthesis',
       'attic',
+      'sag',
       'symphony',
     ]) {
       expect(entry(name).class).toBe('nix-image')
@@ -83,6 +84,7 @@ describe('enabled app inventory', () => {
     expect(entry('proompteng').nixImageAttr).toBe('proompteng-image')
     expect(entry('olden').nixImageAttr).toBe('olden-image')
     expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
+    expect(entry('sag').nixImageAttr).toBe('sag-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
   })
 
@@ -90,7 +92,6 @@ describe('enabled app inventory', () => {
     for (const name of [
       'agents',
       'jangar',
-      'sag',
       'symphony-jangar',
       'symphony-torghut',
       'bilig',
