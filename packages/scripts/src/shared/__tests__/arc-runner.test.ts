@@ -81,8 +81,13 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('--build-arg "LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=${ATTIC_PUBLIC_KEY}"')
     expect(arcRunnerBuildWorkflow).toContain('docker buildx build')
     expect(arcRunnerBuildWorkflow).toContain('--platform "${PLATFORM}"')
+    expect(arcRunnerBuildWorkflow).toContain(
+      '[[ "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]',
+    )
+    expect(arcRunnerBuildWorkflow).toContain('if [[ "${should_publish}" == "true" ]]; then')
     expect(arcRunnerBuildWorkflow).toContain('--push')
     expect(arcRunnerBuildWorkflow).toContain('docker buildx imagetools create')
+    expect(arcRunnerBuildWorkflow).toContain("github.event_name == 'workflow_dispatch'")
     expect(arcRunnerBuildWorkflow).toContain('linux/amd64')
     expect(arcRunnerBuildWorkflow).toContain('linux/arm64')
     expect(arcRunnerBuildWorkflow).toContain('arc-runner-release-contract')

@@ -80,6 +80,11 @@ jobs:
           ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
         run: |
           set -euo pipefail
+          should_publish=false
+          if [[ "${GITHUB_REF}" == "refs/heads/main" ]] && [[ "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            should_publish=true
+          fi
+
           args=(
             docker buildx build
             --platform "${PLATFORM}"
@@ -88,7 +93,7 @@ jobs:
             --build-arg "LAB_NIX_EXTRA_SUBSTITUTERS=http://attic.attic.svc.cluster.local/lab"
             --build-arg "LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=${ATTIC_PUBLIC_KEY}"
             )
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
+          if [[ "${should_publish}" == "true" ]]; then
             args+=(
               --push
               --tag "${IMAGE}:${TAG}-${ARCH}"
@@ -122,7 +127,11 @@ jobs:
           '
 
   publish-index:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      ${{
+        github.ref == 'refs/heads/main' &&
+        (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      }}
     needs: build-platform
     runs-on: arc-arm64
     timeout-minutes: 20
