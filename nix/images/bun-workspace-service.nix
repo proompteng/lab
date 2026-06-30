@@ -19,6 +19,7 @@
   extraContents ? [ ],
   exposedPorts ? { },
   workingDir ? "/app",
+  maxLayers ? 24,
 }:
 
 let
@@ -251,6 +252,7 @@ in
 pkgs.dockerTools.buildLayeredImage {
   name = "registry.ide-newton.ts.net/lab/${imageName}";
   tag = "nix";
+  inherit maxLayers;
   contents = [
     appRoot
     bun
