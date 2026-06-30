@@ -114,28 +114,23 @@ Required outcome:
 
 Persist the captured readiness payload as `session-ready.json`.
 
-### 5. Proof CronJob recovery
+### 5. Proof repair capture
 
 If the readiness gate is blocked by stale empirical, order-feed source-window, execution TCA, or zero-notional drift
-receipts, rerun only the GitOps-owned CronJob templates and capture logs before deleting anything. Use lowercase
-timestamps because Kubernetes Job names must be RFC 1123 compliant.
+receipts, capture the live status first. The old scheduled empirical renewal, source-window repair, and TCA refresh
+CronJobs have been removed; do not recreate them for proof recovery. The remaining GitOps-owned repair CronJob is the
+zero-notional drift repair.
 
 ```bash
 stamp="$(date -u +%Y%m%d%H%M%S)"
 out="/tmp/torghut-proof-rerun-${stamp}"
 mkdir -p "${out}"
 
-for cron in \
-  torghut-empirical-promotion-renewal \
-  torghut-order-feed-source-window-repair \
-  torghut-execution-tca-refresh \
-  torghut-zero-notional-drift-repair; do
-  job="${cron}-manual-${stamp}"
-  kubectl create job -n torghut --from="cronjob/${cron}" "${job}"
-  kubectl wait -n torghut --for=condition=complete --timeout=20m "job/${job}"
-  kubectl get job -n torghut "${job}" -o yaml > "${out}/${job}.yaml"
-  kubectl logs -n torghut -l "job-name=${job}" --all-containers --timestamps --tail=-1 > "${out}/${job}.log"
-done
+job="torghut-zero-notional-drift-repair-manual-${stamp}"
+kubectl create job -n torghut --from="cronjob/torghut-zero-notional-drift-repair" "${job}"
+kubectl wait -n torghut --for=condition=complete --timeout=20m "job/${job}"
+kubectl get job -n torghut "${job}" -o yaml > "${out}/${job}.yaml"
+kubectl logs -n torghut -l "job-name=${job}" --all-containers --timestamps --tail=-1 > "${out}/${job}.log"
 ```
 
 After the rerun, capture:

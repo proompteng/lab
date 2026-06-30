@@ -95,10 +95,7 @@ describe('Torghut manifest scheduling', () => {
   it('retains Torghut scheduled failure logs for same-day debugging', () => {
     const cronJobPaths = [
       'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
-      'argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml',
-      'argocd/applications/torghut/execution-tca-refresh-cronjob.yaml',
       'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
-      'argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml',
       'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
     ]
 
@@ -116,7 +113,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(6)
+    expect(checkedCronJobs).toBe(3)
 
     const replayCronWorkflow = parseManifest(
       'argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml',
