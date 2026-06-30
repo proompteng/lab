@@ -58,9 +58,11 @@ describe('ARC Nix runner toolchain', () => {
     expect(flake).toContain('name = "lab-ci-toolchain"')
     expect(flake).toContain('pathsToLink = [ "/bin" ]')
     expect(flake).toContain('ignoreCollisions = true')
-    expect(nixPackages.indexOf('https://github.com/helm/helm/releases/download/v${helmVersion}/')).toBeLessThan(
-      nixPackages.indexOf('https://get.helm.sh/helm-v${helmVersion}-'),
-    )
+    expect(nixPackages).toContain('pkgs.kubernetes-helm')
+    expect(nixPackages).toContain('lib.versions.major')
+    expect(nixPackages).toContain('kubernetes-helm must stay on Helm 3')
+    expect(nixPackages).not.toContain('https://github.com/helm/helm/releases/download/v${helmVersion}/')
+    expect(nixPackages).not.toContain('https://get.helm.sh/helm-v${helmVersion}-')
   })
 
   it('publishes multi-arch ARC runner images and opens a digest-pinning release PR', () => {
