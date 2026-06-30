@@ -26,6 +26,12 @@ enum class ReadinessErrorClass(
   Unknown("unknown"),
 }
 
+internal fun ReadinessErrorClass.shouldEscalateToLivenessFailure(): Boolean =
+  when (this) {
+    ReadinessErrorClass.OptionsEventStarvation -> false
+    else -> true
+  }
+
 @Serializable
 data class ReadinessGates(
   @SerialName("alpaca_ws") val alpacaWs: Boolean,

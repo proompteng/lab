@@ -82,6 +82,23 @@ const parameterValue = (manifest: JsonRecord, name: string): string => {
 }
 
 describe('Torghut manifest scheduling', () => {
+  it('caps revision history for high-churn Torghut deployments', () => {
+    const deploymentPaths = [
+      'argocd/applications/symphony-torghut/deployment.patch.yaml',
+      'argocd/applications/torghut-hyperliquid-feed/deployment.yaml',
+      'argocd/applications/torghut-hyperliquid-runtime/deployment.yaml',
+      'argocd/applications/torghut-options/catalog/deployment.yaml',
+      'argocd/applications/torghut-options/enricher/deployment.yaml',
+      'argocd/applications/torghut/ws/deployment.yaml',
+      'argocd/applications/torghut-options/ws/deployment.yaml',
+    ]
+
+    for (const path of deploymentPaths) {
+      const deployment = parseManifest(path)
+      expect(getAtPath(deployment, ['spec']).revisionHistoryLimit, path).toBe(2)
+    }
+  })
+
   it('pins arm64-only Torghut image consumers to arm64 nodes', () => {
     for (const check of torghutArm64ImageChecks) {
       const manifest = parseManifest(check.path)
@@ -97,6 +114,7 @@ describe('Torghut manifest scheduling', () => {
       'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
       'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
       'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
+      'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
     ]
 
     let checkedCronJobs = 0
@@ -113,13 +131,12 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(3)
+    expect(checkedCronJobs).toBe(4)
 
-    const replayCronWorkflow = parseManifest(
-      'argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml',
-    )
-    expect(replayCronWorkflow.kind).toBe('CronWorkflow')
-    expect(getAtPath(replayCronWorkflow, ['spec']).failedJobsHistoryLimit).toBe(0)
+    const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
+    const resources = kustomization.resources
+    expect(Array.isArray(resources)).toBe(true)
+    expect(resources).not.toContain('whitepaper-autoresearch-replay-materialization-cronworkflow.yaml')
   })
 
   it('bounds Hyperliquid ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
@@ -145,6 +162,18 @@ describe('Torghut manifest scheduling', () => {
     const data = getAtPath(schema, ['data'])
     expect(data['schema.sql']).toContain('SET distributed_ddl_task_timeout = 10;')
     expect(data['schema.sql']).toContain("SET distributed_ddl_output_mode = 'null_status_on_timeout';")
+  })
+
+  it('bounds Torghut PostSync hook jobs so completed hooks do not become residue', () => {
+    const empiricalBackfill = parseManifest('argocd/applications/torghut/empirical-jobs-backfill-job.yaml')
+    const spec = getAtPath(empiricalBackfill, ['spec'])
+    const annotations = getAtPath(empiricalBackfill, ['metadata', 'annotations'])
+
+    expect(annotations['argocd.argoproj.io/hook']).toBe('PostSync')
+    expect(annotations['argocd.argoproj.io/hook-delete-policy']).toBe('BeforeHookCreation,HookSucceeded')
+    expect(spec.ttlSecondsAfterFinished).toBe(600)
+    expect(spec.backoffLimit).toBe(2)
+    expect(spec.activeDeadlineSeconds).toBe(600)
   })
 
   it('bounds Hyperliquid live ClickHouse writes to the readiness-critical feed path', () => {
@@ -249,6 +278,7 @@ describe('Torghut manifest scheduling', () => {
 
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
+    expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
       'proompteng.ai/config-revision': 'hyperliquid-execution-v2-testnet-short-proof-20260625',
     })

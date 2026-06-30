@@ -38,8 +38,9 @@ resources:
   - empirical-artifacts-retention-cronjob.yaml
   - zero-notional-drift-repair-cronjob.yaml
   - paper-account-flatten-cronjob.yaml
+  - generated-resource-retention-rbac.yaml
+  - generated-resource-retention-cronjob.yaml
   - whitepaper-autoresearch-workflowtemplate.yaml
-  - whitepaper-autoresearch-replay-materialization-cronworkflow.yaml
   - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
   - analysis-template-runtime-ready.yaml

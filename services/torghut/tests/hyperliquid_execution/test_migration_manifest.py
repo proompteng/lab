@@ -51,6 +51,7 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
     deployment = DEPLOYMENT.read_text()
 
     assert "app.hyperliquid_execution.api:app" in deployment
+    assert "revisionHistoryLimit: 2" in deployment
     assert "HYPERLIQUID_EXECUTION_ORDER_POLICY: marketable_ioc" in configmap
     assert "HYPERLIQUID_EXECUTION_MAKER_TIF: Ioc" in configmap
     assert 'HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS: "10"' in configmap

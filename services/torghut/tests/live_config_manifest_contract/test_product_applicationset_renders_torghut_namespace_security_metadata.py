@@ -133,6 +133,58 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         self.assertIsInstance(resources, list)
         self.assertNotIn("execution-tca-refresh-cronjob.yaml", resources)
 
+    def test_whitepaper_replay_materialization_cronworkflow_is_removed_from_gitops(
+        self,
+    ) -> None:
+        relative_path = (
+            "argocd/applications/torghut/"
+            "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
+        )
+        self.assertFalse((_repo_root() / relative_path).exists())
+        kustomization = _load_yaml_mapping(
+            "argocd/applications/torghut/kustomization.yaml"
+        )
+        resources = kustomization.get("resources")
+        self.assertIsInstance(resources, list)
+        self.assertNotIn(
+            "whitepaper-autoresearch-replay-materialization-cronworkflow.yaml",
+            resources,
+        )
+
+    def test_generated_resource_retention_cronjob_prunes_only_stale_residue(
+        self,
+    ) -> None:
+        spec, container = _load_cronjob_container(
+            "argocd/applications/torghut/generated-resource-retention-cronjob.yaml"
+        )
+
+        self.assertEqual(spec.get("schedule"), "43 3 * * *")
+        self.assertEqual(spec.get("timeZone"), "America/New_York")
+        self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
+        self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
+        job_spec = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], spec.get("jobTemplate", {})).get("spec", {}),
+        )
+        template = cast(
+            Mapping[str, object],
+            cast(Mapping[str, object], job_spec.get("template", {})),
+        )
+        pod_spec = cast(Mapping[str, object], template.get("spec", {}))
+        self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
+        self.assertEqual(job_spec.get("backoffLimit"), 0)
+        self.assertEqual(job_spec.get("activeDeadlineSeconds"), 300)
+        self.assertEqual(
+            pod_spec.get("serviceAccountName"), "torghut-generated-resource-retention"
+        )
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn("scripts/prune_kubernetes_residue.py", args)
+        self.assertIn("--analysis-run-prefix torghut-sim-", args)
+        self.assertIn("--ownerless-job-prefix torghut-tigerbeetle-journal-", args)
+        self.assertIn("--analysis-run-max-age-hours 168", args)
+        self.assertIn("--ownerless-job-max-age-hours 168", args)
+        self.assertIn("--apply", args)
+
     def test_zero_notional_drift_repair_cronjob_runs_capital_safe_repair_endpoint(
         self,
     ) -> None:
@@ -447,6 +499,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml",
             "argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml",
             "argocd/applications/torghut/paper-account-flatten-cronjob.yaml",
+            "argocd/applications/torghut/generated-resource-retention-cronjob.yaml",
         )
         checked_cronjobs = 0
         for relative_path in cronjob_paths:
@@ -462,11 +515,4 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
                 )
                 self.assertEqual(job_spec.get("ttlSecondsAfterFinished"), 86400)
                 checked_cronjobs += 1
-        self.assertEqual(checked_cronjobs, 3)
-
-        replay_cronworkflow = _load_yaml_mapping(
-            "argocd/applications/torghut/whitepaper-autoresearch-replay-materialization-cronworkflow.yaml"
-        )
-        self.assertEqual(replay_cronworkflow.get("kind"), "CronWorkflow")
-        replay_spec = cast(Mapping[str, object], replay_cronworkflow.get("spec", {}))
-        self.assertEqual(replay_spec.get("failedJobsHistoryLimit"), 0)
+        self.assertEqual(checked_cronjobs, 4)

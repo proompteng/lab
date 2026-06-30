@@ -283,6 +283,7 @@ jobs:
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml \
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml \
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml \
+            argocd/applications/torghut/generated-resource-retention-cronjob.yaml \
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml \
@@ -325,6 +326,7 @@ jobs:
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
+            argocd/applications/torghut/generated-resource-retention-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
@@ -371,6 +373,7 @@ jobs:
             argocd/applications/torghut/empirical-jobs-backfill-job.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
+            argocd/applications/torghut/generated-resource-retention-cronjob.yaml
             argocd/applications/torghut/whitepaper-semantic-backfill-job.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml

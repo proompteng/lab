@@ -8,8 +8,11 @@ internal class NotReadyLivenessGate(
 ) {
   private val notReadySinceMs = AtomicLong(0)
 
-  fun recordReadiness(ready: Boolean) {
-    if (ready) {
+  fun recordReadiness(
+    ready: Boolean,
+    livenessFailureEligible: Boolean = true,
+  ) {
+    if (ready || !livenessFailureEligible) {
       notReadySinceMs.set(0)
       return
     }

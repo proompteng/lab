@@ -1258,11 +1258,11 @@ class ForwarderApp(
 
   private fun markReady(value: Boolean) {
     val previous = ready.getAndSet(value)
-    notReadyLivenessGate.recordReadiness(value)
     metrics.setReady(value)
     val gates = currentReadinessGates()
     metrics.setReadinessGates(gates)
     if (value) {
+      notReadyLivenessGate.recordReadiness(ready = true)
       notReadyLivenessLogged.set(false)
       readinessErrorClass.set(null)
       reportedNotReadyClass.set(null)
@@ -1271,6 +1271,10 @@ class ForwarderApp(
     }
 
     val errorClass = currentReadinessErrorClass(value, gates) ?: ReadinessErrorClass.Unknown
+    notReadyLivenessGate.recordReadiness(
+      ready = false,
+      livenessFailureEligible = errorClass.shouldEscalateToLivenessFailure(),
+    )
     metrics.setReadinessErrorClass(errorClass)
     if (previous) {
       logger.warn {
