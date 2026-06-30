@@ -51,6 +51,8 @@ const makeAuth = (scopes = ['agents-shell.read', 'agents-shell.write']): AuthCon
   },
 })
 
+const linkedOauthScheme = [{ type: 'oauth2', scopes: ['agents-shell.read', 'offline_access'] }]
+
 const randomListenPort = () => 30_000 + Math.floor(Math.random() * 20_000)
 
 const connectServer = async (config: AgentsShellConfig, auth = makeAuth()) => {
@@ -301,7 +303,7 @@ describe('agents-shell MCP tools', () => {
     const search = tools.tools.find((tool) => tool.name === 'search')
     expect(search?.annotations?.readOnlyHint).toBe(true)
     expect(search?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
       ui: { visibility: ['model'] },
       'openai/visibility': 'public',
       'openai/toolInvocation/invoking': 'Running tool',
@@ -316,7 +318,7 @@ describe('agents-shell MCP tools', () => {
     expect(applyPatch?.annotations?.readOnlyHint).toBe(false)
     expect(applyPatch?.annotations?.destructiveHint).toBe(false)
     expect(applyPatch?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
     })
 
     const git = tools.tools.find((tool) => tool.name === 'git')
@@ -324,13 +326,13 @@ describe('agents-shell MCP tools', () => {
     expect(git?.annotations?.destructiveHint).toBe(false)
     expect(git?.annotations?.openWorldHint).toBe(false)
     expect(git?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
     })
 
     const gitWrite = tools.tools.find((tool) => tool.name === 'git_write')
     expect(gitWrite?.annotations?.destructiveHint).toBe(true)
     expect(gitWrite?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
     })
 
     const kubectl = tools.tools.find((tool) => tool.name === 'kubectl')
@@ -338,21 +340,21 @@ describe('agents-shell MCP tools', () => {
     expect(kubectl?.annotations?.destructiveHint).toBe(false)
     expect(kubectl?.annotations?.openWorldHint).toBe(true)
     expect(kubectl?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
     })
 
     const kubectlAdmin = tools.tools.find((tool) => tool.name === 'kubectl_admin')
     expect(kubectlAdmin?.annotations?.destructiveHint).toBe(true)
     expect(kubectlAdmin?.annotations?.openWorldHint).toBe(true)
     expect(kubectlAdmin?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
     })
 
     const agentStart = tools.tools.find((tool) => tool.name === 'agent_start')
     expect(agentStart?.annotations?.destructiveHint).toBe(true)
     expect(agentStart?.annotations?.openWorldHint).toBe(true)
     expect(agentStart?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
     })
 
     await clientTransport.close()
@@ -364,9 +366,9 @@ describe('agents-shell MCP tools', () => {
     expect(Buffer.byteLength(JSON.stringify({ tools: rawTools }))).toBeLessThan(18_000)
 
     const rawSearch = rawTools.find((tool) => tool.name === 'search')
-    expect(rawSearch?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
+    expect(rawSearch?.securitySchemes).toEqual(linkedOauthScheme)
     expect(rawSearch?._meta).toMatchObject({
-      securitySchemes: [{ type: 'oauth2', scopes: ['agents-shell.read'] }],
+      securitySchemes: linkedOauthScheme,
       ui: { visibility: ['model'] },
       'openai/visibility': 'public',
       'openai/toolInvocation/invoking': 'Running tool',
@@ -382,15 +384,18 @@ describe('agents-shell MCP tools', () => {
     expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
-    expect(rawKubectl?.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
+    expect(rawKubectl?.securitySchemes).toEqual(linkedOauthScheme)
     expect(rawKubectl?.inputSchema?.additionalProperties).toBe(false)
 
     for (const tool of rawTools) {
       expect(tool.description?.length ?? 0).toBeLessThanOrEqual(140)
       expect(tool.outputSchema).toBeUndefined()
-      expect(tool.securitySchemes).toEqual([{ type: 'oauth2', scopes: ['agents-shell.read'] }])
+      expect(tool.securitySchemes).toEqual(linkedOauthScheme)
       expect(tool.securitySchemes).not.toEqual(
         expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['agents-shell.admin']) })]),
+      )
+      expect(tool.securitySchemes).toEqual(
+        expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['offline_access']) })]),
       )
     }
   })
@@ -720,6 +725,25 @@ fi
     expect(result._meta?.['mcp/www_authenticate']).toEqual([
       'Bearer resource_metadata="https://agents-shell.example.test/.well-known/oauth-protected-resource", error="insufficient_scope", error_description="The requested agents-shell tool requires additional OAuth scopes."',
     ])
+
+    await clientTransport.close()
+    await serverTransport.close()
+    await client.close()
+    await server.close()
+  })
+
+  it('does not turn ordinary tool failures into OAuth reconnect challenges', async () => {
+    const config = makeConfig()
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    const result = await client.callTool({
+      name: 'shell_run',
+      arguments: { command: 'echo should-not-run', cwd: 'missing-worktree' },
+    })
+
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('cwd does not exist')
+    expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
 
     await clientTransport.close()
     await serverTransport.close()
