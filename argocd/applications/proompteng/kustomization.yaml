@@ -6,5 +6,5 @@ resources:
 - ingressroute.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/proompteng
-  newTag: 0.572.1
+  digest: sha256:ff4229d16ae2e673964fd29dff69f9c6744c7bee72ff2ff943177aabaea7590c
   newName: registry.ide-newton.ts.net/lab/proompteng
