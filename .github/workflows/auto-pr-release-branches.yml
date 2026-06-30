@@ -94,9 +94,29 @@ jobs:
             gh api "repos/$GH_REPO/contents/$path?ref=$ref" --jq '.content' | tr -d '\n' | base64 -d
           }
 
+          changed_files=()
+          mapfile -t changed_files < <(
+            gh api "repos/$GH_REPO/compare/main...$HEAD_BRANCH" --jq '.files[].filename'
+          )
+
+          migrated_nix_image_paths=(
+            "argocd/applications/bumba/kustomization.yaml"
+          )
+
+          for path in "${changed_files[@]}"; do
+            for migrated_path in "${migrated_nix_image_paths[@]}"; do
+              if [[ "$path" == "$migrated_path" ]]; then
+                create_pr="false"
+                reason="migrated-nix-image-app:${path}"
+                break 2
+              fi
+            done
+          done
+
           base_file=""
           head_file=""
-          if base_file="$(read_repo_file_at_ref "argocd/applications/synthesis/kustomization.yaml" "main")" &&
+          if [[ "$create_pr" == "true" ]] &&
+            base_file="$(read_repo_file_at_ref "argocd/applications/synthesis/kustomization.yaml" "main")" &&
             head_file="$(read_repo_file_at_ref "argocd/applications/synthesis/kustomization.yaml" "$HEAD_BRANCH")"; then
             base_tag="$(extract_synthesis_image_tag <<< "$base_file")"
             head_tag="$(extract_synthesis_image_tag <<< "$head_file")"

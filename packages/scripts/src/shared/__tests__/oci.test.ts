@@ -20,6 +20,8 @@ const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
 const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
+const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
+const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
@@ -322,6 +324,14 @@ describe('native OCI build workflows', () => {
     expect(enabledSimpleReleaseWorkflow).toContain('\\@sha256:[0-9a-f]{64}')
     expect(enabledSimpleReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
     expect(enabledSimpleReleaseWorkflow).not.toContain('docker buildx')
+  })
+
+  it('blocks stale Docker-era release PRs for migrated simple Nix image apps', () => {
+    expect(autoPrReleaseBranchesWorkflow).toContain('migrated_nix_image_paths=(')
+    expect(autoPrReleaseBranchesWorkflow).toContain('"argocd/applications/bumba/kustomization.yaml"')
+    expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
+    expect(releasePrAutomergeWorkflow).not.toContain("'argocd/applications/bumba/kustomization.yaml'")
+    expect(releasePrAutomergeWorkflow).not.toContain('"argocd/applications/bumba/kustomization.yaml"')
   })
 
   it('promotes Attic by digest after a Nix OCI build contract', () => {
