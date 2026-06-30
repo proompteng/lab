@@ -52,7 +52,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: ghcr.io/actions/actions-runner:latest
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -63,7 +63,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: ghcr.io/actions/actions-runner:latest
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
@@ -179,7 +179,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: ghcr.io/actions/actions-runner:latest
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -190,7 +190,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: ghcr.io/actions/actions-runner:latest
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
@@ -309,7 +309,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: ghcr.io/actions/actions-runner:latest
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -320,7 +320,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: ghcr.io/actions/actions-runner:latest
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
