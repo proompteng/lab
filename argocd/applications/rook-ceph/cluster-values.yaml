@@ -131,6 +131,9 @@ cephClusterSpec:
               metadataDevice: /dev/disk/by-id/nvme-KINGSTON_SNV3S1000G_50026B76878F0B27
               databaseSizeMB: "300000"
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
+            config:
+              metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-zxa0mz1m
+              databaseSizeMB: "300000"
           - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
             config:
               metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-osd1

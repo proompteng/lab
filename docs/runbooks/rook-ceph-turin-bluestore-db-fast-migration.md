@@ -407,18 +407,22 @@ the failure mode tracked in [rook/rook#13634](https://github.com/rook/rook/issue
 In that case, pre-create or reuse the target DB LV and point `metadataDevice`
 at the LV path directly.
 
-Live OSD0 example after the 2026-06-30 recreate:
+Live OSD0/OSD1 examples after the 2026-06-30 recreates:
 
 ```yaml
+- name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0MZ1M
+  config:
+    metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-zxa0mz1m
+    databaseSizeMB: "300000"
 - name: /dev/disk/by-id/ata-ST24000NM000C-3WD103_ZXA0LVM9
   config:
     metadataDevice: /dev/ceph-10525ca6-66f7-48fd-a13a-7f7063dcc31b/osd-db-osd1
     databaseSizeMB: "300000"
 ```
 
-Repeat this for `osd.1` only after its target DB LV is known. Do not resume
-Argo with a raw Kingston parent path for the OSD currently being recreated if
-Rook has already failed inventory against that parent device.
+Repeat this for any later OSD only after its target DB LV is known. Do not
+resume Argo with a raw Kingston parent path for the OSD currently being
+recreated if Rook has already failed inventory against that parent device.
 
 Validate:
 
