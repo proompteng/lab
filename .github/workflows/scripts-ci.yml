@@ -6,10 +6,18 @@ on:
       - main
     paths:
       - 'packages/scripts/**'
+      - 'argocd/root.yaml'
+      - 'argocd/applicationsets/**'
+      - 'argocd/applications/**'
+      - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - '.github/workflows/scripts-ci.yml'
   pull_request:
     paths:
       - 'packages/scripts/**'
+      - 'argocd/root.yaml'
+      - 'argocd/applicationsets/**'
+      - 'argocd/applications/**'
+      - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - '.github/workflows/scripts-ci.yml'
 
 concurrency:
