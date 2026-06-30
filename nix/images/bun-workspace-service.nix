@@ -67,6 +67,11 @@ let
 
   installFilterArgs = lib.concatMapStringsSep " " (filter: "--filter ${lib.escapeShellArg filter}") installFilters;
   buildScript = lib.concatStringsSep "\n" buildCommands;
+  resolvedDepsHash =
+    if builtins.isAttrs depsHash then
+      depsHash.${pkgs.stdenv.hostPlatform.system}
+    else
+      depsHash;
 
   deps = pkgs.stdenvNoCC.mkDerivation {
     pname = "${serviceName}-bun-deps";
@@ -75,7 +80,7 @@ let
 
     outputHashAlgo = "sha256";
     outputHashMode = "recursive";
-    outputHash = depsHash;
+    outputHash = resolvedDepsHash;
 
     nativeBuildInputs = [
       bun
@@ -86,6 +91,7 @@ let
 
     dontConfigure = true;
     dontBuild = true;
+    dontFixup = true;
 
     installPhase = ''
       runHook preInstall
