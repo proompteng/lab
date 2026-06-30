@@ -205,6 +205,7 @@ const SCOPES = {
 } as const
 
 const READ_SCOPES = [SCOPES.read, SCOPES.write, SCOPES.admin]
+const CONNECTOR_LINK_SCOPES = [SCOPES.offlineAccess]
 // ChatGPT connector sessions are private and identity-allowlisted. Keep tool authorization on the stable
 // linked scope so long-running workflows do not re-enter OAuth when they move from read tools to write tools.
 const WRITE_SCOPES = READ_SCOPES
@@ -576,7 +577,10 @@ const requireScopes = (auth: AuthContext, acceptedScopes: string[]) => {
     throw new AuthChallengeError(auth.authError)
   }
   if (!scopesSatisfied(auth, acceptedScopes)) {
-    throw new Error(`missing required OAuth scope; one of ${acceptedScopes.join(', ')} is required`)
+    throw new AuthChallengeError({
+      error: 'insufficient_scope',
+      description: 'The requested agents-shell tool requires additional OAuth scopes.',
+    })
   }
 }
 
@@ -937,7 +941,7 @@ const summarizeJob = (
 }
 
 const toolSecurityMeta = (scopes: string[]) => {
-  const requestedScopes = Array.from(new Set(scopes))
+  const requestedScopes = Array.from(new Set([...scopes, ...CONNECTOR_LINK_SCOPES]))
   const securitySchemes = [
     {
       type: 'oauth2',
@@ -1061,12 +1065,10 @@ const withToolErrors =
       return await handler(args)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      const oauthError = error instanceof AuthChallengeError ? error.oauthError : 'insufficient_scope'
-      const oauthDescription =
-        error instanceof AuthChallengeError
-          ? error.oauthDescription
-          : 'The requested agents-shell tool requires additional OAuth scopes.'
-      return errorResult(message, buildBearerChallenge(config, oauthError, oauthDescription))
+      if (error instanceof AuthChallengeError) {
+        return errorResult(message, buildBearerChallenge(config, error.oauthError, error.oauthDescription))
+      }
+      return errorResult(message)
     }
   }
 
