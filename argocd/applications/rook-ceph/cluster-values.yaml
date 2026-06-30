@@ -32,7 +32,7 @@ cephClusterSpec:
       mon_data_avail_warn: "15"
     osd:
       bluestore_cache_autotune: "true"
-      osd_mclock_profile: "balanced"
+      osd_mclock_profile: "high_recovery_ops"
       osd_memory_target: "6442450944"
 
   dataDirHostPath: /var/lib/rook
