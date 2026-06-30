@@ -17,7 +17,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
   { path: 'argocd/applications/torghut/knative-service.yaml', selectorPath: ['spec', 'template', 'spec'] },
   { path: 'argocd/applications/torghut/knative-service-sim.yaml', selectorPath: ['spec', 'template', 'spec'] },
   { path: 'argocd/applications/torghut/db-migrations-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
-  { path: 'argocd/applications/torghut/empirical-jobs-backfill-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
   {
     path: 'argocd/applications/torghut/analysis-template-runtime-ready.yaml',
     selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
@@ -165,15 +164,32 @@ describe('Torghut manifest scheduling', () => {
   })
 
   it('bounds Torghut PostSync hook jobs so completed hooks do not become residue', () => {
-    const empiricalBackfill = parseManifest('argocd/applications/torghut/empirical-jobs-backfill-job.yaml')
-    const spec = getAtPath(empiricalBackfill, ['spec'])
-    const annotations = getAtPath(empiricalBackfill, ['metadata', 'annotations'])
+    const checks = [
+      {
+        path: 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml',
+        ttlSecondsAfterFinished: 600,
+        backoffLimit: 3,
+        activeDeadlineSeconds: 300,
+      },
+      {
+        path: 'argocd/applications/torghut/whitepapers-bucket-bootstrap-job.yaml',
+        ttlSecondsAfterFinished: 300,
+        backoffLimit: 2,
+        activeDeadlineSeconds: 120,
+      },
+    ]
 
-    expect(annotations['argocd.argoproj.io/hook']).toBe('PostSync')
-    expect(annotations['argocd.argoproj.io/hook-delete-policy']).toBe('BeforeHookCreation,HookSucceeded')
-    expect(spec.ttlSecondsAfterFinished).toBe(600)
-    expect(spec.backoffLimit).toBe(2)
-    expect(spec.activeDeadlineSeconds).toBe(600)
+    for (const check of checks) {
+      const manifest = parseManifest(check.path)
+      const spec = getAtPath(manifest, ['spec'])
+      const annotations = getAtPath(manifest, ['metadata', 'annotations'])
+
+      expect(annotations['argocd.argoproj.io/hook'], check.path).toBe('PostSync')
+      expect(annotations['argocd.argoproj.io/hook-delete-policy'], check.path).toBe('BeforeHookCreation,HookSucceeded')
+      expect(spec.ttlSecondsAfterFinished, check.path).toBe(check.ttlSecondsAfterFinished)
+      expect(spec.backoffLimit, check.path).toBe(check.backoffLimit)
+      expect(spec.activeDeadlineSeconds, check.path).toBe(check.activeDeadlineSeconds)
+    }
   })
 
   it('bounds Hyperliquid live ClickHouse writes to the readiness-critical feed path', () => {

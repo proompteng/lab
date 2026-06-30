@@ -32,9 +32,7 @@ resources:
   - llm-guardrails-exporter.yaml
   - whitepapers-objectbucketclaim.yaml
   - whitepapers-bucket-bootstrap-job.yaml
-  - whitepaper-semantic-backfill-job.yaml
   - empirical-artifacts-objectbucketclaim.yaml
-  - empirical-jobs-backfill-job.yaml
   - empirical-artifacts-retention-cronjob.yaml
   - zero-notional-drift-repair-cronjob.yaml
   - paper-account-flatten-cronjob.yaml
