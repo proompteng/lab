@@ -556,22 +556,21 @@ class ForwarderApp(
             while (isActive) {
               delay(config.symbolsPollIntervalMs)
               val desired = desiredSymbols().symbols
-              val (toAdd, toRemove) =
-                subscribedLock.withLock {
-                  val add = desired.filter { !subscribedSymbols.contains(it) }
-                  val remove = subscribedSymbols.filter { !desired.contains(it) }
-                  add to remove
-                }
+              val updates = subscribedLock.withLock { subscriptionUpdates(desired, subscribedSymbols) }
 
-              if (toAdd.isNotEmpty()) {
-                logger.info { "subscribing ${toAdd.size} symbols symbols=$toAdd" }
-                applySubscribe(toAdd)
+              updates.forEach { update ->
+                when (update.action) {
+                  SubscriptionAction.Unsubscribe -> {
+                    logger.info { "unsubscribing ${update.symbols.size} symbols symbols=${update.symbols}" }
+                    applyUnsubscribe(update.symbols)
+                  }
+                  SubscriptionAction.Subscribe -> {
+                    logger.info { "subscribing ${update.symbols.size} symbols symbols=${update.symbols}" }
+                    applySubscribe(update.symbols)
+                  }
+                }
               }
-              if (toRemove.isNotEmpty()) {
-                logger.info { "unsubscribing ${toRemove.size} symbols symbols=$toRemove" }
-                applyUnsubscribe(toRemove)
-              }
-              if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && (toAdd.isNotEmpty() || toRemove.isNotEmpty())) {
+              if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && updates.isNotEmpty()) {
                 publishOptionsWsStatus(
                   producer = producer,
                   seq = seq,
@@ -1476,6 +1475,32 @@ internal fun missingDesiredSymbols(
 ): List<String> {
   val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
   return desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() && it !in normalizedSubscribed }.distinct()
+}
+
+internal enum class SubscriptionAction {
+  Unsubscribe,
+  Subscribe,
+}
+
+internal data class SubscriptionUpdate(
+  val action: SubscriptionAction,
+  val symbols: List<String>,
+)
+
+internal fun subscriptionUpdates(
+  desired: Collection<String>,
+  subscribed: Collection<String>,
+): List<SubscriptionUpdate> {
+  val normalizedDesired = desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+  val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
+  val desiredSet = normalizedDesired.toSet()
+  val subscribedSet = normalizedSubscribed.toSet()
+  val toRemove = normalizedSubscribed.filter { it !in desiredSet }
+  val toAdd = normalizedDesired.filter { it !in subscribedSet }
+  return buildList {
+    if (toRemove.isNotEmpty()) add(SubscriptionUpdate(SubscriptionAction.Unsubscribe, toRemove))
+    if (toAdd.isNotEmpty()) add(SubscriptionUpdate(SubscriptionAction.Subscribe, toAdd))
+  }
 }
 
 internal fun optionsEventStarved(
