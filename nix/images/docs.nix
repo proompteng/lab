@@ -11,9 +11,10 @@ import ./bun-workspace-service.nix {
   serviceName = "docs";
   packageName = "docs";
   depsHash = {
-    x86_64-linux = "sha256-CZuf9swJwaP8Ah4k+/ooMspdAbMwzom5Wmk4SaUMrFw=";
-    aarch64-linux = "sha256-5FSjGRFeyrZGzmthjvubv1bFUBj8DXf6uYA7l6pws8k=";
+    x86_64-linux = lib.fakeHash;
+    aarch64-linux = lib.fakeHash;
   };
+  dependencyClosure = "bunCache";
   installFilters = [
     "@proompteng/design"
     "docs"

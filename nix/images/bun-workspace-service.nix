@@ -12,6 +12,7 @@
   sourcePaths,
   buildCommands ? [ ],
   runtimeInstallPhase ? null,
+  dependencyClosure ? "nodeModules",
   command,
   env ? [ ],
   extraContents ? [ ],
@@ -68,6 +69,7 @@ let
 
   installFilterArgs = lib.concatMapStringsSep " " (filter: "--filter ${lib.escapeShellArg filter}") installFilters;
   buildScript = lib.concatStringsSep "\n" buildCommands;
+  useBunCacheClosure = dependencyClosure == "bunCache";
   resolvedDepsHash =
     if builtins.isAttrs depsHash then
       depsHash.${pkgs.stdenv.hostPlatform.system}
@@ -112,6 +114,13 @@ let
         --no-summary \
         ${installFilterArgs}
 
+      if [ "${dependencyClosure}" = "bunCache" ]; then
+        cd "$TMPDIR"
+        rm -rf "$out"
+        mkdir -p "$out"
+        cp -R "$BUN_INSTALL_CACHE_DIR/." "$out/"
+      fi
+
       runHook postInstall
     '';
   };
@@ -137,10 +146,38 @@ let
       export HOME="$TMPDIR/home"
       export BUN_INSTALL_CACHE_DIR="$TMPDIR/bun-cache"
       mkdir -p "$HOME" "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
-      cp -R ${deps}/. "$TMPDIR/work/"
-      chmod -R u+w "$TMPDIR/work"
-      cp -R . "$TMPDIR/work/"
+      ${
+        if useBunCacheClosure then
+          ''
+            cp -R ${deps}/. "$BUN_INSTALL_CACHE_DIR/"
+            cp -R . "$TMPDIR/work/"
+            chmod -R u+w "$BUN_INSTALL_CACHE_DIR" "$TMPDIR/work"
+          ''
+        else
+          ''
+            cp -R ${deps}/. "$TMPDIR/work/"
+            chmod -R u+w "$TMPDIR/work"
+            cp -R . "$TMPDIR/work/"
+          ''
+      }
       cd "$TMPDIR/work"
+      ${
+        if useBunCacheClosure then
+          ''
+            bun install \
+              --offline \
+              --frozen-lockfile \
+              --ignore-scripts \
+              --backend=copyfile \
+              --linker=isolated \
+              --network-concurrency=1 \
+              --no-progress \
+              --no-summary \
+              ${installFilterArgs}
+          ''
+        else
+          ""
+      }
       ${buildScript}
 
       runHook postBuild

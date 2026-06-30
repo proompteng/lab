@@ -30,6 +30,13 @@ const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
+const productImageModules = [
+  appImageModule,
+  readRepoFile('nix/images/docs.nix'),
+  readRepoFile('nix/images/olden.nix'),
+  readRepoFile('nix/images/proompteng.nix'),
+  readRepoFile('nix/images/synthesis.nix'),
+]
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
@@ -351,6 +358,9 @@ describe('native OCI build workflows', () => {
     expect(productNixWorkflow).not.toContain("'argocd/applications/olden/**'")
     expect(productNixWorkflow).not.toContain("'argocd/applications/synthesis/**'")
     expect(appImageModule).toContain('"@proompteng/source"')
+    for (const imageModule of productImageModules) {
+      expect(imageModule).toContain('dependencyClosure = "bunCache";')
+    }
   })
 
   it('does not rebuild migrated simple app images for GitOps-only manifest changes', () => {
