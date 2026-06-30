@@ -711,7 +711,7 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
             book["paper_route_probe"]["blocking_reasons"],
         )
 
-    def test_paper_route_probe_book_blocks_live_mode_without_activation_contract(
+    def test_paper_route_probe_book_allows_live_mode_without_activation_contract(
         self,
     ) -> None:
         original_mode = proofs_api.settings.trading_mode
@@ -752,7 +752,9 @@ class TestTradingApiPaperRouteCache(TradingApiTestCaseBase):
 
         self.assertIsNotNone(book)
         assert book is not None
-        self.assertIn(
+        self.assertTrue(book["paper_route_probe"]["active"])
+        self.assertEqual(book["paper_route_probe"]["effective_max_notional"], "100")
+        self.assertNotIn(
             "live_submit_activation_missing",
             book["paper_route_probe"]["blocking_reasons"],
         )

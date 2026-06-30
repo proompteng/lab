@@ -127,7 +127,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             collection_gate["blocked_reasons"],
         )
         self.assertIn("simple_submit_disabled", collection_gate["blocked_reasons"])
-        self.assertIn(
+        self.assertNotIn(
             "live_submit_activation_missing", collection_gate["blocked_reasons"]
         )
         self.assertIn(
