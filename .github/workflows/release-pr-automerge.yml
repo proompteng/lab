@@ -12,7 +12,6 @@ on:
     paths:
       - 'argocd/applications/proompteng/kustomization.yaml'
       - 'argocd/applications/synthesis/kustomization.yaml'
-      - 'argocd/applications/bumba/kustomization.yaml'
       - 'argocd/applications/khoshut/kustomization.yaml'
       - 'argocd/applications/analysis/kustomization.yaml'
       - 'argocd/applications/bilig/kustomization.yaml'
@@ -71,7 +70,6 @@ jobs:
           allowed_paths=(
             "argocd/applications/proompteng/kustomization.yaml"
             "argocd/applications/synthesis/kustomization.yaml"
-            "argocd/applications/bumba/kustomization.yaml"
             "argocd/applications/khoshut/kustomization.yaml"
             "argocd/applications/analysis/kustomization.yaml"
             "argocd/applications/bilig/kustomization.yaml"
