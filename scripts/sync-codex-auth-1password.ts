@@ -27,6 +27,19 @@ type OnePasswordItem = {
   [key: string]: unknown
 }
 
+type ExternalSecretResource = {
+  status?: {
+    conditions?: Array<{
+      type?: string
+      status?: string
+    }>
+  }
+}
+
+type QuietCommandOptions = {
+  timeoutMs?: number
+}
+
 const usage = `Usage:
   bun run scripts/sync-codex-auth-1password.ts status
   bun run scripts/sync-codex-auth-1password.ts sync
@@ -41,6 +54,7 @@ Environment:
   OP_VAULT             1Password vault (default: infra)
   OP_ITEM              1Password item title (default: codex-auth)
   OP_FIELD             1Password field label (default: auth.json)
+  OP_STATUS_TIMEOUT_MS max time for each 1Password status probe (default: 15000)
   KUBECTL_TIMEOUT      wait timeout for each ExternalSecret (default: 120s)
 `
 
@@ -82,19 +96,53 @@ const fatal = (message: string, error?: unknown): never => {
   process.exit(1)
 }
 
+const parsePositiveInteger = (name: string, value: string): number => {
+  const parsed = Number.parseInt(value, 10)
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    fatal(`${name} must be a positive integer, got '${value}'`)
+  }
+
+  return parsed
+}
+
+const opStatusTimeoutMs = parsePositiveInteger('OP_STATUS_TIMEOUT_MS', process.env.OP_STATUS_TIMEOUT_MS ?? '15000')
+
 const ensureCli = (binary: string) => {
   if (!Bun.which(binary)) {
     fatal(`Required CLI '${binary}' is not available in PATH`)
   }
 }
 
-const runQuiet = async (description: string, operation: () => Promise<unknown>): Promise<boolean> => {
+const runCommandQuiet = async (
+  description: string,
+  command: string[],
+  { timeoutMs = opStatusTimeoutMs }: QuietCommandOptions = {},
+): Promise<boolean> => {
+  const proc = Bun.spawn(command, { stdout: 'ignore', stderr: 'ignore' })
+  let timedOut = false
+  let killTimeout: ReturnType<typeof setTimeout> | undefined
+  const timeout = setTimeout(() => {
+    timedOut = true
+    proc.kill()
+    killTimeout = setTimeout(() => proc.kill('SIGKILL'), 1_000)
+  }, timeoutMs)
+
   try {
-    await operation()
-    return true
+    const exitCode = await proc.exited
+    if (exitCode === 0) {
+      return true
+    }
+
+    console.log(`${description}: ${timedOut ? 'timed out' : 'unavailable'}`)
+    return false
   } catch {
     console.log(`${description}: unavailable`)
     return false
+  } finally {
+    clearTimeout(timeout)
+    if (killTimeout) {
+      clearTimeout(killTimeout)
+    }
   }
 }
 
@@ -165,6 +213,7 @@ const buildUpdatedItemTemplate = (existingItem: OnePasswordItem | null, authJson
   const existingField = fields.find(
     (field) => field.label === opField || field.id === 'auth-json' || field.id === opField,
   )
+  const passwordField = fields.find((field) => field.id === 'password' || field.purpose === 'PASSWORD')
 
   if (existingField) {
     existingField.type = 'CONCEALED'
@@ -177,6 +226,13 @@ const buildUpdatedItemTemplate = (existingItem: OnePasswordItem | null, authJson
       label: opField,
       value: authJson,
     })
+  }
+
+  if (passwordField) {
+    passwordField.type = 'CONCEALED'
+    passwordField.purpose = 'PASSWORD'
+    passwordField.label = 'password'
+    passwordField.value = authJson
   }
 
   return {
@@ -243,9 +299,9 @@ const syncItem = async () => {
 
 const getExternalSecretReady = async ({ namespace, name }: ExternalSecretTarget): Promise<string> => {
   try {
-    return (
-      await $`kubectl -n ${namespace} get externalsecret ${name} -o jsonpath={.status.conditions[?(@.type=="Ready")].status}`.text()
-    ).trim()
+    const output = await $`kubectl -n ${namespace} get externalsecret ${name} -o json`.text()
+    const resource = JSON.parse(output) as ExternalSecretResource
+    return resource.status?.conditions?.find((condition) => condition.type === 'Ready')?.status ?? ''
   } catch {
     return ''
   }
@@ -255,12 +311,24 @@ const checkStatus = async () => {
   let ready = true
 
   if (Bun.which('op')) {
-    const vaultAvailable = await runQuiet('1Password vault', () => $`op vault get ${opVault} --format json`.quiet())
+    const vaultAvailable = await runCommandQuiet('1Password vault', ['op', 'vault', 'get', opVault, '--format', 'json'])
     if (vaultAvailable) {
-      const itemPresent = await runQuiet('1Password item', () => $`op item get ${opItem} --vault ${opVault}`.quiet())
-      const fieldPresent = await runQuiet('1Password field', () =>
-        $`op read --no-newline op://${opVault}/${opItem}/${opField}`.quiet(),
-      )
+      const itemPresent = await runCommandQuiet('1Password item', [
+        'op',
+        'item',
+        'get',
+        opItem,
+        '--vault',
+        opVault,
+        '--format',
+        'json',
+      ])
+      const fieldPresent = await runCommandQuiet('1Password field', [
+        'op',
+        'read',
+        '--no-newline',
+        `op://${opVault}/${opItem}/${opField}`,
+      ])
       ready = ready && itemPresent && fieldPresent
     } else {
       ready = false
