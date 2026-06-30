@@ -604,6 +604,10 @@ def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
             == "live_submit_activation_expiry_invalid"
         )
 
+        settings.trading_live_submit_activation_expires_at = None
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        assert pipeline._live_bounded_paper_route_source_collection_blocker(now) is None
+
         settings.trading_live_submit_activation_expires_at = "2026-06-17T20:05:00Z"
         settings.trading_simple_paper_route_probe_max_notional = 0
         assert (

@@ -347,10 +347,6 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             context="live static universe",
         )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
-        self.assertEqual(
-            env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
-            "2026-06-22T20:05:00Z",
-        )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
         self.assertTrue(
             _manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE")

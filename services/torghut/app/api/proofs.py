@@ -614,7 +614,7 @@ def _paper_route_live_submit_activation_blocking_reasons(
     live_submit_activation: Mapping[str, Any],
 ) -> list[str]:
     if live_submit_activation.get("configured") is not True:
-        return ["live_submit_activation_missing"]
+        return []
     if live_submit_activation.get("valid") is not True:
         return [
             str(

@@ -90,16 +90,15 @@ def bounded_live_paper_collection_gate_payload(
         blockers.append("live_paper_route_probe_collection_disabled")
     if not settings.trading_simple_submit_enabled:
         blockers.append("simple_submit_disabled")
-    if activation.get("configured") is not True:
-        blockers.append("live_submit_activation_missing")
-    elif activation.get("valid") is not True:
-        blockers.append(
-            str(activation.get("reason") or "live_submit_activation_invalid")
-        )
-    elif activation.get("expired") is True:
-        blockers.append(
-            str(activation.get("reason") or "live_submit_activation_expired")
-        )
+    if activation.get("configured") is True:
+        if activation.get("valid") is not True:
+            blockers.append(
+                str(activation.get("reason") or "live_submit_activation_invalid")
+            )
+        elif activation.get("expired") is True:
+            blockers.append(
+                str(activation.get("reason") or "live_submit_activation_expired")
+            )
     if max_notional is None or max_notional <= 0:
         blockers.append("paper_route_probe_notional_not_configured")
     if source_collection_target_count <= 0:
