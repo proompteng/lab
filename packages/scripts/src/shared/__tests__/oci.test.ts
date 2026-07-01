@@ -283,6 +283,12 @@ describe('native OCI build workflows', () => {
     expect(bunWorkspaceServiceModule).toContain('inherit maxLayers;')
   })
 
+  it('creates writable temp directories in Bun workspace images for non-root runtime pods', () => {
+    expect(bunWorkspaceServiceModule).toContain('extraCommands =')
+    expect(bunWorkspaceServiceModule).toContain('mkdir -p tmp var/tmp')
+    expect(bunWorkspaceServiceModule).toContain('chmod 1777 tmp var/tmp')
+  })
+
   it('does not fan out expensive image builds on unrelated shared script changes', () => {
     for (const workflow of [
       agentsBuildWorkflow,

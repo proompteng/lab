@@ -11,7 +11,10 @@ import ./bun-workspace-service.nix {
   inherit pkgs lib repoRoot bun nodejs;
   serviceName = "bumba";
   packageName = "@proompteng/bumba";
-  depsHash = "sha256-H4lK2btS85onVqnGLIjpeM/hU/D5DGMlVPGdaS/GSUc=";
+  depsHash = {
+    x86_64-linux = "sha256-ndyiyuCI8lQmM6yPNDhY6q4VWtJohWJbZjrMwGObbe0=";
+    aarch64-linux = "sha256-ndyiyuCI8lQmM6yPNDhY6q4VWtJohWJbZjrMwGObbe0=";
+  };
   installFilters = [
     "@proompteng/bumba"
     "@proompteng/temporal-bun-sdk"
