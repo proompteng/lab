@@ -83,7 +83,11 @@ describe('Torghut manifest scheduling', () => {
   it('rolls the options enricher without overlapping side-effecting workers', () => {
     const deployment = parseManifest('argocd/applications/torghut-options/enricher/deployment.yaml')
     expect(getAtPath(deployment, ['spec']).strategy).toMatchObject({
-      type: 'Recreate',
+      type: 'RollingUpdate',
+      rollingUpdate: {
+        maxSurge: 0,
+        maxUnavailable: 1,
+      },
     })
   })
 
