@@ -121,6 +121,11 @@ receipts, capture the live status first. The old scheduled empirical renewal, so
 CronJobs have been removed; do not recreate them for proof recovery. The remaining GitOps-owned repair CronJob is the
 zero-notional drift repair.
 
+The zero-notional repair CronJob runs the script with `--execute-policy dispatchable-only`: it first calls the repair
+endpoint with `execute=false` and only dispatches when the receipt contains a concrete `zero_notional_action` or
+`candidate_id`. A capital-safe `no_selected_repair` receipt should complete successfully with
+`preflight_skipped_execute=true`.
+
 ```bash
 stamp="$(date -u +%Y%m%d%H%M%S)"
 out="/tmp/torghut-proof-rerun-${stamp}"

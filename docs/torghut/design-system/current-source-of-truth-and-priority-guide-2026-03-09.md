@@ -5,6 +5,8 @@
 - Date: `2026-05-13`
 - Purpose: distinguish live source-of-truth docs from historical milestone records and identify the current highest-priority work
 - Scope: `docs/torghut/design-system/**`, `docs/torghut/**`, `argocd/applications/torghut/**`, `services/torghut/**`, `services/jangar/**`
+- Archive note: this file is a historical authority-map snapshot. For current operations, start with
+  `docs/torghut/README.md`, live GitOps, service code, and runtime readback.
 
 ## Why this document exists
 
@@ -19,7 +21,8 @@ The Torghut design corpus has accumulated several generations of:
 That is useful history, but it creates a real operator problem: dated closeout records can be mistaken for the current
 source of truth.
 
-This guide is the current reading order and authority map.
+This guide records the reading order and authority map as of the snapshot above. It is retained for history; current
+truth now lives in the compact Torghut documentation index plus live GitOps/runtime state.
 
 ## Use this first
 

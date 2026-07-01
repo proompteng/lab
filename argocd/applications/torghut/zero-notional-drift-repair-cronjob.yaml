@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: torghut
     app.kubernetes.io/component: zero-notional-drift-repair
 spec:
-  schedule: "*/10 9-16 * * 1-5"
+  schedule: "5,35 9-16 * * 1-5"
   timeZone: America/New_York
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 2
@@ -50,6 +50,7 @@ spec:
                     --service-url http://torghut-sim.torghut.svc.cluster.local \
                     --action rerun_drift_checks_for_blocked_hypotheses \
                     --execute \
+                    --execute-policy dispatchable-only \
                     --drift-limit 1000 \
                     --attempts 3 \
                     --timeout-seconds 45 \
@@ -62,6 +63,7 @@ spec:
                     --service-url http://torghut.torghut.svc.cluster.local \
                     --action rerun_drift_checks_for_blocked_hypotheses \
                     --execute \
+                    --execute-policy dispatchable-only \
                     --drift-limit 1000 \
                     --attempts 3 \
                     --timeout-seconds 45 \

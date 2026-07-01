@@ -81,6 +81,178 @@ class TestRunZeroNotionalRepair(TestCase):
             "&execute=true&drift_limit=321",
         )
 
+    def test_dispatchable_only_skips_execute_for_no_selected_repair(self) -> None:
+        args = script.parse_args(
+            [
+                "--service-url",
+                "http://torghut-sim.torghut.svc.cluster.local",
+                "--execute",
+                "--execute-policy",
+                "dispatchable-only",
+                "--allow-no-selected-repair",
+                "--json",
+            ]
+        )
+        no_op_receipt = _capital_safe_receipt(
+            execution_state="no_selected_repair",
+            command_exit_code=78,
+            blocked_reasons=[
+                "profit_freshness_frontier_matching_repair_missing:"
+                "rerun_drift_checks_for_blocked_hypotheses"
+            ],
+        )
+
+        with patch.object(
+            script.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(no_op_receipt),
+        ) as urlopen:
+            exit_code, receipt = script.run(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(urlopen.call_count, 1)
+        request = urlopen.call_args.args[0]
+        self.assertIn("&execute=false&", request.full_url)
+        self.assertEqual(receipt["execute_policy"], "dispatchable-only")
+        self.assertEqual(receipt["preflight_skipped_execute"], True)
+        self.assertEqual(receipt["preflight_dispatchable"], False)
+        self.assertEqual(receipt["preflight_command_exit_code"], 78)
+        self.assertEqual(receipt["command_exit_code"], 0)
+        self.assertIn("&execute=true&", receipt["execute_request_url"])
+
+    def test_dispatchable_only_executes_after_concrete_preflight_repair(
+        self,
+    ) -> None:
+        args = script.parse_args(
+            [
+                "--service-url",
+                "http://torghut.torghut.svc.cluster.local",
+                "--execute",
+                "--execute-policy",
+                "dispatchable-only",
+                "--json",
+            ]
+        )
+        preflight_receipt = _capital_safe_receipt(
+            execution_state="repair_selected",
+            zero_notional_action="recompute_route_tca_and_fill_quality",
+            candidate_id="candidate-a",
+            requires_repair_lot_dispatch_ticket=True,
+            repair_lot_dispatch_ticket_launch_allowed=True,
+        )
+        execute_receipt = _capital_safe_receipt(
+            execution_state="executed",
+            zero_notional_action="recompute_route_tca_and_fill_quality",
+            candidate_id="candidate-a",
+        )
+
+        with patch.object(
+            script.urllib.request,
+            "urlopen",
+            side_effect=[
+                _FakeResponse(preflight_receipt),
+                _FakeResponse(execute_receipt),
+            ],
+        ) as urlopen:
+            exit_code, receipt = script.run(args)
+
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(urlopen.call_count, 2)
+        first_request = urlopen.call_args_list[0].args[0]
+        second_request = urlopen.call_args_list[1].args[0]
+        self.assertIn("&execute=false&", first_request.full_url)
+        self.assertIn("&execute=true&", second_request.full_url)
+        self.assertEqual(receipt["preflight_dispatchable"], True)
+        self.assertEqual(receipt["preflight_skipped_execute"], False)
+        self.assertEqual(receipt["preflight_execution_state"], "repair_selected")
+
+    def test_dispatchable_repair_requires_concrete_safe_action(self) -> None:
+        self.assertFalse(
+            script._is_dispatchable_repair(
+                _capital_safe_receipt(execution_state="repair_selected")
+            )
+        )
+        self.assertFalse(
+            script._is_dispatchable_repair(
+                _capital_safe_receipt(
+                    execution_state="repair_selected",
+                    zero_notional_action="recompute_route_tca_and_fill_quality",
+                    requires_repair_lot_dispatch_ticket=True,
+                    repair_lot_dispatch_ticket_launch_allowed=False,
+                )
+            )
+        )
+        self.assertTrue(
+            script._is_dispatchable_repair(
+                _capital_safe_receipt(
+                    execution_state="repair_selected",
+                    candidate_id="candidate-a",
+                )
+            )
+        )
+
+    def test_dispatchable_only_rejects_invalid_preflight_receipt(self) -> None:
+        args = script.parse_args(
+            [
+                "--service-url",
+                "http://torghut.torghut.svc.cluster.local",
+                "--execute",
+                "--execute-policy",
+                "dispatchable-only",
+                "--json",
+            ]
+        )
+        invalid_preflight_receipt = _capital_safe_receipt(
+            execution_state="repair_selected",
+            zero_notional_action="recompute_route_tca_and_fill_quality",
+            order_submission_enabled=True,
+        )
+
+        with patch.object(
+            script.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(invalid_preflight_receipt),
+        ) as urlopen:
+            exit_code, receipt = script.run(args)
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(receipt["preflight_dispatchable"], False)
+        self.assertEqual(receipt["preflight_skipped_execute"], True)
+        self.assertIn("receipt_order_submission_enabled", receipt["validation_errors"])
+
+    def test_dispatchable_only_returns_nonzero_preflight_without_execute(
+        self,
+    ) -> None:
+        args = script.parse_args(
+            [
+                "--service-url",
+                "http://torghut.torghut.svc.cluster.local",
+                "--execute",
+                "--execute-policy",
+                "dispatchable-only",
+                "--json",
+            ]
+        )
+        blocked_receipt = _capital_safe_receipt(
+            execution_state="runner_blocked",
+            command_exit_code=78,
+            blocked_reasons=["unexpected_zero_notional_repair_block"],
+        )
+
+        with patch.object(
+            script.urllib.request,
+            "urlopen",
+            return_value=_FakeResponse(blocked_receipt),
+        ) as urlopen:
+            exit_code, receipt = script.run(args)
+
+        self.assertEqual(exit_code, 78)
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(receipt["preflight_dispatchable"], False)
+        self.assertEqual(receipt["preflight_skipped_execute"], True)
+        self.assertNotIn("preflight_command_exit_code", receipt)
+
     def test_rejects_receipt_that_would_enable_order_submission(self) -> None:
         args = script.parse_args(
             [

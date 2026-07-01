@@ -41,10 +41,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
     path: 'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml',
     selectorPath: ['spec', 'templates', 0],
   },
-  {
-    path: 'argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml',
-    selectorPath: ['spec', 'templates', 0],
-  },
 ]
 
 const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRecord => {
@@ -65,20 +61,6 @@ const parseManifest = (path: string): JsonRecord => YAML.parse(readFileSync(join
 
 const parseManifestDocuments = (path: string): JsonRecord[] =>
   YAML.parseAllDocuments(readFileSync(join(repoRoot, path), 'utf8')).map((document) => document.toJSON() as JsonRecord)
-
-const parameterValue = (manifest: JsonRecord, name: string): string => {
-  const parameters = getAtPath(manifest, ['spec', 'arguments']).parameters
-  if (!Array.isArray(parameters)) {
-    throw new Error('Manifest arguments.parameters is not an array')
-  }
-  const parameter = parameters.find((item) => typeof item === 'object' && item !== null && item.name === name) as
-    | { value?: unknown }
-    | undefined
-  if (typeof parameter?.value !== 'string') {
-    throw new Error(`Missing string parameter ${name}`)
-  }
-  return parameter.value
-}
 
 describe('Torghut manifest scheduling', () => {
   it('caps revision history for high-churn Torghut deployments', () => {
@@ -400,54 +382,5 @@ describe('Torghut manifest scheduling', () => {
     expect(spec.restartNonce).toBeGreaterThanOrEqual(16)
     expect(flinkConfiguration['restart-strategy.fixed-delay.attempts']).toBe('60')
     expect(flinkConfiguration['restart-strategy.fixed-delay.delay']).toBe('10 s')
-  })
-
-  it('keeps whitepaper autoresearch off the serving pod resource envelope', () => {
-    const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
-    const template = getAtPath(manifest, ['spec', 'templates', 0])
-    const container = getAtPath(template, ['container'])
-    const resources = getAtPath(container, ['resources'])
-    const requests = getAtPath(resources, ['requests'])
-    const limits = getAtPath(resources, ['limits'])
-
-    expect(requests.memory).toBe('12Gi')
-    expect(limits.memory).toBe('32Gi')
-    expect(container.volumeMounts).toContainEqual(
-      expect.objectContaining({
-        mountPath: '/etc/torghut',
-        name: 'strategy-config',
-      }),
-    )
-    expect(JSON.stringify(template)).toContain('run_whitepaper_autoresearch_profit_target.py')
-    expect(parameterValue(manifest, 'targetNetPnlPerDay')).toBe('500')
-    expect(JSON.stringify(template)).toContain(
-      'config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml',
-    )
-    expect(JSON.stringify(template)).not.toContain(
-      'config/trading/research-programs/strict-daily-profit-autoresearch-300-v1.yaml',
-    )
-    expect(JSON.stringify(template)).toContain('--real-replay-shard-size')
-    expect(JSON.stringify(template)).toContain('--real-replay-shard-timeout-seconds')
-    expect(JSON.stringify(template)).toContain('--real-replay-shard-workers')
-    expect(JSON.stringify(template)).toContain('--feedback-block-reaudit-slots')
-    expect(JSON.stringify(template)).toContain('--selection-only')
-    expect(parameterValue(manifest, 'maxCandidates')).toBe('128')
-    expect(parameterValue(manifest, 'topK')).toBe('64')
-    expect(parameterValue(manifest, 'explorationSlots')).toBe('48')
-    expect(parameterValue(manifest, 'feedbackBlockReauditSlots')).toBe('32')
-    expect(parameterValue(manifest, 'portfolioSizeMin')).toBe('3')
-    expect(parameterValue(manifest, 'selectionOnly')).toBe('false')
-  })
-
-  it('bounds whitepaper autoresearch real replay so profit runs emit evidence before timeout', () => {
-    const manifest = parseManifest('argocd/applications/torghut/whitepaper-autoresearch-workflowtemplate.yaml')
-    const template = getAtPath(manifest, ['spec', 'templates', 0])
-
-    expect(parameterValue(manifest, 'maxFrontierCandidatesPerSpec')).toBe('2')
-    expect(parameterValue(manifest, 'maxTotalFrontierCandidates')).toBe('128')
-    expect(parameterValue(manifest, 'realReplayTimeoutSeconds')).toBe('7200')
-    expect(parameterValue(manifest, 'realReplayShardSize')).toBe('1')
-    expect(parameterValue(manifest, 'realReplayShardWorkers')).toBe('4')
-    expect(template.activeDeadlineSeconds).toBe(9000)
   })
 })

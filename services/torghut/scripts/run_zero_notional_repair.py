@@ -136,6 +136,19 @@ def _accepted_blocked_state(
     return False
 
 
+def _is_dispatchable_repair(receipt: Mapping[str, Any]) -> bool:
+    if _text(receipt.get("execution_state")) == "no_selected_repair":
+        return False
+    has_concrete_repair = bool(
+        _text(receipt.get("zero_notional_action")) or _text(receipt.get("candidate_id"))
+    )
+    if not has_concrete_repair:
+        return False
+    if receipt.get("requires_repair_lot_dispatch_ticket") is True:
+        return receipt.get("repair_lot_dispatch_ticket_launch_allowed") is True
+    return True
+
+
 def _receipt_exit_code(
     receipt: Mapping[str, Any],
     *,
@@ -159,13 +172,9 @@ def _receipt_exit_code(
     return command_exit_code if command_exit_code else 1, []
 
 
-def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
-    url = _repair_url(
-        args.service_url,
-        action=args.action,
-        execute=bool(args.execute),
-        drift_limit=max(1, int(args.drift_limit)),
-    )
+def _run_repair_request(
+    url: str, args: argparse.Namespace
+) -> tuple[int, dict[str, Any]]:
     attempts = max(1, int(args.attempts))
     attempt_errors: list[str] = []
     for attempt in range(1, attempts + 1):
@@ -208,6 +217,60 @@ def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
             )
 
 
+def run(args: argparse.Namespace) -> tuple[int, dict[str, Any]]:
+    drift_limit = max(1, int(args.drift_limit))
+    execute_url = _repair_url(
+        args.service_url,
+        action=args.action,
+        execute=bool(args.execute),
+        drift_limit=drift_limit,
+    )
+    if bool(args.execute) and args.execute_policy == "dispatchable-only":
+        preflight_url = _repair_url(
+            args.service_url,
+            action=args.action,
+            execute=False,
+            drift_limit=drift_limit,
+        )
+        preflight_exit_code, preflight_receipt = _run_repair_request(
+            preflight_url, args
+        )
+        preflight_receipt["execute_policy"] = args.execute_policy
+        preflight_receipt["requested_execute"] = True
+        preflight_receipt["execute_request_url"] = execute_url
+        preflight_receipt["preflight_request_url"] = preflight_url
+        preflight_validation_errors = _receipt_validation_errors(preflight_receipt)
+        if preflight_validation_errors:
+            preflight_receipt["preflight_dispatchable"] = False
+            preflight_receipt["preflight_skipped_execute"] = True
+            preflight_receipt["validation_errors"] = preflight_validation_errors
+            return 1, preflight_receipt
+
+        if not _is_dispatchable_repair(preflight_receipt):
+            preflight_receipt["preflight_dispatchable"] = False
+            preflight_receipt["preflight_skipped_execute"] = True
+            if preflight_exit_code != 0:
+                return preflight_exit_code, preflight_receipt
+            preflight_receipt["preflight_command_exit_code"] = preflight_receipt.get(
+                "command_exit_code"
+            )
+            preflight_receipt["command_exit_code"] = 0
+            return 0, preflight_receipt
+
+        execute_exit_code, execute_receipt = _run_repair_request(execute_url, args)
+        execute_receipt["execute_policy"] = args.execute_policy
+        execute_receipt["requested_execute"] = True
+        execute_receipt["preflight_dispatchable"] = True
+        execute_receipt["preflight_skipped_execute"] = False
+        execute_receipt["preflight_request_url"] = preflight_url
+        execute_receipt["preflight_execution_state"] = _text(
+            preflight_receipt.get("execution_state")
+        )
+        return execute_exit_code, execute_receipt
+
+    return _run_repair_request(execute_url, args)
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run a Torghut zero-notional repair endpoint and validate the receipt stays capital-safe."
@@ -219,6 +282,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--action", default=DEFAULT_ACTION)
     parser.add_argument("--execute", action="store_true")
+    parser.add_argument(
+        "--execute-policy",
+        choices=("always", "dispatchable-only"),
+        default="always",
+        help=(
+            "always executes when --execute is set; dispatchable-only first "
+            "preflights with execute=false and skips no-op receipts."
+        ),
+    )
     parser.add_argument("--drift-limit", type=int, default=1000)
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--timeout-seconds", type=float, default=45.0)

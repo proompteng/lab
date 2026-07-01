@@ -237,7 +237,7 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
             "argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml"
         )
 
-        self.assertEqual(spec.get("schedule"), "*/10 9-16 * * 1-5")
+        self.assertEqual(spec.get("schedule"), "5,35 9-16 * * 1-5")
         self.assertEqual(spec.get("timeZone"), "America/New_York")
         self.assertEqual(spec.get("concurrencyPolicy"), "Forbid")
         self.assertEqual(spec.get("failedJobsHistoryLimit"), 2)
@@ -295,7 +295,8 @@ class TestProductApplicationsetRendersTorghutNamespaceSecurityMetadata(
         )
         self.assertIn("--service-url http://torghut.torghut.svc.cluster.local", args)
         self.assertIn("--action rerun_drift_checks_for_blocked_hypotheses", args)
-        self.assertEqual(args.count("--execute"), 2)
+        self.assertEqual(args.count("--execute \\"), 2)
+        self.assertEqual(args.count("--execute-policy dispatchable-only"), 2)
         self.assertEqual(args.count("--drift-limit 1000"), 2)
         self.assertEqual(args.count("--allow-no-selected-repair"), 2)
         self.assertEqual(args.count("--allow-no-signal-blocked"), 2)
