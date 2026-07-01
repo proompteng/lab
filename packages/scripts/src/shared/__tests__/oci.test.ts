@@ -278,6 +278,11 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
+  it('caps Bun workspace image layers to keep registry publishes bounded', () => {
+    expect(bunWorkspaceServiceModule).toContain('maxLayers ? 24')
+    expect(bunWorkspaceServiceModule).toContain('inherit maxLayers;')
+  })
+
   it('does not fan out expensive image builds on unrelated shared script changes', () => {
     for (const workflow of [
       agentsBuildWorkflow,
