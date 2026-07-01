@@ -260,6 +260,10 @@ pkgs.dockerTools.buildLayeredImage {
     pkgs.cacert
     pkgs.coreutils
   ] ++ extraContents;
+  extraCommands = ''
+    mkdir -p tmp var/tmp
+    chmod 1777 tmp var/tmp
+  '';
   config = {
     Entrypoint = command;
     WorkingDir = workingDir;
