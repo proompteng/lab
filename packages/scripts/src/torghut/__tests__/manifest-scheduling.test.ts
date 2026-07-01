@@ -80,6 +80,13 @@ describe('Torghut manifest scheduling', () => {
     }
   })
 
+  it('rolls the options enricher without overlapping side-effecting workers', () => {
+    const deployment = parseManifest('argocd/applications/torghut-options/enricher/deployment.yaml')
+    expect(getAtPath(deployment, ['spec']).strategy).toMatchObject({
+      type: 'Recreate',
+    })
+  })
+
   it('pins arm64-only Torghut image consumers to arm64 nodes', () => {
     for (const check of torghutArm64ImageChecks) {
       const manifest = parseManifest(check.path)
