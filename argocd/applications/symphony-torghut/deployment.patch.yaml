@@ -7,7 +7,7 @@ spec:
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-06-30T19:32:31Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-01T01:22:52Z"
     spec:
       serviceAccountName: symphony-torghut
       containers:
