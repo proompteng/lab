@@ -13,7 +13,6 @@ const createFixture = () => {
   const migrationManifestPath = join(dir, 'db-migrations-job.yaml')
   const historicalWorkflowManifestPath = join(dir, 'historical-simulation-workflowtemplate.yaml')
   const empiricalWorkflowManifestPath = join(dir, 'empirical-promotion-workflowtemplate.yaml')
-  const whitepaperAutoresearchWorkflowManifestPath = join(dir, 'whitepaper-autoresearch-workflowtemplate.yaml')
   const analysisRuntimeReadyManifestPath = join(dir, 'analysis-template-runtime-ready.yaml')
   const analysisActivityManifestPath = join(dir, 'analysis-template-activity.yaml')
   const analysisTeardownManifestPath = join(dir, 'analysis-template-teardown-clean.yaml')
@@ -91,7 +90,6 @@ spec:
   for (const path of [
     historicalWorkflowManifestPath,
     empiricalWorkflowManifestPath,
-    whitepaperAutoresearchWorkflowManifestPath,
     analysisRuntimeReadyManifestPath,
     analysisActivityManifestPath,
     analysisTeardownManifestPath,
@@ -101,12 +99,6 @@ spec:
     generatedResourceRetentionManifestPath,
     tigerBeetleSmokeManifestPath,
   ]) {
-    const metadataEnv =
-      path === whitepaperAutoresearchWorkflowManifestPath
-        ? `            - name: TORGHUT_COMMIT
-              value: old-commit
-`
-        : ''
     writeFileSync(
       path,
       `apiVersion: v1
@@ -118,7 +110,7 @@ spec:
         - name: torghut
           image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
           env:
-${metadataEnv}            - name: TORGHUT_IMAGE_DIGEST
+            - name: TORGHUT_IMAGE_DIGEST
               value: sha256:1111111111111111111111111111111111111111111111111111111111111111
 `,
       'utf8',
@@ -187,7 +179,6 @@ spec:
     migrationManifestPath,
     historicalWorkflowManifestPath,
     empiricalWorkflowManifestPath,
-    whitepaperAutoresearchWorkflowManifestPath,
     analysisRuntimeReadyManifestPath,
     analysisActivityManifestPath,
     analysisTeardownManifestPath,
@@ -219,7 +210,6 @@ const updateOptionsForFixture = (
   migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
   historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
   empiricalPromotionWorkflowManifestPath: relative(repoRoot, fixture.empiricalWorkflowManifestPath),
-  whitepaperAutoresearchWorkflowManifestPath: relative(repoRoot, fixture.whitepaperAutoresearchWorkflowManifestPath),
   analysisRuntimeReadyManifestPath: relative(repoRoot, fixture.analysisRuntimeReadyManifestPath),
   analysisActivityManifestPath: relative(repoRoot, fixture.analysisActivityManifestPath),
   analysisTeardownManifestPath: relative(repoRoot, fixture.analysisTeardownManifestPath),
@@ -283,10 +273,6 @@ describe('update-manifests', () => {
     const migrationManifest = readFileSync(fixture.migrationManifestPath, 'utf8')
     const historicalWorkflowManifest = readFileSync(fixture.historicalWorkflowManifestPath, 'utf8')
     const empiricalWorkflowManifest = readFileSync(fixture.empiricalWorkflowManifestPath, 'utf8')
-    const whitepaperAutoresearchWorkflowManifest = readFileSync(
-      fixture.whitepaperAutoresearchWorkflowManifestPath,
-      'utf8',
-    )
     const analysisRuntimeReadyManifest = readFileSync(fixture.analysisRuntimeReadyManifestPath, 'utf8')
     const analysisActivityManifest = readFileSync(fixture.analysisActivityManifestPath, 'utf8')
     const analysisTeardownManifest = readFileSync(fixture.analysisTeardownManifestPath, 'utf8')
@@ -324,7 +310,6 @@ describe('update-manifests', () => {
     for (const manifest of [
       historicalWorkflowManifest,
       empiricalWorkflowManifest,
-      whitepaperAutoresearchWorkflowManifest,
       analysisRuntimeReadyManifest,
       analysisActivityManifest,
       analysisTeardownManifest,
@@ -341,7 +326,6 @@ describe('update-manifests', () => {
       )
       expect(manifest).toContain('value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e')
     }
-    expect(whitepaperAutoresearchWorkflowManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(hyperliquidRuntimeMigrationManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     for (const manifest of [optionsCatalogManifest, optionsEnricherManifest]) {
@@ -355,7 +339,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(18)
+    expect(result.changedPaths.length).toBe(17)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -377,7 +361,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(16)
+    expect(result.changedPaths.length).toBe(15)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

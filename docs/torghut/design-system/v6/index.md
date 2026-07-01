@@ -1,5 +1,9 @@
 # Torghut Design System v6: Beyond TSMOM Intraday Autonomy Pack
 
+This index is a historical archive for design contracts, proof records, and implementation closeouts. Do not treat
+dated v6 files as current operational truth until they are verified against live GitOps, `services/torghut/**`, and
+runtime readback. Start current operations from `docs/torghut/README.md`.
+
 ## Status
 
 - Version: `v6`

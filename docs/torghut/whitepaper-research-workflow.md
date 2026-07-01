@@ -7,6 +7,10 @@ Source implementation:
 - `services/torghut/app/main.py`
 - `services/torghut/app/whitepapers/workflow.py`
 
+Retired path: the old Argo `WorkflowTemplate/torghut-whitepaper-autoresearch-profit-target` is no longer part of
+GitOps. New whitepaper work should use the service-owned GitHub issue to Kafka to Torghut to AgentRun path documented
+here.
+
 ## What this workflow does
 
 1. Accepts a GitHub issue payload with a whitepaper kickoff marker and PDF URL.

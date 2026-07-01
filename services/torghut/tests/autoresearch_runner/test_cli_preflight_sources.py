@@ -153,114 +153,87 @@ class TestAutoresearchRunnerCliPreflightSources(AutoresearchRunnerTestCase):
 
         self.assertEqual(failure, "")
 
-    def test_workflow_template_surfaces_feedback_and_fails_closed_on_stale_tape(
+    def test_runner_cli_exposes_direct_handoff_feedback_and_replay_window_controls(
         self,
     ) -> None:
-        template_path = (
-            Path(__file__).parents[4]
-            / "argocd"
-            / "applications"
-            / "torghut"
-            / "whitepaper-autoresearch-workflowtemplate.yaml"
-        )
-        template = template_path.read_text()
+        with TemporaryDirectory() as tmpdir:
+            argv = [
+                "run_whitepaper_autoresearch_profit_target.py",
+                "--output-dir",
+                tmpdir,
+                "--epoch-id",
+                "whitepaper-autoresearch-test",
+                "--source-jsonl",
+                "/tmp/source.jsonl",
+                "--candidate-specs",
+                "/tmp/candidate-specs.jsonl",
+                "--feedback-evidence-jsonl",
+                "/tmp/feedback-evidence.jsonl",
+                "--max-candidates",
+                "128",
+                "--top-k",
+                "64",
+                "--exploration-slots",
+                "48",
+                "--feedback-block-reaudit-slots",
+                "32",
+                "--max-frontier-candidates-per-spec",
+                "2",
+                "--max-total-frontier-candidates",
+                "128",
+                "--real-replay-timeout-seconds",
+                "7200",
+                "--real-replay-shard-size",
+                "1",
+                "--real-replay-shard-timeout-seconds",
+                "900",
+                "--real-replay-shard-workers",
+                "4",
+                "--train-days",
+                "12",
+                "--holdout-days",
+                "8",
+                "--second-oos-days",
+                "5",
+                "--full-window-start-date",
+                "2026-05-04",
+                "--expected-last-trading-day",
+                "2026-05-15",
+                "--latest-complete-window-min-days",
+                "5",
+                "--min-executable-rows-per-symbol-day",
+                "3",
+                "--selection-only",
+            ]
+            with patch.object(sys, "argv", argv):
+                args = cli_parsing._parse_args()
 
-        self.assertIn("name: feedbackEvidenceJsonlB64", template)
-        self.assertIn("name: candidateSpecsJsonlB64", template)
-        self.assertIn("name: candidateSpecsConfigMapName", template)
-        self.assertIn("name: candidateSpecsConfigMapKey", template)
-        self.assertIn("--candidate-specs", template)
-        self.assertIn("TORGHUT_WHITEPAPER_CANDIDATE_SPECS_JSONL_B64", template)
-        self.assertIn("TORGHUT_WHITEPAPER_CANDIDATE_SPECS_CONFIGMAP_PATH", template)
-        self.assertIn("name: feedbackEvidenceConfigMapName", template)
-        self.assertIn("name: feedbackEvidenceConfigMapKey", template)
-        self.assertIn("--feedback-evidence-jsonl", template)
-        self.assertIn("TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_JSONL_B64", template)
-        self.assertIn("TORGHUT_WHITEPAPER_FEEDBACK_EVIDENCE_CONFIGMAP_PATH", template)
-        self.assertIn("TORGHUT_WHITEPAPER_SOURCE_JSONL_B64", template)
-        self.assertIn('--epoch-id "${RUN_ID}"', template)
-        self.assertIn("name: feedback-evidence", template)
-        self.assertIn("name: candidate-specs", template)
-        self.assertNotIn(
-            "printf '%s' \"{{inputs.parameters.feedbackEvidenceJsonlB64}}\"",
-            template,
+        self.assertEqual(args.epoch_id, "whitepaper-autoresearch-test")
+        self.assertEqual(args.source_jsonl, [Path("/tmp/source.jsonl")])
+        self.assertEqual(args.candidate_specs, [Path("/tmp/candidate-specs.jsonl")])
+        self.assertEqual(
+            args.feedback_evidence_jsonl,
+            [Path("/tmp/feedback-evidence.jsonl")],
         )
-        self.assertNotIn(
-            "printf '%s' \"{{inputs.parameters.candidateSpecsJsonlB64}}\"",
-            template,
-        )
-        self.assertNotIn(
-            "printf '%s' \"{{inputs.parameters.sourceJsonlB64}}\"",
-            template,
-        )
-        self.assertIn(
-            'if [ -n "{{inputs.parameters.fullWindowStartDate}}" ]; then',
-            template,
-        )
-        self.assertIn(
-            'if [ -n "{{inputs.parameters.expectedLastTradingDay}}" ]; then',
-            template,
-        )
-        self.assertIn("parallelism: 1", template)
-        self.assertIn("name: torghut-whitepaper-autoresearch-profit-target", template)
-        self.assertIn("podGC:\n    strategy: OnPodCompletion", template)
-        self.assertIn("secondsAfterCompletion: 172800", template)
-        self.assertIn("name: maxCandidates\n        value: '128'", template)
-        self.assertIn("name: topK\n        value: '64'", template)
-        self.assertIn("name: explorationSlots\n        value: '48'", template)
-        self.assertIn("name: feedbackBlockReauditSlots\n        value: '32'", template)
-        self.assertIn(
-            "name: maxFrontierCandidatesPerSpec\n        value: '2'", template
-        )
-        self.assertIn(
-            "name: maxTotalFrontierCandidates\n        value: '128'", template
-        )
-        self.assertIn("name: realReplayTimeoutSeconds\n        value: '7200'", template)
-        self.assertIn(
-            "name: realReplayShardTimeoutSeconds\n        value: '900'", template
-        )
-        self.assertIn("name: realReplayShardWorkers\n        value: '4'", template)
-        self.assertIn("name: trainDays\n        value: '12'", template)
-        self.assertIn("name: holdoutDays\n        value: '8'", template)
-        self.assertIn("name: secondOosDays\n        value: '5'", template)
-        self.assertIn('--train-days "{{inputs.parameters.trainDays}}"', template)
-        self.assertIn('--holdout-days "{{inputs.parameters.holdoutDays}}"', template)
-        self.assertIn(
-            '--second-oos-days "{{inputs.parameters.secondOosDays}}"', template
-        )
-        self.assertIn(
-            '--latest-complete-window-min-days "{{inputs.parameters.latestCompleteWindowMinDays}}"',
-            template,
-        )
-        self.assertIn(
-            '--min-executable-rows-per-symbol-day "{{inputs.parameters.minExecutableRowsPerSymbolDay}}"',
-            template,
-        )
-        self.assertIn("replay-source-coverage-diagnostics.json", template)
-        self.assertIn("cpu: 4", template)
-        self.assertIn("memory: 12Gi", template)
-        self.assertIn("cpu: 8", template)
-        self.assertIn("memory: 32Gi", template)
-        self.assertIn("--feedback-block-reaudit-slots", template)
-        self.assertIn(
-            "--program config/trading/research-programs/portfolio-profit-autoresearch-500-v1.yaml",
-            template,
-        )
-        self.assertNotIn("--require-no-flat-days", template)
-        self.assertNotIn(
-            '--min-daily-net-pnl "{{inputs.parameters.targetNetPnlPerDay}}"', template
-        )
-        self.assertIn("activeDeadlineSeconds: 9000", template)
-        self.assertIn("name: allowStaleTape\n        value: 'false'", template)
-        self.assertIn("name: selectionOnly\n        value: 'false'", template)
-        self.assertIn("name: selectionOnly", template)
-        self.assertIn(
-            'if [ "{{inputs.parameters.selectionOnly}}" = "true" ]; then',
-            template,
-        )
-        self.assertIn("SCRIPT_ARGS+=(--selection-only)", template)
-        self.assertNotIn("value: '2026-04-24'", template)
-        self.assertNotIn("value: '2026-05-01'", template)
+        self.assertEqual(args.max_candidates, 128)
+        self.assertEqual(args.top_k, 64)
+        self.assertEqual(args.exploration_slots, 48)
+        self.assertEqual(args.feedback_block_reaudit_slots, 32)
+        self.assertEqual(args.max_frontier_candidates_per_spec, 2)
+        self.assertEqual(args.max_total_frontier_candidates, 128)
+        self.assertEqual(args.real_replay_timeout_seconds, 7200)
+        self.assertEqual(args.real_replay_shard_size, 1)
+        self.assertEqual(args.real_replay_shard_timeout_seconds, 900)
+        self.assertEqual(args.real_replay_shard_workers, 4)
+        self.assertEqual(args.train_days, 12)
+        self.assertEqual(args.holdout_days, 8)
+        self.assertEqual(args.second_oos_days, 5)
+        self.assertEqual(args.full_window_start_date, "2026-05-04")
+        self.assertEqual(args.expected_last_trading_day, "2026-05-15")
+        self.assertEqual(args.latest_complete_window_min_days, 5)
+        self.assertEqual(args.min_executable_rows_per_symbol_day, 3)
+        self.assertTrue(args.selection_only)
+        self.assertFalse(args.allow_stale_tape)
 
     def test_parse_args_defaults_strategy_configmap_to_runtime_env_path(self) -> None:
         with TemporaryDirectory() as tmpdir:
