@@ -5,5 +5,5 @@ resources:
   - service.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/olden
-    digest: sha256:8695a0dfc47691d7cda0cf5edd84128756f2032a9508a432d0489a3bac525dbd
     newName: registry.ide-newton.ts.net/lab/olden
+    newTag: 0.586.0
