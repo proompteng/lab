@@ -61,7 +61,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--runtime-window-import-file",
         type=Path,
-        help="Path to renew_latest_empirical_promotion_jobs.py runtime_window_import JSON output.",
+        help="Path to runtime-window import JSON output.",
     )
     parser.add_argument(
         "--runtime-window-import-url",

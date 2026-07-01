@@ -256,7 +256,7 @@ def _paper_route_evidence(
                 "import_blockers": blockers,
             },
             "runtime_window_import_handoff": {
-                "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
+                "runner": "removed_runtime_window_import_handoff",
                 "target_plan_endpoint": "/trading/proofs?kind=runtime_window&window=next&limit=20",
                 "required_flags": flags,
                 "source_dsn_env": "SIM_DB_DSN",

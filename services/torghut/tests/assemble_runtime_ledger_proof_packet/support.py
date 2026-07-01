@@ -144,7 +144,7 @@ def _paper_route_evidence(
                 "import_blockers": blockers,
             },
             "runtime_window_import_handoff": {
-                "runner": "scripts/renew_latest_empirical_promotion_jobs.py",
+                "runner": "removed_runtime_window_import_handoff",
                 "import_ready": import_ready,
                 "import_blockers": blockers,
                 "promotion_allowed": False,

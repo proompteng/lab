@@ -15,7 +15,6 @@ from ...models import (
     Strategy,
 )
 from ..autonomy import detect_drift
-from ..empirical_jobs import build_empirical_jobs_status
 from ..feature_quality import evaluate_feature_batch_quality
 from ..ingest import SignalBatch
 from ..models import SignalEnvelope
@@ -146,12 +145,6 @@ class SimpleTradingPipeline(
             session,
             state=self.state,
             market_context_status=market_context_status,
-        )
-
-    def _build_empirical_jobs_status(self, *, session: Session) -> Mapping[str, Any]:
-        return build_empirical_jobs_status(
-            session=session,
-            stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
         )
 
     def _load_quant_evidence_status(self) -> Mapping[str, Any]:

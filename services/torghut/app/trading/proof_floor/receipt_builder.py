@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from ...config import settings
 from ..discovery.promotion_contract import (
     final_authority_parameter_contract,
     probation_evidence_collection_contract,
@@ -45,7 +44,7 @@ def build_profitability_proof_floor_receipt(
     market_session_open: bool | None,
     live_submission_gate: Mapping[str, Any],
     hypothesis_payload: Mapping[str, Any],
-    empirical_jobs_status: Mapping[str, Any],
+    empirical_jobs_status: Mapping[str, Any] | None = None,
     quant_evidence: Mapping[str, Any],
     market_context_status: Mapping[str, Any],
     tca_summary: Mapping[str, Any],
@@ -194,38 +193,6 @@ def build_profitability_proof_floor_receipt(
         source_ref={
             **target_notional_summary,
             "raw_state": target_notional_raw_state,
-        },
-    )
-
-    empirical_health_required = bool(settings.trading_empirical_jobs_health_required)
-    empirical_ready = bool_value(empirical_jobs_status.get("ready"))
-    empirical_status = text_value(empirical_jobs_status.get("status"), "unknown")
-    if empirical_ready:
-        empirical_state = "pass"
-        empirical_effect = "none"
-    elif not empirical_health_required:
-        empirical_state = "informational"
-        empirical_effect = "none"
-    else:
-        empirical_state = "degraded"
-        empirical_effect = "paper_hold" if not live_mode else "live_hold"
-        add_repair(
-            repairs,
-            code="repair_empirical_jobs",
-            dimension="empirical",
-            action="refresh_empirical_job_receipts",
-            reason=empirical_status,
-            priority=50,
-        )
-    add_dimension(
-        dimension="empirical",
-        state=empirical_state,
-        reason=empirical_status,
-        capital_effect=empirical_effect,
-        source_ref={
-            "candidate_ids": empirical_jobs_status.get("candidate_ids") or [],
-            "dataset_snapshot_refs": empirical_jobs_status.get("dataset_snapshot_refs")
-            or [],
         },
     )
 

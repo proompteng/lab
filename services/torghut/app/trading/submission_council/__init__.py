@@ -347,12 +347,7 @@ def _submission_dependency_context(
             dependency_quorum_decision=decision,
             clickhouse_ta_status=clickhouse_ta_status,
         ),
-        empirical_ready=(
-            bool(empirical_jobs_status.get("ready"))
-            if settings.trading_empirical_jobs_health_required
-            and isinstance(empirical_jobs_status, Mapping)
-            else None
-        ),
+        empirical_ready=None,
         dspy_mode=dspy_mode,
         dspy_live_ready=(
             bool(dspy_runtime_status.get("live_ready"))
