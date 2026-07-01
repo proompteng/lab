@@ -254,6 +254,7 @@ jobs:
           TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           TORGHUT_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
           TORGHUT_COMMIT: ${{ steps.meta.outputs.source_sha }}
+          TORGHUT_INCLUDE_OPTIONS_MANIFESTS: "false"
         run: |
           set -euo pipefail
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
