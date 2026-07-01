@@ -6,5 +6,5 @@ resources:
   - ingressroute.yaml
 images:
   - name: registry.ide-newton.ts.net/lab/docs
-    digest: sha256:6681ca68903e9efdbd972ac417b07c6e5921f75b3be219fd7cf6e7bf80d45853
     newName: registry.ide-newton.ts.net/lab/docs
+    newTag: 0.572.1
