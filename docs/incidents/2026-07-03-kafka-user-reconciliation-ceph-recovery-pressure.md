@@ -38,6 +38,46 @@ osd.5 observed slow operation indications in BlueStore
 This caused KRaft/controller write latency, broker heartbeat/request timeouts, and Kafka admin-client timeouts. The
 visible Argo CD symptom was `KafkaUser` degradation, but the failure was below Strimzi in the Kafka control-plane path.
 
+## Five Whys
+
+Five Whys analysis starts from the user-visible impact and repeatedly asks why the previous answer happened until the
+chain reaches an actionable process or configuration failure. It is not a blame exercise, and the useful stopping point
+can be fewer or more than exactly five questions.
+
+1. **Why was the Argo CD `kafka` application degraded?**
+
+   `KafkaUser` resources were `NotReady`, so Argo surfaced the Kafka application as unhealthy even though sync status
+   was clean.
+
+2. **Why were `KafkaUser` resources `NotReady`?**
+
+   The Strimzi user operator could not complete SCRAM credential reconciliation because Kafka admin-client operations
+   timed out.
+
+3. **Why were Kafka admin-client operations timing out?**
+
+   Kafka KRaft/controller and broker request paths were intermittently too slow to respond within admin-client timeouts.
+
+4. **Why were Kafka control-plane request paths too slow?**
+
+   Kafka metadata and broker state were on Ceph-backed PVCs while Ceph was running heavy recovery/backfill, and OSDs on
+   `talos-192-168-1-85` were reporting slow BlueStore operations.
+
+5. **Why did Ceph recovery starve latency-sensitive Kafka IO?**
+
+   Rook Ceph was configured to favor recovery throughput over client latency with `high_recovery_ops`,
+   `osd_max_backfills=32`, and `osd_recovery_max_active=64`, even though Kafka and database PVCs share the same RBD
+   storage.
+
+6. **Why was that configuration allowed to remain in place for shared Kafka/database storage?**
+
+   The storage runbook and GitOps values did not encode a clear policy that recovery must favor client latency when
+   Kafka or database PVCs are on the same Ceph cluster.
+
+**Actionable root cause**: Ceph recovery policy was tuned for aggressive backfill instead of latency-sensitive shared
+storage, and the incident documentation/runbook did not make that tradeoff explicit before recovery pressure reached
+Kafka admin/control-plane paths.
+
 ## Contributing Factors
 
 - Kafka broker and controller state lives on Ceph-backed PVCs.
