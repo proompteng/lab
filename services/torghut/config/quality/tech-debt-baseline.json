@@ -1,0 +1,265 @@
+{
+  "markers": {
+    "asyncio_sleep": {
+      "by_root": {
+        "app": 3
+      },
+      "total": 3
+    },
+    "base_exception": {
+      "by_root": {
+        "app": 1,
+        "scripts": 1
+      },
+      "total": 2
+    },
+    "broad_exception": {
+      "by_root": {
+        "app": 262,
+        "scripts": 105,
+        "tests": 6
+      },
+      "total": 373
+    },
+    "noqa_comment": {
+      "by_root": {
+        "scripts": 17
+      },
+      "total": 17
+    },
+    "not_implemented_error": {
+      "by_root": {
+        "app": 196
+      },
+      "total": 196
+    },
+    "pyright_comment": {
+      "by_root": {},
+      "total": 0
+    },
+    "time_sleep": {
+      "by_root": {
+        "app": 5,
+        "scripts": 22,
+        "tests": 10
+      },
+      "total": 37
+    },
+    "type_ignore": {
+      "by_root": {},
+      "total": 0
+    },
+    "typing_any_import": {
+      "by_root": {
+        "app": 434,
+        "scripts": 163,
+        "tests": 84
+      },
+      "total": 681
+    }
+  },
+  "parse_errors": [],
+  "paths": [
+    "app",
+    "scripts",
+    "tests"
+  ],
+  "pylint_design": {
+    "by_code": {
+      "R0911": 80,
+      "R0912": 128,
+      "R0913": 521,
+      "R0914": 453,
+      "R0915": 117,
+      "R0917": 20,
+      "R1702": 29
+    },
+    "examples": {
+      "R0911": [
+        "app/snapshots.py:543:0: R0911: Too many return statements (7/6) (too-many-return-statements)",
+        "app/alpaca_client.py:294:4: R0911: Too many return statements (9/6) (too-many-return-statements)",
+        "app/whitepapers/workflow/whitepaper_workflow_persistence_methods.py:49:4: R0911: Too many return statements (7/6) (too-many-return-statements)",
+        "app/whitepapers/workflow/whitepaper_workflow_ingestion_methods.py:74:4: R0911: Too many return statements (8/6) (too-many-return-statements)",
+        "app/whitepapers/workflow/whitepaper_workflow_agent_methods.py:295:4: R0911: Too many return statements (7/6) (too-many-return-statements)"
+      ],
+      "R0912": [
+        "app/whitepapers/workflow/whitepaper_workflow_rollout_methods.py:328:4: R0912: Too many branches (15/12) (too-many-branches)",
+        "app/hyperliquid_execution/config.py:159:4: R0912: Too many branches (17/12) (too-many-branches)",
+        "app/api/health_checks/tigerbeetle_health.py:245:0: R0912: Too many branches (18/12) (too-many-branches)",
+        "app/trading/tigerbeetle_runtime_ledger_parity.py:427:0: R0912: Too many branches (25/12) (too-many-branches)",
+        "app/trading/empirical_jobs.py:435:0: R0912: Too many branches (18/12) (too-many-branches)"
+      ],
+      "R0913": [
+        "app/db.py:364:0: R0913: Too many arguments (6/5) (too-many-arguments)",
+        "app/snapshots.py:88:0: R0913: Too many arguments (8/5) (too-many-arguments)",
+        "app/snapshots.py:275:0: R0913: Too many arguments (9/5) (too-many-arguments)",
+        "app/alpaca_client.py:94:4: R0913: Too many arguments (7/5) (too-many-arguments)",
+        "app/alpaca_client.py:182:4: R0913: Too many arguments (10/5) (too-many-arguments)"
+      ],
+      "R0914": [
+        "app/db.py:384:0: R0914: Too many local variables (21/15) (too-many-locals)",
+        "app/snapshots.py:88:0: R0914: Too many local variables (19/15) (too-many-locals)",
+        "app/alpaca_client.py:182:4: R0914: Too many local variables (16/15) (too-many-locals)",
+        "app/whitepapers/workflow/whitepaper_workflow_api_methods.py:169:4: R0914: Too many local variables (26/15) (too-many-locals)",
+        "app/whitepapers/workflow/whitepaper_workflow_persistence_methods.py:193:4: R0914: Too many local variables (42/15) (too-many-locals)"
+      ],
+      "R0915": [
+        "app/whitepapers/workflow/whitepaper_workflow_persistence_methods.py:193:4: R0915: Too many statements (61/50) (too-many-statements)",
+        "app/whitepapers/workflow/whitepaper_workflow_agent_methods.py:50:4: R0915: Too many statements (51/50) (too-many-statements)",
+        "app/api/maintenance.py:111:0: R0915: Too many statements (109/50) (too-many-statements)",
+        "app/api/health_checks/tigerbeetle_health.py:245:0: R0915: Too many statements (79/50) (too-many-statements)",
+        "app/trading/alpha_repair_dividend_ledger.py:208:0: R0915: Too many statements (52/50) (too-many-statements)"
+      ],
+      "R0917": [
+        "app/db.py:364:0: R0917: Too many positional arguments (6/5) (too-many-positional-arguments)",
+        "app/alpaca_client.py:94:4: R0917: Too many positional arguments (7/5) (too-many-positional-arguments)",
+        "app/alpaca_client.py:182:4: R0917: Too many positional arguments (9/5) (too-many-positional-arguments)",
+        "app/api/maintenance.py:111:0: R0917: Too many positional arguments (6/5) (too-many-positional-arguments)",
+        "app/api/whitepaper.py:400:0: R0917: Too many positional arguments (7/5) (too-many-positional-arguments)"
+      ],
+      "R1702": [
+        "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
+        "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
+        "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
+        "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
+        "app/trading/hypotheses/compile_hypothesis_runtime_statuses.py:126:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)"
+      ]
+    },
+    "top_files": [
+      {
+        "count": 13,
+        "path": "app/trading/autonomy/lane_persistence.py"
+      },
+      {
+        "count": 12,
+        "path": "app/trading/ingest/clickhouse_signal_ingestor_core_methods.py"
+      },
+      {
+        "count": 9,
+        "path": "app/trading/autonomy/policy_check/evidence_artifacts.py"
+      },
+      {
+        "count": 9,
+        "path": "app/trading/empirical_jobs.py"
+      },
+      {
+        "count": 9,
+        "path": "app/trading/executable_alpha_receipts/build_executable_alpha_repair_receipts.py"
+      },
+      {
+        "count": 9,
+        "path": "app/trading/execution/order_executor_core_methods.py"
+      },
+      {
+        "count": 9,
+        "path": "app/trading/profit_leases.py"
+      },
+      {
+        "count": 9,
+        "path": "scripts/hypothesis_runtime_window_import/realized_pnl.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/autonomy/phase_manifest_contract.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/autonomy/policy_check/benchmark_parity.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/decisions/resolve_runtime_trade_policy.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/evidence_receipts.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/llm/dspy_compile/workflow/shared_context.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/scheduler/paper_route_materialization.py"
+      },
+      {
+        "count": 8,
+        "path": "app/trading/tigerbeetle_runtime_ledger_parity.py"
+      },
+      {
+        "count": 8,
+        "path": "scripts/historical_simulation_startup/replay_execution.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/alpha/lane/alpha_lane_result.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/autonomy/lane_phase_payloads.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/no_delta_repair_reentry_auction.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/profit_carry_passports.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/profitability_archive/historical_run_archive.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/route_reacquisition.py"
+      },
+      {
+        "count": 7,
+        "path": "app/trading/submission_council/certificate_eval.py"
+      },
+      {
+        "count": 7,
+        "path": "scripts/historical_simulation_startup/state_and_cache.py"
+      },
+      {
+        "count": 7,
+        "path": "scripts/paper_account_position_flattening/lineage_execution.py"
+      }
+    ],
+    "total": 1348
+  },
+  "roots": {
+    "app": {
+      "files": 655,
+      "lines": 282523
+    },
+    "scripts": {
+      "files": 242,
+      "lines": 99757
+    },
+    "tests": {
+      "files": 707,
+      "lines": 310395
+    }
+  },
+  "schema_version": "torghut.tech-debt-measurement.v1",
+  "threshold_counts": {
+    "classes_ge_300": 375,
+    "classes_ge_500": 300,
+    "classes_ge_750": 155,
+    "files_ge_1000": 1,
+    "files_ge_500": 696,
+    "files_ge_750": 344,
+    "files_ge_900": 102,
+    "files_ge_950": 48,
+    "functions_ge_100": 940,
+    "functions_ge_250": 115,
+    "functions_ge_500": 27,
+    "functions_ge_750": 7
+  },
+  "total": {
+    "files": 1604,
+    "lines": 692675
+  }
+}

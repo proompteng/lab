@@ -35,6 +35,20 @@ Health checks:
 - `GET /db-check` – requires reachable Postgres at `DB_DSN`, matching Alembic heads, and schema-lineage policy checks
   (`schema_graph_*` diagnostics + lineage warnings/errors) (default port 8181)
 
+Type-checking guardrails:
+
+```bash
+cd services/torghut
+uv run --frozen pyright --project pyrightconfig.json
+uv run --frozen pyright --project pyrightconfig.alpha.json
+uv run --frozen pyright --project pyrightconfig.scripts.json
+uv run --frozen pyright --project pyrightconfig.alpha.strict.json
+uv run --frozen pyright --project pyrightconfig.scripts.strict.json
+```
+
+The `*.strict.json` profiles are additive ratchets. Keep moving modules from the legacy basic profiles into strict
+slices; do not remove strict includes or weaken diagnostics to get a refactor through CI.
+
 Migration lineage guardrail (CI-local parity):
 
 ```bash
@@ -64,13 +78,43 @@ Current rollout commands:
 cd services/torghut
 uv run --frozen python scripts/run_pylint_torghut_structural_gate.py
 uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
-uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n
+uv run --frozen pylint app scripts --disable=all --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks --score=n
 ```
 
 The structural and file-length commands are blocking in CI. The structural gate rejects regenerated split filenames,
 dynamic module facades, wildcard imports, source-string execution, and broad Ruff/Pyright/type suppressions across the
 full Torghut Python surface. The design-complexity command is intentionally non-blocking inventory until the remaining
 findings are refactored without broad suppressions.
+
+Changed Torghut files are also checked by `scripts/run_pylint_torghut_quality_diff_gate.py`. New changed-line quality
+violations are blocked, including fresh `typing.Any` imports, broad `except Exception` or `except BaseException`,
+blanket lint/type suppressions, wildcard imports, dynamic module facades, generated split filenames, and new design
+violations. If a temporary exception is unavoidable, add a narrow entry to `config/quality/quality-gate-allowlist.toml`
+with an owner, reason, and removal target in the same PR.
+
+## Tech-debt ratchet
+
+Torghut tracks the broader legacy debt inventory in `config/quality/tech-debt-baseline.json`. This is not a substitute
+for targeted refactors; it prevents new work from increasing the existing debt counters while the older surface is paid
+down.
+
+Update the measurement after intentional quality cleanup:
+
+```bash
+cd services/torghut
+uv run --frozen python scripts/measure_torghut_tech_debt.py --format json > config/quality/tech-debt-baseline.json
+```
+
+Enforce the current ratchet locally:
+
+```bash
+cd services/torghut
+uv run --frozen python scripts/measure_torghut_tech_debt.py --baseline config/quality/tech-debt-baseline.json --enforce-ratchet
+```
+
+The ratchet fails when tracked debt counters increase, including over-threshold files/functions/classes, broad `Any`
+imports, broad exception catches, sleep calls, `NotImplementedError` scaffolding, ignore comments, and Pylint design
+findings. Ordinary file and line counts are reported for context but are not ratcheted.
 
 ## Dead-code audit (Vulture)
 

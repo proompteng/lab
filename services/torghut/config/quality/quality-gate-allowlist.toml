@@ -1,0 +1,11 @@
+# Temporary changed-line quality exceptions.
+#
+# Entries must be specific and reviewable:
+#
+# [[allow]]
+# path = "app/example.py"
+# symbol = "torghut-broad-exception"
+# owner = "torghut-runtime"
+# reason = "External dependency boundary is fail-closed and covered by tests."
+# removal_target = "Replace with DependencyProbeUnavailable after endpoint split."
+# line = 123

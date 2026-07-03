@@ -3,40 +3,40 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from hashlib import sha256
 import json
 from typing import Any, cast
 
 from .route_metadata import route_repair_recommendation
+from .route_reacquisition_probe import (
+    PaperRouteProbeConfig,
+    PaperRouteProbePlan,
+    apply_paper_route_probe,
+    paper_route_probe_payload,
+    paper_route_probe_plan,
+)
 
 
 SCHEMA_VERSION = "torghut.route-reacquisition-book.v1"
 ROUTE_REPAIR_AUDIT_RECEIPT_SCHEMA_VERSION = "torghut.route-repair-audit-receipt.v1"
-_PAPER_ROUTE_PROBE_REASONS = {
-    "execution_tca_route_universe_empty",
-    "execution_tca_route_universe_exclusions_applied",
-    "execution_tca_route_universe_incomplete",
-    "execution_tca_slippage_guardrail_exceeded",
-    "execution_tca_symbol_missing",
-    "route_tca_passed_but_dependency_receipts_block_capital",
-    "route_tca_avg_abs_slippage_above_guardrail",
-    "route_tca_non_authority_source",
-    "route_tca_non_authority_source_decision_mode",
-    "tca_evidence_stale",
-    "stale_quote",
-    "missing_executable_quote",
-    "missing_bid_ask",
-    "missing_bid",
-    "missing_ask",
-    "spread_bps_exceeded",
-    "session_closed",
-    "pair_imbalance",
-    "missing_target",
-    "blocked_submit",
-    "missing_close_flatten_handoff",
-    "runtime_import_pending",
-}
-_PAPER_ROUTE_PROBE_STATES = {"blocked", "missing", "probing"}
+
+
+@dataclass(frozen=True)
+class RouteReacquisitionSources:
+    proof_floor_receipt: Mapping[str, Any]
+    tca_dimension: Mapping[str, Any]
+    market_context_dimension: Mapping[str, Any]
+    quant_dimension: Mapping[str, Any]
+    alpha_dimension: Mapping[str, Any]
+    tca_source_ref: Mapping[str, Any]
+    market_context_source_ref: Mapping[str, Any]
+    quant_source_ref: Mapping[str, Any]
+    alpha_source_ref: Mapping[str, Any]
+    symbol_routes: Mapping[str, Any]
+    account_label: str | None
+    generated_at: object
+    dependency_pass: bool
 
 
 def _text(value: object, default: str = "") -> str:
@@ -74,14 +74,6 @@ def _float(value: object) -> float | None:
     return None
 
 
-def _positive_amount_text(value: object) -> str | None:
-    amount = _float(value)
-    if amount is None or amount <= 0:
-        return None
-    rendered = _text(value)
-    return rendered if rendered else str(amount)
-
-
 def _mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
@@ -92,20 +84,6 @@ def _sequence(value: object) -> Sequence[object]:
     if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
         return cast(Sequence[object], value)
     return []
-
-
-def _symbol_list(value: object) -> list[str]:
-    symbols: list[str] = []
-    values: Sequence[object]
-    if isinstance(value, str):
-        values = value.split(",")
-    else:
-        values = _sequence(value)
-    for raw_symbol in values:
-        symbol = _text(raw_symbol).upper()
-        if symbol and symbol not in symbols:
-            symbols.append(symbol)
-    return symbols
 
 
 def _stable_ref(prefix: str, payload: Mapping[str, object]) -> str:
@@ -486,41 +464,213 @@ def _repair_candidate(record: Mapping[str, object], *, rank: int) -> dict[str, o
     return payload
 
 
-def _paper_route_probe_eligible(record: Mapping[str, object]) -> bool:
-    return (
-        _text(record.get("state")) in _PAPER_ROUTE_PROBE_STATES
-        and _text(record.get("reason")) in _PAPER_ROUTE_PROBE_REASONS
+def _route_reacquisition_sources(
+    proof_floor_receipt: Mapping[str, Any],
+) -> RouteReacquisitionSources:
+    tca_dimension = _dimension(proof_floor_receipt, "execution_tca")
+    market_context_dimension = _dimension(proof_floor_receipt, "market_context")
+    quant_dimension = _dimension(proof_floor_receipt, "quant_ingestion")
+    alpha_dimension = _dimension(proof_floor_receipt, "alpha_readiness")
+    tca_source_ref = _source_ref(tca_dimension)
+    unsettled_count = _int(tca_source_ref.get("unsettled_execution_count"))
+    return RouteReacquisitionSources(
+        proof_floor_receipt=proof_floor_receipt,
+        tca_dimension=tca_dimension,
+        market_context_dimension=market_context_dimension,
+        quant_dimension=quant_dimension,
+        alpha_dimension=alpha_dimension,
+        tca_source_ref=tca_source_ref,
+        market_context_source_ref=_source_ref(market_context_dimension),
+        quant_source_ref=_source_ref(quant_dimension),
+        alpha_source_ref=_source_ref(alpha_dimension),
+        symbol_routes=_mapping(tca_source_ref.get("symbol_routes")),
+        account_label=cast(str | None, proof_floor_receipt.get("account_label")),
+        generated_at=proof_floor_receipt.get("generated_at"),
+        dependency_pass=(
+            _state_is_pass(market_context_dimension)
+            and _state_is_pass(quant_dimension)
+            and _state_is_pass(alpha_dimension)
+            and unsettled_count <= 0
+        ),
     )
 
 
-def _paper_route_probe_blockers(
+def _route_record_from_payload(
     *,
-    trading_mode: str,
-    market_session_open: bool | None,
-    enabled: bool,
-    allow_live_mode: bool,
-    configured_limit: str | None,
-    eligible_symbol_count: int,
-) -> list[str]:
-    blockers: list[str] = []
-    if trading_mode == "live":
-        if not allow_live_mode:
-            blockers.append("live_paper_route_probe_collection_disabled")
-    elif trading_mode != "paper":
-        blockers.append("not_paper_mode")
-    if not enabled:
-        blockers.append("paper_route_probe_disabled")
-    if configured_limit is None:
-        blockers.append("paper_route_probe_max_notional_invalid")
-    if market_session_open is not True:
-        blockers.append(
-            "session_closed"
-            if market_session_open is False
-            else "market_session_unknown"
+    sources: RouteReacquisitionSources,
+    symbol_payload: Mapping[str, Any],
+    state: str,
+    reason: str,
+) -> dict[str, object]:
+    return _record_from_symbol(
+        proof_floor_receipt=sources.proof_floor_receipt,
+        symbol_payload=symbol_payload,
+        account_label=sources.account_label,
+        state=state,
+        reason=reason,
+        tca_source_ref=sources.tca_source_ref,
+        market_context_source_ref=sources.market_context_source_ref,
+        quant_source_ref=sources.quant_source_ref,
+        alpha_source_ref=sources.alpha_source_ref,
+    )
+
+
+def _routeable_records(sources: RouteReacquisitionSources) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    state = "routeable" if sources.dependency_pass else "probing"
+    reason = (
+        "route_tca_passed"
+        if sources.dependency_pass
+        else "route_tca_passed_but_dependency_receipts_block_capital"
+    )
+    for raw_symbol in _sequence(sources.symbol_routes.get("routeable_symbols")):
+        symbol_payload = _mapping(raw_symbol)
+        if _text(symbol_payload.get("symbol")):
+            records.append(
+                _route_record_from_payload(
+                    sources=sources,
+                    symbol_payload=symbol_payload,
+                    state=state,
+                    reason=reason,
+                )
+            )
+    return records
+
+
+def _blocked_records(sources: RouteReacquisitionSources) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    reason = _text(sources.tca_dimension.get("reason"), "execution_tca_blocked")
+    for raw_symbol in _sequence(sources.symbol_routes.get("blocked_symbols")):
+        symbol_payload = _mapping(raw_symbol)
+        if _text(symbol_payload.get("symbol")):
+            records.append(
+                _route_record_from_payload(
+                    sources=sources,
+                    symbol_payload=symbol_payload,
+                    state="blocked",
+                    reason=reason,
+                )
+            )
+    return records
+
+
+def _missing_records(sources: RouteReacquisitionSources) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for raw_symbol in _sequence(sources.symbol_routes.get("missing_symbols")):
+        symbol_payload = (
+            cast(Mapping[str, Any], raw_symbol)
+            if isinstance(raw_symbol, Mapping)
+            else {"symbol": raw_symbol}
         )
-    if eligible_symbol_count <= 0:
-        blockers.append("paper_route_probe_candidate_missing")
-    return blockers
+        if _text(symbol_payload.get("symbol")):
+            records.append(
+                _missing_record(
+                    proof_floor_receipt=sources.proof_floor_receipt,
+                    symbol_payload=symbol_payload,
+                    account_label=sources.account_label,
+                    tca_source_ref=sources.tca_source_ref,
+                    market_context_source_ref=sources.market_context_source_ref,
+                    quant_source_ref=sources.quant_source_ref,
+                    alpha_source_ref=sources.alpha_source_ref,
+                )
+            )
+    return records
+
+
+def _route_reacquisition_records(
+    sources: RouteReacquisitionSources,
+) -> list[dict[str, object]]:
+    return [
+        *_routeable_records(sources),
+        *_blocked_records(sources),
+        *_missing_records(sources),
+    ]
+
+
+def _record_counts(records: Sequence[Mapping[str, object]]) -> dict[str, int]:
+    return {
+        "routeable": sum(1 for item in records if item["state"] == "routeable"),
+        "probing": sum(1 for item in records if item["state"] == "probing"),
+        "blocked": sum(1 for item in records if item["state"] == "blocked"),
+        "missing": sum(1 for item in records if item["state"] == "missing"),
+        "retired": sum(1 for item in records if item["state"] == "retired"),
+    }
+
+
+def _repair_candidates(
+    records: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
+    repair_source_records = sorted(
+        (
+            record
+            for record in records
+            if _text(record.get("state")) in {"blocked", "missing"}
+        ),
+        key=_repair_candidate_rank,
+    )
+    return [
+        _repair_candidate(record, rank=index + 1)
+        for index, record in enumerate(repair_source_records)
+    ]
+
+
+def _route_reacquisition_summary(
+    *,
+    sources: RouteReacquisitionSources,
+    records: Sequence[Mapping[str, object]],
+    probe_plan: PaperRouteProbePlan,
+) -> dict[str, object]:
+    counts = _record_counts(records)
+    repair_candidates = _repair_candidates(records)
+    return {
+        "scope_symbols": list(_sequence(sources.symbol_routes.get("scope_symbols"))),
+        "scope_symbol_count": _int(sources.symbol_routes.get("scope_symbol_count")),
+        "routeable_symbol_count": counts["routeable"],
+        "probing_symbol_count": counts["probing"],
+        "blocked_symbol_count": counts["blocked"],
+        "missing_symbol_count": counts["missing"],
+        "retired_symbol_count": counts["retired"],
+        "candidate_symbols": [
+            _text(item.get("symbol"))
+            for item in records
+            if _text(item.get("state")) in {"routeable", "probing"}
+        ],
+        "repair_candidate_count": len(repair_candidates),
+        "repair_candidate_symbols": [
+            _text(item.get("symbol")) for item in repair_candidates
+        ],
+        "repair_candidates": repair_candidates,
+        "paper_route_probe_eligible_symbols": probe_plan.eligible_symbols,
+        "paper_route_probe_active_symbols": probe_plan.active_symbols,
+        "expected_unblock_value": (
+            counts["blocked"] * 2
+            + counts["missing"]
+            + counts["probing"] * 3
+            + counts["routeable"] * 4
+        ),
+    }
+
+
+def _source_refs_payload(
+    *,
+    sources: RouteReacquisitionSources,
+    probe_plan: PaperRouteProbePlan,
+) -> dict[str, object]:
+    return {
+        "proof_floor_generated_at": sources.generated_at,
+        "proof_floor_route_state": sources.proof_floor_receipt.get("route_state"),
+        "proof_floor_capital_state": sources.proof_floor_receipt.get("capital_state"),
+        "execution_tca_reason": sources.tca_dimension.get("reason"),
+        "market_context_state": sources.market_context_dimension.get("state"),
+        "quant_ingestion_state": sources.quant_dimension.get("state"),
+        "alpha_readiness_state": sources.alpha_dimension.get("state"),
+        "paper_route_probe_target_symbols": probe_plan.target_symbols,
+        "paper_route_probe_target_symbol_source": (
+            "bounded_paper_route_collection_target_plan"
+            if probe_plan.target_symbols
+            else None
+        ),
+    }
 
 
 def build_route_reacquisition_book(
@@ -539,165 +689,27 @@ def build_route_reacquisition_book(
     or notional by itself; it makes the next revenue repair explicit.
     """
 
-    tca_dimension = _dimension(proof_floor_receipt, "execution_tca")
-    market_context_dimension = _dimension(proof_floor_receipt, "market_context")
-    quant_dimension = _dimension(proof_floor_receipt, "quant_ingestion")
-    alpha_dimension = _dimension(proof_floor_receipt, "alpha_readiness")
-
-    tca_source_ref = _source_ref(tca_dimension)
-    market_context_source_ref = _source_ref(market_context_dimension)
-    quant_source_ref = _source_ref(quant_dimension)
-    alpha_source_ref = _source_ref(alpha_dimension)
-    symbol_routes = _mapping(tca_source_ref.get("symbol_routes"))
-    account_label = cast(str | None, proof_floor_receipt.get("account_label"))
-    generated_at = proof_floor_receipt.get("generated_at")
-
-    market_context_pass = _state_is_pass(market_context_dimension)
-    quant_pass = _state_is_pass(quant_dimension)
-    alpha_pass = _state_is_pass(alpha_dimension)
-    unsettled_count = _int(tca_source_ref.get("unsettled_execution_count"))
-    dependency_pass = (
-        market_context_pass and quant_pass and alpha_pass and unsettled_count <= 0
-    )
-
-    records: list[dict[str, object]] = []
-    for raw_symbol in _sequence(symbol_routes.get("routeable_symbols")):
-        symbol_payload = _mapping(raw_symbol)
-        if not _text(symbol_payload.get("symbol")):
-            continue
-        state = "routeable" if dependency_pass else "probing"
-        reason = (
-            "route_tca_passed"
-            if dependency_pass
-            else "route_tca_passed_but_dependency_receipts_block_capital"
-        )
-        records.append(
-            _record_from_symbol(
-                proof_floor_receipt=proof_floor_receipt,
-                symbol_payload=symbol_payload,
-                account_label=account_label,
-                state=state,
-                reason=reason,
-                tca_source_ref=tca_source_ref,
-                market_context_source_ref=market_context_source_ref,
-                quant_source_ref=quant_source_ref,
-                alpha_source_ref=alpha_source_ref,
-            )
-        )
-    for raw_symbol in _sequence(symbol_routes.get("blocked_symbols")):
-        symbol_payload = _mapping(raw_symbol)
-        if not _text(symbol_payload.get("symbol")):
-            continue
-        records.append(
-            _record_from_symbol(
-                proof_floor_receipt=proof_floor_receipt,
-                symbol_payload=symbol_payload,
-                account_label=account_label,
-                state="blocked",
-                reason=_text(tca_dimension.get("reason"), "execution_tca_blocked"),
-                tca_source_ref=tca_source_ref,
-                market_context_source_ref=market_context_source_ref,
-                quant_source_ref=quant_source_ref,
-                alpha_source_ref=alpha_source_ref,
-            )
-        )
-    for raw_symbol in _sequence(symbol_routes.get("missing_symbols")):
-        symbol_payload = (
-            cast(Mapping[str, Any], raw_symbol)
-            if isinstance(raw_symbol, Mapping)
-            else {"symbol": raw_symbol}
-        )
-        symbol = _text(symbol_payload.get("symbol"))
-        if not symbol:
-            continue
-        records.append(
-            _missing_record(
-                proof_floor_receipt=proof_floor_receipt,
-                symbol_payload=symbol_payload,
-                account_label=account_label,
-                tca_source_ref=tca_source_ref,
-                market_context_source_ref=market_context_source_ref,
-                quant_source_ref=quant_source_ref,
-                alpha_source_ref=alpha_source_ref,
-            )
-        )
-
-    configured_probe_limit = _positive_amount_text(paper_route_probe_max_notional)
-    eligible_probe_symbols = [
-        _text(item.get("symbol"))
-        for item in records
-        if _paper_route_probe_eligible(item)
-    ]
-    target_probe_symbols = _symbol_list(paper_route_probe_target_symbols)
-    for symbol in target_probe_symbols:
-        if symbol not in eligible_probe_symbols:
-            eligible_probe_symbols.append(symbol)
-    probe_blockers = _paper_route_probe_blockers(
+    sources = _route_reacquisition_sources(proof_floor_receipt)
+    records = _route_reacquisition_records(sources)
+    probe_config = PaperRouteProbeConfig(
         trading_mode=trading_mode,
         market_session_open=market_session_open,
         enabled=paper_route_probe_enabled,
         allow_live_mode=paper_route_probe_allow_live_mode,
-        configured_limit=configured_probe_limit,
-        eligible_symbol_count=len(eligible_probe_symbols),
+        max_notional=paper_route_probe_max_notional,
+        target_symbols=paper_route_probe_target_symbols,
     )
-    probe_active = not probe_blockers
-    effective_probe_limit = configured_probe_limit if probe_active else "0"
-    next_session_probe_limit = (
-        configured_probe_limit
-        if paper_route_probe_enabled and configured_probe_limit is not None
-        else "0"
-    )
-    active_probe_symbols = eligible_probe_symbols if probe_active else []
-    for record in records:
-        eligible = _paper_route_probe_eligible(record)
-        record["paper_route_probe"] = {
-            "eligible": eligible,
-            "active": probe_active and eligible,
-            "notional_limit": effective_probe_limit if eligible else "0",
-            "next_session_notional_limit": next_session_probe_limit
-            if eligible
-            else "0",
-            "live_mode_collection_allowed": paper_route_probe_allow_live_mode,
-            "blocking_reasons": probe_blockers if eligible else [],
-            "capital_authority": "none",
-            "promotion_authority": False,
-        }
-
-    counts = {
-        "routeable": sum(1 for item in records if item["state"] == "routeable"),
-        "probing": sum(1 for item in records if item["state"] == "probing"),
-        "blocked": sum(1 for item in records if item["state"] == "blocked"),
-        "missing": sum(1 for item in records if item["state"] == "missing"),
-        "retired": sum(1 for item in records if item["state"] == "retired"),
-    }
-    candidate_symbols = [
-        _text(item.get("symbol"))
-        for item in records
-        if _text(item.get("state")) in {"routeable", "probing"}
-    ]
-    repair_source_records = sorted(
-        (
-            record
-            for record in records
-            if _text(record.get("state")) in {"blocked", "missing"}
-        ),
-        key=_repair_candidate_rank,
-    )
-    repair_candidates = [
-        _repair_candidate(record, rank=index + 1)
-        for index, record in enumerate(repair_source_records)
-    ]
-    expected_unblock_value = (
-        counts["blocked"] * 2
-        + counts["missing"]
-        + counts["probing"] * 3
-        + counts["routeable"] * 4
+    probe_plan = paper_route_probe_plan(records, probe_config)
+    apply_paper_route_probe(
+        records,
+        config=probe_config,
+        plan=probe_plan,
     )
     live_mode = trading_mode == "live"
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": generated_at,
-        "account_label": account_label,
+        "generated_at": sources.generated_at,
+        "account_label": sources.account_label,
         "trading_mode": trading_mode,
         "market_session_open": market_session_open,
         "state": "repair_only"
@@ -710,53 +722,16 @@ def build_route_reacquisition_book(
         "authority_semantics": "audit_only_until_source_backed_runtime_ledger_fill_proof",
         "records": records,
         "repair_audit_receipts": [record["audit_receipt"] for record in records],
-        "summary": {
-            "scope_symbols": list(_sequence(symbol_routes.get("scope_symbols"))),
-            "scope_symbol_count": _int(symbol_routes.get("scope_symbol_count")),
-            "routeable_symbol_count": counts["routeable"],
-            "probing_symbol_count": counts["probing"],
-            "blocked_symbol_count": counts["blocked"],
-            "missing_symbol_count": counts["missing"],
-            "retired_symbol_count": counts["retired"],
-            "candidate_symbols": candidate_symbols,
-            "repair_candidate_count": len(repair_candidates),
-            "repair_candidate_symbols": [
-                _text(item.get("symbol")) for item in repair_candidates
-            ],
-            "repair_candidates": repair_candidates,
-            "paper_route_probe_eligible_symbols": eligible_probe_symbols,
-            "paper_route_probe_active_symbols": active_probe_symbols,
-            "expected_unblock_value": expected_unblock_value,
-        },
-        "paper_route_probe": {
-            "configured_enabled": paper_route_probe_enabled,
-            "live_mode_collection_allowed": paper_route_probe_allow_live_mode,
-            "configured_max_notional": configured_probe_limit or "0",
-            "active": probe_active,
-            "effective_max_notional": effective_probe_limit,
-            "next_session_max_notional": next_session_probe_limit,
-            "eligible_symbol_count": len(eligible_probe_symbols),
-            "eligible_symbols": eligible_probe_symbols,
-            "active_symbols": active_probe_symbols,
-            "blocking_reasons": probe_blockers,
-            "capital_authority": "none",
-            "promotion_authority": False,
-        },
-        "source_refs": {
-            "proof_floor_generated_at": generated_at,
-            "proof_floor_route_state": proof_floor_receipt.get("route_state"),
-            "proof_floor_capital_state": proof_floor_receipt.get("capital_state"),
-            "execution_tca_reason": tca_dimension.get("reason"),
-            "market_context_state": market_context_dimension.get("state"),
-            "quant_ingestion_state": quant_dimension.get("state"),
-            "alpha_readiness_state": alpha_dimension.get("state"),
-            "paper_route_probe_target_symbols": target_probe_symbols,
-            "paper_route_probe_target_symbol_source": (
-                "bounded_paper_route_collection_target_plan"
-                if target_probe_symbols
-                else None
-            ),
-        },
+        "summary": _route_reacquisition_summary(
+            sources=sources,
+            records=records,
+            probe_plan=probe_plan,
+        ),
+        "paper_route_probe": paper_route_probe_payload(
+            config=probe_config,
+            plan=probe_plan,
+        ),
+        "source_refs": _source_refs_payload(sources=sources, probe_plan=probe_plan),
         "rollback_target": {
             "paper_probe_notional_limit": "0",
             "live_submit_enabled": False,

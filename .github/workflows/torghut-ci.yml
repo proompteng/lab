@@ -385,6 +385,14 @@ jobs:
         working-directory: services/torghut
         run: uv run --frozen pyright --project pyrightconfig.scripts.json
 
+      - name: Type check (pyright strict alpha slice)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.alpha.strict.json
+
+      - name: Type check (pyright strict scripts slice)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.scripts.strict.json
+
   static-guards:
     name: Bytecode + lint + migration guard
     runs-on: ubuntu-latest
@@ -566,8 +574,16 @@ jobs:
         run: >
           uv run --frozen pylint app scripts
           --disable=all
-          --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements
+          --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks
           --score=n
+
+      - name: Torghut tech-debt ratchet
+        working-directory: services/torghut
+        run: >
+          uv run --frozen python scripts/measure_torghut_tech_debt.py
+          --baseline config/quality/tech-debt-baseline.json
+          --enforce-ratchet
+          --format markdown
 
       - name: Migration lineage guardrail
         working-directory: services/torghut

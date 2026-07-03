@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from tests.pipeline.trading_pipeline_base import (
     Any,
     Decimal,
@@ -654,7 +656,7 @@ class TestTradingPipelinePositionProjectionA(TradingPipelineTestCaseBase):
         pipeline = TradingPipeline.__new__(TradingPipeline)
         pipeline.account_label = "paper"
         session = Mock()
-        session.execute.side_effect = RuntimeError("db unavailable")
+        session.execute.side_effect = SQLAlchemyError("db unavailable")
         positions = [{"symbol": "AAPL", "qty": "1", "side": "long"}]
 
         with patch(

@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Any, Optional, Sequence, cast
 
 from sqlalchemy import select
@@ -14,10 +13,8 @@ from sqlalchemy.orm import Session
 from ....config import settings
 from ....db import SessionLocal
 from ....models import (
-    Execution,
     PositionSnapshot,
     Strategy,
-    TradeDecision,
 )
 from ...execution_policy import ExecutionPolicy
 from ...feature_quality import (
@@ -52,27 +49,20 @@ from ..safety import (
 from .contexts import (
     BatchSignalProcessingContext,
     SessionWarmupWindow,
-    StrategyPositionExposureUpdate,
     TradingPipelineRuntimeDependencies,
 )
-from .shared import (
-    TradingPipelineBase,
-    STRATEGY_POSITION_TAG_LOOKBACK,
-    aware_utc,
-    normalized_symbol,
-    same_side_position_exposure,
-)
+from .position_exposure import TradingPipelinePositionExposureMixin
+from .shared import STRATEGY_POSITION_TAG_LOOKBACK, normalized_symbol
 from .support import (
     clone_positions,
     coerce_strategy_symbols,
-    optional_decimal,
     project_open_orders_onto_positions,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineRunCycleMixin(TradingPipelineBase):
+class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
     def __init__(
         self,
         dependencies: TradingPipelineRuntimeDependencies | None = None,
@@ -774,135 +764,3 @@ class TradingPipelineRunCycleMixin(TradingPipelineBase):
                 )
             )
         return tagged_positions
-
-    def _load_strategy_position_tag_rows(
-        self,
-        session: Session,
-        lookback_start: datetime,
-    ) -> Sequence[Any] | None:
-        try:
-            return session.execute(
-                select(Execution, TradeDecision)
-                .join(TradeDecision, Execution.trade_decision_id == TradeDecision.id)
-                .where(
-                    Execution.alpaca_account_label == self.account_label,
-                    TradeDecision.alpaca_account_label == self.account_label,
-                    Execution.status == "filled",
-                    Execution.filled_qty > Decimal("0"),
-                    Execution.created_at >= lookback_start,
-                )
-            ).all()
-        except Exception:
-            logger.exception(
-                "Failed to resolve strategy position tags account=%s",
-                self.account_label,
-            )
-            return None
-
-    def _build_strategy_position_exposures(
-        self,
-        rows: Sequence[Any],
-        session_open: datetime,
-    ) -> dict[str, dict[str, dict[str, Any]]]:
-        exposures: dict[str, dict[str, dict[str, Any]]] = {}
-        for execution, decision_row in rows:
-            update = self._strategy_position_exposure_update(execution, decision_row)
-            if update is None:
-                continue
-            self._record_strategy_position_exposure(
-                exposures,
-                update=update,
-                session_open=session_open,
-            )
-        return exposures
-
-    @staticmethod
-    def _strategy_position_exposure_update(
-        execution: Any,
-        decision_row: Any,
-    ) -> StrategyPositionExposureUpdate | None:
-        symbol = normalized_symbol(execution.symbol or decision_row.symbol)
-        strategy_id = str(decision_row.strategy_id)
-        if not symbol or not strategy_id:
-            return None
-        filled_qty = optional_decimal(execution.filled_qty)
-        if filled_qty is None or filled_qty <= 0:
-            return None
-        side = str(execution.side or "").strip().lower()
-        if side not in {"buy", "sell"}:
-            return None
-        signed_qty = filled_qty if side == "buy" else -filled_qty
-        return StrategyPositionExposureUpdate(
-            symbol=symbol,
-            strategy_id=strategy_id,
-            signed_qty=signed_qty,
-            filled_qty=filled_qty,
-            side=side,
-            execution_created_at=aware_utc(execution.created_at),
-            avg_fill_price=optional_decimal(execution.avg_fill_price),
-        )
-
-    @staticmethod
-    def _empty_strategy_position_exposure() -> dict[str, Any]:
-        return {
-            "qty": Decimal("0"),
-            "buy_qty": Decimal("0"),
-            "buy_notional": Decimal("0"),
-            "session_qty": Decimal("0"),
-            "latest_execution_at": None,
-            "earliest_execution_at": None,
-        }
-
-    @staticmethod
-    def _record_strategy_position_exposure(
-        exposures: dict[str, dict[str, dict[str, Any]]],
-        *,
-        update: StrategyPositionExposureUpdate,
-        session_open: datetime,
-    ) -> None:
-        strategy_exposures = exposures.setdefault(update.symbol, {})
-        exposure = strategy_exposures.setdefault(
-            update.strategy_id,
-            TradingPipelineRunCycleMixin._empty_strategy_position_exposure(),
-        )
-        exposure["qty"] = cast(Decimal, exposure["qty"]) + update.signed_qty
-        if update.execution_created_at >= session_open:
-            exposure["session_qty"] = (
-                cast(Decimal, exposure["session_qty"]) + update.signed_qty
-            )
-        if (
-            update.side == "buy"
-            and update.avg_fill_price is not None
-            and update.avg_fill_price > 0
-        ):
-            exposure["buy_qty"] = cast(Decimal, exposure["buy_qty"]) + update.filled_qty
-            exposure["buy_notional"] = cast(
-                Decimal,
-                exposure["buy_notional"],
-            ) + (update.filled_qty * update.avg_fill_price)
-        TradingPipelineRunCycleMixin._record_position_exposure_window(
-            exposure,
-            update.execution_created_at,
-        )
-
-    @staticmethod
-    def _record_position_exposure_window(
-        exposure: dict[str, Any],
-        execution_created_at: datetime,
-    ) -> None:
-        earliest_execution_at = exposure.get("earliest_execution_at")
-        if (
-            earliest_execution_at is None
-            or execution_created_at < earliest_execution_at
-        ):
-            exposure["earliest_execution_at"] = execution_created_at
-        latest_execution_at = exposure.get("latest_execution_at")
-        if latest_execution_at is None or execution_created_at > latest_execution_at:
-            exposure["latest_execution_at"] = execution_created_at
-
-    @staticmethod
-    def same_side_position_exposure(
-        position_qty: Decimal,
-        exposure_qty: Decimal,
-    ) -> bool:
-        return same_side_position_exposure(position_qty, exposure_qty)
