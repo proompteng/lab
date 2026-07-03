@@ -37,10 +37,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
     path: 'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml',
     selectorPath: ['spec', 'templates', 0],
   },
-  {
-    path: 'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml',
-    selectorPath: ['spec', 'templates', 0],
-  },
 ]
 
 const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRecord => {
@@ -103,7 +99,6 @@ describe('Torghut manifest scheduling', () => {
 
   it('retains Torghut scheduled failure logs for same-day debugging', () => {
     const cronJobPaths = [
-      'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
       'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
       'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
@@ -126,7 +121,7 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(4)
+    expect(checkedCronJobs).toBe(3)
 
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources

@@ -341,7 +341,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
                 side_effect=_healthy_hypotheses,
             ),
             patch(
-                "app.trading.scheduler.simple_pipeline.build_empirical_jobs_status",
+                "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
                 return_value={"ready": True, "status": "healthy"},
             ),
             patch(

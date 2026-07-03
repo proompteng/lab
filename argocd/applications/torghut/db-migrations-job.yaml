@@ -19,6 +19,8 @@ spec:
         app.kubernetes.io/name: torghut-db-migrations
         app.kubernetes.io/part-of: lab
     spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
       restartPolicy: OnFailure
       containers:
         - name: migrate
