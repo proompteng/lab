@@ -36,7 +36,6 @@ resources:
   - paper-account-flatten-cronjob.yaml
   - generated-resource-retention-rbac.yaml
   - generated-resource-retention-cronjob.yaml
-  - whitepaper-autoresearch-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
   - analysis-template-runtime-ready.yaml
   - analysis-template-activity.yaml
