@@ -32,25 +32,17 @@ cephClusterSpec:
       mon_data_avail_warn: "15"
     osd:
       bluestore_cache_autotune: "true"
-      # Keep recovery moving during the current Turin/Altra PG backfill window while protecting Kafka latency.
+      # Use Ceph's recovery-biased mClock profile, but keep concurrency bounded so Kafka stays responsive.
       # Ceph mClock ignores recovery/backfill concurrency overrides unless this gate is enabled.
-      osd_mclock_profile: "custom"
+      osd_mclock_profile: "high_recovery_ops"
       osd_mclock_override_recovery_settings: "true"
-      osd_mclock_scheduler_background_recovery_res: "0.050000"
-      osd_mclock_scheduler_background_recovery_lim: "0.150000"
-      osd_mclock_scheduler_client_res: "0.850000"
-      osd_mclock_scheduler_client_lim: "1.000000"
-      osd_mclock_scheduler_background_best_effort_res: "0.100000"
-      osd_mclock_scheduler_background_recovery_wgt: "12"
-      osd_mclock_scheduler_client_wgt: "1"
-      osd_mclock_scheduler_background_best_effort_wgt: "1"
       osd_memory_target: "6442450944"
-      osd_max_backfills: "1"
-      osd_recovery_max_active: "2"
-      osd_recovery_max_active_hdd: "2"
+      osd_max_backfills: "2"
+      osd_recovery_max_active: "4"
+      osd_recovery_max_active_hdd: "4"
       osd_recovery_max_single_start: "1"
-      osd_recovery_op_priority: "1"
-      osd_recovery_sleep_hdd: "0.050000"
+      osd_recovery_op_priority: "3"
+      osd_recovery_sleep_hdd: "0"
 
   dataDirHostPath: /var/lib/rook
 
