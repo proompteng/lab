@@ -19,9 +19,8 @@ spec:
         app.kubernetes.io/component: embeddings
     spec:
       nodeSelector:
-        kubernetes.io/arch: arm64
-        kubernetes.io/hostname: talos-192-168-1-85
-        nvidia.com/gpu.present: "true"
+        kubernetes.io/arch: amd64
+        kubernetes.io/hostname: turin
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -137,6 +136,8 @@ spec:
               value: "4096"
             - name: SAIGAK_PROXY_TIMEOUT_SECONDS
               value: "120"
+            - name: SAIGAK_REQUIRE_GPU_RESIDENCY
+              value: "false"
           ports:
             - name: http
               containerPort: 11434

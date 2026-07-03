@@ -6,11 +6,14 @@ This runbook records the hard migration where completion traffic moves to the
 
 ## Current Roles
 
-`saigak` is a Kubernetes `StatefulSet` pinned to `talos-192-168-1-85`. It serves
-Ollama through an embeddings-only proxy on port `11434` and must not expose chat
-completion endpoints. It must never request Turin's Blackwell GPU. If Altra does
-not advertise allocatable `nvidia.com/gpu`, keep Saigak CPU-only on Altra until
-the 3090 container-GPU path is restored.
+`saigak` is a Kubernetes `StatefulSet` serving Ollama through an embeddings-only
+proxy on port `11434`; it must not expose chat completion endpoints. Its current
+PVC is local-path storage selected on `turin`, so the immediate safe deconflict
+is CPU-only residency on `turin` with no `runtimeClassName: nvidia`, no
+`nvidia.com/gpu` request or limit, and no NVIDIA runtime environment. A real move
+to the Altra RTX 3090 requires both an allocatable Altra GPU and a storage
+migration off the Turin local-path PVC; only that later GPU-backed mode should
+set `SAIGAK_REQUIRE_GPU_RESIDENCY=true`.
 
 `flamingo` is a normal Kubernetes Deployment pinned to Turin's Blackwell GPU. It
 serves a vLLM OpenAI-compatible API on:
@@ -153,7 +156,7 @@ Do not treat completion migration as complete until all of these are true:
 - OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been audited.
 - Saigak rejects `/v1/chat/completions` and `/api/generate`.
 - Saigak `/v1/embeddings` returns 4096 dimensions. `/api/ps` showing GPU VRAM
-  residency is required only after Altra advertises allocatable `nvidia.com/gpu`;
-  until then, CPU-only Altra residency is acceptable and Blackwell residency is
-  not.
+  residency is required only after Altra advertises allocatable `nvidia.com/gpu`
+  and Saigak storage has migrated off Turin local-path storage; until then,
+  CPU-only Turin residency is acceptable and Blackwell GPU residency is not.
 - A stability window has passed with Flamingo stable under normal agent load.

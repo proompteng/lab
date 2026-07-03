@@ -38,6 +38,15 @@ data:
     design. It is blocked unless Turin has at least two physical free GPUs after
     Plex preservation and no Saigak drift on the Blackwell node.
 
+    July 3, 2026 live testing outcome: do not promote the batch, memory,
+    MTP-1, language-model-only, or CUDA graph memory-estimate candidates on
+    this pinned vLLM image. They were tested end to end against the deployed
+    `qwen36-flamingo` model after Saigak was removed from Blackwell GPU
+    allocation. None passed the throughput/TTFT/TPOT promotion gates. The
+    promoted production change from that run is the Blackwell resource
+    deconflict: Saigak remains embeddings-only and CPU-only while Flamingo keeps
+    the baseline launch profile.
+
   baseline.args: |
     --host 0.0.0.0
     --port 8000
@@ -121,7 +130,7 @@ data:
     --kv-cache-dtype fp8
     --max-num-seqs 16
     --max-num-batched-tokens 16384
-    --enable-prefix-caching
+    --no-enable-prefix-caching
     --reasoning-parser qwen3
     --enable-auto-tool-choice
     --tool-call-parser qwen3_coder
@@ -131,3 +140,35 @@ data:
   blocked-single-gpu-flags.txt: |
     --enable-dbo
     --max-num-partial-prefills
+
+  measured-2026-07-03.md: |
+    # Measured Live Results
+
+    Tested against `unsloth/Qwen3.6-35B-A3B-NVFP4` served as
+    `qwen36-flamingo` on `vllm/vllm-openai:v0.23.0-x86_64-cu129`
+    digest `sha256:871762282db5bc464b5a3f0a59e41207ef25c2d95edf5f701e57a6bfc27b9496`.
+
+    Baseline after Saigak GPU deconflict:
+
+    - Smoke artifact:
+      `/tmp/flamingo-real-opt-candidates/flamingo-baseline-deconflicted-smoke-2026-07-03T21-59-10-261Z.json`
+    - Full artifact:
+      `/tmp/flamingo-real-opt-candidates/flamingo-baseline-deconflicted-full-2026-07-03T21-59-58-481Z.json`
+    - Full result: zero failed gates, zero request errors, zero aborts, zero
+      preemptions, and `133.21` generation tokens/s over `1,620,474` prompt
+      tokens.
+
+    Rejected candidates:
+
+    - `batch24576`: failed output-throughput and p99 TTFT gates.
+    - `gmem086`: larger KV cache, but failed output-throughput and p99 TTFT
+      gates.
+    - `mtp1-prefix-off`: real MTP AL around `1.80`, but failed output
+      throughput, p99 TTFT, and TPOT gates.
+    - `language-model-only-warm`: passed quality checks, but did not beat the
+      throughput promotion threshold.
+    - `cudagraph-estimate-off-warm`: larger KV cache, but no throughput
+      promotion and vLLM warned about unaccounted CUDA graph memory/OOM risk.
+
+    Final live state was restored to `baseline.args` and passed smoke:
+    `/tmp/flamingo-real-opt-candidates/flamingo-baseline-restored-smoke-2026-07-03T22-50-51-537Z.json`.

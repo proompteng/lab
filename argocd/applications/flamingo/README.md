@@ -242,6 +242,46 @@ production route.
 | `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
 | `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
 
+### Recorded Live Optimization Run
+
+Run date: `2026-07-03`.
+
+Live precondition fixed first:
+
+- `saigak` had drifted onto `turin` with a `nvidia.com/gpu` request while its
+  PVC was local-path storage selected on `turin`.
+- The safe live/GitOps correction is CPU-only `saigak` on `turin` until a real
+  Altra 3090 storage migration exists.
+- After the correction, the only GPU consumers were `flamingo` and Plex, and
+  `saigak` still returned `4096`-dimension embeddings while blocking chat
+  completions.
+
+Fresh post-deconflict baseline artifacts:
+
+| Artifact | Result |
+| --- | --- |
+| `/tmp/flamingo-real-opt-candidates/flamingo-baseline-deconflicted-smoke-2026-07-03T21-59-10-261Z.json` | `0` failed gates, `129.41` gen tok/s, `0` errors/aborts/preemptions |
+| `/tmp/flamingo-real-opt-candidates/flamingo-baseline-deconflicted-full-2026-07-03T21-59-58-481Z.json` | `0` failed gates, `133.21` gen tok/s, `1,620,474` prompt tokens, `0` errors/aborts/preemptions |
+
+Measured candidate outcomes on the same deployed model/image:
+
+| Candidate | Live change | Artifact | Decision |
+| --- | --- | --- | --- |
+| `batch24576` | `--max-num-batched-tokens 24576` | `/tmp/flamingo-real-opt-candidates/flamingo-batch24576-smoke-2026-07-03T22-11-29-828Z.json` | Rejected: output throughput and p99 TTFT gates failed |
+| `gmem086` | `--gpu-memory-utilization 0.86` | `/tmp/flamingo-real-opt-candidates/flamingo-gmem086-smoke-2026-07-03T22-16-12-023Z.json` | Rejected: KV capacity improved, but throughput and p99 TTFT gates failed |
+| `mtp1-prefix-off` | `--no-enable-prefix-caching --speculative-config {"method":"mtp","num_speculative_tokens":1}` | `/tmp/flamingo-real-opt-candidates/flamingo-mtp1-prefix-off-mtp-al-2026-07-03T22-30-05-021Z.json` and `/tmp/flamingo-real-opt-candidates/flamingo-mtp1-prefix-off-smoke-2026-07-03T22-30-59-838Z.json` | Rejected: real AL was about `1.80`, but smoke throughput, p99 TTFT, and TPOT gates failed |
+| `language-model-only-warm` | `--language-model-only` | `/tmp/flamingo-real-opt-candidates/flamingo-language-model-only-warm-smoke-2026-07-03T22-36-36-387Z.json` | Rejected as a performance promotion: quality gates passed, but throughput did not beat baseline threshold |
+| `cudagraph-estimate-off-warm` | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0` | `/tmp/flamingo-real-opt-candidates/flamingo-cudagraph-estimate-off-warm-smoke-2026-07-03T22-43-00-169Z.json` | Rejected: larger KV cache did not improve throughput, and vLLM warned about unaccounted CUDA graph memory/OOM risk |
+
+Final live state was restored to `baseline.args` and smoke-tested:
+`/tmp/flamingo-real-opt-candidates/flamingo-baseline-restored-smoke-2026-07-03T22-50-51-537Z.json`
+with `0` failed gates and `0` request errors/aborts/preemptions.
+
+No vLLM launch-flag candidate was promoted from this run. The production
+optimization that passed end-to-end is the Blackwell resource deconflict:
+Saigak no longer consumes the physical Blackwell GPU, allowing the current
+Qwen3.6 baseline to pass the full 262K profile that previously OOMed.
+
 The default `full` benchmark profile now covers the InferenceX-inspired
 serving shapes:
 
