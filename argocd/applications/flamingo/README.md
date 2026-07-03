@@ -6,7 +6,7 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 ## Production Target
 
 - Node: `turin`
-- GPU: `NVIDIA RTX PRO 6000 Blackwell Max-Q`, advertised as `nvidia.com/gpu: 1`
+- GPU: one physical `NVIDIA RTX PRO 6000 Blackwell Max-Q`; the device plugin may expose time-sliced `nvidia.com/gpu` replicas.
 - RuntimeClass: `nvidia`
 - Server: `vllm/vllm-openai:v0.23.0-x86_64-cu129`
 - Image digest: `sha256:871762282db5bc464b5a3f0a59e41207ef25c2d95edf5f701e57a6bfc27b9496`
@@ -26,11 +26,17 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --trust-remote-code
 --dtype bfloat16
 --max-model-len 262144
---gpu-memory-utilization 0.95
+--gpu-memory-utilization 0.85
 --kv-cache-dtype fp8
 --safetensors-load-strategy eager
 --max-num-seqs 16
 --max-num-batched-tokens 16384
+--max-num-partial-prefills 2
+--max-long-partial-prefills 1
+--long-prefill-token-threshold 8192
+--enable-dbo
+--dbo-decode-token-threshold 32
+--dbo-prefill-token-threshold 512
 --enable-prefix-caching
 --reasoning-parser qwen3
 --enable-auto-tool-choice
@@ -80,8 +86,11 @@ kubectl -n flamingo exec deploy/flamingo -- df -h /models || true
 
 Expected:
 
-- `nvidia.com/gpu` allocatable is `1`.
-- No non-Flamingo workload consumes the GPU.
+- `nvidia.com/gpu` allocatable is non-zero.
+- `flamingo` and the approved Plex transcode workload are the only expected
+  Blackwell GPU consumers before tuning.
+- `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
+  separate embeddings path.
 - The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
 
 Render before sync:
@@ -200,8 +209,9 @@ turns with `preserve_thinking=true`.
 ## Optimization Matrix
 
 Record each run with the vLLM image digest, model revision, flags, concurrency,
-prompt/output token counts, TTFT, output tokens per second, peak GPU memory, GPU
-power draw, temperature, preemption count, and any OOM or parser failure.
+prompt/output token counts, TTFT, TPOT, output tokens per second, KV-cache usage,
+prefix-cache hits, request wait/running gauges, GPU memory, GPU power draw,
+temperature, and any OOM, parser, HTTP, or preemption failure.
 
 Use the repo runner so output is comparable:
 
@@ -213,11 +223,36 @@ bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8-eager` | `262144` | `0.95` | `16` | `16384` | Promoted production profile |
-| `context-262k-lowseq` | `262144` | `0.95` | `8` | `8192` | Startup fallback if the initial candidate OOMs |
-| `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 smokes pass |
-| `batch-262k-32k` | `262144` | `0.95` | `16` | `32768` | Promote only if TTFT and preemption stay acceptable |
-| `mem-262k-097` | `262144` | `0.97` | `16` | `16384` | Promote only if no OOM or sustained preemption |
+| `context-262k-fp8-eager` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
+| `prefill-dbo-262k` | `262144` | `0.85` | `16` | `16384` | Explicit partial-prefill + DBO profile |
+| `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
+| `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
+| `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
+
+The default `full` benchmark profile now covers the InferenceX-inspired
+serving shapes:
+
+- warmups at concurrency `1/2/4/8/16` plus a long-prefill warmup;
+- scheduler profile `4K` input / `512` output;
+- scheduler profile `32K` input / `4K` output;
+- scheduler profile `128K` input / `512` output;
+- long-context recall at `180K`, `220K`, and `229K` when the default full
+  target set is used.
+
+### InferenceX Methodology Adaptation
+
+InferenceX Qwen3.5 work is not copied flag-for-flag because it benchmarks a
+different model scale and hardware topology. The reusable parts are:
+
+- Qwen-specific reasoning and tool parsers stay active during every benchmark.
+- Thinking mode is controlled through Qwen chat-template kwargs, not generic
+  prose prompts.
+- Throughput is judged on coding-agent-like prompt/output shapes, not only tiny
+  random-token requests.
+- Speculative decoding is measured by accepted-token and draft counters:
+  `AL = 1 + accepted_draft_tokens / verification_drafts`.
+- Synthetic acceptance is benchmark-only and must not be used as a production
+  quality shortcut.
 
 ### Recorded Production Run
 
@@ -271,12 +306,23 @@ Short coding-loop smoke benchmark:
 | Mean TPOT | `6.38 ms` |
 | Failed requests | `0` |
 
-MTP candidate flags:
+MTP candidate flags, tested one value at a time:
 
 ```text
---moe-backend marlin
---speculative-config {"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}
+--speculative-config {"method":"mtp","num_speculative_tokens":1}
+--speculative-config {"method":"mtp","num_speculative_tokens":2}
+--speculative-config {"method":"mtp","num_speculative_tokens":3}
+--speculative-config {"method":"mtp","num_speculative_tokens":4}
 ```
+
+Promote MTP only when all of these hold in the benchmark artifact:
+
+- exact no-thinking, medium thinking, structured tool call, prefix-cache repeat,
+  and long-context recall pass;
+- `speculativeDecode.metricDelta.speculativeAcceptanceLength` is present;
+- output throughput improves by at least `15%` against the same non-MTP profile;
+- p99 TTFT regresses by no more than `10%`;
+- a real AnyPi-style repo task still completes with a code/test diff.
 
 KV-cache candidates must be checked against the pinned vLLM image before use:
 

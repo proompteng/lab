@@ -56,10 +56,23 @@ spec:
             - "0.85"
             - --kv-cache-dtype
             - fp8
+            - --safetensors-load-strategy
+            - eager
             - --max-num-seqs
             - "16"
             - --max-num-batched-tokens
             - "16384"
+            - --max-num-partial-prefills
+            - "2"
+            - --max-long-partial-prefills
+            - "1"
+            - --long-prefill-token-threshold
+            - "8192"
+            - --enable-dbo
+            - --dbo-decode-token-threshold
+            - "32"
+            - --dbo-prefill-token-threshold
+            - "512"
             - --enable-prefix-caching
             - --reasoning-parser
             - qwen3
