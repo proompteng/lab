@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flamingo-optimization-candidates
+  namespace: flamingo
+  labels:
+    app.kubernetes.io/name: flamingo
+    app.kubernetes.io/component: optimization-candidates
+  annotations:
+    flamingo.proompteng.ai/routing: "not-routed"
+    flamingo.proompteng.ai/production-model: qwen36-flamingo
+data:
+  rollout-policy.md: |
+    # Qwen3.6 Flamingo Optimization Candidates
+
+    These profiles are GitOps-tracked rollout inputs for `qwen36-flamingo`.
+    This ConfigMap does not create a second model server, change routing, or
+    consume GPU. Apply one production Deployment change per rollout and capture
+    a benchmark artifact with:
+
+    bun run flamingo:benchmark --profile=smoke --candidate-id=<candidate> --fail-on-gate
+    bun run flamingo:benchmark --profile=full --candidate-id=<candidate> --baseline-result=<baseline.json> --long-targets=180000,220000,229000 --fail-on-gate
+
+    Do not run the full profile while Saigak is still resident on Turin. The
+    July 3, 2026 baseline attempt OOMed the vLLM engine during `warmup-c16` with
+    only about 593 MiB free on the physical Blackwell.
+
+    Production keeps `unsloth/Qwen3.6-35B-A3B-NVFP4`, the served model id
+    `qwen36-flamingo`, `max-model-len=262144`, fp8 KV cache, prefix caching,
+    Qwen3 reasoning parsing, and Qwen3 Coder tool-call parsing.
+
+    Do not promote `--enable-dbo` in the single-Blackwell profile. Do not
+    promote `--max-num-partial-prefills > 1` until the selected vLLM image starts
+    cleanly and passes smoke in an isolated canary. Time-sliced GPU replicas do
+    not count as a prefill/decode architecture.
+
+    True prefill/decode disaggregation is a separate `flamingo-pd-shadow`
+    design. It is blocked unless Turin has at least two physical free GPUs after
+    Plex preservation and no Saigak drift on the Blackwell node.
+
+  baseline.args: |
+    --host 0.0.0.0
+    --port 8000
+    --model unsloth/Qwen3.6-35B-A3B-NVFP4
+    --served-model-name qwen36-flamingo
+    --trust-remote-code
+    --dtype bfloat16
+    --max-model-len 262144
+    --gpu-memory-utilization 0.85
+    --kv-cache-dtype fp8
+    --max-num-seqs 16
+    --max-num-batched-tokens 16384
+    --enable-prefix-caching
+    --reasoning-parser qwen3
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --optimization-level 2
+
+  candidate-1-image-lane.md: |
+    Pin the newest official stable `vllm/vllm-openai` CUDA image digest that
+    starts with `baseline.args`. Stop this lane if startup, `/v1/models`,
+    exact no-thinking, medium thinking, structured Qwen tool calls, or long
+    recall fails.
+
+  candidate-2-eager.args: |
+    --host 0.0.0.0
+    --port 8000
+    --model unsloth/Qwen3.6-35B-A3B-NVFP4
+    --served-model-name qwen36-flamingo
+    --trust-remote-code
+    --dtype bfloat16
+    --max-model-len 262144
+    --gpu-memory-utilization 0.85
+    --kv-cache-dtype fp8
+    --max-num-seqs 16
+    --max-num-batched-tokens 16384
+    --enable-prefix-caching
+    --reasoning-parser qwen3
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --optimization-level 2
+    --safetensors-load-strategy eager
+
+  candidate-3-batch-sweep.json: |
+    [
+      {
+        "candidateId": "batch-086-16-24576",
+        "gpu_memory_utilization": "0.86",
+        "max_num_seqs": "16",
+        "max_num_batched_tokens": "24576"
+      },
+      {
+        "candidateId": "batch-088-24-24576",
+        "gpu_memory_utilization": "0.88",
+        "max_num_seqs": "24",
+        "max_num_batched_tokens": "24576"
+      },
+      {
+        "candidateId": "batch-088-24-32768",
+        "gpu_memory_utilization": "0.88",
+        "max_num_seqs": "24",
+        "max_num_batched_tokens": "32768"
+      },
+      {
+        "candidateId": "batch-090-32-32768",
+        "gpu_memory_utilization": "0.90",
+        "max_num_seqs": "32",
+        "max_num_batched_tokens": "32768"
+      }
+    ]
+
+  candidate-4-mtp-n1.args: |
+    --host 0.0.0.0
+    --port 8000
+    --model unsloth/Qwen3.6-35B-A3B-NVFP4
+    --served-model-name qwen36-flamingo
+    --trust-remote-code
+    --dtype bfloat16
+    --max-model-len 262144
+    --gpu-memory-utilization 0.85
+    --kv-cache-dtype fp8
+    --max-num-seqs 16
+    --max-num-batched-tokens 16384
+    --enable-prefix-caching
+    --reasoning-parser qwen3
+    --enable-auto-tool-choice
+    --tool-call-parser qwen3_coder
+    --optimization-level 2
+    --speculative-config {"method":"mtp","num_speculative_tokens":1}
+
+  blocked-single-gpu-flags.txt: |
+    --enable-dbo
+    --max-num-partial-prefills

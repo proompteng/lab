@@ -217,16 +217,27 @@ temperature, and any OOM, parser, HTTP, or preemption failure.
 Use the repo runner so output is comparable:
 
 ```bash
-bun run flamingo:benchmark --profile=smoke
-bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
+bun run flamingo:benchmark --profile=smoke --candidate-id=baseline-live --fail-on-gate
+bun run flamingo:benchmark --profile=full --candidate-id=<candidate> --baseline-result=<baseline.json> --long-targets=180000,220000,229000 --fail-on-gate
 ```
+
+Do not run the `full` profile against production while Saigak is still resident
+on Turin. On July 3, 2026, `full` reached `warmup-c16` and the vLLM engine died
+with CUDA OOM in the FlashInfer fused-MoE path after only about `593 MiB` was
+free on the physical Blackwell. Run `smoke` first, move Saigak off Blackwell,
+then use `full` as the promotion gate for one candidate at a time.
+
+`candidate-profiles.yaml` is the rendered GitOps source for safe rollout
+profiles. It is a no-traffic ConfigMap, not a second model server, so Argo can
+carry the policy without allocating another Blackwell GPU or changing the
+production route.
 
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
 | `context-262k-fp8` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
 | `eager-262k` | `262144` | `0.85` | `16` | `16384` | Test `--safetensors-load-strategy eager` alone before promotion |
-| `dbo-262k` | `262144` | `0.85` | `16` | `16384` | Shadow only; July 3, 2026 DBO/eager rollout crash-looped |
+| `image-lane` | `262144` | `0.85` | `16` | `16384` | New official stable vLLM CUDA digest with current flags first |
 | `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
 | `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
 | `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
@@ -240,6 +251,10 @@ serving shapes:
 - scheduler profile `128K` input / `512` output;
 - long-context recall at `180K`, `220K`, and `229K` when the default full
   target set is used.
+
+`--profile=mtp-al` adds Qwen chat-template thinking-on/off MTP acceptance
+cells. It only measures the deployed `--speculative-config`; synthetic
+acceptance is not a production gate.
 
 ### InferenceX Methodology Adaptation
 
@@ -333,9 +348,15 @@ KV-cache candidates must be checked against the pinned vLLM image before use:
 --kv-cache-dtype auto
 ```
 
-Do not combine MTP, KV-cache dtype, batching, and memory changes after the
-initial 262K candidate. Change one variable, run the smoke suite, then run a
-real AnyPi AgentRun.
+Do not combine MTP, KV-cache dtype, batching, memory, DBO, or concurrent partial
+prefill changes after the initial 262K candidate. Change one variable, run the
+smoke suite, then run a real AnyPi AgentRun.
+
+Do not re-enable `--enable-dbo` in the single-GPU production profile. Do not
+re-enable `--max-num-partial-prefills > 1` until the upgraded vLLM image proves
+support in a canary startup and smoke. True prefill/decode disaggregation is a
+separate `flamingo-pd-shadow` design that requires at least two physical free
+GPUs after Plex preservation; time-sliced replicas are not enough.
 
 ## Completion Criteria
 

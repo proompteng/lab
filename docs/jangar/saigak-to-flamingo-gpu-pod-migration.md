@@ -8,7 +8,9 @@ This runbook records the hard migration where completion traffic moves to the
 
 `saigak` is a Kubernetes `StatefulSet` pinned to `talos-192-168-1-85`. It serves
 Ollama through an embeddings-only proxy on port `11434` and must not expose chat
-completion endpoints.
+completion endpoints. It must never request Turin's Blackwell GPU. If Altra does
+not advertise allocatable `nvidia.com/gpu`, keep Saigak CPU-only on Altra until
+the 3090 container-GPU path is restored.
 
 `flamingo` is a normal Kubernetes Deployment pinned to Turin's Blackwell GPU. It
 serves a vLLM OpenAI-compatible API on:
@@ -150,5 +152,8 @@ Do not treat completion migration as complete until all of these are true:
 - No completion consumer depends on Saigak's Ollama model store.
 - OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been audited.
 - Saigak rejects `/v1/chat/completions` and `/api/generate`.
-- Saigak `/v1/embeddings` returns 4096 dimensions and `/api/ps` shows GPU VRAM residency.
+- Saigak `/v1/embeddings` returns 4096 dimensions. `/api/ps` showing GPU VRAM
+  residency is required only after Altra advertises allocatable `nvidia.com/gpu`;
+  until then, CPU-only Altra residency is acceptable and Blackwell residency is
+  not.
 - A stability window has passed with Flamingo stable under normal agent load.

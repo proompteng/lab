@@ -10,6 +10,11 @@ export const requiredTerms = [
   '32768',
   'fp8',
   'speculativeAcceptanceLength',
+  'candidate-id',
+  'baseline-result',
+  'fail-on-gate',
+  'mtp-al',
+  'flamingo-pd-shadow',
 ]
 
 export const forbiddenTerms = [
@@ -22,6 +27,7 @@ export const forbiddenTerms = [
 
 export const targetFiles = [
   'argocd/applications/flamingo/deployment.yaml',
+  'argocd/applications/flamingo/candidate-profiles.yaml',
   'argocd/applications/flamingo/README.md',
   'argocd/applications/flamingo/docs/large-model-multigpu.md',
   'argocd/applications/agents/anypi-agentprovider.yaml',

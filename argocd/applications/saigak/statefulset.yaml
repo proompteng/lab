@@ -18,16 +18,12 @@ spec:
         app.kubernetes.io/name: saigak
         app.kubernetes.io/component: embeddings
     spec:
-      runtimeClassName: nvidia
       nodeSelector:
-        kubernetes.io/arch: amd64
-        kubernetes.io/hostname: turin
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: talos-192-168-1-85
         nvidia.com/gpu.present: "true"
       tolerations:
         - key: node-role.kubernetes.io/control-plane
-          operator: Exists
-          effect: NoSchedule
-        - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
       terminationGracePeriodSeconds: 120
@@ -102,12 +98,6 @@ spec:
               value: 30m
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "1"
-            - name: OLLAMA_FLASH_ATTENTION
-              value: "1"
-            - name: NVIDIA_VISIBLE_DEVICES
-              value: all
-            - name: NVIDIA_DRIVER_CAPABILITIES
-              value: compute,utility
           livenessProbe:
             exec:
               command:
@@ -119,13 +109,11 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: "2"
-              memory: 16Gi
-              nvidia.com/gpu: "1"
-            limits:
               cpu: "8"
+              memory: 32Gi
+            limits:
+              cpu: "32"
               memory: 64Gi
-              nvidia.com/gpu: "1"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
