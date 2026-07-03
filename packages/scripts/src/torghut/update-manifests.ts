@@ -15,8 +15,6 @@ const defaultSimulationManifestPath = 'argocd/applications/torghut/knative-servi
 const defaultMigrationManifestPath = 'argocd/applications/torghut/db-migrations-job.yaml'
 const defaultHistoricalSimulationWorkflowManifestPath =
   'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
-const defaultEmpiricalPromotionWorkflowManifestPath =
-  'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml'
 const defaultAnalysisRuntimeReadyManifestPath = 'argocd/applications/torghut/analysis-template-runtime-ready.yaml'
 const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysis-template-activity.yaml'
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
@@ -45,7 +43,6 @@ type UpdateManifestsOptions = {
   simulationManifestPath?: string
   migrationManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
-  empiricalPromotionWorkflowManifestPath?: string
   analysisRuntimeReadyManifestPath?: string
   analysisActivityManifestPath?: string
   analysisTeardownManifestPath?: string
@@ -73,7 +70,6 @@ type CliOptions = {
   simulationManifestPath?: string
   migrationManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
-  empiricalPromotionWorkflowManifestPath?: string
   analysisRuntimeReadyManifestPath?: string
   analysisActivityManifestPath?: string
   analysisTeardownManifestPath?: string
@@ -290,11 +286,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.historicalSimulationWorkflowManifestPath ?? defaultHistoricalSimulationWorkflowManifestPath,
     'torghut-historical-simulation image reference',
   )
-  const empiricalPromotionWorkflow = updateImageOnlyManifest(
-    options,
-    options.empiricalPromotionWorkflowManifestPath ?? defaultEmpiricalPromotionWorkflowManifestPath,
-    'torghut-empirical-promotion image reference',
-  )
   const analysisRuntimeReady = updateImageOnlyManifest(
     options,
     options.analysisRuntimeReadyManifestPath ?? defaultAnalysisRuntimeReadyManifestPath,
@@ -371,7 +362,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     simulationService,
     migration,
     historicalSimulationWorkflow,
-    empiricalPromotionWorkflow,
     analysisRuntimeReady,
     analysisActivity,
     analysisTeardown,
@@ -413,7 +403,6 @@ Options:
   --simulation-manifest-path <path>
   --migration-manifest-path <path>
   --historical-simulation-workflow-manifest-path <path>
-  --empirical-promotion-workflow-manifest-path <path>
   --analysis-runtime-ready-manifest-path <path>
   --analysis-activity-manifest-path <path>
   --analysis-teardown-manifest-path <path>
@@ -481,9 +470,6 @@ Options:
         break
       case '--historical-simulation-workflow-manifest-path':
         options.historicalSimulationWorkflowManifestPath = value
-        break
-      case '--empirical-promotion-workflow-manifest-path':
-        options.empiricalPromotionWorkflowManifestPath = value
         break
       case '--analysis-runtime-ready-manifest-path':
         options.analysisRuntimeReadyManifestPath = value
@@ -566,8 +552,6 @@ const main = (cliOptions?: CliOptions) => {
     migrationManifestPath: parsed.migrationManifestPath ?? process.env.TORGHUT_MIGRATION_MANIFEST_PATH,
     historicalSimulationWorkflowManifestPath:
       parsed.historicalSimulationWorkflowManifestPath ?? process.env.TORGHUT_HISTORICAL_SIMULATION_WORKFLOW_PATH,
-    empiricalPromotionWorkflowManifestPath:
-      parsed.empiricalPromotionWorkflowManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_WORKFLOW_PATH,
     analysisRuntimeReadyManifestPath:
       parsed.analysisRuntimeReadyManifestPath ?? process.env.TORGHUT_ANALYSIS_RUNTIME_READY_MANIFEST_PATH,
     analysisActivityManifestPath:
