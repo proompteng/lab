@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.27.1 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `argocd/applications/clickhouse-operator/values.yaml`.
+The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.26.3 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `argocd/applications/clickhouse-operator/values.yaml`.
 
 ## Namespace & Access
 
@@ -223,7 +223,7 @@ This is an emergency-only path, but it is now a known one. Waiting for the clust
 
 - Helm chart rollback: `argocd app rollback clickhouse-operator <ID>` reverts to a previous revision while keeping the namespace intact.
 - Namespace recovery: if a change introduces broken CRDs or controllers, disable auto-sync, delete the `clickhouse-operator` namespace, and re-sync the application after values are corrected.
-- Keeper & cluster CRDs: versioned CRDs are pinned to chart v0.27.1. Regenerate schemas via `scripts/download_crd_schema.py` before upgrading to maintain kubeconform coverage.
+- Keeper & cluster CRDs: versioned CRDs are pinned to chart v0.26.3. Regenerate schemas via `scripts/download_crd_schema.py` before upgrading to maintain kubeconform coverage.
 
 ## References
 
