@@ -708,7 +708,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
                 return_value={},
             ),
             patch(
-                "app.trading.scheduler.simple_pipeline.build_empirical_jobs_status",
+                "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
                 return_value={},
             ),
             patch(
