@@ -40,21 +40,7 @@ from .shared import (
     logger,
 )
 
-_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS = frozenset(
-    {
-        "alpha_readiness_not_promotion_eligible",
-        "bounded_paper_route_evidence_collection_only",
-        "hypothesis_window_evidence_missing",
-        "live_runtime_ledger_required",
-        "paper_probation_evidence_collection_only",
-        "paper_route_runtime_ledger_import_pending",
-        "promotion_certificate_missing",
-        "runtime_ledger_profit_target_source_collection_pending",
-        "runtime_ledger_source_collection_only",
-        "runtime_ledger_source_collection_pending",
-        "runtime_ledger_source_window_evidence_pending",
-    }
-)
+_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS: frozenset[str] = frozenset()
 
 _BOUNDED_PAPER_ROUTE_CLOSE_SOURCE = "filled_bounded_paper_route_collection_executions"
 

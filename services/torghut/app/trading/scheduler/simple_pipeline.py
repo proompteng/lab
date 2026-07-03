@@ -28,7 +28,6 @@ from ..submission_council import (
     load_quant_evidence_status,
 )
 from ..live_submit_activation import (
-    live_submit_activation_blocker,
     live_submit_activation_status,
 )
 from ..tca import build_tca_gate_inputs
@@ -558,9 +557,8 @@ class SimpleTradingPipeline(
             simple_blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
             simple_blocked_reasons.append("simple_submit_disabled")
-        activation_blocker = live_submit_activation_blocker()
-        if activation_blocker is not None:
-            simple_blocked_reasons.append(activation_blocker)
+        if not settings.trading_live_submit_enabled:
+            simple_blocked_reasons.append("live_submit_disabled")
         if settings.trading_emergency_stop_enabled and bool(
             getattr(self.state, "emergency_stop_active", False)
         ):
@@ -588,8 +586,15 @@ class SimpleTradingPipeline(
             gate["capital_stage"] = "shadow"
             gate["capital_state"] = "observe"
         gate["pipeline_mode"] = "simple"
+        gate["operational_submission_gate"] = {
+            "allowed": bool(gate.get("allowed", False)),
+            "reason": str(gate.get("reason") or "unknown"),
+            "blocked_reasons": merged_blocked_reasons,
+            "execution_route": gate.get("execution_route"),
+        }
         gate["simple_lane"] = {
             "submit_enabled": settings.trading_simple_submit_enabled,
+            "live_submit_enabled": settings.trading_live_submit_enabled,
             "shared_gate_enforced": True,
             "blocked_reasons": simple_blocked_reasons,
             "live_submit_activation": live_submit_activation_status(),

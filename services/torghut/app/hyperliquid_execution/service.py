@@ -10,6 +10,7 @@ from typing import Protocol, cast
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidExecutionExchange
 from .feed_reader import FeedStatus
+from .maintenance import close_largest_positions_over_cap
 from .models import (
     CycleRecord,
     CycleResult,
@@ -91,16 +92,19 @@ class HyperliquidExecutionService:
             trading_enabled=self._config.order_submission_enabled(),
             dependencies=context.dependencies,
         )
-        self._process_features(
-            repository=repository,
-            context=_FeatureProcessingContext(
-                cycle_id=cycle_id,
-                started_at=started_at,
-                features=context.features,
-                risk_state=risk_state,
-            ),
-            counts=counts,
-        )
+        maintenance_reduce_only = self._reduce_over_cap_exposure(risk_state)
+        counts.record_maintenance_reduce_only(maintenance_reduce_only)
+        if not _maintenance_reduce_only_ran(maintenance_reduce_only):
+            self._process_features(
+                repository=repository,
+                context=_FeatureProcessingContext(
+                    cycle_id=cycle_id,
+                    started_at=started_at,
+                    features=context.features,
+                    risk_state=risk_state,
+                ),
+                counts=counts,
+            )
 
         repository.insert_performance_snapshot(observed_at=started_at)
         repository.insert_multifactor_attribution_snapshot(
@@ -141,6 +145,20 @@ class HyperliquidExecutionService:
     ) -> None:
         result = self._exchange.cancel_order(expired)
         repository.mark_order_cancelled(expired, result)
+
+    def _reduce_over_cap_exposure(self, risk_state: RiskState) -> dict[str, object]:
+        if risk_state.gross_exposure_usd < self._config.max_gross_exposure_usd:
+            return {
+                "schema_version": "torghut.hyperliquid-execution-over-cap-maintenance.v1",
+                "over_cap": False,
+                "actions": [],
+            }
+        return close_largest_positions_over_cap(
+            config=self._config,
+            exchange=self._exchange,
+            execute=True,
+            max_actions=1,
+        )
 
     def _process_features(
         self,
@@ -371,6 +389,7 @@ class _CycleCounts:
         default_factory=_empty_nested_counts
     )
     order_errors_by_type: dict[str, int] = field(default_factory=_empty_counts)
+    maintenance_reduce_only: dict[str, object] | None = None
 
     def record_risk_block(self, coin: str, reason: str) -> None:
         self.risk_blocks_by_reason[reason] = (
@@ -382,6 +401,20 @@ class _CycleCounts:
     def record_order_error(self, error_type: str) -> None:
         self.order_errors_by_type[error_type] = (
             self.order_errors_by_type.get(error_type, 0) + 1
+        )
+
+    def record_maintenance_reduce_only(self, report: dict[str, object]) -> None:
+        self.maintenance_reduce_only = report
+        actions = report.get("actions")
+        if not isinstance(actions, list):
+            return
+        action_items = cast(list[object], actions)
+        submitted_statuses = {"accepted", "filled", "submitted"}
+        self.orders_submitted += sum(
+            1
+            for action in action_items
+            if isinstance(action, dict)
+            and cast(dict[str, object], action).get("status") in submitted_statuses
         )
 
 
@@ -412,6 +445,8 @@ def _cycle_universe_details(
     counts: _CycleCounts,
 ) -> dict[str, object]:
     details = dict(universe_details)
+    if counts.maintenance_reduce_only is not None:
+        details["maintenance_reduce_only"] = counts.maintenance_reduce_only
     if counts.risk_blocks_by_reason:
         details["risk_blocks_by_reason"] = dict(
             sorted(counts.risk_blocks_by_reason.items())
@@ -426,6 +461,11 @@ def _cycle_universe_details(
             sorted(counts.order_errors_by_type.items())
         )
     return details
+
+
+def _maintenance_reduce_only_ran(report: dict[str, object]) -> bool:
+    actions = report.get("actions")
+    return isinstance(actions, list) and bool(cast(list[object], actions))
 
 
 def _feature_status(

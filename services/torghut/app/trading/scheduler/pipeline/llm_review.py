@@ -166,12 +166,19 @@ class TradingPipelineReviewMixin(TradingPipelineBase):
         symbol: str,
     ) -> Any:
         _ = symbol
-        if getattr(self.execution_adapter, "name", None) == "simulation":
+        if getattr(self.execution_adapter, "name", None) in {
+            "simulation",
+            "session_router",
+        }:
             return self.execution_adapter
         return self.order_firewall
 
-    @staticmethod
-    def _execution_client_name(client: Any) -> str:
+    def _execution_client_name(self, client: Any) -> str:
+        current_route = getattr(client, "current_route", None)
+        if callable(current_route):
+            route = str(current_route() or "").strip()
+            if route:
+                return route
         raw_name = getattr(client, "name", None)
         if raw_name:
             return str(raw_name)

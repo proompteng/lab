@@ -633,8 +633,12 @@ class TestExecutionAdapters(TestCase):
 
     def test_build_execution_adapter_uses_alpaca_when_simulation_disabled(self) -> None:
         original_sim_enabled = config.settings.trading_simulation_enabled
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
         try:
             config.settings.trading_simulation_enabled = False
+            config.settings.trading_testnet_after_hours_enabled = False
             adapter = build_execution_adapter(
                 alpaca_client=FakeReadClient(),
                 order_firewall=FakeOrderFirewall(),
@@ -642,6 +646,83 @@ class TestExecutionAdapters(TestCase):
             self.assertEqual(adapter.name, "alpaca")
         finally:
             config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
+
+    def test_session_router_uses_alpaca_during_regular_market_hours(self) -> None:
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
+        try:
+            config.settings.trading_simulation_enabled = False
+            config.settings.trading_testnet_after_hours_enabled = True
+            with patch(
+                "app.trading.execution_adapters.lean_adapter.market_session_is_open",
+                return_value=True,
+            ):
+                adapter = build_execution_adapter(
+                    alpaca_client=FakeReadClient(),
+                    order_firewall=FakeOrderFirewall(),
+                )
+
+                payload = _submit_order(
+                    adapter,
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1.0,
+                    order_type="market",
+                    time_in_force="day",
+                )
+
+            self.assertEqual(adapter.name, "session_router")
+            self.assertEqual(payload["_execution_route_expected"], "alpaca")
+            self.assertEqual(payload["_execution_route_actual"], "alpaca")
+            self.assertEqual(payload["id"], "fallback-order")
+        finally:
+            config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
+
+    def test_session_router_uses_testnet_outside_regular_market_hours(self) -> None:
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
+        try:
+            config.settings.trading_simulation_enabled = False
+            config.settings.trading_testnet_after_hours_enabled = True
+            with patch(
+                "app.trading.execution_adapters.lean_adapter.market_session_is_open",
+                return_value=False,
+            ):
+                adapter = build_execution_adapter(
+                    alpaca_client=FakeReadClient(),
+                    order_firewall=FakeOrderFirewall(),
+                )
+
+                payload = _submit_order(
+                    adapter,
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1.0,
+                    order_type="market",
+                    time_in_force="day",
+                    extra_params={"client_order_id": "after-hours-testnet"},
+                )
+
+            self.assertEqual(adapter.name, "session_router")
+            self.assertEqual(payload["_execution_route_expected"], "testnet")
+            self.assertEqual(payload["_execution_route_actual"], "testnet")
+            self.assertTrue(str(payload["id"]).startswith("sim-order-"))
+            self.assertEqual(payload["status"], "filled")
+        finally:
+            config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
 
     def test_simulation_adapter_uses_kafka_security_kwargs(self) -> None:
         captured_kwargs: dict[str, Any] = {}

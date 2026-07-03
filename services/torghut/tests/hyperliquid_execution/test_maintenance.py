@@ -6,7 +6,10 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
-from app.hyperliquid_execution.maintenance import close_excluded_positions
+from app.hyperliquid_execution.maintenance import (
+    close_excluded_positions,
+    close_largest_positions_over_cap,
+)
 from app.hyperliquid_execution.models import AccountSnapshot, AccountState, OrderResult
 
 
@@ -76,6 +79,31 @@ def test_reduce_only_close_executes_when_flag_enabled() -> None:
     assert report["actions"][0]["status"] == "filled"
     assert report["actions"][0]["exchange_order_id"] == "789"
     assert exchange.closed == [("SPX", Decimal("275.2"), Decimal("0.02"))]
+
+
+def test_reduce_only_over_cap_closes_largest_position_first() -> None:
+    exchange = _MaintenanceExchange()
+
+    report = close_largest_positions_over_cap(
+        config=HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
+                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "50",
+            }
+        ),
+        exchange=exchange,
+        execute=True,
+    )
+
+    assert report["over_cap"] is True
+    assert report["blockers"] == []
+    assert report["actions"][0]["reason"] == "gross_exposure_cap"
+    assert report["actions"][0]["status"] == "filled"
+    assert report["actions"][0]["coin"] == "SPX"
+    assert exchange.closed == [("SPX", Decimal("275.2"), Decimal("0.05"))]
 
 
 class _MaintenanceExchange:

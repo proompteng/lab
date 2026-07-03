@@ -333,6 +333,48 @@ def test_service_cycle_submits_at_most_one_order() -> None:
     assert exchange.submitted_coins == ["NVDA"]
 
 
+def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
+    now = _now()
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
+            "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "250",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "50",
+            "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
+        }
+    )
+    session = _FakeSession(risk_gross_exposure_usd=Decimal("250"))
+    exchange = _ServiceExchange(
+        now,
+        account_state=_account_state(
+            now,
+            gross_exposure_usd=Decimal("260"),
+            position_size=Decimal("2.6"),
+            position_notional_usd=Decimal("260"),
+        ),
+    )
+    service = HyperliquidExecutionService(
+        config=config,
+        feed=_ServiceFeed(now),
+        exchange=exchange,
+    )
+
+    result = service.run_once(session)
+
+    assert result.signals_written == 0
+    assert result.orders_submitted == 1
+    assert exchange.submitted_coins == []
+    assert exchange.reduce_only_closes == [("NVDA", Decimal("2.6"), Decimal("0.05"))]
+    maintenance = result.universe_details["maintenance_reduce_only"]
+    assert isinstance(maintenance, dict)
+    assert maintenance["over_cap"] is True
+    assert maintenance["actions"][0]["reason"] == "gross_exposure_cap"
+    assert maintenance["actions"][0]["status"] == "filled"
+
+
 def test_service_selects_only_fresh_execution_markets() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
@@ -595,10 +637,17 @@ class _TwoExecutableServiceFeed(_PartialFeatureServiceFeed):
 
 
 class _ServiceExchange:
-    def __init__(self, now: datetime) -> None:
+    def __init__(
+        self,
+        now: datetime,
+        *,
+        account_state: AccountState | None = None,
+    ) -> None:
         self.now = now
+        self.account_state = account_state or _account_state(now)
         self.reconciled_coins: set[str] = set()
         self.submitted_coins: list[str] = []
+        self.reduce_only_closes: list[tuple[str, Decimal | None, Decimal]] = []
 
     def filter_supported_markets(
         self,
@@ -618,6 +667,16 @@ class _ServiceExchange:
         self.submitted_coins.append(intent.coin)
         return OrderResult("filled", "456", {"filled": {"oid": 456}})
 
+    def close_position_reduce_only(
+        self,
+        coin: str,
+        *,
+        size: Decimal | None = None,
+        slippage: Decimal = Decimal("0.05"),
+    ) -> OrderResult:
+        self.reduce_only_closes.append((coin, size, slippage))
+        return OrderResult("filled", "789", {"filled": {"oid": 789}})
+
     def cancel_order(self, _order: Any) -> OrderResult:
         return OrderResult("cancelled", "123", {"ok": True})
 
@@ -627,7 +686,7 @@ class _ServiceExchange:
 
     def reconcile_account(self, _market_id_by_coin: dict[str, str]) -> AccountState:
         self.reconciled_coins.update(_market_id_by_coin)
-        return _account_state(self.now)
+        return self.account_state
 
     def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]:
         self.reconciled_coins.update(coins)
@@ -648,11 +707,13 @@ class _FakeSession:
         *,
         reject_count: int = 0,
         risk_open_coin: bool = False,
+        risk_gross_exposure_usd: Decimal = Decimal("10"),
         risk_exposure_usd: Decimal = Decimal("0"),
         risk_cooldown: bool = False,
     ) -> None:
         self.reject_count = reject_count
         self.risk_open_coin = risk_open_coin
+        self.risk_gross_exposure_usd = risk_gross_exposure_usd
         self.risk_exposure_usd = risk_exposure_usd
         self.risk_cooldown = risk_cooldown
         self.calls: list[tuple[str, Mapping[str, object] | None]] = []
@@ -682,7 +743,12 @@ class _FakeSession:
         if "SELECT count(*) AS rejects" in sql:
             return [{"rejects": self.reject_count}]
         if "daily_realized_pnl_usd" in sql:
-            return [{"gross_exposure_usd": "10", "daily_realized_pnl_usd": "1"}]
+            return [
+                {
+                    "gross_exposure_usd": str(self.risk_gross_exposure_usd),
+                    "daily_realized_pnl_usd": "1",
+                }
+            ]
         if "SELECT DISTINCT coin" in sql:
             return [{"coin": "NVDA"}] if self.risk_open_coin else []
         if "GROUP BY coin" in sql and "exposures" in sql:
@@ -854,22 +920,28 @@ def _fill(now: datetime) -> Fill:
     )
 
 
-def _account_state(now: datetime) -> AccountState:
+def _account_state(
+    now: datetime,
+    *,
+    gross_exposure_usd: Decimal = Decimal("10"),
+    position_size: Decimal = Decimal("0.1"),
+    position_notional_usd: Decimal = Decimal("10"),
+) -> AccountState:
     return AccountState(
         account=AccountSnapshot(
             observed_at=now,
             account_value_usd=Decimal("1000"),
             withdrawable_usd=Decimal("900"),
-            gross_exposure_usd=Decimal("10"),
+            gross_exposure_usd=gross_exposure_usd,
             raw_payload={"account": "test"},
         ),
         positions=(
             PositionSnapshot(
                 market_id="hl:perp:xyz:NVDA",
                 coin="NVDA",
-                size=Decimal("0.1"),
+                size=position_size,
                 entry_price=Decimal("100"),
-                notional_usd=Decimal("10"),
+                notional_usd=position_notional_usd,
                 unrealized_pnl_usd=Decimal("0.25"),
                 observed_at=now,
                 raw_payload={"coin": "NVDA"},

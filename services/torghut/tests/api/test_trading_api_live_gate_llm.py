@@ -196,7 +196,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             else:
                 app.state.trading_scheduler = original_scheduler
 
-    def test_trading_status_blocks_live_submission_when_quant_latest_store_is_empty(
+    def test_trading_status_keeps_quant_latest_store_empty_diagnostic_only(
         self,
     ) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
@@ -207,6 +207,10 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": (
+                settings.trading_testnet_after_hours_enabled
+            ),
         }
         try:
             settings.trading_enabled = True
@@ -215,6 +219,8 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             settings.trading_autonomy_allow_live_promotion = True
             settings.trading_kill_switch_enabled = False
             settings.trading_simple_submit_enabled = True
+            settings.trading_live_submit_enabled = True
+            settings.trading_testnet_after_hours_enabled = True
 
             scheduler = TradingScheduler()
             app.state.trading_scheduler = scheduler
@@ -289,10 +295,12 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             gate = payload["live_submission_gate"]
-            self.assertFalse(gate["allowed"])
-            self.assertEqual(gate["reason"], "quant_latest_metrics_empty")
-            self.assertEqual(gate["capital_state"], "observe")
-            self.assertIn("quant_latest_store_alarm", gate["blocked_reasons"])
+            self.assertTrue(gate["allowed"])
+            self.assertEqual(gate["reason"], "operational_submission_ready")
+            self.assertEqual(gate["capital_state"], "live")
+            self.assertNotIn("quant_latest_store_alarm", gate["blocked_reasons"])
+            self.assertEqual(payload["execution_route"], "testnet")
+            self.assertTrue(payload["operational_submission_gate"]["allowed"])
             self.assertEqual(payload["quant_evidence"]["window"], "15m")
             self.assertFalse(payload["quant_evidence"]["ok"])
         finally:
@@ -307,6 +315,12 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             ]
             settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
+            ]
+            settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
+            settings.trading_testnet_after_hours_enabled = original[
+                "trading_testnet_after_hours_enabled"
             ]
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):

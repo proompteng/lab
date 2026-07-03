@@ -15,14 +15,12 @@ from .common import (
     normalize_reason_codes as _normalize_reason_codes,
     safe_int as _safe_int,
     safe_text as _safe_text,
-    stage_rank as _stage_rank,
     build_profit_lease_projection,
     build_profit_window_contract,
     build_tca_gate_inputs,
     cast,
     compile_hypothesis_runtime_statuses,
     datetime,
-    hashlib,
     load_hypothesis_registry,
     resolve_hypothesis_dependency_quorum,
     settings,
@@ -38,42 +36,21 @@ from .quant_health import (
     resolve_quant_health_url,
 )
 from .gate_payloads import (
-    bounded_live_paper_collection_gate_payload as _bounded_live_paper_collection_gate_payload,
     common_submission_payload as _common_submission_payload,
-)
-from .configured_collection import (
-    with_configured_paper_collection_targets as _with_configured_paper_collection_targets,
 )
 from .runtime_summary import (
     build_hypothesis_runtime_summary,
 )
-from .paper_probation import (
-    RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER as _RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER,
-    runtime_ledger_paper_probation_candidates as _runtime_ledger_paper_probation_candidates,
-    runtime_ledger_source_collection_candidates as _runtime_ledger_source_collection_candidates,
-)
-from .import_plan import (
-    paper_probation_eligible_total_with_runtime_ledger as _paper_probation_eligible_total_with_runtime_ledger,
-    runtime_ledger_paper_probation_import_plan as _runtime_ledger_paper_probation_import_plan,
-    with_bounded_paper_route_manifest_collection_targets as _with_bounded_paper_route_manifest_collection_targets,
-)
 from .repair_candidates import (
     extract_runtime_summary as _extract_runtime_summary,
-    load_runtime_ledger_repair_candidates as _load_runtime_ledger_repair_candidates,
     refresh_runtime_summary_totals as _refresh_runtime_summary_totals,
     build_submission_gate_market_context_status,
 )
 from .certificate_loading import (
-    load_latest_certificate_evidence as _load_latest_certificate_evidence,
     merge_runtime_certificate_evidence as _merge_runtime_certificate_evidence,
 )
 from .certificate_eval import (
-    attach_lineage_refs as _attach_lineage_refs,
-    candidate_reason_codes_for_gate_scope as _candidate_reason_codes_for_gate_scope,
     default_lineage_ref as _default_lineage_ref,
-    evaluate_certificate_candidates as _evaluate_certificate_candidates,
-    runtime_hypothesis_ids_for_gate_scope as _runtime_hypothesis_ids_for_gate_scope,
-    runtime_ledger_hypothesis_ids_for_gate_scope as _runtime_ledger_hypothesis_ids_for_gate_scope,
     segment_summary as _segment_summary,
 )
 from .profit_readiness import (
@@ -81,9 +58,6 @@ from .profit_readiness import (
     build_profit_live_controls as _build_profit_live_controls,
     build_profit_rejection_summary as _build_profit_rejection_summary,
     load_profit_promotion_table_counts as _load_profit_promotion_table_counts,
-)
-from ..live_submit_activation import (
-    live_submit_activation_blocker,
 )
 
 
@@ -171,19 +145,6 @@ class _SubmissionGateBuildInputs:
     clickhouse_ta_status: Mapping[str, Any] | None
 
 
-@dataclass(frozen=True)
-class _SelectedCertificateState:
-    chosen_candidate: Mapping[str, object] | None
-    allowed: bool
-    certificate_id: str | None
-    issued_at: object
-    expires_at: object
-    capital_stage: str
-    capital_state: str
-    reason: str
-    reason_codes: list[str]
-
-
 def build_live_submission_gate_payload(
     state: object,
     *,
@@ -218,25 +179,12 @@ def _submission_gate_payload_from_context(
 ) -> dict[str, object]:
     if settings.trading_mode != "live":
         return _non_live_submission_gate_payload(context)
-    evaluated_tuples, valid_candidates = _live_submission_certificate_candidates(
+    del session
+    blocked_reasons = _operational_submission_blocked_reasons(context)
+    lineage_ref = _default_lineage_ref(status="operational")
+    return _operational_submission_gate_payload(
         context,
-        session=session,
-    )
-    blocked_reasons = _live_submission_blocked_reasons(
-        context,
-        evaluated_tuples=evaluated_tuples,
-        valid_candidates=valid_candidates,
-    )
-    selection = _select_live_submission_certificate(valid_candidates, blocked_reasons)
-    lineage_ref = _live_submission_lineage_ref(
-        selection.chosen_candidate, evaluated_tuples
-    )
-    return _live_submission_gate_payload(
-        context,
-        selection=selection,
         blocked_reasons=blocked_reasons,
-        evaluated_tuples=evaluated_tuples,
-        evidence_tuple=_live_submission_evidence_tuple(context, selection),
         lineage_ref=lineage_ref,
         profit_window_contract=_submission_profit_window_contract(
             context, lineage_ref=lineage_ref
@@ -413,19 +361,13 @@ def _submission_runtime_inputs(
 ) -> _SubmissionRuntimeInputs:
     registry = load_hypothesis_registry()
     registry_item_payloads = [item.model_dump(mode="json") for item in registry.items]
-    runtime_ledger = _submission_runtime_ledger_context(session, registry_item_payloads)
+    runtime_ledger = _empty_submission_runtime_ledger_context()
     evidence_rows = (
         [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
-        else _load_latest_certificate_evidence(
-            session,
-            hypothesis_ids=[item.hypothesis_id for item in registry.items],
-            now=now,
-            max_age_seconds=max_age_seconds,
-        )
-        if session is not None
         else []
     )
+    _ = (session, now, max_age_seconds)
     return _SubmissionRuntimeInputs(
         registry_item_payloads=registry_item_payloads,
         runtime_ledger=runtime_ledger,
@@ -433,45 +375,13 @@ def _submission_runtime_inputs(
     )
 
 
-def _submission_runtime_ledger_context(
-    session: Session | None,
-    registry_item_payloads: list[dict[str, object]],
-) -> _SubmissionRuntimeLedgerContext:
-    repair_candidates = (
-        _load_runtime_ledger_repair_candidates(
-            session, registry_items=registry_item_payloads
-        )
-        if session is not None
-        else []
-    )
-    paper_probation_candidates = _runtime_ledger_paper_probation_candidates(
-        repair_candidates
-    )
-    source_collection_candidates = _runtime_ledger_source_collection_candidates(
-        repair_candidates
-    )
-    source_collection_profit_target_candidates = [
-        candidate
-        for candidate in source_collection_candidates
-        if bool(candidate.get("source_collection_profit_target_candidate"))
-    ]
-    import_plan = _runtime_ledger_paper_probation_import_plan(
-        [*paper_probation_candidates, *source_collection_candidates]
-    )
-    merged_import_plan = _with_bounded_paper_route_manifest_collection_targets(
-        import_plan,
-        registry_items=registry_item_payloads,
-    )
-    merged_import_plan = _with_configured_paper_collection_targets(
-        merged_import_plan,
-        session=session,
-    )
+def _empty_submission_runtime_ledger_context() -> _SubmissionRuntimeLedgerContext:
     return _SubmissionRuntimeLedgerContext(
-        repair_candidates=repair_candidates,
-        paper_probation_candidates=paper_probation_candidates,
-        source_collection_candidates=source_collection_candidates,
-        source_collection_profit_target_candidates=source_collection_profit_target_candidates,
-        paper_probation_import_plan=merged_import_plan,
+        repair_candidates=[],
+        paper_probation_candidates=[],
+        source_collection_candidates=[],
+        source_collection_profit_target_candidates=[],
+        paper_probation_import_plan={},
     )
 
 
@@ -524,17 +434,14 @@ def _submission_totals(
     *,
     claimed_promotion_eligible_total: int,
 ) -> _SubmissionTotals:
+    del runtime_items, runtime_ledger
     paper_probation_eligible_total = _safe_int(
         summary.get("paper_probation_eligible_total")
     )
     return _SubmissionTotals(
         claimed_promotion_eligible_total=claimed_promotion_eligible_total,
         promotion_eligible_total=_safe_int(summary.get("promotion_eligible_total")),
-        paper_probation_eligible_total=_paper_probation_eligible_total_with_runtime_ledger(
-            legacy_total=paper_probation_eligible_total,
-            runtime_items=runtime_items,
-            runtime_ledger_candidates=runtime_ledger.paper_probation_candidates,
-        ),
+        paper_probation_eligible_total=paper_probation_eligible_total,
         active_capital_stage=resolve_active_capital_stage(summary) or "unknown",
     )
 
@@ -605,224 +512,51 @@ def _non_live_submission_gate_payload(
     }
 
 
-def _live_submission_certificate_candidates(
+def _operational_submission_blocked_reasons(
     context: _SubmissionGateContext,
-    *,
-    session: Session | None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    evaluated_tuples, valid_candidates = _evaluate_certificate_candidates(
-        evidence=context.runtime_inputs.evidence_rows,
-        segment_summary=context.segment_summary,
-        runtime_items=context.runtime_items,
-        registry_items=context.runtime_inputs.registry_item_payloads,
-        max_age_seconds=context.max_age_seconds,
-        now=context.now,
-        window=_safe_text(context.quant.evidence.get("window")),
-        account=_safe_text(context.quant.evidence.get("account")),
-    )
-    if session is None or not evaluated_tuples:
-        return evaluated_tuples, valid_candidates
-    evaluated_tuples = _attach_lineage_refs(session, evaluated_rows=evaluated_tuples)
-    return evaluated_tuples, [
-        item for item in evaluated_tuples if not item.get("reason_codes")
-    ]
-
-
-def _live_submission_blocked_reasons(
-    context: _SubmissionGateContext,
-    *,
-    evaluated_tuples: Sequence[Mapping[str, object]],
-    valid_candidates: Sequence[Mapping[str, object]],
 ) -> list[str]:
     blocked_reasons: list[str] = []
-    _append_toggle_and_readiness_blockers(blocked_reasons, context)
-    _append_alpha_readiness_blockers(blocked_reasons, context)
-    _append_certificate_blockers(
-        blocked_reasons,
-        context,
-        evaluated_tuples=evaluated_tuples,
-        valid_candidates=valid_candidates,
-    )
+    if not settings.trading_enabled:
+        blocked_reasons.append("trading_disabled")
+    if settings.trading_kill_switch_enabled:
+        blocked_reasons.append("kill_switch_enabled")
+    if not settings.trading_simple_submit_enabled:
+        blocked_reasons.append("simple_submit_disabled")
+    if not settings.trading_live_submit_enabled:
+        blocked_reasons.append("live_submit_disabled")
+    if settings.trading_emergency_stop_enabled and bool(
+        getattr(context.state, "emergency_stop_active", False)
+    ):
+        blocked_reasons.append(
+            str(
+                getattr(context.state, "emergency_stop_reason", "")
+                or "emergency_stop_active"
+            )
+        )
+    execution_route = _execution_route_payload(context)
+    if execution_route["route"] == "alpaca" and not _alpaca_broker_available():
+        blocked_reasons.append("broker_unavailable")
+    if (
+        execution_route["route"] == "testnet"
+        and not settings.trading_testnet_after_hours_enabled
+    ):
+        blocked_reasons.append("testnet_after_hours_disabled")
     return _normalize_reason_codes(blocked_reasons)
 
 
-def _append_toggle_and_readiness_blockers(
-    blocked_reasons: list[str],
-    context: _SubmissionGateContext,
-) -> None:
-    if context.toggles.blocking_toggle_mismatches:
-        blocked_reasons.append("critical_toggle_parity_diverged")
-    if context.dependencies.empirical_ready is False:
-        blocked_reasons.append("empirical_jobs_not_ready")
-    if context.dependencies.dspy_live_ready is False:
-        blocked_reasons.append("dspy_live_runtime_not_ready")
-    if context.dependencies.decision != "allow":
-        blocked_reasons.append(f"dependency_quorum_{context.dependencies.decision}")
-    if context.quant.required and not context.quant.ready:
-        blocked_reasons.extend(context.quant.blocking_reasons or [context.quant.reason])
-    activation_blocker = live_submit_activation_blocker(now=context.now)
-    if activation_blocker is not None:
-        blocked_reasons.append(activation_blocker)
-
-
-def _append_alpha_readiness_blockers(
-    blocked_reasons: list[str],
-    context: _SubmissionGateContext,
-) -> None:
-    runtime_ledger = context.runtime_inputs.runtime_ledger
-    if context.totals.promotion_eligible_total > 0:
-        return
-    blocked_reasons.append("alpha_readiness_not_promotion_eligible")
-    if runtime_ledger.paper_probation_candidates:
-        blocked_reasons.append("paper_probation_evidence_collection_only")
-    has_source_collection_target = (
-        runtime_ledger.source_collection_candidates
-        or _safe_int(
-            runtime_ledger.paper_probation_import_plan.get(
-                "manifest_bounded_collection_target_count"
-            )
-        )
-    )
-    if not has_source_collection_target:
-        return
-    if runtime_ledger.source_collection_profit_target_candidates:
-        blocked_reasons.append(_RUNTIME_LEDGER_SOURCE_COLLECTION_PROFIT_TARGET_BLOCKER)
-    blocked_reasons.append("runtime_ledger_source_collection_pending")
-
-
-def _append_certificate_blockers(
-    blocked_reasons: list[str],
-    context: _SubmissionGateContext,
-    *,
-    evaluated_tuples: Sequence[Mapping[str, object]],
-    valid_candidates: Sequence[Mapping[str, object]],
-) -> None:
-    if _should_require_promotion_certificate(context) and not valid_candidates:
-        if not evaluated_tuples:
-            blocked_reasons.extend(
-                ["promotion_certificate_missing", "hypothesis_window_evidence_missing"]
-            )
-            return
-        blocked_reasons.extend(
-            _candidate_reason_codes_for_gate_scope(
-                evaluated_tuples,
-                hypothesis_ids=_runtime_hypothesis_ids_for_gate_scope(
-                    context.runtime_items,
-                    eligibility_key="promotion_eligible",
-                ),
-            )
-        )
-        blocked_reasons.append("promotion_certificate_missing")
-    elif context.totals.paper_probation_eligible_total > 0 and evaluated_tuples:
-        blocked_reasons.extend(
-            _candidate_reason_codes_for_gate_scope(
-                evaluated_tuples,
-                hypothesis_ids=_paper_probation_scope_hypothesis_ids(context),
-            )
-        )
-
-
-def _should_require_promotion_certificate(context: _SubmissionGateContext) -> bool:
-    return (
-        context.totals.promotion_eligible_total > 0
-        or context.totals.claimed_promotion_eligible_total > 0
-    )
-
-
-def _paper_probation_scope_hypothesis_ids(context: _SubmissionGateContext) -> set[str]:
-    hypothesis_ids = _runtime_hypothesis_ids_for_gate_scope(
-        context.runtime_items,
-        eligibility_key="paper_probation_eligible",
-    )
-    hypothesis_ids.update(
-        _runtime_ledger_hypothesis_ids_for_gate_scope(
-            context.runtime_inputs.runtime_ledger.paper_probation_candidates
-        )
-    )
-    return hypothesis_ids
-
-
-def _select_live_submission_certificate(
-    valid_candidates: Sequence[Mapping[str, object]],
-    blocked_reasons: Sequence[str],
-) -> _SelectedCertificateState:
-    chosen_candidate = (
-        max(valid_candidates, key=lambda item: _stage_rank(item.get("capital_stage")))
-        if valid_candidates
-        else None
-    )
-    allowed = chosen_candidate is not None and not blocked_reasons
-    if not allowed or chosen_candidate is None:
-        return _SelectedCertificateState(
-            chosen_candidate=chosen_candidate,
-            allowed=False,
-            certificate_id=None,
-            issued_at=None,
-            expires_at=None,
-            capital_stage="shadow",
-            capital_state="observe",
-            reason=_primary_live_submission_blocked_reason(blocked_reasons),
-            reason_codes=list(blocked_reasons) or ["promotion_certificate_missing"],
-        )
-    capital_stage = str(chosen_candidate.get("capital_stage") or "shadow")
-    return _SelectedCertificateState(
-        chosen_candidate=chosen_candidate,
-        allowed=True,
-        certificate_id=_certificate_id_for_candidate(chosen_candidate, capital_stage),
-        issued_at=chosen_candidate.get("issued_at"),
-        expires_at=chosen_candidate.get("expires_at"),
-        capital_stage=capital_stage,
-        capital_state=capital_stage,
-        reason="promotion_certificate_valid",
-        reason_codes=["promotion_certificate_valid"],
-    )
+def _alpaca_broker_available() -> bool:
+    for account in settings.trading_accounts:
+        api_key = str(getattr(account, "api_key", "") or "").strip()
+        secret_key = str(getattr(account, "secret_key", "") or "").strip()
+        if api_key and secret_key:
+            return True
+    return False
 
 
 def _primary_live_submission_blocked_reason(blocked_reasons: Sequence[str]) -> str:
-    if "live_submit_activation_expired" in blocked_reasons:
-        return "live_submit_activation_expired"
-    if "live_submit_activation_expiry_invalid" in blocked_reasons:
-        return "live_submit_activation_expiry_invalid"
-    if "alpha_readiness_not_promotion_eligible" in blocked_reasons:
-        return "alpha_readiness_not_promotion_eligible"
     if blocked_reasons:
         return blocked_reasons[0]
-    return "promotion_certificate_missing"
-
-
-def _certificate_id_for_candidate(
-    chosen_candidate: Mapping[str, object],
-    capital_state: str,
-) -> str:
-    certificate_basis = "|".join(
-        [
-            str(chosen_candidate.get("hypothesis_id") or ""),
-            str(chosen_candidate.get("candidate_id") or ""),
-            str(chosen_candidate.get("strategy_id") or ""),
-            str(chosen_candidate.get("account") or ""),
-            str(chosen_candidate.get("window") or ""),
-            capital_state,
-            str(chosen_candidate.get("metric_window_id") or ""),
-            str(chosen_candidate.get("promotion_decision_id") or ""),
-        ]
-    )
-    return hashlib.sha256(certificate_basis.encode("utf-8")).hexdigest()[:24]
-
-
-def _live_submission_lineage_ref(
-    chosen_candidate: Mapping[str, object] | None,
-    evaluated_tuples: Sequence[Mapping[str, object]],
-) -> dict[str, object]:
-    lineage_ref = _default_lineage_ref(
-        status="missing" if evaluated_tuples else "unverified"
-    )
-    if chosen_candidate is not None and isinstance(
-        chosen_candidate.get("lineage_ref"), Mapping
-    ):
-        return dict(cast(Mapping[str, object], chosen_candidate.get("lineage_ref")))
-    if evaluated_tuples and isinstance(evaluated_tuples[0].get("lineage_ref"), Mapping):
-        return dict(cast(Mapping[str, object], evaluated_tuples[0].get("lineage_ref")))
-    return lineage_ref
+    return "operational_submission_ready"
 
 
 def _submission_profit_window_contract(
@@ -845,21 +579,6 @@ def _submission_profit_window_contract(
     )
 
 
-def _live_submission_evidence_tuple(
-    context: _SubmissionGateContext,
-    selection: _SelectedCertificateState,
-) -> dict[str, object]:
-    candidate = selection.chosen_candidate
-    return {
-        "hypothesis_id": candidate.get("hypothesis_id") if candidate else None,
-        "candidate_id": candidate.get("candidate_id") if candidate else None,
-        "strategy_id": candidate.get("strategy_id") if candidate else None,
-        "account": context.quant.evidence.get("account"),
-        "window": context.quant.evidence.get("window"),
-        "capital_state": selection.capital_state,
-    }
-
-
 def _empty_submission_evidence_tuple(
     context: _SubmissionGateContext,
     capital_state: str,
@@ -874,39 +593,83 @@ def _empty_submission_evidence_tuple(
     }
 
 
-def _live_submission_gate_payload(
+def _operational_submission_gate_payload(
     context: _SubmissionGateContext,
     *,
-    selection: _SelectedCertificateState,
     blocked_reasons: list[str],
-    evaluated_tuples: list[dict[str, object]],
-    evidence_tuple: dict[str, object],
     lineage_ref: dict[str, object],
     profit_window_contract: dict[str, object],
 ) -> dict[str, object]:
+    allowed = not blocked_reasons
+    reason = (
+        _primary_live_submission_blocked_reason(blocked_reasons)
+        if blocked_reasons
+        else "operational_submission_ready"
+    )
+    execution_route = _execution_route_payload(context)
     return {
-        "allowed": selection.allowed,
-        "reason": selection.reason,
+        "schema_version": "torghut.operational-submission-gate.v1",
+        "allowed": allowed,
+        "reason": reason,
         "blocked_reasons": blocked_reasons,
-        "certificate_id": selection.certificate_id,
-        "capital_stage": selection.capital_stage,
-        "capital_state": selection.capital_state,
-        "issued_at": selection.issued_at,
-        "expires_at": selection.expires_at,
+        "certificate_id": None,
+        "capital_stage": "live" if allowed else "operational_blocked",
+        "capital_state": "live" if allowed else "blocked",
+        "issued_at": None,
+        "expires_at": None,
+        "authority_scope": "operational_submission",
+        "promotion_authority": False,
+        "final_authority_ok": allowed,
+        "final_promotion_allowed": False,
+        "capital_promotion_allowed": False,
+        "configured_live_submit": settings.trading_live_submit_enabled,
+        "simple_submit_enabled": settings.trading_simple_submit_enabled,
+        "testnet_after_hours_enabled": settings.trading_testnet_after_hours_enabled,
+        "alpaca_regular_session_open": execution_route["alpaca_regular_session_open"],
+        "execution_route": execution_route,
+        "operational_submission_gate": {
+            "allowed": allowed,
+            "reason": reason,
+            "blocked_reasons": blocked_reasons,
+            "execution_route": execution_route,
+        },
         **_common_submission_payload(context),
-        "bounded_live_paper_collection_gate": _bounded_live_paper_collection_gate_payload(
-            context,
-            blocked_reasons=blocked_reasons,
-        ),
-        "reason_codes": selection.reason_codes,
+        "bounded_live_paper_collection_gate": {
+            "schema_version": "torghut.bounded-live-paper-collection-gate.v1",
+            "allowed": False,
+            "active": False,
+            "reason": "retired_operational_submission_gate",
+            "blocked_reasons": [],
+            "authority_scope": "retired",
+            "capital_promotion_allowed": False,
+            "final_authority_ok": False,
+            "capital_gate_allowed": False,
+        },
+        "reason_codes": blocked_reasons or ["operational_submission_ready"],
         "segment_summary": {
             "segments": context.segment_summary,
-            "evaluated_hypotheses": evaluated_tuples,
+            "evaluated_hypotheses": [],
         },
-        "evidence_tuple": evidence_tuple,
+        "evidence_tuple": _empty_submission_evidence_tuple(context, "operational"),
         "lineage_ref": lineage_ref,
-        "evaluated_tuples": evaluated_tuples,
+        "evaluated_tuples": [],
         "profit_window_contract": profit_window_contract,
+    }
+
+
+def _execution_route_payload(context: _SubmissionGateContext) -> dict[str, object]:
+    session_open = getattr(context.state, "market_session_open", None)
+    route = "alpaca" if session_open is True else "testnet"
+    reason = (
+        "alpaca_regular_session_open"
+        if route == "alpaca"
+        else "alpaca_regular_session_closed"
+    )
+    return {
+        "route": route,
+        "reason": reason,
+        "alpaca_regular_session_open": session_open is True,
+        "testnet_after_hours_enabled": settings.trading_testnet_after_hours_enabled,
     }
 
 

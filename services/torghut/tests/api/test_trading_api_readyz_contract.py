@@ -110,6 +110,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_pipeline_mode": settings.trading_pipeline_mode,
             "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
             "trading_live_submit_activation_expires_at": (
                 settings.trading_live_submit_activation_expires_at
             ),
@@ -120,6 +121,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_kill_switch_enabled = True
             settings.trading_pipeline_mode = "simple"
             settings.trading_simple_submit_enabled = False
+            settings.trading_live_submit_enabled = False
             settings.trading_live_submit_activation_expires_at = "2000-01-01T00:00:00Z"
 
             gate = readiness_surface_helpers.core_readiness_live_submission_gate()
@@ -133,6 +135,9 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
             ]
+            settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
             settings.trading_live_submit_activation_expires_at = original[
                 "trading_live_submit_activation_expires_at"
             ]
@@ -141,7 +146,6 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertFalse(gate["promotion_authority"])
         self.assertFalse(gate["promotion_authority_ok"])
         self.assertFalse(gate["final_authority_ok"])
-        self.assertIn("live_submit_activation_expired", gate["blocked_reasons"])
         self.assertFalse(gate["final_promotion_allowed"])
         self.assertFalse(gate["final_promotion_authorized"])
         self.assertEqual(gate["reason"], "readyz_core_dependencies_only")
@@ -152,7 +156,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                 "trading_disabled",
                 "kill_switch_enabled",
                 "simple_submit_disabled",
-                "live_submit_activation_expired",
+                "live_submit_disabled",
             ],
         )
         self.assertFalse(gate["read_model_evaluated"])

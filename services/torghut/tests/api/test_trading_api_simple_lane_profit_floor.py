@@ -61,12 +61,18 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         original_trading_enabled = settings.trading_enabled
         original_trading_mode = settings.trading_mode
         original_simple_submit_enabled = settings.trading_simple_submit_enabled
+        original_live_submit_enabled = settings.trading_live_submit_enabled
+        original_testnet_after_hours_enabled = (
+            settings.trading_testnet_after_hours_enabled
+        )
         original_kill_switch_enabled = settings.trading_kill_switch_enabled
 
         settings.trading_pipeline_mode = "simple"
         settings.trading_enabled = True
         settings.trading_mode = "live"
         settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_enabled = True
+        settings.trading_testnet_after_hours_enabled = True
         settings.trading_kill_switch_enabled = False
         try:
             scheduler = TradingScheduler()
@@ -99,10 +105,22 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
 
             self.assertEqual(payload["pipeline_mode"], "simple")
             self.assertEqual(payload["execution_lane"], "simple")
-            self.assertFalse(payload["live_submission_gate"]["allowed"])
+            self.assertTrue(payload["live_submission_gate"]["allowed"])
             self.assertEqual(
                 payload["live_submission_gate"]["reason"],
+                "operational_submission_ready",
+            )
+            self.assertNotIn(
                 "alpha_readiness_not_promotion_eligible",
+                payload["live_submission_gate"]["blocked_reasons"],
+            )
+            self.assertNotIn(
+                "runtime_ledger_source_collection_pending",
+                payload["live_submission_gate"]["blocked_reasons"],
+            )
+            self.assertNotIn(
+                "runtime_ledger_profit_target_source_collection_pending",
+                payload["live_submission_gate"]["blocked_reasons"],
             )
             self.assertTrue(
                 payload["live_submission_gate"]["simple_lane"]["shared_gate_enforced"]
@@ -153,6 +171,10 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             settings.trading_enabled = original_trading_enabled
             settings.trading_mode = original_trading_mode
             settings.trading_simple_submit_enabled = original_simple_submit_enabled
+            settings.trading_live_submit_enabled = original_live_submit_enabled
+            settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours_enabled
+            )
             settings.trading_kill_switch_enabled = original_kill_switch_enabled
 
     def test_trading_status_summarizes_persisted_rejected_signal_outcomes(
@@ -269,6 +291,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             "trading_enabled": settings.trading_enabled,
             "trading_mode": settings.trading_mode,
             "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
         }
@@ -276,6 +299,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         settings.trading_enabled = False
         settings.trading_mode = "live"
         settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_enabled = True
         settings.trading_kill_switch_enabled = False
         settings.trading_emergency_stop_enabled = False
         try:
@@ -301,6 +325,9 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
             ]
+            settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
             settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
@@ -317,6 +344,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             gate["simple_lane"],
             {
                 "submit_enabled": True,
+                "live_submit_enabled": True,
                 "shared_gate_enforced": True,
                 "blocked_reasons": ["trading_disabled"],
             },
@@ -328,6 +356,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             "trading_enabled": settings.trading_enabled,
             "trading_mode": settings.trading_mode,
             "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_emergency_stop_enabled": settings.trading_emergency_stop_enabled,
         }
@@ -335,6 +364,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         settings.trading_enabled = True
         settings.trading_mode = "live"
         settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_enabled = True
         settings.trading_kill_switch_enabled = False
         settings.trading_emergency_stop_enabled = True
         try:
@@ -363,6 +393,9 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
             ]
+            settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
             settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
@@ -377,6 +410,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             gate["simple_lane"],
             {
                 "submit_enabled": True,
+                "live_submit_enabled": True,
                 "shared_gate_enforced": True,
                 "blocked_reasons": ["operator_pause"],
             },

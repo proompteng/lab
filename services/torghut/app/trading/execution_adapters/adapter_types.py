@@ -7,7 +7,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from decimal import Decimal
 from typing import Any, Optional, Protocol, cast
 from uuid import uuid4
@@ -667,9 +667,132 @@ class SimulationExecutionAdapter:
             )
 
 
+class SessionRoutingExecutionAdapter:
+    """Route regular-session orders to Alpaca and after-hours orders to testnet."""
+
+    name = "session_router"
+
+    def __init__(
+        self,
+        *,
+        alpaca_adapter: AlpacaExecutionAdapter,
+        testnet_adapter: SimulationExecutionAdapter,
+        alpaca_regular_session_open: Callable[[], bool],
+        testnet_enabled: Callable[[], bool],
+    ) -> None:
+        self._alpaca_adapter = alpaca_adapter
+        self._testnet_adapter = testnet_adapter
+        self._alpaca_regular_session_open = alpaca_regular_session_open
+        self._testnet_enabled = testnet_enabled
+        self.last_route = self.current_route()
+
+    def current_route(self) -> str:
+        if self._alpaca_regular_session_open():
+            return "alpaca"
+        if self._testnet_enabled():
+            return "testnet"
+        return "blocked"
+
+    def submit_order(
+        self,
+        request: OrderSubmission,
+        /,
+    ) -> dict[str, Any]:
+        route = self.current_route()
+        adapter = self._adapter_for_route(route)
+        payload = dict(adapter.submit_order(request))
+        payload["_execution_adapter"] = payload.get("_execution_adapter") or route
+        payload["_execution_route_expected"] = route
+        payload["_execution_route_actual"] = route
+        self.last_route = route
+        return payload
+
+    def cancel_order(self, order_id: str) -> bool:
+        route = self.current_route()
+        if route == "blocked":
+            return False
+        adapter = self._adapter_for_route(route)
+        self.last_route = route
+        return bool(adapter.cancel_order(order_id))
+
+    def cancel_all_orders(self) -> list[dict[str, Any]]:
+        canceled: list[dict[str, Any]] = []
+        for route, adapter in (
+            ("alpaca", self._alpaca_adapter),
+            ("testnet", self._testnet_adapter),
+        ):
+            try:
+                canceled.extend(adapter.cancel_all_orders())
+                self.last_route = route
+            except Exception:
+                logger.warning(
+                    "Session router failed to cancel orders route=%s",
+                    route,
+                    exc_info=True,
+                )
+        return canceled
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        route = self.current_route()
+        if route == "blocked":
+            return {
+                "id": order_id,
+                "status": "not_found",
+                "_execution_route_actual": "blocked",
+            }
+        self.last_route = route
+        return self._adapter_for_route(route).get_order(order_id)
+
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict[str, Any] | None:
+        route = self.current_route()
+        if route == "blocked":
+            return None
+        self.last_route = route
+        return self._adapter_for_route(route).get_order_by_client_order_id(
+            client_order_id
+        )
+
+    def list_orders(self, status: str = "all") -> list[dict[str, Any]]:
+        route = self.current_route()
+        if route == "blocked":
+            return []
+        self.last_route = route
+        return self._adapter_for_route(route).list_orders(status=status)
+
+    def list_positions(self) -> list[dict[str, Any]] | None:
+        route = self.current_route()
+        if route == "blocked":
+            return []
+        self.last_route = route
+        return self._adapter_for_route(route).list_positions()
+
+    def seed_positions_snapshot(self, positions: list[dict[str, Any]] | None) -> None:
+        seed = getattr(self._testnet_adapter, "seed_positions_snapshot", None)
+        if callable(seed):
+            seed(positions)
+
+    def seed_missing_position_snapshot(self, position: Mapping[str, Any]) -> bool:
+        seed = getattr(self._testnet_adapter, "seed_missing_position_snapshot", None)
+        if not callable(seed):
+            return False
+        return bool(seed(position))
+
+    def _adapter_for_route(
+        self, route: str
+    ) -> AlpacaExecutionAdapter | SimulationExecutionAdapter:
+        if route == "alpaca":
+            return self._alpaca_adapter
+        if route == "testnet":
+            return self._testnet_adapter
+        raise RuntimeError("testnet_after_hours_disabled")
+
+
 __all__ = [
     "AlpacaExecutionAdapter",
     "ExecutionAdapter",
+    "SessionRoutingExecutionAdapter",
     "SimulationExecutionAdapter",
     "logger",
 ]
