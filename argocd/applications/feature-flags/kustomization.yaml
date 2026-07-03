@@ -28,3 +28,13 @@ patches:
         path: /metadata/annotations/helm.sh~1hook
       - op: remove
         path: /metadata/annotations/helm.sh~1hook-weight
+  - target:
+      kind: Deployment
+      name: feature-flags
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: feature-flags
+        annotations:
+          argocd.argoproj.io/sync-options: Replace=true
