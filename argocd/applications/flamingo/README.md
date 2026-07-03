@@ -31,9 +31,6 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --safetensors-load-strategy eager
 --max-num-seqs 16
 --max-num-batched-tokens 16384
---max-num-partial-prefills 2
---max-long-partial-prefills 1
---long-prefill-token-threshold 8192
 --enable-dbo
 --dbo-decode-token-threshold 32
 --dbo-prefill-token-threshold 512
@@ -72,6 +69,12 @@ the OpenAI-compatible reasoning field instead of being mixed into normal
 assistant content. The active tool parser is `qwen3_coder`, which is the vLLM
 Qwen3.5/Qwen3.6 recipe recommendation for automatic tool calling.
 Reference: <https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3.5.html>
+
+Do not enable concurrent partial prefill for this profile on the pinned vLLM
+image. The July 3, 2026 rollout with `--max-num-partial-prefills 2` failed
+before engine startup with `NotImplementedError: Concurrent Partial Prefill is
+not supported`. Keep mixed prefill/decode scheduling to DBO until a newer vLLM
+image proves support for this model/configuration.
 
 ## Rollout Gates
 
@@ -224,7 +227,7 @@ bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
 | `context-262k-fp8-eager` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
-| `prefill-dbo-262k` | `262144` | `0.85` | `16` | `16384` | Explicit partial-prefill + DBO profile |
+| `dbo-262k` | `262144` | `0.85` | `16` | `16384` | DBO only; concurrent partial prefill is rejected by the pinned vLLM/model config |
 | `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
 | `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
 | `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
