@@ -333,6 +333,39 @@ export const assertEnabledAppBuildPolicy = (inventory: EnabledAppInventory): voi
     )
   }
 
+  const repoImageAppsWithoutDisposition = inventory.entries.filter(
+    (entry) =>
+      entry.repoImages.length > 0 &&
+      entry.class !== 'nix-image' &&
+      entry.class !== 'deferred' &&
+      !(entry.class === 'vendor-manifest' && Boolean(entry.deferredReason)),
+  )
+  if (repoImageAppsWithoutDisposition.length > 0) {
+    throw new Error(
+      `Repo-image app(s) need Nix migration or explicit deferral: ${repoImageAppsWithoutDisposition
+        .map((entry) => entry.name)
+        .join(', ')}`,
+    )
+  }
+
+  const nixImageAppsWithoutAttr = inventory.entries.filter(
+    (entry) => entry.class === 'nix-image' && !entry.nixImageAttr,
+  )
+  if (nixImageAppsWithoutAttr.length > 0) {
+    throw new Error(
+      `Nix-image app(s) are missing package attrs: ${nixImageAppsWithoutAttr.map((entry) => entry.name).join(', ')}`,
+    )
+  }
+
+  const deferredAppsWithoutReason = inventory.entries.filter(
+    (entry) => entry.class === 'deferred' && !entry.deferredReason,
+  )
+  if (deferredAppsWithoutReason.length > 0) {
+    throw new Error(
+      `Deferred app(s) are missing reasons: ${deferredAppsWithoutReason.map((entry) => entry.name).join(', ')}`,
+    )
+  }
+
   const chartBuilds = inventory.entries.filter((entry) => entry.class === 'helm-chart' && entry.repoImages.length > 0)
   if (chartBuilds.length > 0) {
     throw new Error(
