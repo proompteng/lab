@@ -15,6 +15,7 @@ from ...models import (
     Strategy,
 )
 from ..autonomy import detect_drift
+from ..empirical_jobs import build_empirical_jobs_status
 from ..feature_quality import evaluate_feature_batch_quality
 from ..ingest import SignalBatch
 from ..models import SignalEnvelope
@@ -79,6 +80,8 @@ from .target_plan_helpers import (
 
 
 logger = logging.getLogger(__name__)
+
+_EMPIRICAL_JOBS_STATUS_PATCH_TARGET = build_empirical_jobs_status
 
 
 class SimpleTradingPipeline(

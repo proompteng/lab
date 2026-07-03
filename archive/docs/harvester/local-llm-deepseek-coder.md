@@ -157,7 +157,7 @@ docker compose restart
 
 ## Optional: Surface Codex CLI to Open WebUI via MCP
 
-Follow [docs/codex-mcp-bridge.md](./codex-mcp-bridge.md) for the complete Codex bridge setup (systemd unit, Tailscale proxy, docker-compose environment, and WebUI import). Once the bridge is running, Codex tools appear under **Settings → External Tools** after you import `~/Downloads/codex-mcp-tool.json`.
+Follow [docs/codex-mcp-bridge.md](../../../docs/codex-mcp-bridge.md) for the complete Codex bridge setup (systemd unit, Tailscale proxy, docker-compose environment, and WebUI import). Once the bridge is running, Codex tools appear under **Settings → External Tools** after you import `~/Downloads/codex-mcp-tool.json`.
 
 ## Runtime notes
 

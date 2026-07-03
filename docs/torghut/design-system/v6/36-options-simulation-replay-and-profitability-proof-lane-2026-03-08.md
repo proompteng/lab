@@ -3,7 +3,7 @@
 ## Status
 
 - Date: `2026-03-08`
-- Maturity: `implementation-ready design`
+- Maturity: `historical replay/proof design; superseded by current simulation code and proof gates`
 - Scope: `services/torghut/scripts/**`, `services/torghut/app/trading/**`,
   `services/torghut/app/options_lane/**`, `argocd/applications/torghut/**`,
   simulation Postgres/ClickHouse/Kafka assets, and artifact generation for options
@@ -17,6 +17,10 @@
   generate profitability evidence before live options trading is allowed
 - Non-goals: live options order routing, assignment automation, or full
   multi-broker abstraction
+
+## Current-Truth Notice
+
+This document is a March 8 options replay design snapshot. The current simulation system has since been split into package directories and repair/proof gates evolved after May 2026. Treat the detailed contracts below as historical rationale unless they are revalidated against `services/torghut/scripts/historical_simulation_startup/**`, `services/torghut/scripts/historical_simulation_runtime_verification/**`, `services/torghut/app/trading/**`, and current rollout proof docs.
 
 ## Executive Summary
 
@@ -63,7 +67,7 @@ not just "another table copy."
 
 ### Historical simulation entrypoints are equity-only
 
-[`services/torghut/scripts/start_historical_simulation.py`](services/torghut/scripts/start_historical_simulation.py)
+[`../../../../services/torghut/scripts/historical_simulation_startup`](../../../../services/torghut/scripts/historical_simulation_startup)
 defines only equity production and simulation topic families:
 
 - `torghut.trades.v1`
@@ -86,24 +90,24 @@ signals without design work.
 
 ### Verification and report tooling are still bound to equity tables and topics
 
-[`services/torghut/scripts/historical_simulation_verification.py`](services/torghut/scripts/historical_simulation_verification.py)
+[`../../../../services/torghut/scripts/historical_simulation_runtime_verification/runtime_health.py`](../../../../services/torghut/scripts/historical_simulation_runtime_verification/runtime_health.py)
 checks only the equity topic family and only accepts ClickHouse isolation when:
 
 - the signal table ends in `.ta_signals`
 - the price table ends in `.ta_microbars`
 
-[`services/torghut/scripts/analyze_historical_simulation.py`](services/torghut/scripts/analyze_historical_simulation.py)
+[`services/torghut/scripts/analyze_historical_simulation.py`](../../../../services/torghut/scripts/analyze_historical_simulation.py)
 queries `FROM {clickhouse_db}.ta_microbars` for price reconstruction and does not
 look at any options-derived table family.
 
 ### The options lane has partial backfill plumbing, but not an end-to-end replay path
 
-[`services/torghut/app/options_lane/alpaca.py`](services/torghut/app/options_lane/alpaca.py)
+[`services/torghut/app/options_lane/alpaca.py`](../../../../services/torghut/app/options_lane/alpaca.py)
 already defines `get_option_bars(...)`.
 
-[`services/torghut/app/options_lane/catalog_service.py`](services/torghut/app/options_lane/catalog_service.py)
+[`services/torghut/app/options_lane/catalog_service.py`](../../../../services/torghut/app/options_lane/catalog_service.py)
 and
-[`services/torghut/app/options_lane/enricher_service.py`](services/torghut/app/options_lane/enricher_service.py)
+[`services/torghut/app/options_lane/enricher_service.py`](../../../../services/torghut/app/options_lane/enricher_service.py)
 both initialize a `bars_backfill` rate bucket.
 
 But repository search shows no current caller for `get_option_bars(...)`, so Torghut
@@ -112,7 +116,7 @@ path.
 
 ### Dataset selection and proof workflows still assume an equity universe
 
-[`services/torghut/app/trading/llm/dspy_compile/dataset.py`](services/torghut/app/trading/llm/dspy_compile/dataset.py)
+[`services/torghut/app/trading/llm/dspy_compile/dataset.py`](../../../../services/torghut/app/trading/llm/dspy_compile/dataset.py)
 recognizes `torghut:equity:enabled`, but there is no options universe selector or
 contract-set selector.
 

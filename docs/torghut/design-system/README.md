@@ -22,7 +22,7 @@ endpoints.
 - `v3/`: flexible quant strategy engine and full-loop autonomy handoff.
 - `v4/`: quant and LLM profitability expansion pack.
 - `v5/`: strategy build pack and per-paper technique synthesis.
-- `v6/`: historical intraday autonomy, proof, capital authority, and Jangar/Torghut contract archive.
+- `v6/`: historical intraday autonomy, proof, capital authority, and Jangar/Torghut contract archive. The March 2026 options-lane series in `v6/33` through `v6/37` is rationale/archaeology, not current cluster health or trading authority.
 
 ## Operator Rule
 

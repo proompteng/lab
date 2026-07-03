@@ -3,7 +3,7 @@
 ## Status
 
 - Date: `2026-03-08`
-- Maturity: `implementation-ready design`
+- Maturity: `historical design snapshot; superseded as a live source of truth`
 - Scope: `services/dorvud/websockets/**`, `services/dorvud/technical-analysis/**`,
   `argocd/applications/torghut/**`, `argocd/applications/kafka/**`, Torghut Postgres/ClickHouse/Kafka, and the live
   `torghut` / `kafka` clusters
@@ -11,6 +11,10 @@
   the live equity lane
 - Non-goals: options order routing, assignment/exercise workflows, portfolio accounting changes, or a generalized
   multi-asset runtime refactor
+
+## Current-Truth Notice
+
+This document records the March 8 options market-data architecture decision. It is not a current implementation plan or cluster-health statement. Current truth is `argocd/applications/torghut-options/**`, `services/torghut/app/options_lane/**`, `services/dorvud/**`, `docs/torghut/README.md`, and live runtime readback. Re-verify provider limits, feed mode, topics, ClickHouse tables, and Argo health before implementing from any contract below.
 
 ## Executive Summary
 
@@ -74,12 +78,12 @@ The current production baseline is healthy but equity-only:
 
 ### Current websocket runtime is hard-coded for equity and crypto only
 
-[`services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderConfig.kt`](services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderConfig.kt)
+[`services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderConfig.kt`](../../../../services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderConfig.kt)
 defines `AlpacaMarketType` as only `EQUITY` or `CRYPTO`, and the allowed channel sets are equity/crypto-specific. The
 same file defaults topics to `torghut.trades.v1`, `torghut.quotes.v1`, `torghut.bars.1m.v1`, and `torghut.status.v1`.
 No options market type or options topic family exists in the current runtime config model.
 
-[`argocd/applications/torghut/ws/configmap.yaml`](argocd/applications/torghut/ws/configmap.yaml) confirms the live
+[`argocd/applications/torghut/ws/configmap.yaml`](../../../../argocd/applications/torghut/ws/configmap.yaml) confirms the live
 deployment is explicitly equity-scoped:
 
 - `ALPACA_MARKET_TYPE=equity`
@@ -90,7 +94,7 @@ That means the currently deployed websocket runtime cannot be extended to option
 
 ### Current Kafka and TA contracts have no options lane
 
-[`argocd/applications/kafka/torghut-topics.yaml`](argocd/applications/kafka/torghut-topics.yaml) defines only the
+[`argocd/applications/kafka/torghut-topics.yaml`](../../../../argocd/applications/kafka/torghut-topics.yaml) defines only the
 existing equity and Lean topics:
 
 - `torghut.trades.v1`
@@ -107,7 +111,7 @@ existing equity and Lean topics:
 Live Kafka state matches the manifests: `kubectl -n kafka get kafkatopic,kafkauser` shows no options topics and only
 `KafkaUser/torghut-ws` for the Torghut market-data path.
 
-[`argocd/applications/torghut/ta/configmap.yaml`](argocd/applications/torghut/ta/configmap.yaml) wires the live Flink
+[`argocd/applications/torghut/ta/configmap.yaml`](../../../../argocd/applications/torghut/ta/configmap.yaml) wires the live Flink
 job to the equity topics only:
 
 - `TA_TRADES_TOPIC=torghut.trades.v1`
@@ -120,7 +124,7 @@ There is no current options-specific data contract to preserve or extend.
 
 ### Current Jangar symbol registry is not a safe contract catalog
 
-[`services/jangar/src/server/migrations/20251228_init.ts`](services/jangar/src/server/migrations/20251228_init.ts)
+[`services/jangar/src/server/migrations/20251228_init.ts`](../../../../services/jangar/src/server/migrations/20251228_init.ts)
 creates `torghut_symbols` with `symbol TEXT PRIMARY KEY` and `asset_class TEXT NOT NULL DEFAULT 'equity'`. That schema
 is adequate for the current equity universe feed, but it is not a safe authority for contract-level options catalog
 state. Phase 1 must therefore use a separate options catalog in Torghut-owned state, not an overloaded reuse of the

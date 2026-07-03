@@ -363,7 +363,7 @@ uv run --frozen python scripts/check_refactor_quality.py --all
 uv run --frozen pylint app scripts --disable=all --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements --score=n
 uv run --frozen pytest --cov --cov-branch --cov-report=term-missing --cov-report=xml
 uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90
-cd /Users/gregkonush/.codex/worktrees/ccea/lab
+cd <repo-root>
 git diff --check
 bun run lint:argocd
 ```

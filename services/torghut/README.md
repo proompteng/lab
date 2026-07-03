@@ -119,7 +119,7 @@ findings. Ordinary file and line counts are reported for context but are not rat
 ## Dead-code audit (Vulture)
 
 Run Vulture from the Torghut service root so it picks up the checked-in `[tool.vulture]` config in
-[`pyproject.toml`](/Users/gregkonush/.codex/worktrees/3348/lab/services/torghut/pyproject.toml):
+[`pyproject.toml`](pyproject.toml):
 
 ```bash
 cd services/torghut

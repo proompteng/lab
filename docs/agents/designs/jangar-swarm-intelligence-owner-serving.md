@@ -1,9 +1,13 @@
 # Swarm Intelligence: Single-CRD 24/7 Autonomous Delivery
 
-Status: Proposed (2026-03-01)
+Status: Historical proposal snapshot (2026-03-01); not current implementation authority.
+
+Current-truth notice: this document captures the original single-CRD swarm concept. Verify current swarm/controller
+behavior against live `services/jangar/**`, `argocd/applications/agents/**`, current CRDs, and `docs/agents/README.md`
+before using any specific schema, rollout, or autonomy claim below.
 
 Docs index: [README](../README.md)
-Execution runbook: [swarm-end-to-end-runbook](../swarm-end-to-end-runbook.md)
+Execution runbook: [swarm-end-to-end-runbook](../../jangar/runbooks/swarm-end-to-end-runbook.md)
 
 ## Objective
 
