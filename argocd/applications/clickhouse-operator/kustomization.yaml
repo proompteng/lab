@@ -9,3 +9,5 @@ helmCharts:
     namespace: clickhouse-operator
     includeCRDs: true
     valuesFile: ./values.yaml
+commonAnnotations:
+  argocd.argoproj.io/sync-options: ServerSideApply=true
