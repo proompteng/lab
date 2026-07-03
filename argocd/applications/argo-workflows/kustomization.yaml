@@ -11,6 +11,66 @@ resources:
   - alloy-rbac.yaml
   - alloy-configmap.yaml
   - alloy-deployment.yaml
+
+patches:
+  - target:
+      kind: ServiceAccount
+      name: argo-workflows-crd-install
+      namespace: argo-workflows
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: ClusterRole
+      name: argo-workflows-crd-install
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: ClusterRoleBinding
+      name: argo-workflows-crd-install
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: Job
+      name: argo-workflows-crd-install
+      namespace: argo-workflows
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Force=true,Replace=true
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-1"
+
 helmCharts:
   - name: argo-workflows
     repo: https://argoproj.github.io/argo-helm
