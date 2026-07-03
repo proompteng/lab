@@ -159,8 +159,8 @@ controllers:
   replicaCount: 2
   image:
     repository: registry.ide-newton.ts.net/lab/agents-controller
-    tag: sha-67efb77c315182233a779b0cb6dfe41370f6f5d7
-    digest: sha256:b9c048dc6a06757eb987fbc4aa80ca3abe65af100c04ed9aac601995976d7432
+    tag: 86e969e4
+    digest: sha256:0004d24e7c47554776c3ed2728cf197756c53e4feb8d8dd8f0cea61489684bb4
   autoscaling:
     enabled: false
 swarm:
