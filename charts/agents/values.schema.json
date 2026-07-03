@@ -350,6 +350,11 @@
           "type": "object",
           "properties": {
             "enabled": { "type": "boolean" },
+            "volumeMode": {
+              "type": "string",
+              "enum": ["persistentVolumeClaim", "emptyDir"],
+              "description": "Volume source mounted by the agents-shell pod. Leave persistentVolumeClaim for durable workspaces; use emptyDir for stateless emergency restore while keeping the PVC object managed separately."
+            },
             "existingClaim": { "type": "string" },
             "claimName": { "type": "string" },
             "accessModes": { "type": "array", "items": { "type": "string" } },
