@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-execution-v2-testnet-short-proof-20260625
+        proompteng.ai/config-revision: hyperliquid-execution-v2-testnet-cap-250-reduce-only-20260703a
       labels:
         app: torghut-hyperliquid-runtime
     spec:

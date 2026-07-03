@@ -6,18 +6,24 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 
+_RETIRED_SUBMISSION_AUTHORITY_BLOCKERS = frozenset(
+    {
+        "alpha_readiness_not_promotion_eligible",
+        "runtime_ledger_profit_target_source_collection_pending",
+        "runtime_ledger_source_collection_pending",
+    }
+)
+
+
 def build_submission_authority_status(
     live_submission_gate: Mapping[str, Any],
     *,
     simple_lane_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    """Summarize the effective submit authority without changing gate decisions."""
+    """Summarize the effective submit authority after retiring proof blockers."""
 
     simple_lane = _mapping(simple_lane_status)
-    operational_gate = (
-        _mapping(live_submission_gate.get("operational_submission_gate"))
-        or live_submission_gate
-    )
+    operational_gate = operational_submission_gate_status(live_submission_gate)
     operational_allowed = _bool(operational_gate.get("allowed"))
     effective_mode = "operational_submission" if operational_allowed else "blocked"
     return {
@@ -52,6 +58,78 @@ def build_submission_authority_status(
     }
 
 
+def operational_submission_gate_status(
+    live_submission_gate: Mapping[str, Any],
+) -> dict[str, object]:
+    """Return the effective operational gate with retired proof blockers removed."""
+
+    nested_gate = _mapping(live_submission_gate.get("operational_submission_gate"))
+    gate = nested_gate or live_submission_gate
+    raw_blocked_reasons = _strings(gate.get("blocked_reasons"))
+    blocked_reasons = _active_submission_blockers(raw_blocked_reasons)
+    raw_reason = _text(gate.get("reason"), "")
+    raw_allowed = _bool(gate.get("allowed"))
+    reason = _active_submission_reason(raw_reason, blocked_reasons, raw_allowed)
+    allowed = _active_submission_allowed(
+        raw_allowed=raw_allowed,
+        raw_reason=raw_reason,
+        raw_blocked_reasons=raw_blocked_reasons,
+        active_blocked_reasons=blocked_reasons,
+    )
+    if allowed and not blocked_reasons:
+        reason = "operational_submission_ready"
+    return {
+        "allowed": allowed,
+        "reason": reason,
+        "blocked_reasons": blocked_reasons,
+        "execution_route": _mapping(gate.get("execution_route")),
+    }
+
+
+def _active_submission_allowed(
+    *,
+    raw_allowed: bool,
+    raw_reason: str,
+    raw_blocked_reasons: list[str],
+    active_blocked_reasons: list[str],
+) -> bool:
+    if active_blocked_reasons:
+        return False
+    if raw_allowed:
+        return True
+    if _is_retired_submission_blocker(raw_reason):
+        return True
+    if raw_blocked_reasons and not active_blocked_reasons:
+        return True
+    return False
+
+
+def _active_submission_blockers(blocked_reasons: list[str]) -> list[str]:
+    return [
+        reason
+        for reason in blocked_reasons
+        if not _is_retired_submission_blocker(reason)
+    ]
+
+
+def _active_submission_reason(
+    raw_reason: str,
+    blocked_reasons: list[str],
+    raw_allowed: bool,
+) -> str:
+    if blocked_reasons:
+        return blocked_reasons[0]
+    if _is_retired_submission_blocker(raw_reason):
+        return "operational_submission_ready"
+    if raw_allowed:
+        return raw_reason or "operational_submission_ready"
+    return raw_reason or "unknown"
+
+
+def _is_retired_submission_blocker(reason: str) -> bool:
+    return reason in _RETIRED_SUBMISSION_AUTHORITY_BLOCKERS
+
+
 def _mapping(value: object) -> Mapping[str, Any]:
     if isinstance(value, Mapping):
         return cast(Mapping[str, Any], value)
@@ -82,4 +160,4 @@ def _strings(value: object) -> list[str]:
     return strings
 
 
-__all__ = ["build_submission_authority_status"]
+__all__ = ["build_submission_authority_status", "operational_submission_gate_status"]

@@ -40,8 +40,6 @@ from .shared import (
     logger,
 )
 
-_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS: frozenset[str] = frozenset()
-
 _BOUNDED_PAPER_ROUTE_CLOSE_SOURCE = "filled_bounded_paper_route_collection_executions"
 
 if TYPE_CHECKING:
@@ -251,17 +249,7 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if isinstance(collection_gate, Mapping):
             collection_gate_mapping = cast(Mapping[str, Any], collection_gate)
             return collection_gate_mapping.get("allowed") is True
-        blocked_reasons = {
-            str(reason).strip()
-            for reason in cast(
-                list[object],
-                live_submission_gate.get("blocked_reasons") or [],
-            )
-            if str(reason).strip()
-        }
-        if not blocked_reasons:
-            return False
-        return blocked_reasons.issubset(_LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS)
+        return False
 
     def _bounded_live_paper_route_close_metadata(
         self,
@@ -381,21 +369,12 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             exit_qty = Decimal(str(exit_qty))
         return decision.qty <= exit_qty
 
-    def _bounded_live_paper_route_probe_profit_floor_allowed(
-        self,
-        decision: StrategyDecision,
-        proof_floor_block_reason: str,
-    ) -> bool:
-        return (
-            self._bounded_live_paper_route_probe_decision_applies(decision)
-            and proof_floor_block_reason
-            in _LIVE_GATE_BOUNDED_PAPER_ROUTE_BYPASS_REASONS
-        )
-
     def _profitability_floor_submission_allowed(
         self,
         request: TradingSubmissionRequest,
     ) -> bool:
+        if settings.trading_mode == "live":
+            return True
         decision = request.decision
         session = request.session
         decision_row = request.decision_row
@@ -409,11 +388,7 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         if not settings.trading_simple_submit_enabled and collection_metadata is None:
             self._block_simple_submit_disabled(request, proof_floor_block_reason)
             return False
-        if self._paper_route_probe_applies(
-            decision, collection_metadata
-        ) or self._bounded_live_paper_route_probe_profit_floor_allowed(
-            decision, proof_floor_block_reason
-        ):
+        if self._paper_route_probe_applies(decision, collection_metadata):
             return True
         self._block_decision_submission(
             DecisionBlockRequest(
@@ -432,6 +407,8 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
         self,
         request: TradingSubmissionRequest,
     ) -> bool:
+        if settings.trading_mode == "live":
+            return True
         decision = request.decision
         collection_metadata = self._bounded_sim_collection_metadata(decision)
         if self._paper_route_probe_applies(decision, collection_metadata):
@@ -442,11 +419,6 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             decision.symbol,
         )
         if proof_floor_symbol_block_reason is not None:
-            if self._bounded_live_paper_route_probe_profit_floor_allowed(
-                decision,
-                proof_floor_symbol_block_reason,
-            ):
-                return True
             self._block_decision_submission(
                 DecisionBlockRequest(
                     session=request.session,

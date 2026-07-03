@@ -346,7 +346,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
             )
         )
 
-    def test_simple_pipeline_blocks_symbol_excluded_from_route_candidates(
+    def test_simple_pipeline_treats_route_candidate_floor_as_live_diagnostic(
         self,
     ) -> None:
         from app import config
@@ -437,28 +437,17 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
         ):
             pipeline.run_once()
 
-        self.assertEqual(len(alpaca_client.submitted), 0)
+        self.assertEqual(len(alpaca_client.submitted), 1)
+        self.assertEqual(alpaca_client.submitted[0]["symbol"], "NVDA")
         with self.session_local() as session:
             decision = session.execute(select(TradeDecision)).scalar_one()
             decision_json = cast(dict[str, Any], decision.decision_json)
-            persisted_floor = cast(
-                dict[str, Any], decision_json.get("profitability_proof_floor")
-            )
-            route_book = cast(
-                dict[str, Any], persisted_floor.get("route_reacquisition_book")
-            )
-            route_summary = cast(dict[str, Any], route_book.get("summary"))
-
-            self.assertEqual(decision.status, "blocked")
-            self.assertEqual(
+            self.assertEqual(decision.status, "submitted")
+            self.assertNotEqual(
                 decision_json.get("submission_stage"),
                 "blocked_profitability_route_symbol",
             )
-            self.assertEqual(
-                decision_json.get("submission_block_reason"),
-                "profitability_route_symbol_excluded",
-            )
-            self.assertEqual(route_summary.get("candidate_symbols"), ["AAPL"])
+            self.assertNotIn("submission_block_reason", decision_json)
 
     def test_simple_pipeline_skips_out_of_strategy_universe_signals_before_quote_quality(
         self,

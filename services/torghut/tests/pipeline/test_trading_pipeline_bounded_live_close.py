@@ -250,7 +250,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
         self.assertEqual(bid, Decimal("298.11"))
         self.assertEqual(ask, Decimal("298.29"))
 
-    def test_live_bounded_paper_route_close_does_not_bypass_retired_gate(
+    def test_live_bounded_paper_route_close_ignores_retired_gate_blockers(
         self,
     ) -> None:
         from app import config
@@ -345,7 +345,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                         return_value=datetime(2026, 3, 26, 16, 0, tzinfo=timezone.utc),
                     ),
                 ):
-                    self.assertFalse(
+                    self.assertTrue(
                         pipeline._is_trading_submission_allowed(
                             session=session,
                             decision=decision,
@@ -356,10 +356,6 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 session.refresh(decision_row)
                 decision_json = cast(dict[str, Any], decision_row.decision_json)
 
-            self.assertEqual(
-                decision_json["submission_stage"],
-                "blocked_profitability_proof_floor",
-            )
             params = cast(dict[str, Any], decision_json["params"])
             exit_metadata = cast(
                 dict[str, Any],
