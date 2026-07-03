@@ -27,7 +27,6 @@ from app.db import SessionLocal
 
 from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
 from ...trading.live_submit_activation import (
-    live_submit_activation_blocker,
     live_submit_activation_status,
 )
 from .. import health_checks as health_checks_api
@@ -347,11 +346,8 @@ def core_readiness_live_submission_gate() -> dict[str, object]:
             blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
             blocked_reasons.append("simple_submit_disabled")
-        activation_blocker = live_submit_activation_blocker(
-            now=datetime.now(timezone.utc)
-        )
-        if activation_blocker is not None:
-            blocked_reasons.append(activation_blocker)
+        if not settings.trading_live_submit_enabled:
+            blocked_reasons.append("live_submit_disabled")
 
     return {
         "allowed": False,
@@ -553,11 +549,8 @@ def minimal_health_surface_timeout_live_submission_gate(
             blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
             blocked_reasons.append("simple_submit_disabled")
-        activation_blocker = live_submit_activation_blocker(
-            now=datetime.now(timezone.utc)
-        )
-        if activation_blocker is not None:
-            blocked_reasons.append(activation_blocker)
+        if not settings.trading_live_submit_enabled:
+            blocked_reasons.append("live_submit_disabled")
 
     reason = blocked_reasons[0] if blocked_reasons else reason_code
 

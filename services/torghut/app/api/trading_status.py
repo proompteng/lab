@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any, cast
 
@@ -186,12 +187,12 @@ _load_rejected_signal_outcome_learning_summary = (
 router = APIRouter()
 
 _FAST_STATUS_GATE_REASONS = {
+    "broker_unavailable",
     "emergency_stop_active",
     "kill_switch_enabled",
-    "live_submit_activation_expired",
-    "live_submit_activation_expiry_invalid",
-    "live_submit_activation_missing",
+    "live_submit_disabled",
     "simple_submit_disabled",
+    "testnet_after_hours_disabled",
     "trading_disabled",
 }
 
@@ -675,6 +676,9 @@ def trading_status() -> dict[str, object]:
         state,
         persisted_summary=persisted_rejected_signal_outcome_learning,
     )
+    execution_route, execution_route_details = _execution_route_status(
+        live_submission_gate.get("execution_route")
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -692,6 +696,11 @@ def trading_status() -> dict[str, object]:
             "fallback_total": dict(state.metrics.execution_advisor_fallback_total),
         },
         "running": state.running,
+        "execution_route": execution_route,
+        "execution_route_details": execution_route_details,
+        "operational_submission_gate": live_submission_gate.get(
+            "operational_submission_gate", live_submission_gate
+        ),
         "live_submission_gate": live_submission_gate,
         "submission_authority": submission_authority,
         "tigerbeetle_ledger": tigerbeetle_ledger,
@@ -862,6 +871,15 @@ def trading_status() -> dict[str, object]:
         "control_plane_contract": control_plane_contract,
         "evidence_continuity": state.last_evidence_continuity_report,
     }
+
+
+def _execution_route_status(value: object) -> tuple[str | None, dict[str, object]]:
+    if isinstance(value, Mapping):
+        route_payload = cast(Mapping[str, object], value)
+        route = str(route_payload.get("route") or "").strip() or None
+        return route, dict(route_payload)
+    route = str(value or "").strip() or None
+    return route, {}
 
 
 __all__ = ["trading_status"]

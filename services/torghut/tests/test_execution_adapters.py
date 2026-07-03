@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app import config
 from app.trading.execution_adapters import (
     OrderSubmission,
+    SessionRoutingExecutionAdapter,
     SimulationExecutionAdapter,
     build_execution_adapter,
 )
@@ -75,6 +76,66 @@ class FakeReadClient:
         return []
 
 
+class FakeRoutedAdapter:
+    def __init__(self, name: str, *, fail_cancel_all: bool = False) -> None:
+        self.name = name
+        self.fail_cancel_all = fail_cancel_all
+        self.submitted: list[OrderSubmission] = []
+        self.cancelled: list[str] = []
+        self.seeded_positions: list[dict[str, Any]] | None = None
+        self.seeded_missing: list[dict[str, Any]] = []
+
+    def submit_order(self, request: OrderSubmission) -> dict[str, Any]:
+        self.submitted.append(request)
+        return {
+            "id": f"{self.name}-order",
+            "status": "accepted",
+            "symbol": request.symbol,
+        }
+
+    def cancel_order(self, order_id: str) -> bool:
+        self.cancelled.append(order_id)
+        return True
+
+    def cancel_all_orders(self) -> list[dict[str, str]]:
+        if self.fail_cancel_all:
+            raise RuntimeError("cancel_all_failed")
+        return [{"id": f"{self.name}-cancelled"}]
+
+    def get_order(self, order_id: str) -> dict[str, str]:
+        return {
+            "id": order_id,
+            "status": "accepted",
+            "_execution_route_actual": self.name,
+        }
+
+    def get_order_by_client_order_id(
+        self, client_order_id: str
+    ) -> dict[str, str] | None:
+        return {
+            "id": f"{self.name}-{client_order_id}",
+            "status": "accepted",
+        }
+
+    def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+        return [{"id": f"{self.name}-{status}", "status": status}]
+
+    def list_positions(self) -> list[dict[str, str]]:
+        return [{"symbol": "AAPL", "route": self.name}]
+
+    def seed_positions_snapshot(self, positions: list[dict[str, Any]] | None) -> None:
+        self.seeded_positions = positions
+
+    def seed_missing_position_snapshot(self, position: dict[str, Any]) -> bool:
+        self.seeded_missing.append(position)
+        return True
+
+
+class FakeNoSeedAdapter(FakeRoutedAdapter):
+    seed_positions_snapshot = None
+    seed_missing_position_snapshot = None
+
+
 class TestExecutionAdapters(TestCase):
     def test_simulation_adapter_returns_filled_order_with_simulation_context(
         self,
@@ -123,6 +184,115 @@ class TestExecutionAdapters(TestCase):
         self.assertEqual(simulation_context.get("dataset_id"), "dataset-1")
         self.assertEqual(simulation_context.get("dataset_event_id"), "evt-1")
         self.assertEqual(payload.get("_execution_route_actual"), "simulation")
+
+    def test_session_router_submits_to_alpaca_testnet_or_blocks(self) -> None:
+        route_state = {"alpaca_open": True, "testnet_enabled": True}
+        alpaca = FakeRoutedAdapter("alpaca")
+        testnet = FakeRoutedAdapter("testnet")
+        adapter = SessionRoutingExecutionAdapter(
+            alpaca_adapter=alpaca,
+            testnet_adapter=testnet,
+            alpaca_regular_session_open=lambda: route_state["alpaca_open"],
+            testnet_enabled=lambda: route_state["testnet_enabled"],
+        )
+        request = _order_submission(
+            symbol="AAPL",
+            side="buy",
+            qty=1.0,
+            order_type="market",
+            time_in_force="day",
+        )
+
+        alpaca_payload = adapter.submit_order(request)
+        self.assertEqual(alpaca_payload["_execution_route_actual"], "alpaca")
+        self.assertEqual(adapter.last_route, "alpaca")
+        self.assertEqual(alpaca.submitted, [request])
+
+        route_state["alpaca_open"] = False
+        testnet_payload = adapter.submit_order(request)
+        self.assertEqual(testnet_payload["_execution_route_actual"], "testnet")
+        self.assertEqual(adapter.last_route, "testnet")
+        self.assertEqual(testnet.submitted, [request])
+
+        route_state["testnet_enabled"] = False
+        self.assertEqual(adapter.current_route(), "blocked")
+        with self.assertRaises(RuntimeError):
+            adapter.submit_order(request)
+
+    def test_session_router_read_paths_fail_closed_when_route_is_blocked(self) -> None:
+        adapter = SessionRoutingExecutionAdapter(
+            alpaca_adapter=FakeRoutedAdapter("alpaca"),
+            testnet_adapter=FakeRoutedAdapter("testnet"),
+            alpaca_regular_session_open=lambda: False,
+            testnet_enabled=lambda: False,
+        )
+
+        self.assertFalse(adapter.cancel_order("order-1"))
+        self.assertEqual(
+            adapter.get_order("order-1"),
+            {
+                "id": "order-1",
+                "status": "not_found",
+                "_execution_route_actual": "blocked",
+            },
+        )
+        self.assertIsNone(adapter.get_order_by_client_order_id("client-1"))
+        self.assertEqual(adapter.list_orders(), [])
+        self.assertEqual(adapter.list_positions(), [])
+
+    def test_session_router_routes_management_calls_and_seed_helpers(self) -> None:
+        route_state = {"alpaca_open": True, "testnet_enabled": True}
+        alpaca = FakeRoutedAdapter("alpaca")
+        testnet = FakeRoutedAdapter("testnet", fail_cancel_all=True)
+        adapter = SessionRoutingExecutionAdapter(
+            alpaca_adapter=alpaca,
+            testnet_adapter=testnet,
+            alpaca_regular_session_open=lambda: route_state["alpaca_open"],
+            testnet_enabled=lambda: route_state["testnet_enabled"],
+        )
+
+        self.assertTrue(adapter.cancel_order("order-1"))
+        self.assertEqual(alpaca.cancelled, ["order-1"])
+        self.assertEqual(
+            adapter.get_order("order-1")["_execution_route_actual"], "alpaca"
+        )
+        self.assertEqual(
+            adapter.get_order_by_client_order_id("client-1"),
+            {"id": "alpaca-client-1", "status": "accepted"},
+        )
+        self.assertEqual(adapter.list_orders(status="open")[0]["id"], "alpaca-open")
+        self.assertEqual(adapter.list_positions()[0]["route"], "alpaca")
+
+        route_state["alpaca_open"] = False
+        self.assertTrue(adapter.cancel_order("order-2"))
+        self.assertEqual(testnet.cancelled, ["order-2"])
+        self.assertEqual(
+            adapter.get_order("order-2")["_execution_route_actual"], "testnet"
+        )
+        self.assertEqual(
+            adapter.get_order_by_client_order_id("client-2"),
+            {"id": "testnet-client-2", "status": "accepted"},
+        )
+        self.assertEqual(
+            adapter.list_orders(status="filled")[0]["id"], "testnet-filled"
+        )
+        self.assertEqual(adapter.list_positions()[0]["route"], "testnet")
+
+        self.assertEqual(adapter.cancel_all_orders(), [{"id": "alpaca-cancelled"}])
+        positions = [{"symbol": "AAPL", "qty": "1"}]
+        adapter.seed_positions_snapshot(positions)
+        self.assertEqual(testnet.seeded_positions, positions)
+        self.assertTrue(adapter.seed_missing_position_snapshot({"symbol": "MSFT"}))
+        self.assertEqual(testnet.seeded_missing, [{"symbol": "MSFT"}])
+
+        no_seed = SessionRoutingExecutionAdapter(
+            alpaca_adapter=alpaca,
+            testnet_adapter=FakeNoSeedAdapter("testnet-no-seed"),
+            alpaca_regular_session_open=lambda: False,
+            testnet_enabled=lambda: True,
+        )
+        no_seed.seed_positions_snapshot(positions)
+        self.assertFalse(no_seed.seed_missing_position_snapshot({"symbol": "MSFT"}))
 
     def test_simulation_adapter_does_not_cancel_filled_order(self) -> None:
         adapter = SimulationExecutionAdapter(
@@ -605,8 +775,12 @@ class TestExecutionAdapters(TestCase):
         original_order_bootstrap = config.settings.trading_order_feed_bootstrap_servers
         original_run_id = config.settings.trading_simulation_run_id
         original_dataset = config.settings.trading_simulation_dataset_id
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
         try:
             config.settings.trading_simulation_enabled = True
+            config.settings.trading_testnet_after_hours_enabled = False
             config.settings.trading_simulation_order_updates_topic = (
                 "torghut.sim.trade-updates.v1"
             )
@@ -630,11 +804,18 @@ class TestExecutionAdapters(TestCase):
             )
             config.settings.trading_simulation_run_id = original_run_id
             config.settings.trading_simulation_dataset_id = original_dataset
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
 
     def test_build_execution_adapter_uses_alpaca_when_simulation_disabled(self) -> None:
         original_sim_enabled = config.settings.trading_simulation_enabled
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
         try:
             config.settings.trading_simulation_enabled = False
+            config.settings.trading_testnet_after_hours_enabled = False
             adapter = build_execution_adapter(
                 alpaca_client=FakeReadClient(),
                 order_firewall=FakeOrderFirewall(),
@@ -642,6 +823,83 @@ class TestExecutionAdapters(TestCase):
             self.assertEqual(adapter.name, "alpaca")
         finally:
             config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
+
+    def test_session_router_uses_alpaca_during_regular_market_hours(self) -> None:
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
+        try:
+            config.settings.trading_simulation_enabled = False
+            config.settings.trading_testnet_after_hours_enabled = True
+            with patch(
+                "app.trading.execution_adapters.lean_adapter.market_session_is_open",
+                return_value=True,
+            ):
+                adapter = build_execution_adapter(
+                    alpaca_client=FakeReadClient(),
+                    order_firewall=FakeOrderFirewall(),
+                )
+
+                payload = _submit_order(
+                    adapter,
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1.0,
+                    order_type="market",
+                    time_in_force="day",
+                )
+
+            self.assertEqual(adapter.name, "session_router")
+            self.assertEqual(payload["_execution_route_expected"], "alpaca")
+            self.assertEqual(payload["_execution_route_actual"], "alpaca")
+            self.assertEqual(payload["id"], "fallback-order")
+        finally:
+            config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
+
+    def test_session_router_uses_testnet_outside_regular_market_hours(self) -> None:
+        original_sim_enabled = config.settings.trading_simulation_enabled
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
+        try:
+            config.settings.trading_simulation_enabled = False
+            config.settings.trading_testnet_after_hours_enabled = True
+            with patch(
+                "app.trading.execution_adapters.lean_adapter.market_session_is_open",
+                return_value=False,
+            ):
+                adapter = build_execution_adapter(
+                    alpaca_client=FakeReadClient(),
+                    order_firewall=FakeOrderFirewall(),
+                )
+
+                payload = _submit_order(
+                    adapter,
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1.0,
+                    order_type="market",
+                    time_in_force="day",
+                    extra_params={"client_order_id": "after-hours-testnet"},
+                )
+
+            self.assertEqual(adapter.name, "session_router")
+            self.assertEqual(payload["_execution_route_expected"], "testnet")
+            self.assertEqual(payload["_execution_route_actual"], "testnet")
+            self.assertTrue(str(payload["id"]).startswith("sim-order-"))
+            self.assertEqual(payload["status"], "filled")
+        finally:
+            config.settings.trading_simulation_enabled = original_sim_enabled
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
 
     def test_simulation_adapter_uses_kafka_security_kwargs(self) -> None:
         captured_kwargs: dict[str, Any] = {}

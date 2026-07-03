@@ -520,7 +520,10 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineBase):
         execution_client: Any,
         symbol: str,
     ) -> None:
-        if self._execution_client_name(execution_client) != "simulation":
+        if self._execution_client_name(execution_client) not in {
+            "simulation",
+            "testnet",
+        }:
             return
         try:
             positions = execution_client.list_positions()

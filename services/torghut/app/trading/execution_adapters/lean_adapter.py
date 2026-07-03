@@ -19,9 +19,11 @@ from .adapter_types import (
     AlpacaExecutionAdapter,
     ExecutionAdapter,
     OrderSubmission,
+    SessionRoutingExecutionAdapter,
     SimulationExecutionAdapter,
     logger,
 )
+from ..market_session import market_session_is_open
 from .order_text import (
     classify_failure_taxonomy,
     classify_fallback_reason,
@@ -646,14 +648,25 @@ def build_execution_adapter(
     alpaca_adapter = AlpacaExecutionAdapter(
         firewall=order_firewall, read_client=alpaca_client
     )
-    simulation_adapter = _build_simulation_execution_adapter()
-    if simulation_adapter is not None:
+    simulation_adapter = _build_simulation_execution_adapter(
+        force=settings.trading_testnet_after_hours_enabled
+    )
+    if settings.trading_testnet_after_hours_enabled and simulation_adapter is not None:
+        return SessionRoutingExecutionAdapter(
+            alpaca_adapter=alpaca_adapter,
+            testnet_adapter=simulation_adapter,
+            alpaca_regular_session_open=lambda: market_session_is_open(alpaca_client),
+            testnet_enabled=lambda: settings.trading_testnet_after_hours_enabled,
+        )
+    if settings.trading_simulation_enabled and simulation_adapter is not None:
         return simulation_adapter
     return alpaca_adapter
 
 
-def _build_simulation_execution_adapter() -> SimulationExecutionAdapter | None:
-    if not settings.trading_simulation_enabled:
+def _build_simulation_execution_adapter(
+    *, force: bool = False
+) -> SimulationExecutionAdapter | None:
+    if not settings.trading_simulation_enabled and not force:
         return None
     bootstrap_servers = (
         settings.trading_simulation_order_updates_bootstrap_servers

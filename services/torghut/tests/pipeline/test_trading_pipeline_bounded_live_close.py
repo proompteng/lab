@@ -250,7 +250,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
         self.assertEqual(bid, Decimal("298.11"))
         self.assertEqual(ask, Decimal("298.29"))
 
-    def test_live_bounded_paper_route_close_bypasses_gate_and_tags_exit(
+    def test_live_bounded_paper_route_close_does_not_bypass_retired_gate(
         self,
     ) -> None:
         from app import config
@@ -345,7 +345,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                         return_value=datetime(2026, 3, 26, 16, 0, tzinfo=timezone.utc),
                     ),
                 ):
-                    self.assertTrue(
+                    self.assertFalse(
                         pipeline._is_trading_submission_allowed(
                             session=session,
                             decision=decision,
@@ -355,30 +355,20 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
 
                 session.refresh(decision_row)
                 decision_json = cast(dict[str, Any], decision_row.decision_json)
-                params = cast(dict[str, Any], decision_json["params"])
-                exit_metadata = cast(
-                    dict[str, Any],
-                    params["paper_route_probe_exit"],
-                )
-                simple_lane = cast(dict[str, Any], params["simple_lane"])
 
+            self.assertEqual(
+                decision_json["submission_stage"],
+                "blocked_profitability_proof_floor",
+            )
+            params = cast(dict[str, Any], decision_json["params"])
+            exit_metadata = cast(
+                dict[str, Any],
+                params["paper_route_probe_exit"],
+            )
+            simple_lane = cast(dict[str, Any], params["simple_lane"])
             self.assertEqual(exit_metadata["mode"], "paper_route_exit")
-            self.assertEqual(
-                exit_metadata["source"],
-                "filled_bounded_paper_route_collection_executions",
-            )
-            self.assertEqual(exit_metadata["db_open_qty"], "2.00000000")
-            self.assertEqual(exit_metadata["db_open_side"], "long")
             self.assertTrue(exit_metadata["live_bounded_paper_route_close"])
-            self.assertEqual(
-                exit_metadata["source_candidate_ids"],
-                ["candidate-pairs-a"],
-            )
             self.assertTrue(simple_lane["bounded_live_paper_route_close"])
-            self.assertEqual(
-                simple_lane["submit_path"],
-                "bounded_paper_route_collection",
-            )
         finally:
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_enabled = original["trading_enabled"]

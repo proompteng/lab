@@ -16,7 +16,6 @@ from ....models import (
     Strategy,
     TradeDecision,
 )
-from ...live_submit_activation import live_submit_activation_status
 from ...models import StrategyDecision
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -276,12 +275,6 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             return "live_paper_route_probe_collection_disabled"
         if not settings.trading_simple_submit_enabled:
             return "simple_submit_disabled"
-        activation = live_submit_activation_status(now=now)
-        if activation.get("configured") is True:
-            if activation.get("valid") is not True:
-                return str(activation.get("reason") or "live_submit_activation_invalid")
-            if activation.get("expired") is True:
-                return str(activation.get("reason") or "live_submit_activation_expired")
         max_notional = _optional_decimal(
             settings.trading_simple_paper_route_probe_max_notional
         )

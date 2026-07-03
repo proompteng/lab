@@ -226,7 +226,7 @@ def test_live_bounded_source_collection_skips_unactionable_short_open_leg(
         settings.trading_fractional_equities_enabled = fractional_before
 
 
-def test_live_bounded_paper_route_target_blocks_without_activation(
+def test_live_bounded_paper_route_target_ignores_expired_activation(
     monkeypatch,
 ) -> None:
     trading_mode_before = settings.trading_mode
@@ -265,9 +265,9 @@ def test_live_bounded_paper_route_target_blocks_without_activation(
         )
 
         assert decisions == []
-        assert pipeline.state.last_bounded_evidence_collection_blocker["reason"] == (
-            "live_submit_activation_expired"
-        )
+        blocker = pipeline.state.last_bounded_evidence_collection_blocker
+        assert blocker["reason"] == "paper_route_target_plan_source_decisions_missing"
+        assert blocker["reason"] != "live_submit_activation_expired"
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
@@ -599,10 +599,8 @@ def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
 
         settings.trading_simple_submit_enabled = True
         settings.trading_live_submit_activation_expires_at = "invalid"
-        assert (
-            pipeline._live_bounded_paper_route_source_collection_blocker(now)
-            == "live_submit_activation_expiry_invalid"
-        )
+        settings.trading_simple_paper_route_probe_max_notional = 100
+        assert pipeline._live_bounded_paper_route_source_collection_blocker(now) is None
 
         settings.trading_live_submit_activation_expires_at = None
         settings.trading_simple_paper_route_probe_max_notional = 100
@@ -751,7 +749,9 @@ def test_live_bounded_paper_route_target_rejects_missing_cap_and_symbols(
         )
 
 
-def test_live_bounded_paper_route_symbol_floor_allows_bounded_probe() -> None:
+def test_live_bounded_paper_route_symbol_floor_does_not_bypass_runtime_ledger_blocker() -> (
+    None
+):
     trading_mode_before = settings.trading_mode
     probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
     probe_allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
@@ -769,9 +769,8 @@ def test_live_bounded_paper_route_symbol_floor_allows_bounded_probe() -> None:
         pipeline._proof_floor_symbol_block_reason = lambda proof_floor, symbol: (
             "runtime_ledger_source_collection_pending"
         )
-        pipeline._block_decision_submission = lambda **_kwargs: (_ for _ in ()).throw(
-            AssertionError("bounded live probe must not be blocked")
-        )
+        blocks: list[object] = []
+        pipeline._block_decision_submission = lambda request: blocks.append(request)
         decision = _routeability_decision(
             params={
                 "source_decision_mode": "bounded_paper_route_collection",
@@ -783,12 +782,15 @@ def test_live_bounded_paper_route_symbol_floor_allows_bounded_probe() -> None:
             }
         )
 
-        assert pipeline._profitability_floor_symbol_submission_allowed(
+        assert not pipeline._profitability_floor_symbol_submission_allowed(
             TradingSubmissionRequest(
                 session=SimpleNamespace(),
                 decision=decision,
                 decision_row=SimpleNamespace(status="planned"),
             )
+        )
+        assert (
+            getattr(blocks[0], "reason") == "runtime_ledger_source_collection_pending"
         )
     finally:
         settings.trading_mode = trading_mode_before

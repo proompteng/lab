@@ -46,6 +46,16 @@ class HyperliquidExecutionExchange(Protocol):
         """Cancel a resting order by Hyperliquid oid."""
         ...
 
+    def close_position_reduce_only(
+        self,
+        coin: str,
+        *,
+        size: Decimal | None = None,
+        slippage: Decimal = Decimal("0.05"),
+    ) -> OrderResult:
+        """Close an existing position through a reduce-only order."""
+        ...
+
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         """Read fills from the configured testnet account."""
         ...

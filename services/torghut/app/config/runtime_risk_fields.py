@@ -206,6 +206,24 @@ class RuntimeRiskSettingsFields(BaseSettings):
         description="Allow the simple lane to submit live broker orders.",
     )
 
+    trading_live_submit_enabled: bool = Field(
+        default=False,
+        alias="TRADING_LIVE_SUBMIT_ENABLED",
+        description=(
+            "Explicit operator toggle for live-mode order submission. This replaces "
+            "alpha-promotion/source-collection authority as the live submission switch."
+        ),
+    )
+
+    trading_testnet_after_hours_enabled: bool = Field(
+        default=False,
+        alias="TRADING_TESTNET_AFTER_HOURS_ENABLED",
+        description=(
+            "Route live-mode orders to the deterministic testnet/simulation adapter "
+            "outside Alpaca regular market hours."
+        ),
+    )
+
     trading_live_submit_activation_expires_at: Optional[str] = Field(
         default=None,
         alias="TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT",

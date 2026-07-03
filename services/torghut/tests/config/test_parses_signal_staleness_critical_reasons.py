@@ -297,6 +297,8 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             "trading_lean_lane_disable_switch",
             "trading_lean_live_canary_hard_rollback_enabled",
             "trading_simple_submit_enabled",
+            "trading_live_submit_enabled",
+            "trading_testnet_after_hours_enabled",
             "trading_simple_order_feed_telemetry_enabled",
             "trading_simple_paper_route_probe_enabled",
             "trading_simple_paper_route_probe_allow_live_mode",

@@ -348,7 +348,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             )
             time_source_module._TIME_SOURCE._cache_by_account.clear()
 
-    def test_live_shadow_stage_blocks_policy_approved_decision(self) -> None:
+    def test_live_shadow_stage_does_not_block_operational_submission(self) -> None:
         from app import config
 
         original = {
@@ -357,6 +357,9 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -366,6 +369,9 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
         config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
+        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
@@ -418,6 +424,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
+            pipeline._is_market_session_open = lambda _now=None: False
 
             with (
                 patch(
@@ -439,20 +446,16 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 decision_rows = session.execute(select(TradeDecision)).scalars().all()
                 self.assertEqual(len(decision_rows), 1)
                 decision_row = decision_rows[0]
-                self.assertEqual(decision_row.status, "blocked")
+                self.assertEqual(decision_row.status, "submitted")
                 decision_json = decision_row.decision_json
                 assert isinstance(decision_json, dict)
-                self.assertEqual(
-                    decision_json.get("submission_block_reason"),
-                    "capital_stage_shadow",
-                )
-                self.assertEqual(
+                self.assertNotEqual(
                     decision_json.get("submission_stage"),
                     "blocked_capital_stage_shadow",
                 )
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
                 assert isinstance(control_plane_snapshot, dict)
-                self.assertEqual(control_plane_snapshot.get("capital_stage"), "shadow")
+                self.assertEqual(control_plane_snapshot.get("capital_stage"), "live")
                 self.assertEqual(
                     control_plane_snapshot.get("trading_autonomy_allow_live_promotion"),
                     False,
@@ -461,17 +464,17 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     "live_submission_gate"
                 )
                 assert isinstance(live_submission_gate, dict)
-                self.assertEqual(live_submission_gate.get("allowed"), False)
+                self.assertEqual(live_submission_gate.get("allowed"), True)
                 self.assertEqual(
                     live_submission_gate.get("reason"),
-                    "hypothesis_window_evidence_missing",
+                    "operational_submission_ready",
                 )
 
-            self.assertEqual(alpaca_client.submitted, [])
-            self.assertEqual(
-                state.metrics.submission_block_total.get("capital_stage_shadow"), 1
+            self.assertNotEqual(alpaca_client.submitted, [])
+            self.assertIsNone(
+                state.metrics.submission_block_total.get("capital_stage_shadow")
             )
-            self.assertEqual(state.metrics.decision_state_total.get("blocked"), 1)
+            self.assertEqual(state.metrics.decision_state_total.get("submitted"), 1)
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -485,6 +488,15 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
+            config.settings.trading_testnet_after_hours_enabled = original[
+                "trading_testnet_after_hours_enabled"
+            ]
 
     def test_live_submission_allows_autonomy_eligible_canary_without_static_flag(
         self,
@@ -497,6 +509,9 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -506,6 +521,9 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
         config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
+        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
@@ -624,6 +642,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 account_label="live",
                 session_factory=self.session_local,
             )
+            pipeline._is_market_session_open = lambda _now=None: False
 
             with (
                 patch(
@@ -656,11 +675,10 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 self.assertEqual(live_submission_gate.get("allowed"), True)
                 self.assertEqual(
                     live_submission_gate.get("reason"),
-                    "promotion_certificate_valid",
+                    "operational_submission_ready",
                 )
-                self.assertEqual(
-                    live_submission_gate.get("evidence_tuple", {}).get("hypothesis_id"),
-                    "H-CONT-01",
+                self.assertIsNone(
+                    live_submission_gate.get("evidence_tuple", {}).get("hypothesis_id")
                 )
 
             self.assertEqual(len(alpaca_client.submitted), 1)
@@ -677,6 +695,15 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
             ]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
+            config.settings.trading_testnet_after_hours_enabled = original[
+                "trading_testnet_after_hours_enabled"
+            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -684,7 +711,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_live_submission_blocks_autonomy_eligible_canary_without_promotion_evidence(
+    def test_live_submission_ignores_autonomy_promotion_evidence_for_operational_submit(
         self,
     ) -> None:
         from app import config
@@ -695,6 +722,9 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -704,6 +734,9 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = False
         config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
+        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
@@ -776,7 +809,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             with self.session_local() as session:
                 decision_rows = session.execute(select(TradeDecision)).scalars().all()
                 self.assertEqual(len(decision_rows), 1)
-                self.assertEqual(decision_rows[0].status, "blocked")
+                self.assertNotEqual(decision_rows[0].status, "blocked")
                 decision_json = decision_rows[0].decision_json
                 assert isinstance(decision_json, dict)
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
@@ -785,17 +818,17 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     "live_submission_gate"
                 )
                 assert isinstance(live_submission_gate, dict)
-                self.assertEqual(live_submission_gate.get("allowed"), False)
+                self.assertEqual(live_submission_gate.get("allowed"), True)
                 self.assertEqual(
                     live_submission_gate.get("reason"),
-                    "alpha_readiness_not_promotion_eligible",
+                    "operational_submission_ready",
                 )
-                self.assertIn(
+                self.assertNotIn(
                     "alpha_readiness_not_promotion_eligible",
                     live_submission_gate.get("blocked_reasons", []),
                 )
 
-            self.assertEqual(alpaca_client.submitted, [])
+            self.assertNotEqual(alpaca_client.submitted, [])
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -808,6 +841,15 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
+            config.settings.trading_testnet_after_hours_enabled = original[
+                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

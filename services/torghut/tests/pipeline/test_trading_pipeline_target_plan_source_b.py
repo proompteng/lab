@@ -29,7 +29,7 @@ from tests.pipeline.trading_pipeline_base import (
 
 
 class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
-    def test_live_bounded_paper_route_probe_bypasses_only_collection_blockers(
+    def test_live_bounded_paper_route_probe_does_not_bypass_retired_collection_blockers(
         self,
     ) -> None:
         from app import config
@@ -101,7 +101,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             )
 
             config.settings.trading_simple_paper_route_probe_allow_live_mode = True
-            self.assertTrue(
+            self.assertFalse(
                 pipeline._bounded_live_paper_route_probe_submission_allowed(
                     decision,
                     gate,
@@ -175,6 +175,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             "trading_simple_submit_enabled": (
                 config.settings.trading_simple_submit_enabled
             ),
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
             "trading_live_submit_activation_expires_at": (
                 config.settings.trading_live_submit_activation_expires_at
             ),
@@ -183,6 +184,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
         config.settings.trading_enabled = True
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
         config.settings.trading_live_submit_activation_expires_at = (
             "2000-01-01T00:00:00Z"
         )
@@ -222,15 +224,19 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             config.settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
             ]
+            config.settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
             config.settings.trading_live_submit_activation_expires_at = original[
                 "trading_live_submit_activation_expires_at"
             ]
 
-        self.assertFalse(gate["allowed"])
+        self.assertTrue(gate["allowed"])
         simple_lane = cast(dict[str, Any], gate["simple_lane"])
+        self.assertEqual(simple_lane["blocked_reasons"], [])
         self.assertEqual(
-            simple_lane["blocked_reasons"],
-            ["live_submit_activation_expired"],
+            simple_lane["live_submit_activation"]["reason"],
+            "live_submit_activation_expired",
         )
 
     def test_live_bounded_paper_route_probe_passes_collection_only_proof_floor(
@@ -325,7 +331,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                         return_value=proof_floor,
                     ),
                 ):
-                    self.assertTrue(
+                    self.assertFalse(
                         pipeline._is_trading_submission_allowed(
                             session=session,
                             decision=decision,

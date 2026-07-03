@@ -168,13 +168,15 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
             item["observed"]["runtime_window_prior_reasons"],
             ["drift_checks_missing"],
         )
-        self.assertFalse(gate["allowed"])
-        self.assertIn(
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "operational_submission_ready")
+        self.assertEqual(gate["blocked_reasons"], [])
+        self.assertNotIn(
             "alpha_readiness_not_promotion_eligible",
             gate["blocked_reasons"],
         )
-        self.assertIn("promotion_certificate_shadow_only", gate["blocked_reasons"])
-        self.assertIn("alpha_hypothesis_shadow_only", gate["blocked_reasons"])
+        self.assertNotIn("promotion_certificate_shadow_only", gate["blocked_reasons"])
+        self.assertNotIn("alpha_hypothesis_shadow_only", gate["blocked_reasons"])
 
         stale_summary = dict(summary)
         stale_summary.update(
@@ -213,15 +215,9 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
 
         self.assertEqual(stale_gate["promotion_eligible_total"], 0)
         self.assertEqual(stale_gate["paper_probation_eligible_total"], 1)
-        self.assertIn(
-            "alpha_readiness_not_promotion_eligible",
-            stale_gate["blocked_reasons"],
-        )
-        self.assertIn(
-            "promotion_certificate_shadow_only",
-            stale_gate["blocked_reasons"],
-        )
-        self.assertIn("alpha_hypothesis_shadow_only", stale_gate["blocked_reasons"])
+        self.assertTrue(stale_gate["allowed"])
+        self.assertEqual(stale_gate["reason"], "operational_submission_ready")
+        self.assertEqual(stale_gate["blocked_reasons"], [])
 
         non_shadow_paper_gate = build_live_submission_gate_payload(
             SimpleNamespace(
@@ -250,11 +246,15 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
 
         self.assertEqual(non_shadow_paper_gate["promotion_eligible_total"], 0)
         self.assertEqual(non_shadow_paper_gate["paper_probation_eligible_total"], 1)
-        self.assertIn(
+        self.assertTrue(non_shadow_paper_gate["allowed"])
+        self.assertEqual(
+            non_shadow_paper_gate["reason"], "operational_submission_ready"
+        )
+        self.assertNotIn(
             "alpha_readiness_not_promotion_eligible",
             non_shadow_paper_gate["blocked_reasons"],
         )
-        self.assertIn(
+        self.assertNotIn(
             "promotion_certificate_not_live_runtime",
             non_shadow_paper_gate["blocked_reasons"],
         )
@@ -372,7 +372,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
             forced_summary["promotion_eligible_total"] = 1
             forced_summary["items"] = [forced_item]
             gate = build_live_submission_gate_payload(
-                SimpleNamespace(market_session_open=True),
+                SimpleNamespace(market_session_open=False),
                 hypothesis_summary=forced_summary,
                 empirical_jobs_status={"ready": True},
                 dspy_runtime_status={"mode": "inactive"},
@@ -385,8 +385,10 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
         self.assertFalse(item["promotion_eligible"])
         self.assertEqual(item["capital_stage"], "shadow")
         self.assertEqual(item["reasons"], ["drift_checks_missing"])
-        self.assertIn("promotion_decision_evidence_missing", gate["blocked_reasons"])
-        self.assertIn("promotion_certificate_missing", gate["blocked_reasons"])
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "operational_submission_ready")
+        self.assertNotIn("promotion_decision_evidence_missing", gate["blocked_reasons"])
+        self.assertNotIn("promotion_certificate_missing", gate["blocked_reasons"])
 
     def test_hypothesis_runtime_summary_rejects_failed_runtime_proof(self) -> None:
         engine = create_engine(

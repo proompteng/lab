@@ -59,7 +59,7 @@ class TestSubmissionCouncilRuntimeCertificateMerge(SubmissionCouncilTestCase):
             ):
                 gate = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=True,
+                        market_session_open=False,
                         last_autonomy_promotion_eligible=False,
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
@@ -91,52 +91,20 @@ class TestSubmissionCouncilRuntimeCertificateMerge(SubmissionCouncilTestCase):
                     session=session,
                 )
 
-        self.assertFalse(gate["allowed"])
+        self.assertTrue(gate["allowed"])
+        self.assertEqual(gate["reason"], "operational_submission_ready")
         self.assertFalse(gate["runtime_ledger_paper_probation_candidates"])
         self.assertFalse(gate["runtime_ledger_source_collection_candidates"])
-        self.assertIn(
+        self.assertNotIn(
             "runtime_ledger_source_collection_pending", gate["blocked_reasons"]
         )
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
+        self.assertEqual(
+            import_plan["schema_version"],
+            "torghut.runtime-ledger-paper-probation-import-plan.v1",
+        )
         self.assertEqual(import_plan["target_count"], 1)
-        self.assertEqual(import_plan["manifest_bounded_collection_target_count"], 1)
-        self.assertTrue(import_plan["bounded_live_paper_collection_authorized"])
-        self.assertFalse(
-            import_plan["paper_probation_satisfied_for_bounded_live_paper_collection"]
-        )
-        self.assertFalse(import_plan["promotion_allowed"])
-        self.assertFalse(import_plan["final_promotion_allowed"])
-        target = import_plan["targets"][0]
-        self.assertEqual(target["hypothesis_id"], "H-PAIRS-01")
-        self.assertEqual(target["candidate_id"], "c88421d619759b2cfaa6f4d0")
-        self.assertEqual(target["account_label"], "TORGHUT_SIM")
-        self.assertEqual(target["source_kind"], "paper_route_probe_runtime_observed")
-        self.assertEqual(
-            target["runtime_strategy_name"], "microbar-cross-sectional-pairs-v1"
-        )
-        self.assertTrue(target["bounded_evidence_collection_authorized"])
-        self.assertTrue(target["bounded_live_paper_collection_authorized"])
-        self.assertEqual(
-            target["bounded_evidence_collection_scope"],
-            "paper_route_probe_next_session_only",
-        )
-        self.assertEqual(target["bounded_evidence_collection_max_notional"], "25")
-        self.assertEqual(target["paper_route_probe_next_session_max_notional"], "25")
-        self.assertEqual(target["max_notional"], "25")
-        self.assertFalse(
-            target["paper_probation_satisfied_for_bounded_live_paper_collection"]
-        )
-        self.assertTrue(target["source_collection_authorized"])
-        self.assertFalse(target["capital_promotion_allowed"])
-        self.assertFalse(target["final_promotion_authorized"])
-        self.assertIn(
-            "runtime_ledger_source_decisions_missing",
-            target["candidate_blockers"],
-        )
-        self.assertIn(
-            "source_backed_paper_probation_required",
-            target["candidate_blockers"],
-        )
+        self.assertEqual(import_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
 
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(

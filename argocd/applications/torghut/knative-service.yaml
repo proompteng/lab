@@ -128,6 +128,10 @@ spec:
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "true"
+            - name: TRADING_LIVE_SUBMIT_ENABLED
+              value: "true"
+            - name: TRADING_TESTNET_AFTER_HOURS_ENABLED
+              value: "true"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED

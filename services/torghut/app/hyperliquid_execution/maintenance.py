@@ -92,6 +92,71 @@ def close_excluded_positions(
     }
 
 
+def close_largest_positions_over_cap(
+    *,
+    config: HyperliquidExecutionConfig,
+    exchange: MaintenanceExchange,
+    execute: bool = False,
+    slippage: Decimal = Decimal("0.05"),
+    max_actions: int = 1,
+) -> dict[str, object]:
+    """Close the largest positions first when gross exposure is at or over cap."""
+
+    observed_at = datetime.now(timezone.utc)
+    account = exchange.reconcile_account({})
+    over_cap = account.account.gross_exposure_usd >= config.max_gross_exposure_usd
+    candidates = sorted(
+        _raw_position_rows(account),
+        key=lambda position: _decimal(position["notional_usd"]),
+        reverse=True,
+    )
+    blockers = _execution_blockers(config) if execute and over_cap else []
+    actions: list[dict[str, object]] = []
+    if over_cap:
+        for candidate in candidates[: max(0, max_actions)]:
+            action = {
+                "coin": candidate["coin"],
+                "size": candidate["size"],
+                "notional_usd": candidate["notional_usd"],
+                "reason": "gross_exposure_cap",
+            }
+            if blockers:
+                action["status"] = "blocked"
+                action["blockers"] = blockers
+            elif not execute:
+                action["status"] = "dry_run"
+            else:
+                result = exchange.close_position_reduce_only(
+                    str(candidate["coin"]),
+                    size=abs(Decimal(str(candidate["size"]))),
+                    slippage=slippage,
+                )
+                action.update(
+                    {
+                        "status": result.status,
+                        "exchange_order_id": result.exchange_order_id,
+                        "rejection_reason": result.rejection_reason,
+                        "raw_response": result.raw_response,
+                    }
+                )
+            actions.append(action)
+
+    return {
+        "schema_version": "torghut.hyperliquid-execution-over-cap-maintenance.v1",
+        "observed_at": observed_at.isoformat(),
+        "execute_requested": execute,
+        "maintenance_reduce_only_close_enabled": config.maintenance_reduce_only_close_enabled,
+        "market_data_network": config.market_data_network,
+        "execution_network": config.execution_network,
+        "account_gross_exposure_usd": str(account.account.gross_exposure_usd),
+        "max_gross_exposure_usd": str(config.max_gross_exposure_usd),
+        "over_cap": over_cap,
+        "candidates": candidates,
+        "blockers": blockers,
+        "actions": actions,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Dry-run or execute reduce-only closes for excluded Hyperliquid positions."
@@ -147,6 +212,8 @@ def _requested_symbols(
 def _raw_position_rows(account: AccountState) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
     _append_raw_position_rows(rows, account.account.raw_payload)
+    if not rows:
+        rows.extend(_position_snapshot_rows(account))
     return sorted(rows, key=lambda row: str(row["coin"]))
 
 
@@ -184,6 +251,22 @@ def _append_raw_position_rows(
                 "unrealized_pnl_usd": str(position_map.get("unrealizedPnl") or "0"),
             }
         )
+
+
+def _position_snapshot_rows(account: AccountState) -> list[dict[str, object]]:
+    return [
+        {
+            "coin": position.coin,
+            "size": str(position.size),
+            "entry_price": (
+                str(position.entry_price) if position.entry_price is not None else None
+            ),
+            "notional_usd": str(abs(position.notional_usd)),
+            "unrealized_pnl_usd": str(position.unrealized_pnl_usd),
+        }
+        for position in account.positions
+        if position.size != Decimal("0")
+    ]
 
 
 def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:

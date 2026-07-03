@@ -279,8 +279,8 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
     ) -> None:
         live_submission_gate_payload = {
             "allowed": False,
-            "reason": "live_submit_activation_expired",
-            "blocked_reasons": ["live_submit_activation_expired"],
+            "reason": "live_submit_disabled",
+            "blocked_reasons": ["live_submit_disabled"],
             "read_model_unavailable": False,
             "promotion_authority": False,
             "final_authority_ok": False,
@@ -324,14 +324,14 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         self.assertIn("hypothesis_runtime", skipped_reads)
         self.assertEqual(
             payload["llm_evaluation"]["error"],
-            "llm_evaluation_live_submit_activation_expired",
+            "llm_evaluation_live_submit_disabled",
         )
         self.assertIn(
-            "tca_summary_live_submit_activation_expired",
+            "tca_summary_live_submit_disabled",
             payload["tca"]["reason_codes"],
         )
         self.assertIn(
-            "hypothesis_runtime_live_submit_activation_expired",
+            "hypothesis_runtime_live_submit_disabled",
             payload["hypotheses"]["summary"]["reason_codes"],
         )
 

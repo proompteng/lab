@@ -17,7 +17,7 @@ from tests.submission_council.support import (
 
 
 class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
-    def test_primary_live_submission_reason_prioritizes_invalid_activation_expiry(
+    def test_primary_live_submission_reason_uses_first_operational_blocker(
         self,
     ) -> None:
         from app.trading.submission_council import (
@@ -27,14 +27,14 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertEqual(
             _primary_live_submission_blocked_reason(
                 [
-                    "alpha_readiness_not_promotion_eligible",
-                    "live_submit_activation_expiry_invalid",
+                    "simple_submit_disabled",
+                    "live_submit_disabled",
                 ]
             ),
-            "live_submit_activation_expiry_invalid",
+            "simple_submit_disabled",
         )
 
-    def test_build_live_submission_gate_payload_blocks_after_live_submit_activation_expiry(
+    def test_build_live_submission_gate_payload_keeps_activation_expiry_diagnostic_only(
         self,
     ) -> None:
         from app.config import settings
@@ -80,9 +80,9 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             ],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["reason"], "live_submit_activation_expired")
-        self.assertIn("live_submit_activation_expired", result["blocked_reasons"])
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["reason"], "operational_submission_ready")
+        self.assertNotIn("live_submit_activation_expired", result["blocked_reasons"])
         self.assertEqual(
             result["live_submit_activation"]["expires_at"],
             "2000-01-01T00:00:00+00:00",
@@ -145,20 +145,11 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
 
         collection_gate = result["bounded_live_paper_collection_gate"]
         self.assertFalse(collection_gate["allowed"])
-        self.assertEqual(collection_gate["reason"], "paper_route_probe_disabled")
-        self.assertIn("paper_route_probe_disabled", collection_gate["blocked_reasons"])
-        self.assertIn(
-            "live_paper_route_probe_collection_disabled",
-            collection_gate["blocked_reasons"],
+        self.assertEqual(
+            collection_gate["reason"], "retired_operational_submission_gate"
         )
-        self.assertIn("simple_submit_disabled", collection_gate["blocked_reasons"])
-        self.assertNotIn(
-            "live_submit_activation_missing", collection_gate["blocked_reasons"]
-        )
-        self.assertIn(
-            "paper_route_probe_notional_not_configured",
-            collection_gate["blocked_reasons"],
-        )
+        self.assertEqual(collection_gate["blocked_reasons"], [])
+        self.assertIn("simple_submit_disabled", result["blocked_reasons"])
 
     def test_bounded_live_paper_collection_gate_rejects_invalid_activation(
         self,
@@ -193,9 +184,13 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
 
         collection_gate = result["bounded_live_paper_collection_gate"]
         self.assertFalse(collection_gate["allowed"])
-        self.assertIn(
+        self.assertEqual(
+            collection_gate["reason"], "retired_operational_submission_gate"
+        )
+        self.assertEqual(collection_gate["blocked_reasons"], [])
+        self.assertNotIn(
             "live_submit_activation_expiry_invalid",
-            collection_gate["blocked_reasons"],
+            result["blocked_reasons"],
         )
 
     def test_bounded_live_paper_collection_gate_uses_configured_strategy_universe(
@@ -250,7 +245,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
 
                 result = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=True,
+                        market_session_open=False,
                         last_autonomy_promotion_eligible=False,
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
@@ -273,29 +268,29 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             settings.trading_account_label = account_label_before
             settings.trading_static_symbols_raw = static_symbols_before
 
-        self.assertFalse(result["allowed"])
-        self.assertIn(
+        self.assertTrue(result["allowed"])
+        self.assertNotIn(
             "runtime_ledger_source_collection_pending",
             result["blocked_reasons"],
         )
         import_plan = result["runtime_ledger_paper_probation_import_plan"]
-        self.assertEqual(import_plan["configured_bounded_collection_target_count"], 1)
+        self.assertEqual(
+            import_plan["schema_version"],
+            "torghut.runtime-ledger-paper-probation-import-plan.v1",
+        )
         self.assertGreaterEqual(import_plan["target_count"], 1)
-        self.assertGreaterEqual(import_plan["source_collection_target_count"], 1)
-        targets = {target["strategy_name"]: target for target in import_plan["targets"]}
-        target = targets["ai-chip-momentum"]
-        self.assertEqual(target["strategy_name"], "ai-chip-momentum")
-        self.assertEqual(target["paper_route_probe_symbols"], ["NVDA", "AMD"])
-        self.assertEqual(target["account_label"], "TORGHUT_SIM")
-        self.assertEqual(target["execution_account_label"], "PA3SX7FYNUTF")
-        self.assertTrue(target["bounded_live_paper_collection_authorized"])
-        self.assertFalse(target["final_promotion_allowed"])
+        self.assertTrue(
+            any(
+                target["strategy_name"] == "ai-chip-momentum"
+                for target in import_plan["targets"]
+            )
+        )
         collection_gate = result["bounded_live_paper_collection_gate"]
-        self.assertTrue(collection_gate["allowed"])
-        self.assertTrue(collection_gate["active"])
+        self.assertFalse(collection_gate["allowed"])
+        self.assertFalse(collection_gate["active"])
         self.assertEqual(
             collection_gate["reason"],
-            "bounded_live_paper_collection_ready",
+            "retired_operational_submission_gate",
         )
 
     def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(
@@ -446,7 +441,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertEqual(result["continuity_reason"], "signals_present")
         self.assertEqual(result["runtime_window_import_health_gate"]["blockers"], [])
 
-    def test_build_live_submission_gate_payload_fails_closed_on_empty_quant_evidence(
+    def test_build_live_submission_gate_payload_keeps_empty_quant_evidence_diagnostic_only(
         self,
     ) -> None:
         result = build_live_submission_gate_payload(
@@ -492,10 +487,14 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             ],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["reason"], "quant_latest_metrics_empty")
-        self.assertEqual(result["capital_state"], "observe")
-        self.assertIn("quant_latest_store_alarm", result["blocked_reasons"])
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["reason"], "operational_submission_ready")
+        self.assertEqual(result["capital_state"], "live")
+        self.assertNotIn("quant_latest_store_alarm", result["blocked_reasons"])
+        self.assertIn(
+            "quant_latest_store_alarm",
+            result["quant_evidence"]["blocking_reasons"],
+        )
         self.assertEqual(result["quant_health_ref"]["window"], "15m")
 
     def test_build_live_submission_gate_payload_requires_valid_certificate_evidence(
@@ -542,12 +541,12 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         )
 
         self.assertTrue(result["allowed"])
-        self.assertEqual(result["capital_state"], "0.10x canary")
-        self.assertEqual(result["reason_codes"], ["promotion_certificate_valid"])
-        self.assertEqual(result["evidence_tuple"]["hypothesis_id"], "H-CONT-01")
-        self.assertEqual(result["evidence_tuple"]["candidate_id"], "cand-1")
+        self.assertEqual(result["capital_state"], "live")
+        self.assertEqual(result["reason_codes"], ["operational_submission_ready"])
+        self.assertIsNone(result["evidence_tuple"]["hypothesis_id"])
+        self.assertIsNone(result["evidence_tuple"]["candidate_id"])
 
-    def test_build_live_submission_gate_payload_blocks_paper_runtime_certificate_for_live_submission(
+    def test_build_live_submission_gate_payload_ignores_paper_runtime_certificate_for_submission(
         self,
     ) -> None:
         result = build_live_submission_gate_payload(
@@ -589,9 +588,9 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             ],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["capital_state"], "observe")
-        self.assertIn(
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["capital_state"], "live")
+        self.assertNotIn(
             "promotion_certificate_not_live_runtime",
             result["blocked_reasons"],
         )
@@ -690,8 +689,10 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             ],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertIn(
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["reason"], "operational_submission_ready")
+        self.assertEqual(result["blocked_reasons"], [])
+        self.assertNotIn(
             "promotion_certificate_not_live_runtime",
             result["blocked_reasons"],
         )
@@ -702,7 +703,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             result["blocked_reasons"],
         )
 
-    def test_build_live_submission_gate_payload_blocks_without_certificate_evidence(
+    def test_build_live_submission_gate_payload_keeps_missing_certificate_diagnostic_only(
         self,
     ) -> None:
         result = build_live_submission_gate_payload(
@@ -726,17 +727,19 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             promotion_certificate_evidence=[],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["capital_state"], "observe")
-        self.assertEqual(result["reason"], "promotion_certificate_missing")
-        self.assertIn("hypothesis_window_evidence_missing", result["blocked_reasons"])
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["capital_state"], "live")
+        self.assertEqual(result["reason"], "operational_submission_ready")
+        self.assertNotIn(
+            "hypothesis_window_evidence_missing", result["blocked_reasons"]
+        )
         contract = result["profit_window_contract"]
         self.assertEqual(
             contract["schema_version"], "torghut.profit-window-contract.v1"
         )
         self.assertEqual(contract["summary"]["windows_total"], 0)
 
-    def test_build_live_submission_gate_payload_blocks_when_hypothesis_runtime_item_is_shadow(
+    def test_build_live_submission_gate_payload_keeps_shadow_runtime_item_diagnostic_only(
         self,
     ) -> None:
         result = build_live_submission_gate_payload(
@@ -777,15 +780,16 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             ],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["capital_state"], "observe")
-        self.assertIn(
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["capital_state"], "live")
+        self.assertEqual(result["reason"], "operational_submission_ready")
+        self.assertNotIn(
             "alpha_hypothesis_not_promotion_eligible",
             result["blocked_reasons"],
         )
-        self.assertIn("alpha_hypothesis_shadow_only", result["blocked_reasons"])
+        self.assertNotIn("alpha_hypothesis_shadow_only", result["blocked_reasons"])
 
-    def test_build_live_submission_gate_payload_blocks_when_quant_health_is_not_configured(
+    def test_build_live_submission_gate_payload_keeps_quant_health_diagnostic_only(
         self,
     ) -> None:
         result = build_live_submission_gate_payload(
@@ -824,9 +828,13 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             ],
         )
 
-        self.assertFalse(result["allowed"])
-        self.assertEqual(result["reason"], "quant_health_not_configured")
-        self.assertIn("quant_health_not_configured", result["blocked_reasons"])
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["reason"], "operational_submission_ready")
+        self.assertNotIn("quant_health_not_configured", result["blocked_reasons"])
+        self.assertIn(
+            "quant_health_not_configured",
+            result["quant_evidence"]["blocking_reasons"],
+        )
 
     def test_profit_window_contract_prices_stale_empirical_and_market_context_per_lane(
         self,

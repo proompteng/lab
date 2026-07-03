@@ -554,6 +554,8 @@ def _build_live_submission_gate_payload(
         blocked_reasons.append("kill_switch_enabled")
     if not settings.trading_simple_submit_enabled:
         blocked_reasons.append("simple_submit_disabled")
+    if not settings.trading_live_submit_enabled:
+        blocked_reasons.append("live_submit_disabled")
     if settings.trading_emergency_stop_enabled and bool(
         getattr(state, "emergency_stop_active", False)
     ):
@@ -582,8 +584,15 @@ def _build_live_submission_gate_payload(
         gate["capital_stage"] = "shadow"
         gate["capital_state"] = "observe"
     gate["pipeline_mode"] = "simple"
+    gate["operational_submission_gate"] = {
+        "allowed": bool(gate.get("allowed", False)),
+        "reason": str(gate.get("reason") or "unknown"),
+        "blocked_reasons": merged_blocked_reasons,
+        "execution_route": gate.get("execution_route"),
+    }
     gate["simple_lane"] = {
         "submit_enabled": settings.trading_simple_submit_enabled,
+        "live_submit_enabled": settings.trading_live_submit_enabled,
         "shared_gate_enforced": True,
         "blocked_reasons": blocked_reasons,
     }
