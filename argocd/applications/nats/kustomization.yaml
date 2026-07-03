@@ -12,7 +12,7 @@ resources:
 helmCharts:
   - name: nats
     repo: https://nats-io.github.io/k8s/helm/charts
-    version: 2.12.6
+    version: 2.14.2
     releaseName: nats
     namespace: nats
     valuesFile: ./values.yaml
@@ -20,7 +20,7 @@ helmCharts:
 images:
   - name: nats
     newName: mirror.gcr.io/library/nats
-    newTag: 2.12.6-alpine
+    newTag: 2.14.2-alpine
   - name: natsio/nats-server-config-reloader
     newName: mirror.gcr.io/natsio/nats-server-config-reloader
     newTag: 0.21.1

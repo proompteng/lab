@@ -3,8 +3,8 @@ kind: Kustomization
 namespace: flink
 helmCharts:
   - name: flink-kubernetes-operator
-    repo: https://downloads.apache.org/flink/flink-kubernetes-operator-1.14.0/
-    version: 1.14.0
+    repo: https://downloads.apache.org/flink/flink-kubernetes-operator-1.15.0/
+    version: 1.15.0
     releaseName: flink-kubernetes-operator
     namespace: flink
     includeCRDs: true

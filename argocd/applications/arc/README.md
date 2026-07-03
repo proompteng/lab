@@ -2,7 +2,7 @@
 
 These runners are not pinned to any specific node by default.
 
-- Chart version pinned in `application.yaml` is `0.14.1` for both the controller and the runner scale set.
+- Chart version pinned in `application.yaml` is `0.14.2` for both the controller and the runner scale set.
 - Upgrading from ≤0.9.x requires deleting the legacy `actions.github.com` CRDs and reinstalling the controller/runner charts before letting Argo CD reconcile.
 - Keep the custom template (init container + privileged `docker:dind` sidecar with `DOCKER_HOST=unix:///var/run/docker.sock`) when reapplying so Docker builds continue to work under Kubernetes mode.
 - The runner container intentionally waits for `docker version` before starting `run.sh`; without this guard, ARC can register a runner before the dind socket is ready.

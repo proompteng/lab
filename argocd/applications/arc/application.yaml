@@ -8,13 +8,13 @@ spec:
   sources:
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-controller
         skipCrds: false
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set
         skipCrds: false
@@ -145,7 +145,7 @@ spec:
                   emptyDir: {}
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-amd64
         skipCrds: false
@@ -272,7 +272,7 @@ spec:
                   emptyDir: {}
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-analysis
         skipCrds: false
