@@ -31,6 +31,7 @@ from app.hyperliquid_execution.models import (
 from app.hyperliquid_execution.repository import HyperliquidExecutionRepository
 from app.hyperliquid_execution.service import (
     HyperliquidExecutionService,
+    _CycleCounts,
     _feature_status,
     _string_list_detail,
     runtime_readiness,
@@ -117,6 +118,15 @@ def test_api_readiness_metrics_report_and_cycle_paths(monkeypatch: Any) -> None:
         api.runtime_state.latest_error = old_error
         api.runtime_state.metrics = old_metrics
         api.runtime_state.service = old_service
+
+
+def test_cycle_result_ignores_malformed_reduce_only_action_report() -> None:
+    counts = _CycleCounts()
+
+    counts.record_maintenance_reduce_only({"actions": "not-a-list"})
+
+    assert counts.maintenance_reduce_only == {"actions": "not-a-list"}
+    assert counts.orders_submitted == 0
 
 
 def test_feed_reader_builds_queries_parses_features_and_reports_status() -> None:

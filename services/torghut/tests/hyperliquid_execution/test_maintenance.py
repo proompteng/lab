@@ -106,6 +106,50 @@ def test_reduce_only_over_cap_closes_largest_position_first() -> None:
     assert exchange.closed == [("SPX", Decimal("275.2"), Decimal("0.05"))]
 
 
+def test_reduce_only_over_cap_dry_run_marks_largest_position() -> None:
+    exchange = _MaintenanceExchange()
+
+    report = close_largest_positions_over_cap(
+        config=HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "50",
+            }
+        ),
+        exchange=exchange,
+        execute=False,
+    )
+
+    assert report["over_cap"] is True
+    assert report["actions"][0]["reason"] == "gross_exposure_cap"
+    assert report["actions"][0]["status"] == "dry_run"
+    assert exchange.closed == []
+
+
+def test_reduce_only_over_cap_requires_maintenance_flag_when_executing() -> None:
+    exchange = _MaintenanceExchange()
+
+    report = close_largest_positions_over_cap(
+        config=HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "50",
+            }
+        ),
+        exchange=exchange,
+        execute=True,
+    )
+
+    assert report["over_cap"] is True
+    assert report["blockers"] == ["maintenance_reduce_only_close_disabled"]
+    assert report["actions"][0]["status"] == "blocked"
+    assert report["actions"][0]["blockers"] == [
+        "maintenance_reduce_only_close_disabled"
+    ]
+    assert exchange.closed == []
+
+
 class _MaintenanceExchange:
     def __init__(self) -> None:
         self.closed: list[tuple[str, Decimal | None, Decimal]] = []
