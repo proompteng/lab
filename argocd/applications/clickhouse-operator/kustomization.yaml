@@ -4,7 +4,7 @@ namespace: clickhouse-operator
 helmCharts:
   - name: altinity-clickhouse-operator
     repo: https://helm.altinity.com
-    version: 0.26.3
+    version: 0.27.1
     releaseName: clickhouse-operator
     namespace: clickhouse-operator
     includeCRDs: true
