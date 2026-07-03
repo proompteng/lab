@@ -9,6 +9,7 @@ data:
   ALPACA_STREAM_URL: "wss://stream.data.alpaca.markets"
   ALPACA_BASE_URL: "https://data.alpaca.markets"
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes"
+  OPTIONS_MARKET_HOLIDAYS: "2026-07-03"
   JANGAR_SYMBOLS_URL: "http://torghut-options-catalog.torghut.svc.cluster.local/v1/options/hot-set"
   SYMBOLS: ""
   SYMBOLS_POLL_INTERVAL_MS: "30000"

@@ -5,6 +5,7 @@ import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
 import io.github.cdimascio.dotenv.dotenv
 import java.io.File
+import java.time.LocalDate
 import java.util.Properties
 
 data class TopicConfig(
@@ -39,6 +40,7 @@ data class ForwarderConfig(
   val alpacaBaseUrl: String,
   val alpacaTradeStreamUrl: String?,
   val alpacaMarketDataChannels: List<String>,
+  val optionsMarketHolidays: Set<LocalDate> = emptySet(),
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
   val symbolAllowlist: Set<String>,
@@ -131,6 +133,7 @@ data class ForwarderConfig(
             "for market type ${alpacaMarketType.name.lowercase()} (allowed: $allowed)",
         )
       }
+      val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
       val jangarSymbolsUrl =
         mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -209,6 +212,7 @@ data class ForwarderConfig(
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
         alpacaMarketDataChannels = alpacaMarketDataChannels,
+        optionsMarketHolidays = optionsMarketHolidays,
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
         symbolAllowlist = symbolAllowlist,
@@ -237,6 +241,22 @@ data class ForwarderConfig(
       val merged = dotEnvEntries.toMutableMap()
       merged.putAll(System.getenv())
       return merged
+    }
+
+    private fun parseIsoDateSet(raw: String?): Set<LocalDate> {
+      val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return emptySet()
+      if (trimmed == "[]") return emptySet()
+      return trimmed
+        .trim('[', ']')
+        .split(",", "\n", ";", " ")
+        .map { it.trim().trim('"', '\'') }
+        .filter { it.isNotEmpty() }
+        .map { token ->
+          runCatching { LocalDate.parse(token) }
+            .getOrElse {
+              error("OPTIONS_MARKET_HOLIDAYS must contain ISO-8601 dates (yyyy-MM-dd): $token")
+            }
+        }.toSet()
     }
 
     private fun loadDotEnv(): Map<String, String> {
