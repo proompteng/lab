@@ -8,13 +8,49 @@ resources:
 helmCharts:
   - name: gpu-operator
     repo: https://nvidia.github.io/gpu-operator
-    version: v26.3.1
+    version: v26.3.3
     releaseName: gpu-operator
     namespace: gpu-operator
     includeCRDs: true
     valuesFile: values.yaml
 
 patches:
+  - target:
+      kind: ServiceAccount
+      name: gpu-operator-node-feature-discovery-prune
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: gpu-operator-node-feature-discovery-prune
+  - target:
+      kind: ClusterRole
+      name: gpu-operator-node-feature-discovery-prune
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: gpu-operator-node-feature-discovery-prune
+  - target:
+      kind: ClusterRoleBinding
+      name: gpu-operator-node-feature-discovery-prune
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: gpu-operator-node-feature-discovery-prune
+  - target:
+      kind: Job
+      name: gpu-operator-node-feature-discovery-prune
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: gpu-operator-node-feature-discovery-prune
   - target:
       kind: Job
       name: gpu-operator-upgrade-crd
@@ -23,17 +59,6 @@ patches:
       kind: Job
       metadata:
         name: gpu-operator-upgrade-crd
-        namespace: gpu-operator
-        annotations:
-          argocd.argoproj.io/sync-options: Replace=true
-  - target:
-      kind: Job
-      name: gpu-operator-node-feature-discovery-prune
-    patch: |-
-      apiVersion: batch/v1
-      kind: Job
-      metadata:
-        name: gpu-operator-node-feature-discovery-prune
         namespace: gpu-operator
         annotations:
           argocd.argoproj.io/sync-options: Replace=true

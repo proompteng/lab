@@ -17,7 +17,7 @@ resources:
 helmCharts:
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 6.0.6
+    version: 6.1.0
     releaseName: observability-mimir
     namespace: observability
     includeCRDs: true
@@ -122,6 +122,15 @@ patches:
         name: observability-loki-loki-distributed-querier
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: Job
+      name: observability-mimir-smoke-test
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: observability-mimir-smoke-test
   - target:
       kind: StatefulSet
       name: observability-mimir-alertmanager

@@ -1,7 +1,7 @@
 fullnameOverride: pgadmin
 
 image:
-  tag: "9.12"
+  tag: "9.16"
 
 service:
   type: ClusterIP
