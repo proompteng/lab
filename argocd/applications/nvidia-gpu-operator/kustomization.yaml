@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: gpu-operator
 
 resources:
-  - altra-nvidia-device-plugin.yaml
   - turin-nvidia-device-plugin.yaml
 
 helmCharts:
