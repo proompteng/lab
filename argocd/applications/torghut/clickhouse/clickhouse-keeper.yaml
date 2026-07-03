@@ -9,6 +9,7 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
+  taskID: torghut-keeper-reconcile-20260703
   configuration:
     clusters:
       - name: default
@@ -25,7 +26,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: clickhouse-keeper
-              image: registry.ide-newton.ts.net/lab/clickhouse-keeper:24.3.5.46@sha256:23bc68f765052b59a19e56e5e18b2ecb7cfc23a51ef901b59cd78a0f759c200c
+              image: mirror.gcr.io/clickhouse/clickhouse-keeper:25.12.5.44@sha256:525b8b0f93ccb371131c46f22a066ea43d33d74aba314203e8044609945d8524
               resources:
                 requests:
                   cpu: 250m
