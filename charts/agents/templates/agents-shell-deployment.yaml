@@ -2,6 +2,7 @@
 {{- $namespace := .Values.namespaceOverride | default .Release.Namespace -}}
 {{- $image := .Values.agentsShell.image | default dict -}}
 {{- $workspaceBootstrap := .Values.agentsShell.workspace.bootstrap | default dict -}}
+{{- $workspaceVolumeMode := .Values.agentsShell.workspace.volumeMode | default "persistentVolumeClaim" -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -223,10 +224,15 @@ spec:
               mountPath: /workspace
       volumes:
         - name: workspace
-          {{- if .Values.agentsShell.workspace.enabled }}
+          {{- if eq $workspaceVolumeMode "emptyDir" }}
+          emptyDir: {}
+          {{- else if eq $workspaceVolumeMode "persistentVolumeClaim" }}
+          {{- if not .Values.agentsShell.workspace.enabled }}
+          {{- fail "agentsShell.workspace.enabled must be true when agentsShell.workspace.volumeMode is persistentVolumeClaim" }}
+          {{- end }}
           persistentVolumeClaim:
             claimName: {{ include "agents.agentsShellWorkspaceClaimName" . }}
           {{- else }}
-          emptyDir: {}
+          {{- fail "agentsShell.workspace.volumeMode must be either persistentVolumeClaim or emptyDir" }}
           {{- end }}
 {{- end }}

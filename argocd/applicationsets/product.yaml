@@ -156,6 +156,9 @@ spec:
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
+                    pod-security.kubernetes.io/enforce: privileged
+                    pod-security.kubernetes.io/audit: privileged
+                    pod-security.kubernetes.io/warn: privileged
                 automation: auto
                 enabled: "true"
               - name: agents
@@ -166,7 +169,7 @@ spec:
                 managedNamespaceMetadata:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
-                automation: auto
+                automation: manual
                 enabled: "true"
               - name: agents-ci
                 path: argocd/applications/agents-ci

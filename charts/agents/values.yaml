@@ -121,6 +121,7 @@ agentsShell:
     extra: []
   workspace:
     enabled: true
+    volumeMode: persistentVolumeClaim
     existingClaim: ''
     claimName: ''
     accessModes:

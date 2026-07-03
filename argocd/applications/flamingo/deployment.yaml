@@ -53,11 +53,9 @@ spec:
             - --max-model-len
             - "262144"
             - --gpu-memory-utilization
-            - "0.95"
+            - "0.85"
             - --kv-cache-dtype
             - fp8
-            - --safetensors-load-strategy
-            - eager
             - --max-num-seqs
             - "16"
             - --max-num-batched-tokens
