@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 import { afterEach, describe, expect, it } from 'bun:test'
 
@@ -46,6 +46,9 @@ const productImageModules = [
   readRepoFile('nix/images/proompteng.nix'),
   readRepoFile('nix/images/synthesis.nix'),
 ]
+const allNixImageModules = readdirSync(new URL('nix/images/', repoRoot))
+  .filter((name) => name.endsWith('.nix'))
+  .map((name) => [name, readRepoFile(`nix/images/${name}`)] as const)
 const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const sagImageModule = readRepoFile('nix/images/sag.nix')
 const agentsImageModule = readRepoFile('nix/images/agents.nix')
@@ -260,6 +263,14 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('test -s "${output_file}"')
     expect(nixOciWorkflow).toContain('No build-platform helper closure paths were captured.')
     expect(nixOciWorkflow).toContain('No index helper closure paths were captured.')
+    expect(nixOciWorkflow).toContain('Start checkout timer')
+    expect(nixOciWorkflow).toContain('Record checkout timing')
+    expect(nixOciWorkflow).toContain('"checkout-${ARCH}"')
+    expect(nixOciWorkflow).toContain('"checkout-publish-index"')
+    expect(nixOciWorkflow).toContain('Start Nix setup timer')
+    expect(nixOciWorkflow).toContain('Record Nix setup timing')
+    expect(nixOciWorkflow).toContain('"nix-setup-${ARCH}"')
+    expect(nixOciWorkflow).toContain('"nix-setup-publish-index"')
     expect(nixOciWorkflow).toContain('nix/ci-run-timed.sh')
     expect(nixOciWorkflow).toContain('nix/ci-nix-oci-summary.sh')
     expect(nixOciWorkflow).toContain(
@@ -275,7 +286,25 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Attic substitutions')
     expect(ciNixOciSummaryScript).toContain('cache.nixos.org substitutions')
     expect(ciNixOciSummaryScript).toContain('Local derivation builds')
+    expect(ciNixOciSummaryScript).toContain('Nix OCI Performance Contract')
+    expect(ciNixOciSummaryScript).toContain('Total timed seconds')
+    expect(ciNixOciSummaryScript).toContain('Cache substitutions')
+    expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
+  })
+
+  it('keeps Nix image derivations deterministic and dockerTools-backed', () => {
+    for (const [name, imageModule] of allNixImageModules) {
+      if (imageModule.includes('created = "now"')) {
+        throw new Error(`${name} must not use impure dockerTools timestamps`)
+      }
+      if (imageModule.includes('docker build')) {
+        throw new Error(`${name} must not emulate Dockerfile builds`)
+      }
+    }
+    expect(
+      allNixImageModules.some(([, imageModule]) => imageModule.includes('pkgs.dockerTools.buildLayeredImage')),
+    ).toBe(true)
   })
 
   it('caps Bun workspace image layers to keep registry publishes bounded', () => {

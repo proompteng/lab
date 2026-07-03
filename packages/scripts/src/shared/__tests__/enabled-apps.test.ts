@@ -107,6 +107,17 @@ describe('enabled app inventory', () => {
     }
   })
 
+  it('requires every root-enabled repo image to have a rollout disposition', () => {
+    for (const candidate of inventory.entries.filter((entry) => entry.repoImages.length > 0)) {
+      expect(['nix-image', 'deferred', 'vendor-manifest']).toContain(candidate.class)
+      if (candidate.class === 'nix-image') {
+        expect(candidate.nixImageAttr).toBeTruthy()
+      } else {
+        expect(candidate.deferredReason).toBeTruthy()
+      }
+    }
+  })
+
   it('passes the no-build-for-chart-and-vendor guardrail', () => {
     expect(() => assertEnabledAppBuildPolicy(inventory)).not.toThrow()
   })

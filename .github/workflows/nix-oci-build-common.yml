@@ -57,11 +57,32 @@ jobs:
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
+      - name: Start checkout timer
+        run: |
+          set -euo pipefail
+          mkdir -p "${NIX_OCI_LOG_DIR}"
+          date +%s > "${NIX_OCI_LOG_DIR}/checkout-start"
+
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Record checkout timing
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          start="$(cat "${NIX_OCI_LOG_DIR}/checkout-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "checkout-${ARCH}" 0 "$((end - start))" "actions/checkout@v5" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
+
       - name: Require Attic public key
         run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Start Nix setup timer
+        run: |
+          set -euo pipefail
+          date +%s > "${NIX_OCI_LOG_DIR}/nix-setup-start"
 
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
@@ -72,6 +93,16 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Record Nix setup timing
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          start="$(cat "${NIX_OCI_LOG_DIR}/nix-setup-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "nix-setup-${ARCH}" 0 "$((end - start))" ".github/actions/setup-nix-toolchain" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
       - name: Prime OCI helper closures
         env:
@@ -172,11 +203,30 @@ jobs:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-publish-index
     steps:
+      - name: Start checkout timer
+        run: |
+          set -euo pipefail
+          mkdir -p "${NIX_OCI_LOG_DIR}"
+          date +%s > "${NIX_OCI_LOG_DIR}/checkout-start"
+
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Record checkout timing
+        if: always()
+        run: |
+          set -euo pipefail
+          start="$(cat "${NIX_OCI_LOG_DIR}/checkout-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "checkout-publish-index" 0 "$((end - start))" "actions/checkout@v5" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
+
       - name: Require Attic public key
         run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Start Nix setup timer
+        run: |
+          set -euo pipefail
+          date +%s > "${NIX_OCI_LOG_DIR}/nix-setup-start"
 
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
@@ -187,6 +237,14 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Record Nix setup timing
+        if: always()
+        run: |
+          set -euo pipefail
+          start="$(cat "${NIX_OCI_LOG_DIR}/nix-setup-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "nix-setup-publish-index" 0 "$((end - start))" ".github/actions/setup-nix-toolchain" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
       - name: Prime OCI index helper closures
         run: |
