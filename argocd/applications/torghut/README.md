@@ -12,11 +12,6 @@ automate via PR + Argo sync). Other docs should link here instead of duplicating
 The Argo WorkflowTemplate `torghut-historical-simulation` is now managed as part of
 `argocd/applications/torghut`.
 
-The Argo WorkflowTemplate `torghut-empirical-promotion` is also managed here. It assembles
-authoritative benchmark parity, foundation router parity, and Janus evidence artifacts from
-replayed/observed manifests, uploads them to the `torghut-empirical-artifacts` bucket when
-configured, and persists freshness rows into `vnext_empirical_job_runs`.
-
 The empirical workflow depends on the namespace-local sealed secret
 `rook-ceph-rgw-argo-workflows` for Argo archive-log uploads. Keep that secret managed here so
 workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.

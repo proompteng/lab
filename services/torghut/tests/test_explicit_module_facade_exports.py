@@ -117,8 +117,6 @@ EXPLICIT_IMPORT_SURFACES = (
     "scripts.paper_route_target_materialization",
     "scripts.readback_hpairs_profit_proof_gap",
     "scripts.hpairs_profit_proof_gap_readback",
-    "scripts.renew_latest_empirical_promotion_jobs",
-    "scripts.empirical_promotion_renewal",
     "scripts.run_local_simple_lane_replay",
     "scripts.simple_lane_replay",
     "scripts.run_simulation_analysis",

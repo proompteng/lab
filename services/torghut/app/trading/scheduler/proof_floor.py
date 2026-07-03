@@ -30,13 +30,11 @@ class SimplePipelineProofFloorMixin(TradingPipelineBase):
                 session,
                 market_context_status=market_context_status,
             )
-            empirical_jobs_status = self._build_empirical_jobs_status(session=session)
             quant_evidence = self._load_quant_evidence_status()
             live_submission_gate = self._live_submission_gate(
                 inputs=LiveSubmissionGateInputs(
                     session=session,
                     hypothesis_summary=hypothesis_payload,
-                    empirical_jobs_status=empirical_jobs_status,
                     quant_health_status=quant_evidence,
                 )
             )
@@ -50,7 +48,6 @@ class SimplePipelineProofFloorMixin(TradingPipelineBase):
                 ),
                 live_submission_gate=live_submission_gate,
                 hypothesis_payload=hypothesis_payload,
-                empirical_jobs_status=empirical_jobs_status,
                 quant_evidence=quant_evidence,
                 market_context_status=market_context_status,
                 tca_summary=self._build_tca_gate_inputs(session=session),

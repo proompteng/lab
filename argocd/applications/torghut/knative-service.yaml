@@ -176,8 +176,6 @@ spec:
               value: "false"
             - name: TRADING_EVIDENCE_CONTINUITY_ENABLED
               value: "false"
-            - name: TRADING_EMPIRICAL_JOBS_HEALTH_REQUIRED
-              value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON

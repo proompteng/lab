@@ -553,16 +553,13 @@ class CoreSettingsFields(BaseSettings):
     trading_empirical_job_stale_after_seconds: int = Field(
         default=86400,
         alias="TRADING_EMPIRICAL_JOB_STALE_AFTER_SECONDS",
-        description="Freshness budget for empirical parity and Janus workflow outputs.",
+        description="Deprecated compatibility budget for historical empirical-job status payloads.",
     )
 
     trading_empirical_jobs_health_required: bool = Field(
         default=False,
         alias="TRADING_EMPIRICAL_JOBS_HEALTH_REQUIRED",
-        description=(
-            "Require fresh empirical jobs for /trading/health. Leave false for live local-strategy execution; "
-            "promotion evidence is reported separately."
-        ),
+        description="Deprecated compatibility flag. Empirical jobs no longer block live Torghut gates.",
     )
 
     trading_forecast_router_refinement_enabled: bool = Field(
