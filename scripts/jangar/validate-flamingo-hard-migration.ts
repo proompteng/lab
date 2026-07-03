@@ -11,6 +11,13 @@ export const requiredTerms = [
   'fp8',
   'safetensors-load-strategy',
   'eager',
+  'max-num-partial-prefills',
+  'max-long-partial-prefills',
+  'long-prefill-token-threshold',
+  'enable-dbo',
+  'dbo-decode-token-threshold',
+  'dbo-prefill-token-threshold',
+  'speculativeAcceptanceLength',
 ]
 
 export const forbiddenTerms = [
