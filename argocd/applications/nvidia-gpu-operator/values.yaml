@@ -1,10 +1,13 @@
 # Talos owns host NVIDIA drivers and the container toolkit through system
 # extensions. This chart provides GPU Operator CRDs/components, while
-# repo-owned node-specific device-plugin DaemonSets advertise GPUs:
+# a repo-owned node-specific device-plugin DaemonSet advertises Turin GPUs:
 # - `turin-nvidia-device-plugin`: Blackwell on `turin`, time-sliced for shared use.
-# - `altra-nvidia-device-plugin`: RTX 3090 on `talos-192-168-1-85`, exclusive.
+#
+# Sandbox/KubeVirt/vfio passthrough is intentionally disabled. It created the
+# `nvidia-sandbox-validator` DaemonSet on Altra, but that node is not a working
+# production GPU container path.
 sandboxWorkloads:
-  enabled: true
+  enabled: false
 
 operator:
   # Talos uses containerd.
@@ -26,5 +29,14 @@ devicePlugin:
 sandboxDevicePlugin:
   enabled: false
 
+kataSandboxDevicePlugin:
+  enabled: false
+
+ccManager:
+  enabled: false
+
 vfioManager:
+  enabled: false
+
+vgpuDeviceManager:
   enabled: false
