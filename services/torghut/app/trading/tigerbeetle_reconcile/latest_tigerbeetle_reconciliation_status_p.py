@@ -87,24 +87,6 @@ from .runtime_ledger_ref_coverage import (
 )
 
 
-# ---------------------------------------------------------------------------
-# Payload dataclass
-# ---------------------------------------------------------------------------
-
-@dataclass
-class _ReconciliationState:
-    counts: _ReconciliationCounts = field(default_factory=_empty_counts)
-    blockers: list[str] = field(default_factory=list)
-    mismatched_refs: list[dict[str, object]] = field(default_factory=list)
-    missing_transfer_refs: list[dict[str, object]] = field(default_factory=list)
-    missing_source_rows: list[dict[str, object]] = field(default_factory=list)
-    unlinked_refs: list[dict[str, object]] = field(default_factory=list)
-    legacy_source_amount_unverifiable_refs: list[dict[str, object]] = field(default_factory=list)
-    transfer_lookup: dict[str, object] = field(default_factory=dict)
-    client_lookup_ok: bool = True
-    client_error: str | None = None
-
-
 @dataclass
 class _ReconciliationCounts:
     checked_transfer_count: int = 0
@@ -129,6 +111,21 @@ class _ReconciliationCounts:
 
 def _empty_counts() -> _ReconciliationCounts:
     return _ReconciliationCounts()
+
+
+@dataclass
+class _ReconciliationState:
+    counts: _ReconciliationCounts = field(default_factory=_empty_counts)
+    blockers: list[str] = field(default_factory=list)
+    mismatched_refs: list[dict[str, object]] = field(default_factory=list)
+    missing_transfer_refs: list[dict[str, object]] = field(default_factory=list)
+    missing_source_rows: list[dict[str, object]] = field(default_factory=list)
+    unlinked_refs: list[dict[str, object]] = field(default_factory=list)
+    legacy_source_amount_unverifiable_refs: list[dict[str, object]] = field(default_factory=list)
+    ref_list: Sequence[Any] = field(default_factory=list)  # type: ignore[type-arg]
+    transfer_lookup: dict[str, object] = field(default_factory=dict)
+    client_lookup_ok: bool = True
+    client_error: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -627,6 +624,54 @@ def reconcile_tigerbeetle_transfers(
     return _process_reconciliation(session, settings_obj, client, limit, persist, account_label)
 
 
+def _run_client_lookup(
+    session: Session,
+    client: TigerBeetleClientProtocol | None,
+    settings_obj: Settings,
+    limit: int,
+) -> _ReconciliationState:
+    refs = _reconciliation_transfer_refs(session, cluster_id=settings_obj.tigerbeetle_cluster_id, limit=limit)
+    state = _ReconciliationState(ref_list=refs)
+    tb_client: TigerBeetleClientProtocol | None = None
+    owned_client = client is None
+
+    try:
+        if refs:
+            tb_client = client or create_tigerbeetle_client(settings_obj)
+            looked_up = tb_client.lookup_transfers([int(ref.transfer_id) for ref in refs])
+            state.transfer_lookup = {lookup_key: item for item in looked_up if (lookup_key := _transfer_lookup_key(item)) is not None}
+    except Exception as exc:
+        state.client_lookup_ok = False
+        state.client_error = f"{type(exc).__name__}: {exc}"
+        state.blockers.append(BLOCKER_CLIENT_UNAVAILABLE)
+    finally:
+        if owned_client and tb_client is not None:
+            close = getattr(tb_client, "close", None)
+            if callable(close):
+                close()
+    return state
+
+
+def _process_refs(session: Session, refs: Sequence[Any], state: _ReconciliationState) -> None:
+    state.counts.checked_transfer_count = len(refs)
+    for ref in refs:
+        ref_transfer_id = _u128_text(ref.transfer_id) or str(ref.transfer_id)
+        actual = state.transfer_lookup.get(ref_transfer_id) if state.client_lookup_ok else None
+        _process_single_transfer(session, ref, actual, state.client_lookup_ok, ref_transfer_id, state.counts, state.blockers, state.mismatched_refs)
+
+
+def _collect_unlinked(
+    session: Session,
+    settings_obj: Settings,
+    limit: int,
+    state: _ReconciliationState,
+) -> None:
+    _query_unlinked_events(session, settings_obj, limit, state.blockers, state.unlinked_refs)
+    _query_unlinked_executions(session, settings_obj, limit, state.blockers, state.unlinked_refs)
+    _query_unlinked_costs(session, settings_obj, limit, state.blockers, state.unlinked_refs)
+    _query_unlinked_runtime_buckets(session, settings_obj, limit, None, state.blockers, state.unlinked_refs)
+
+
 def _process_reconciliation(
     session: Session,
     settings_obj: Settings,
@@ -681,13 +726,12 @@ def _build_final_payload(
         finished_at,
         state.counts,
         ref_counts,
-        compact_ref_counts,
         state.client_lookup_ok,
         state.client_error,
         unique_blockers,
         source_missing_count,
-        state.counts.stable_ref_mismatch_count,
         ref_count_stable_ref_mismatch_count,
+        state.counts.stable_ref_mismatch_count,
         state.counts.stable_ref_mismatch_count,
     )
     payload = _assemble_reconciliation_payload(
