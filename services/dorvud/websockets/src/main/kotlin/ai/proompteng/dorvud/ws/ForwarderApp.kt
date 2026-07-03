@@ -59,6 +59,7 @@ import org.msgpack.jackson.dataformat.MessagePackFactory
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -442,6 +443,7 @@ class ForwarderApp(
             subscribedSince = subscribedSince.get(),
             subscribedCount = if (subscribedOk) 1 else 0,
             marketType = config.alpacaMarketType,
+            marketHolidays = config.optionsMarketHolidays,
           )
         if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
           metrics.setOptionsEventStarvation(eventStarved)
@@ -602,6 +604,7 @@ class ForwarderApp(
                   subscribedSince = subscribedSince.get(),
                   subscribedCount = subscribedCount,
                   marketType = config.alpacaMarketType,
+                  marketHolidays = config.optionsMarketHolidays,
                 )
               metrics.setOptionsEventStarvation(eventStarved)
               if (eventStarved) {
@@ -1447,6 +1450,7 @@ class ForwarderApp(
 
   private fun currentSessionState(now: Instant): String {
     val marketNow = now.atZone(marketSessionZoneId)
+    if (marketNow.toLocalDate() in config.optionsMarketHolidays) return "holiday"
     if (marketNow.dayOfWeek.value >= 6) return "weekend"
     val minuteOfDay = (marketNow.hour * 60) + marketNow.minute
     return when {
@@ -1509,17 +1513,22 @@ internal fun optionsEventStarved(
   subscribedSince: Instant?,
   subscribedCount: Int,
   marketType: AlpacaMarketType,
+  marketHolidays: Set<LocalDate> = emptySet(),
   grace: Duration = Duration.ofSeconds(90),
 ): Boolean {
-  if (marketType != AlpacaMarketType.OPTIONS || subscribedCount <= 0 || !isRegularMarketSession(now)) {
+  if (marketType != AlpacaMarketType.OPTIONS || subscribedCount <= 0 || !isRegularMarketSession(now, marketHolidays)) {
     return false
   }
   val lastHealthyEvent = lastEventAt ?: subscribedSince ?: return false
   return Duration.between(lastHealthyEvent, now) >= grace
 }
 
-private fun isRegularMarketSession(now: Instant): Boolean {
+private fun isRegularMarketSession(
+  now: Instant,
+  marketHolidays: Set<LocalDate> = emptySet(),
+): Boolean {
   val marketNow = now.atZone(marketSessionZoneId)
+  if (marketNow.toLocalDate() in marketHolidays) return false
   if (marketNow.dayOfWeek.value >= 6) return false
   val minuteOfDay = (marketNow.hour * 60) + marketNow.minute
   return minuteOfDay in (9 * 60 + 30) until (16 * 60)

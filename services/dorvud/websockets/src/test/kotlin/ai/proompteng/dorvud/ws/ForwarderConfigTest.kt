@@ -2,6 +2,7 @@ package ai.proompteng.dorvud.ws
 
 import java.io.File
 import java.nio.file.Files
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -39,6 +40,7 @@ class ForwarderConfigTest {
     assertEquals(AlpacaMarketType.EQUITY, cfg.alpacaMarketType)
     assertEquals("us", cfg.alpacaCryptoLocation)
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), cfg.alpacaMarketDataChannels)
+    assertEquals(emptySet(), cfg.optionsMarketHolidays)
     assertEquals("torghut.trades.v1", cfg.topics.trades)
   }
 
@@ -148,12 +150,14 @@ class ForwarderConfigTest {
           "TOPIC_TRADES" to "torghut.options.trades.v1",
           "TOPIC_QUOTES" to "torghut.options.quotes.v1",
           "TOPIC_STATUS" to "torghut.options.status.v1",
+          "OPTIONS_MARKET_HOLIDAYS" to "2026-07-03, 2026-12-25",
         ),
       )
 
     assertEquals(AlpacaMarketType.OPTIONS, cfg.alpacaMarketType)
     assertEquals("opra", cfg.alpacaFeed)
     assertEquals(listOf("trades", "quotes"), cfg.alpacaMarketDataChannels)
+    assertEquals(setOf(LocalDate.parse("2026-07-03"), LocalDate.parse("2026-12-25")), cfg.optionsMarketHolidays)
     assertEquals(null, cfg.topics.bars1m)
   }
 

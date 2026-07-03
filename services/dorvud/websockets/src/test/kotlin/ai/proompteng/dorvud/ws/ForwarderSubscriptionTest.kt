@@ -2,6 +2,7 @@ package ai.proompteng.dorvud.ws
 
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -128,6 +129,17 @@ class ForwarderSubscriptionTest {
         subscribedSince = stale,
         subscribedCount = 0,
         marketType = AlpacaMarketType.OPTIONS,
+        grace = Duration.ofSeconds(90),
+      ),
+    )
+    assertFalse(
+      optionsEventStarved(
+        now = now,
+        lastEventAt = null,
+        subscribedSince = stale,
+        subscribedCount = 12,
+        marketType = AlpacaMarketType.OPTIONS,
+        marketHolidays = setOf(LocalDate.parse("2026-06-18")),
         grace = Duration.ofSeconds(90),
       ),
     )
