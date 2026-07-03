@@ -24,6 +24,7 @@ from ...llm.dspy_programs.runtime import (
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
 )
+from ...empirical_jobs import build_empirical_jobs_status
 from ...models import StrategyDecision
 from ...portfolio import (
     AllocationResult,
@@ -489,11 +490,26 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
         quant_status = inputs.quant_health_status
         if quant_status is None:
             quant_status = load_quant_evidence_status(account_label=self.account_label)
+        empirical_status = inputs.empirical_jobs_status
+        if empirical_status is None and inputs.session is not None:
+            try:
+                empirical_status = build_empirical_jobs_status(
+                    session=inputs.session,
+                    stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
+                )
+            except Exception as exc:  # pragma: no cover - additive runtime safety
+                empirical_status = {
+                    "ready": False,
+                    "status": "unavailable",
+                    "reason": f"empirical_jobs_status_unavailable:{type(exc).__name__}",
+                    "blocked_reasons": ["empirical_jobs_status_unavailable"],
+                    "stale_after_seconds": settings.trading_empirical_job_stale_after_seconds,
+                }
 
         gate = build_live_submission_gate_payload(
             self.state,
             hypothesis_summary=summary,
-            empirical_jobs_status=inputs.empirical_jobs_status,
+            empirical_jobs_status=empirical_status,
             dspy_runtime_status=inputs.dspy_runtime_status,
             quant_health_status=quant_status,
             quant_account_label=self.account_label,
