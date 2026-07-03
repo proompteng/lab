@@ -60,13 +60,17 @@ class TestTradingApiStatusConsumerEvidence(TradingApiTestCaseBase):
             submission_authority["effective_submit_mode"],
             {
                 "blocked",
+                "operational_submission",
                 "bounded_live_paper_collection",
                 "bounded_live_paper_collection_waiting_for_session",
                 "capital_promotion",
             },
         )
-        self.assertIn("capital_promotion_gate", submission_authority)
-        self.assertIn("bounded_collection_gate", submission_authority)
+        self.assertIn("operational_submission_gate", submission_authority)
+        self.assertEqual(
+            submission_authority["authority_scope"],
+            "operational_submission",
+        )
 
     def test_trading_status_reports_latest_persisted_decision_timestamp(self) -> None:
         with self.session_local() as session:

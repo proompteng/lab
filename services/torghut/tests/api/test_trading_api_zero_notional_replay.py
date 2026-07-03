@@ -614,7 +614,7 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             )
         self.assertEqual(response.json()["execution_state"], "runner_blocked")
 
-    def test_trading_status_blocks_live_submission_when_lineage_tables_are_empty(
+    def test_trading_status_keeps_lineage_empty_as_diagnostic_only(
         self,
     ) -> None:
         original_scheduler = getattr(app.state, "trading_scheduler", None)
@@ -625,6 +625,8 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": settings.trading_testnet_after_hours_enabled,
         }
         try:
             settings.trading_enabled = True
@@ -633,6 +635,8 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             settings.trading_autonomy_allow_live_promotion = False
             settings.trading_kill_switch_enabled = False
             settings.trading_simple_submit_enabled = True
+            settings.trading_live_submit_enabled = False
+            settings.trading_testnet_after_hours_enabled = False
 
             scheduler = TradingScheduler()
             scheduler.state.last_market_context_freshness_seconds = 30
@@ -756,11 +760,11 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             gate = response.json()["live_submission_gate"]
             self.assertFalse(gate["allowed"])
             self.assertEqual(gate["capital_state"], "observe")
-            self.assertIn("dataset_snapshot_missing", gate["blocked_reasons"])
-            self.assertIn("strategy_hypothesis_missing", gate["blocked_reasons"])
-            self.assertEqual(gate["lineage_ref"]["status"], "missing")
-            self.assertEqual(gate["lineage_ref"]["dataset_snapshot_count"], 0)
-            self.assertEqual(gate["lineage_ref"]["strategy_hypothesis_count"], 0)
+            self.assertNotIn("dataset_snapshot_missing", gate["blocked_reasons"])
+            self.assertNotIn("strategy_hypothesis_missing", gate["blocked_reasons"])
+            self.assertIn("live_submit_disabled", gate["blocked_reasons"])
+            self.assertIn("testnet_after_hours_disabled", gate["blocked_reasons"])
+            self.assertEqual(gate["lineage_ref"]["status"], "operational")
         finally:
             settings.trading_enabled = original["trading_enabled"]
             settings.trading_mode = original["trading_mode"]
@@ -773,6 +777,12 @@ class TestTradingApiZeroNotionalReplay(TradingApiTestCaseBase):
             ]
             settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
+            ]
+            settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
+            settings.trading_testnet_after_hours_enabled = original[
+                "trading_testnet_after_hours_enabled"
             ]
             if original_scheduler is None:
                 if hasattr(app.state, "trading_scheduler"):
