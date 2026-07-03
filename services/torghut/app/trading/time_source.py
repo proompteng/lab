@@ -91,7 +91,7 @@ class TradingTimeSource:
     ) -> TradingTimeSnapshot:
         start, _end = simulation_window_bounds()
         account = self._effective_account_label(account_label=account_label)
-        raw_cursor_at = self._load_clickhouse_cursor(account_label=account)
+        raw_cursor_at = TradingTimeSource._load_clickhouse_cursor(account_label=account)
         cursor_at = normalize_simulation_cursor(raw_cursor_at)
         if (
             raw_cursor_at is not None

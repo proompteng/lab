@@ -610,7 +610,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
             ):
                 gate = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=True,
+                        market_session_open=False,
                         last_autonomy_promotion_eligible=True,
                         last_autonomy_promotion_action="promote",
                         drift_live_promotion_eligible=False,
@@ -644,8 +644,9 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
 
         self.assertTrue(gate["allowed"])
         self.assertEqual(gate["promotion_eligible_total"], 1)
-        self.assertEqual(gate["capital_stage"], "0.10x canary")
-        self.assertEqual(gate["evidence_tuple"]["candidate_id"], "cand-live")
+        self.assertEqual(gate["reason"], "operational_submission_ready")
+        self.assertEqual(gate["capital_stage"], "live")
+        self.assertIsNone(gate["evidence_tuple"]["candidate_id"])
         self.assertNotIn(
             "alpha_readiness_not_promotion_eligible", gate["blocked_reasons"]
         )

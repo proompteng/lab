@@ -3,39 +3,22 @@ from __future__ import annotations
 from app.trading.submission_authority import build_submission_authority_status
 
 
-def test_submission_authority_surfaces_bounded_collection_submit_mode() -> None:
+def test_submission_authority_allows_operational_submission() -> None:
     status = build_submission_authority_status(
         {
-            "allowed": False,
-            "reason": "alpha_readiness_not_promotion_eligible",
-            "blocked_reasons": [
-                "alpha_readiness_not_promotion_eligible",
-                "runtime_ledger_source_collection_pending",
-            ],
-            "capital_stage": "shadow",
-            "capital_state": "blocked",
-            "bounded_live_paper_collection_gate": {
+            "operational_submission_gate": {
                 "allowed": True,
-                "active": True,
-                "reason": "bounded_live_paper_collection_ready",
-                "authority_scope": "bounded_evidence_collection_only",
-                "source_collection_target_count": 1,
-                "source_collection_profit_target_count": 1,
-                "paper_route_probe_max_notional": "100",
-                "market_session_open": True,
-                "capital_gate_blocked_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
-                    "runtime_ledger_source_collection_pending",
-                ],
-                "collection_only_blockers": [
-                    "alpha_readiness_not_promotion_eligible",
-                    "runtime_ledger_source_collection_pending",
-                ],
-                "hard_blockers": [],
+                "reason": "operational_submission_ready",
+                "blocked_reasons": [],
+                "execution_route": {
+                    "route": "testnet",
+                    "alpaca_regular_session_open": False,
+                },
             },
         },
         simple_lane_status={
             "submit_enabled": True,
+            "live_submit_enabled": True,
             "paper_route_probe_enabled": True,
             "paper_route_probe_allow_live_mode": True,
             "max_notional_per_order": 100.0,
@@ -44,75 +27,67 @@ def test_submission_authority_surfaces_bounded_collection_submit_mode() -> None:
         },
     )
 
-    assert status["effective_submit_mode"] == "bounded_live_paper_collection"
+    assert status["effective_submit_mode"] == "operational_submission"
     assert status["can_submit_now"] is True
-    assert status["authority_scope"] == "bounded_evidence_collection_only"
-    assert status["reason"] == "bounded_live_paper_collection_ready"
-    assert status["capital_promotion_gate"] == {
-        "allowed": False,
-        "reason": "alpha_readiness_not_promotion_eligible",
-        "blocked_reasons": [
-            "alpha_readiness_not_promotion_eligible",
-            "runtime_ledger_source_collection_pending",
-        ],
-        "capital_stage": "shadow",
-        "capital_state": "blocked",
-        "certificate_id": None,
+    assert status["authority_scope"] == "operational_submission"
+    assert status["reason"] == "operational_submission_ready"
+    assert status["operational_submission_gate"] == {
+        "allowed": True,
+        "reason": "operational_submission_ready",
+        "blocked_reasons": [],
+        "execution_route": {
+            "route": "testnet",
+            "alpaca_regular_session_open": False,
+        },
     }
-    assert status["bounded_collection_gate"]["hard_blockers"] == []
-    assert status["bounded_collection_gate"]["source_collection_target_count"] == 1
     assert status["simple_lane_contract"]["max_notional_per_order"] == 100.0
     assert "promotion_allowed" not in status
     assert "final_promotion_allowed" not in status
 
 
-def test_submission_authority_blocks_on_hard_bounded_collection_blocker() -> None:
+def test_submission_authority_blocks_on_operational_blocker() -> None:
     status = build_submission_authority_status(
         {
-            "allowed": False,
-            "reason": "empirical_jobs_not_ready",
-            "blocked_reasons": ["empirical_jobs_not_ready"],
-            "bounded_live_paper_collection_gate": {
+            "operational_submission_gate": {
                 "allowed": False,
-                "active": False,
-                "reason": "empirical_jobs_not_ready",
-                "blocked_reasons": ["empirical_jobs_not_ready"],
-                "authority_scope": "bounded_evidence_collection_only",
-                "hard_blockers": ["empirical_jobs_not_ready"],
+                "reason": "kill_switch_enabled",
+                "blocked_reasons": ["kill_switch_enabled"],
+                "execution_route": {
+                    "route": "alpaca",
+                    "alpaca_regular_session_open": True,
+                },
             },
         },
-        simple_lane_status={"submit_enabled": True},
+        simple_lane_status={"submit_enabled": True, "live_submit_enabled": True},
     )
 
     assert status["effective_submit_mode"] == "blocked"
     assert status["can_submit_now"] is False
     assert status["authority_scope"] == "none"
-    assert status["reason"] == "empirical_jobs_not_ready"
-    assert status["bounded_collection_gate"]["hard_blockers"] == [
-        "empirical_jobs_not_ready"
+    assert status["reason"] == "kill_switch_enabled"
+    assert status["operational_submission_gate"]["blocked_reasons"] == [
+        "kill_switch_enabled"
     ]
 
 
-def test_submission_authority_prefers_capital_promotion_when_allowed() -> None:
+def test_submission_authority_accepts_compatibility_gate_payload() -> None:
     status = build_submission_authority_status(
         {
             "allowed": True,
-            "reason": "live_submission_allowed",
+            "reason": "operational_submission_ready",
             "blocked_reasons": [],
-            "capital_stage": "live",
-            "capital_state": "authorized",
-            "certificate_id": "cert-1",
-            "bounded_live_paper_collection_gate": {
-                "allowed": True,
-                "active": True,
-                "reason": "bounded_live_paper_collection_ready",
+            "execution_route": {
+                "route": "alpaca",
+                "alpaca_regular_session_open": True,
             },
         },
-        simple_lane_status={"submit_enabled": True},
+        simple_lane_status={"submit_enabled": True, "live_submit_enabled": True},
     )
 
-    assert status["effective_submit_mode"] == "capital_promotion"
+    assert status["effective_submit_mode"] == "operational_submission"
     assert status["can_submit_now"] is True
-    assert status["authority_scope"] == "capital_promotion"
-    assert status["reason"] == "live_submission_allowed"
-    assert status["capital_promotion_gate"]["certificate_id"] == "cert-1"
+    assert status["authority_scope"] == "operational_submission"
+    assert status["operational_submission_gate"]["execution_route"] == {
+        "route": "alpaca",
+        "alpaca_regular_session_open": True,
+    }

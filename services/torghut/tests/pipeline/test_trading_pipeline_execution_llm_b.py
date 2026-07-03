@@ -39,6 +39,9 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -174,6 +177,9 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             "trading_enabled": config.settings.trading_enabled,
             "trading_mode": config.settings.trading_mode,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -192,6 +198,9 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             "llm_adjustment_approved": config.settings.llm_adjustment_approved,
         }
         config.settings.trading_enabled = True
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
+        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -318,6 +327,7 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=FakeLLMReviewEngine(error=RuntimeError("boom")),
             )
+            pipeline_live._is_market_session_open = lambda _now=None: False
             eligible_summary = {
                 "promotion_eligible_total": 1,
                 "capital_stage_totals": {"shadow": 1},
@@ -355,6 +365,15 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_autonomy_allow_live_promotion = original[
                 "trading_autonomy_allow_live_promotion"
+            ]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
+            ]
+            config.settings.trading_testnet_after_hours_enabled = original[
+                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

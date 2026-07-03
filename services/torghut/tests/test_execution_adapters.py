@@ -605,8 +605,12 @@ class TestExecutionAdapters(TestCase):
         original_order_bootstrap = config.settings.trading_order_feed_bootstrap_servers
         original_run_id = config.settings.trading_simulation_run_id
         original_dataset = config.settings.trading_simulation_dataset_id
+        original_testnet_after_hours = (
+            config.settings.trading_testnet_after_hours_enabled
+        )
         try:
             config.settings.trading_simulation_enabled = True
+            config.settings.trading_testnet_after_hours_enabled = False
             config.settings.trading_simulation_order_updates_topic = (
                 "torghut.sim.trade-updates.v1"
             )
@@ -630,6 +634,9 @@ class TestExecutionAdapters(TestCase):
             )
             config.settings.trading_simulation_run_id = original_run_id
             config.settings.trading_simulation_dataset_id = original_dataset
+            config.settings.trading_testnet_after_hours_enabled = (
+                original_testnet_after_hours
+            )
 
     def test_build_execution_adapter_uses_alpaca_when_simulation_disabled(self) -> None:
         original_sim_enabled = config.settings.trading_simulation_enabled

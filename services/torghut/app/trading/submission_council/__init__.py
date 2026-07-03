@@ -38,15 +38,29 @@ from .quant_health import (
 from .gate_payloads import (
     common_submission_payload as _common_submission_payload,
 )
+from .configured_collection import (
+    with_configured_paper_collection_targets as _with_configured_paper_collection_targets,
+)
 from .runtime_summary import (
     build_hypothesis_runtime_summary,
 )
+from .paper_probation import (
+    runtime_ledger_paper_probation_candidates as _runtime_ledger_paper_probation_candidates,
+    runtime_ledger_source_collection_candidates as _runtime_ledger_source_collection_candidates,
+)
+from .import_plan import (
+    paper_probation_eligible_total_with_runtime_ledger as _paper_probation_eligible_total_with_runtime_ledger,
+    runtime_ledger_paper_probation_import_plan as _runtime_ledger_paper_probation_import_plan,
+    with_bounded_paper_route_manifest_collection_targets as _with_bounded_paper_route_manifest_collection_targets,
+)
 from .repair_candidates import (
     extract_runtime_summary as _extract_runtime_summary,
+    load_runtime_ledger_repair_candidates as _load_runtime_ledger_repair_candidates,
     refresh_runtime_summary_totals as _refresh_runtime_summary_totals,
     build_submission_gate_market_context_status,
 )
 from .certificate_loading import (
+    load_latest_certificate_evidence as _load_latest_certificate_evidence,
     merge_runtime_certificate_evidence as _merge_runtime_certificate_evidence,
 )
 from .certificate_eval import (
@@ -361,13 +375,19 @@ def _submission_runtime_inputs(
 ) -> _SubmissionRuntimeInputs:
     registry = load_hypothesis_registry()
     registry_item_payloads = [item.model_dump(mode="json") for item in registry.items]
-    runtime_ledger = _empty_submission_runtime_ledger_context()
+    runtime_ledger = _submission_runtime_ledger_context(session, registry_item_payloads)
     evidence_rows = (
         [dict(item) for item in promotion_certificate_evidence]
         if promotion_certificate_evidence is not None
+        else _load_latest_certificate_evidence(
+            session,
+            hypothesis_ids=[item.hypothesis_id for item in registry.items],
+            now=now,
+            max_age_seconds=max_age_seconds,
+        )
+        if session is not None
         else []
     )
-    _ = (session, now, max_age_seconds)
     return _SubmissionRuntimeInputs(
         registry_item_payloads=registry_item_payloads,
         runtime_ledger=runtime_ledger,
@@ -375,13 +395,45 @@ def _submission_runtime_inputs(
     )
 
 
-def _empty_submission_runtime_ledger_context() -> _SubmissionRuntimeLedgerContext:
+def _submission_runtime_ledger_context(
+    session: Session | None,
+    registry_item_payloads: list[dict[str, object]],
+) -> _SubmissionRuntimeLedgerContext:
+    repair_candidates = (
+        _load_runtime_ledger_repair_candidates(
+            session, registry_items=registry_item_payloads
+        )
+        if session is not None
+        else []
+    )
+    paper_probation_candidates = _runtime_ledger_paper_probation_candidates(
+        repair_candidates
+    )
+    source_collection_candidates = _runtime_ledger_source_collection_candidates(
+        repair_candidates
+    )
+    source_collection_profit_target_candidates = [
+        candidate
+        for candidate in source_collection_candidates
+        if bool(candidate.get("source_collection_profit_target_candidate"))
+    ]
+    import_plan = _runtime_ledger_paper_probation_import_plan(
+        [*paper_probation_candidates, *source_collection_candidates]
+    )
+    merged_import_plan = _with_bounded_paper_route_manifest_collection_targets(
+        import_plan,
+        registry_items=registry_item_payloads,
+    )
+    merged_import_plan = _with_configured_paper_collection_targets(
+        merged_import_plan,
+        session=session,
+    )
     return _SubmissionRuntimeLedgerContext(
-        repair_candidates=[],
-        paper_probation_candidates=[],
-        source_collection_candidates=[],
-        source_collection_profit_target_candidates=[],
-        paper_probation_import_plan={},
+        repair_candidates=repair_candidates,
+        paper_probation_candidates=paper_probation_candidates,
+        source_collection_candidates=source_collection_candidates,
+        source_collection_profit_target_candidates=source_collection_profit_target_candidates,
+        paper_probation_import_plan=merged_import_plan,
     )
 
 
@@ -434,14 +486,17 @@ def _submission_totals(
     *,
     claimed_promotion_eligible_total: int,
 ) -> _SubmissionTotals:
-    del runtime_items, runtime_ledger
     paper_probation_eligible_total = _safe_int(
         summary.get("paper_probation_eligible_total")
     )
     return _SubmissionTotals(
         claimed_promotion_eligible_total=claimed_promotion_eligible_total,
         promotion_eligible_total=_safe_int(summary.get("promotion_eligible_total")),
-        paper_probation_eligible_total=paper_probation_eligible_total,
+        paper_probation_eligible_total=_paper_probation_eligible_total_with_runtime_ledger(
+            legacy_total=paper_probation_eligible_total,
+            runtime_items=runtime_items,
+            runtime_ledger_candidates=runtime_ledger.paper_probation_candidates,
+        ),
         active_capital_stage=resolve_active_capital_stage(summary) or "unknown",
     )
 

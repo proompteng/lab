@@ -766,6 +766,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
         config.settings.trading_mode = "live"
         config.settings.trading_pipeline_mode = "simple"
         config.settings.trading_simple_submit_enabled = False
+        config.settings.trading_live_submit_enabled = True
         config.settings.trading_universe_source = "jangar"
         config.settings.trading_universe_static_fallback_enabled = True
         config.settings.trading_universe_static_fallback_symbols_raw = "NVDA"

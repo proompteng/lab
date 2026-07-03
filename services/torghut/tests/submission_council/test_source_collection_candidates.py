@@ -849,7 +849,7 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
             ):
                 gate = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=True,
+                        market_session_open=False,
                         last_autonomy_promotion_eligible=False,
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
@@ -916,34 +916,31 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
 
         self.assertEqual(gate["paper_probation_eligible_total"], 0)
         self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 0)
-        self.assertIn(
+        self.assertNotIn(
             "runtime_ledger_source_collection_pending", gate["blocked_reasons"]
         )
-        self.assertIn(
+        self.assertNotIn(
             "runtime_ledger_profit_target_source_collection_pending",
             gate["blocked_reasons"],
         )
-        self.assertFalse(gate["allowed"])
+        self.assertTrue(gate["allowed"])
         collection_gate = gate["bounded_live_paper_collection_gate"]
-        self.assertTrue(collection_gate["allowed"])
-        self.assertTrue(collection_gate["active"])
+        self.assertFalse(collection_gate["allowed"])
+        self.assertFalse(collection_gate["active"])
         self.assertEqual(
             collection_gate["reason"],
-            "bounded_live_paper_collection_ready",
+            "retired_operational_submission_gate",
         )
-        self.assertEqual(
-            collection_gate["authority_scope"], "bounded_evidence_collection_only"
-        )
+        self.assertEqual(collection_gate["authority_scope"], "retired")
         self.assertFalse(collection_gate["capital_promotion_allowed"])
         self.assertFalse(collection_gate["final_authority_ok"])
         self.assertEqual(collection_gate["blocked_reasons"], [])
-        self.assertEqual(collection_gate["paper_route_probe_max_notional"], "100")
         waiting_collection_gate = waiting_gate["bounded_live_paper_collection_gate"]
-        self.assertTrue(waiting_collection_gate["allowed"])
+        self.assertFalse(waiting_collection_gate["allowed"])
         self.assertFalse(waiting_collection_gate["active"])
         self.assertEqual(
             waiting_collection_gate["reason"],
-            "bounded_live_paper_collection_waiting_for_session",
+            "retired_operational_submission_gate",
         )
         self.assertEqual(gate["runtime_ledger_source_collection_candidate_total"], 1)
         self.assertEqual(

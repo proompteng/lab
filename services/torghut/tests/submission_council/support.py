@@ -157,6 +157,8 @@ class SubmissionCouncilTestCase(TestCase):
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
             "trading_live_submit_activation_expires_at": settings.trading_live_submit_activation_expires_at,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
+            "trading_testnet_after_hours_enabled": settings.trading_testnet_after_hours_enabled,
             "trading_simple_paper_route_probe_enabled": settings.trading_simple_paper_route_probe_enabled,
             "trading_simple_paper_route_probe_allow_live_mode": settings.trading_simple_paper_route_probe_allow_live_mode,
             "trading_simple_paper_route_probe_max_notional": settings.trading_simple_paper_route_probe_max_notional,
@@ -176,6 +178,9 @@ class SubmissionCouncilTestCase(TestCase):
         settings.trading_autonomy_allow_live_promotion = False
         settings.trading_kill_switch_enabled = False
         settings.trading_live_submit_activation_expires_at = None
+        settings.trading_live_submit_enabled = True
+        settings.trading_testnet_after_hours_enabled = True
+        settings.trading_simple_submit_enabled = True
 
     def tearDown(self) -> None:
         settings.trading_enabled = self._settings_snapshot["trading_enabled"]
@@ -191,6 +196,12 @@ class SubmissionCouncilTestCase(TestCase):
         ]
         settings.trading_live_submit_activation_expires_at = self._settings_snapshot[
             "trading_live_submit_activation_expires_at"
+        ]
+        settings.trading_live_submit_enabled = self._settings_snapshot[
+            "trading_live_submit_enabled"
+        ]
+        settings.trading_testnet_after_hours_enabled = self._settings_snapshot[
+            "trading_testnet_after_hours_enabled"
         ]
         settings.trading_simple_paper_route_probe_enabled = self._settings_snapshot[
             "trading_simple_paper_route_probe_enabled"

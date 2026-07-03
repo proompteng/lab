@@ -684,7 +684,7 @@ class SessionRoutingExecutionAdapter:
         self._testnet_adapter = testnet_adapter
         self._alpaca_regular_session_open = alpaca_regular_session_open
         self._testnet_enabled = testnet_enabled
-        self.last_route = self.current_route()
+        self.last_route = "unknown"
 
     def current_route(self) -> str:
         if self._alpaca_regular_session_open():

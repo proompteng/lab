@@ -262,7 +262,7 @@ class TestSubmissionCouncilRuntimeLedgerRepairCandidates(SubmissionCouncilTestCa
             ):
                 gate = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=True,
+                        market_session_open=False,
                         last_autonomy_promotion_eligible=False,
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
@@ -388,7 +388,8 @@ class TestSubmissionCouncilRuntimeLedgerRepairCandidates(SubmissionCouncilTestCa
         paper_candidates = gate["runtime_ledger_paper_probation_candidates"]
         self.assertEqual(gate["paper_probation_eligible_total"], 2)
         self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 2)
-        self.assertIn(
+        self.assertTrue(gate["allowed"])
+        self.assertNotIn(
             "paper_probation_evidence_collection_only", gate["blocked_reasons"]
         )
         self.assertNotIn("segment_market-context_blocked", gate["blocked_reasons"])
