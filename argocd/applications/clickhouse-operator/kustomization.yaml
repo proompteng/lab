@@ -4,10 +4,8 @@ namespace: clickhouse-operator
 helmCharts:
   - name: altinity-clickhouse-operator
     repo: https://helm.altinity.com
-    version: 0.27.1
+    version: 0.26.3
     releaseName: clickhouse-operator
     namespace: clickhouse-operator
     includeCRDs: true
     valuesFile: ./values.yaml
-commonAnnotations:
-  argocd.argoproj.io/sync-options: ServerSideApply=true
