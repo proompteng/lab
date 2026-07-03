@@ -28,12 +28,8 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --max-model-len 262144
 --gpu-memory-utilization 0.85
 --kv-cache-dtype fp8
---safetensors-load-strategy eager
 --max-num-seqs 16
 --max-num-batched-tokens 16384
---enable-dbo
---dbo-decode-token-threshold 32
---dbo-prefill-token-threshold 512
 --enable-prefix-caching
 --reasoning-parser qwen3
 --enable-auto-tool-choice
@@ -57,12 +53,12 @@ The model weights are NVFP4, but the KV cache uses FP8. Live rollout proved that
 `requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
 combination changes and is proven in a separate smoke.
 
-Safetensors eager loading is forced because the model cache is RBD-backed but
-appears to vLLM as local EXT4. Live rollout proved lazy checkpoint loading can
-block for about 12 minutes in disk I/O before the HTTP server starts, and
-`--safetensors-load-strategy prefetch` was slower than the lazy baseline on the
-single 23 GiB shard. `eager` uses a different vLLM loader path that reads the
-whole shard into RAM before yielding tensors.
+Safetensors eager loading remains a candidate, not a production default. The
+model cache is RBD-backed but appears to vLLM as local EXT4, and earlier rollout
+work showed lazy checkpoint loading can block for about 12 minutes in disk I/O
+before the HTTP server starts. The July 3, 2026 DBO/eager candidate also
+crash-looped, so isolate `--safetensors-load-strategy eager` in its own rollout
+before promoting it.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
@@ -70,11 +66,13 @@ assistant content. The active tool parser is `qwen3_coder`, which is the vLLM
 Qwen3.5/Qwen3.6 recipe recommendation for automatic tool calling.
 Reference: <https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3.5.html>
 
-Do not enable concurrent partial prefill for this profile on the pinned vLLM
-image. The July 3, 2026 rollout with `--max-num-partial-prefills 2` failed
-before engine startup with `NotImplementedError: Concurrent Partial Prefill is
-not supported`. Keep mixed prefill/decode scheduling to DBO until a newer vLLM
-image proves support for this model/configuration.
+Do not enable concurrent partial prefill or DBO directly in this production
+profile on the pinned vLLM image. The July 3, 2026 rollout with
+`--max-num-partial-prefills 2` failed before engine startup with
+`NotImplementedError: Concurrent Partial Prefill is not supported`. The
+follow-up DBO/eager-only rollout also crash-looped. Keep those flags as isolated
+shadow candidates until a newer vLLM image or single-variable rollout proves
+support for this model/configuration.
 
 ## Rollout Gates
 
@@ -226,8 +224,9 @@ bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8-eager` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
-| `dbo-262k` | `262144` | `0.85` | `16` | `16384` | DBO only; concurrent partial prefill is rejected by the pinned vLLM/model config |
+| `context-262k-fp8` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
+| `eager-262k` | `262144` | `0.85` | `16` | `16384` | Test `--safetensors-load-strategy eager` alone before promotion |
+| `dbo-262k` | `262144` | `0.85` | `16` | `16384` | Shadow only; July 3, 2026 DBO/eager rollout crash-looped |
 | `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
 | `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
 | `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
