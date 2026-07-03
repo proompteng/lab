@@ -26,11 +26,10 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --trust-remote-code
 --dtype bfloat16
 --max-model-len 262144
---gpu-memory-utilization 0.95
+--gpu-memory-utilization 0.85
 --kv-cache-dtype fp8
---safetensors-load-strategy eager
---max-num-seqs 16
---max-num-batched-tokens 16384
+--max-num-seqs 8
+--max-num-batched-tokens 8192
 --enable-prefix-caching
 --reasoning-parser qwen3
 --enable-auto-tool-choice
@@ -38,10 +37,13 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --optimization-level 2
 ```
 
-The production target is full 262K server context. If this profile fails,
-reduce concurrency first by moving to `--max-num-seqs 8` and
-`--max-num-batched-tokens 8192`. Do not reduce context below 262K unless both
-vLLM KV/concurrency tuning and an SGLang validation path fail.
+The production target is full 262K server context. The lower concurrency cap is
+intentional: live Pi prefix summarization can submit 100K+ token requests with
+large output budgets, and the earlier `--max-num-seqs 16` /
+`--max-num-batched-tokens 16384` profile co-scheduled enough prefill work to
+OOM the vLLM engine on the single 96 GiB Blackwell card. Do not reduce context
+below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path
+fail.
 
 NUMA auto-binding is intentionally disabled. Live rollout proved that vLLM
 0.23.0 cannot auto-detect Turin's GPU-to-NUMA topology and exits with
@@ -54,12 +56,12 @@ The model weights are NVFP4, but the KV cache uses FP8. Live rollout proved that
 `requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
 combination changes and is proven in a separate smoke.
 
-Safetensors eager loading is forced because the model cache is RBD-backed but
-appears to vLLM as local EXT4. Live rollout proved lazy checkpoint loading can
-block for about 12 minutes in disk I/O before the HTTP server starts, and
+Earlier rollout testing proved lazy checkpoint loading could block for about 12
+minutes in disk I/O before the HTTP server starts, while
 `--safetensors-load-strategy prefetch` was slower than the lazy baseline on the
-single 23 GiB shard. `eager` uses a different vLLM loader path that reads the
-whole shard into RAM before yielding tensors.
+single 23 GiB shard. The current health-restored deployment does not force a
+safetensors loading strategy. Do not re-add `--safetensors-load-strategy eager`
+without a separate startup and memory validation pass.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
@@ -213,8 +215,8 @@ bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8-eager` | `262144` | `0.95` | `16` | `16384` | Promoted production profile |
-| `context-262k-lowseq` | `262144` | `0.95` | `8` | `8192` | Startup fallback if the initial candidate OOMs |
+| `context-262k-fp8-eager` | `262144` | `0.95` | `16` | `16384` | Superseded; Pi compaction OOMed this envelope |
+| `context-262k-pi-compaction` | `262144` | `0.85` | `8` | `8192` | Current production profile |
 | `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 smokes pass |
 | `batch-262k-32k` | `262144` | `0.95` | `16` | `32768` | Promote only if TTFT and preemption stay acceptable |
 | `mem-262k-097` | `262144` | `0.97` | `16` | `16384` | Promote only if no OOM or sustained preemption |
@@ -289,6 +291,25 @@ Do not combine MTP, KV-cache dtype, batching, and memory changes after the
 initial 262K candidate. Change one variable, run the smoke suite, then run a
 real AnyPi AgentRun.
 
+### Pi Compaction Gate
+
+Before restoring higher concurrency, run the Pi compaction validator against a
+reduced-context smoke profile first:
+
+```bash
+PI_FLAMINGO_SERVER_CONTEXT=32768 \
+PI_FLAMINGO_CLIENT_CONTEXT=24576 \
+PI_FLAMINGO_MAX_TOKENS=2048 \
+PI_FLAMINGO_COMPACTION_RESERVE=8192 \
+PI_FLAMINGO_KEEP_RECENT=4000 \
+PI_FLAMINGO_PROMPT_CHARS=90000 \
+bun run scripts/jangar/validate-pi-flamingo-compaction.ts
+```
+
+Only after that passes should the full 262K Pi compaction gate run against the
+tailnet endpoint. A failed gate is a serving-profile failure, not permission to
+resume an already overfull Pi session.
+
 ## Completion Criteria
 
 - `/v1/models` returns `qwen36-flamingo` with `max_model_len=262144`.
@@ -297,6 +318,7 @@ real AnyPi AgentRun.
 - Host Pi defaults to `qwen36-flamingo`.
 - AnyPi provider defaults to `qwen36-flamingo`, 229376 input context, 32768 max
   output, and medium Qwen thinking against the 262K server context.
+- Pi compaction passes the reduced-context gate, then the full 262K gate.
 - One substantial AnyPi AgentRun produces a real code/test diff and validates.
 - The benchmark table is updated with the final promoted flags.
 

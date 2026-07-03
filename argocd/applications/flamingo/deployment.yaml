@@ -57,9 +57,9 @@ spec:
             - --kv-cache-dtype
             - fp8
             - --max-num-seqs
-            - "16"
+            - "8"
             - --max-num-batched-tokens
-            - "16384"
+            - "8192"
             - --enable-prefix-caching
             - --reasoning-parser
             - qwen3
