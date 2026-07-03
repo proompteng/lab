@@ -10,6 +10,11 @@ export const requiredTerms = [
   '32768',
   'fp8',
   'speculativeAcceptanceLength',
+  'candidate-id',
+  'baseline-result',
+  'fail-on-gate',
+  'mtp-al',
+  'flamingo-pd-shadow',
 ]
 
 export const forbiddenTerms = [
@@ -22,6 +27,7 @@ export const forbiddenTerms = [
 
 export const targetFiles = [
   'argocd/applications/flamingo/deployment.yaml',
+  'argocd/applications/flamingo/candidate-profiles.yaml',
   'argocd/applications/flamingo/README.md',
   'argocd/applications/flamingo/docs/large-model-multigpu.md',
   'argocd/applications/agents/anypi-agentprovider.yaml',
@@ -157,10 +163,18 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
 
   const saigakStatefulSet = byPath.get('argocd/applications/saigak/statefulset.yaml')
   if (saigakStatefulSet) {
-    for (const term of ['kubernetes.io/hostname: turin', 'RTX PRO 6000', 'Blackwell']) {
+    for (const term of [
+      'runtimeClassName: nvidia',
+      'nvidia.com/gpu:',
+      'OLLAMA_FLASH_ATTENTION',
+      'NVIDIA_VISIBLE_DEVICES',
+      'NVIDIA_DRIVER_CAPABILITIES',
+      'RTX PRO 6000',
+      'Blackwell',
+    ]) {
       if (saigakStatefulSet.includes(term)) {
         failures.push(
-          `argocd/applications/saigak/statefulset.yaml: Saigak must stay on the Altra RTX 3090 path, found "${term}"`,
+          `argocd/applications/saigak/statefulset.yaml: Saigak must not consume Turin Blackwell GPU resources, found "${term}"`,
         )
       }
     }

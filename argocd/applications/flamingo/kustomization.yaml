@@ -4,5 +4,6 @@ kind: Kustomization
 resources:
   - pvc.yaml
   - deployment.yaml
+  - candidate-profiles.yaml
   - service.yaml
   - tailscale-service.yaml
