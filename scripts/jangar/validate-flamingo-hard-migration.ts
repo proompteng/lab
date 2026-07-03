@@ -9,11 +9,6 @@ export const requiredTerms = [
   '229376',
   '32768',
   'fp8',
-  'safetensors-load-strategy',
-  'eager',
-  'enable-dbo',
-  'dbo-decode-token-threshold',
-  'dbo-prefill-token-threshold',
   'speculativeAcceptanceLength',
 ]
 
