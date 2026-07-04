@@ -10,17 +10,28 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
-- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Implementation status: **Implemented, but materially refactored from this v1 document.** The periodic trading loop exists, but not as the old monolithic `services/torghut/app/trading/scheduler.py` flow. Current runtime is split across `SimpleTradingPipeline`, shared pipeline mixins, source-collection helpers, paper-route materialization, submission policy, and execution/adapters.
 - Current source evidence:
-  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
-  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
-  - `services/torghut/app/trading/consumer_evidence.py`
-  - `services/torghut/app/trading/freshness_carry.py`
-  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
-  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
-- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
-
+  - `services/torghut/app/trading/scheduler/simple_pipeline.py` defines `SimpleTradingPipeline`, composed from paper-route, source-collection, proof-floor, quote-sizing, direct-submission, and base pipeline mixins.
+  - `services/torghut/app/trading/scheduler/simple_pipeline.py::SimpleTradingPipeline.run_once` labels mature rejected-signal outcomes, loads strategies, captures runtime-window account snapshots, warms session context, bounds paper-route signal scope, fetches signals, and processes the batch.
+  - `services/torghut/app/trading/scheduler/pipeline/run_cycle.py::TradingPipelineRunCycleMixin.run_once` keeps the generic dependency-driven run cycle for ingestor/decision/risk/executor/reconciler style operation.
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py` gates decision submission with allocator rejection, notional extraction, market snapshots, and submission preparation.
+  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, and bounded simple risk caps.
+  - Pipeline behavior is covered by the `services/torghut/tests/pipeline/test_trading_pipeline_*.py` suite.
+- What is implemented from the design:
+  - periodic service-owned trading loop;
+  - strategy load/refresh before decision processing;
+  - ClickHouse/signal-backed decision batches;
+  - deterministic gates before submission;
+  - decision/execution persistence through `TradeDecision` and `Execution` ORM rows;
+  - paper-route and runtime-window proof plumbing around the loop.
+- What changed from the design:
+  - old paths `services/torghut/app/trading/scheduler.py`, `execution.py`, `reconcile.py`, and `services/torghut/app/config.py` are stale for current runtime authority;
+  - live-submit authority is no longer just `TRADING_SIMPLE_SUBMIT_ENABLED`; it also flows through execution runtime/status and the submission-council gate;
+  - risk and submission preparation are distributed between `RiskEngine`, `simple_risk.py`, submission policy mixins, and execution policy/adapters.
+- Remaining gaps / operator caveats:
+  - The v1 diagram remains directionally useful, but it is too linear for the current source. Current runtime has paper-route materialization, proof-floor receipt logic, source-collection target plans, runtime ledger context, and live-submission gate payloads that are not shown in the original diagram.
+  - Treat this doc as implemented-at-the-core-loop level, not as an exhaustive current execution architecture.
 
 ## Purpose
 
@@ -42,12 +53,14 @@ core safety gates that ensure paper-by-default trading.
 
 - Knative Service: `argocd/applications/torghut/knative-service.yaml`
 - Strategy config: `argocd/applications/torghut/strategy-configmap.yaml`
-- Trading scheduler: `services/torghut/app/trading/scheduler.py`
-- Decision model: `services/torghut/app/trading/models.py`
-- Signal ingestion: `services/torghut/app/trading/ingest.py`
-- Risk checks: `services/torghut/app/trading/risk.py`
-- Execution: `services/torghut/app/trading/execution.py`
-- Reconciliation: `services/torghut/app/trading/reconcile.py`
+- Current simple pipeline: `services/torghut/app/trading/scheduler/simple_pipeline.py`
+- Generic pipeline run-cycle mixin: `services/torghut/app/trading/scheduler/pipeline/run_cycle.py`
+- Runtime pipeline factory: `services/torghut/app/trading/scheduler/runtime_pipeline_factory.py`
+- Submission policy: `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Source collection and target-plan helpers: `services/torghut/app/trading/scheduler/source_collection/**`, `services/torghut/app/trading/scheduler/target_plan_helpers/**`
+- Risk checks: `services/torghut/app/trading/risk.py`, `services/torghut/app/trading/simple_risk.py`
+- Execution runtime/adapters: `services/torghut/app/trading/execution_runtime.py`, `services/torghut/app/trading/execution/**`, `services/torghut/app/trading/execution_adapters/**`
+- Trading ORM records: `services/torghut/app/models/entities/trading_records.py`
 
 ## Trading loop flow
 
@@ -99,7 +112,7 @@ From `argocd/applications/torghut/knative-service.yaml`:
 Notes:
 
 - The service supports additional trading controls (qty defaults, cooldown, allow-shorts, notional and position caps, signal schema selection).
-  See `services/torghut/app/config.py` for the full env surface area.
+  See `services/torghut/app/config/settings.py` and `services/torghut/app/config/*_fields.py` for the current env/settings surface area.
 - The Knative manifest currently also sets `CLICKHOUSE_*`, but the trading dependency checks use `TA_CLICKHOUSE_*`.
 
 ## Safety gates (v1)
