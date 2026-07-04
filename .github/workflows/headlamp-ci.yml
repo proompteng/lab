@@ -42,6 +42,7 @@ jobs:
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes
 

@@ -111,6 +111,8 @@ Same commit plus same lockfiles should reproduce the same Nix output path and OC
 2. **PR 2: ARC Runner Speed Foundation**
    - Build deterministic ARC runner images with pinned Nix, Bun, uv, Go, Python, `skopeo`, `crane`, `cosign`, `jq`, `yq`, `kustomize`, and repo CI helpers.
    - Nix workflows should validate preinstalled tools and fail on ARC fallback to repeated installer actions.
+   - Shared setup action callers running on ARC must set `require-preinstalled: 'true'`; missing Nix or missing CI toolchain commands fail instead of invoking `cachix/install-nix-action` or `nix profile install`.
+   - Runner image smoke must execute `toolchain-doctor` and `oci-doctor` inside the built image before a release contract can be emitted.
    - Keep Docker/DinD only while Docker-backed transitional workflows remain.
 
 3. **PR 3: Finish Agents Nix Runtime**

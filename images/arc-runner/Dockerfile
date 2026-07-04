@@ -25,6 +25,7 @@ RUN apt-get update \
 
 USER runner
 ENV USER=runner
+ENV LAB_ARC_RUNNER_TOOLCHAIN=1
 ENV PATH="/home/runner/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
 
 WORKDIR /tmp/lab-nix-toolchain

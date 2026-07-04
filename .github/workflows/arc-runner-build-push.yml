@@ -120,13 +120,27 @@ jobs:
           set -euo pipefail
           docker run --rm "lab-arc-runner:test-${ARCH}" bash -lc '
             set -euo pipefail
+            test "${LAB_ARC_RUNNER_TOOLCHAIN:-}" = "1"
             nix --version
+            command -v node
+            command -v bun
+            command -v go
+            command -v ruby
+            command -v python3.11
+            command -v python3.12
+            command -v uv
+            command -v tofu
+            command -v helm
             command -v skopeo
             command -v crane
             command -v cosign
             command -v jq
             command -v yq
             command -v kustomize
+            command -v toolchain-doctor
+            command -v oci-doctor
+            toolchain-doctor
+            oci-doctor
             test -d /home/runner/externals
           '
 

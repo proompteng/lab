@@ -1,5 +1,5 @@
 name: setup-nix-toolchain
-description: Validate the ARC preinstalled Nix toolchain and fall back to installing Nix when needed.
+description: Validate the preinstalled Nix toolchain and optionally fail closed instead of falling back.
 
 inputs:
   github-token:
@@ -13,6 +13,10 @@ inputs:
       experimental-features = nix-command flakes
   install-ci-toolchain:
     description: Install and validate the repo CI toolchain when the runner image does not already provide it.
+    required: false
+    default: 'false'
+  require-preinstalled:
+    description: Fail instead of installing Nix or the CI toolchain. Use this for ARC jobs that must run on the custom runner image.
     required: false
     default: 'false'
 
@@ -31,8 +35,16 @@ runs:
           echo "nix_available=false" >> "${GITHUB_OUTPUT}"
         fi
 
+    - name: Reject missing preinstalled Nix
+      if: steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Nix is not preinstalled on this runner, and require-preinstalled=true forbids fallback installation." >&2
+        exit 1
+
     - name: Install xz for fallback Nix installer
-      if: steps.detect.outputs.nix_available != 'true'
+      if: steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -49,7 +61,7 @@ runs:
         fi
 
     - name: Install fallback Nix
-      if: steps.detect.outputs.nix_available != 'true'
+      if: steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled != 'true'
       uses: cachix/install-nix-action@v31
       with:
         github_access_token: ${{ inputs.github-token }}
@@ -78,17 +90,60 @@ runs:
     - name: Ensure repo CI toolchain
       if: inputs.install-ci-toolchain == 'true'
       shell: bash
+      env:
+        REQUIRE_PREINSTALLED: ${{ inputs.require-preinstalled }}
       run: |
         set -euo pipefail
         export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
-        missing=0
-        for cmd in nix skopeo crane cosign jq yq kustomize docker docker-buildx; do
+        missing=()
+        required_commands=(
+          nix
+          node
+          bun
+          go
+          ruby
+          python3.11
+          python3.12
+          uv
+          tofu
+          helm
+          kustomize
+          kubeconform
+          kubectl
+          argo
+          argocd
+          buf
+          gh
+          shellcheck
+          jq
+          yq
+          rg
+          fd
+          fzf
+          buildctl
+          buildkitd
+          docker
+          docker-buildx
+          crane
+          skopeo
+          regctl
+          cosign
+          toolchain-doctor
+          oci-doctor
+        )
+        for cmd in "${required_commands[@]}"; do
           if ! command -v "${cmd}" >/dev/null 2>&1; then
-            missing=1
-            break
+            missing+=("${cmd}")
           fi
         done
-        if [ "${missing}" -eq 1 ]; then
+        if [ "${#missing[@]}" -gt 0 ] && [ "${REQUIRE_PREINSTALLED}" = "true" ]; then
+          printf 'Required CI toolchain commands are missing from the preinstalled runner image:\n' >&2
+          printf '  %s\n' "${missing[@]}" >&2
+          exit 1
+        fi
+        if [ "${#missing[@]}" -gt 0 ]; then
+          printf 'Installing missing CI toolchain commands through Nix profile:\n'
+          printf '  %s\n' "${missing[@]}"
           nix profile install .#ciToolchain --priority 4
         fi
         toolchain-doctor

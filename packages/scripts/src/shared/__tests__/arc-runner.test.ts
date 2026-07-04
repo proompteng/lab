@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'bun:test'
 
@@ -12,10 +12,15 @@ const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-
 const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
 const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
+const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const argoLintWorkflow = readRepoFile('.github/workflows/argo-lint.yml')
+const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
+const enabledSimpleReleaseWorkflow = readRepoFile('.github/workflows/enabled-simple-nix-release.yml')
 const kubeconformWorkflow = readRepoFile('.github/workflows/kubeconform.yml')
 const khoshutWorkflow = readRepoFile('.github/workflows/khoshut-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
+const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
+const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
 const flake = readRepoFile('flake.nix')
 const nixPackages = readRepoFile('nix/packages.nix')
 const toolchainDoctor = readRepoFile('nix/toolchain-doctor.sh')
@@ -43,6 +48,7 @@ describe('ARC Nix runner toolchain', () => {
       'ghcr.io/actions/actions-runner@sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29',
     )
     expect(arcRunnerDockerfile).not.toContain('ghcr.io/actions/actions-runner:latest')
+    expect(arcRunnerDockerfile).toContain('ENV LAB_ARC_RUNNER_TOOLCHAIN=1')
     expect(arcRunnerDockerfile).toContain('https://releases.nixos.org/nix/nix-2.28.5/install')
     expect(arcRunnerDockerfile).toContain('ARG LAB_NIX_EXTRA_SUBSTITUTERS=')
     expect(arcRunnerDockerfile).toContain('ARG LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=')
@@ -72,6 +78,16 @@ describe('ARC Nix runner toolchain', () => {
   it('publishes multi-arch ARC runner images and opens a digest-pinning release PR', () => {
     expect(arcRunnerBuildWorkflow).toContain('runner: arc-amd64')
     expect(arcRunnerBuildWorkflow).toContain('runner: arc-arm64')
+    expect(arcRunnerBuildWorkflow).toContain('Smoke PR runner image toolchain')
+    expect(arcRunnerBuildWorkflow).toContain('test "${LAB_ARC_RUNNER_TOOLCHAIN:-}" = "1"')
+    expect(arcRunnerBuildWorkflow).toContain('command -v bun')
+    expect(arcRunnerBuildWorkflow).toContain('command -v uv')
+    expect(arcRunnerBuildWorkflow).toContain('command -v go')
+    expect(arcRunnerBuildWorkflow).toContain('command -v python3.11')
+    expect(arcRunnerBuildWorkflow).toContain('command -v python3.12')
+    expect(arcRunnerBuildWorkflow).toContain('command -v tofu')
+    expect(arcRunnerBuildWorkflow).toContain('toolchain-doctor')
+    expect(arcRunnerBuildWorkflow).toContain('oci-doctor')
     expect(arcRunnerBuildWorkflow).toContain('Prepare minimal runner image context')
     expect(arcRunnerBuildWorkflow).toContain('cp flake.nix flake.lock .artifacts/arc-runner-context/')
     expect(arcRunnerBuildWorkflow).toContain('Require Attic public key')
@@ -100,10 +116,23 @@ describe('ARC Nix runner toolchain', () => {
 
   it('uses a shared setup action so Nix jobs validate preinstalled tools before falling back', () => {
     expect(setupAction).toContain('Detect preinstalled Nix')
+    expect(setupAction).toContain('require-preinstalled:')
+    expect(setupAction).toContain('Reject missing preinstalled Nix')
+    expect(setupAction).toContain("inputs.require-preinstalled == 'true'")
     expect(setupAction).toContain("steps.detect.outputs.nix_available != 'true'")
+    expect(setupAction).toContain(
+      "steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled != 'true'",
+    )
     expect(setupAction).toContain('uses: cachix/install-nix-action@v31')
     expect(setupAction).toContain('extra_nix_config: ${{ inputs.extra-nix-config }}')
     expect(setupAction).toContain('NIX_CONFIG<<__LAB_NIX_CONFIG__')
+    expect(setupAction).toContain('REQUIRE_PREINSTALLED: ${{ inputs.require-preinstalled }}')
+    expect(setupAction).toContain('Required CI toolchain commands are missing from the preinstalled runner image')
+    expect(setupAction).toContain('command -v "${cmd}"')
+    expect(setupAction).toContain('node')
+    expect(setupAction).toContain('bun')
+    expect(setupAction).toContain('uv')
+    expect(setupAction).toContain('buildctl')
     expect(setupAction).toContain('nix profile install .#ciToolchain --priority 4')
     expect(setupAction).toContain('toolchain-doctor')
     expect(setupAction).toContain('oci-doctor')
@@ -111,17 +140,42 @@ describe('ARC Nix runner toolchain', () => {
     for (const workflow of [
       nixOciWorkflow,
       atticReleaseWorkflow,
-      argoLintWorkflow,
-      kubeconformWorkflow,
-      khoshutWorkflow,
+      agentsBuildWorkflow,
+      enabledProductReleaseWorkflow,
+      enabledSimpleReleaseWorkflow,
       headlampWorkflow,
+      sagReleaseWorkflow,
+      symphonyReleaseWorkflow,
     ]) {
       expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+      expect(workflow).toContain("require-preinstalled: 'true'")
+    }
+
+    for (const workflow of [argoLintWorkflow, kubeconformWorkflow, khoshutWorkflow]) {
+      expect(workflow).toContain('runs-on: ubuntu-latest')
+      expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+      expect(workflow).not.toContain("require-preinstalled: 'true'")
     }
 
     expect(nixOciWorkflow).not.toContain('Install xz for Nix installer')
     expect(nixOciWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
     expect(atticReleaseWorkflow).not.toContain('Install xz for Nix installer')
     expect(atticReleaseWorkflow).not.toContain('uses: cachix/install-nix-action@v31')
+  })
+
+  it('does not let ARC workflow callers silently use fallback Nix installation', () => {
+    const workflowDir = new URL('.github/workflows/', repoRoot)
+    const arcSetupCallers = readdirSync(workflowDir)
+      .filter((file) => file.endsWith('.yml') || file.endsWith('.yaml'))
+      .map((file) => [file, readRepoFile(`.github/workflows/${file}`)] as const)
+      .filter(([, content]) => content.includes('uses: ./.github/actions/setup-nix-toolchain'))
+      .filter(([, content]) => content.includes('runs-on: arc-') || content.includes('runner: arc-'))
+
+    expect(arcSetupCallers.length).toBeGreaterThan(0)
+    for (const [file, content] of arcSetupCallers) {
+      expect(content, `${file} must require the preinstalled ARC Nix toolchain`).toContain(
+        "require-preinstalled: 'true'",
+      )
+    }
   })
 })
