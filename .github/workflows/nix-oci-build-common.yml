@@ -134,6 +134,7 @@ jobs:
             echo "Nix image output is not a tar file: ${image_tar}" >&2
             exit 1
           fi
+          printf '%s\n' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
           echo "image_tar=${image_tar}" >> "${GITHUB_OUTPUT}"
           echo "Built ${PACKAGE_ATTR} for ${{ matrix.platform }} at ${image_tar}."
 
@@ -168,7 +169,7 @@ jobs:
           fi
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
-      - name: Push reusable helper closures to Attic
+      - name: Push build platform closures to Attic
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
@@ -182,8 +183,14 @@ jobs:
             echo "No build-platform helper closure paths were captured." >&2
             exit 2
           fi
+          mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
+          if [[ "${#image_paths[@]}" -eq 0 ]]; then
+            echo "No Nix image closure paths were captured." >&2
+            exit 2
+          fi
+          cache_paths=("${helper_paths[@]}" "${image_paths[@]}")
           bash nix/ci-run-timed.sh "push-build-platform-closures-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-${ARCH}.log" \
-            nix run .#cache-push -- "${helper_paths[@]}"
+            nix run .#cache-push -- "${cache_paths[@]}"
 
       - name: Summarize Nix OCI cache use
         if: always()

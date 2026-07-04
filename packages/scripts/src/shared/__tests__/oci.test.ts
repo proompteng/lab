@@ -252,8 +252,10 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('nix run .#oci-push --')
     expect(nixOciWorkflow).toContain('nix run .#create-oci-index --')
     expect(nixOciWorkflow).toContain('nix run .#assert-oci-platforms --')
-    expect(nixOciWorkflow).toContain('nix run .#cache-push -- "${helper_paths[@]}"')
-    expect(nixOciWorkflow).not.toContain('nix run .#cache-push -- "${IMAGE_TAR}"')
+    expect(nixOciWorkflow).toContain('printf \'%s\\n\' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
+    expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
+    expect(nixOciWorkflow).toContain('cache_paths=("${helper_paths[@]}" "${image_paths[@]}")')
+    expect(nixOciWorkflow).toContain('nix run .#cache-push -- "${cache_paths[@]}"')
     expect(nixOciWorkflow).toContain('nix run .#write-oci-release-contract --')
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
@@ -262,6 +264,7 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('helper_attrs+=(.#ociPush .#cachePush)')
     expect(nixOciWorkflow).toContain('test -s "${output_file}"')
     expect(nixOciWorkflow).toContain('No build-platform helper closure paths were captured.')
+    expect(nixOciWorkflow).toContain('No Nix image closure paths were captured.')
     expect(nixOciWorkflow).toContain('No index helper closure paths were captured.')
     expect(nixOciWorkflow).toContain('Start checkout timer')
     expect(nixOciWorkflow).toContain('Record checkout timing')
@@ -547,6 +550,20 @@ describe('native OCI build workflows', () => {
     expect(agentsImageModule).toContain('"agents-controller-image"')
     expect(agentsImageModule).toContain('"agents-control-plane-image"')
     expect(agentsImageModule).toContain('"agents-shell-image"')
+  })
+
+  it('preserves isolated Bun workspace runtime dependencies in Agents images', () => {
+    expect(agentsImageModule).toContain('copyWorkspaceNodeModules()')
+    expect(agentsImageModule).toContain(
+      'copyWorkspaceNodeModules "$TMPDIR/work/packages/$package/node_modules" "$out/app/packages/$package/node_modules"',
+    )
+    expect(agentsImageModule).toContain(
+      'copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"',
+    )
+    expect(agentsImageModule).toContain('rm -rf "$target_path"')
+    expect(agentsImageModule).toContain('cp -R "$source_path/." "$target_path/"')
+    expect(agentsImageModule).toContain('rm -rf "$out/app/packages/agent-contracts/node_modules/effect"')
+    expect(agentsImageModule).toContain('ln -s /app/node_modules/effect')
   })
 
   it('routes enabled product app image builds through real Nix OCI attrs', () => {
