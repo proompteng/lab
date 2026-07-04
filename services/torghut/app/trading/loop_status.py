@@ -31,6 +31,7 @@ SCHEMA_VERSION = "torghut.trading-loop-status.v1"
 DEFAULT_FRESHNESS_THRESHOLD_SECONDS = 180
 DEFAULT_ACCOUNT_FRESHNESS_SECONDS = 300
 DEFAULT_MIN_RECENT_FILLS = 3
+LOOP_STATUS_QUERY_TIMEOUT_MS = 1_500
 
 
 def _empty_mapping() -> Mapping[str, object]:
@@ -513,8 +514,10 @@ def _safe_one(
     errors: list[str],
 ) -> dict[str, object]:
     try:
+        _apply_query_timeout(session)
         row = session.execute(text(query)).mappings().first()
     except SQLAlchemyError as exc:
+        _recover_failed_query(session)
         errors.append(f"{name}_query_failed:{type(exc).__name__}")
         return {}
     return _json_safe_mapping(row) if row is not None else {}
@@ -527,11 +530,28 @@ def _safe_rows(
     errors: list[str],
 ) -> list[dict[str, object]]:
     try:
+        _apply_query_timeout(session)
         rows = session.execute(text(query)).mappings().all()
     except SQLAlchemyError as exc:
+        _recover_failed_query(session)
         errors.append(f"{name}_query_failed:{type(exc).__name__}")
         return []
     return [_json_safe_mapping(row) for row in rows]
+
+
+def _apply_query_timeout(session: QuerySession) -> None:
+    try:
+        session.execute(
+            text(f"SET LOCAL statement_timeout = '{LOOP_STATUS_QUERY_TIMEOUT_MS}ms'")
+        )
+    except SQLAlchemyError:
+        _recover_failed_query(session)
+
+
+def _recover_failed_query(session: QuerySession) -> None:
+    rollback = getattr(session, "rollback", None)
+    if callable(rollback):
+        rollback()
 
 
 def _json_safe_mapping(row: Mapping[str, object]) -> dict[str, object]:
