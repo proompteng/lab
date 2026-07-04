@@ -127,10 +127,7 @@ def _paper_route_target_price_retry_risk_reasons(
     params = _mapping_child(decision_json, "params")
     if params is None or not isinstance(params.get("paper_route_target_plan"), Mapping):
         return None
-    precheck = _mapping_child(params, "execution_precheck") or _mapping_child(
-        params,
-        "simple_lane_precheck",
-    )
+    precheck = _mapping_child(params, "execution_precheck")
     if precheck is None or precheck.get("price") is not None:
         return None
     risk_reasons = _risk_reason_items(decision_json.get("risk_reasons"))

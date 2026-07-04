@@ -789,7 +789,6 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         if preparation.diagnostics:
             params_update = dict(prepared_decision.params)
             params_update["execution_precheck"] = preparation.diagnostics
-            params_update.pop("simple_lane_precheck", None)
             self.executor.update_decision_params(
                 request.session,
                 request.decision_row,

@@ -513,7 +513,7 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
     def paper_route_probe_short_increasing_sell(decision: StrategyDecision) -> bool:
         if decision.action != "sell":
             return False
-        for key in ("execution", "simple_lane", "sizing"):
+        for key in ("execution", "sizing"):
             section = decision.params.get(key)
             if not isinstance(section, Mapping):
                 continue

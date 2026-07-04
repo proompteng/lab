@@ -49,7 +49,7 @@ def _decision(
     )
 
 
-def _with_simple_lane_quantity_resolution(
+def _with_execution_quantity_resolution(
     decision: StrategyDecision,
     **overrides: object,
 ) -> StrategyDecision:
@@ -111,7 +111,7 @@ __all__: tuple[str, ...] = (
     "_TestExecutionPolicyBase",
     "_config",
     "_decision",
-    "_with_simple_lane_quantity_resolution",
+    "_with_execution_quantity_resolution",
     "config",
     "datetime",
     "timezone",

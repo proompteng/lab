@@ -80,7 +80,6 @@ def _target_notional_sizing_audit_from_params(
         "paper_route_target_plan",
         "paper_route_probe",
         "execution",
-        "simple_lane",
     ):
         metadata = _mapping_value(params.get(key))
         if metadata is None:
