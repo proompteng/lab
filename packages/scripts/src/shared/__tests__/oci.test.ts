@@ -17,6 +17,7 @@ const atticGcCronJob = readRepoFile('argocd/applications/attic/gc-cronjob.yaml')
 const productApplicationSet = readRepoFile('argocd/applicationsets/product.yaml')
 const flake = readRepoFile('flake.nix')
 const inspectOciArchiveScript = readRepoFile('nix/oci-inspect-archive.sh')
+const ociReleaseContractScript = readRepoFile('nix/oci-release-contract.sh')
 const ciRunTimedScript = readRepoFile('nix/ci-run-timed.sh')
 const ciNixOciSummaryScript = readRepoFile('nix/ci-nix-oci-summary.sh')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
@@ -287,6 +288,8 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).not.toContain('cache_paths=("${helper_paths[@]}" "${image_paths[@]}")')
     expect(nixOciWorkflow).not.toContain('nix run .#cache-push -- "${cache_paths[@]}"')
     expect(nixOciWorkflow).toContain('nix run .#write-oci-release-contract --')
+    expect(nixOciWorkflow).toContain('PLATFORM_DIGEST_AMD64: ${{ steps.oci.outputs.platform_digest_amd64 }}')
+    expect(nixOciWorkflow).toContain('PLATFORM_DIGEST_ARM64: ${{ steps.oci.outputs.platform_digest_arm64 }}')
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
     expect(nixOciWorkflow).toContain('nix build --print-build-logs --no-link --print-out-paths "$@"')
@@ -310,6 +313,15 @@ describe('native OCI build workflows', () => {
       'helper_attrs=(.#createOciIndex .#assertOciPlatforms .#writeOciReleaseContract .#cachePush)',
     )
     expect(nixOciWorkflow).not.toContain('nix develop -c')
+  })
+
+  it('writes release contracts with platform digests for strict Torghut promotion', () => {
+    expect(ociReleaseContractScript).toContain('PLATFORM_DIGEST_AMD64')
+    expect(ociReleaseContractScript).toContain('PLATFORM_DIGEST_ARM64')
+    expect(ociReleaseContractScript).toContain('platformDigests: {')
+    expect(ociReleaseContractScript).toContain('"linux/amd64": $platformDigestAmd64')
+    expect(ociReleaseContractScript).toContain('"linux/arm64": $platformDigestArm64')
+    expect(ociReleaseContractScript).toContain('createdAt: $createdAt')
   })
 
   it('records real Nix OCI timing and cache-hit summaries', () => {
