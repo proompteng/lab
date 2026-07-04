@@ -47,8 +47,8 @@ spec:
               securityContext:
                 runAsNonRoot: false
                 # ARC runners need a writable tool cache under /home/runner/_work/_tool.
-                # With PVC-backed work dirs, the volume is root-owned by default; set an fsGroup so the
-                # non-root runner user can create directories before any workflow steps run.
+                # Keep lab runners on node-local work dirs so high-concurrency Nix image builds do not
+                # block on dynamic PVC provisioning before the runner can accept a job.
                 fsGroup: 1001
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
@@ -131,14 +131,8 @@ spec:
                       mountPath: /home/runner/externals
               volumes:
                 - name: work
-                  ephemeral:
-                    volumeClaimTemplate:
-                      spec:
-                        accessModes: ["ReadWriteOnce"]
-                        storageClassName: "rook-ceph-block"
-                        resources:
-                          requests:
-                            storage: 20Gi
+                  emptyDir:
+                    sizeLimit: 80Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals
@@ -258,14 +252,8 @@ spec:
                       mountPath: /home/runner/externals
               volumes:
                 - name: work
-                  ephemeral:
-                    volumeClaimTemplate:
-                      spec:
-                        accessModes: ["ReadWriteOnce"]
-                        storageClassName: "rook-ceph-block"
-                        resources:
-                          requests:
-                            storage: 20Gi
+                  emptyDir:
+                    sizeLimit: 80Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals

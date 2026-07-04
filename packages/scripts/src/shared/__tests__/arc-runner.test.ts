@@ -34,18 +34,24 @@ const runnerScaleSetBlock = (name: string): string => {
 }
 
 describe('ARC Nix runner toolchain', () => {
-  it('keeps ARC storage and Docker sidecar unchanged while making runner images releasable by digest', () => {
+  it('keeps lab ARC runners on local work dirs while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('runnerScaleSetName: arc-amd64')
     expect(arcApplication).toContain('runnerScaleSetName: analysis-arm64')
     expect(arcApplication).toContain('image: docker:dind')
-    expect(arcApplication).toContain('storageClassName: "rook-ceph-block"')
-    expect(arcApplication).toContain('volumeClaimTemplate:')
+    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
+      const block = runnerScaleSetBlock(scaleSet)
+      expect(block).toContain('emptyDir:')
+      expect(block).toContain('sizeLimit: 80Gi')
+      expect(block).not.toContain('storageClassName: "rook-ceph-block"')
+      expect(block).not.toContain('volumeClaimTemplate:')
+    }
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('storageClassName: "rook-ceph-block"')
     expect(arcRunnerReleaseWorkflow).toContain('registry.ide-newton.ts.net/lab/arc-runner')
     expect(arcRunnerReleaseWorkflow).toContain('arc-runner\\@sha256')
     expect(arcRunnerReleaseWorkflow).toContain('test "$(grep -cF "image: ${IMAGE_REF}"')
     expect(arcRunnerReleaseWorkflow).toContain("grep -F 'image: docker:dind'")
-    expect(arcRunnerReleaseWorkflow).toContain('grep -F \'storageClassName: "rook-ceph-block"\'')
+    expect(arcRunnerReleaseWorkflow).toContain("grep -cF 'sizeLimit: 80Gi'")
     expect(arcRunnerReleaseWorkflow).not.toContain('ObjectBucketClaim')
     expect(arcRunnerReleaseWorkflow).not.toContain('PersistentVolumeClaim')
   })
@@ -64,10 +70,12 @@ describe('ARC Nix runner toolchain', () => {
       const block = runnerScaleSetBlock(scaleSet)
       expect(block).toContain('ephemeral-storage: "4Gi"')
       expect(block).toContain('ephemeral-storage: "6Gi"')
+      expect(block).toContain('sizeLimit: 80Gi')
+      expect(block).not.toContain('storage: 20Gi')
     }
 
-    expect(arcApplication).toContain('storageClassName: "rook-ceph-block"')
-    expect(arcApplication).toContain('storage: 20Gi')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('storageClassName: "rook-ceph-block"')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('storage: 20Gi')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {
@@ -136,6 +144,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain('linux/amd64')
     expect(arcRunnerBuildWorkflow).toContain('linux/arm64')
     expect(arcRunnerBuildWorkflow).toContain('arc-runner-release-contract')
+    expect(arcRunnerBuildWorkflow).not.toContain("'.github/workflows/arc-runner-release.yml'")
+    expect(arcRunnerBuildWorkflow).not.toContain("'packages/scripts/src/shared/__tests__/arc-runner.test.ts'")
     expect(arcRunnerReleaseWorkflow).toContain('workflows:')
     expect(arcRunnerReleaseWorkflow).toContain('arc-runner-build-push')
     expect(arcRunnerReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
