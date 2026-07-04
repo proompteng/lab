@@ -231,8 +231,8 @@
   },
   "roots": {
     "app": {
-      "files": 655,
-      "lines": 282523
+      "files": 661,
+      "lines": 282590
     },
     "scripts": {
       "files": 242,
@@ -249,8 +249,8 @@
     "classes_ge_500": 300,
     "classes_ge_750": 155,
     "files_ge_1000": 1,
-    "files_ge_500": 696,
-    "files_ge_750": 344,
+    "files_ge_500": 694,
+    "files_ge_750": 343,
     "files_ge_900": 102,
     "files_ge_950": 48,
     "functions_ge_100": 940,
@@ -259,7 +259,7 @@
     "functions_ge_750": 7
   },
   "total": {
-    "files": 1604,
-    "lines": 692675
+    "files": 1610,
+    "lines": 692742
   }
 }
