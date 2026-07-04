@@ -8,9 +8,17 @@ from typing import Any, cast
 
 _DIAGNOSTIC_SUBMISSION_REASONS = frozenset(
     {
+        "alpha_readiness_not_promotion_eligible",
         "hypothesis_not_promotion_eligible",
+        "portfolio_runtime_ledger_summary_missing",
+        "promotion_decision_missing",
+        "route_tca_passed_but_dependency_receipts_block_capital",
+        "runtime_ledger_profit_target_source_collection_pending",
+        "runtime_ledger_rows_missing",
+        "runtime_ledger_source_collection_pending",
         "runtime_profit_target_import_required",
         "runtime_window_import_required",
+        "stage_clearance_packet_missing",
     }
 )
 
@@ -22,7 +30,7 @@ def build_submission_authority_status(
 ) -> dict[str, object]:
     """Summarize effective submit authority from operational blockers only."""
 
-    simple_lane = _mapping(simple_lane_status)
+    _ = simple_lane_status
     operational_gate = operational_submission_gate_status(live_submission_gate)
     operational_allowed = _bool(operational_gate.get("allowed"))
     effective_mode = "operational_submission" if operational_allowed else "blocked"
@@ -39,21 +47,6 @@ def build_submission_authority_status(
             "reason": _text(operational_gate.get("reason"), "unknown"),
             "blocked_reasons": _strings(operational_gate.get("blocked_reasons")),
             "execution_route": _mapping(operational_gate.get("execution_route")),
-        },
-        "simple_lane_contract": {
-            "submit_enabled": _bool(simple_lane.get("submit_enabled")),
-            "live_submit_enabled": _bool(simple_lane.get("live_submit_enabled")),
-            "paper_route_probe_enabled": _bool(
-                simple_lane.get("paper_route_probe_enabled")
-            ),
-            "paper_route_probe_allow_live_mode": _bool(
-                simple_lane.get("paper_route_probe_allow_live_mode")
-            ),
-            "max_notional_per_order": simple_lane.get("max_notional_per_order"),
-            "max_notional_per_symbol": simple_lane.get("max_notional_per_symbol"),
-            "max_gross_exposure_pct_equity": simple_lane.get(
-                "max_gross_exposure_pct_equity"
-            ),
         },
     }
 

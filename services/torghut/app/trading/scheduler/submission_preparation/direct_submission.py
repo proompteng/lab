@@ -386,7 +386,7 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
             return True
         collection_metadata = self._bounded_sim_collection_metadata(decision)
         if not settings.trading_simple_submit_enabled and collection_metadata is None:
-            self._block_simple_submit_disabled(request, proof_floor_block_reason)
+            self._block_submit_disabled(request, proof_floor_block_reason)
             return False
         if self._paper_route_probe_applies(decision, collection_metadata):
             return True
@@ -474,7 +474,7 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                         capital_stage="shadow",
                         extra_metadata={
                             "paper_route_target_window": active_target_window,
-                            "simple_lane": {
+                            "execution_gate": {
                                 "submit_enabled": settings.trading_simple_submit_enabled,
                                 "bounded_sim_collection_required": True,
                                 "bounded_sim_collection_bypass": False,
@@ -485,7 +485,7 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                 return False
         return True
 
-    def _block_simple_submit_disabled(
+    def _block_submit_disabled(
         self,
         request: TradingSubmissionRequest,
         proof_floor_block_reason: str,
@@ -495,11 +495,11 @@ class SimplePipelineDirectSubmissionMixin(TradingPipelineBase):
                 session=request.session,
                 decision=request.decision,
                 decision_row=request.decision_row,
-                reason="simple_submit_disabled",
-                submission_stage="blocked_simple_submit_disabled",
+                reason="submit_disabled",
+                submission_stage="blocked_submit_disabled",
                 capital_stage="shadow",
                 extra_metadata={
-                    "simple_lane": {
+                    "execution_gate": {
                         "submit_enabled": False,
                         "bounded_sim_collection_bypass": False,
                         "bounded_sim_collection_required": True,

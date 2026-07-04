@@ -73,7 +73,7 @@ _FAST_STATUS_GATE_REASONS = {
     "live_submit_activation_expiry_invalid",
     "live_submit_activation_missing",
     "live_submit_disabled",
-    "simple_submit_disabled",
+    "submit_disabled",
     "testnet_after_hours_disabled",
     "trading_disabled",
 }

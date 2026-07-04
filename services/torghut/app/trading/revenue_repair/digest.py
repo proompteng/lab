@@ -250,9 +250,7 @@ def _build_evidence(
             inputs.repair_outcome_dividend
         ),
         "runtime_window_import_repair": runtime_window_import_repair,
-        "simple_lane_reject_reason_totals": _collect_reason_counts(
-            inputs.status_payload
-        ),
+        "execution_reject_reason_totals": _collect_reason_counts(inputs.status_payload),
     }
 
 

@@ -27,11 +27,11 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertEqual(
             _primary_live_submission_blocked_reason(
                 [
-                    "simple_submit_disabled",
+                    "submit_disabled",
                     "live_submit_disabled",
                 ]
             ),
-            "simple_submit_disabled",
+            "submit_disabled",
         )
 
     def test_build_live_submission_gate_payload_keeps_activation_expiry_diagnostic_only(
@@ -113,7 +113,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertIsNone(result["empirical_jobs_ready"])
         self.assertNotIn("empirical", result["segment_summary"])
 
-    def test_bounded_live_paper_collection_gate_fails_closed_without_explicit_contract(
+    def test_operational_gate_blocks_when_submit_disabled_without_collection_contract(
         self,
     ) -> None:
         from app.config import settings
@@ -143,15 +143,13 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             quant_health_status=self._healthy_quant_status(),
         )
 
-        collection_gate = result["bounded_live_paper_collection_gate"]
-        self.assertFalse(collection_gate["allowed"])
-        self.assertEqual(
-            collection_gate["reason"], "retired_operational_submission_gate"
-        )
-        self.assertEqual(collection_gate["blocked_reasons"], [])
-        self.assertIn("simple_submit_disabled", result["blocked_reasons"])
+        self.assertNotIn("bounded_live_paper_collection_gate", result)
+        operational_gate = result["operational_submission_gate"]
+        self.assertFalse(operational_gate["allowed"])
+        self.assertIn("submit_disabled", result["blocked_reasons"])
+        self.assertIn("submit_disabled", operational_gate["blocked_reasons"])
 
-    def test_bounded_live_paper_collection_gate_rejects_invalid_activation(
+    def test_live_submit_activation_is_diagnostic_for_operational_gate(
         self,
     ) -> None:
         from app.config import settings
@@ -161,9 +159,10 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         settings.trading_simple_submit_enabled = True
         settings.trading_simple_paper_route_probe_max_notional = 100
         settings.trading_live_submit_activation_expires_at = "not-a-date"
+        settings.trading_testnet_after_hours_enabled = True
         result = build_live_submission_gate_payload(
             SimpleNamespace(
-                market_session_open=True,
+                market_session_open=False,
                 last_autonomy_promotion_eligible=False,
                 last_autonomy_promotion_action=None,
                 drift_live_promotion_eligible=False,
@@ -182,18 +181,14 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             quant_health_status=self._healthy_quant_status(),
         )
 
-        collection_gate = result["bounded_live_paper_collection_gate"]
-        self.assertFalse(collection_gate["allowed"])
-        self.assertEqual(
-            collection_gate["reason"], "retired_operational_submission_gate"
-        )
-        self.assertEqual(collection_gate["blocked_reasons"], [])
+        self.assertNotIn("bounded_live_paper_collection_gate", result)
+        self.assertTrue(result["operational_submission_gate"]["allowed"])
         self.assertNotIn(
             "live_submit_activation_expiry_invalid",
             result["blocked_reasons"],
         )
 
-    def test_bounded_live_paper_collection_gate_uses_configured_strategy_universe(
+    def test_runtime_import_plan_uses_configured_strategy_universe(
         self,
     ) -> None:
         account_label_before = settings.trading_account_label
@@ -285,13 +280,8 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
                 for target in import_plan["targets"]
             )
         )
-        collection_gate = result["bounded_live_paper_collection_gate"]
-        self.assertFalse(collection_gate["allowed"])
-        self.assertFalse(collection_gate["active"])
-        self.assertEqual(
-            collection_gate["reason"],
-            "retired_operational_submission_gate",
-        )
+        self.assertNotIn("bounded_live_paper_collection_gate", result)
+        self.assertTrue(result["operational_submission_gate"]["allowed"])
 
     def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(
         self,

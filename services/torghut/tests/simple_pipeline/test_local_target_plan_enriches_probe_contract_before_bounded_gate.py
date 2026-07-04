@@ -553,6 +553,58 @@ def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
 
 
+def test_after_hours_live_testnet_route_falls_back_to_live_signal_scope(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    probe_enabled_before = settings.trading_simple_paper_route_probe_enabled
+    allow_live_before = settings.trading_simple_paper_route_probe_allow_live_mode
+    testnet_after_hours_before = settings.trading_testnet_after_hours_enabled
+    static_symbols_raw_before = settings.trading_static_symbols_raw
+    try:
+        settings.trading_mode = "live"
+        settings.trading_simple_paper_route_probe_enabled = True
+        settings.trading_simple_paper_route_probe_allow_live_mode = True
+        settings.trading_testnet_after_hours_enabled = True
+        settings.trading_static_symbols_raw = "BTC/USD"
+        now = datetime(2026, 6, 1, 23, 0, tzinfo=timezone.utc)
+        strategy = Strategy(
+            name="hyperliquid-after-hours",
+            description="metadata fixture",
+            enabled=True,
+            base_timeframe="1Min",
+            universe_type="static",
+            universe_symbols=["ETH/USD"],
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "TORGHUT_SIM"
+        pipeline.state = SimpleNamespace()
+        pipeline._is_market_session_open = lambda _now: False
+        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+            set(),
+            "paper_route_session_window_not_open",
+            [],
+        )
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.trading_now",
+            lambda account_label=None: now,
+        )
+
+        scope = pipeline._bounded_paper_route_signal_scope(
+            [strategy],
+            session=None,
+        )
+
+        assert scope == ({"BTC/USD", "ETH/USD"}, {"1Min"})
+        assert not hasattr(pipeline.state, "last_bounded_evidence_collection_blocker")
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
+        settings.trading_simple_paper_route_probe_allow_live_mode = allow_live_before
+        settings.trading_testnet_after_hours_enabled = testnet_after_hours_before
+        settings.trading_static_symbols_raw = static_symbols_raw_before
+
+
 def test_bounded_sim_collection_accepts_declared_paper_account_alias() -> None:
     target = _bounded_hpairs_target(source_account_label="PA3SX7FYNUTF")
 

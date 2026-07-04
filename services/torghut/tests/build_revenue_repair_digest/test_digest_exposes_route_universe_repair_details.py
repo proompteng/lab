@@ -180,7 +180,7 @@ class TestDigestExposesRouteUniverseRepairDetails(_TestBuildRevenueRepairDigestB
     def test_repair_queue_derives_unknown_blocker_and_skips_empty_reasons(self) -> None:
         repair_queue = _build_repair_queue(
             {"route_state": "candidate", "repair_ladder": []},
-            {"simple_lane_reject_reason_totals": {"insufficient_buying_power": 4}},
+            {"execution": {"reject_reason_totals": {"insufficient_buying_power": 4}}},
             ["", "insufficient_buying_power", "custom_blocker"],
         )
 

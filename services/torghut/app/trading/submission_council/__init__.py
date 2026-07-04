@@ -576,7 +576,7 @@ def _operational_submission_blocked_reasons(
     if settings.trading_kill_switch_enabled:
         blocked_reasons.append("kill_switch_enabled")
     if not settings.trading_simple_submit_enabled:
-        blocked_reasons.append("simple_submit_disabled")
+        blocked_reasons.append("submit_disabled")
     if not settings.trading_live_submit_enabled:
         blocked_reasons.append("live_submit_disabled")
     if settings.trading_emergency_stop_enabled and bool(
@@ -689,17 +689,6 @@ def _operational_submission_gate_payload(
             "execution_route": execution_route,
         },
         **_common_submission_payload(context),
-        "bounded_live_paper_collection_gate": {
-            "schema_version": "torghut.bounded-live-paper-collection-gate.v1",
-            "allowed": False,
-            "active": False,
-            "reason": "retired_operational_submission_gate",
-            "blocked_reasons": [],
-            "authority_scope": "retired",
-            "capital_promotion_allowed": False,
-            "final_authority_ok": False,
-            "capital_gate_allowed": False,
-        },
         "reason_codes": blocked_reasons or ["operational_submission_ready"],
         "segment_summary": {
             "segments": context.segment_summary,

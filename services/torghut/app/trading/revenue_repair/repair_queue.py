@@ -87,6 +87,13 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
         57,
         2,
     ),
+    "submit_disabled": (
+        "live_submit_gate_closed",
+        "live_submission_gate",
+        "keep_submit_disabled_until_proof_floor_passes",
+        50,
+        1,
+    ),
     "simple_submit_disabled": (
         "live_submit_gate_closed",
         "live_submission_gate",
@@ -337,7 +344,8 @@ def _choose_mapping(*values: object) -> dict[str, Any]:
 
 def _collect_reason_counts(status_payload: Mapping[str, Any]) -> dict[str, int]:
     totals: dict[str, int] = {}
-    raw_totals = _mapping(status_payload.get("simple_lane_reject_reason_totals"))
+    execution = _mapping(status_payload.get("execution"))
+    raw_totals = _mapping(execution.get("reject_reason_totals"))
     for reason, count in raw_totals.items():
         normalized = _text(reason)
         if normalized:

@@ -274,7 +274,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         if not settings.trading_simple_paper_route_probe_allow_live_mode:
             return "live_paper_route_probe_collection_disabled"
         if not settings.trading_simple_submit_enabled:
-            return "simple_submit_disabled"
+            return "submit_disabled"
         max_notional = _optional_decimal(
             settings.trading_simple_paper_route_probe_max_notional
         )

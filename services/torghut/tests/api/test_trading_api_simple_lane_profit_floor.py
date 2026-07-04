@@ -56,7 +56,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
 
         self.assertEqual(call_order, ["clickhouse", "alpaca", "postgres"])
 
-    def test_trading_status_surfaces_simple_lane_fields(self) -> None:
+    def test_trading_status_surfaces_route_neutral_execution_contract(self) -> None:
         original_pipeline_mode = settings.trading_pipeline_mode
         original_trading_enabled = settings.trading_enabled
         original_trading_mode = settings.trading_mode
@@ -122,18 +122,19 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                 "runtime_profit_target_import_required",
                 payload["live_submission_gate"]["blocked_reasons"],
             )
-            self.assertTrue(
-                payload["live_submission_gate"]["simple_lane"]["shared_gate_enforced"]
-            )
+            self.assertNotIn("simple_lane", payload["live_submission_gate"])
             self.assertIn(
                 "profit_window_contract",
                 payload["live_submission_gate"],
             )
-            self.assertEqual(payload["simple_lane_orders_submitted_total"], 7)
+            self.assertEqual(payload["execution"]["orders_submitted_total"], 7)
             self.assertEqual(
-                payload["simple_lane_reject_reason_totals"],
+                payload["execution"]["reject_reason_totals"],
                 {"broker_submit_failed": 2},
             )
+            self.assertNotIn("simple_lane_orders_submitted_total", payload)
+            self.assertNotIn("simple_lane_reject_reason_totals", payload)
+            self.assertNotIn("simple_lane_status", payload)
             self.assertEqual(
                 payload["rejections"]["strategy_intent_suppression_total"],
                 {"strategy-1|exit_only_sell_without_long_position": 4},
@@ -157,14 +158,6 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             self.assertEqual(
                 outcome_learning["latest_event"]["paper_claim_id"],
                 "rejection-event-outcome-labels",
-            )
-            self.assertTrue(payload["simple_lane_status"]["enabled"])
-            self.assertTrue(
-                payload["simple_lane_status"]["route_symbol_filter_enabled"]
-            )
-            self.assertEqual(
-                payload["simple_lane_status"]["allowed_reject_reasons"][0],
-                "broker_precheck_failed",
             )
         finally:
             settings.trading_pipeline_mode = original_pipeline_mode
@@ -285,7 +278,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
 
         self.assertEqual(summary, {"persistence_state": "unavailable"})
 
-    def test_simple_lane_shared_gate_applies_local_block_reason(self) -> None:
+    def test_operational_gate_applies_local_block_reason(self) -> None:
         original = {
             "trading_pipeline_mode": settings.trading_pipeline_mode,
             "trading_enabled": settings.trading_enabled,
@@ -340,17 +333,13 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         self.assertEqual(gate["capital_stage"], "shadow")
         self.assertEqual(gate["capital_state"], "observe")
         self.assertEqual(gate["blocked_reasons"], ["trading_disabled"])
+        self.assertNotIn("simple_lane", gate)
         self.assertEqual(
-            gate["simple_lane"],
-            {
-                "submit_enabled": True,
-                "live_submit_enabled": True,
-                "shared_gate_enforced": True,
-                "blocked_reasons": ["trading_disabled"],
-            },
+            gate["operational_submission_gate"]["blocked_reasons"],
+            ["trading_disabled"],
         )
 
-    def test_simple_lane_shared_gate_applies_emergency_stop_reason(self) -> None:
+    def test_operational_gate_applies_emergency_stop_reason(self) -> None:
         original = {
             "trading_pipeline_mode": settings.trading_pipeline_mode,
             "trading_enabled": settings.trading_enabled,
@@ -406,17 +395,13 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         self.assertFalse(gate["allowed"])
         self.assertEqual(gate["reason"], "operator_pause")
         self.assertEqual(gate["blocked_reasons"], ["operator_pause"])
+        self.assertNotIn("simple_lane", gate)
         self.assertEqual(
-            gate["simple_lane"],
-            {
-                "submit_enabled": True,
-                "live_submit_enabled": True,
-                "shared_gate_enforced": True,
-                "blocked_reasons": ["operator_pause"],
-            },
+            gate["operational_submission_gate"]["blocked_reasons"],
+            ["operator_pause"],
         )
 
-    def test_simple_lane_paper_mode_preserves_shared_runtime_import_plan(self) -> None:
+    def test_paper_mode_preserves_shared_runtime_import_plan(self) -> None:
         original = {
             "trading_pipeline_mode": settings.trading_pipeline_mode,
             "trading_mode": settings.trading_mode,
@@ -471,14 +456,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             gate["runtime_ledger_paper_probation_import_plan"]["target_count"],
             1,
         )
-        self.assertEqual(
-            gate["simple_lane"],
-            {
-                "submit_enabled": True,
-                "shared_gate_enforced": True,
-                "blocked_reasons": [],
-            },
-        )
+        self.assertNotIn("simple_lane", gate)
 
     def test_trading_status_and_health_include_profitability_proof_floor(
         self,

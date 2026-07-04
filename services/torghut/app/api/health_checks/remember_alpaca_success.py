@@ -301,13 +301,13 @@ def budget_exhausted_live_submission_gate_payload(
     empirical_jobs_status: Mapping[str, Any],
     quant_health_status: Mapping[str, Any],
 ) -> dict[str, object]:
-    simple_lane_blockers = [reason]
+    operational_blockers = [reason]
     if not settings.trading_simple_submit_enabled:
-        simple_lane_blockers.append("simple_submit_disabled")
+        operational_blockers.append("submit_disabled")
     return {
         "allowed": False,
         "reason": reason,
-        "blocked_reasons": list(dict.fromkeys(simple_lane_blockers)),
+        "blocked_reasons": list(dict.fromkeys(operational_blockers)),
         "reason_codes": [reason],
         "read_model_unavailable": True,
         "read_model_status": "timeout",
@@ -371,11 +371,6 @@ def budget_exhausted_live_submission_gate_payload(
             "read_model_unavailable": True,
         },
         "pipeline_mode": settings.trading_pipeline_mode,
-        "simple_lane": {
-            "submit_enabled": settings.trading_simple_submit_enabled,
-            "shared_gate_enforced": True,
-            "blocked_reasons": simple_lane_blockers,
-        },
     }
 
 

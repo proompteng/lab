@@ -346,7 +346,7 @@ def core_readiness_live_submission_gate() -> dict[str, object]:
         if settings.trading_kill_switch_enabled:
             blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
-            blocked_reasons.append("simple_submit_disabled")
+            blocked_reasons.append("submit_disabled")
         if not settings.trading_live_submit_enabled:
             blocked_reasons.append("live_submit_disabled")
 
@@ -571,7 +571,7 @@ def minimal_health_surface_timeout_live_submission_gate(
         if settings.trading_kill_switch_enabled:
             blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
-            blocked_reasons.append("simple_submit_disabled")
+            blocked_reasons.append("submit_disabled")
         if not settings.trading_live_submit_enabled:
             blocked_reasons.append("live_submit_disabled")
 

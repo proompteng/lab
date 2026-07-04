@@ -922,24 +922,14 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
             gate["blocked_reasons"],
         )
         self.assertTrue(gate["allowed"])
-        collection_gate = gate["bounded_live_paper_collection_gate"]
-        self.assertFalse(collection_gate["allowed"])
-        self.assertFalse(collection_gate["active"])
-        self.assertEqual(
-            collection_gate["reason"],
-            "retired_operational_submission_gate",
-        )
-        self.assertEqual(collection_gate["authority_scope"], "retired")
-        self.assertFalse(collection_gate["capital_promotion_allowed"])
-        self.assertFalse(collection_gate["final_authority_ok"])
-        self.assertEqual(collection_gate["blocked_reasons"], [])
-        waiting_collection_gate = waiting_gate["bounded_live_paper_collection_gate"]
-        self.assertFalse(waiting_collection_gate["allowed"])
-        self.assertFalse(waiting_collection_gate["active"])
-        self.assertEqual(
-            waiting_collection_gate["reason"],
-            "retired_operational_submission_gate",
-        )
+        self.assertNotIn("bounded_live_paper_collection_gate", gate)
+        operational_gate = gate["operational_submission_gate"]
+        self.assertTrue(operational_gate["allowed"])
+        self.assertEqual(operational_gate["blocked_reasons"], [])
+        self.assertNotIn("bounded_live_paper_collection_gate", waiting_gate)
+        waiting_operational_gate = waiting_gate["operational_submission_gate"]
+        self.assertTrue(waiting_operational_gate["allowed"])
+        self.assertEqual(waiting_operational_gate["blocked_reasons"], [])
         self.assertEqual(gate["runtime_ledger_source_collection_candidate_total"], 1)
         self.assertEqual(
             gate["runtime_ledger_source_collection_profit_target_candidate_total"], 1

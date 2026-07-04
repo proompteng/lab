@@ -48,7 +48,6 @@ class TradingStatusResponseDependencies:
     build_source_serving_repair_receipt_payload: PayloadBuilder
     build_submission_authority_status: PayloadBuilder
     route_claim_symbols: Callable[..., Sequence[object]]
-    simple_lane_reject_reason_totals: PayloadBuilder
 
 
 @dataclass
