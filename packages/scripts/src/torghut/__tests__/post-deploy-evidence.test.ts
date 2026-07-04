@@ -355,22 +355,25 @@ describe('validatePostDeployEvidence', () => {
     ).toThrow('max_notional_per_order must be 100')
   })
 
-  it('rejects healthy readyz when empirical jobs are still stale', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: {
-          ...baseTradingStatus,
-          empirical_jobs: {
-            ready: false,
-            status: 'degraded',
-            blocked_reasons: ['job_stale'],
-          },
+  it('reports stale empirical jobs as diagnostics without blocking live-submit rollout acceptance', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+      tradingStatus: {
+        ...baseTradingStatus,
+        empirical_jobs: {
+          ready: false,
+          status: 'degraded',
+          blocked_reasons: ['job_stale'],
         },
-      }),
-    ).toThrow('empirical jobs must be fresh')
+      },
+    })
+
+    expect(result.liveSubmitContract).toBe('bounded_live_submit_active')
+    expect(result.summaryLines.join('\n')).toContain(
+      'Empirical jobs diagnostic: ready=`false`, status=`degraded`, blocked=`job_stale`',
+    )
   })
 
   it('accepts repair-only zero-notional readyz 503 without treating it as a rollout failure', () => {
