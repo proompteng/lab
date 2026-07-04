@@ -29,8 +29,12 @@ describe('torghut-deploy-automerge workflow', () => {
   test('runs registry digest validation where the private registry is reachable', () => {
     expect(deployAutomergeWorkflow).toContain('runs-on: arc-arm64')
     expect(deployAutomergeWorkflow).not.toContain('runs-on: ubuntu-latest')
-    expect(deployAutomergeWorkflow).toContain('This pull_request_target job does not check out pull request code.')
-    expect(deployAutomergeWorkflow).not.toContain('uses: actions/checkout')
+    expect(deployAutomergeWorkflow).toContain(
+      'This pull_request_target job checks out trusted base code only, never pull request code.',
+    )
+    expect(deployAutomergeWorkflow).toContain('uses: actions/checkout@v4')
+    expect(deployAutomergeWorkflow).toContain('ref: ${{ github.event.pull_request.base.sha }}')
+    expect(deployAutomergeWorkflow).not.toContain('ref: ${{ github.event.pull_request.head.sha }}')
   })
 
   test('allowlists every hyperliquid runtime manifest promoted by torghut-release', () => {
@@ -83,8 +87,11 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_COMMIT'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_TA_COMMIT'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_WS_COMMIT'")
-    expect(deployAutomergeWorkflow).toContain('docker buildx imagetools inspect')
-    expect(deployAutomergeWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
+    expect(deployAutomergeWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(deployAutomergeWorkflow).toContain(
+      'nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64',
+    )
+    expect(deployAutomergeWorkflow).not.toContain('docker buildx')
     expect(deployAutomergeWorkflow).toContain('release manifest pins a multi-arch image digest')
     expect(deployAutomergeWorkflow).not.toContain('gh run list')
     expect(deployAutomergeWorkflow).not.toContain('gh run view')

@@ -7,7 +7,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 import { buildImage } from './build-image'
 
 const manifestPath = resolve(repoRoot, 'argocd/applications/torghut/knative-service.yaml')
@@ -42,9 +42,10 @@ type DeploymentStatus = {
 }
 
 const ensureTools = () => {
-  ensureCli('docker')
   ensureCli('kn')
   ensureCli('kubectl')
+  ensureCli('nix')
+  ensureCli('crane')
   ensureCli('uv')
 }
 
@@ -333,54 +334,42 @@ const updateManifest = (image: string, version: string, commit: string) => {
   console.log(`Updated ${manifestPath} with image ${image}`)
 }
 
-const buildWebsocketImage = async () => {
+const buildWebsocketImage = async (commit: string) => {
   const registry = process.env.TORGHUT_WS_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.TORGHUT_WS_IMAGE_REPOSITORY ?? 'lab/torghut-ws'
   const tag = process.env.TORGHUT_WS_IMAGE_TAG ?? 'latest'
-  const context = resolve(repoRoot, process.env.TORGHUT_WS_IMAGE_CONTEXT ?? 'services/dorvud')
-  const dockerfile = resolve(
-    repoRoot,
-    process.env.TORGHUT_WS_IMAGE_DOCKERFILE ?? 'services/dorvud/websockets/Dockerfile',
-  )
-  const platforms = process.env.TORGHUT_WS_IMAGE_PLATFORMS?.split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/amd64', 'linux/arm64']
-  const codexAuthPath = process.env.TORGHUT_WS_CODEX_AUTH_PATH
 
-  return buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'torghut-ws',
+    imageName: 'torghut-ws',
+    packageAttr: 'torghut-ws-image',
     registry,
     repository,
     tag,
-    context,
-    dockerfile,
-    platforms,
-    codexAuthPath,
+    sourceSha: commit,
+    latestTag: 'latest',
   })
+
+  return { image: `${result.image}:${result.tag}`, digest: result.reference }
 }
 
-const buildTechnicalAnalysisImage = async () => {
+const buildTechnicalAnalysisImage = async (commit: string) => {
   const registry = process.env.TORGHUT_TA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.TORGHUT_TA_IMAGE_REPOSITORY ?? 'lab/torghut-ta'
   const tag = process.env.TORGHUT_TA_IMAGE_TAG ?? 'latest'
-  const context = resolve(repoRoot, process.env.TORGHUT_TA_IMAGE_CONTEXT ?? 'services/dorvud')
-  const dockerfile = resolve(
-    repoRoot,
-    process.env.TORGHUT_TA_IMAGE_DOCKERFILE ?? 'services/dorvud/technical-analysis-flink/Dockerfile',
-  )
-  const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
-    .map((entry) => entry.trim())
-    .filter((entry) => entry.length > 0 && entry.toLowerCase() !== 'none') ?? ['linux/amd64', 'linux/arm64']
-  const codexAuthPath = process.env.TORGHUT_TA_CODEX_AUTH_PATH
 
-  return buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'torghut-ta',
+    imageName: 'torghut-ta',
+    packageAttr: 'torghut-ta-image',
     registry,
     repository,
     tag,
-    context,
-    dockerfile,
-    platforms,
-    codexAuthPath,
+    sourceSha: commit,
+    latestTag: 'latest',
   })
+
+  return { image: `${result.image}:${result.tag}`, digest: result.reference }
 }
 
 const updateWebsocketDeployment = (image: string, version: string, commit: string) => {
@@ -594,18 +583,15 @@ const applyTechnicalAnalysisResources = async () => {
 const main = async () => {
   ensureTools()
 
-  const { image, version, commit } = await buildImage()
-  const digestRef = inspectImageDigest(image)
+  const { digest: digestRef, version, commit } = await buildImage()
 
-  const websocketImage = await buildWebsocketImage()
-  const websocketDigestRef = inspectImageDigest(websocketImage.image)
+  const websocketImage = await buildWebsocketImage(commit)
 
-  const taImage = await buildTechnicalAnalysisImage()
-  const taDigestRef = inspectImageDigest(taImage.image)
+  const taImage = await buildTechnicalAnalysisImage(commit)
 
   updateManifest(digestRef, version, commit)
-  updateWebsocketDeployment(websocketDigestRef, version, commit)
-  updateTechnicalAnalysisDeployment(taDigestRef, version, commit)
+  updateWebsocketDeployment(websocketImage.digest, version, commit)
+  updateTechnicalAnalysisDeployment(taImage.digest, version, commit)
   await runMigrations()
   await applyManifest()
   await applyWebsocketResources()

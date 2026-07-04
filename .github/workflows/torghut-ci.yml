@@ -7,8 +7,9 @@ on:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
+      - 'packages/scripts/src/shared/oci-digest.ts'
       - '.github/workflows/torghut-ci.yml'
       - '.github/workflows/torghut-build-push.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
@@ -28,8 +29,9 @@ on:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
+      - 'packages/scripts/src/shared/oci-digest.ts'
       - '.github/workflows/torghut-ci.yml'
       - '.github/workflows/torghut-build-push.yaml'
       - '.github/workflows/torghut-deploy-automerge.yml'
@@ -129,7 +131,7 @@ jobs:
 
           service=false
           manifests=false
-          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|docker|git)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release|hyperliquid-feed-release|ta-release|ws-release)\.yml$|\.github/workflows/torghut-(build-push|hyperliquid-feed-build-push|ta-build-push|ws-build-push)\.yaml$)'; then
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release|hyperliquid-feed-release|ta-release|ws-release)\.yml$|\.github/workflows/torghut-(build-push|hyperliquid-feed-build-push|ta-build-push|ws-build-push)\.yaml$)'; then
             service=true
           fi
           if matches_any '^argocd/applications/(torghut|torghut-options|torghut-hyperliquid-runtime)/'; then
@@ -183,8 +185,10 @@ jobs:
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
 
       - name: Verify source image digest contract
         shell: bash
@@ -245,7 +249,7 @@ jobs:
 
           assert_multi_arch_image() {
             local image_ref="$1"
-            local image_digest manifest_json platform platform_digest
+            local image_digest
 
             image_digest="${image_ref#*@}"
             if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
@@ -253,19 +257,7 @@ jobs:
               exit 1
             fi
 
-            manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image_ref}")"
-            for platform in linux/amd64 linux/arm64; do
-              platform_digest="$(
-                jq -r --arg platform "${platform}" \
-                  '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                  <<< "${manifest_json}" | head -n 1
-              )"
-              if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-                echo "Release manifest image ${image_ref} is missing required platform ${platform}"
-                docker buildx imagetools inspect "${image_ref}"
-                exit 1
-              fi
-            done
+            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
           }
 
           verify_image_contract() {

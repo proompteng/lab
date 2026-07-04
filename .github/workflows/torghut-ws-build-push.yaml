@@ -4,7 +4,28 @@ permissions:
   contents: read
 
 on:
-  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'services/dorvud/gradle/**'
+      - 'services/dorvud/gradlew'
+      - 'services/dorvud/gradle.properties'
+      - 'services/dorvud/settings.gradle.kts'
+      - 'services/dorvud/build.gradle.kts'
+      - 'services/dorvud/platform/**'
+      - 'services/dorvud/websockets/**'
+      - 'nix/images/dorvud-jvm-service.nix'
+      - 'nix/images/torghut-ws.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
+      - 'flake.lock'
+      - '.github/workflows/torghut-ws-build-push.yaml'
+      - '.github/workflows/torghut-ws-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -16,138 +37,33 @@ on:
       - 'services/dorvud/build.gradle.kts'
       - 'services/dorvud/platform/**'
       - 'services/dorvud/websockets/**'
-      - 'packages/scripts/src/torghut/release-contract.ts'
-      - 'packages/scripts/src/shared/docker.ts'
+      - 'nix/images/dorvud-jvm-service.nix'
+      - 'nix/images/torghut-ws.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
+      - 'flake.lock'
       - '.github/workflows/torghut-ws-build-push.yaml'
+      - '.github/workflows/torghut-ws-release.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/actions/setup-nix-toolchain/**'
+  workflow_dispatch:
+
+concurrency:
+  group: torghut-ws-build-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-platform:
-    if: >-
-      ${{
-        github.event_name == 'workflow_dispatch' ||
-        github.event_name == 'push'
-      }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push torghut-ws image
-        uses: docker/build-push-action@v6
-        with:
-          context: services/dorvud
-          file: services/dorvud/websockets/Dockerfile
-          platforms: ${{ matrix.platform }}
-          push: true
-          tags: |
-            registry.ide-newton.ts.net/lab/torghut-ws:${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
-            registry.ide-newton.ts.net/lab/torghut-ws:latest-${{ matrix.arch }}
-          cache-from: type=registry,ref=registry.ide-newton.ts.net/lab/torghut-ws:latest-${{ matrix.arch }}
-          cache-to: type=inline
-
-  publish-index:
-    needs: build-platform
-    runs-on: arc-arm64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts
-
-      - name: Create multi-arch image index
-        shell: bash
-        run: |
-          set -euo pipefail
-          IMAGE='registry.ide-newton.ts.net/lab/torghut-ws'
-          TAG='${{ steps.meta.outputs.tag }}'
-          docker buildx imagetools create \
-            -t "${IMAGE}:${TAG}" \
-            -t "${IMAGE}:latest" \
-            "${IMAGE}:${TAG}-amd64" \
-            "${IMAGE}:${TAG}-arm64"
-
-      - name: Verify multi-arch image manifest
-        id: digest
-        shell: bash
-        run: |
-          set -euo pipefail
-          IMAGE='registry.ide-newton.ts.net/lab/torghut-ws'
-          TAG='${{ steps.meta.outputs.tag }}'
-          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}:${TAG}")"
-          DIGEST="$(jq -r '.manifest.digest // empty' <<< "${MANIFEST_JSON}")"
-          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-            echo "Failed to resolve digest for ${IMAGE}:${TAG}"
-            exit 1
-          fi
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-
-          for platform in linux/amd64 linux/arm64; do
-            platform_digest="$(
-              jq -r --arg platform "${platform}" \
-                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                <<< "${MANIFEST_JSON}" | head -n 1
-            )"
-            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Image ${IMAGE}:${TAG} is missing required platform ${platform}"
-              docker buildx imagetools inspect "${IMAGE}:${TAG}"
-              exit 1
-            fi
-            echo "platform_digest_${platform#linux/}=${platform_digest}" >> "$GITHUB_OUTPUT"
-          done
-
-      - name: Write release contract artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun run packages/scripts/src/torghut/release-contract.ts write \
-            --path torghut-ws-release-contract.json \
-            --source-sha "${GITHUB_SHA}" \
-            --tag "${{ steps.meta.outputs.tag }}" \
-            --digest "${{ steps.digest.outputs.digest }}" \
-            --image 'registry.ide-newton.ts.net/lab/torghut-ws' \
-            --platforms 'linux/amd64,linux/arm64' \
-            --platform-digest 'linux/amd64=${{ steps.digest.outputs.platform_digest_amd64 }}' \
-            --platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'
-
-      - name: Upload release contract artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: torghut-ws-release-contract
-          path: torghut-ws-release-contract.json
-          if-no-files-found: error
-          retention-days: 3
+  nix-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: torghut-ws
+      package_attr: torghut-ws-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'torghut-ws-release-contract' || '' }}
+    secrets: inherit

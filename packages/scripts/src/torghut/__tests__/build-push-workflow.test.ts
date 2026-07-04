@@ -55,57 +55,46 @@ describe('torghut build-push workflow', () => {
   })
 
   it('does not use actions/cache on the ARC-backed build runner', () => {
-    const buildJob = workflow.indexOf('build-platform:')
-    const cacheStep = workflow.indexOf('uses: actions/cache@v4', buildJob)
-
-    expect(buildJob).toBeGreaterThan(-1)
-    expect(cacheStep).toBe(-1)
+    expect(workflow).not.toContain('uses: actions/cache@v4')
   })
 
-  it('waits for the private registry before building the release image', () => {
-    const buildJob = workflow.indexOf('build-platform:')
-    const registryWaitStep = workflow.indexOf('name: Wait for private registry', buildJob)
-    const buildStep = workflow.indexOf('name: Build and push torghut image', buildJob)
-
-    expect(buildJob).toBeGreaterThan(-1)
-    expect(workflow).toContain('timeout-minutes: 180')
-    expect(registryWaitStep).toBeGreaterThan(buildJob)
-    expect(buildStep).toBeGreaterThan(registryWaitStep)
-    expect(workflow).toContain('REGISTRY_URL: https://registry.ide-newton.ts.net/v2/')
-    expect(workflow).toContain('REGISTRY_WAIT_TIMEOUT_SECONDS: 600')
-    expect(workflow).toContain('REGISTRY_WAIT_INTERVAL_SECONDS: 15')
+  it('routes the core Torghut image through the shared Nix OCI workflow', () => {
+    expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(workflow).toContain('image_name: torghut')
+    expect(workflow).toContain('package_attr: torghut-image')
+    expect(workflow).toContain('tag: sha-${{ github.sha }}')
+    expect(workflow).toContain('torghut-release-contract')
+    expect(workflow).not.toContain('docker/setup-buildx-action')
+    expect(workflow).not.toContain('docker/build-push-action')
+    expect(workflow).not.toContain('docker buildx')
   })
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {
-    expect(workflow).toContain('runner: arc-amd64')
-    expect(workflow).toContain('runner: arc-arm64')
-    expect(workflow).toContain('runs-on: ${{ matrix.runner }}')
-    expect(workflow).toContain('TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}-${{ matrix.arch }}')
-    expect(workflow).toContain('TORGHUT_IMAGE_PLATFORMS: ${{ matrix.platform }}')
-    expect(workflow).not.toContain('docker/setup-qemu-action')
-    expect(workflow).toContain('name: Create multi-arch image index')
-    expect(workflow).toContain('"${IMAGE}:${TAG}-amd64"')
-    expect(workflow).toContain('"${IMAGE}:${TAG}-arm64"')
-    expect(workflow).toContain('name: Verify multi-arch image manifest')
-    expect(workflow).toContain('for platform in linux/amd64 linux/arm64; do')
-    expect(workflow).toContain("--platforms 'linux/amd64,linux/arm64'")
-    expect(workflow).toContain("--platform-digest 'linux/amd64=${{ steps.digest.outputs.platform_digest_amd64 }}'")
-    expect(workflow).toContain("--platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'")
+    expect(workflow).toContain("latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
+    expect(workflow).toContain(
+      "release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'torghut-release-contract' || '' }}",
+    )
   })
 
-  it('publishes and contracts TA and WS images as amd64 and arm64 from direct pushes', () => {
+  it('publishes and contracts TA and WS images through the shared Nix OCI workflow', () => {
     const serviceWorkflows = [
       {
         workflow: taWorkflow,
         servicePath: 'services/dorvud/technical-analysis-flink/**',
+        imageName: 'torghut-ta',
+        packageAttr: 'torghut-ta-image',
+        artifact: 'torghut-ta-release-contract',
       },
       {
         workflow: wsWorkflow,
         servicePath: 'services/dorvud/websockets/**',
+        imageName: 'torghut-ws',
+        packageAttr: 'torghut-ws-image',
+        artifact: 'torghut-ws-release-contract',
       },
     ]
 
-    for (const { workflow: serviceWorkflow, servicePath } of serviceWorkflows) {
+    for (const { workflow: serviceWorkflow, servicePath, imageName, packageAttr, artifact } of serviceWorkflows) {
       expect(serviceWorkflow).toContain('push:')
       expect(serviceWorkflow).toContain(`- '${servicePath}'`)
       expect(serviceWorkflow).toContain("- 'services/dorvud/platform/**'")
@@ -113,25 +102,13 @@ describe('torghut build-push workflow', () => {
       expect(serviceWorkflow).not.toContain("- 'services/dorvud/**'")
       expect(serviceWorkflow).not.toContain('workflow_run:')
       expect(serviceWorkflow).toContain("github.event_name == 'push'")
-      expect(serviceWorkflow).toContain('runner: arc-amd64')
-      expect(serviceWorkflow).toContain('runner: arc-arm64')
-      expect(serviceWorkflow).toContain('runs-on: ${{ matrix.runner }}')
+      expect(serviceWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+      expect(serviceWorkflow).toContain(`image_name: ${imageName}`)
+      expect(serviceWorkflow).toContain(`package_attr: ${packageAttr}`)
+      expect(serviceWorkflow).toContain(artifact)
       expect(serviceWorkflow).not.toContain('docker/setup-qemu-action')
-      expect(serviceWorkflow).toContain('platforms: ${{ matrix.platform }}')
-      expect(serviceWorkflow).toContain(':${{ steps.meta.outputs.tag }}-${{ matrix.arch }}')
-      expect(serviceWorkflow).toContain(':latest-${{ matrix.arch }}')
-      expect(serviceWorkflow).toContain('name: Create multi-arch image index')
-      expect(serviceWorkflow).toContain('"${IMAGE}:${TAG}-amd64"')
-      expect(serviceWorkflow).toContain('"${IMAGE}:${TAG}-arm64"')
-      expect(serviceWorkflow).toContain('name: Verify multi-arch image manifest')
-      expect(serviceWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
-      expect(serviceWorkflow).toContain("--platforms 'linux/amd64,linux/arm64'")
-      expect(serviceWorkflow).toContain(
-        "--platform-digest 'linux/amd64=${{ steps.digest.outputs.platform_digest_amd64 }}'",
-      )
-      expect(serviceWorkflow).toContain(
-        "--platform-digest 'linux/arm64=${{ steps.digest.outputs.platform_digest_arm64 }}'",
-      )
+      expect(serviceWorkflow).not.toContain('docker/setup-buildx-action')
+      expect(serviceWorkflow).not.toContain('docker buildx')
     }
   })
 
@@ -140,19 +117,16 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/hyperliquid-feed/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/platform/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
-    expect(hyperliquidFeedWorkflow).toContain("- 'packages/scripts/src/torghut/release-contract.ts'")
+    expect(hyperliquidFeedWorkflow).toContain("- 'nix/oci-release-contract.sh'")
     expect(hyperliquidFeedWorkflow).not.toContain("- 'services/dorvud/**'")
     expect(hyperliquidFeedWorkflow).not.toContain('workflow_run:')
     expect(hyperliquidFeedWorkflow).toContain("github.event_name == 'push'")
-    expect(hyperliquidFeedWorkflow).toContain('runner: arc-amd64')
-    expect(hyperliquidFeedWorkflow).toContain('runner: arc-arm64')
-    expect(hyperliquidFeedWorkflow).toContain('platforms: ${{ matrix.platform }}')
-    expect(hyperliquidFeedWorkflow).toContain('name: Verify multi-arch image manifest')
-    expect(hyperliquidFeedWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
-    expect(hyperliquidFeedWorkflow).toContain('name: Write release contract artifact')
-    expect(hyperliquidFeedWorkflow).toContain('--path torghut-hyperliquid-feed-release-contract.json')
-    expect(hyperliquidFeedWorkflow).toContain("--image 'registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed'")
-    expect(hyperliquidFeedWorkflow).toContain('name: torghut-hyperliquid-feed-release-contract')
+    expect(hyperliquidFeedWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(hyperliquidFeedWorkflow).toContain('image_name: torghut-hyperliquid-feed')
+    expect(hyperliquidFeedWorkflow).toContain('package_attr: torghut-hyperliquid-feed-image')
+    expect(hyperliquidFeedWorkflow).toContain('torghut-hyperliquid-feed-release-contract')
+    expect(hyperliquidFeedWorkflow).not.toContain('docker/setup-buildx-action')
+    expect(hyperliquidFeedWorkflow).not.toContain('docker buildx')
   })
 
   it('promotes Hyperliquid feed images through a digest-pinned release PR', () => {
@@ -238,8 +212,9 @@ describe('torghut build-push workflow', () => {
     expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net/lab/torghut')
     expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net/lab/torghut-ta')
     expect(releaseManifestJobBody).toContain('registry.ide-newton.ts.net/lab/torghut-ws')
-    expect(releaseManifestJobBody).toContain('docker buildx imagetools inspect')
-    expect(releaseManifestJobBody).toContain('for platform in linux/amd64 linux/arm64; do')
+    expect(releaseManifestJobBody).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(releaseManifestJobBody).toContain('nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64')
+    expect(releaseManifestJobBody).not.toContain('docker buildx')
     expect(releaseManifestJobBody).toContain('release manifest pins a multi-arch image digest')
     expect(releaseManifestJobBody).not.toContain('gh run list')
     expect(releaseManifestJobBody).not.toContain('gh run view')
@@ -322,7 +297,7 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/torghut/release-contract.ts')
     expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')
     expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/cli.ts')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/docker.ts')
+    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/oci-digest.ts')
     expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/git.ts')
     expect(hyperliquidFeedReleaseWorkflow).toContain('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
     expect(hyperliquidFeedReleaseWorkflow).toContain('.github/workflows/torghut-hyperliquid-feed-release.yml')
