@@ -708,8 +708,9 @@ class SimplePipelineSourceCollectionTargetPlanMixin(SourceCollectionRuntimeMixin
                 or "paper_route_probe_next_session_only"
             ),
             "bounded_evidence_collection_max_notional": str(context.target_cap),
+            "source_collection_diagnostics": ["runtime_window_import_required"],
             **source_collection_authority(
-                blockers=["runtime_ledger_source_collection_pending"],
+                blockers=[],
                 bounded_live_paper_collection_authorized=(
                     bounded_collection_authorized
                 ),

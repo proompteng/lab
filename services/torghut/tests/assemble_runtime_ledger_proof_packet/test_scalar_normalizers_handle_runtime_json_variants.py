@@ -613,7 +613,7 @@ class TestScalarNormalizersHandleRuntimeJsonVariants(_TestRuntimeLedgerProofPack
         evidence["runtime_window_import_plan"] = import_plan
 
         result = packet.build_runtime_ledger_proof_packet(
-            _status(blockers=["runtime_ledger_source_collection_pending"]),
+            _status(blockers=["runtime_window_import_required"]),
             proof_mode="authority",
             paper_route_evidence=evidence,
             runtime_window_import=_runtime_import(),
@@ -625,7 +625,7 @@ class TestScalarNormalizersHandleRuntimeJsonVariants(_TestRuntimeLedgerProofPack
         )
 
         self.assertFalse(result["ok"])
-        self.assertIn("runtime_ledger_source_collection_pending", result["blockers"])
+        self.assertIn("runtime_window_import_required", result["blockers"])
         for blocker in (
             "runtime_window_import_health_gate_missing",
             "dependency_quorum_not_allow",

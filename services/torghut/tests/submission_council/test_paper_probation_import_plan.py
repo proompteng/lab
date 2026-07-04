@@ -184,9 +184,9 @@ class TestSubmissionCouncilPaperProbationImportPlan(SubmissionCouncilTestCase):
                     "bucket_ended_at": "2026-05-29T20:00:00+00:00",
                     "source_collection_candidate": True,
                     "source_collection_reason_codes": [
-                        "runtime_ledger_source_collection_pending"
+                        "runtime_window_import_required"
                     ],
-                    "reason_codes": ["runtime_ledger_source_collection_pending"],
+                    "reason_codes": ["runtime_window_import_required"],
                 }
             ]
         )

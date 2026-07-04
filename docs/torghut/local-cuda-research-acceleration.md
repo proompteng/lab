@@ -81,6 +81,5 @@ evidence stack proves them:
 - post-cost PnL against the active profit target
 - existing firewall and promotion blockers cleared by their owning services
 
-The CUDA ranker must not clear `simple_submit_disabled`,
-`hypothesis_not_promotion_eligible`, or
-`runtime_ledger_source_collection_pending`.
+The CUDA ranker must not enable submit paths. Runtime import state remains
+repair diagnostic metadata.

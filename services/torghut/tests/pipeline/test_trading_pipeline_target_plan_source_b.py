@@ -87,8 +87,8 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                 "allowed": False,
                 "blocked_reasons": [
                     "hypothesis_not_promotion_eligible",
-                    "runtime_ledger_source_collection_pending",
-                    "runtime_ledger_profit_target_source_collection_pending",
+                    "runtime_window_import_required",
+                    "runtime_profit_target_import_required",
                 ],
             }
 
@@ -300,15 +300,15 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                 "allowed": False,
                 "blocked_reasons": [
                     "hypothesis_not_promotion_eligible",
-                    "runtime_ledger_source_collection_pending",
-                    "runtime_ledger_profit_target_source_collection_pending",
+                    "runtime_window_import_required",
+                    "runtime_profit_target_import_required",
                 ],
             }
             proof_floor = {
                 "route_state": "repair_only",
                 "capital_state": "zero_notional",
                 "max_notional": "0",
-                "blocking_reasons": ["runtime_ledger_source_collection_pending"],
+                "blocking_reasons": ["runtime_window_import_required"],
             }
 
             with self.session_local() as session:

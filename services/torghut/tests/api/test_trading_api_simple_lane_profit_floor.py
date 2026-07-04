@@ -115,11 +115,11 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                 payload["live_submission_gate"]["blocked_reasons"],
             )
             self.assertNotIn(
-                "runtime_ledger_source_collection_pending",
+                "runtime_window_import_required",
                 payload["live_submission_gate"]["blocked_reasons"],
             )
             self.assertNotIn(
-                "runtime_ledger_profit_target_source_collection_pending",
+                "runtime_profit_target_import_required",
                 payload["live_submission_gate"]["blocked_reasons"],
             )
             self.assertTrue(

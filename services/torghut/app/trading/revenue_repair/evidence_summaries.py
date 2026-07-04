@@ -299,8 +299,9 @@ def _summarize_runtime_window_import_repair(
             }
             for target in skipped_targets[:5]
         ],
+        "diagnostic_reasons": ["runtime_window_import_required"],
         **capital_blocked_authority(
-            blockers=["runtime_ledger_source_collection_pending"],
+            blockers=[],
         ).as_target_fields(),
     }
 

@@ -270,7 +270,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
 
         self.assertTrue(result["allowed"])
         self.assertNotIn(
-            "runtime_ledger_source_collection_pending",
+            "runtime_window_import_required",
             result["blocked_reasons"],
         )
         import_plan = result["runtime_ledger_paper_probation_import_plan"]

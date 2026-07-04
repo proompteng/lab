@@ -93,15 +93,15 @@ def test_submission_authority_accepts_compatibility_gate_payload() -> None:
     }
 
 
-def test_submission_authority_retired_source_collection_blockers_do_not_block() -> None:
+def test_submission_authority_diagnostic_reasons_do_not_block() -> None:
     status = build_submission_authority_status(
         {
             "allowed": False,
             "reason": "hypothesis_not_promotion_eligible",
             "blocked_reasons": [
                 "hypothesis_not_promotion_eligible",
-                "runtime_ledger_profit_target_source_collection_pending",
-                "runtime_ledger_source_collection_pending",
+                "runtime_profit_target_import_required",
+                "runtime_window_import_required",
             ],
             "execution_route": {
                 "route": "testnet",
