@@ -41,6 +41,22 @@ count_timed_phases() {
   awk 'NF > 0 {count += 1} END {print count + 0}' "${timings_file}"
 }
 
+count_image_cache_status() {
+  local expected_status="$1"
+  local count file
+  count=0
+  if ! compgen -G "${log_dir}/image-cache-push-status-*.txt" >/dev/null; then
+    echo 0
+    return
+  fi
+  for file in "${log_dir}"/image-cache-push-status-*.txt; do
+    if grep -q -E "^${expected_status}[[:space:]]" "${file}"; then
+      count=$((count + 1))
+    fi
+  done
+  echo "${count}"
+}
+
 count_existing_image_archives() {
   local image_tar archive_count
   archive_count=0
@@ -80,6 +96,8 @@ timed_seconds="$(sum_timed_seconds)"
 cache_substitutions=$((attic_substitutions + nixos_substitutions))
 image_archives="$(count_existing_image_archives)"
 image_archive_bytes="$(sum_existing_image_archive_bytes)"
+image_cache_warm_successes="$(count_image_cache_status succeeded)"
+image_cache_warm_failures="$(count_image_cache_status failed)"
 
 {
   echo "## Nix OCI Cache Summary"
@@ -100,6 +118,8 @@ image_archive_bytes="$(sum_existing_image_archive_bytes)"
   echo "| Cache substitutions | ${cache_substitutions} |"
   echo "| Existing image archives | ${image_archives} |"
   echo "| Existing image archive bytes | ${image_archive_bytes} |"
+  echo "| Image archive Attic warm successes | ${image_cache_warm_successes} |"
+  echo "| Image archive Attic warm failures | ${image_cache_warm_failures} |"
   echo
 
   if [[ -f "${timings_file}" ]]; then

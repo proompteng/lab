@@ -253,9 +253,16 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('nix run .#create-oci-index --')
     expect(nixOciWorkflow).toContain('nix run .#assert-oci-platforms --')
     expect(nixOciWorkflow).toContain('printf \'%s\\n\' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
+    expect(nixOciWorkflow).toContain('Push build platform helper closures to Attic')
+    expect(nixOciWorkflow).toContain('nix run .#cache-push -- "${helper_paths[@]}"')
+    expect(nixOciWorkflow).toContain('Warm Nix image archive closure in Attic')
     expect(nixOciWorkflow).toContain('mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
-    expect(nixOciWorkflow).toContain('cache_paths=("${helper_paths[@]}" "${image_paths[@]}")')
-    expect(nixOciWorkflow).toContain('nix run .#cache-push -- "${cache_paths[@]}"')
+    expect(nixOciWorkflow).toContain('nix run .#cache-push -- "${image_paths[@]}"')
+    expect(nixOciWorkflow).toContain(
+      'Attic image closure push failed for ${ARCH}; registry image push remains authoritative.',
+    )
+    expect(nixOciWorkflow).not.toContain('cache_paths=("${helper_paths[@]}" "${image_paths[@]}")')
+    expect(nixOciWorkflow).not.toContain('nix run .#cache-push -- "${cache_paths[@]}"')
     expect(nixOciWorkflow).toContain('nix run .#write-oci-release-contract --')
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(nixOciWorkflow).not.toContain('extra-substituters = http://attic.attic.svc.cluster.local/lab')
@@ -293,6 +300,8 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Total timed seconds')
     expect(ciNixOciSummaryScript).toContain('Cache substitutions')
     expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
+    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm successes')
+    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm failures')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
   })
 
