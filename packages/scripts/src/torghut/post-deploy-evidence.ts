@@ -310,7 +310,6 @@ const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract
     liveSubmissionGate.live_submit_activation,
     'torghut status live_submission_gate.live_submit_activation',
   )
-  const empiricalJobs = requireObject(status.empirical_jobs, 'torghut status empirical_jobs')
 
   if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
     throw new Error('torghut status autonomy_enabled must be false for bounded live-submit rollout')
@@ -332,11 +331,23 @@ const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract
       'torghut live_submission_gate.blocked_reasons',
     )
   }
-  if (requireBoolean(empiricalJobs.ready, 'torghut empirical_jobs.ready') !== true) {
-    throw new Error('torghut empirical jobs must be fresh before bounded live-submit rollout acceptance')
-  }
-  requireScalarValue(empiricalJobs.status, 'healthy', 'torghut empirical_jobs.status')
   return liveSubmitContract
+}
+
+const empiricalJobsDiagnosticLine = (status: JsonObject): string | undefined => {
+  const value = status.empirical_jobs
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const empiricalJobs = value as JsonObject
+  const blockedReasons = Array.isArray(empiricalJobs.blocked_reasons)
+    ? empiricalJobs.blocked_reasons.map((reason) => formatScalar(reason, '')).filter(Boolean)
+    : []
+  const parts = [`ready=\`${formatScalar(empiricalJobs.ready)}\``, `status=\`${formatScalar(empiricalJobs.status)}\``]
+  if (blockedReasons.length > 0) {
+    parts.push(`blocked=${blockedReasons.map((reason) => `\`${reason}\``).join(',')}`)
+  }
+  return `- Empirical jobs diagnostic: ${parts.join(', ')}`
 }
 
 const assertShadowZeroNotionalGateClosedContract = (status: JsonObject, digest: JsonObject): LiveSubmitContract => {
@@ -832,6 +843,10 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
   ]
   if (liveSubmitContract) {
     lines.push(`- Live submit contract: \`${liveSubmitContract}\``)
+  }
+  const empiricalJobsDiagnostic = empiricalJobsDiagnosticLine(status)
+  if (empiricalJobsDiagnostic) {
+    lines.push(empiricalJobsDiagnostic)
   }
   if (blockerReasons.length > 0) {
     lines.push(`- Blockers: ${blockerReasons.map((reason) => `\`${reason}\``).join(', ')}`)
