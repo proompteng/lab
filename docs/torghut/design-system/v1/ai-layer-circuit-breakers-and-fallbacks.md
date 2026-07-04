@@ -10,15 +10,27 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented/prototyped: LLM review, DSPy scripts, discovery stress modules, and Jangar OpenAI-compatible routes exist; many ML/LOB designs remain research/prototype.
-- Matched implementation area: LLM, DSPy, AI review, and model governance.
+- Implementation status: **Partially implemented and currently inactive in deployment.** The circuit-breaker class, guardrail evaluator, and deterministic DSPy fallback exist, but the current Knative manifest sets `LLM_ENABLED=false` and `LLM_DSPY_RUNTIME_MODE=disabled`.
 - Current source evidence:
-  - `services/torghut/app/trading/llm`
-  - `services/torghut/scripts/run_dspy_workflow.py`
-  - `services/torghut/scripts/compile_dspy_program.py`
-  - `services/jangar/src/routes/openai/v1/chat/completions.ts`
-  - `services/torghut/app/trading/discovery/order_flow_features.py`
-- Design drift note: Distinguish production review gates from research/prototype model ideas.
+  - `services/torghut/app/trading/llm/circuit.py::LLMCircuitBreaker` tracks recent error timestamps, opens the circuit for a cooldown window, clears open state after cooldown, and exposes `snapshot()` with open/cooldown/error-count fields.
+  - `services/torghut/app/trading/llm/review_engine.py::_deterministic_fallback_response` returns a schema-valid veto response with deterministic required checks when DSPy runtime execution fails.
+  - `services/torghut/app/trading/llm/guardrails.py::evaluate_llm_guardrails` blocks or shadows requests for token-budget, prompt allowlist, rollout-stage, missing prompt template, missing governance evidence, missing adjustment approval, and invalid committee-role conditions.
+  - `services/torghut/app/config/llm_fields.py` owns `LLM_CIRCUIT_*`, rollout-stage, DSPy runtime, model-inventory, and governance-evidence settings.
+  - `argocd/applications/torghut/llm-guardrails-exporter-configmap.yaml` exports circuit, policy, governance, token-budget, and error-ratio metrics.
+- What is implemented from the design:
+  - error-window circuit state;
+  - cooldown/open snapshot reporting;
+  - deterministic fallback response on DSPy runtime failure;
+  - rollout-stage and governance-evidence guardrails;
+  - guardrail metrics exporter.
+- What changed from the design:
+  - runtime is DSPy-artifact gated rather than a direct generic provider call;
+  - active deployment currently disables LLM/DSPy execution;
+  - current authority is `evaluate_llm_guardrails` plus DSPy runtime readiness, not this document's older fail-mode prose.
+- Remaining gaps / operator caveats:
+  - circuit state is in-process and not durable across pod restarts;
+  - metrics are readback, not proof that model execution is active;
+  - activation requires explicit model inventory, artifact hash, rollout stage, and governance evidence.
 
 
 ## Purpose
@@ -42,7 +54,11 @@ Define resilience mechanisms that prevent AI provider issues from destabilizing 
 ## Current implementation (pointers)
 
 - Circuit breaker: `services/torghut/app/trading/llm/circuit.py`
-- Settings: `services/torghut/app/config.py` (`LLM_CIRCUIT_*`, `LLM_FAIL_MODE`)
+- Runtime fallback: `services/torghut/app/trading/llm/review_engine.py`
+- Guardrail evaluator: `services/torghut/app/trading/llm/guardrails.py`
+- Settings: `services/torghut/app/config/llm_fields.py`, `services/torghut/app/config/settings.py`
+- Deployment state: `argocd/applications/torghut/knative-service.yaml`
+- Metrics exporter: `argocd/applications/torghut/llm-guardrails-exporter-configmap.yaml`
 
 ## Circuit breaker model
 
@@ -74,7 +90,7 @@ stateDiagram-v2
   Stage-specific rollout semantics are enforced for this check (for example `stage2` always evaluates effective
   fail mode as `pass_through`, so live `stage2` requires explicit approval even when `LLM_FAIL_MODE=veto`).
 - **Paper mode (`TRADING_MODE=paper`):** Fallback behavior is controlled by `LLM_FAIL_MODE`:
-  - `LLM_FAIL_MODE=veto` (current default in `services/torghut/app/config.py`) fails-closed.
+  - `LLM_FAIL_MODE=veto` was the historical fail-closed default; current LLM settings live in `services/torghut/app/config/llm_fields.py` and runtime is disabled in the manifest.
   - `LLM_FAIL_MODE=pass_through` allows deterministic pass-through on AI errors.
 
 Note: Live mode is itself gated by `TRADING_MODE=live`; this document assumes that is rare and carefully reviewed.

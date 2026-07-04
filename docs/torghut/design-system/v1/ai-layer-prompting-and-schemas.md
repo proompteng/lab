@@ -9,16 +9,27 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented/prototyped: LLM review, DSPy scripts, discovery stress modules, and Jangar OpenAI-compatible routes exist; many ML/LOB designs remain research/prototype.
-- Matched implementation area: LLM, DSPy, AI review, and model governance.
+- Implementation status: **Implemented for strict request/response schemas and sanitized prompting inputs; runtime prompting is DSPy-artifact based and currently disabled in deployment.** The old `system_v1.txt` template exists, but current review execution uses DSPy adapters/runtime metadata rather than a simple static prompt call.
+- Matched implementation area: LLM prompting and schemas.
 - Current source evidence:
-  - `services/torghut/app/trading/llm`
-  - `services/torghut/scripts/run_dspy_workflow.py`
-  - `services/torghut/scripts/compile_dspy_program.py`
-  - `services/jangar/src/routes/openai/v1/chat/completions.ts`
-  - `services/torghut/app/trading/discovery/order_flow_features.py`
-- Design drift note: Distinguish production review gates from research/prototype model ideas.
-
+  - `services/torghut/app/trading/llm/prompt_templates/system_v1.txt`
+  - `services/torghut/app/trading/llm/schema.py`
+  - `services/torghut/app/trading/llm/review_engine.py`
+  - `services/torghut/app/trading/llm/dspy_programs/adapters.py`
+  - `services/torghut/app/trading/llm/dspy_programs/runtime.py`
+- What is implemented from the design:
+  - versioned prompt template file;
+  - strict typed request schema;
+  - typed response schema with rationale/adjustment/escalation validators;
+  - sanitized input allowlist for account, positions, decision params, price snapshots, imbalance, sizing, and HMM regime context;
+  - no chain-of-thought requirement in source schemas.
+- What changed from the design:
+  - current runtime is DSPy artifact/pipeline based, so prompt text is only part of the guardrail/runtime surface;
+  - response schema now includes calibrated probabilities, uncertainty, calibration metadata, committee trace, and required deterministic checks;
+  - response parsing ignores unknown gateway metadata while request schemas remain strict.
+- Remaining gaps / operator caveats:
+  - prompt-template edits alone do not activate model behavior;
+  - model quality still depends on evaluation artifacts and guardrail thresholds.
 
 ## Purpose
 
@@ -40,7 +51,7 @@ auditable.
 - Prompt template: `services/torghut/app/trading/llm/prompt_templates/system_v1.txt`
 - Schema definitions: `services/torghut/app/trading/llm/schema.py`
 - Review engine: `services/torghut/app/trading/llm/review_engine.py`
-- Settings: `services/torghut/app/config.py` (`LLM_PROMPT_VERSION`)
+- Settings: `services/torghut/app/config/llm_fields.py` (`LLM_PROMPT_VERSION`)
 
 ## Prompting architecture
 
