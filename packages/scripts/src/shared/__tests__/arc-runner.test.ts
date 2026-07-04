@@ -62,8 +62,8 @@ describe('ARC Nix runner toolchain', () => {
   it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
     for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
       const block = runnerScaleSetBlock(scaleSet)
-      expect(block).toContain('ephemeral-storage: "8Gi"')
-      expect(block).toContain('ephemeral-storage: "12Gi"')
+      expect(block).toContain('ephemeral-storage: "4Gi"')
+      expect(block).toContain('ephemeral-storage: "6Gi"')
     }
 
     expect(arcApplication).toContain('storageClassName: "rook-ceph-block"')
