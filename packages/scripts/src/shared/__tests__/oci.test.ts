@@ -307,6 +307,9 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('Record Nix setup timing')
     expect(nixOciWorkflow).toContain('"nix-setup-${ARCH}"')
     expect(nixOciWorkflow).toContain('"nix-setup-publish-index"')
+    expect(nixOciWorkflow).toContain("require-preinstalled: 'true'")
+    expect(nixOciWorkflow).toContain("install-ci-toolchain: 'false'")
+    expect(nixOciWorkflow).not.toContain("install-ci-toolchain: 'true'")
     expect(nixOciWorkflow).toContain('nix/ci-run-timed.sh')
     expect(nixOciWorkflow).toContain('nix/ci-nix-oci-summary.sh')
     expect(nixOciWorkflow).toContain(
