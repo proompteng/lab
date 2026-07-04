@@ -73,7 +73,7 @@ spec:
             - name: FROUSSARD_VERSION
               value: v0.571.1-491-ga931fba9e
             - name: FROUSSARD_COMMIT
-              value: 3061f810b8e912bdc8fccffc5659408f42afeb2b
+              value: 3846851d28670d36fd4f9cf5ead22f8aad012623
             - name: LGTM_TEMPO_TRACES_ENDPOINT
               value: http://observability-tempo-gateway.observability.svc.cluster.local:4317
             - name: LGTM_MIMIR_METRICS_ENDPOINT
