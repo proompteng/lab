@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-feed-clickhouse-catchup-window-20260620a
+        proompteng.ai/config-revision: hyperliquid-feed-top12-readiness-20260704a
       labels:
         app: torghut-hyperliquid-feed
     spec:
@@ -58,6 +58,11 @@ spec:
                   key: torghut_password
             - name: JAVA_TOOL_OPTIONS
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
+            # Own these keys directly to clear old server-side-applied runtime overrides.
+            - name: HYPERLIQUID_PINNED_PERP_COINS
+              value: ""
+            - name: CLICKHOUSE_REQUEST_TIMEOUT_MS
+              value: "30000"
           ports:
             - containerPort: 8080
               name: http

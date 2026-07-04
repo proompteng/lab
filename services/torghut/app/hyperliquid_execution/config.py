@@ -16,11 +16,18 @@ _RESTORE_ORDER_POLICY = "marketable_ioc"
 _MAKER_ORDER_POLICY = "maker_ttl"
 _SUPPORTED_ORDER_POLICIES = {_RESTORE_ORDER_POLICY, _MAKER_ORDER_POLICY}
 _DEFAULT_TRADE_COINS = (
-    "BNB",
-    "ZRO",
-    "PAXG",
-    "AERO",
-    "XMR",
+    "BTC",
+    "ETH",
+    "HYPE",
+    "SOL",
+    "xyz:SKHX",
+    "xyz:MU",
+    "xyz:XYZ100",
+    "xyz:CL",
+    "xyz:SNDK",
+    "xyz:MSTR",
+    "xyz:SILVER",
+    "xyz:GOLD",
 )
 
 
@@ -45,6 +52,8 @@ class HyperliquidExecutionConfig:
     clickhouse_username: str
     clickhouse_password: str | None
     clickhouse_timeout_seconds: int
+    feed_readiness_url: str | None
+    feed_readiness_timeout_seconds: int
     trade_coins: tuple[str, ...]
     excluded_coins: tuple[str, ...]
     max_markets_per_cycle: int
@@ -122,6 +131,10 @@ class HyperliquidExecutionConfig:
             clickhouse_password=_optional_text(source, "CLICKHOUSE_PASSWORD")
             or _optional_text(source, "CLICKHOUSE_PASSWORD", prefixed=False),
             clickhouse_timeout_seconds=_int(source, "CLICKHOUSE_TIMEOUT_SECONDS", 10),
+            feed_readiness_url=_optional_text(source, "FEED_READINESS_URL"),
+            feed_readiness_timeout_seconds=_int(
+                source, "FEED_READINESS_TIMEOUT_SECONDS", 3
+            ),
             trade_coins=tuple(_csv(source, "TRADE_COINS", _DEFAULT_TRADE_COINS)),
             excluded_coins=tuple(_csv(source, "EXCLUDED_COINS", ("SPX",))),
             max_markets_per_cycle=_int(source, "MAX_MARKETS_PER_CYCLE", 20),

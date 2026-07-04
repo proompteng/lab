@@ -176,6 +176,8 @@ def _config_payload() -> dict[str, object]:
         "min_edge_bps": str(config.min_edge_bps),
         "cost_buffer_bps": str(config.cost_buffer_bps),
         "signal_staleness_seconds": config.signal_staleness_seconds,
+        "feed_readiness_url_configured": config.feed_readiness_url is not None,
+        "feed_readiness_timeout_seconds": config.feed_readiness_timeout_seconds,
         "order_policy": config.order_policy,
         "effective_order_tif": config.effective_order_tif,
         "maker_tif": config.maker_tif,

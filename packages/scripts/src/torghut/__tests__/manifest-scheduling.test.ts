@@ -227,7 +227,7 @@ describe('Torghut manifest scheduling', () => {
     )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-clickhouse-catchup-window-20260620a')
+    ).toBe('hyperliquid-feed-top12-readiness-20260704a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {

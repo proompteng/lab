@@ -18,11 +18,18 @@ def test_config_rejects_old_runtime_prefix() -> None:
 
 def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     assert HyperliquidExecutionConfig.from_env({}).trade_coins == (
-        "BNB",
-        "ZRO",
-        "PAXG",
-        "AERO",
-        "XMR",
+        "BTC",
+        "ETH",
+        "HYPE",
+        "SOL",
+        "xyz:SKHX",
+        "xyz:MU",
+        "xyz:XYZ100",
+        "xyz:CL",
+        "xyz:SNDK",
+        "xyz:MSTR",
+        "xyz:SILVER",
+        "xyz:GOLD",
     )
 
     config = HyperliquidExecutionConfig.from_env(
@@ -55,6 +62,18 @@ def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     )
     assert short_config.allow_short_entries is True
     assert short_config.maintenance_reduce_only_close_enabled is True
+
+
+def test_config_accepts_feed_readiness_dependency_contract() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_FEED_READINESS_URL": "http://feed/readyz",
+            "HYPERLIQUID_EXECUTION_FEED_READINESS_TIMEOUT_SECONDS": "7",
+        }
+    )
+
+    assert config.feed_readiness_url == "http://feed/readyz"
+    assert config.feed_readiness_timeout_seconds == 7
 
 
 def test_config_keeps_maker_ttl_as_explicit_compatibility_policy() -> None:
