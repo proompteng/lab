@@ -11,6 +11,7 @@ and runtime validation.
 
 ## Start Here
 
+- Source-read current state: `current-source-state.md`
 - Operational/source-of-truth appendix (repo + chart + cluster): `designs/handoff-common.md`
 - Implementing the Helm chart and controllers (implementation-grade): `agents-helm-chart-implementation.md`
 - Chart intent and scope (high-level design): `agents-helm-chart-design.md`

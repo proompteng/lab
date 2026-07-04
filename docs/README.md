@@ -12,7 +12,9 @@ Start here when deciding which documentation to trust.
 ## Current Operational Maps
 
 - Agents/Jangar: `agents/README.md`
+- Agents/Jangar source-read state: `agents/current-source-state.md`
 - Torghut: `torghut/README.md`
+- Torghut source-read state: `torghut/current-source-state.md`
 - Incidents: `incidents/README.md`
 - Temporal Bun SDK docs: `temporal-bun-sdk/README.md`
 - Secure action gateway: `secure-action-gateway/README.md`

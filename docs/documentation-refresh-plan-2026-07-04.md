@@ -28,6 +28,11 @@ design docs retaining current-sounding language after source code, GitOps, and r
    - Use text search and `git diff --check` for local validation.
    - Avoid adding another committed checker script.
    - Keep Torghut scheduler compatibility fixes already required by current tests.
+7. Add source-read current-state documents.
+   - Read Torghut source, API routes, runtime modules, options/Hyperliquid lanes, and GitOps directories.
+   - Read Jangar/Agents source, routes, control-plane modules, chart CRDs, and GitOps resources.
+   - Write current-state docs from those inspected paths so the repository has source-backed state maps, not just
+     authority disclaimers.
 
 ## Completed Changes
 
@@ -36,6 +41,8 @@ design docs retaining current-sounding language after source code, GitOps, and r
 - Added `docs/agents/designs/README.md`.
 - Added `docs/whitepapers/README.md`.
 - Updated `README.md`, `docs/agents/README.md`, `docs/torghut/README.md`, and Torghut design-system index files.
+- Added `docs/agents/current-source-state.md` and `docs/torghut/current-source-state.md` from direct source/GitOps
+  inspection.
 - Left historical design documents in place, but made the archive and index authority clear.
 
 ## Follow-up Policy

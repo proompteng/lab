@@ -8,6 +8,7 @@ documentation authority rules live in `../documentation-authority.md`.
 
 Trust these surfaces in order:
 
+- Source-read current state: `docs/torghut/current-source-state.md`
 - Live GitOps: `argocd/applications/torghut/**`, `argocd/applications/torghut-options/**`,
   `argocd/applications/torghut-hyperliquid-feed/**`, and
   `argocd/applications/torghut-hyperliquid-runtime/**`.
@@ -21,6 +22,7 @@ Trust these surfaces in order:
 
 - Torghut app GitOps and TA replay: `argocd/applications/torghut/README.md`
 - Trading service local development: `services/torghut/README.md`
+- Current source-state map: `docs/torghut/current-source-state.md`
 - DB migrations: `services/torghut/migrations/README.md`
 - CI/CD and release commands: `docs/torghut/ci-cd.md`
 - Historical simulation operations: `docs/torghut/rollouts/historical-simulation-playbook.md`
