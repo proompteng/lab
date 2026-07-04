@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-feed-top12-readiness-20260704a
+        proompteng.ai/config-revision: hyperliquid-feed-pinned-runtime-universe-20260704a
       labels:
         app: torghut-hyperliquid-feed
     spec:
@@ -60,7 +60,7 @@ spec:
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
             # Own these keys directly to clear old server-side-applied runtime overrides.
             - name: HYPERLIQUID_PINNED_PERP_COINS
-              value: ""
+              value: BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD
             - name: CLICKHOUSE_REQUEST_TIMEOUT_MS
               value: "30000"
           ports:
