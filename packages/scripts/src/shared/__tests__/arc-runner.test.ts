@@ -50,10 +50,11 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).not.toContain('PersistentVolumeClaim')
   })
 
-  it('allows five concurrent ARC runners per scale set and keeps arm runners warm', () => {
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
+  it('allows ten concurrent lab ARC runners per architecture and keeps runners warm', () => {
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 10')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 10')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
