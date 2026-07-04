@@ -143,6 +143,53 @@ Expected steady-state readback:
 1. No recovery override keys remain in `ceph config dump`.
 1. Every OSD deployment reports memory request `8Gi` and limit `12Gi`.
 
+## Deep-Scrub Progress Monitoring
+
+`ceph -s` only reports how many PGs are currently deep-scrubbing and how many
+are overdue. It does not expose a useful percent-complete progress bar for deep
+scrub. When `PG_NOT_DEEP_SCRUBBED` is the only remaining health warning, use
+the per-PG `objects_scrubbed` counter to verify that work is advancing.
+
+Current health and active scrub count:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+```
+
+Active deep-scrub PGs:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- bash -lc \
+'ceph pg dump pgs_brief 2>/dev/null | awk "/scrubbing\\+deep/{print}"'
+```
+
+Per-PG progress counters:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- bash -lc \
+'ceph pg dump pgs --format json 2>/dev/null |
+ jq -r ".pg_stats[] | select(.state | contains(\"scrubbing+deep\")) |
+ [.pgid, .stat_sum.num_objects, .objects_scrubbed, .scrub_schedule] | @tsv" |
+ sort'
+```
+
+Sample the command twice a minute apart. Progress is visible when
+`objects_scrubbed` increases for active PGs, even if the same PG IDs remain in
+`active+clean+scrubbing+deep` and the top-level overdue count has not changed
+yet. The overdue count usually drops only after full PG deep-scrubs complete.
+
+Avoid raising `osd_max_scrubs` just to clear the warning faster unless this is
+an explicit maintenance window tradeoff. Ceph documents `osd_max_scrubs` as the
+maximum simultaneous scrub operations per OSD, and also documents that scrubbing
+can reduce cluster performance. Keep the steady-state client-first profile at
+`osd_mclock_profile=high_client_ops`.
+
+Reference:
+
+1. Ceph OSD scrub configuration, including `osd_max_scrubs` and scrub impact:
+   https://docs.ceph.com/en/latest/rados/configuration/osd-config-ref/
+
 ## Install / rollout steps
 
 1. Ensure you have verified the disk inventory on each node (example):
