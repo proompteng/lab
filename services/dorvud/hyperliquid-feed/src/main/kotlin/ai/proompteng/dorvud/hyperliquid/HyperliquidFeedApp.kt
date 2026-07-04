@@ -293,14 +293,14 @@ class HyperliquidFeedApp(
         metrics.recordDedupDrop(record.envelope.channel)
         return@forEach
       }
+      metrics.recordEvent(record.envelope.channel)
+      recordMarketDataFreshness(record.envelope.channel)
       val payload = json.encodeToString(record.envelope)
       runCatching {
         producer.send(ProducerRecord(record.topic, record.key, payload)) { _, error ->
           if (error == null) {
             recordKafkaSuccess()
             metrics.kafkaProduceSuccess.increment()
-            metrics.recordEvent(record.envelope.channel)
-            recordMarketDataFreshness(record.envelope.channel)
           } else {
             recordKafkaFailure(record.topic, error)
           }
@@ -395,10 +395,8 @@ class HyperliquidFeedApp(
   private fun clickHouseFreshAt(observedAt: Long): Boolean {
     if (!config.clickHouse.enabled) return true
     val lastSuccess = clickHouseLastSuccessMs.get()
-    val lastFailure = clickHouseLastFailureMs.get()
     val successFresh = lastSuccess > 0 && observedAt - lastSuccess <= config.clickHouse.readyMaxAgeMs
-    val failureExpired = lastFailure == 0L || observedAt - lastFailure > config.clickHouse.failureHoldMs
-    return clickHouseReady.get() && successFresh && failureExpired
+    return clickHouseReady.get() && successFresh
   }
 
   private fun clickHouseLastSuccessLagMs(): Long? {

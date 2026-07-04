@@ -138,7 +138,13 @@ class ClickHouseFeedReader:
         """
         try:
             rows = self.query_json_each_row(query, includes_format=True)
-        except Exception as exc:
+        except (
+            RuntimeError,
+            OSError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ) as exc:
             reason = f"clickhouse_query_failed:{type(exc).__name__}"
             return FeedStatus(
                 False, (RuntimeDependencyStatus("clickhouse", False, reason=reason),)
@@ -147,6 +153,9 @@ class ClickHouseFeedReader:
             _dependency_from_row(row, self._config.dependency_staleness_seconds)
             for row in rows
         )
+        feed_service_status = self._feed_service_status()
+        if feed_service_status is not None:
+            statuses = statuses + (feed_service_status,)
         return FeedStatus(
             bool(statuses) and all(status.ready for status in statuses), statuses
         )
@@ -179,6 +188,59 @@ class ClickHouseFeedReader:
                     }
                 )
         return rows
+
+    def _feed_service_status(self) -> RuntimeDependencyStatus | None:
+        if not self._config.feed_readiness_url:
+            return None
+        try:
+            status, body = _request_http_get(
+                url=self._config.feed_readiness_url,
+                timeout_seconds=self._config.feed_readiness_timeout_seconds,
+            )
+        except (
+            RuntimeError,
+            OSError,
+            http.client.HTTPException,
+            UnicodeDecodeError,
+        ) as exc:
+            return RuntimeDependencyStatus(
+                "hyperliquid_feed_service",
+                False,
+                reason=f"feed_readiness_query_failed:{type(exc).__name__}",
+            )
+        details: dict[str, object] = {"http_status": status}
+        try:
+            parsed_payload: object = json.loads(body) if body.strip() else {}
+        except json.JSONDecodeError:
+            parsed_payload = {}
+        payload: dict[str, object] = {}
+        if isinstance(parsed_payload, dict):
+            payload = {
+                str(key): value
+                for key, value in cast(dict[object, object], parsed_payload).items()
+            }
+            details.update(
+                {
+                    key: value
+                    for key, value in payload.items()
+                    if key in {"readinessBlockers", "websocket", "kafka", "clickhouse"}
+                }
+            )
+        ready = status < 300 and payload.get("ready") is not False
+        if ready:
+            return RuntimeDependencyStatus(
+                "hyperliquid_feed_service", True, details=details
+            )
+        blockers = details.get("readinessBlockers")
+        reason = f"feed_readiness_http_{status}"
+        if isinstance(blockers, list) and blockers:
+            reason = ",".join(str(item) for item in cast(list[object], blockers))
+        return RuntimeDependencyStatus(
+            "hyperliquid_feed_service",
+            False,
+            reason=reason,
+            details=details,
+        )
 
 
 def _request_clickhouse(
@@ -218,6 +280,32 @@ def _request_clickhouse(
         if response.status >= 300:
             raise RuntimeError(f"clickhouse_http_{response.status}:{payload[:200]}")
         return payload
+    finally:
+        connection.close()
+
+
+def _request_http_get(*, url: str, timeout_seconds: int) -> tuple[int, str]:
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise RuntimeError(f"unsupported_http_url_scheme:{parsed.scheme}")
+    if not parsed.hostname:
+        raise RuntimeError("invalid_http_url_host")
+    path = parsed.path or "/"
+    if parsed.query:
+        path = f"{path}?{parsed.query}"
+    connection: http.client.HTTPConnection
+    if parsed.scheme == "https":
+        connection = http.client.HTTPSConnection(
+            parsed.hostname, parsed.port, timeout=timeout_seconds
+        )
+    else:
+        connection = http.client.HTTPConnection(
+            parsed.hostname, parsed.port, timeout=timeout_seconds
+        )
+    try:
+        connection.request("GET", path, headers={"Accept": "application/json"})
+        response = connection.getresponse()
+        return response.status, response.read().decode("utf-8")
     finally:
         connection.close()
 
