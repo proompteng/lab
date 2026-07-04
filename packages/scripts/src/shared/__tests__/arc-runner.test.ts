@@ -59,6 +59,17 @@ describe('ARC Nix runner toolchain', () => {
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
+  it('keeps lab ARC ephemeral-storage requests small enough for the configured runner scale', () => {
+    for (const scaleSet of ['arc-arm64', 'arc-amd64']) {
+      const block = runnerScaleSetBlock(scaleSet)
+      expect(block).toContain('ephemeral-storage: "8Gi"')
+      expect(block).toContain('ephemeral-storage: "12Gi"')
+    }
+
+    expect(arcApplication).toContain('storageClassName: "rook-ceph-block"')
+    expect(arcApplication).toContain('storage: 20Gi')
+  })
+
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {
     expect(arcRunnerDockerfile).toContain('FROM ${ACTIONS_RUNNER_BASE}')
     expect(arcRunnerDockerfile).toContain(
