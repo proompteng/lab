@@ -80,7 +80,7 @@ spec:
                     requests:
                       cpu: "4"
                       memory: "8Gi"
-                      ephemeral-storage: "40Gi"
+                      ephemeral-storage: "8Gi"
                     limits:
                       cpu: "8"
                       memory: "16Gi"
@@ -112,7 +112,7 @@ spec:
                     requests:
                       cpu: "4"
                       memory: "8Gi"
-                      ephemeral-storage: "30Gi"
+                      ephemeral-storage: "12Gi"
                     limits:
                       cpu: "12"
                       memory: "16Gi"
@@ -207,7 +207,7 @@ spec:
                     requests:
                       cpu: "4"
                       memory: "8Gi"
-                      ephemeral-storage: "40Gi"
+                      ephemeral-storage: "8Gi"
                     limits:
                       cpu: "8"
                       memory: "16Gi"
@@ -239,7 +239,7 @@ spec:
                     requests:
                       cpu: "4"
                       memory: "8Gi"
-                      ephemeral-storage: "30Gi"
+                      ephemeral-storage: "12Gi"
                     limits:
                       cpu: "12"
                       memory: "16Gi"
