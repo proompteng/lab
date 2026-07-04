@@ -110,20 +110,6 @@ jobs:
           end="$(date +%s)"
           printf '%s\t%s\t%s\t%s\n' "nix-setup-${ARCH}" 0 "$((end - start))" ".github/actions/setup-nix-toolchain" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
-      - name: Prime OCI helper closures
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          mkdir -p "${NIX_OCI_LOG_DIR}"
-          helper_attrs=(.#inspectOciArchive)
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            helper_attrs+=(.#ociPush .#cachePush)
-          fi
-          bash nix/ci-run-timed.sh "prime-build-platform-helpers-${ARCH}" "${NIX_OCI_LOG_DIR}/prime-helpers-${ARCH}.log" \
-            bash -lc 'set -euo pipefail; output_file="${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"; nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${output_file}"; test -s "${output_file}"' \
-            bash "${helper_attrs[@]}"
-
       - name: Build Nix image archive
         id: build
         env:
@@ -170,7 +156,7 @@ jobs:
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
-            nix run .#inspect-oci-archive -- "${IMAGE_TAR}"
+            bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -184,7 +170,7 @@ jobs:
         run: |
           set -euo pipefail
           args=(
-            nix run .#oci-push --
+            bash nix/oci-push.sh
             --image "${IMAGE}"
             --tag "${TAG}-${ARCH}"
             --tar "${IMAGE_TAR}"
@@ -193,23 +179,6 @@ jobs:
             args+=(--latest-tag "latest-${ARCH}")
           fi
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
-
-      - name: Push build platform helper closures to Attic
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        env:
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-          ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          test -n "${ATTIC_TOKEN}"
-          mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"
-          if [[ "${#helper_paths[@]}" -eq 0 ]]; then
-            echo "No build-platform helper closure paths were captured." >&2
-            exit 2
-          fi
-          bash nix/ci-run-timed.sh "push-build-platform-helper-closures-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-helpers-${ARCH}.log" \
-            nix run .#cache-push -- "${helper_paths[@]}"
 
       - name: Warm Nix image archive closure in Attic
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -228,7 +197,7 @@ jobs:
           status_file="${NIX_OCI_LOG_DIR}/image-cache-push-status-${ARCH}.txt"
           set +e
           bash nix/ci-run-timed.sh "push-image-archive-closure-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
-            nix run .#cache-push -- "${image_paths[@]}"
+            bash nix/cache-push.sh "${image_paths[@]}"
           status="$?"
           set -e
           if [[ "${status}" -ne 0 ]]; then
@@ -305,15 +274,6 @@ jobs:
           end="$(date +%s)"
           printf '%s\t%s\t%s\t%s\n' "nix-setup-publish-index" 0 "$((end - start))" ".github/actions/setup-nix-toolchain" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
-      - name: Prime OCI index helper closures
-        run: |
-          set -euo pipefail
-          mkdir -p "${NIX_OCI_LOG_DIR}"
-          helper_attrs=(.#createOciIndex .#assertOciPlatforms .#writeOciReleaseContract .#cachePush)
-          bash nix/ci-run-timed.sh "prime-index-helpers" "${NIX_OCI_LOG_DIR}/prime-index-helpers.log" \
-            bash -lc 'set -euo pipefail; output_file="${NIX_OCI_LOG_DIR}/index-helper-paths.txt"; nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${output_file}"; test -s "${output_file}"' \
-            bash "${helper_attrs[@]}"
-
       - name: Create OCI image index
         id: oci
         env:
@@ -323,7 +283,7 @@ jobs:
         run: |
           set -euo pipefail
           args=(
-            nix run .#create-oci-index --
+            bun run packages/scripts/src/shared/oci.ts create-index
             --image "${IMAGE}"
             --tag "${TAG}"
             --arch-tag "linux/amd64=${TAG}-amd64"
@@ -341,7 +301,7 @@ jobs:
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "assert-oci-platforms" "${NIX_OCI_LOG_DIR}/assert-oci-platforms.log" \
-            nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+            bun run packages/scripts/src/shared/oci.ts assert "${IMAGE}:${TAG}" linux/amd64 linux/arm64
 
       - name: Write release contract
         if: inputs.release_artifact_name != ''
@@ -358,21 +318,7 @@ jobs:
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "write-release-contract" "${NIX_OCI_LOG_DIR}/write-release-contract.log" \
-            nix run .#write-oci-release-contract -- .artifacts/${{ inputs.image_name }}/release-contract.json
-
-      - name: Push OCI index helper closures to Attic
-        env:
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "${ATTIC_TOKEN}"
-          mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/index-helper-paths.txt"
-          if [[ "${#helper_paths[@]}" -eq 0 ]]; then
-            echo "No index helper closure paths were captured." >&2
-            exit 2
-          fi
-          bash nix/ci-run-timed.sh "push-index-helper-closures" "${NIX_OCI_LOG_DIR}/cache-push-index-helpers.log" \
-            nix run .#cache-push -- "${helper_paths[@]}"
+            bash nix/oci-release-contract.sh .artifacts/${{ inputs.image_name }}/release-contract.json
 
       - name: Upload release contract
         if: inputs.release_artifact_name != ''
