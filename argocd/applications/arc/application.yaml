@@ -28,7 +28,7 @@ spec:
           scaleSetLabels:
             - arc-arm64
           minRunners: 1
-          maxRunners: 5
+          maxRunners: 10
           listenerTemplate:
             spec:
               dnsConfig:
@@ -158,8 +158,8 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          minRunners: 0
-          maxRunners: 5
+          minRunners: 1
+          maxRunners: 10
           listenerTemplate:
             spec:
               dnsConfig:
