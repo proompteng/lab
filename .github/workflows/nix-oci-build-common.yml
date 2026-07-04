@@ -89,7 +89,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           require-preinstalled: 'true'
-          install-ci-toolchain: 'true'
+          install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
@@ -262,7 +262,7 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           require-preinstalled: 'true'
-          install-ci-toolchain: 'true'
+          install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
