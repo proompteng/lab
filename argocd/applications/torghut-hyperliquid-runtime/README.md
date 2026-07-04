@@ -9,6 +9,8 @@ V2 contract:
 - Market data network is `mainnet`.
 - Execution network is `testnet`.
 - Runtime env names use `HYPERLIQUID_EXECUTION_*`; old `HYPERLIQUID_RUNTIME_*` names are rejected by config validation.
+- ConfigMap-only runtime env changes must bump Deployment pod-template annotation `proompteng.ai/config-revision` so
+  Argo creates a new ReplicaSet and the process reads the new env.
 - The configured execution universe is
   `BTC,ETH,HYPE,SOL,xyz:SKHX,xyz:MU,xyz:XYZ100,xyz:CL,xyz:SNDK,xyz:MSTR,xyz:SILVER,xyz:GOLD`. Selection uses direct
   Hyperliquid mainnet `metaAndAssetCtxs` 24h notional volume (`dayNtlVlm`) and keeps only markets enabled in

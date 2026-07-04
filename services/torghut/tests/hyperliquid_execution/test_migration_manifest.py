@@ -61,7 +61,5 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
         'HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED: "true"'
         in configmap
     )
-    assert (
-        "hyperliquid-execution-v2-testnet-cap-250-reduce-only-20260703a" in deployment
-    )
+    assert "hyperliquid-execution-v2-top12-universe-20260704a" in deployment
     assert "HYPERLIQUID_RUNTIME_" not in configmap
