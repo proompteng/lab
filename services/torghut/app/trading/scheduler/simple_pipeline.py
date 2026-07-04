@@ -22,6 +22,7 @@ from ..paper_route_target_plan import (
     fetch_paper_route_target_plan_url,
 )
 from ..proof_floor import build_profitability_proof_floor_receipt
+from ..submission_authority import operational_submission_gate_status
 from ..submission_council import (
     build_hypothesis_runtime_summary,
     build_submission_gate_market_context_status,
@@ -569,28 +570,41 @@ class SimpleTradingPipeline(
                 )
             )
 
+        operational_gate = operational_submission_gate_status(gate)
         gate_blocked_reasons = [
             str(item).strip()
-            for item in cast(list[object], gate.get("blocked_reasons") or [])
+            for item in cast(
+                list[object], operational_gate.get("blocked_reasons") or []
+            )
             if str(item).strip()
         ]
         merged_blocked_reasons = list(
             dict.fromkeys([*gate_blocked_reasons, *simple_blocked_reasons])
         )
-        gate["allowed"] = (
-            bool(gate.get("allowed", False)) and not simple_blocked_reasons
+        allowed = bool(operational_gate.get("allowed", False)) and not (
+            simple_blocked_reasons
         )
+        reason = str(
+            simple_blocked_reasons[0]
+            if simple_blocked_reasons
+            else operational_gate.get("reason") or "operational_submission_ready"
+        )
+        gate["allowed"] = allowed
         gate["blocked_reasons"] = merged_blocked_reasons
+        gate["reason"] = reason
         if simple_blocked_reasons:
-            gate["reason"] = simple_blocked_reasons[0]
             gate["capital_stage"] = "shadow"
             gate["capital_state"] = "observe"
+        elif allowed:
+            gate["capital_stage"] = "live"
+            gate["capital_state"] = "live"
         gate["pipeline_mode"] = "simple"
         gate["operational_submission_gate"] = {
-            "allowed": bool(gate.get("allowed", False)),
-            "reason": str(gate.get("reason") or "unknown"),
+            "allowed": allowed,
+            "reason": reason,
             "blocked_reasons": merged_blocked_reasons,
-            "execution_route": gate.get("execution_route"),
+            "execution_route": operational_gate.get("execution_route")
+            or gate.get("execution_route"),
         }
         gate["simple_lane"] = {
             "submit_enabled": settings.trading_simple_submit_enabled,

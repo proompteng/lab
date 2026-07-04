@@ -18,6 +18,127 @@ from tests.simple_pipeline.support import (
 )
 
 
+def test_simple_live_submission_gate_drops_retired_source_collection_blockers(
+    monkeypatch,
+) -> None:
+    trading_mode_before = settings.trading_mode
+    trading_enabled_before = settings.trading_enabled
+    kill_switch_before = settings.trading_kill_switch_enabled
+    simple_submit_before = settings.trading_simple_submit_enabled
+    live_submit_before = settings.trading_live_submit_enabled
+    emergency_stop_before = settings.trading_emergency_stop_enabled
+    try:
+        settings.trading_mode = "live"
+        settings.trading_enabled = True
+        settings.trading_kill_switch_enabled = False
+        settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_enabled = True
+        settings.trading_emergency_stop_enabled = False
+
+        def _legacy_gate(
+            self: object,
+            *,
+            inputs: object | None = None,
+        ) -> dict[str, object]:
+            _ = self, inputs
+            return {
+                "allowed": False,
+                "reason": "alpha_readiness_not_promotion_eligible",
+                "blocked_reasons": [
+                    "alpha_readiness_not_promotion_eligible",
+                    "runtime_ledger_profit_target_source_collection_pending",
+                    "runtime_ledger_source_collection_pending",
+                ],
+                "execution_route": {
+                    "route": "testnet",
+                    "alpaca_regular_session_open": False,
+                },
+            }
+
+        monkeypatch.setattr(
+            "app.trading.scheduler.simple_pipeline.TradingPipeline._live_submission_gate",
+            _legacy_gate,
+        )
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.state = SimpleNamespace(emergency_stop_active=False)
+
+        gate = pipeline._live_submission_gate()
+
+        assert gate["allowed"] is True
+        assert gate["reason"] == "operational_submission_ready"
+        assert gate["blocked_reasons"] == []
+        assert gate["operational_submission_gate"] == {
+            "allowed": True,
+            "reason": "operational_submission_ready",
+            "blocked_reasons": [],
+            "execution_route": {
+                "route": "testnet",
+                "alpaca_regular_session_open": False,
+            },
+        }
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_enabled = trading_enabled_before
+        settings.trading_kill_switch_enabled = kill_switch_before
+        settings.trading_simple_submit_enabled = simple_submit_before
+        settings.trading_live_submit_enabled = live_submit_before
+        settings.trading_emergency_stop_enabled = emergency_stop_before
+
+
+def test_bounded_live_paper_route_requires_explicit_collection_gate() -> None:
+    assert not SimpleTradingPipeline._bounded_live_paper_route_collection_gate_allows(
+        {
+            "allowed": False,
+            "reason": "runtime_ledger_source_collection_pending",
+            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+        }
+    )
+    assert SimpleTradingPipeline._bounded_live_paper_route_collection_gate_allows(
+        {
+            "bounded_live_paper_collection_gate": {
+                "allowed": True,
+                "reason": "explicit_collection_contract",
+            }
+        }
+    )
+
+
+def test_live_profitability_proof_floor_is_diagnostic_for_runtime_ledger_blockers() -> (
+    None
+):
+    trading_mode_before = settings.trading_mode
+    submit_enabled_before = settings.trading_simple_submit_enabled
+    try:
+        settings.trading_mode = "live"
+        settings.trading_simple_submit_enabled = True
+        pipeline = object.__new__(SimpleTradingPipeline)
+        pipeline.account_label = "PA3SX7FYNUTF"
+        pipeline._profitability_proof_floor = lambda session: {
+            "route_state": "repair_only",
+            "capital_state": "zero_notional",
+            "max_notional": "0",
+            "blocking_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "runtime_ledger_profit_target_source_collection_pending",
+                "runtime_ledger_source_collection_pending",
+            ],
+        }
+        blocks: list[object] = []
+        pipeline._block_decision_submission = lambda request: blocks.append(request)
+
+        assert pipeline._profitability_floor_submission_allowed(
+            TradingSubmissionRequest(
+                session=SimpleNamespace(),
+                decision=_routeability_decision(),
+                decision_row=SimpleNamespace(status="planned"),
+            )
+        )
+        assert blocks == []
+    finally:
+        settings.trading_mode = trading_mode_before
+        settings.trading_simple_submit_enabled = submit_enabled_before
+
+
 def test_live_bounded_paper_route_target_generates_capped_source_decisions(
     monkeypatch,
 ) -> None:
@@ -749,7 +870,7 @@ def test_live_bounded_paper_route_target_rejects_missing_cap_and_symbols(
         )
 
 
-def test_live_bounded_paper_route_symbol_floor_does_not_bypass_runtime_ledger_blocker() -> (
+def test_live_profitability_symbol_floor_is_diagnostic_for_runtime_ledger_blocker() -> (
     None
 ):
     trading_mode_before = settings.trading_mode
@@ -782,16 +903,14 @@ def test_live_bounded_paper_route_symbol_floor_does_not_bypass_runtime_ledger_bl
             }
         )
 
-        assert not pipeline._profitability_floor_symbol_submission_allowed(
+        assert pipeline._profitability_floor_symbol_submission_allowed(
             TradingSubmissionRequest(
                 session=SimpleNamespace(),
                 decision=decision,
                 decision_row=SimpleNamespace(status="planned"),
             )
         )
-        assert (
-            getattr(blocks[0], "reason") == "runtime_ledger_source_collection_pending"
-        )
+        assert blocks == []
     finally:
         settings.trading_mode = trading_mode_before
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before

@@ -91,3 +91,28 @@ def test_submission_authority_accepts_compatibility_gate_payload() -> None:
         "route": "alpaca",
         "alpaca_regular_session_open": True,
     }
+
+
+def test_submission_authority_retired_source_collection_blockers_do_not_block() -> None:
+    status = build_submission_authority_status(
+        {
+            "allowed": False,
+            "reason": "alpha_readiness_not_promotion_eligible",
+            "blocked_reasons": [
+                "alpha_readiness_not_promotion_eligible",
+                "runtime_ledger_profit_target_source_collection_pending",
+                "runtime_ledger_source_collection_pending",
+            ],
+            "execution_route": {
+                "route": "testnet",
+                "alpaca_regular_session_open": False,
+            },
+        },
+        simple_lane_status={"submit_enabled": True, "live_submit_enabled": True},
+    )
+
+    assert status["effective_submit_mode"] == "operational_submission"
+    assert status["can_submit_now"] is True
+    assert status["authority_scope"] == "operational_submission"
+    assert status["reason"] == "operational_submission_ready"
+    assert status["operational_submission_gate"]["blocked_reasons"] == []
