@@ -46,6 +46,77 @@ from app.api.readiness_helpers.readiness_surface import (
 logger = logging.getLogger(__name__)
 
 
+def _cached_result_from_entry(
+    cache_entry: Mapping[str, object] | None,
+) -> tuple[dict[str, object], int] | None:
+    if cache_entry is None:
+        return None
+    payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
+    dependencies = payload.get("dependencies")
+    if isinstance(dependencies, Mapping):
+        from .evaluate_trading_health_payload import (
+            runtime_dependencies_for_health_surface,
+        )
+
+        runtime_dependencies = runtime_dependencies_for_health_surface(
+            cast(Mapping[str, object], dependencies)
+        )
+        readiness_dependency_reasons = _readiness_dependency_degradation_reason_codes(
+            runtime_dependencies,
+            scheduler_ok=True,
+        )
+        live_submission_gate = payload.get("live_submission_gate")
+        if isinstance(live_submission_gate, Mapping):
+            guarded_live_submission_gate = _guard_live_submission_gate_for_readiness(
+                cast(Mapping[str, object], live_submission_gate),
+                readiness_dependency_reasons=readiness_dependency_reasons,
+            )
+            payload["live_submission_gate"] = guarded_live_submission_gate
+            if bool(
+                guarded_live_submission_gate.get("readiness_dependency_guard_active")
+            ):
+                dependencies_payload = deepcopy(
+                    dict(cast(Mapping[str, object], dependencies))
+                )
+                dependencies_payload["live_submission_gate"] = {
+                    "ok": False,
+                    "detail": str(
+                        guarded_live_submission_gate.get("reason")
+                        or "readiness_dependency_degraded"
+                    ),
+                    "capital_stage": guarded_live_submission_gate.get("capital_stage"),
+                    "readiness_dependency_guard_active": True,
+                    "readiness_dependency_guard_reasons": readiness_dependency_reasons,
+                }
+                payload["dependencies"] = dependencies_payload
+    status_value = cache_entry.get("status_code")
+    status_code = status_value if isinstance(status_value, int) else 503
+    return (
+        cast(
+            dict[str, object],
+            _strip_promotion_authority_claims_for_readiness(payload),
+        ),
+        status_code,
+    )
+
+
+def _start_refresh_locked(
+    *,
+    cache_key: str,
+    include_database_contract: bool,
+    allow_stale_dependency_cache: bool,
+) -> Future[tuple[dict[str, object], int]]:
+    from .evaluate_trading_health_payload import evaluate_trading_health_payload
+
+    refresh_future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
+        evaluate_trading_health_payload,
+        include_database_contract=include_database_contract,
+        allow_stale_dependency_cache=allow_stale_dependency_cache,
+    )
+    _TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = refresh_future
+    return refresh_future
+
+
 def evaluate_trading_health_payload_bounded(
     *,
     include_database_contract: bool = False,
@@ -59,80 +130,6 @@ def evaluate_trading_health_payload_bounded(
     callback_future: Future[tuple[dict[str, object], int]] | None = None
     cached_result: tuple[dict[str, object], int] | None = None
 
-    def _cached_result_from_entry(
-        cache_entry: Mapping[str, object] | None,
-    ) -> tuple[dict[str, object], int] | None:
-        if cache_entry is None:
-            return None
-        payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
-        dependencies = payload.get("dependencies")
-        if isinstance(dependencies, Mapping):
-            from .evaluate_trading_health_payload import (
-                runtime_dependencies_for_health_surface,
-            )
-
-            runtime_dependencies = runtime_dependencies_for_health_surface(
-                cast(Mapping[str, object], dependencies)
-            )
-            readiness_dependency_reasons = (
-                _readiness_dependency_degradation_reason_codes(
-                    runtime_dependencies,
-                    scheduler_ok=True,
-                )
-            )
-            live_submission_gate = payload.get("live_submission_gate")
-            if isinstance(live_submission_gate, Mapping):
-                guarded_live_submission_gate = (
-                    _guard_live_submission_gate_for_readiness(
-                        cast(Mapping[str, object], live_submission_gate),
-                        readiness_dependency_reasons=readiness_dependency_reasons,
-                    )
-                )
-                payload["live_submission_gate"] = guarded_live_submission_gate
-                if bool(
-                    guarded_live_submission_gate.get(
-                        "readiness_dependency_guard_active"
-                    )
-                ):
-                    dependencies_payload = deepcopy(
-                        dict(cast(Mapping[str, object], dependencies))
-                    )
-                    dependencies_payload["live_submission_gate"] = {
-                        "ok": False,
-                        "detail": str(
-                            guarded_live_submission_gate.get("reason")
-                            or "readiness_dependency_degraded"
-                        ),
-                        "capital_stage": guarded_live_submission_gate.get(
-                            "capital_stage"
-                        ),
-                        "readiness_dependency_guard_active": True,
-                        "readiness_dependency_guard_reasons": (
-                            readiness_dependency_reasons
-                        ),
-                    }
-                    payload["dependencies"] = dependencies_payload
-        status_value = cache_entry.get("status_code")
-        status_code = status_value if isinstance(status_value, int) else 503
-        return (
-            cast(
-                dict[str, object],
-                _strip_promotion_authority_claims_for_readiness(payload),
-            ),
-            status_code,
-        )
-
-    def _start_refresh_locked() -> Future[tuple[dict[str, object], int]]:
-        from .evaluate_trading_health_payload import evaluate_trading_health_payload
-
-        refresh_future = _TRADING_HEALTH_SURFACE_EVALUATION_EXECUTOR.submit(
-            evaluate_trading_health_payload,
-            include_database_contract=include_database_contract,
-            allow_stale_dependency_cache=allow_stale_dependency_cache,
-        )
-        _TRADING_HEALTH_SURFACE_EVALUATIONS[cache_key] = refresh_future
-        return refresh_future
-
     with _TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
         future = _TRADING_HEALTH_SURFACE_EVALUATIONS.get(cache_key)
         if future is not None and future.done():
@@ -141,7 +138,11 @@ def evaluate_trading_health_payload_bounded(
                 _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
             )
             if cached_result is not None:
-                callback_future = _start_refresh_locked()
+                callback_future = _start_refresh_locked(
+                    cache_key=cache_key,
+                    include_database_contract=include_database_contract,
+                    allow_stale_dependency_cache=allow_stale_dependency_cache,
+                )
             else:
                 future = None
         elif future is not None:
@@ -152,7 +153,11 @@ def evaluate_trading_health_payload_bounded(
             cached_result = _cached_result_from_entry(
                 _TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.get(cache_key)
             )
-            future = _start_refresh_locked()
+            future = _start_refresh_locked(
+                cache_key=cache_key,
+                include_database_contract=include_database_contract,
+                allow_stale_dependency_cache=allow_stale_dependency_cache,
+            )
             callback_future = future
 
     if callback_future is not None:

@@ -31,6 +31,9 @@ PLUGIN_ENABLES = ",".join(
         "torghut-source-string-execution",
         "torghut-shadowed-all",
         "torghut-empty-all",
+        "torghut-typing-any-import",
+        "torghut-broad-exception",
+        "torghut-base-exception",
     )
 )
 
@@ -177,6 +180,42 @@ def test_torghut_pylint_quality_plugin_rejects_empty_all(
 
     assert result.returncode != 0
     assert "torghut-empty-all" in result.output
+
+
+def test_torghut_pylint_quality_plugin_rejects_new_dynamic_type_and_broad_catches(
+    tmp_path: Path,
+) -> None:
+    module_path = tmp_path / "dynamic_boundary.py"
+    module_path.write_text(
+        "\n".join(
+            (
+                "from __future__ import annotations",
+                "",
+                "from typing import Any",
+                "",
+                "def broad_boundary(value: object) -> object:",
+                "    try:",
+                "        return value",
+                "    except Exception:",
+                "        return Any",
+                "",
+                "def base_boundary(value: object) -> object:",
+                "    try:",
+                "        return value",
+                "    except BaseException:",
+                "        return value",
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_quality_pylint(module_path)
+
+    assert result.returncode != 0
+    assert "torghut-typing-any-import" in result.output
+    assert "torghut-broad-exception" in result.output
+    assert "torghut-base-exception" in result.output
 
 
 def test_torghut_pylint_quality_plugin_rejects_source_segment_names(

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -28,8 +27,8 @@ class TSMOMConfig:
     max_gross_leverage: float = 1.0
     long_only: bool = True
     cost_bps_per_turnover: float = 5.0
-    start: Optional[date] = None
-    end: Optional[date] = None
+    start: date | None = None
+    end: date | None = None
 
 
 def backtest_tsmom(
@@ -47,7 +46,7 @@ def backtest_tsmom(
 
     _validate_backtest_inputs(prices, cfg)
     px = _prepare_prices(prices, cfg)
-    rets = px.pct_change(fill_method=None)
+    rets: pd.DataFrame = px.pct_change(fill_method=None)
     w = _compute_weights(px, rets, cfg)
     port_ret_gross, turnover, cost_ret, port_ret_net = _compute_portfolio_returns(
         w, rets, cfg
@@ -82,12 +81,11 @@ def _validate_backtest_inputs(prices: pd.DataFrame, cfg: TSMOMConfig) -> None:
 
 
 def _prepare_prices(prices: pd.DataFrame, cfg: TSMOMConfig) -> pd.DataFrame:
-    px = prices.copy()
-    px = px.sort_index().dropna(how="all")
+    px: pd.DataFrame = prices.copy().sort_index().dropna(how="all")
     if cfg.start is not None:
-        px = px[px.index.date >= cfg.start]
+        px = px.loc[str(cfg.start) :]
     if cfg.end is not None:
-        px = px[px.index.date <= cfg.end]
+        px = px.loc[: str(cfg.end)]
     px = px.dropna(axis=1, how="all")
     if px.empty:
         raise ValueError("prices empty after filtering")
@@ -97,19 +95,19 @@ def _prepare_prices(prices: pd.DataFrame, cfg: TSMOMConfig) -> pd.DataFrame:
 def _compute_weights(
     px: pd.DataFrame, rets: pd.DataFrame, cfg: TSMOMConfig
 ) -> pd.DataFrame:
-    lookback_ret = px.shift(1) / px.shift(cfg.lookback_days + 1) - 1.0
-    signal = np.sign(lookback_ret)
-    if cfg.long_only:
-        signal = signal.clip(lower=0.0)
+    lookback_ret: pd.DataFrame = px.shift(1) / px.shift(cfg.lookback_days + 1) - 1.0
+    signal: pd.DataFrame = (lookback_ret > 0).astype(float)
+    if not cfg.long_only:
+        signal = signal.where(lookback_ret >= 0, -1.0)
 
-    vol = rets.rolling(cfg.vol_lookback_days).std(ddof=0).shift(1)
-    inv_vol = cfg.target_daily_vol / vol
-    raw_w = signal * inv_vol
+    vol: pd.DataFrame = rets.rolling(cfg.vol_lookback_days).std(ddof=0).shift(1)
+    inv_vol: pd.DataFrame = cfg.target_daily_vol / vol
+    raw_w: pd.DataFrame = signal * inv_vol
     raw_w = raw_w.replace([np.inf, -np.inf], np.nan).fillna(0.0)
     raw_w = raw_w.clip(lower=-cfg.max_gross_leverage, upper=cfg.max_gross_leverage)
 
-    gross = raw_w.abs().sum(axis=1)
-    scale = (cfg.max_gross_leverage / gross).clip(upper=1.0).fillna(0.0)
+    gross: pd.Series = raw_w.abs().sum(axis=1)
+    scale: pd.Series = (cfg.max_gross_leverage / gross).clip(upper=1.0).fillna(0.0)
     return raw_w.mul(scale, axis=0)
 
 
@@ -118,10 +116,10 @@ def _compute_portfolio_returns(
     rets: pd.DataFrame,
     cfg: TSMOMConfig,
 ) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
-    port_ret_gross = (weights * rets).sum(axis=1).fillna(0.0)
-    turnover = weights.diff().abs().sum(axis=1).fillna(0.0)
-    cost_ret = turnover * (cfg.cost_bps_per_turnover / 10000.0)
-    port_ret_net = port_ret_gross - cost_ret
+    port_ret_gross: pd.Series = (weights * rets).sum(axis=1).fillna(0.0)
+    turnover: pd.Series = weights.diff().abs().sum(axis=1).fillna(0.0)
+    cost_ret: pd.Series = turnover * (cfg.cost_bps_per_turnover / 10000.0)
+    port_ret_net: pd.Series = port_ret_gross - cost_ret
     return port_ret_gross, turnover, cost_ret, port_ret_net
 
 

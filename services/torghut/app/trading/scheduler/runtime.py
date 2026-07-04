@@ -9,15 +9,9 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
-from ...alpaca_client import TorghutAlpacaClient
 from ...config import TradingAccountLane, settings
 from ...observability import capture_posthog_event
-from ...strategies import StrategyCatalog
-from ..decisions import DecisionEngine
 from ..execution import OrderExecutor
-from ..execution_adapters import build_execution_adapter
-from ..firewall import OrderFirewall
-from ..ingest import ClickHouseSignalIngestor
 from ..llm.dspy_programs.runtime import (
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
@@ -33,14 +27,9 @@ from ..market_context_domains import (
     active_market_context_mapping,
     active_market_context_reasons,
 )
-from ..order_feed import OrderFeedIngestor
-from ..prices import ClickHousePriceFetcher
-from ..reconcile import Reconciler
-from ..risk import RiskEngine
 from ..simulation_progress import active_simulation_runtime_context
 from ..simulation import resolve_market_context_as_of
 from ..time_source import trading_time_status
-from ..universe import UniverseResolver
 from .governance.governance_mixin_decision_methods import (
     TradingSchedulerGovernanceDecisionMethods,
 )
@@ -52,8 +41,8 @@ from .governance.governance_mixin_runtime_methods import (
 )
 from .governance.shared_context import TradingSchedulerGovernanceMixinFields
 from .pipeline import TradingPipeline
-from .simple_pipeline import SimpleTradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
+from .runtime_pipeline_factory import build_simple_trading_pipeline_for_account
 from .state import TradingState
 
 logger = logging.getLogger(__name__)
@@ -411,34 +400,9 @@ class TradingScheduler(
         }
 
     def _build_pipeline_for_account(self, lane: TradingAccountLane) -> TradingPipeline:
-        price_fetcher = ClickHousePriceFetcher()
-        strategy_catalog = StrategyCatalog.from_settings()
-        alpaca_client = TorghutAlpacaClient(
-            api_key=lane.api_key,
-            secret_key=lane.secret_key,
-            base_url=lane.base_url,
-        )
-        order_firewall = OrderFirewall(alpaca_client)
-        execution_adapter = build_execution_adapter(
-            alpaca_client=alpaca_client, order_firewall=order_firewall
-        )
-        executor = OrderExecutor()
-        executor.prime_shorting_metadata_cache(alpaca_client)
-        return SimpleTradingPipeline(
-            alpaca_client=alpaca_client,
-            order_firewall=order_firewall,
-            ingestor=ClickHouseSignalIngestor(account_label=lane.label),
-            decision_engine=DecisionEngine(price_fetcher=price_fetcher),
-            risk_engine=RiskEngine(),
-            executor=executor,
-            execution_adapter=execution_adapter,
-            reconciler=Reconciler(account_label=lane.label),
-            universe_resolver=UniverseResolver(),
+        return build_simple_trading_pipeline_for_account(
+            lane=lane,
             state=self.state,
-            account_label=lane.label,
-            price_fetcher=price_fetcher,
-            strategy_catalog=strategy_catalog,
-            order_feed_ingestor=OrderFeedIngestor(default_account_label=lane.label),
         )
 
     def _build_pipeline(self) -> TradingPipeline:

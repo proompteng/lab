@@ -24,6 +24,7 @@ from app.api.health_cache_state import (
 )
 from app.config import settings
 from app.db import SessionLocal
+from app.trading.scheduler import TradingScheduler
 
 from ...bootstrap import evaluate_scheduler_status as _evaluate_scheduler_status
 from ...trading.live_submit_activation import (
@@ -369,14 +370,32 @@ def core_readiness_live_submission_gate() -> dict[str, object]:
     }
 
 
-def _evaluate_core_readiness_payload(
+def _readiness_cache_payload(
     *,
-    include_database_contract: bool = False,
-    allow_stale_dependency_cache: bool = False,
-) -> tuple[dict[str, object], int]:
-    scheduler = get_trading_scheduler()
-    scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
+    now: datetime,
+    checked_at: datetime,
+    cache_used: bool,
+) -> dict[str, object]:
+    cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
+    cache_age_seconds = 0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
+    cache_ttl_seconds = settings.trading_readiness_dependency_cache_ttl_seconds
+    return {
+        "checked_at": checked_at.isoformat(),
+        "cache_ttl_seconds": cache_ttl_seconds,
+        "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
+        "cache_used": cache_used,
+        "cache_age_seconds": cache_age_seconds,
+        "cache_stale": cache_used and cache_age_seconds > cache_ttl_seconds,
+    }
 
+
+def _core_readiness_dependencies(
+    *,
+    scheduler: TradingScheduler,
+    scheduler_ok: bool,
+    include_database_contract: bool,
+    allow_stale_dependency_cache: bool,
+) -> tuple[dict[str, object], list[str]]:
     now = datetime.now(timezone.utc)
     with SessionLocal() as session:
         dependencies, checked_at, cache_used = readiness_dependency_snapshot(
@@ -384,34 +403,38 @@ def _evaluate_core_readiness_payload(
             include_database_contract=include_database_contract,
             allow_stale_dependency_cache=allow_stale_dependency_cache,
         )
+
     dependencies = dict(dependencies)
     from .evaluate_trading_health_payload import evaluate_universe_dependency
 
     dependencies["universe"] = evaluate_universe_dependency(scheduler)
-    cache_age_seconds = (now - checked_at).total_seconds() if checked_at else 0.0
-    cache_age_seconds = 0.0 if cache_age_seconds < 0 else round(cache_age_seconds, 3)
-    cache_stale = (
-        cache_used
-        and cache_age_seconds > settings.trading_readiness_dependency_cache_ttl_seconds
+    dependencies["readiness_cache"] = _readiness_cache_payload(
+        now=now,
+        checked_at=checked_at,
+        cache_used=cache_used,
     )
-    dependencies["readiness_cache"] = {
-        "checked_at": checked_at.isoformat(),
-        "cache_ttl_seconds": settings.trading_readiness_dependency_cache_ttl_seconds,
-        "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
-        "cache_used": cache_used,
-        "cache_age_seconds": cache_age_seconds,
-        "cache_stale": cache_stale,
-    }
-
-    readiness_dependency_reasons = readiness_dependency_degradation_reason_codes(
+    return dependencies, readiness_dependency_degradation_reason_codes(
         dependencies,
         scheduler_ok=scheduler_ok,
     )
+
+
+def _evaluate_core_readiness_payload(
+    *,
+    include_database_contract: bool = False,
+    allow_stale_dependency_cache: bool = False,
+) -> tuple[dict[str, object], int]:
+    scheduler = get_trading_scheduler()
+    scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
+    dependencies, readiness_dependency_reasons = _core_readiness_dependencies(
+        scheduler=scheduler,
+        scheduler_ok=scheduler_ok,
+        include_database_contract=include_database_contract,
+        allow_stale_dependency_cache=allow_stale_dependency_cache,
+    )
     overall_ok = scheduler_ok and not readiness_dependency_reasons
-    status = "ok" if overall_ok else "degraded"
-    status_code = 200 if overall_ok else 503
     payload: dict[str, object] = {
-        "status": status,
+        "status": "ok" if overall_ok else "degraded",
         "reason_codes": readiness_dependency_reasons,
         "scheduler": scheduler_payload,
         "dependencies": dependencies,
@@ -430,7 +453,7 @@ def _evaluate_core_readiness_payload(
     return cast(
         dict[str, object],
         strip_promotion_authority_claims_for_readiness(payload),
-    ), status_code
+    ), 200 if overall_ok else 503
 
 
 def trading_health_surface_cache_key(
@@ -590,44 +613,77 @@ def minimal_health_surface_timeout_proof_floor() -> dict[str, object]:
     }
 
 
+def _unavailable_health_surface_dependencies(
+    *,
+    include_database_contract: bool,
+    reason_code: str,
+) -> dict[str, object]:
+    dependencies: dict[str, object] = {}
+    unavailable_detail = f"not evaluated before {reason_code}"
+    for dependency_name in ("postgres", "clickhouse", "alpaca", "tigerbeetle"):
+        dependencies[dependency_name] = health_surface_timeout_dependency_placeholder(
+            reason_code=reason_code,
+            detail=unavailable_detail,
+        )
+    if include_database_contract:
+        dependencies["database"] = health_surface_timeout_dependency_placeholder(
+            reason_code=reason_code,
+            detail=unavailable_detail,
+        )
+    return dependencies
+
+
+def _cached_health_surface_dependencies(
+    *,
+    checked_at: datetime,
+    dependencies: dict[str, object],
+) -> dict[str, object]:
+    now = datetime.now(timezone.utc)
+    cache_age_seconds = round(max(0.0, (now - checked_at).total_seconds()), 3)
+    cache_ttl_seconds = settings.trading_readiness_dependency_cache_ttl_seconds
+    dependencies["readiness_cache"] = {
+        "checked_at": checked_at.isoformat(),
+        "cache_ttl_seconds": cache_ttl_seconds,
+        "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
+        "cache_used": True,
+        "cache_age_seconds": cache_age_seconds,
+        "cache_stale": cache_age_seconds > cache_ttl_seconds,
+        "health_surface_timeout_fallback": True,
+    }
+    return dependencies
+
+
+def _health_surface_timeout_dependencies(
+    *,
+    include_database_contract: bool,
+    reason_code: str,
+) -> dict[str, object]:
+    cached_dependencies = cached_readiness_dependencies_for_health_surface(
+        include_database_contract=include_database_contract,
+    )
+    if cached_dependencies is None:
+        return _unavailable_health_surface_dependencies(
+            include_database_contract=include_database_contract,
+            reason_code=reason_code,
+        )
+
+    dependencies, checked_at = cached_dependencies
+    return _cached_health_surface_dependencies(
+        checked_at=checked_at,
+        dependencies=dependencies,
+    )
+
+
 def _minimal_health_surface_timeout_payload(
     *,
     include_database_contract: bool,
     reason_code: str,
     detail: str,
 ) -> dict[str, object]:
-    cached_dependencies = cached_readiness_dependencies_for_health_surface(
+    dependencies = _health_surface_timeout_dependencies(
         include_database_contract=include_database_contract,
+        reason_code=reason_code,
     )
-    if cached_dependencies is None:
-        dependencies: dict[str, object] = {}
-        unavailable_detail = f"not evaluated before {reason_code}"
-        for dependency_name in ("postgres", "clickhouse", "alpaca", "tigerbeetle"):
-            dependencies[dependency_name] = (
-                health_surface_timeout_dependency_placeholder(
-                    reason_code=reason_code,
-                    detail=unavailable_detail,
-                )
-            )
-        if include_database_contract:
-            dependencies["database"] = health_surface_timeout_dependency_placeholder(
-                reason_code=reason_code,
-                detail=unavailable_detail,
-            )
-    else:
-        dependencies, checked_at = cached_dependencies
-        now = datetime.now(timezone.utc)
-        cache_age_seconds = round(max(0.0, (now - checked_at).total_seconds()), 3)
-        cache_ttl_seconds = settings.trading_readiness_dependency_cache_ttl_seconds
-        dependencies["readiness_cache"] = {
-            "checked_at": checked_at.isoformat(),
-            "cache_ttl_seconds": cache_ttl_seconds,
-            "cache_stale_tolerance_seconds": settings.trading_readiness_dependency_cache_stale_tolerance_seconds,
-            "cache_used": True,
-            "cache_age_seconds": cache_age_seconds,
-            "cache_stale": cache_age_seconds > cache_ttl_seconds,
-            "health_surface_timeout_fallback": True,
-        }
 
     dependencies["health_evaluation"] = {
         "ok": False,
