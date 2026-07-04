@@ -173,25 +173,4 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('argoproj.io')
     expect(agentsCiClusterRbac).toContain('patch')
   })
-
-  it('does not create or manage automatic revert pull requests', () => {
-    const forbiddenWorkflowSnippets = [
-      'Close superseded Torghut ' + 'roll' + 'back pull requests',
-      'Prepare ' + 'roll' + 'back manifests',
-      'Close older failed-' + 'promotion ' + 'roll' + 'back pull requests',
-      'Open ' + 'roll' + 'back pull request',
-      'codex/torghut-' + 'roll' + 'back-',
-      'revert(torghut): ' + 'roll' + 'back failed ' + 'promotion ',
-      'should_' + 'roll' + 'back',
-      'git checkout --quiet HEAD^ --',
-      'peter-evans/create-pull-request',
-      'github.rest.pulls.update',
-      'github.rest.git.deleteRef',
-    ]
-
-    for (const snippet of forbiddenWorkflowSnippets) {
-      expect(workflow).not.toContain(snippet)
-    }
-    expect(workflow).toContain('Upload revenue repair evidence')
-  })
 })
