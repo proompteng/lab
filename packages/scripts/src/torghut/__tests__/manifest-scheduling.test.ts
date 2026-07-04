@@ -272,7 +272,9 @@ describe('Torghut manifest scheduling', () => {
     expect(runtimeData.HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MARKET_DATA_NETWORK).toBe('mainnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXECUTION_NETWORK).toBe('testnet')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe('BNB,ZRO,PAXG,AERO,XMR')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe(
+      'BTC,ETH,HYPE,SOL,xyz:SKHX,xyz:MU,xyz:XYZ100,xyz:CL,xyz:SNDK,xyz:MSTR,xyz:SILVER,xyz:GOLD',
+    )
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXCLUDED_COINS).toBe('SPX')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('10')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('10')
