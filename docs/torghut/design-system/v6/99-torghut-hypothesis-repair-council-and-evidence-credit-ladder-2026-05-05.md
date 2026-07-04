@@ -1,20 +1,20 @@
 # 99. Torghut Hypothesis Repair Council and Evidence Credit Ladder (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Gideon Park, Torghut Traders
-Scope: Torghut quant profitability, hypothesis repair ranking, zero-notional repair, evidence credits, and capital
-reentry guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/95-jangar-torghut-evidence-credit-ladder-and-profit-repair-council-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
 
-Extends:
-
-- `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
-- `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
-- `96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
 
 ## Decision
 

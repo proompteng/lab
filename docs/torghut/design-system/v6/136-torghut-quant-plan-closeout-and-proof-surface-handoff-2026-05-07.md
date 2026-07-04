@@ -1,30 +1,21 @@
 # 136. Torghut Quant Plan Closeout And Proof Surface Handoff (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant plan closeout, Jangar rollout authority, Torghut capital authority, database proof limits,
-implementation gates, validation gates, rollout, rollback, and cross-stage handoff.
 
-Primary merged contracts:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
-- `docs/torghut/design-system/v6/72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
-- `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
-- `docs/torghut/design-system/v6/75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
-- `docs/agents/designs/144-jangar-capital-evidence-return-lane-and-paper-gate-witness-quorum-2026-05-07.md`
-- `docs/torghut/design-system/v6/148-torghut-profit-evidence-reactivation-scheduler-and-paper-gate-receipts-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Merged PR evidence:
-
-- PR 5390: `https://github.com/proompteng/lab/pull/5390`, merged as
-  `c8530a79d388ee38ed726af93a544bea9a5779a1`.
-- PR 5408: `https://github.com/proompteng/lab/pull/5408`, merged as
-  `ad00e8e7f2c98bab69a89a30c9d989f65318dcbc`.
-- PR 5777: `https://github.com/proompteng/lab/pull/5777`, merged as
-  `ec1b8e5a9f5d0536489a3878c3c53f353ad2b585`.
-- PR 5854: `https://github.com/proompteng/lab/pull/5854`, merged as
-  `b05380736319cd68b17549615d9602adbc1abc46`.
 
 ## Decision
 

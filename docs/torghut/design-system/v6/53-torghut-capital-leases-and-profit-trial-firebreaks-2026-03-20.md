@@ -1,25 +1,21 @@
 # 53. Torghut Capital Leases and Profit-Trial Firebreaks (2026-03-20)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-03-20`
-Owner: Victor Chen (Jangar Engineering)
-Mission: `codex/swarm-jangar-control-plane-plan`
-Swarm impact:
 
-- `torghut-quant`
-- `jangar-control-plane`
+## Source Implementation Audit (2026-07-04)
 
-Companion doc:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-- `docs/agents/designs/54-jangar-admission-receipts-rollout-shadow-and-anti-entropy-reconciliation-2026-03-20.md`
-
-Extends:
-
-- `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
-- `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
-- `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
-- `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
-- `docs/agents/designs/53-jangar-dependency-provenance-ledger-and-consumer-acknowledged-admission-2026-03-19.md`
 
 ## Executive summary
 

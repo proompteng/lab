@@ -43,5 +43,10 @@ Before treating any dated design file as current truth, verify it against:
 
 ## Historical Audits
 
+- Every design document now has a `Source Implementation Audit (2026-07-04)` block with current source evidence,
+  implementation status, and drift notes.
+- `implementation-audit.md` summarizes the source-read audit coverage.
+- `implementation-status-matrix-2026-02-21.md` has been refreshed as the current source-read matrix for the audited
+  design corpus.
 - `implementation-status-matrix-2026-02-21.md`
 - `implementation-audit.md`

@@ -10,6 +10,19 @@
 - Primary objective: turn the selected options-lane architecture into concrete event, storage, config, and operating
   contracts that engineers can implement without re-opening first-order design questions
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Dorvud WS/TA, Torghut ClickHouse/GitOps, and TA Flink deployments exist; exact topics/tables must be verified from current manifests/code.
+- Matched implementation area: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding.
+- Current source evidence:
+  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
+  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
+  - `argocd/applications/torghut/ws/deployment.yaml`
+  - `argocd/applications/torghut/ta/flinkdeployment.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
+- Design drift note: Older data-plane diagrams can be directionally right while specific topic/table/runtime claims have drifted.
+
 ## Context
 
 Document 33 selects the production architecture: a separate options lane with catalog discovery, websocket ingest, REST

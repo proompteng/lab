@@ -1,22 +1,20 @@
 # 202. Torghut Compact Alpha Closure Export And No-Delta Lease (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut revenue-repair compact evidence export, Jangar admission boundary, alpha closure no-delta lease,
-zero-notional capital safety, validation, rollout, rollback, and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/197-jangar-compact-alpha-closure-ingestion-and-stage-credit-repair-gate-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md`
-- `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
-- `199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md`
-- `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
-- `docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md`
 
 ## Decision
 

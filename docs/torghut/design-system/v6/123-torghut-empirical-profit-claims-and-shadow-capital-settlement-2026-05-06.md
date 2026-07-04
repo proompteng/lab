@@ -1,21 +1,20 @@
 # 123. Torghut Empirical Profit Claims And Shadow Capital Settlement (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut stale empirical proof, hypothesis profitability, quant freshness, market-context freshness, shadow
-capital, Jangar clearinghouse consumption, and capital reentry guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/119-jangar-empirical-proof-renewal-clearinghouse-and-capital-reentry-settlement-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and changed: empirical status/proof concepts remain in code, but old empirical job scripts and Argo workflow templates were removed.
+- Matched implementation area: Empirical jobs and promotion evidence.
+- Current source evidence:
+  - `services/torghut/app/trading/empirical_jobs.py`
+  - `services/torghut/app/api/health_checks/shared_context.py`
+  - `services/torghut/app/trading/profit_windows.py`
+  - `services/torghut/app/trading/profit_leases.py`
+  - `services/torghut/scripts/build_historical_profitability_proof.py`
+- Design drift note: Old empirical-promotion scripts/templates must not be cited as live source authority.
 
-Extends:
-
-- `122-torghut-profit-renewal-bids-and-capital-shadow-ledger-2026-05-06.md`
-- `121-torghut-evidence-debt-tranches-and-profit-unblock-ladder-2026-05-06.md`
-- `120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
-- `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 
 ## Decision
 

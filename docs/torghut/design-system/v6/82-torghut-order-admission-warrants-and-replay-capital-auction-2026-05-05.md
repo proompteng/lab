@@ -1,23 +1,20 @@
 # 82. Torghut Order Admission Warrants and Replay Capital Auction
 
 Status: Accepted for implementation planning
-Date: `2026-05-05`
-Owner: Gideon Park, Torghut Traders
-Scope: Torghut live order admission, broker-bound capital authority, replay-backed capital allocation, Jangar proof
-consumption, and deployer rollback gates.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
-- `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
-- `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
-- `79-torghut-market-state-capital-oracle-and-proof-lane-rollout-sentry-2026-05-05.md`
-- `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
-- `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 
 ## Decision
 

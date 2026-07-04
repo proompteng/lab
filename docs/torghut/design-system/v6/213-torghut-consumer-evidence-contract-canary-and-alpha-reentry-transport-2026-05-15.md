@@ -1,22 +1,20 @@
 # 213. Torghut Consumer-Evidence Contract Canary And Alpha Reentry Transport (2026-05-15)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-15
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut consumer-evidence summary/full transport, contract-canary refs, revenue-repair source authority,
-no-delta alpha reentry, validation gates, rollout, rollback, and cross-swarm handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/207-jangar-consumer-evidence-transport-split-and-source-serving-contract-canary-2026-05-15.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `212-torghut-route-adjacent-proof-and-execution-freshness-reentry-2026-05-14.md`
-- `212-torghut-consumer-evidence-parity-and-alpha-release-freshness-2026-05-14.md`
-- `211-torghut-controller-ingestion-carry-and-alpha-no-delta-release-2026-05-14.md`
-- `210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
-- `191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
 
 ## Decision
 

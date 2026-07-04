@@ -1,24 +1,20 @@
 # 211. Torghut Controller-Ingestion Carry And Alpha No-Delta Release (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut revenue-repair no-delta release conditions, Jangar controller-ingestion carry import, alpha-readiness
-routeable-candidate repair, zero-notional guardrails, validation, rollout, rollback, and cross-swarm handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/205-jangar-controller-ingestion-settlement-and-verification-carry-cutover-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
 
-Extends:
-
-- `210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
-- `docs/agents/designs/204-jangar-source-bound-verification-carry-exchange-and-repair-slot-reconciliation-2026-05-14.md`
-- `209-torghut-verification-carry-import-and-alpha-repair-release-2026-05-14.md`
-- `208-torghut-jangar-verification-carry-bridge-and-no-delta-reentry-market-2026-05-14.md`
-- `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `docs/agents/designs/203-jangar-foreclosure-carry-rollout-witness-and-stage-debt-repair-2026-05-14.md`
 
 ## Decision
 

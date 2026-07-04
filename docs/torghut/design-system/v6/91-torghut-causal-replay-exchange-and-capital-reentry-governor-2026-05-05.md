@@ -1,20 +1,20 @@
 # 91. Torghut Causal Replay Exchange and Capital Reentry Governor (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Gideon Park, Torghut Traders
-Scope: Torghut profitability, hypothesis validation, causal replay, proof freshness, capital guardrails, and Jangar
-control-plane consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/87-jangar-database-pressure-fuses-and-capital-authority-backplane-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `90-torghut-proof-receipt-router-and-capital-query-firebreak-2026-05-05.md`
-- `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
-- `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
 
 ## Decision
 

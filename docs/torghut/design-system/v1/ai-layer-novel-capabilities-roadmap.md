@@ -7,6 +7,20 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Maturity: advisory roadmap (proposal; not a shipped feature set)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented/prototyped: LLM review, DSPy scripts, discovery stress modules, and Jangar OpenAI-compatible routes exist; many ML/LOB designs remain research/prototype.
+- Matched implementation area: LLM, DSPy, AI review, and model governance.
+- Current source evidence:
+  - `services/torghut/app/trading/llm`
+  - `services/torghut/scripts/run_dspy_workflow.py`
+  - `services/torghut/scripts/compile_dspy_program.py`
+  - `services/jangar/src/routes/openai/v1/chat/completions.ts`
+  - `services/torghut/app/trading/discovery/order_flow_features.py`
+- Design drift note: Distinguish production review gates from research/prototype model ideas.
+
+
 ## Purpose
 
 Outline potential “novel” AI capabilities that can be added while preserving deterministic risk controls and

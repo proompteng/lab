@@ -1,29 +1,21 @@
 # 194. Torghut Quant Plan Closeout And Repair-Only Handoff (2026-05-13)
 
 Status: Accepted for plan-lane closeout and engineer/deployer handoff
-Date: 2026-05-13
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant plan closeout, Jangar control-plane resilience linkage, current repair-only runtime evidence,
-capital safety, implementation acceptance gates, rollout, rollback, and the next bounded value-gate milestone.
 
-Primary merged architecture PRs:
+## Source Implementation Audit (2026-07-04)
 
-- `#5390` - `docs(torghut): define proof exchange architecture`
-- `#5408` - `docs(torghut): add authority ledger plan`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Governing architecture:
-
-- `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
-- `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
-- `docs/torghut/design-system/v6/72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
-- `docs/torghut/design-system/v6/75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
-
-Current implementation frontier:
-
-- `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
-- `docs/agents/designs/189-jangar-terminal-debt-compaction-and-repair-outcome-escrow-2026-05-13.md`
-- `192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
-- `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
 
 ## Decision
 

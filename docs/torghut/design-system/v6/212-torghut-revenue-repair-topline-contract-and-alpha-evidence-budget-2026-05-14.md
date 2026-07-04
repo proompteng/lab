@@ -1,23 +1,20 @@
 # 212. Torghut Revenue-Repair Topline Contract And Alpha Evidence Budget (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut revenue-repair endpoint contract, alpha-readiness repair queue, routeable-candidate evidence budget,
-Jangar material evidence settlement import, zero-notional guardrails, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/206-jangar-material-evidence-settlement-spine-and-repair-dispatch-budget-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `211-torghut-controller-ingestion-carry-and-alpha-no-delta-release-2026-05-14.md`
-- `210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
-- `209-torghut-verification-carry-import-and-alpha-repair-release-2026-05-14.md`
-- `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
 
 ## Decision
 

@@ -1,20 +1,20 @@
 # 107. Torghut Decision Custody Cells And Capital Reentry (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, hypothesis capital warrants, decision custody, sizing guardrails, empirical proof
-freshness, account-scoped quant health, rollout and rollback gates, and Jangar proof exchange consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/103-jangar-torghut-decision-custody-cells-and-rollout-proof-exchange-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
 
-Extends:
-
-- `106-torghut-live-proof-recovery-ledger-and-options-data-firewall-2026-05-06.md`
-- `105-torghut-capital-reentry-evidence-feed-and-readiness-debt-netting-2026-05-06.md`
-- `102-torghut-profit-proof-exchange-and-capital-slo-budget-2026-05-06.md`
 
 ## Decision
 

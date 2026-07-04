@@ -1,21 +1,20 @@
 # 167. Torghut Scoped Profit Repair Options And Freshness Debt Retirement (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, scoped proof freshness, repair option ranking, route/TCA reacquisition, Jangar evidence
-debt consumption, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/163-jangar-scoped-evidence-debt-and-retained-failure-quarantine-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `166-torghut-executable-profit-receipts-and-repair-convoy-settlement-2026-05-07.md`
-- `165-torghut-outcome-priced-repair-market-and-capital-shadow-swaps-2026-05-07.md`
-- `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
-- `163-torghut-quant-stage-cohort-and-evidence-repair-settlement-2026-05-07.md`
 
 ## Decision
 

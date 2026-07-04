@@ -1,21 +1,20 @@
 # 135. Torghut Capital-Qualified Alpha Router And Execution Repair Ladder (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, alpha routing, evidence repair, execution/TCA settlement, market-context freshness,
-Jangar receipt consumption, rollout gates, rollback, and zero-notional validation.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/131-jangar-capital-qualification-receipts-and-rollout-repair-arbiter-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
-- `133-torghut-capital-readiness-cache-and-profit-carry-governor-2026-05-06.md`
-- `129-torghut-bidirectional-quant-proof-receipts-and-profit-reentry-ledger-2026-05-06.md`
-- `127-torghut-fillability-first-alpha-reentry-and-observation-backed-proof-exchange-2026-05-06.md`
 
 ## Decision
 

@@ -1,20 +1,20 @@
 # 165. Torghut Outcome-Priced Repair Market And Capital Shadow Swaps (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, zero-notional repair economics, capital shadow swaps, routeability repair, empirical
-proof renewal, Jangar brownout clearing, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/161-jangar-repair-outcome-brownout-market-and-stage-freeze-clearing-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
-- `163-torghut-quant-stage-cohort-and-evidence-repair-settlement-2026-05-07.md`
-- `163-torghut-repair-outcome-attribution-and-capital-reentry-slo-2026-05-07.md`
 
 ## Decision
 

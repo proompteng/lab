@@ -1,24 +1,20 @@
 # 57. Torghut Profit-Clock Cutover and Regime Auction Contract (2026-03-20)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-03-20`
-Owner: Gideon Park (Torghut Traders)
-Mission: `codex/swarm-torghut-quant-plan`
-Swarm impacts:
 
-- `torghut-quant`
-- `jangar-control-plane`
+## Source Implementation Audit (2026-07-04)
 
-Companion doc:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-- `docs/agents/designs/58-jangar-authority-capsule-cutover-and-freeze-expiry-repair-contract-2026-03-20.md`
-
-Extends:
-
-- `56-torghut-profit-clocks-and-capital-allocation-auction-2026-03-20.md`
-- `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
-- `54-torghut-capital-lease-receipts-and-profit-falsification-ledger-2026-03-20.md`
-- `53-torghut-cross-plane-profit-certificate-veto-and-options-auth-isolation-2026-03-20.md`
 
 ## Executive summary
 

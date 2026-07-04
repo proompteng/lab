@@ -1,21 +1,21 @@
 # 134. Torghut Profitability Proof Floor And Evidence Repair Market (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, proof-floor admission, evidence repair prioritization, hypothesis guardrails,
-Jangar settlement consumption, rollout safety, rollback, and zero-notional repair.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/130-jangar-synthetic-readiness-settlement-and-evidence-probe-fuses-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `133-torghut-stable-jangar-receipts-and-closed-session-capital-hold-2026-05-06.md`
-- `133-torghut-consumer-evidence-return-path-and-shadow-settlement-2026-05-06.md`
-- `132-torghut-dependency-quorum-rehydration-and-profit-inventory-handoff-2026-05-06.md`
-- `129-torghut-bidirectional-quant-proof-receipts-and-profit-reentry-ledger-2026-05-06.md`
 
 ## Decision
 

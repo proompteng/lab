@@ -1,20 +1,20 @@
 # 120. Torghut Capital Activation Receipts And Shadow Profit Proof Queue (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut live/paper capital activation, empirical proof repair, quant freshness, market-context recovery,
-Jangar witness consumption, and profitability guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/116-jangar-controller-witness-quorum-and-capital-activation-receipts-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `118-torghut-proof-route-parity-and-options-informed-repair-scheduler-2026-05-06.md`
-- `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
-- `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 
 ## Decision
 

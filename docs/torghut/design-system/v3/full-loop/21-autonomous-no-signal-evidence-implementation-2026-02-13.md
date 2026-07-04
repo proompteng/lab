@@ -6,6 +6,19 @@
 - Verification source: implemented in `services/torghut/app/trading/ingest.py`, `services/torghut/app/trading/scheduler.py`, and `services/torghut/app/trading/autonomy/lane.py`.
 - Evidence check: code (`services/torghut/app/trading/ingest.py`, `services/torghut/app/trading/scheduler.py`, `services/torghut/app/trading/autonomy/lane.py`), tests (`services/torghut/tests/test_autonomy_evidence.py`), and runtime path (`argocd/applications/torghut/knative-service.yaml`) were verified (2026-02-21).
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Dorvud WS/TA, Torghut ClickHouse/GitOps, and TA Flink deployments exist; exact topics/tables must be verified from current manifests/code.
+- Matched implementation area: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding.
+- Current source evidence:
+  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
+  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
+  - `argocd/applications/torghut/ws/deployment.yaml`
+  - `argocd/applications/torghut/ta/flinkdeployment.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
+- Design drift note: Older data-plane diagrams can be directionally right while specific topic/table/runtime claims have drifted.
+
 ## Objective
 
 Ensure the autonomy loop creates durable research-ledger evidence for empty-signal windows so monitoring, replay, and rollout tooling can distinguish a healthy no-data state from an execution failure.

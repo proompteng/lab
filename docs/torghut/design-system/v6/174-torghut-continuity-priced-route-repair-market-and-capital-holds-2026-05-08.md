@@ -1,20 +1,20 @@
 # 174. Torghut Continuity-Priced Route Repair Market And Capital Holds (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut proof-floor repair, route reacquisition, zero-notional capital holds, Jangar continuity consumption,
-paper probe admission, and live rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/170-jangar-continuity-witness-ledger-and-attested-dispatch-packets-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `173-torghut-no-notional-repair-options-desk-and-promotion-custody-2026-05-07.md`
-- `172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
-- `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
 
 ## Decision
 

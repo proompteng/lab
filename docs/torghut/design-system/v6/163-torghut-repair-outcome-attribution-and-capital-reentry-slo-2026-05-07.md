@@ -1,21 +1,20 @@
 # 163. Torghut Repair Outcome Attribution And Capital Reentry SLO (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, repair outcome attribution, proof-floor blocker retirement, capital route reentry,
-Jangar repair ledger consumption, validation, rollout, rollback, and implementation acceptance gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/159-jangar-closed-loop-repair-outcome-ledger-and-material-action-reentry-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `162-torghut-profit-evidence-refill-and-capital-route-reentry-2026-05-07.md`
-- `161-torghut-shadow-capital-parity-and-no-notional-release-train-2026-05-07.md`
-- `155-torghut-capital-repair-outcome-ledger-and-edge-reacquisition-gates-2026-05-07.md`
-- `159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
 
 ## Decision
 

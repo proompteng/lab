@@ -1,19 +1,20 @@
 # 84. Torghut Capital Warrant Adoption and Profitability Experiment Ladder (2026-05-05)
 
 Status: Approved for implementation (`discover`)
-Date: `2026-05-05`
-Owner: Victor Chen (Jangar Engineering)
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/80-jangar-settlement-adoption-ladder-and-cutover-governance-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
-- `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
-- `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
-- `docs/agents/designs/78-jangar-capital-warrant-issuer-and-route-independent-order-admission-2026-05-05.md`
 
 ## Decision
 

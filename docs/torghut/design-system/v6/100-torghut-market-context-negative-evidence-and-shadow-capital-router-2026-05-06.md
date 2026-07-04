@@ -1,20 +1,20 @@
 # 100. Torghut Market Context Negative Evidence And Shadow Capital Router (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut market-context proof, quant health scoping, zero-notional repair ranking, shadow capital routing, and
-Jangar observed-action authority integration.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/96-jangar-observed-action-authority-and-negative-evidence-reclocking-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `99-torghut-profit-proof-escrow-and-repair-dividend-slo-2026-05-05.md`
-- `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
-- `96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
 
 ## Decision
 

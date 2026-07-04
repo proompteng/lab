@@ -1,5 +1,18 @@
 # Torghut Quant plan-stage merge contract and implementation handoff (2026-03-16)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane source modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Treat Jangar/Torghut contract docs as handoff history unless their claims are verified against current Jangar modules and routes.
+
 ## Summary
 
 This document is the merged architecture contract for the `torghut-quant` plan stage.

@@ -1,22 +1,20 @@
 # 197. Torghut Alpha Readiness Strike Ledger And Routeable Candidate Ladder (2026-05-13)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-13
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant revenue repair, alpha readiness, promotion custody, zero-notional repair dispatch,
-routeable-candidate admission, capital safety, validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/192-jangar-alpha-readiness-repair-escrow-and-runner-admission-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `196-torghut-profit-carry-passports-and-repair-capacity-futures-2026-05-13.md`
-- `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
-- `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
 
 ## Decision
 

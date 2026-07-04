@@ -3,18 +3,21 @@
 Date: 2026-05-05
 Owner: Victor Chen, Jangar Engineering
 Status: Accepted for implementation planning
-Scope: Torghut broker admission, hypothesis promotion, Jangar proof-runway consumption, empirical proof repair, and
-profitability guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/79-jangar-control-plane-proof-runway-and-consumer-gated-rollout-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
-- `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
-- `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
 
 ## Decision
 

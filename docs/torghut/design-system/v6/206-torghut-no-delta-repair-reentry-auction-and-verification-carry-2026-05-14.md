@@ -1,22 +1,21 @@
 # 206. Torghut No-Delta Repair Reentry Auction And Verification Carry (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut revenue-repair priority, alpha-readiness no-delta suppression, routeable-candidate recovery, Jangar
-verification carry, zero-notional capital safety, validation, rollout, rollback, and cross-swarm handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `204-torghut-alpha-repair-dividend-ledger-and-custody-flight-recorder-2026-05-14.md`
-- `203-torghut-alpha-closure-dividend-slo-and-consumer-evidence-carry-2026-05-14.md`
-- `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
 
 ## Decision
 

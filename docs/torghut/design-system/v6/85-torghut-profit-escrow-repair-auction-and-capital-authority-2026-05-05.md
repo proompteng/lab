@@ -1,20 +1,21 @@
 # 85. Torghut Profit Escrow, Repair Auction, and Capital Authority (2026-05-05)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-05-05`
-Owner: Victor Chen (Jangar Engineering)
-Mission: `codex/swarm-jangar-control-plane-plan`
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/81-jangar-action-authority-ledger-and-repair-runway-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
-- `83-torghut-profit-runway-consumer-and-hypothesis-capital-auction-2026-05-05.md`
-- `82-torghut-order-admission-warrants-and-replay-capital-auction-2026-05-05.md`
-- `docs/agents/designs/81-jangar-action-authority-ledger-and-repair-runway-2026-05-05.md`
 
 ## Decision
 

@@ -1,5 +1,19 @@
 # 10. Audit and Compliance Evidence Spec
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: secrets/RBAC/policies exist in GitOps and code, but compliance/governance designs are broader than current automated enforcement.
+- Matched implementation area: Security, secrets, RBAC, audit, governance, and compliance.
+- Current source evidence:
+  - `argocd/applications/torghut/role.yaml`
+  - `argocd/applications/torghut/rolebinding.yaml`
+  - `argocd/applications/torghut/sealed-secrets.yaml`
+  - `services/torghut/app/trading/autonomy/policy_checks.py`
+  - `services/torghut/scripts/run_governance_policy_dry_run.py`
+- Design drift note: Governance/compliance designs need tests and GitOps policy wiring before being treated as fully enforced.
+
+
 ## Objective
 
 Define the mandatory evidence package for every promotion decision and major incident, ensuring traceability,

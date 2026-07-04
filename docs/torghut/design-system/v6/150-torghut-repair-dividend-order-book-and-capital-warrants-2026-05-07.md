@@ -1,21 +1,20 @@
 # 150. Torghut Repair Dividend Order Book And Capital Warrants (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, repair prioritization, zero-notional warrant bids, TCA and market-context recovery,
-capital guardrails, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `149-torghut-profit-evidence-convergence-epochs-and-quant-stage-arbitrage-2026-05-07.md`
-- `148-torghut-profit-evidence-reactivation-scheduler-and-paper-gate-receipts-2026-05-07.md`
-- `145-torghut-proof-renewal-leases-and-capital-reentry-state-market-2026-05-07.md`
-- `docs/agents/designs/145-jangar-observation-epoch-tripwire-and-capital-contradiction-arbiter-2026-05-07.md`
 
 ## Decision
 

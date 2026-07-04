@@ -1,21 +1,20 @@
 # 184. Torghut Profit-Signal Quorum And Context-Routability Handoff (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, scoped quant freshness, market-context routability, hypothesis guardrails, Jangar
-stage-clearance consumption, capital safety, validation, rollout, rollback, and handoff gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/180-jangar-stage-clearance-exchange-and-scheduler-routability-contract-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `183-torghut-forecast-registry-repair-and-route-rehearsal-profit-gates-2026-05-08.md`
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
-- `181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
-- `docs/agents/designs/179-jangar-controller-witness-reconciliation-and-failure-debt-retirement-2026-05-08.md`
 
 ## Decision
 

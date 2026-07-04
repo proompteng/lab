@@ -1,21 +1,21 @@
 # 136. Torghut Stage-Coherent Profit Escrow And Proof-Age Arbitrage (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, stage-coherent capital admission, proof-age settlement, read-only data quality
-evidence, Jangar dependency quorum consumption, repair hypotheses, rollout gates, rollback, and deployer handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/132-jangar-stage-freshness-escrow-and-capital-authority-reclocking-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `135-torghut-capital-qualified-alpha-router-and-execution-repair-ladder-2026-05-06.md`
-- `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
-- `129-torghut-bidirectional-quant-proof-receipts-and-profit-reentry-ledger-2026-05-06.md`
-- `127-torghut-fillability-first-alpha-reentry-and-observation-backed-proof-exchange-2026-05-06.md`
 
 ## Decision
 

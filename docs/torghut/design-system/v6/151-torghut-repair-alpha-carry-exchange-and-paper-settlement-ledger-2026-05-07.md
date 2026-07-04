@@ -1,21 +1,20 @@
 # 151. Torghut Repair Alpha Carry Exchange And Paper Settlement Ledger (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut zero-notional repair prioritization, measurable trading hypotheses, paper settlement evidence, capital
-guardrails, validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/147-jangar-hot-path-witness-cache-and-repair-settlement-cells-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `150-torghut-repair-dividend-order-book-and-capital-warrants-2026-05-07.md`
-- `149-torghut-profit-evidence-convergence-epochs-and-quant-stage-arbitrage-2026-05-07.md`
-- `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
-- `docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`
 
 ## Decision
 

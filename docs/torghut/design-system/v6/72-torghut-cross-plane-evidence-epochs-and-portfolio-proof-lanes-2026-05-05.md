@@ -1,24 +1,20 @@
 # 72. Torghut Cross-Plane Evidence Epochs and Portfolio Proof Lanes (2026-05-05)
 
 Status: Approved for implementation (`discover`)
-Date: `2026-05-05`
-Owner: Gideon Park (Torghut Traders architecture)
-Mission: `codex/swarm-torghut-quant-discover`
-Swarm impacts:
 
-- `torghut-quant`
-- `jangar-control-plane`
+## Source Implementation Audit (2026-07-04)
 
-Companion doc:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-- `docs/agents/designs/67-jangar-runtime-evidence-epochs-and-artifact-parity-gates-2026-05-05.md`
-
-Extends:
-
-- `docs/torghut/design-system/v6/71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md`
-- `docs/torghut/design-system/v6/70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md`
-- `docs/torghut/design-system/v6/64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
-- `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
 
 ## Executive summary
 

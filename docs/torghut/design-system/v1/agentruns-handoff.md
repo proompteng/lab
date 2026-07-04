@@ -7,6 +7,20 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Intended audience: AgentRuns implementers and oncall automation engineers
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
+
+
 ## Purpose
 
 Provide a production-quality handoff pack so the AgentRuns platform (and any automation built on it) can safely:

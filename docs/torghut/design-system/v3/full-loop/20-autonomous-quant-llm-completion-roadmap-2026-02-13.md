@@ -22,6 +22,20 @@
   - LEAN route-provenance/risk parity evidence is still partially staged during warmup and cannot be treated as a fully closed production handoff yet.
 - Related PR: `https://github.com/proompteng/lab/pull/3641` and implementation follow-up PRs.
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented/prototyped: LLM review, DSPy scripts, discovery stress modules, and Jangar OpenAI-compatible routes exist; many ML/LOB designs remain research/prototype.
+- Matched implementation area: LLM, DSPy, AI review, and model governance.
+- Current source evidence:
+  - `services/torghut/app/trading/llm`
+  - `services/torghut/scripts/run_dspy_workflow.py`
+  - `services/torghut/scripts/compile_dspy_program.py`
+  - `services/jangar/src/routes/openai/v1/chat/completions.ts`
+  - `services/torghut/app/trading/discovery/order_flow_features.py`
+- Design drift note: Distinguish production review gates from research/prototype model ideas.
+
+
 ## Update (2026-02-26)
 
 - Signal continuity/freshness controls referenced in this roadmap are now completed and should not be treated as open priority work.

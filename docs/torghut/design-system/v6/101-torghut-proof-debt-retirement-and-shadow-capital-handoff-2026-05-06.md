@@ -1,21 +1,20 @@
 # 101. Torghut Proof Debt Retirement And Shadow Capital Handoff (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut proof debt retirement, empirical job freshness, market-context freshness, universe proof, scoped quant
-proof, shadow capital routing, and Jangar discover cutover consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/97-jangar-discover-cutover-handoff-and-proof-debt-gates-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
-- `100-torghut-session-proof-train-and-profitability-warrants-2026-05-06.md`
-- `99-torghut-profit-proof-escrow-and-repair-dividend-slo-2026-05-05.md`
-- `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
 
 ## Decision
 

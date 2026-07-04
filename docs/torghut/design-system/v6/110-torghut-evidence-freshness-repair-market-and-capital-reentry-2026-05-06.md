@@ -1,21 +1,21 @@
 # 110. Torghut Evidence Freshness Repair Market And Capital Reentry (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, evidence freshness repair, market-context recovery, empirical replay, quant latest
-rehydration, TCA settlement, and staged capital reentry through Jangar proof repair claims.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/106-jangar-proof-repair-clearinghouse-and-brownout-priority-queue-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `109-torghut-profit-proof-budget-consumer-and-options-runway-2026-05-06.md`
-- `108-torghut-capital-clearance-market-and-negative-evidence-ledger-2026-05-06.md`
-- `105-torghut-capital-reentry-evidence-feed-and-readiness-debt-netting-2026-05-06.md`
-- `100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
 
 ## Decision
 

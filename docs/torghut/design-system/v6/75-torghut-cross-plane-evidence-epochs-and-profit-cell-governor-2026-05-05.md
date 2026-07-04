@@ -1,22 +1,21 @@
 # 75. Torghut Cross-Plane Evidence Epochs and Profit Cell Governor (2026-05-05)
 
 Status: Approved for implementation (`discover`)
-Date: `2026-05-05`
-Owner: Gideon Park (Torghut Traders)
-Scope: Torghut quant profitability, evidence authority, data freshness, source/schema consistency, Jangar admission,
-and safe rollout/rollback gates.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/70-jangar-evidence-epoch-admission-and-rollout-quarantine-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md`
-- `69-torghut-harness-v2-strategy-discovery-and-whitepaper-research-factory-2026-04-07.md`
-- `65-torghut-quant-proof-ledger-cutover-program-and-handoff-contract-2026-03-21.md`
-- `64-torghut-profit-window-cutover-and-escrow-enforcement-contract-2026-03-21.md`
-- `53-torghut-kafka-retention-bootstrap-and-archive-backed-profitability-proof-2026-03-27.md`
 
 ## Executive Summary
 

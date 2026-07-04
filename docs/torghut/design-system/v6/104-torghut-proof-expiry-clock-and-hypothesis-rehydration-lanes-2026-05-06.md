@@ -1,21 +1,21 @@
 # 104. Torghut Proof Expiry Clock And Hypothesis Rehydration Lanes (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability proof, stale empirical jobs, quant metrics freshness, hypothesis promotion, Jangar
-capital holdbacks, and options/equity rehydration lanes.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/100-jangar-lease-reconciliation-clock-and-dispatch-expiry-contract-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `103-torghut-hypothesis-lease-arbiter-and-options-profit-runway-2026-05-06.md`
-- `103-torghut-hypothesis-rehydration-and-proof-gap-auction-2026-05-06.md`
-- `102-torghut-profit-proof-exchange-and-capital-slo-budget-2026-05-06.md`
-- `100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
 
 ## Decision
 

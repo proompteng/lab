@@ -1,21 +1,20 @@
 # 129. Torghut Proof-Carry Watermarks And Zero-Decision Capital Drain (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, proof-carrying capital evidence, quant freshness, zero-decision lanes, market-context
-staleness, Jangar consumer evidence escrow, and rollout guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/125-jangar-run-settlement-watermarks-and-consumer-evidence-escrow-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
 
-Extends:
-
-- `128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
-- `127-torghut-market-context-claims-and-lane-profit-settlement-2026-05-06.md`
-- `124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
-- `120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
 
 ## Decision
 

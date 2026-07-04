@@ -12,6 +12,20 @@
 - Non-goals: options order routing, assignment/exercise workflows, portfolio accounting changes, or a generalized
   multi-asset runtime refactor
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
+
+
 ## Current-Truth Notice
 
 This document records the March 8 options market-data architecture decision. It is not a current implementation plan or cluster-health statement. Current truth is `argocd/applications/torghut-options/**`, `services/torghut/app/options_lane/**`, `services/dorvud/**`, `docs/torghut/README.md`, and live runtime readback. Re-verify provider limits, feed mode, topics, ClickHouse tables, and Argo health before implementing from any contract below.

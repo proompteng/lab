@@ -1,21 +1,20 @@
 # 92. Torghut Proof-Cost Market and Options Catalog Firebreak (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, options catalog readiness, proof producer cost control, hypothesis evidence freshness,
-capital admission, and Jangar brownout consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/88-jangar-negative-evidence-arbiter-and-brownout-governor-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `91-torghut-causal-replay-exchange-and-capital-reentry-governor-2026-05-05.md`
-- `90-torghut-proof-receipt-router-and-capital-query-firebreak-contract-2026-05-05.md`
-- `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
-- `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
 
 ## Decision
 
