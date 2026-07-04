@@ -519,11 +519,11 @@ class TestScalarNormalizersHandleRuntimeJsonVariants(_TestRuntimeLedgerProofPack
             "purpose": "next_session_paper_route_runtime_window_evidence_collection",
             "session_readiness": {
                 "import_ready": False,
-                "import_blockers": ["paper_route_session_window_not_open"],
+                "import_blockers": ["alpaca_regular_session_closed"],
             },
             "runtime_window_import_handoff": {
                 "import_ready": False,
-                "import_blockers": ["paper_route_session_window_not_open"],
+                "import_blockers": ["alpaca_regular_session_closed"],
             },
             "targets": [
                 {

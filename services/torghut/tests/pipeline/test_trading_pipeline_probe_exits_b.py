@@ -830,11 +830,13 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
             decision_json = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], decision_json.get("params"))
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
-            simple_lane = cast(dict[str, Any], params.get("execution"))
+            execution_metadata = cast(dict[str, Any], params.get("execution"))
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(execution.submitted_qty, Decimal("0.25000000"))
             self.assertEqual(paper_route_probe.get("mode"), "paper_route_acquisition")
             self.assertEqual(paper_route_probe.get("max_notional"), "25.0")
             self.assertEqual(paper_route_probe.get("capped_qty"), "0.2500")
-            self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
+            self.assertEqual(
+                execution_metadata.get("paper_route_probe_cap_applied"), True
+            )

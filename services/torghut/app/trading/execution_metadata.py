@@ -1,8 +1,4 @@
-"""Canonical execution metadata for trade decisions.
-
-Legacy rows used ``simple_lane``. New writes use ``execution`` while readers
-fall back to the legacy key so existing decisions remain inspectable.
-"""
+"""Canonical execution metadata for trade decisions."""
 
 from __future__ import annotations
 
@@ -11,7 +7,7 @@ from collections.abc import Mapping
 from typing import cast
 
 EXECUTION_METADATA_KEY = "execution"
-LEGACY_SIMPLE_LANE_METADATA_KEY = "simple_lane"
+_REMOVED_SIMPLE_LANE_METADATA_KEY = "simple_lane"
 
 
 def execution_metadata(
@@ -20,9 +16,6 @@ def execution_metadata(
     raw_execution = params.get(EXECUTION_METADATA_KEY)
     if isinstance(raw_execution, Mapping):
         return cast(Mapping[str, typing.Any], raw_execution)
-    raw_legacy = params.get(LEGACY_SIMPLE_LANE_METADATA_KEY)
-    if isinstance(raw_legacy, Mapping):
-        return cast(Mapping[str, typing.Any], raw_legacy)
     return None
 
 
@@ -37,13 +30,12 @@ def set_execution_metadata(
     params: dict[str, typing.Any],
     metadata: Mapping[str, typing.Any],
 ) -> None:
-    params.pop(LEGACY_SIMPLE_LANE_METADATA_KEY, None)
+    params.pop(_REMOVED_SIMPLE_LANE_METADATA_KEY, None)
     params[EXECUTION_METADATA_KEY] = dict(metadata)
 
 
 __all__ = [
     "EXECUTION_METADATA_KEY",
-    "LEGACY_SIMPLE_LANE_METADATA_KEY",
     "execution_metadata",
     "mutable_execution_metadata",
     "set_execution_metadata",

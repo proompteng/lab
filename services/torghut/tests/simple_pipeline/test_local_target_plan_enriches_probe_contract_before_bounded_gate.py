@@ -544,8 +544,8 @@ def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(
 
         assert decisions == []
         blocker = pipeline.state.last_bounded_evidence_collection_blocker
-        assert blocker["reason"] == "paper_route_session_window_not_open"
-        assert blocker["blockers"] == ["paper_route_session_window_not_open"]
+        assert blocker["reason"] == "alpaca_regular_session_closed"
+        assert blocker["blockers"] == ["alpaca_regular_session_closed"]
         assert blocker["account_label"] == "TORGHUT_SIM"
         assert blocker["target_count"] == 0
     finally:
@@ -553,7 +553,7 @@ def test_bounded_source_collection_blocks_closed_session_with_explicit_reason(
         settings.trading_simple_paper_route_probe_enabled = probe_enabled_before
 
 
-def test_after_hours_live_testnet_route_falls_back_to_live_signal_scope(
+def test_after_hours_live_testnet_route_uses_live_signal_scope_without_target_plan(
     monkeypatch,
 ) -> None:
     trading_mode_before = settings.trading_mode
@@ -580,10 +580,12 @@ def test_after_hours_live_testnet_route_falls_back_to_live_signal_scope(
         pipeline.account_label = "TORGHUT_SIM"
         pipeline.state = SimpleNamespace()
         pipeline._is_market_session_open = lambda _now: False
-        pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
-            set(),
-            "paper_route_session_window_not_open",
-            [],
+
+        def _target_plan_must_not_be_called(**_kwargs: object) -> object:
+            raise AssertionError("after_hours_testnet_route_must_not_load_target_plan")
+
+        pipeline._external_paper_route_target_probe_symbols_cached = (
+            _target_plan_must_not_be_called
         )
         monkeypatch.setattr(
             "app.trading.scheduler.simple_pipeline.trading_now",

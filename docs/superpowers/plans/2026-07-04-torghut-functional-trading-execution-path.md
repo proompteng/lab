@@ -19,7 +19,7 @@ Live readback showed:
 - `/trading/status.operational_submission_gate.allowed` was `true`.
 - `/trading/status.simple_lane_orders_submitted_total` was `0`.
 - Runtime ledger showed `filled_notional: 0`, `closed_trade_count: 0`, and `open_position_count: 0`.
-- Scheduler logs repeated `paper_route_session_window_not_open` with `target_count=0`.
+- Scheduler logs repeated `alpaca_regular_session_closed` with `target_count=0`.
 - Profit and route surfaces were still `observe_only`, `repair_only`, and `zero_notional`.
 - Hyperliquid runtime had repeated `TimeoutError` cycles and temporary `/readyz` 503s.
 
@@ -43,7 +43,7 @@ Functional trading means current order proof, not rollout proof.
    Answer: `_bounded_paper_route_signal_scope` returns `None` when `self._is_market_session_open(now)` is false.
    Action: Remove the market-session early return for the testnet route; use session only for route choice.
 
-5. Why does `paper_route_session_window_not_open` keep appearing?
+5. Why does `alpaca_regular_session_closed` keep appearing?
    Answer: The old paper-route evidence collection assumes a regular-session target window, so after-hours testnet is treated as a collection window failure.
    Action: Delete paper-route session window authority from live/testnet execution and keep it only as diagnostic evidence collection.
 

@@ -277,6 +277,23 @@ def _target_active_in_window(target: Mapping[str, Any], now: datetime) -> bool:
     return window_start <= now < window_end
 
 
+def _after_hours_testnet_route_enabled(
+    *,
+    trading_mode: str,
+    paper_route_probe_enabled: bool,
+    paper_route_probe_allow_live_mode: bool,
+    testnet_after_hours_enabled: bool,
+    market_session_open: bool,
+) -> bool:
+    return (
+        trading_mode == "live"
+        and paper_route_probe_enabled
+        and paper_route_probe_allow_live_mode
+        and testnet_after_hours_enabled
+        and not market_session_open
+    )
+
+
 def _target_missing_explicit_probe_window(target: Mapping[str, Any]) -> bool:
     return all(
         _safe_text(target.get(key)) is None
@@ -774,6 +791,7 @@ def _paper_route_probe_lineage_from_params(params: Mapping[str, Any]) -> dict[st
 target_plan_has_active_bounded_sim_collection_owner = (
     _target_plan_has_active_bounded_sim_collection_owner
 )
+after_hours_testnet_route_enabled = _after_hours_testnet_route_enabled
 target_requires_bounded_sim_collection_gate = (
     _target_requires_bounded_sim_collection_gate
 )

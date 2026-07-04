@@ -552,12 +552,14 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             decision_json = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], decision_json.get("params"))
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
-            simple_lane = cast(dict[str, Any], params.get("execution"))
+            execution_metadata = cast(dict[str, Any], params.get("execution"))
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(paper_route_probe.get("symbol"), "NVDA")
             self.assertEqual(paper_route_probe.get("mode"), "paper_route_acquisition")
-            self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
+            self.assertEqual(
+                execution_metadata.get("paper_route_probe_cap_applied"), True
+            )
 
     def test_paper_route_probe_helpers_handle_missing_repair_metadata(self) -> None:
         self.assertFalse(SimpleTradingPipeline._proof_floor_market_session_open({}))
