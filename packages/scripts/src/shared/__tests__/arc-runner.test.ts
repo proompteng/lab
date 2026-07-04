@@ -25,6 +25,14 @@ const flake = readRepoFile('flake.nix')
 const nixPackages = readRepoFile('nix/packages.nix')
 const toolchainDoctor = readRepoFile('nix/toolchain-doctor.sh')
 
+const runnerScaleSetBlock = (name: string): string => {
+  const start = arcApplication.indexOf(`runnerScaleSetName: ${name}`)
+  expect(start).toBeGreaterThan(-1)
+
+  const next = arcApplication.indexOf('runnerScaleSetName:', start + 1)
+  return arcApplication.slice(start, next === -1 ? arcApplication.length : next)
+}
+
 describe('ARC Nix runner toolchain', () => {
   it('keeps ARC storage and Docker sidecar unchanged while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
@@ -40,6 +48,14 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).toContain('grep -F \'storageClassName: "rook-ceph-block"\'')
     expect(arcRunnerReleaseWorkflow).not.toContain('ObjectBucketClaim')
     expect(arcRunnerReleaseWorkflow).not.toContain('PersistentVolumeClaim')
+  })
+
+  it('allows five concurrent ARC runners per scale set and keeps arm runners warm', () => {
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {
