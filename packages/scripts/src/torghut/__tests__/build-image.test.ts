@@ -28,6 +28,11 @@ describe('buildImage', () => {
         sourceSha: options.sourceSha ?? '',
         packageAttr: options.packageAttr,
         contractPath: '.artifacts/torghut/manual-release-contract.json',
+        platforms: ['linux/amd64'],
+        platformDigests: {
+          'linux/amd64': 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        },
+        imageTarPath: '/nix/store/torghut-image.tar',
       }
     })
 
@@ -75,6 +80,9 @@ describe('buildImage', () => {
         sourceSha: options.sourceSha ?? '',
         packageAttr: options.packageAttr,
         contractPath: '.artifacts/torghut/manual-release-contract.json',
+        platforms: [],
+        platformDigests: {},
+        dryRun: true,
       }
     })
 

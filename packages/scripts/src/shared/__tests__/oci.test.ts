@@ -100,6 +100,7 @@ const productDeployScripts = [
   readRepoFile('packages/scripts/src/synthesis/deploy-service.ts'),
 ]
 const nixOciDeployScript = readRepoFile('packages/scripts/src/shared/nix-oci-deploy.ts')
+const nixOciPlanScript = readRepoFile('packages/scripts/src/shared/nix-oci.ts')
 const ociPushScript = readRepoFile('nix/oci-push.sh')
 
 afterEach(() => {
@@ -172,6 +173,80 @@ describe('inspectOciPlatforms', () => {
     expect(inspectOciPlatforms('registry.example/lab/example:sha').map((entry) => entry.platform)).toEqual([
       'linux/amd64',
       'linux/arm64',
+    ])
+  })
+
+  it('reads the platform from single-architecture manifests', () => {
+    Bun.which = ((binary: string) => (binary === 'crane' ? '/bin/crane' : null)) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined === 'crane manifest registry.example/lab/example:sha') {
+        return spawnResult(
+          0,
+          JSON.stringify({
+            schemaVersion: 2,
+            config: {
+              digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+            },
+          }),
+        )
+      }
+      if (joined === 'crane digest registry.example/lab/example:sha') {
+        return spawnResult(0, 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+      }
+      if (joined === 'crane config registry.example/lab/example:sha') {
+        return spawnResult(0, JSON.stringify({ os: 'linux', architecture: 'arm64' }))
+      }
+      return spawnResult(1)
+    }) as typeof Bun.spawnSync)
+
+    expect(inspectOciPlatforms('registry.example/lab/example:sha')).toEqual([
+      {
+        platform: 'linux/arm64',
+        digest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      },
+    ])
+  })
+
+  it('falls back to regctl for single-architecture image digest and config reads', () => {
+    Bun.which = ((binary: string) =>
+      binary === 'crane' || binary === 'regctl' ? `/bin/${binary}` : null) as typeof Bun.which
+    __private.setSpawnSync(((command: Parameters<typeof Bun.spawnSync>[0]) => {
+      const joined = typeof command === 'string' ? command : command.join(' ')
+      if (joined === 'crane manifest registry.example/lab/example:sha') {
+        return spawnResult(1, '', 'not found')
+      }
+      if (joined === 'regctl manifest get registry.example/lab/example:sha --format raw-body') {
+        return spawnResult(
+          0,
+          JSON.stringify({
+            schemaVersion: 2,
+            config: {
+              digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+            },
+          }),
+        )
+      }
+      if (joined === 'crane digest registry.example/lab/example:sha') {
+        return spawnResult(1, '', 'not found')
+      }
+      if (joined === 'regctl image digest registry.example/lab/example:sha') {
+        return spawnResult(0, 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee')
+      }
+      if (joined === 'crane config registry.example/lab/example:sha') {
+        return spawnResult(1, '', 'not found')
+      }
+      if (joined === 'regctl image inspect registry.example/lab/example:sha') {
+        return spawnResult(0, JSON.stringify({ os: 'linux', architecture: 'amd64' }))
+      }
+      return spawnResult(1)
+    }) as typeof Bun.spawnSync)
+
+    expect(inspectOciPlatforms('registry.example/lab/example:sha')).toEqual([
+      {
+        platform: 'linux/amd64',
+        digest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      },
     ])
   })
 })
@@ -375,13 +450,14 @@ describe('native OCI build workflows', () => {
       symphonyBuildWorkflow,
       sagBuildWorkflow,
       productNixWorkflow,
+      torghutBuildWorkflow,
     ]) {
       expect(workflow).not.toContain("'packages/scripts/src/shared/**'")
       expect(workflow).not.toContain('- packages/scripts/src/shared/**')
+      expect(workflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     }
 
     expect(productNixWorkflow).not.toContain("'nix/**'")
-    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(agentsBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
 
     for (const workflow of [jangarBuildWorkflow]) {
@@ -391,14 +467,11 @@ describe('native OCI build workflows', () => {
     }
     expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/cli.ts'")
     expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/git.ts'")
-    expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
     expect(sagBuildWorkflow).toContain("'packages/scripts/src/shared/cli.ts'")
     expect(sagBuildWorkflow).toContain("'packages/scripts/src/shared/git.ts'")
-    expect(sagBuildWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
 
-    expect(productNixWorkflow).toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
     expect(enabledProductReleaseWorkflow).toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
   })
@@ -771,7 +844,12 @@ describe('native OCI build workflows', () => {
     expect(nixOciDeployScript).toContain("await run('nix', ['build', `.#${packageAttr}`")
     expect(nixOciDeployScript).toContain("await run('nix', pushArgs")
     expect(nixOciDeployScript).toContain("runCapture('crane', ['digest'")
-    expect(nixOciDeployScript).toContain('Nix OCI image pushes must stay in')
+    expect(nixOciDeployScript).toContain('buildNixOciBuildPlan')
+    expect(nixOciDeployScript).toContain('inspectOciPlatforms')
+    expect(nixOciDeployScript).toContain('Pushed Nix OCI image has no observable platform metadata')
+    expect(nixOciDeployScript).toContain('platformDigests')
+    expect(nixOciDeployScript).toContain('imageTarPath')
+    expect(nixOciPlanScript).toContain('Nix OCI image pushes must stay in')
   })
 
   it('opens digest-pinning release PRs for enabled simple app Nix builds', () => {

@@ -152,12 +152,25 @@ const parseManifestPlatforms = (manifestBody: string): OciPlatformDigest[] => {
   )
 }
 
+const parseConfigPlatform = (configBody: string, digest: string): OciPlatformDigest[] => {
+  const parsed = JSON.parse(configBody) as { os?: string; architecture?: string; variant?: string }
+  const platform = formatPlatform(parsed)
+  return platform && digest ? [{ platform, digest }] : []
+}
+
 export const inspectOciPlatforms = (imageRef: string): OciPlatformDigest[] => {
   const manifestBody =
     runOptional('crane', ['manifest', imageRef]) ??
     runRequired('regctl', ['manifest', 'get', imageRef, '--format', 'raw-body'])
 
-  return parseManifestPlatforms(manifestBody)
+  const indexPlatforms = parseManifestPlatforms(manifestBody)
+  if (indexPlatforms.length > 0) {
+    return indexPlatforms
+  }
+
+  const digest = runOptional('crane', ['digest', imageRef]) ?? runOptional('regctl', ['image', 'digest', imageRef])
+  const configBody = runOptional('crane', ['config', imageRef]) ?? runOptional('regctl', ['image', 'inspect', imageRef])
+  return digest && configBody ? parseConfigPlatform(configBody, digest) : []
 }
 
 export const assertOciPlatforms = (imageRef: string, requiredPlatforms: string[]): OciPlatformDigest[] => {

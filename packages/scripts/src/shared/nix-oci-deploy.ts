@@ -3,6 +3,8 @@ import { dirname, resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from './cli'
 import { execGit } from './git'
+import { buildNixOciBuildPlan } from './nix-oci'
+import { inspectOciPlatforms } from './oci'
 
 export type BuildAndPushNixImageOptions = {
   service: string
@@ -26,6 +28,10 @@ export type BuildAndPushNixImageResult = {
   sourceSha: string
   packageAttr: string
   contractPath: string
+  platforms: string[]
+  platformDigests: Record<string, string>
+  imageTarPath?: string
+  dryRun?: boolean
 }
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
@@ -62,8 +68,12 @@ const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'm
         reference: result.reference,
         sourceSha: result.sourceSha,
         packageAttr: result.packageAttr,
+        platforms: result.platforms,
+        platformDigests: result.platformDigests,
+        imageTarPath: result.imageTarPath,
         builder: 'nix-dockerTools-skopeo',
         invocation,
+        dryRun: result.dryRun === true ? true : undefined,
       },
       null,
       2,
@@ -78,17 +88,22 @@ export const buildAndPushNixImage = async (
   const repository = requiredValue(options.repository ?? `lab/${options.imageName}`, 'repository')
   const tag = requiredValue(options.tag ?? execGit(['rev-parse', '--short', 'HEAD']), 'tag')
   const sourceSha = requiredValue(options.sourceSha ?? execGit(['rev-parse', 'HEAD']), 'sourceSha')
-  const image = `${registry}/${repository}`
   const service = requiredValue(options.service, 'service')
   const packageAttr = requiredValue(options.packageAttr, 'packageAttr')
+  const plan = buildNixOciBuildPlan({
+    service,
+    imageName: requiredValue(options.imageName, 'imageName'),
+    packageAttr,
+    sourceSha,
+    tag,
+    registry,
+    repository,
+  })
+  const image = plan.image
   const contractPath = resolve(
     repoRoot,
     options.contractPath ?? `.artifacts/${options.service}/manual-release-contract.json`,
   )
-
-  if (registry !== defaultRegistry || !repository.startsWith('lab/')) {
-    throw new Error(`Nix OCI image pushes must stay in ${defaultRegistry}/lab, got ${image}`)
-  }
 
   if (options.dryRun) {
     const dryRunDigest = 'sha256:dry-run'
@@ -101,6 +116,9 @@ export const buildAndPushNixImage = async (
       sourceSha,
       packageAttr,
       contractPath,
+      platforms: [],
+      platformDigests: {},
+      dryRun: true,
     }
     writeReleaseContract(result, 'manual-script')
     return result
@@ -121,6 +139,10 @@ export const buildAndPushNixImage = async (
   await run('nix', pushArgs, { cwd: repoRoot })
 
   const digest = runCapture('crane', ['digest', `${image}:${tag}`])
+  const observedPlatforms = inspectOciPlatforms(`${image}:${tag}`)
+  if (observedPlatforms.length === 0) {
+    throw new Error(`Pushed Nix OCI image has no observable platform metadata: ${image}:${tag}`)
+  }
   const result = {
     service,
     image,
@@ -130,6 +152,9 @@ export const buildAndPushNixImage = async (
     sourceSha,
     packageAttr,
     contractPath,
+    platforms: observedPlatforms.map((entry) => entry.platform),
+    platformDigests: Object.fromEntries(observedPlatforms.map((entry) => [entry.platform, entry.digest])),
+    imageTarPath: tarPath,
   }
   writeReleaseContract(result, 'manual-script')
   return result
