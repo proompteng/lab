@@ -5,6 +5,10 @@ Status: Current (2026-02-07)
 This is the hub for `docs/agents/**`. It is intended to make the Agents documentation set composable:
 clear entrypoints, clear “source of truth”, and a complete catalog of related documents.
 
+Authority note: use `../documentation-authority.md` when deciding whether a design file is current. The `designs/**`
+tree is a dated design archive unless an individual file explicitly says it is current and points to live code, GitOps,
+and runtime validation.
+
 ## Start Here
 
 - Operational/source-of-truth appendix (repo + chart + cluster): `designs/handoff-common.md`
@@ -18,9 +22,10 @@ clear entrypoints, clear “source of truth”, and a complete catalog of relate
 - How to validate changes in CI: `ci-validation-plan.md`
 - How to install/upgrade/debug (ops): `runbooks.md`
 - Fast Jangar/Torghut live analysis workflow: `designs/jangar-torghut-live-analysis-playbook.md`
-- Autonomous Jangar/Torghut production system design: `designs/autonomous-jangar-torghut-production-system.md`
+- Historical autonomous Jangar/Torghut production proposal: `designs/autonomous-jangar-torghut-production-system.md`
 - Swarm agentic mission architecture notes: `designs/swarm-agentic-mission-architecture-2026-05-08.md`
-- Current Jangar/Torghut architecture contracts:
+- Jangar/Torghut architecture contract archive. Treat these as dated handoffs until verified against live code, GitOps,
+  and runtime status:
   - `designs/207-jangar-consumer-evidence-transport-split-and-source-serving-contract-canary-2026-05-15.md`
   - `../torghut/design-system/v6/213-torghut-consumer-evidence-contract-canary-and-alpha-reentry-transport-2026-05-15.md`
   - `designs/206-jangar-route-adjacent-proof-custody-and-torghut-reentry-admission-2026-05-14.md`

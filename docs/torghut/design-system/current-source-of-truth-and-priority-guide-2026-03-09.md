@@ -8,6 +8,10 @@
 - Archive note: this file is a historical authority-map snapshot. For current operations, start with
   `docs/torghut/README.md`, live GitOps, service code, and runtime readback.
 
+
+Current authority note: this file is retained as a historical map. It must not be used as the current priority list
+without validating against `docs/torghut/README.md`, live GitOps, service code, runtime endpoints, and CI.
+
 ## Why this document exists
 
 The Torghut design corpus has accumulated several generations of:
