@@ -103,7 +103,6 @@ jobs:
               packages/scripts/src/sag
               packages/scripts/src/shared/cli.ts
               packages/scripts/src/shared/git.ts
-              packages/scripts/src/shared/nix-oci-deploy.ts
               nix/images/sag.nix
               nix/images/openai-codex-cli.nix
               nix/images/bun-workspace-service.nix

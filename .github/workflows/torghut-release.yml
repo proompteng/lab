@@ -120,8 +120,6 @@ jobs:
                     packages/scripts/src/torghut \
                     packages/scripts/src/shared/cli.ts \
                     packages/scripts/src/shared/git.ts \
-                    packages/scripts/src/shared/nix-oci-deploy.ts \
-                    packages/scripts/src/shared/oci-digest.ts \
                     nix/images/torghut.nix \
                     .github/workflows/torghut-build-push.yaml \
                     .github/workflows/torghut-ci.yml \

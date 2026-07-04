@@ -127,8 +127,6 @@ jobs:
                     packages/scripts/src/torghut/update-ws-manifest.ts \
                     packages/scripts/src/shared/cli.ts \
                     packages/scripts/src/shared/git.ts \
-                    packages/scripts/src/shared/nix-oci-deploy.ts \
-                    packages/scripts/src/shared/oci-digest.ts \
                     nix/images/dorvud-jvm-service.nix \
                     nix/images/torghut-ws.nix \
                     .github/workflows/torghut-ws-build-push.yaml \

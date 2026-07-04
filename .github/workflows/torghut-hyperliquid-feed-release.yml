@@ -127,8 +127,6 @@ jobs:
                     packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts \
                     packages/scripts/src/shared/cli.ts \
                     packages/scripts/src/shared/git.ts \
-                    packages/scripts/src/shared/nix-oci-deploy.ts \
-                    packages/scripts/src/shared/oci-digest.ts \
                     nix/images/dorvud-jvm-service.nix \
                     nix/images/torghut-hyperliquid-feed.nix \
                     .github/workflows/torghut-hyperliquid-feed-build-push.yaml \

@@ -123,23 +123,23 @@ jobs:
             case "${service}" in
               proompteng)
                 manifest_path="argocd/applications/proompteng/kustomization.yaml"
-                input_paths=(apps/landing packages/backend packages/design packages/scripts/src/proompteng packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/landing packages/backend packages/design packages/scripts/src/proompteng packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
                 ;;
               app)
                 manifest_path="argocd/applications/app/kustomization.yaml"
-                input_paths=(apps/app packages/design packages/scripts/src/app packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/app.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/app packages/design packages/scripts/src/app packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts nix/images/app.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
                 ;;
               synthesis)
                 manifest_path="argocd/applications/synthesis/kustomization.yaml"
-                input_paths=(apps/synthesis packages/design packages/scripts/src/synthesis packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/synthesis.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/synthesis packages/design packages/scripts/src/synthesis packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts nix/images/synthesis.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
                 ;;
               docs)
                 manifest_path="argocd/applications/docs/kustomization.yaml"
-                input_paths=(apps/docs packages/design packages/scripts/src/docs packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/docs packages/design packages/scripts/src/docs packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
                 ;;
               olden)
                 manifest_path="argocd/applications/olden/kustomization.yaml"
-                input_paths=(apps/olden packages/design packages/scripts/src/olden packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/olden packages/design packages/scripts/src/olden packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
                 ;;
               *)
                 echo "Unsupported service in release contract: ${service}" >&2
