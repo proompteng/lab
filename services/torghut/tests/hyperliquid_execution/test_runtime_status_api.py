@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from fastapi.testclient import TestClient
+
 from app.hyperliquid_execution import api
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.models import CycleResult, RuntimeDependencyStatus
@@ -61,6 +63,32 @@ def test_trading_status_projects_runtime_cycle_and_compatibility_gate() -> None:
         "trading_disabled",
     ]
     assert payload["live_submission_gate"] == payload["operational_submission_gate"]
+
+
+def test_trading_loop_status_alias_uses_runtime_status_contract() -> None:
+    cycle = CycleResult(
+        observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        markets_seen=1,
+        selected_coins=("BTC",),
+        signals_written=1,
+        orders_submitted=1,
+        orders_cancelled=0,
+        dependencies=(RuntimeDependencyStatus("hyperliquid_feed_service", True),),
+        universe_details={"selected": ["BTC"]},
+    )
+    config = HyperliquidExecutionConfig.from_env(
+        {"HYPERLIQUID_EXECUTION_ENABLED": "false"}
+    )
+
+    with _runtime_state(config=config, cycle=cycle):
+        response = TestClient(api.app).get("/trading/loop/status")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ready"] is True
+    assert payload["execution_route"] == "testnet"
+    assert payload["latest_cycle"]["orders_submitted"] == 1
+    assert payload["operational_submission_gate"] == payload["live_submission_gate"]
 
 
 def test_trading_status_reports_operational_gate_without_alpha_blockers() -> None:

@@ -92,6 +92,7 @@ def readyz(response: Response) -> dict[str, object]:
 
 
 @app.get("/trading/status")
+@app.get("/trading/loop/status")
 def trading_status() -> dict[str, object]:
     ready, reasons, dependencies = runtime_readiness(
         config=runtime_state.config,

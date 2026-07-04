@@ -22,7 +22,7 @@ spec:
         kubernetes.io/arch: arm64
       containers:
         - name: migrate
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:607af89da76b14c984939adb5d9d6e11726fe7b82f14ab2d0072189012e96e72
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:b1ac28ac8bc5de96f96761066c4efff18b3ea46d22d154eadd221ea49449c3c4
           imagePullPolicy: Always
           command:
             - /bin/sh
@@ -51,9 +51,9 @@ spec:
               /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
           env:
             - name: TORGHUT_COMMIT
-              value: c789931929fb3116093abb4a1e9d3a28efe562fb
+              value: f5cf060c8dfce37133b62ab580d321c3626daf8c
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:607af89da76b14c984939adb5d9d6e11726fe7b82f14ab2d0072189012e96e72
+              value: sha256:b1ac28ac8bc5de96f96761066c4efff18b3ea46d22d154eadd221ea49449c3c4
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
