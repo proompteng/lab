@@ -10,16 +10,30 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Implemented/partially evolved: Dorvud WS/TA, Torghut ClickHouse/GitOps, and TA Flink deployments exist; exact topics/tables must be verified from current manifests/code.
-- Matched implementation area: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding.
+- Implementation status: **Implemented and expanded.** The WS forwarder exists as the Dorvud `ForwarderApp` with Alpaca market-data streaming, optional trade updates, bars backfill, static/remote symbol handling, Kafka publishing, readiness/liveness gates, metrics, and GitOps deployment.
 - Current source evidence:
-  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
-  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
-  - `argocd/applications/torghut/ws/deployment.yaml`
-  - `argocd/applications/torghut/ta/flinkdeployment.yaml`
-  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
-- Design drift note: Data-plane diagrams can be directionally right while specific topic/table/runtime claims drift.
-
+  - `ForwarderConfig.kt` defines current env/config for market type, crypto location, Alpaca feed/base/stream URLs, trade stream URL, market-data channels, options holidays, static symbols, allowlist, shard settings, trade updates, bars backfill, reconnect/backoff, dedup, Kafka auth/TLS, topics, health/metrics ports, and not-ready liveness timeout.
+  - `ForwarderApp.kt::start` builds Kafka producer, dedup caches, symbol tracker, market-data stream job, optional trade-updates stream job, and optional bars backfill job.
+  - `ForwarderApp.streamMarketDataSession` handles Alpaca auth, subscribe/unsubscribe batches, symbol refresh, options starvation status, reconnect classification, and message routing.
+  - `ForwarderApp.sendKafka` publishes `ProducerRecord(topic, env.symbol, payload)`, records Kafka latency, and updates readiness on produce success/failure.
+  - `HealthServer.kt` exposes `/healthz`, `/readyz`, and Prometheus metrics; liveness can fail after readiness remains false for `HEALTH_NOT_READY_KILL_AFTER_MS`.
+  - `argocd/applications/torghut/ws/configmap.yaml` currently uses a static executable chip universe and allowlist, full market-data channels, bars backfill enabled, trade updates enabled, and bounded Kafka producer settings.
+- What is implemented from the design:
+  - one replica in GitOps to respect Alpaca connection limits;
+  - Alpaca market-data to Kafka forwarding;
+  - symbol-keyed Kafka records;
+  - dedup caches;
+  - readiness/liveness endpoints;
+  - Kafka metadata/produce readiness;
+  - reconnect backoff;
+  - static and fetched symbol sources.
+- What changed from the design:
+  - current production config intentionally avoids depending on Jangar for live trading symbols and uses `SYMBOLS` plus `SYMBOLS_ALLOWLIST`;
+  - trade updates and bars backfill are now part of the forwarder contract;
+  - readiness is classified across WS, trade-updates, Kafka, and not-ready liveness gates rather than a single boolean.
+- Remaining gaps / operator caveats:
+  - The doc's v1 data-flow diagram omits trade-update topics, bars backfill, options status publishing, and readiness error classification.
+  - A single replica protects the Alpaca account connection limit but also makes the forwarder a deliberate single active ingress point.
 
 ## Purpose
 
