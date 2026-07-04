@@ -51,6 +51,48 @@ spec:
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('does not rewrite source metadata when the image digest is unchanged', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'torghut-hyperliquid-feed-manifest-test-'))
+    const manifestPath = join(dir, 'deployment.yaml')
+    writeFileSync(
+      manifestPath,
+      `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: torghut-hyperliquid-feed
+          image: registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e
+          env:
+            - name: TORGHUT_HYPERLIQUID_FEED_VERSION
+              value: main-oldsource
+            - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
+              value: oldsource
+            - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
+              value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e
+`,
+      'utf8',
+    )
+
+    const result = __private.updateHyperliquidFeedManifest(
+      'registry.ide-newton.ts.net/lab/torghut-hyperliquid-feed',
+      'sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+      'main-newsource',
+      'newsource',
+      relative(repoRoot, manifestPath),
+    )
+
+    const updated = readFileSync(manifestPath, 'utf8')
+    expect(updated).toContain('value: main-oldsource')
+    expect(updated).toContain('value: oldsource')
+    expect(updated).not.toContain('value: main-newsource')
+    expect(updated).not.toContain('value: newsource')
+    expect(result.changed).toBe(false)
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('parses manifest override options', () => {
     const options = __private.parseArgs([
       '--manifest-path',

@@ -43,15 +43,33 @@ const arcApplication = readFileSync(
 const pathPatternIndex = (pattern: string): number =>
   workflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
+const ciPathPatternIndex = (pattern: string): number =>
+  ciWorkflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
+
 describe('torghut build-push workflow', () => {
-  it('does not build and deploy Torghut for test-only script changes', () => {
-    const scriptsInclude = pathPatternIndex('packages/scripts/src/torghut/**')
-    const testsExclude = pathPatternIndex('!packages/scripts/src/torghut/__tests__/**')
-    const testFilesExclude = pathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')
+  it('does not build the core Torghut image for release helper script changes', () => {
+    expect(pathPatternIndex('packages/scripts/src/torghut/**')).toBe(-1)
+    expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
+    expect(pathPatternIndex('packages/scripts/src/shared/cli.ts')).toBe(-1)
+    expect(pathPatternIndex('packages/scripts/src/shared/git.ts')).toBe(-1)
+    expect(pathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
+    expect(pathPatternIndex('.github/workflows/nix-oci-build-common.yml')).toBe(-1)
+    expect(pathPatternIndex('services/torghut/**')).toBeGreaterThan(-1)
+    expect(pathPatternIndex('nix/images/torghut.nix')).toBeGreaterThan(-1)
+  })
+
+  it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {
+    const scriptsInclude = ciPathPatternIndex('packages/scripts/src/torghut/**')
+    const testsExclude = ciPathPatternIndex('!packages/scripts/src/torghut/__tests__/**')
+    const testFilesExclude = ciPathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')
+    const updaterExclude = ciPathPatternIndex('!packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')
 
     expect(scriptsInclude).toBeGreaterThan(-1)
     expect(testsExclude).toBeGreaterThan(scriptsInclude)
     expect(testFilesExclude).toBeGreaterThan(scriptsInclude)
+    expect(updaterExclude).toBeGreaterThan(scriptsInclude)
+    expect(ciPathPatternIndex('.github/workflows/torghut-ci.yml')).toBe(-1)
+    expect(ciPathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
   })
 
   it('does not use actions/cache on the ARC-backed build runner', () => {
