@@ -480,7 +480,7 @@ class TestTradingPipelinePaperRouteQuoteB(TradingPipelineTestCaseBase):
         nested_audit = {"sizing_source": "target_notional", "resolved_qty": "3"}
         self.assertEqual(
             _target_notional_sizing_audit_from_params(
-                {"simple_lane": {"paper_route_target_notional_sizing": nested_audit}}
+                {"execution": {"paper_route_target_notional_sizing": nested_audit}}
             ),
             nested_audit,
         )

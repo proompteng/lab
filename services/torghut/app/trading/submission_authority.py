@@ -25,12 +25,9 @@ _DIAGNOSTIC_SUBMISSION_REASONS = frozenset(
 
 def build_submission_authority_status(
     live_submission_gate: Mapping[str, Any],
-    *,
-    simple_lane_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     """Summarize effective submit authority from operational blockers only."""
 
-    _ = simple_lane_status
     operational_gate = operational_submission_gate_status(live_submission_gate)
     operational_allowed = _bool(operational_gate.get("allowed"))
     effective_mode = "operational_submission" if operational_allowed else "blocked"

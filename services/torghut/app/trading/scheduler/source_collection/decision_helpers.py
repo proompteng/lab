@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from ....config import settings
 from ...decisions.positions_for_strategy_action import position_qty_for_symbol
+from ...execution_metadata import set_execution_metadata
 from ...promotion_authority import source_collection_authority
 from ...quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
 from ...runtime_decision_authority import source_decision_mode_is_profit_proof_eligible
@@ -185,14 +186,14 @@ def balanced_pair_needs_short_permission(
     )
 
 
-def source_collection_simple_lane(
+def source_collection_execution_metadata(
     context: SourceCollectionTargetContext,
     *,
     metadata: Mapping[str, Any],
     mode: SourceCollectionMode,
     action: str,
 ) -> dict[str, Any]:
-    simple_lane: dict[str, Any] = {
+    execution: dict[str, Any] = {
         "source": "external_target_plan_url",
         "target_plan_source_decision": True,
         "paper_route_probe_max_notional": str(context.target_cap),
@@ -205,17 +206,17 @@ def source_collection_simple_lane(
         "client_order_id_basis": "trade_decision_hash",
     }
     if context.symbol_quantities:
-        simple_lane["paper_route_probe_symbol_quantities"] = {
+        execution["paper_route_probe_symbol_quantities"] = {
             item_symbol: str(quantity)
             for item_symbol, quantity in context.symbol_quantities.items()
         }
     if mode.execution_metadata:
-        simple_lane["execution_account_label"] = mode.execution_metadata[
+        execution["execution_account_label"] = mode.execution_metadata[
             "execution_account_label"
         ]
-        simple_lane["submit_path"] = mode.execution_metadata["submit_path"]
+        execution["submit_path"] = mode.execution_metadata["submit_path"]
     del metadata
-    return simple_lane
+    return execution
 
 
 def source_collection_params(
@@ -223,13 +224,12 @@ def source_collection_params(
     *,
     symbol: str,
     metadata: dict[str, Any],
-    simple_lane: dict[str, Any],
+    execution_metadata: dict[str, Any],
     mode: SourceCollectionMode,
 ) -> dict[str, Any]:
     params: dict[str, Any] = {
         "paper_route_target_plan": metadata,
         "paper_route_target_plan_source_decision": metadata,
-        "simple_lane": simple_lane,
         "source_decision_mode": mode.source_decision_mode,
         "profit_proof_eligible": mode.profit_proof_eligible,
         "hypothesis_id": metadata.get("hypothesis_id"),
@@ -260,6 +260,7 @@ def source_collection_params(
     }
     if "exit_minute_after_open" in metadata:
         params["exit_minute_after_open"] = metadata["exit_minute_after_open"]
+    set_execution_metadata(params, execution_metadata)
     return params
 
 
@@ -371,15 +372,16 @@ def source_collection_broker_quantity_resolution(
 def apply_source_collection_quantity_resolution(
     *,
     metadata: dict[str, Any],
-    simple_lane: dict[str, Any],
+    execution_metadata: dict[str, Any],
     params: dict[str, Any],
     quantity_resolution: Any,
 ) -> None:
     metadata["paper_route_target_notional_sizing"] = quantity_resolution.audit
-    simple_lane["paper_route_target_notional_sizing"] = quantity_resolution.audit
-    simple_lane["target_source_notional_sized"] = (
+    execution_metadata["paper_route_target_notional_sizing"] = quantity_resolution.audit
+    execution_metadata["target_source_notional_sized"] = (
         quantity_resolution.audit.get("sizing_source") == "target_notional"
     )
+    set_execution_metadata(params, execution_metadata)
     params["paper_route_target_notional_sizing"] = quantity_resolution.audit
     params.update(quantity_resolution.price_params)
 
@@ -393,7 +395,7 @@ __all__ = [
     "source_collection_has_unrepaired_exposure",
     "source_collection_params",
     "source_collection_profit_proof_exposure",
-    "source_collection_simple_lane",
+    "source_collection_execution_metadata",
     "source_collection_strategy_exposure",
     "source_collection_symbols",
     "source_collection_timeframe",

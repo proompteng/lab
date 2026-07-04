@@ -155,7 +155,7 @@ class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
             refreshed_json = cast(dict[str, Any], refreshed.decision_json)
             params = cast(dict[str, Any], refreshed_json.get("params"))
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
-            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+            execution_metadata = cast(dict[str, Any], params.get("execution"))
             retry = cast(dict[str, Any], refreshed_json.get("paper_route_probe_retry"))
 
             self.assertEqual(refreshed.status, "submitted")
@@ -165,7 +165,9 @@ class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
                 Decimal(str(paper_route_probe.get("capped_notional"))),
                 Decimal("25.000000"),
             )
-            self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
+            self.assertEqual(
+                execution_metadata.get("paper_route_probe_cap_applied"), True
+            )
             self.assertEqual(
                 retry.get("previous_submission_block_reason"),
                 "hypothesis_not_promotion_eligible",

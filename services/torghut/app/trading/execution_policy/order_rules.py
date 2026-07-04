@@ -463,7 +463,12 @@ def prechecked_reducing_position_qty(decision: StrategyDecision) -> Decimal | No
     qty = optional_decimal(decision.qty)
     if qty is None or qty <= 0:
         return None
-    for key in ("simple_lane", "simple_lane_precheck"):
+    for key in (
+        "execution",
+        "execution_precheck",
+        "simple_lane",
+        "simple_lane_precheck",
+    ):
         section = decision.params.get(key)
         if not isinstance(section, Mapping):
             continue

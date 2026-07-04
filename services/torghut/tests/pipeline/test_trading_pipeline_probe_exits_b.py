@@ -237,7 +237,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
                     "db_open_qty": "34.69970000",
                     "db_open_side": "long",
                 },
-                "simple_lane": {
+                "execution": {
                     "quantity_resolution": {
                         "action": "sell",
                         "symbol": "INTC",
@@ -314,7 +314,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
                     "db_open_qty": "34.69970000",
                     "db_open_side": "long",
                 },
-                "simple_lane": {
+                "execution": {
                     "quantity_resolution": {
                         "action": "sell",
                         "symbol": "INTC",
@@ -649,7 +649,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
                 "params": {
                     "price": Decimal("100"),
                     "paper_route_probe_exit": {"mode": "paper_route_exit"},
-                    "simple_lane": {"quantity_resolution": {}},
+                    "execution": {"quantity_resolution": {}},
                 }
             }
         )
@@ -830,7 +830,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
             decision_json = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], decision_json.get("params"))
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
-            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+            simple_lane = cast(dict[str, Any], params.get("execution"))
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(execution.submitted_qty, Decimal("0.25000000"))

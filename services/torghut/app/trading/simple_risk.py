@@ -7,6 +7,7 @@ from decimal import Decimal
 from collections.abc import Mapping
 from typing import Any, cast
 
+from .execution_metadata import set_execution_metadata
 from .models import StrategyDecision
 from .prices import resolve_execution_reference_price
 from .quantity_rules import (
@@ -696,17 +697,20 @@ def _approved_simple_risk(
     params = dict(context.decision.params)
     params["execution_lane"] = "simple"
     params["submit_path"] = "direct_alpaca"
-    params["simple_lane"] = {
-        "requested_qty": str(context.decision.qty),
-        "final_qty": str(caps.adjusted_qty),
-        "price": str(context.price),
-        "notional": str(final.notional),
-        "quantity_resolution": context.resolution.to_payload(),
-        "capped_by_order": caps.capped_by_order,
-        "capped_by_symbol": caps.capped_by_symbol,
-        "capped_by_gross": caps.capped_by_gross,
-        "capped_by_buying_power": caps.capped_by_buying_power,
-    }
+    set_execution_metadata(
+        params,
+        {
+            "requested_qty": str(context.decision.qty),
+            "final_qty": str(caps.adjusted_qty),
+            "price": str(context.price),
+            "notional": str(final.notional),
+            "quantity_resolution": context.resolution.to_payload(),
+            "capped_by_order": caps.capped_by_order,
+            "capped_by_symbol": caps.capped_by_symbol,
+            "capped_by_gross": caps.capped_by_gross,
+            "capped_by_buying_power": caps.capped_by_buying_power,
+        },
+    )
     return SimpleRiskPreparation(
         approved=True,
         decision=context.decision.model_copy(

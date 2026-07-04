@@ -738,7 +738,7 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
             row_json = cast(dict[str, Any], row.decision_json)
             params = cast(dict[str, Any], row_json["params"])
             sizing = cast(dict[str, Any], params["paper_route_target_notional_sizing"])
-            simple_lane = cast(dict[str, Any], params["simple_lane"])
+            execution_metadata = cast(dict[str, Any], params["execution"])
             source_metadata = cast(dict[str, Any], params["paper_route_target_plan"])
 
         self.assertIsNotNone(prepared)
@@ -755,8 +755,8 @@ class TestTradingPipelinePaperRouteQuoteA(TradingPipelineTestCaseBase):
             "sell_short_increasing_integer_only",
         )
         self.assertFalse(sizing["broker_quantity_resolution"]["fractional_allowed"])
-        self.assertEqual(simple_lane["final_qty"], "150")
-        self.assertTrue(simple_lane["target_source_notional_sized"])
+        self.assertEqual(execution_metadata["final_qty"], "150")
+        self.assertTrue(execution_metadata["target_source_notional_sized"])
         self.assertEqual(
             source_metadata["paper_route_target_notional_sizing"]["resolved_qty"],
             "150",

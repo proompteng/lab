@@ -224,7 +224,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
                 decision.model_copy(
                     update={
                         "action": "sell",
-                        "params": {"simple_lane": "missing-resolution"},
+                        "params": {"execution": "missing-resolution"},
                     }
                 )
             )
@@ -234,7 +234,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
                 decision.model_copy(
                     update={
                         "action": "sell",
-                        "params": {"simple_lane": {"quantity_resolution": "missing"}},
+                        "params": {"execution": {"quantity_resolution": "missing"}},
                     }
                 )
             )
@@ -245,7 +245,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
                     update={
                         "action": "sell",
                         "params": {
-                            "simple_lane": {
+                            "execution": {
                                 "quantity_resolution": {"short_increasing": "yes"}
                             }
                         },
@@ -259,7 +259,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
                     update={
                         "action": "sell",
                         "params": {
-                            "simple_lane": {
+                            "execution": {
                                 "quantity_resolution": {"short_increasing": "off"}
                             }
                         },
@@ -724,7 +724,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
             action="buy",
             qty=Decimal("1"),
             rationale="buying-power-projection",
-            params={"price": "100", "simple_lane": {"notional": "100"}},
+            params={"price": "100", "execution": {"notional": "100"}},
         )
 
         SimpleTradingPipeline._apply_simple_projected_buying_power(
@@ -748,7 +748,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
             action="sell",
             qty=Decimal("3"),
             rationale="short-increase-projection",
-            params={"price": "50", "simple_lane": {"notional": "150"}},
+            params={"price": "50", "execution": {"notional": "150"}},
         )
 
         SimpleTradingPipeline._apply_simple_projected_buying_power(
@@ -841,7 +841,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
             action="sell",
             qty=Decimal("1"),
             rationale="reducing-sell",
-            params={"price": "100", "simple_lane": {"notional": "100"}},
+            params={"price": "100", "execution": {"notional": "100"}},
         )
 
         SimpleTradingPipeline._apply_simple_projected_buying_power(
@@ -868,7 +868,7 @@ class TestTradingPipelineRouteExecutionA(TradingPipelineTestCaseBase):
             action="sell",
             qty=Decimal("0"),
             rationale="zero-qty-sell",
-            params={"price": "100", "simple_lane": {"notional": "100"}},
+            params={"price": "100", "execution": {"notional": "100"}},
         )
 
         SimpleTradingPipeline._apply_simple_projected_buying_power(

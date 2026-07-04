@@ -13,6 +13,11 @@ from ....models import (
     Strategy,
     TradeDecision,
 )
+from ...execution_metadata import (
+    execution_metadata,
+    mutable_execution_metadata,
+    set_execution_metadata,
+)
 from ...models import StrategyDecision
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -337,9 +342,9 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
         )
         params = dict(decision.params)
         metadata = dict(cast(Mapping[str, Any], params["paper_route_probe_exit"]))
-        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
+        execution = mutable_execution_metadata(params)
         quantity_resolution = dict(
-            cast(Mapping[str, Any], simple_lane.get("quantity_resolution") or {})
+            cast(Mapping[str, Any], execution.get("quantity_resolution") or {})
         )
         is_short_exit = decision.action == "buy"
         effective_position_qty = abs(current_qty)
@@ -378,13 +383,13 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
         metadata["effective_position_qty"] = str(effective_position_qty)
 
         quantity_resolution["position_qty"] = str(decision.qty)
-        simple_lane["final_qty"] = str(decision.qty)
-        simple_lane["quantity_resolution"] = quantity_resolution
+        execution["final_qty"] = str(decision.qty)
+        execution["quantity_resolution"] = quantity_resolution
         price = _optional_decimal(params.get("price"))
         if price is not None and price > 0:
-            simple_lane["notional"] = str(decision.qty * price)
+            execution["notional"] = str(decision.qty * price)
         params["paper_route_probe_exit"] = metadata
-        params["simple_lane"] = simple_lane
+        set_execution_metadata(params, execution)
         return decision.model_copy(update={"params": params})
 
     def _process_paper_route_probe_retry_decisions(
@@ -486,11 +491,7 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
         for value in (
             decision.limit_price,
             decision.params.get("price"),
-            cast(Mapping[str, Any], decision.params.get("simple_lane") or {}).get(
-                "price"
-            )
-            if isinstance(decision.params.get("simple_lane"), Mapping)
-            else None,
+            (execution_metadata(decision.params) or {}).get("price"),
             cast(Mapping[str, Any], decision.params.get("price_snapshot") or {}).get(
                 "price"
             )
@@ -512,7 +513,7 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
     def paper_route_probe_short_increasing_sell(decision: StrategyDecision) -> bool:
         if decision.action != "sell":
             return False
-        for key in ("simple_lane", "sizing"):
+        for key in ("execution", "simple_lane", "sizing"):
             section = decision.params.get(key)
             if not isinstance(section, Mapping):
                 continue
@@ -760,17 +761,17 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
 
         capped_notional = capped_qty * price
         params = dict(decision.params)
-        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
-        simple_lane["final_qty"] = str(capped_qty)
-        simple_lane["notional"] = str(capped_notional)
-        simple_lane["paper_route_probe_cap_applied"] = True
+        execution = mutable_execution_metadata(params)
+        execution["final_qty"] = str(capped_qty)
+        execution["notional"] = str(capped_notional)
+        execution["paper_route_probe_cap_applied"] = True
         if target_source_authorized:
-            simple_lane["target_source_notional_sized"] = True
+            execution["target_source_notional_sized"] = True
         if target_notional_sizing is not None:
-            simple_lane["paper_route_target_notional_sizing"] = dict(
+            execution["paper_route_target_notional_sizing"] = dict(
                 target_notional_sizing
             )
-        params["simple_lane"] = simple_lane
+        set_execution_metadata(params, execution)
         paper_route_probe = {
             **dict(context),
             "reference_price": str(price),
@@ -803,19 +804,19 @@ class SimplePipelinePaperRouteProbeProcessingMixin(PaperRouteProbeRuntime):
 
         notional = decision.qty * price
         params = dict(decision.params)
-        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
-        simple_lane["final_qty"] = str(decision.qty)
-        simple_lane["notional"] = str(notional)
-        simple_lane["paper_route_probe_cap_applied"] = True
+        execution = mutable_execution_metadata(params)
+        execution["final_qty"] = str(decision.qty)
+        execution["notional"] = str(notional)
+        execution["paper_route_probe_cap_applied"] = True
         if bool(metadata.get("target_source_authorized")):
-            simple_lane["target_source_notional_sized"] = True
+            execution["target_source_notional_sized"] = True
 
         probe_metadata = dict(metadata)
         probe_metadata["reference_price"] = str(price)
         probe_metadata["capped_qty"] = str(decision.qty)
         probe_metadata["capped_notional"] = str(notional)
 
-        params["simple_lane"] = simple_lane
+        set_execution_metadata(params, execution)
         params["paper_route_probe"] = probe_metadata
         _merge_paper_route_probe_lineage(
             params,

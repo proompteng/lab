@@ -36,6 +36,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
 
         original = {
             "trading_mode": config.settings.trading_mode,
+            "trading_enabled": config.settings.trading_enabled,
             "trading_simple_submit_enabled": (
                 config.settings.trading_simple_submit_enabled
             ),
@@ -47,6 +48,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             ),
         }
         config.settings.trading_mode = "live"
+        config.settings.trading_enabled = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_simple_paper_route_probe_enabled = True
         config.settings.trading_simple_paper_route_probe_allow_live_mode = True
@@ -65,96 +67,83 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            strategy_id = str(uuid4())
-            decision = StrategyDecision(
-                strategy_id=strategy_id,
-                symbol="AAPL",
-                event_ts=datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc),
-                timeframe="1Min",
-                action="buy",
-                qty=Decimal("1"),
-                rationale="bounded-paper-route-probe",
-                params={
-                    "source_decision_mode": "bounded_paper_route_collection",
-                    "profit_proof_eligible": True,
-                    "paper_route_probe": {
-                        "source_decision_mode": "bounded_paper_route_collection",
-                        "profit_proof_eligible": True,
-                    },
-                },
-            )
             gate = {
                 "allowed": False,
+                "reason": "live_submission_gate_blocked",
                 "blocked_reasons": [
                     "hypothesis_not_promotion_eligible",
                     "runtime_window_import_required",
                     "runtime_profit_target_import_required",
                 ],
+                "bounded_live_paper_collection_gate": {
+                    "allowed": True,
+                    "authority_scope": "bounded_evidence_collection_only",
+                },
             }
 
-            config.settings.trading_simple_paper_route_probe_allow_live_mode = False
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_probe_submission_allowed(
-                    decision,
-                    gate,
+            with self.session_local() as session:
+                strategy = Strategy(
+                    name=f"bounded-live-probe-{uuid4()}",
+                    description="bounded paper route probe must not bypass live gate",
+                    enabled=True,
+                    base_timeframe="1Min",
+                    universe_type="static",
+                    universe_symbols=["AAPL"],
                 )
-            )
+                session.add(strategy)
+                session.commit()
+                session.refresh(strategy)
+                decision = StrategyDecision(
+                    strategy_id=str(strategy.id),
+                    symbol="AAPL",
+                    event_ts=datetime(2026, 6, 17, 13, 45, tzinfo=timezone.utc),
+                    timeframe="1Min",
+                    action="buy",
+                    qty=Decimal("1"),
+                    rationale="bounded-paper-route-probe",
+                    params={
+                        "source_decision_mode": "bounded_paper_route_collection",
+                        "profit_proof_eligible": True,
+                        "paper_route_probe": {
+                            "source_decision_mode": "bounded_paper_route_collection",
+                            "profit_proof_eligible": True,
+                        },
+                    },
+                )
+                decision_row = OrderExecutor().ensure_decision(
+                    session,
+                    decision,
+                    strategy,
+                    "paper",
+                )
 
-            config.settings.trading_simple_paper_route_probe_allow_live_mode = True
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_probe_submission_allowed(
-                    decision,
-                    gate,
-                )
+                with patch.object(
+                    SimpleTradingPipeline,
+                    "_live_submission_gate",
+                    return_value=gate,
+                ):
+                    self.assertFalse(
+                        pipeline._is_trading_submission_allowed(
+                            session=session,
+                            decision=decision,
+                            decision_row=decision_row,
+                        )
+                    )
+
+                session.refresh(decision_row)
+                decision_json = cast(dict[str, Any], decision_row.decision_json)
+
+            self.assertEqual(
+                decision_json["submission_stage"],
+                "blocked_live_submission_gate",
             )
-            self.assertTrue(
-                pipeline._bounded_live_paper_route_probe_submission_allowed(
-                    decision,
-                    {
-                        **gate,
-                        "blocked_reasons": [
-                            *cast(list[str], gate["blocked_reasons"]),
-                            "empirical_jobs_not_ready",
-                        ],
-                        "bounded_live_paper_collection_gate": {
-                            "allowed": True,
-                            "authority_scope": "bounded_evidence_collection_only",
-                        },
-                    },
-                )
-            )
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_probe_submission_allowed(
-                    decision,
-                    {
-                        **gate,
-                        "bounded_live_paper_collection_gate": {
-                            "allowed": False,
-                            "reason": "live_submit_activation_expired",
-                        },
-                    },
-                )
-            )
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_probe_submission_allowed(
-                    decision,
-                    {
-                        **gate,
-                        "blocked_reasons": [
-                            *cast(list[str], gate["blocked_reasons"]),
-                            "empirical_jobs_not_ready",
-                        ],
-                    },
-                )
-            )
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_probe_submission_allowed(
-                    decision,
-                    {**gate, "blocked_reasons": []},
-                )
+            self.assertNotIn(
+                "paper_route_probe_exit",
+                cast(dict[str, Any], decision_json.get("params") or {}),
             )
         finally:
             config.settings.trading_mode = original["trading_mode"]
+            config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_simple_submit_enabled = original[
                 "trading_simple_submit_enabled"
             ]
@@ -563,7 +552,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             decision_json = cast(dict[str, Any], decision.decision_json)
             params = cast(dict[str, Any], decision_json.get("params"))
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
-            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
+            simple_lane = cast(dict[str, Any], params.get("execution"))
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(paper_route_probe.get("symbol"), "NVDA")
@@ -746,7 +735,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                 "action": "sell",
                 "params": {
                     "price": "100",
-                    "simple_lane": {
+                    "execution": {
                         "quantity_resolution": {
                             "action": "sell",
                             "reason": "sell_reducing_long_fractional_allowed",

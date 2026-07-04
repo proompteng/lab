@@ -17,6 +17,7 @@ from ....models import (
     TradeDecision,
 )
 from ....strategies.catalog import extract_catalog_metadata
+from ...execution_metadata import set_execution_metadata
 from ...models import StrategyDecision
 from ...session_context import regular_session_open_utc_for
 from ..target_plan_helpers import (
@@ -126,7 +127,10 @@ def _paper_route_target_price_retry_risk_reasons(
     params = _mapping_child(decision_json, "params")
     if params is None or not isinstance(params.get("paper_route_target_plan"), Mapping):
         return None
-    precheck = _mapping_child(params, "simple_lane_precheck")
+    precheck = _mapping_child(params, "execution_precheck") or _mapping_child(
+        params,
+        "simple_lane_precheck",
+    )
     if precheck is None or precheck.get("price") is not None:
         return None
     risk_reasons = _risk_reason_items(decision_json.get("risk_reasons"))
@@ -199,11 +203,14 @@ def _paper_route_probe_exit_params(
     }
     params: dict[str, Any] = {
         "paper_route_probe_exit": exit_metadata,
-        "simple_lane": _paper_route_probe_exit_simple_lane(
+    }
+    set_execution_metadata(
+        params,
+        _paper_route_probe_exit_execution_metadata(
             exposure=exposure,
             avg_entry_price=avg_entry_price,
         ),
-    }
+    )
     for key in ("source_decision_mode", "profit_proof_eligible"):
         if key in exposure.lineage:
             params[key] = exposure.lineage[key]
@@ -214,7 +221,7 @@ def _paper_route_probe_exit_params(
     return params
 
 
-def _paper_route_probe_exit_simple_lane(
+def _paper_route_probe_exit_execution_metadata(
     *,
     exposure: PaperRouteProbeExposure,
     avg_entry_price: Decimal | None,

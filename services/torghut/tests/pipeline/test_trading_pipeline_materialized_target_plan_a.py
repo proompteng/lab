@@ -193,13 +193,13 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 params.get("paper_route_target_plan_source_decision"),
             )
             paper_route_probe = cast(dict[str, Any], params.get("paper_route_probe"))
-            simple_lane = cast(dict[str, Any], params.get("simple_lane"))
-            simple_lane_precheck = cast(
-                dict[str, Any], params.get("simple_lane_precheck")
-            )
+            execution_metadata = cast(dict[str, Any], params.get("execution"))
+            execution_precheck = cast(dict[str, Any], params.get("execution_precheck"))
             bounded_execution_policy = cast(
                 dict[str, Any], params.get("bounded_paper_route_execution_policy")
             )
+            self.assertNotIn("simple_lane", params)
+            self.assertNotIn("simple_lane_precheck", params)
 
             self.assertEqual(decision.status, "submitted")
             self.assertEqual(Decimal(str(decision_json["qty"])), Decimal("2.4997"))
@@ -276,12 +276,14 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                 Decimal("249.994997"),
             )
             self.assertTrue(paper_route_probe["target_source_notional_sized"])
-            self.assertEqual(Decimal(str(simple_lane["final_qty"])), Decimal("2.4997"))
             self.assertEqual(
-                Decimal(str(simple_lane["notional"])), Decimal("249.994997")
+                Decimal(str(execution_metadata["final_qty"])), Decimal("2.4997")
             )
-            self.assertEqual(simple_lane_precheck["requested_qty"], "2.4997")
-            self.assertEqual(simple_lane_precheck["final_qty"], "2.4997")
+            self.assertEqual(
+                Decimal(str(execution_metadata["notional"])), Decimal("249.994997")
+            )
+            self.assertEqual(execution_precheck["requested_qty"], "2.4997")
+            self.assertEqual(execution_precheck["final_qty"], "2.4997")
             self.assertEqual(
                 bounded_execution_policy["authority"],
                 "bounded_paper_route_collection_only",

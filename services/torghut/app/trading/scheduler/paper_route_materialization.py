@@ -14,6 +14,7 @@ from ...models import (
     Strategy,
     TradeDecision,
 )
+from ..execution_metadata import set_execution_metadata
 from ..models import StrategyDecision
 from ..promotion_authority import source_collection_authority
 from ..runtime_decision_authority import (
@@ -52,7 +53,7 @@ class _MaterializedDecisionBuild:
     symbol_quantities: Mapping[str, Decimal]
     metadata: dict[str, Any]
     execution_metadata: Mapping[str, Any]
-    simple_lane: dict[str, Any]
+    execution: dict[str, Any]
     params: dict[str, Any]
 
 
@@ -102,6 +103,17 @@ class _MaterializedPlanningResult:
 class _MaterializedPlanningWindowResult:
     window_cap: _MaterializedWindowCap | None
     expired: bool = False
+
+
+@dataclass(frozen=True)
+class _MaterializedExecutionMetadataRequest:
+    metadata: Mapping[str, Any]
+    execution_metadata: Mapping[str, Any]
+    symbol_quantities: Mapping[str, Decimal]
+    action: Literal["buy", "sell"]
+    window_start: datetime
+    window_end: datetime
+    max_notional: Decimal
 
 
 class SimplePipelinePaperRouteMaterializationMixin(
@@ -290,38 +302,33 @@ class SimplePipelinePaperRouteMaterializationMixin(
         return target_symbols, symbol_quantities, metadata, execution_metadata
 
     @staticmethod
-    def _paper_route_materialized_simple_lane(
-        *,
-        metadata: Mapping[str, Any],
-        execution_metadata: Mapping[str, Any],
-        symbol_quantities: Mapping[str, Decimal],
-        action: Literal["buy", "sell"],
-        window_start: datetime,
-        window_end: datetime,
-        max_notional: Decimal,
+    def _paper_route_materialized_execution_metadata(
+        request: _MaterializedExecutionMetadataRequest,
     ) -> dict[str, Any]:
-        simple_lane = {
+        execution = {
             "source": "paper_route_target_plan_materializer",
             "target_plan_source_decision": True,
             "paper_route_target_plan_materialized": True,
-            "paper_route_probe_max_notional": str(max_notional),
-            "paper_route_probe_window_start": window_start.isoformat(),
-            "paper_route_probe_window_end": window_end.isoformat(),
-            "paper_route_probe_symbol_actions": metadata[
+            "paper_route_probe_max_notional": str(request.max_notional),
+            "paper_route_probe_window_start": request.window_start.isoformat(),
+            "paper_route_probe_window_end": request.window_end.isoformat(),
+            "paper_route_probe_symbol_actions": request.metadata[
                 "paper_route_probe_symbol_actions"
             ],
-            "paper_route_probe_leg_action": action,
+            "paper_route_probe_leg_action": request.action,
             "live_capital_routing_enabled": False,
             "client_order_id_basis": "materialized_trade_decision_hash",
-            "execution_account_label": execution_metadata["execution_account_label"],
-            "submit_path": execution_metadata["submit_path"],
+            "execution_account_label": request.execution_metadata[
+                "execution_account_label"
+            ],
+            "submit_path": request.execution_metadata["submit_path"],
         }
-        if symbol_quantities:
-            simple_lane["paper_route_probe_symbol_quantities"] = {
+        if request.symbol_quantities:
+            execution["paper_route_probe_symbol_quantities"] = {
                 item_symbol: str(quantity)
-                for item_symbol, quantity in symbol_quantities.items()
+                for item_symbol, quantity in request.symbol_quantities.items()
             }
-        return simple_lane
+        return execution
 
     @staticmethod
     def _paper_route_materialized_params(
@@ -330,7 +337,7 @@ class SimplePipelinePaperRouteMaterializationMixin(
         target: Mapping[str, Any],
         metadata: Mapping[str, Any],
         execution_metadata: Mapping[str, Any],
-        simple_lane: Mapping[str, Any],
+        execution: Mapping[str, Any],
         symbol: str,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {
@@ -339,7 +346,6 @@ class SimplePipelinePaperRouteMaterializationMixin(
             "paper_route_materialized_decision_hash": decision_row.decision_hash,
             "paper_route_target_plan": metadata,
             "paper_route_target_plan_source_decision": metadata,
-            "simple_lane": simple_lane,
             "source_decision_mode": BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
             "profit_proof_eligible": True,
             "hypothesis_id": metadata.get("hypothesis_id"),
@@ -373,6 +379,7 @@ class SimplePipelinePaperRouteMaterializationMixin(
         }
         if "exit_minute_after_open" in metadata:
             params["exit_minute_after_open"] = metadata["exit_minute_after_open"]
+        set_execution_metadata(params, execution)
         _merge_paper_route_probe_lineage(
             params,
             _paper_route_probe_lineage_from_params(params),
@@ -403,21 +410,23 @@ class SimplePipelinePaperRouteMaterializationMixin(
                 max_notional=max_notional,
             )
         )
-        simple_lane = self._paper_route_materialized_simple_lane(
-            metadata=metadata,
-            execution_metadata=execution_metadata,
-            symbol_quantities=symbol_quantities,
-            action=action,
-            window_start=window_start,
-            window_end=window_end,
-            max_notional=max_notional,
+        execution = self._paper_route_materialized_execution_metadata(
+            _MaterializedExecutionMetadataRequest(
+                metadata=metadata,
+                execution_metadata=execution_metadata,
+                symbol_quantities=symbol_quantities,
+                action=action,
+                window_start=window_start,
+                window_end=window_end,
+                max_notional=max_notional,
+            )
         )
         params = self._paper_route_materialized_params(
             decision_row=decision_row,
             target=target,
             metadata=metadata,
             execution_metadata=execution_metadata,
-            simple_lane=simple_lane,
+            execution=execution,
             symbol=symbol,
         )
         return _MaterializedDecisionBuild(
@@ -425,7 +434,7 @@ class SimplePipelinePaperRouteMaterializationMixin(
             symbol_quantities=symbol_quantities,
             metadata=metadata,
             execution_metadata=execution_metadata,
-            simple_lane=simple_lane,
+            execution=execution,
             params=params,
         )
 
@@ -530,12 +539,13 @@ class SimplePipelinePaperRouteMaterializationMixin(
         quantity_resolution: _TargetProbeQuantityResolution,
     ) -> None:
         build.metadata["paper_route_target_notional_sizing"] = quantity_resolution.audit
-        build.simple_lane["paper_route_target_notional_sizing"] = (
+        build.execution["paper_route_target_notional_sizing"] = (
             quantity_resolution.audit
         )
-        build.simple_lane["target_source_notional_sized"] = (
+        build.execution["target_source_notional_sized"] = (
             quantity_resolution.audit.get("sizing_source") == "target_notional"
         )
+        set_execution_metadata(build.params, build.execution)
         build.params["paper_route_target_notional_sizing"] = quantity_resolution.audit
         build.params.update(quantity_resolution.price_params)
 
