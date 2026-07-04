@@ -290,7 +290,7 @@ describe('Torghut manifest scheduling', () => {
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-testnet-cap-250-reduce-only-20260703a',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-top12-universe-20260704a',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')
