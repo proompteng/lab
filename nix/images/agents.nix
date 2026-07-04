@@ -83,18 +83,32 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/packages" "$out/app/services/agents"
 
+    copyWorkspaceNodeModules() {
+      local source_path="$1"
+      local target_path="$2"
+
+      if [ -d "$source_path" ]; then
+        rm -rf "$target_path"
+        mkdir -p "$target_path"
+        cp -R "$source_path/." "$target_path/"
+      fi
+    }
+
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
     for package in agent-contracts codex cx-tools otel temporal-bun-sdk; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
+      copyWorkspaceNodeModules "$TMPDIR/work/packages/$package/node_modules" "$out/app/packages/$package/node_modules"
     done
 
     cp "$TMPDIR/work/services/agents/package.json" "$out/app/services/agents/package.json"
     cp -R "$TMPDIR/work/services/agents/src" "$out/app/services/agents/src"
     cp -R "$TMPDIR/work/services/agents/scripts" "$out/app/services/agents/scripts"
     cp -R "$TMPDIR/work/services/agents/.output" "$out/app/services/agents/.output"
+    copyWorkspaceNodeModules "$TMPDIR/work/services/agents/node_modules" "$out/app/services/agents/node_modules"
 
     chmod +x "$out/app/services/agents/scripts/agents-shell-entrypoint.sh"
     mkdir -p "$out/app/packages/agent-contracts/node_modules"
+    rm -rf "$out/app/packages/agent-contracts/node_modules/effect"
     ln -s /app/node_modules/effect "$out/app/packages/agent-contracts/node_modules/effect"
   '';
 
