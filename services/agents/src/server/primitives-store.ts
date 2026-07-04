@@ -309,9 +309,6 @@ const toAgentRunIdempotencyRecord = (row: {
   updatedAt: row.updated_at,
 })
 
-type AgentRunIdempotencyRow = Parameters<typeof toAgentRunIdempotencyRecord>[0]
-type AgentRunIdempotencyReservationRow = AgentRunIdempotencyRow & { created: boolean }
-
 const toAgentRunRerunSubmissionRecord = (row: {
   id: string
   parent_ref: string
@@ -666,49 +663,38 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
 
   const reserveAgentRunIdempotencyKey: PrimitivesStore['reserveAgentRunIdempotencyKey'] = async (input) => {
     await ready
-    const result = await sql<AgentRunIdempotencyReservationRow>`
-      WITH inserted AS (
-        INSERT INTO agent_run_idempotency_keys (
-          namespace,
-          agent_name,
-          idempotency_key,
-          agent_run_name,
-          agent_run_uid,
-          terminal_phase,
-          terminal_at
-        )
-        VALUES (
-          ${input.namespace},
-          ${input.agentName},
-          ${input.idempotencyKey},
-          NULL,
-          NULL,
-          NULL,
-          NULL
-        )
-        ON CONFLICT (namespace, agent_name, idempotency_key) DO NOTHING
-        RETURNING *, TRUE AS created
-      ),
-      existing AS (
-        SELECT *, FALSE AS created
-        FROM agent_run_idempotency_keys
-        WHERE namespace = ${input.namespace}
-          AND agent_name = ${input.agentName}
-          AND idempotency_key = ${input.idempotencyKey}
-          AND NOT EXISTS (SELECT 1 FROM inserted)
-      )
-      SELECT * FROM inserted
-      UNION ALL
-      SELECT * FROM existing
-      LIMIT 1;
-    `.execute(db)
-    const row = result.rows[0]
+    const inserted = await db
+      .insertInto('agent_run_idempotency_keys')
+      .values({
+        namespace: input.namespace,
+        agent_name: input.agentName,
+        idempotency_key: input.idempotencyKey,
+        agent_run_name: null,
+        agent_run_uid: null,
+        terminal_phase: null,
+        terminal_at: null,
+      })
+      .onConflict((oc) => oc.columns(['namespace', 'agent_name', 'idempotency_key']).doNothing())
+      .returningAll()
+      .executeTakeFirst()
 
-    if (!row) {
+    if (inserted) {
+      return { record: toAgentRunIdempotencyRecord(inserted), created: true }
+    }
+
+    const existing = await db
+      .selectFrom('agent_run_idempotency_keys')
+      .selectAll()
+      .where('namespace', '=', input.namespace)
+      .where('agent_name', '=', input.agentName)
+      .where('idempotency_key', '=', input.idempotencyKey)
+      .executeTakeFirst()
+
+    if (!existing) {
       throw new Error('failed to resolve agent run idempotency key after conflict')
     }
 
-    return { record: toAgentRunIdempotencyRecord(row), created: row.created }
+    return { record: toAgentRunIdempotencyRecord(existing), created: false }
   }
 
   const assignAgentRunIdempotencyKey: PrimitivesStore['assignAgentRunIdempotencyKey'] = async (input) => {
