@@ -32,17 +32,10 @@ cephClusterSpec:
       mon_data_avail_warn: "15"
     osd:
       bluestore_cache_autotune: "true"
-      # Use Ceph's recovery-biased mClock profile, but keep concurrency bounded so Kafka stays responsive.
-      # Ceph mClock ignores recovery/backfill concurrency overrides unless this gate is enabled.
-      osd_mclock_profile: "high_recovery_ops"
-      osd_mclock_override_recovery_settings: "true"
-      osd_memory_target: "6442450944"
-      osd_max_backfills: "2"
-      osd_recovery_max_active: "4"
-      osd_recovery_max_active_hdd: "4"
-      osd_recovery_max_single_start: "1"
-      osd_recovery_op_priority: "3"
-      osd_recovery_sleep_hdd: "0"
+      # Prioritize client IO after the Turin BlueStore DB migration has recovered.
+      # Recovery/backfill overrides are intentionally omitted so the built-in mClock profile controls QoS.
+      osd_mclock_profile: "high_client_ops"
+      osd_memory_target: "8589934592"
 
   dataDirHostPath: /var/lib/rook
 
@@ -109,10 +102,10 @@ cephClusterSpec:
   resources:
     osd:
       limits:
-        memory: 8Gi
+        memory: 12Gi
       requests:
         cpu: 1000m
-        memory: 6Gi
+        memory: 8Gi
 
   csi:
     readAffinity:
