@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import cast
+
 from app.config import settings
 from app.trading.time_source import trading_time_status
 
@@ -18,6 +21,9 @@ def project_trading_status_response(
     payloads = build.payloads
     rejection_alert_status = payload(payloads, "rejection_alert_status")
     capital_replay_projection = payload(payloads, "capital_replay_projection")
+    execution_route, execution_route_details = _execution_route_status(
+        build.core.live_submission_gate.get("execution_route")
+    )
     return {
         "enabled": settings.trading_enabled,
         "autonomy_enabled": settings.trading_autonomy_enabled,
@@ -30,6 +36,11 @@ def project_trading_status_response(
         "shadow_first": payload(payloads, "shadow_first_runtime"),
         "execution_advisor": _execution_advisor_payload(state),
         "running": state.running,
+        "execution_route": execution_route,
+        "execution_route_details": execution_route_details,
+        "operational_submission_gate": build.core.live_submission_gate.get(
+            "operational_submission_gate", build.core.live_submission_gate
+        ),
         "live_submission_gate": build.core.live_submission_gate,
         "submission_authority": payload(payloads, "submission_authority"),
         "tigerbeetle_ledger": build.late.tigerbeetle_ledger,
@@ -126,6 +137,15 @@ def project_trading_status_response(
         "control_plane_contract": payload(payloads, "control_plane_contract"),
         "evidence_continuity": state.last_evidence_continuity_report,
     }
+
+
+def _execution_route_status(value: object) -> tuple[str | None, dict[str, object]]:
+    if isinstance(value, Mapping):
+        route_payload = cast(Mapping[str, object], value)
+        route = str(route_payload.get("route") or "").strip() or None
+        return route, dict(route_payload)
+    route = str(value or "").strip() or None
+    return route, {}
 
 
 def _execution_advisor_payload(state: object) -> dict[str, object]:
