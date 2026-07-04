@@ -235,7 +235,7 @@ const executableAlphaReceipts = (
     hypothesis_id: 'H-MICRO-01',
     repair_class: 'evidence_window_refresh',
     target_value_gate: 'routeable_candidate_count',
-    reason_codes: ['alpha_readiness_not_promotion_eligible'],
+    reason_codes: ['hypothesis_not_promotion_eligible'],
     account_id: 'PA3SX7FYNUTF',
     window: '15m',
     trading_mode: 'paper',
@@ -245,7 +245,7 @@ const executableAlphaReceipts = (
     evidence_window_status: 'stale',
     alpha_readiness_state: 'blocked',
     expected_unblock_value: 2,
-    expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+    expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
     required_input_refs: ['capital-replay:current'],
     required_output_receipts: ['alpha_readiness_receipt', 'hypothesis_promotion_receipt'],
     validation_commands: ['uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py'],
@@ -287,7 +287,7 @@ const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {})
   revenue_repair_queue: [
     {
       code: 'repair_alpha_readiness',
-      reason: 'alpha_readiness_not_promotion_eligible',
+      reason: 'hypothesis_not_promotion_eligible',
       dimension: 'alpha_readiness',
       action: 'clear_hypothesis_blockers_before_capital',
       priority: 70,

@@ -70,7 +70,7 @@ GitOps manifests, ClickHouse tables, or empirical artifacts.
 ### Data And Profitability Evidence
 
 - Profitability proof floor returned `route_state=repair_only`, `capital_state=zero_notional`, and max notional `0`.
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Repair ladder entries included live submit gate closure, alpha readiness repair, execution TCA repair, feature
   coverage, drift governance, and closed-session signal hold.
 - Alpha readiness had `3` hypotheses, with `1` blocked, `2` shadow, `0` promotion eligible, and `3` rollback required.

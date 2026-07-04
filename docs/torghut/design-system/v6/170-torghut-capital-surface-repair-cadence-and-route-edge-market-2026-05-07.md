@@ -102,7 +102,7 @@ flags.
 - Scheduler was running and startup grace was inactive.
 - Live submission gate was closed with `simple_submit_disabled`.
 - Proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Alpha readiness had three hypotheses: one blocked, two shadow, zero promotion eligible, and three rollback required.
 - Market context state was stale with no last freshness seconds or domain states in the proof-floor source reference.

@@ -40,14 +40,14 @@ This evidence pass was read-only on 2026-05-08.
   parent-fork warnings at earlier migrations.
 - `/trading/status` reports `enabled=true`, `mode=live`, and `running=true`. The live submission gate is not allowed:
   reason `simple_submit_disabled`, blocked by `simple_submit_disabled` and
-  `alpha_readiness_not_promotion_eligible`.
+  `hypothesis_not_promotion_eligible`.
 - The hypothesis registry path `/app/config/trading/hypotheses` is loaded with three hypotheses. All three are in
   shadow, all capital multipliers are zero, promotion-eligible total is zero, and rollback-required total is three.
 - TCA has 7,334 orders, average absolute slippage around 13.82 bps, and eight symbols in scope, but the latest execution
   timestamp is 2026-04-02. That is useful historical evidence, not enough active-session execution realism.
 - `/trading/consumer-evidence` emits schema `torghut.consumer-evidence-status.v1`, active revision `torghut-00308`, and
   a route-proven profit receipt in `repair` state. Reason codes include `forecast_registry_degraded`,
-  `simple_submit_disabled`, and `alpha_readiness_not_promotion_eligible`.
+  `simple_submit_disabled`, and `hypothesis_not_promotion_eligible`.
 - Consumer evidence reports empirical jobs healthy and ready, but forecast service degraded with `registry_empty`,
   market context degraded with stale `technicals`, `news`, and `regime` domains, and quant evidence degraded with
   `quant_pipeline_stages_missing`. Latest quant metrics count is 144, but pipeline stage count is zero.

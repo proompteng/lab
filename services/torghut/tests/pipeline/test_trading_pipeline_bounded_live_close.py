@@ -285,7 +285,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             gate = {
                 "allowed": False,
                 "blocked_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "runtime_ledger_source_collection_pending",
                 ],
                 "bounded_live_paper_collection_gate": {
@@ -403,8 +403,8 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             pipeline = self._pipeline(self.session_local)
             gate = {
                 "allowed": False,
-                "reason": "alpha_readiness_not_promotion_eligible",
-                "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+                "reason": "hypothesis_not_promotion_eligible",
+                "blocked_reasons": ["hypothesis_not_promotion_eligible"],
                 "bounded_live_paper_collection_gate": {
                     "allowed": True,
                     "authority_scope": "bounded_evidence_collection_only",
@@ -502,7 +502,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             pipeline = self._pipeline(self.session_local)
             gate = {
                 "allowed": False,
-                "reason": "alpha_readiness_not_promotion_eligible",
+                "reason": "hypothesis_not_promotion_eligible",
                 "blocked_reasons": ["empirical_jobs_not_ready"],
             }
             with self.session_local() as session:

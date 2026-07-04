@@ -86,7 +86,7 @@ All evidence in this pass was collected read-only.
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - `/readyz` reported proof floor `repair_only`, route state `repair_only`, capital state `zero_notional`, and
   `max_notional=0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - Alpha readiness had 3 total hypotheses, 0 promotion-eligible hypotheses, and 2 rollback-required hypotheses.
 - Execution TCA included 7,334 orders and 7,245 filled executions, but aggregate absolute slippage exceeded the 8 bps

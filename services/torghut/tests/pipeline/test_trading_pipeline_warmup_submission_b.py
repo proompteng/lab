@@ -920,7 +920,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
                 "route_state": "repair_only",
                 "capital_state": "zero_notional",
                 "max_notional": "0",
-                "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+                "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             },
         ):
             pipeline.run_once()
@@ -942,7 +942,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             )
             self.assertEqual(
                 decision_json.get("submission_block_reason"),
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
             )
             self.assertEqual(proof_floor.get("capital_state"), "zero_notional")
             self.assertEqual(control_plane.get("execution_lane"), "simple")

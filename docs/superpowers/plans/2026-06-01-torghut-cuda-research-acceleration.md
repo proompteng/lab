@@ -24,7 +24,7 @@
 
 - CUDA output is advisory research evidence only.
 - Promotion remains blocked unless live-paper parity, runtime-ledger buckets, exact replay, explicit costs, lineage, TigerBeetle refs, and closed lifecycle checks pass.
-- `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `runtime_ledger_source_collection_pending` must not be bypassed by this plan.
+- `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `runtime_ledger_source_collection_pending` must not be bypassed by this plan.
 - No required PyTorch dependency is added to the base Torghut environment in this slice; CUDA support is optional and selected explicitly.
 
 ## Implementation Checkpoint

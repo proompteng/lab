@@ -86,7 +86,7 @@ state, trading flags, GitOps resources, empirical artifacts, or AgentRun records
 - Live dependencies were mostly reachable: Postgres `ok`, ClickHouse `ok`, Alpaca `ok`, universe `ok`, empirical jobs
   `healthy`, DSPy runtime informational, and quant evidence informational.
 - Live proof floor was `repair_only`, capital state `zero_notional`, max notional `0`, and blocked by
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Live quant evidence had `latest_metrics_count=144`, latest update `2026-05-07T10:10:25Z`, pipeline lag `14`
   seconds, `stage_count=3`, and max stage lag `59145` seconds because ingestion was stale.
 - Live `/trading/status` reported `mode=live`, `promotion_eligible_total=0`, `rollback_required_total=3`, one blocked

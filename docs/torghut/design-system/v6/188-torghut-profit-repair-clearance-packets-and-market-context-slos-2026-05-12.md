@@ -51,7 +51,7 @@ GitOps resources, or AgentRun objects.
   node. Startup probes and Flink `Job Not Found` warnings continued during reconciliation.
 - `http://torghut.torghut.svc.cluster.local/readyz` returned HTTP 503 with `status=degraded`.
 - `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, and blocked reasons included
-  `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
 - The active capital stage was `shadow`; live promotion was not configured, and promotion-eligible total was `0`.
 
 ### Profit And Data Evidence
@@ -59,7 +59,7 @@ GitOps resources, or AgentRun objects.
 - Jangar consumed a current Torghut consumer-evidence receipt at `2026-05-12T16:44:10.650021Z`.
 - The receipt decision was `repair`, `max_notional=0`, `route_repair_value=14`, and serving revision `torghut-00320`.
 - Receipt reason codes were `empirical_jobs_degraded`, `forecast_registry_degraded`, `simple_submit_disabled`,
-  `alpha_readiness_not_promotion_eligible`, `degraded`, and `market_context_stale`.
+  `hypothesis_not_promotion_eligible`, `degraded`, and `market_context_stale`.
 - Quant evidence for `PA3SX7FYNUTF/15m` had `180` latest metrics and a recent update, but status was degraded with
   `quant_metrics_update_missing` and `quant_pipeline_stages_missing`.
 - The live readiness payload evaluated three hypotheses:

@@ -80,7 +80,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, or trading 
 - Schema lineage had one branch, no duplicate revisions, no orphan parents, and known parent-fork warnings at
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live alpha readiness had three shadow hypotheses, zero promotion-eligible hypotheses, and three rollback-required
   hypotheses.

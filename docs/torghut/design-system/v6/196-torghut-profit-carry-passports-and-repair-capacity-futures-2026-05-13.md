@@ -113,7 +113,7 @@ trading flags, GitOps resources, AgentRuns, or market data.
   - `H-MEGACAP-BREADTH-PROBE` for `AMZN`, `GOOGL`, and `ORCL`, with expected blocker delta `1` and missing route
     symbol evidence.
 - The proof-floor blockers included `market_context_stale`, `market_context_state_unknown`,
-  `quant_health_not_configured`, `alpha_readiness_not_promotion_eligible`, and `simple_submit_disabled`.
+  `quant_health_not_configured`, `hypothesis_not_promotion_eligible`, and `simple_submit_disabled`.
 - The profit window contract had three windows: two `quarantined` and one `underfunded`. All windows were blocking.
 - The route repair board summarized eight zero-notional route rows, with state counts `blocked=4`, `missing=3`, and
   `probing=1`. It named expected unblock value `14`, top repair symbols `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA`,

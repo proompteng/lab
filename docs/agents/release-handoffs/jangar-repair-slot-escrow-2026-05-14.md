@@ -28,7 +28,7 @@ The post-validation live business surface is intentionally unchanged until this 
 Torghut `/trading/revenue-repair` remained the source of truth for repair priority:
 
 - top queue item: `repair_alpha_readiness`
-- reason: `alpha_readiness_not_promotion_eligible`
+- reason: `hypothesis_not_promotion_eligible`
 - value gate: `routeable_candidate_count`
 - required output: `torghut.executable-alpha-receipts.v1`
 - selected receipt max notional: `0`

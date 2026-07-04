@@ -28,7 +28,7 @@ the Jangar universe was fresh with 12 symbols, empirical jobs were healthy, and 
 
 That evidence does not justify paper or live capital. `/trading/health` returned HTTP `503` with
 `status=degraded`. The live submission gate was closed by `simple_submit_disabled`, the proof floor was `repair_only`,
-capital state was `zero_notional`, and blockers were `alpha_readiness_not_promotion_eligible`,
+capital state was `zero_notional`, and blockers were `hypothesis_not_promotion_eligible`,
 `execution_tca_stale`, and `simple_submit_disabled`. TCA was last computed on `2026-04-02T20:59:45.136640Z`; average
 absolute slippage was about `568.61` bps against an `8` bps guardrail; expected shortfall coverage was zero; quant
 ingestion lag was `59069` seconds; forecast authority was blocked by `registry_empty`; LEAN was still a deterministic
@@ -88,7 +88,7 @@ state, trading flags, AgentRun records, GitOps resources, or empirical artifacts
   `chip-paper-microbar-composite@execution-proof`.
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, with `capital_stage=shadow`.
 - Profitability proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Quant evidence was not a hard blocker but was degraded: latest metrics count `144`, latest update
   `2026-05-07T10:09:11.915Z`, pipeline lag `22` seconds, stage count `3`, and max stage lag `59069` seconds.

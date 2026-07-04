@@ -95,7 +95,7 @@ trading flags, broker state, market data, or AgentRuns.
 - `/trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`, active revision
   `torghut-00415`, and `readyz_status=degraded`.
 - The repair queue had five items. The top item was `repair_alpha_readiness`, reason
-  `alpha_readiness_not_promotion_eligible`, priority `70`, value gate `routeable_candidate_count`, required output
+  `hypothesis_not_promotion_eligible`, priority `70`, value gate `routeable_candidate_count`, required output
   `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - Lower-priority items were live submit disabled, empirical jobs degraded, generic degraded state, and empirical jobs
   not ready.

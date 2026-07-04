@@ -121,7 +121,7 @@ const topRepairQueueItem = (status: TorghutConsumerEvidenceStatus) => status.rev
 
 const topRepairQueueItemIsAlpha = (status: TorghutConsumerEvidenceStatus) => {
   const item = topRepairQueueItem(status)
-  return item?.code === 'repair_alpha_readiness' || item?.reason === 'alpha_readiness_not_promotion_eligible'
+  return item?.code === 'repair_alpha_readiness'
 }
 
 const alphaClosureBoard = (status: TorghutConsumerEvidenceStatus) => status.alpha_repair_closure_board ?? null

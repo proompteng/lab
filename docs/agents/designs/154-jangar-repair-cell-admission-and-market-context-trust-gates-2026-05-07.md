@@ -110,7 +110,7 @@ GitOps resources, AgentRun objects, trading flags, or market data.
 - Live Torghut `/trading/health` returned `status=degraded` even though scheduler, Postgres, ClickHouse, Alpaca,
   Jangar universe, and empirical jobs were healthy.
 - Live proof floor was `repair_only`, `capital_state=zero_notional`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_empty`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_empty`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Market-context health for `AAPL` was degraded despite fresh technicals and regime. Fundamentals and news were stale
   by multiple weeks.

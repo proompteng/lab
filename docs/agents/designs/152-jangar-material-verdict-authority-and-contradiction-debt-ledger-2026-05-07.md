@@ -117,7 +117,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
   no duplicate revisions, no orphan parents, and known parent-fork warnings.
 - Live submission remained closed: `allowed=false`, `reason=simple_submit_disabled`, `capital_stage=shadow`.
 - Live proof floor remained `repair_only` with `capital_state=zero_notional`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live TCA had `13,775` orders, `13,571` filled executions, latest computed at
   `2026-05-07T14:23:44.018621+00:00`, and average absolute slippage

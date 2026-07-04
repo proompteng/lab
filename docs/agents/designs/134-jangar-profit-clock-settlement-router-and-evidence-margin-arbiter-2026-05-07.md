@@ -39,7 +39,7 @@ Cluster evidence:
   timeouts.
 - Torghut live revision `torghut-00250` and sim revision `torghut-sim-00350` are rolled out and serving.
 - Torghut live `/readyz` is degraded, not down. The blockers are profit authority blockers:
-  `simple_submit_disabled`, `zero_notional`, `alpha_readiness_not_promotion_eligible`,
+  `simple_submit_disabled`, `zero_notional`, `hypothesis_not_promotion_eligible`,
   `execution_tca_stale`, and degraded quant evidence.
 - Live quant evidence shows `maxStageLagSeconds: 44777`. Compute is fresh enough, but ingestion and
   materialization disagree.

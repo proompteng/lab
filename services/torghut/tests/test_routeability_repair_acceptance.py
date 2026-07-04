@@ -27,7 +27,7 @@ def _base_inputs() -> dict[str, object]:
             "reason_codes": [
                 "forecast_registry_degraded",
                 "simple_submit_disabled",
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
             ],
         },
         "proof_floor_receipt": {
@@ -37,7 +37,7 @@ def _base_inputs() -> dict[str, object]:
             "capital_state": "zero_notional",
             "max_notional": "0",
             "blocking_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "simple_submit_disabled",
             ],
             "proof_dimensions": [

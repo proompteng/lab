@@ -81,7 +81,7 @@ def test_live_degraded_evidence_routes_to_repair_only() -> None:
     assert receipt["max_notional"] == "0"
     assert set(receipt["blocking_reasons"]) >= {
         "simple_submit_disabled",
-        "alpha_readiness_not_promotion_eligible",
+        "hypothesis_not_promotion_eligible",
         "quant_pipeline_degraded",
         "execution_tca_stale",
     }

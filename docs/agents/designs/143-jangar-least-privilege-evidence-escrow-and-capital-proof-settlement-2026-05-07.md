@@ -129,7 +129,7 @@ context and rechecked the current cluster, route, and source state before select
   individually reachable or informationally OK.
 - Live submission was closed by `simple_submit_disabled`, `capital_stage=shadow`, and `promotion_eligible_total=0`.
 - Proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Quant latest metrics were available for account `PA3SX7FYNUTF`, window `15m`, with `144` latest metrics, empty-store
   alarm false, missing-update alarm false, and low route lag, but pipeline stages were missing.

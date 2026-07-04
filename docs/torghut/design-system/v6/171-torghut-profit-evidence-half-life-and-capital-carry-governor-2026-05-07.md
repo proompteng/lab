@@ -82,7 +82,7 @@ All evidence in this pass was collected read-only on 2026-05-07.
   `live_submit_enabled=false` behavior through the simple-submit disabled reason.
 - `/trading/health` returned HTTP 503 with `status=degraded`.
 - The proof floor was `repair_only`, capital state `zero_notional`, max notional `0`, and blocking reasons:
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Alpha readiness had three hypotheses, zero promotion-eligible, and three rollback-required.
 - Quant evidence was informational rather than required. Latest metrics were fresh, but pipeline health remained

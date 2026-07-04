@@ -25,7 +25,7 @@ I am selecting an **alpha-readiness strike ledger** as the next Torghut quant ar
 The live business surface is no longer asking for a generic proof loop. `/trading/revenue-repair` is explicit:
 `business_state=repair_only`, `revenue_ready=false`, `routeable_candidate_count=0`,
 `zero_notional_or_stale_evidence_rate=1.0`, `capital_state=zero_notional`, `max_notional=0`, and the top repair queue
-item is `repair_alpha_readiness` for `alpha_readiness_not_promotion_eligible`. The required output receipt is
+item is `repair_alpha_readiness` for `hypothesis_not_promotion_eligible`. The required output receipt is
 `torghut.executable-alpha-receipts.v1`, with `alpha_readiness_receipt`, `hypothesis_promotion_receipt`, and
 `capital_replay_board` as required receipts.
 
@@ -82,13 +82,13 @@ records, trading flags, broker state, or AgentRuns.
   `capital_stage=shadow`, `proof_floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`,
   and `max_notional=0`.
 - The repair queue had two visible business blockers:
-  - `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`,
+  - `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`,
     priority `70`, expected unblock value `2`, required output `torghut.executable-alpha-receipts.v1`.
   - `live_submit_gate_closed`, reason `simple_submit_disabled`, value gate `capital_gate_safety`, priority `50`, and
     capital rule `zero_notional_repair_only`.
 - Route evidence reported `accepted_routeable_candidate_count=0`, `zero_notional_or_stale_evidence_rate=1.0`,
   `selected_repair_bid_count=32`, and held action classes `paper_canary`, `live_micro_canary`, and `live_scale`.
-- Routeability acceptance was blocked with reason codes including `alpha_readiness_not_promotion_eligible`,
+- Routeability acceptance was blocked with reason codes including `hypothesis_not_promotion_eligible`,
   `alpha_readiness_fail`, `proof_floor_repair_only`, `capital_state_zero_notional`,
   `route_tca_passed_but_dependency_receipts_block_capital`, `execution_tca_route_universe_exclusions_applied`,
   `execution_tca_symbol_missing`, `hypothesis_not_promotion_eligible`, `research_candidates_empty`,
@@ -148,7 +148,7 @@ records, trading flags, broker state, or AgentRuns.
 ### Source And Test Surface
 
 - `services/torghut/app/trading/revenue_repair.py` already maps
-  `alpha_readiness_not_promotion_eligible` to `repair_alpha_readiness`, value gate `routeable_candidate_count`, and
+  `hypothesis_not_promotion_eligible` to `repair_alpha_readiness`, value gate `routeable_candidate_count`, and
   required output `torghut.executable-alpha-receipts.v1`.
 - `services/torghut/app/trading/executable_alpha_receipts.py` builds the zero-notional capital replay board and
   candidate executable alpha receipts. The current receipts are projections: `after_refs` are empty, measured delta is

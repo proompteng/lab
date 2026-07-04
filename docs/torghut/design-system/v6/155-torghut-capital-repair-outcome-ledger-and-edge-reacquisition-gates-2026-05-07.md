@@ -82,7 +82,7 @@ records, ClickHouse tables, broker state, GitOps resources, or trading flags.
 - Live submission gate was closed: `simple_submit_disabled`, `capital_stage=shadow`.
 - Live proof floor was `floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and
   `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Alpha readiness had `promotion_eligible_total=0`, `rollback_required_total=3`, and `state_totals.shadow=3`.
 - Execution TCA had `13,775` orders, `13,571` filled executions, average absolute slippage

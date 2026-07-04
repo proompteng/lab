@@ -106,7 +106,7 @@ records, GitOps resources, AgentRun objects, broker state, or trading flags.
 - Live `/trading/health` returned HTTP `503` with `status=degraded`; Postgres, ClickHouse, Alpaca, Jangar universe,
   readiness cache, and broker status were healthy.
 - Live proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`, and blocked by
-  `alpha_readiness_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
+  `hypothesis_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live quant evidence had `144` latest metrics updated at `2026-05-07T19:08:41Z`, but the ingestion stage lag was
   `534758` seconds and the materialization stage was not OK.

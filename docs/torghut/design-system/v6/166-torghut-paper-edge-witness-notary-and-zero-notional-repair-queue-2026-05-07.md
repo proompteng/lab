@@ -98,7 +98,7 @@ database records, ClickHouse data, broker state, GitOps resources, AgentRun obje
   materialization was not OK.
 - Live proof floor was `repair_only`, route state was `repair_only`, capital state was `zero_notional`, and
   `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live TCA had `7334` orders, `7245` filled executions, latest TCA at `2026-05-07T14:23:43Z`, average absolute
   slippage about `13.82 bps`, and slippage guardrail `8 bps`.

@@ -251,7 +251,7 @@ def _build_repair_closure(
     ]
     before_refs = [item for item in before_refs if item]
     reason_codes = _string_list(selected_receipt.get("reason_codes")) or [
-        _text(top_queue_item.get("reason"), "alpha_readiness_not_promotion_eligible")
+        _text(top_queue_item.get("reason"), "hypothesis_not_promotion_eligible")
     ]
     routeable_before = _routeable_candidate_count(evidence)
     measured_delta = _int(selected_receipt.get("measured_delta"))
@@ -292,7 +292,7 @@ def _build_repair_closure(
         "closure_id": closure_id,
         "queue_code": _text(top_queue_item.get("code"), "repair_alpha_readiness"),
         "reason_code": _text(
-            top_queue_item.get("reason"), "alpha_readiness_not_promotion_eligible"
+            top_queue_item.get("reason"), "hypothesis_not_promotion_eligible"
         ),
         "hypothesis_id": _text(selected_receipt.get("hypothesis_id")),
         "value_gate": _text(

@@ -17,7 +17,7 @@ def _proof_floor(**overrides: object) -> dict[str, object]:
         "route_state": "repair_only",
         "capital_state": "zero_notional",
         "max_notional": "0",
-        "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+        "blocking_reasons": ["hypothesis_not_promotion_eligible"],
     }
     proof_floor.update(overrides)
     return proof_floor
@@ -38,7 +38,7 @@ def _consumer_receipt(**overrides: object) -> dict[str, object]:
         "reason_codes": [
             "forecast_registry_degraded",
             "simple_submit_disabled",
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
         ],
     }
     receipt.update(overrides)

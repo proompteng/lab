@@ -134,7 +134,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Live database schema was current at Alembic head `0029_whitepaper_embedding_dimension_4096`, with one branch and
   known parent-fork warnings.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_empty`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live TCA had 7334 orders, 7245 filled executions, zero routeable symbols, five blocked symbols, three missing
   symbols, average absolute slippage `13.8203637593029676` bps, and guardrail `8` bps.

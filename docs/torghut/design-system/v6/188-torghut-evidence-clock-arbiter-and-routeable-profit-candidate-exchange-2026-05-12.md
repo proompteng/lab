@@ -76,7 +76,7 @@ trading flags, GitOps resources, or AgentRun objects.
 - Jangar unscoped quant health returned `ok=true`, `latestMetricsCount=4536`, and a one-second latest-store lag.
 - Torghut `/readyz` returned HTTP 503.
 - Torghut `/trading/status` returned `enabled=true`, `mode=live`, `autonomy_enabled=false`, and `running=true`, but
-  live submission stayed blocked by `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and
+  live submission stayed blocked by `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and
   `simple_submit_disabled`.
 - The same status payload reported scoped quant `status=degraded`, `quant_metrics_update_missing`,
   `quant_pipeline_degraded`, ingestion lag over `341,000` seconds for the sampled account/window, and materialization

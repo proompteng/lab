@@ -15,7 +15,7 @@ Before evidence at `2026-05-14T03:01:46Z`:
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top `repair_queue` item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top `repair_queue` item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - affected value gate: `routeable_candidate_count`
 - `routeable_candidate_count=0`
 - `zero_notional_or_stale_evidence_rate=1.0`

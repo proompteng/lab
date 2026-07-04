@@ -105,7 +105,7 @@ Evidence was collected read-only on 2026-05-15 between 00:26Z and 00:30Z.
 - `/trading/revenue-repair` returned `business_state=repair_only` and `revenue_ready=false`.
 - Top queue:
   - `code=repair_alpha_readiness`;
-  - `reason=alpha_readiness_not_promotion_eligible`;
+  - `reason=hypothesis_not_promotion_eligible`;
   - `value_gate=routeable_candidate_count`;
   - `required_output_receipt=torghut.executable-alpha-receipts.v1`;
   - `max_notional=0`.

@@ -24,7 +24,7 @@ I am selecting **route warrant exchange with ingestion proof reentry** as the ne
 The live system is not idle. It is conflicted. Torghut `/healthz` returns HTTP 200, core pods are running, and the
 latest promoted image is serving. Quant compute is fresh, with Jangar seeing current latest metrics and compute-stage
 lag near seconds. But Torghut `/readyz` and `/trading/health` return HTTP 503. Live submission is blocked by
-`simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and stale empirical jobs. The current Jangar
+`simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and stale empirical jobs. The current Jangar
 consumer evidence says `decision=repair`, `max_notional=0`, `route_repair_value=14`,
 `accepted_routeable_candidate_count=0`, and `routeability_aggregate_state=blocked`.
 

@@ -31,7 +31,7 @@ The blocking evidence is now more subtle. Jangar dependency quorum is `delay`, n
 degraded: discover, plan, implement, and verify stages for the Jangar control-plane lane are stale. Torghut `/readyz`
 is still HTTP `503` with status `degraded`. Live submission is closed by `simple_submit_disabled`, capital is
 `shadow`, and the profitability proof floor is `repair_only` with `max_notional=0`. The proof floor blocks on
-`alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+`hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 
 The data plane confirms why a fresh empirical proof is not enough. Read-only Postgres showed current Alembic head
 `0029_whitepaper_embedding_dimension_4096`, `147623` trade decisions, `13778` executions, `13775` TCA metric rows,
@@ -128,7 +128,7 @@ state, trading flags, empirical artifacts, or GitOps manifests.
 - `/trading/status` reported `mode=live`, live submission gate `allowed=false`, reason `simple_submit_disabled`,
   `capital_stage=shadow`, `configured_live_promotion=false`, `promotion_eligible_total=0`, proof floor
   `capital_state=zero_notional`, and `max_notional=0`.
-- The proof floor blocked on `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- The proof floor blocked on `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Jangar quant health for account `PA3SX7FYNUTF`, window `15m`, returned `status=degraded`,
   `latestMetricsCount=144`, latest metrics updated at `2026-05-07T04:55:40Z`, compute lag `1` second, ingestion lag

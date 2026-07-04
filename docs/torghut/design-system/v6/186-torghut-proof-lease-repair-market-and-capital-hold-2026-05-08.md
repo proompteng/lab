@@ -69,7 +69,7 @@ manifests, or AgentRun objects.
 - Current and expected schema heads were both `0030_evidence_epochs`.
 - Schema lineage was ready, with known historical parent-fork warnings and no missing or unexpected heads.
 - Live submission was closed by `simple_submit_disabled`, `capital_stage=shadow`, and blocked reasons
-  `alpha_readiness_not_promotion_eligible` plus `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible` plus `simple_submit_disabled`.
 - The proof floor was `repair_only`, `capital_state=zero_notional`, and required.
 
 ### Quant, Context, And Lease Evidence

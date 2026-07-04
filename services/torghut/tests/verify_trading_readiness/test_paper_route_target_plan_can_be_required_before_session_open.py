@@ -79,7 +79,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
                 "capital_state": "zero_notional",
                 "max_notional": "0",
                 "blocking_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "degraded",
                     "execution_tca_slippage_guardrail_exceeded",
                 ],
@@ -92,7 +92,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
                 continue
             if dimension.get("dimension") == "alpha_readiness":
                 dimension["state"] = "fail"
-                dimension["reason"] = "alpha_readiness_not_promotion_eligible"
+                dimension["reason"] = "hypothesis_not_promotion_eligible"
             if dimension.get("dimension") == "execution_tca":
                 dimension["state"] = "fail"
                 dimension["reason"] = "execution_tca_slippage_guardrail_exceeded"
@@ -201,7 +201,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
                 "capital_state": "zero_notional",
                 "max_notional": "0",
                 "blocking_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "execution_tca_slippage_guardrail_exceeded",
                 ],
             }
@@ -213,7 +213,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
                 continue
             if dimension.get("dimension") == "alpha_readiness":
                 dimension["state"] = "fail"
-                dimension["reason"] = "alpha_readiness_not_promotion_eligible"
+                dimension["reason"] = "hypothesis_not_promotion_eligible"
             if dimension.get("dimension") == "execution_tca":
                 dimension["state"] = "fail"
                 dimension["reason"] = "execution_tca_slippage_guardrail_exceeded"
@@ -269,7 +269,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
                 "capital_state": "zero_notional",
                 "max_notional": "0",
                 "blocking_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "execution_tca_slippage_guardrail_exceeded",
                 ],
             }
@@ -281,7 +281,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
                 continue
             if dimension.get("dimension") == "alpha_readiness":
                 dimension["state"] = "fail"
-                dimension["reason"] = "alpha_readiness_not_promotion_eligible"
+                dimension["reason"] = "hypothesis_not_promotion_eligible"
             if dimension.get("dimension") == "execution_tca":
                 dimension["state"] = "fail"
                 dimension["reason"] = "execution_tca_slippage_guardrail_exceeded"

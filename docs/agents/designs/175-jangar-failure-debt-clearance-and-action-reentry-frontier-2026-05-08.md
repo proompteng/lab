@@ -107,7 +107,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
 - Torghut live `/readyz` returned HTTP 503 and `status=degraded`: Postgres, ClickHouse, Alpaca, universe, database,
   empirical jobs, and quant evidence were readable, but `live_submission_gate` failed with `simple_submit_disabled`
   and profitability proof floor was `repair_only`.
-- Torghut proof floor blockers were `alpha_readiness_not_promotion_eligible`,
+- Torghut proof floor blockers were `hypothesis_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 
 ## Problem

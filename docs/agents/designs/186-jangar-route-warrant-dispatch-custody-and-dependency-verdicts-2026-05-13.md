@@ -85,7 +85,7 @@ broker state, trading flags, or AgentRun objects.
   `torghut-route-proven-profit:aa5a577cc116cff0`, generated `2026-05-13T00:13:02.509509+00:00`.
 - The same evidence requires repair: `max_notional=0`, `route_repair_value=14`,
   `accepted_routeable_candidate_count=0`, and blockers include `empirical_jobs_degraded`,
-  `forecast_registry_degraded`, `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `degraded`.
+  `forecast_registry_degraded`, `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `degraded`.
 - Jangar Postgres has substantial retained run debt: `241` failed AgentRuns, `5` pending, `34` running, and `591`
   succeeded at the sample point.
 - Recent Jangar resource state shows `codex-spark-agent` with `92` failed, `6` running, and `520` succeeded resources

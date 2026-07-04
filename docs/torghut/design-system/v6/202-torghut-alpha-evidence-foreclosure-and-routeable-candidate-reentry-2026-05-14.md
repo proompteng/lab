@@ -29,7 +29,7 @@ The live business surface has moved again, but the revenue blocker has not clear
 `business_state=repair_only`, `revenue_ready=false`, active revision `torghut-00376`, accepted routeable candidate
 count `0`, `zero_notional_or_stale_evidence_rate=1.0`, `max_notional=0`, and top queue item
 `repair_alpha_readiness`. That queue item still targets `routeable_candidate_count`, still cites
-`alpha_readiness_not_promotion_eligible`, and still requires `torghut.executable-alpha-receipts.v1`.
+`hypothesis_not_promotion_eligible`, and still requires `torghut.executable-alpha-receipts.v1`.
 
 The difference is that Torghut now publishes the alpha evidence foundry, alpha repair closure board, closure settlement
 market, and executable alpha repair receipts. Those contracts make the work visible. They also expose a new failure
@@ -142,7 +142,7 @@ broker state, GitOps resources, AgentRuns, or market data.
   `capital_state=zero_notional`, and `max_notional=0`.
 - Top repair queue item:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `value_gate=routeable_candidate_count`
   - `expected_unblock_value=4`
   - `required_output_receipt=torghut.executable-alpha-receipts.v1`

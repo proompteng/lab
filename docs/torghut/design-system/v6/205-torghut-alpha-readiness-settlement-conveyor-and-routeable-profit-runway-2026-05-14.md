@@ -26,7 +26,7 @@ The live business surface is not ambiguous. On 2026-05-14 at 08:40:57Z,
 `GET http://torghut.torghut.svc.cluster.local/trading/revenue-repair` returned
 `business_state=repair_only`, `revenue_ready=false`, `accepted_routeable_candidate_count=0`,
 `zero_notional_or_stale_evidence_rate=1.0`, and `max_notional=0`. The top repair queue item was
-`repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, priority `70`, value gate
+`repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, priority `70`, value gate
 `routeable_candidate_count`, and required output `torghut.executable-alpha-receipts.v1`.
 
 The top repair should not be displaced by execution TCA repair or live-submit work. TCA is important, but the current
@@ -113,7 +113,7 @@ state, trading flags, GitOps resources, AgentRuns, or market data.
 ### Revenue, Alpha, And Routeability
 
 - Top repair queue item: `repair_alpha_readiness`.
-- Top repair reason: `alpha_readiness_not_promotion_eligible`.
+- Top repair reason: `hypothesis_not_promotion_eligible`.
 - Required output receipt: `torghut.executable-alpha-receipts.v1`.
 - Capital rule: `zero_notional_repair_only`.
 - Capital state: `shadow`, `zero_notional`, `max_notional=0`, `live_submission_allowed=false`.

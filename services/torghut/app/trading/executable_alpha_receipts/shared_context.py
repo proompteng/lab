@@ -113,7 +113,6 @@ REPAIR_REASON_CLASSES = (
     (
         "promotion_decision_receipt",
         {
-            "alpha_readiness_not_promotion_eligible",
             "hypothesis_not_promotion_eligible",
             "promotion_decision_missing",
             "post_cost_expectancy_non_positive",
@@ -392,10 +391,7 @@ def repair_class_for_target(
 
 
 def top_alpha_repair(top_blocker: Mapping[str, Any]) -> bool:
-    return (
-        text(top_blocker.get("code")) == "repair_alpha_readiness"
-        or text(top_blocker.get("reason")) == "alpha_readiness_not_promotion_eligible"
-    )
+    return text(top_blocker.get("code")) == "repair_alpha_readiness"
 
 
 def receipt_by_hypothesis(
@@ -431,7 +427,7 @@ def targets_from_alpha_readiness(
                     "hypothesis_id": hypothesis_id,
                     "state": "blocked",
                     "promotion_eligible": False,
-                    "reasons": ["alpha_readiness_not_promotion_eligible"],
+                    "reasons": ["hypothesis_not_promotion_eligible"],
                 }
             )
     return targets
@@ -441,7 +437,7 @@ def expected_gate_delta(reason_codes: Sequence[str]) -> str:
     for reason in reason_codes:
         if reason:
             return f"retire_{reason}"
-    return "retire_alpha_readiness_not_promotion_eligible"
+    return "retire_hypothesis_not_promotion_eligible"
 
 
 def required_input_refs(

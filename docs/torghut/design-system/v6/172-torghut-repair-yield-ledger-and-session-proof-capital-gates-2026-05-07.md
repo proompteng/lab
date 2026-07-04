@@ -30,7 +30,7 @@ fresh maintenance on `execution_tca_metrics`, and a large options contract catal
 
 The profitable interpretation is still conservative. The proof floor is `repair_only`, route state is `repair_only`,
 capital state is `zero_notional`, and max notional is `0`. The blocking reasons are stable:
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
 `simple_submit_disabled`. Provider health is not enough to clear the market-context blocker: fundamentals and news
 providers succeeded at 23:11Z, but the bundle remained stale, with technicals/regime about 9,482 seconds old, news
 about 19,713 seconds old, and fundamentals about 4,872,481 seconds old. Route repair also remains debt, with AAPL only
@@ -104,7 +104,7 @@ database records, ClickHouse tables, GitOps resources, broker state, empirical a
 
 ### Trading Evidence
 
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Market context last checked at `2026-05-07T23:11:40.093641Z`, but last bundle `as_of` was
   `2026-05-07T20:33:02Z`, freshness was 9,482 seconds, and all domains were stale.

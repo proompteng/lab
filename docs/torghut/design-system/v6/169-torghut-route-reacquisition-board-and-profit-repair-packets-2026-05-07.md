@@ -82,7 +82,7 @@ Evidence was collected read-only on 2026-05-07.
   symbols. Missing symbols were `AMZN`, `GOOGL`, and `ORCL`; blocked symbols included `AMD`, `AVGO`, `INTC`, and
   `NVDA`.
 - `/trading/health` reported profit floor `repair_only`, capital `zero_notional`, `market_context_stale`,
-  `execution_tca_route_universe_incomplete`, `alpha_readiness_not_promotion_eligible`, and `simple_submit_disabled`.
+  `execution_tca_route_universe_incomplete`, `hypothesis_not_promotion_eligible`, and `simple_submit_disabled`.
 - Jangar typed quant health for `account=paper&window=1d` had zero latest metrics and no stages. Torghut's configured
   15-minute quant evidence had latest metrics but still no stages, so it is informational rather than a capital
   receipt.

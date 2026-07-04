@@ -25,7 +25,7 @@ The current data says Torghut should not trade live notional, but it also says e
 at 02:11Z, Torghut `/readyz` returned `status=degraded` while Postgres, ClickHouse, Alpaca, universe, database schema,
 and empirical jobs were healthy. The degradation was capital-specific: live submission was blocked by
 `simple_submit_disabled`, the proof floor was `repair_only`, capital state was `zero_notional`, and zero hypotheses
-were promotion-eligible. The proof floor named three blocking reasons: `alpha_readiness_not_promotion_eligible`,
+were promotion-eligible. The proof floor named three blocking reasons: `hypothesis_not_promotion_eligible`,
 `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 
 The profitability evidence is specific enough to be actionable. `/trading/tca` reported 7,334 orders and 7,245 filled

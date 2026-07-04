@@ -88,7 +88,7 @@ state, trading flags, AgentRun records, GitOps resources, or empirical artifacts
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, `capital_stage=shadow`, and
   `promotion_eligible_total=0`.
 - Proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Quant control-plane health for account `PA3SX7FYNUTF`, window `15m`, reported `status=ok`,
   `latestMetricsCount=144`, `emptyLatestStoreAlarm=false`, `missingUpdateAlarm=false`, and

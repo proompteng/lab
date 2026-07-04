@@ -805,7 +805,7 @@ class TestTradingPipelineProbeExitsB(TradingPipelineTestCaseBase):
             "max_notional": "0",
             "market_window": {"session_open": True},
             "blocking_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "execution_tca_route_universe_empty",
             ],
             "route_reacquisition_book": {

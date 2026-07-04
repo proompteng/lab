@@ -136,7 +136,6 @@ ALPHA_FEATURE_ROUTEABILITY_PRIORITY_BONUS = Decimal("3")
 
 ALPHA_READINESS_ROUTEABILITY_REASON_CODES = {
     "alpha_readiness_fail",
-    "alpha_readiness_not_promotion_eligible",
     "hypothesis_not_promotion_eligible",
 }
 

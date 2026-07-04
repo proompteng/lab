@@ -84,7 +84,7 @@ ClickHouse tables, AgentRun objects, GitOps resources, or empirical artifacts.
   `torghut-00259`, build commit `0aa204cd446ba8ad24f4460eaa74d392a5ae3ea4`, and `orders_submitted_total=0`.
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, `capital_stage=shadow`.
 - Live proof floor was `repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
-- Live proof blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live proof blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live empirical jobs were healthy, truthful, and promotion-authority eligible for candidate
   `chip-paper-microbar-composite@execution-proof` on dataset `torghut-chip-full-day-20260505-5e447b6d-r1`.

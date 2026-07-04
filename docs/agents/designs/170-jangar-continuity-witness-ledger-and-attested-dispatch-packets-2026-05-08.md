@@ -120,7 +120,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
 - Torghut `/db-check` reported schema current with Alembic head `0029_whitepaper_embedding_dimension_4096`; it also
   reported lineage warnings for known parent forks.
 - Torghut trading proof floor was `repair_only`, `capital_state=zero_notional`, and blocked by
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 - Torghut alpha readiness had 3 hypotheses, 0 promotion-eligible hypotheses, and 2 rollback-required hypotheses.
 - Torghut route reacquisition had 8 scope symbols, 1 probing symbol, 4 blocked symbols, 3 missing symbols, and 0
   capital-eligible symbols.

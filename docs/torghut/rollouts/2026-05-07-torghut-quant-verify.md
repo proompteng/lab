@@ -126,7 +126,7 @@ Runtime trading promotion is intentionally closed, not rolled back: `/readyz` re
     pod rollout failure.
   - Revenue repair digest: `business_state=repair_only`, `revenue_ready=false`,
     `capital_state=zero_notional`, `max_notional=0`.
-  - Blockers: `alpha_readiness_not_promotion_eligible`, `degraded`,
+  - Blockers: `hypothesis_not_promotion_eligible`, `degraded`,
     `execution_tca_route_universe_incomplete`, `market_context_stale`, `simple_submit_disabled`,
     and `quant_pipeline_stages_missing`.
 - Event review:

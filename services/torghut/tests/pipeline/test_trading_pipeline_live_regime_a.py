@@ -824,7 +824,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     "operational_submission_ready",
                 )
                 self.assertNotIn(
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     live_submission_gate.get("blocked_reasons", []),
                 )
 

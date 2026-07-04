@@ -127,7 +127,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, or trading 
 - Live dependencies were healthy for Postgres, ClickHouse, Alpaca, Jangar universe, empirical jobs, and database
   schema.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Execution TCA had 7334 orders, 7245 filled executions, average absolute slippage `13.8203637593029676` bps, and
   guardrail `8` bps. Five symbols were blocked and three were missing.

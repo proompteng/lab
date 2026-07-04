@@ -84,7 +84,7 @@ flags, or AgentRun objects.
   allowing `torghut_observe` and holding or blocking paper/live Torghut capital classes.
 - Torghut consumer evidence was current at `2026-05-08T16:08:14Z`, with receipt
   `torghut-route-proven-profit:d269b7c44c6c79a0`, serving revision `torghut-00311`, decision `repair`, and reasons
-  `forecast_registry_degraded`, `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and
+  `forecast_registry_degraded`, `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and
   `market_context_stale`.
 
 ### Source Evidence

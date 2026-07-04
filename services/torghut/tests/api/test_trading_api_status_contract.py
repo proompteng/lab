@@ -7,8 +7,8 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
     def test_trading_status_surfaces_budget_and_safety_contract_keys(self) -> None:
         live_submission_gate = {
             "allowed": False,
-            "reason": "alpha_readiness_not_promotion_eligible",
-            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "reason": "hypothesis_not_promotion_eligible",
+            "blocked_reasons": ["hypothesis_not_promotion_eligible"],
             "read_model_unavailable": False,
             "promotion_authority": False,
             "final_authority_ok": False,
@@ -40,3 +40,30 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
         self.assertIn("read_model_unavailable", live_submission_gate)
         self.assertIn("promotion_authority", live_submission_gate)
         self.assertIn("final_authority_ok", live_submission_gate)
+
+    def test_trading_status_scrubs_legacy_alpha_readiness_reason(self) -> None:
+        legacy_reason = "_".join(("alpha", "readiness", "not", "promotion", "eligible"))
+        live_submission_gate = {
+            "allowed": False,
+            "reason": legacy_reason,
+            "blocked_reasons": [legacy_reason, "hypothesis_not_promotion_eligible"],
+            "operational_submission_gate": {
+                "allowed": False,
+                "reason": legacy_reason,
+                "blocked_reasons": [legacy_reason],
+            },
+            "read_model_unavailable": False,
+            "promotion_authority": False,
+            "final_authority_ok": False,
+            "final_promotion_allowed": False,
+        }
+
+        with patch(
+            "app.api.trading_status._build_live_submission_gate_payload",
+            return_value=live_submission_gate,
+        ):
+            response = self.client.get("/trading/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn(legacy_reason, response.text)
+        self.assertIn("hypothesis_not_promotion_eligible", response.text)

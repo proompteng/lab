@@ -94,7 +94,7 @@ flags.
   `chip-paper-microbar-composite@execution-proof` over dataset `torghut-chip-full-day-20260505-4c330ce9-r1`.
 - Torghut proof floor remained `repair_only`, route state `repair_only`, capital state `zero_notional`, and max
   notional `0`.
-- Runtime blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
+- Runtime blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
   `market_context_stale`, and `simple_submit_disabled`.
 - The route book had one probing symbol, four blocked symbols, and three missing symbols. A separate TCA summary still
   reported one routeable symbol, which is exactly the type of cross-surface contradiction the ledger must settle.

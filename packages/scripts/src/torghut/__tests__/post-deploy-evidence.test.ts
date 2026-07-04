@@ -213,7 +213,7 @@ describe('validatePostDeployEvidence', () => {
       readyz: { status: 'ok' },
       revenueRepairDigest: {
         ...baseDigest,
-        blockers: [{ reason: 'alpha_readiness_not_promotion_eligible' }, { reason: 'empirical_jobs_not_ready' }],
+        blockers: [{ reason: 'hypothesis_not_promotion_eligible' }, { reason: 'empirical_jobs_not_ready' }],
         capital: {
           ...baseDigest.capital,
           capital_stage: 'shadow',
@@ -224,7 +224,7 @@ describe('validatePostDeployEvidence', () => {
           readyz_status: 'ok',
           readyz_ok: true,
           dependency_failures: [
-            { name: 'live_submission_gate', detail: 'alpha_readiness_not_promotion_eligible' },
+            { name: 'live_submission_gate', detail: 'hypothesis_not_promotion_eligible' },
             { name: 'profitability_proof_floor', detail: 'repair_only' },
           ],
         },
@@ -241,10 +241,10 @@ describe('validatePostDeployEvidence', () => {
         live_submission_gate: {
           ...baseTradingStatus.live_submission_gate,
           allowed: false,
-          reason: 'alpha_readiness_not_promotion_eligible',
+          reason: 'hypothesis_not_promotion_eligible',
           blocked_reasons: [
             'empirical_jobs_not_ready',
-            'alpha_readiness_not_promotion_eligible',
+            'hypothesis_not_promotion_eligible',
             'runtime_ledger_profit_target_source_collection_pending',
             'runtime_ledger_source_collection_pending',
           ],

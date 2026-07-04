@@ -124,7 +124,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
   warnings remained for known parent forks after revisions `0010_execution_provenance_and_governance_trace` and
   `0015_whitepaper_workflow_tables`.
 - Torghut `/readyz` returned HTTP 503 degraded. The proof floor was `repair_only`, capital state was `zero_notional`,
-  and blockers included `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+  and blockers included `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - Torghut route reacquisition had 8 scoped symbols, 1 probing symbol, 4 blocked symbols, and 3 missing symbols. Recent
   market-context jobs showed mixed outcomes: old `INTC` and `AMZN` provider jobs failed, while fresh `INTC`, `AMZN`,

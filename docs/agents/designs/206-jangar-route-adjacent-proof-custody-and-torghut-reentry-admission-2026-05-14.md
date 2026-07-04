@@ -31,7 +31,7 @@ opaque missing carry to a precise `lagging` carry state. It did not make revenue
 blocking shape is route-adjacent proof and execution freshness: live revenue repair names
 `route_adjacent_workload_proof_missing`, `active_session_execution_samples_stale`,
 `execution_tca_expected_shortfall_samples_missing_non_promoting`, `empirical_jobs_degraded`, and
-`alpha_readiness_not_promotion_eligible`.
+`hypothesis_not_promotion_eligible`.
 
 The system should not respond by launching broader repair traffic. Jangar should produce one compact custody object
 that joins Torghut live revision, source commit, serving digest, route-adjacent workload readiness, execution TCA
@@ -114,7 +114,7 @@ database records, AgentRuns, GitOps state, broker state, market data, or trading
   `capital_state=zero_notional`, and `max_notional=0`.
 - The active source commit in revenue repair was `03213d0bd7f1be055cafc3031c1b792ade249dd4`.
 - The top repair queue item remained `repair_alpha_readiness` with reason
-  `alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`, required output
+  `hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`, required output
   `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - Torghut emitted `jangar_controller_ingestion_carry.carry_state=lagging` with source settlement ref
   `controller-ingestion-settlement:*`, verification board ref `verify-trust-foreclosure-board:*`, repair-slot escrow

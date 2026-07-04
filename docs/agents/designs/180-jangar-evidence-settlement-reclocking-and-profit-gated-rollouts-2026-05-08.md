@@ -60,14 +60,14 @@ This evidence pass was read-only on 2026-05-08.
 - Torghut is live on active revision `torghut-00308` with version `v0.568.5-588-ge87e3d87d`. `/readyz` and
   `/trading/health` return HTTP 503 degraded. Postgres, ClickHouse, Alpaca, schema currentness, and empirical jobs are
   OK; live submission is blocked by `simple_submit_disabled`, promotion is blocked by
-  `alpha_readiness_not_promotion_eligible`, quant evidence reports `quant_pipeline_stages_missing`, and market context
+  `hypothesis_not_promotion_eligible`, quant evidence reports `quant_pipeline_stages_missing`, and market context
   has stale domains.
 - Torghut `/trading/status` reports three hypotheses, all in shadow, zero promotion eligible, and all rollback
   required. TCA has 7,334 orders with average absolute slippage around 13.82 bps, but the latest execution is
   2026-04-02, so the execution proof is old relative to the active route gates.
 - Torghut `/trading/consumer-evidence` emits `torghut.consumer-evidence-status.v1`, schema head `0030_evidence_epochs`,
   active revision `torghut-00308`, and a route-proven profit receipt in `repair` state. The receipt names
-  `forecast_registry_degraded`, `simple_submit_disabled`, and `alpha_readiness_not_promotion_eligible` as reason codes.
+  `forecast_registry_degraded`, `simple_submit_disabled`, and `hypothesis_not_promotion_eligible` as reason codes.
 - Source risk is concentrated. `services/jangar/src/server/supporting-primitives-controller.ts` is 3,325 lines and owns
   CRD watches, schedule runner generation, freeze state, namespace queues, resource-key throttles, workspace/PVC
   reconciliation, and unfreeze timers. `control-plane-status.ts` assembles rollout truth, execution trust, dependency

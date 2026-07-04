@@ -114,7 +114,7 @@ def test_alpha_closure_dividend_slo_marks_paid_delta() -> None:
         generated_at=NOW,
         alpha_repair_closure_board=_board(
             measured_delta=1,
-            retired_reason_codes=["alpha_readiness_not_promotion_eligible"],
+            retired_reason_codes=["hypothesis_not_promotion_eligible"],
             preserved_reason_codes=[],
             no_delta_budget_state="available",
         ),
@@ -122,7 +122,7 @@ def test_alpha_closure_dividend_slo_marks_paid_delta() -> None:
 
     assert slo["dividend_state"] == "paid"
     assert slo["routeable_candidate_count_after"] == 1
-    assert slo["retired_reason_codes"] == ["alpha_readiness_not_promotion_eligible"]
+    assert slo["retired_reason_codes"] == ["hypothesis_not_promotion_eligible"]
     assert "alpha_closure_no_delta_active" not in slo["reason_codes"]
 
 

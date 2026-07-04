@@ -596,7 +596,7 @@ class TestReadyPaperStatusPassesStrictGate(_TestVerifyTradingReadinessBase):
                 "capital_state": "zero_notional",
                 "max_notional": "0",
                 "blocking_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "execution_tca_route_universe_empty",
                     "market_context_stale",
                 ],
@@ -609,7 +609,7 @@ class TestReadyPaperStatusPassesStrictGate(_TestVerifyTradingReadinessBase):
                 continue
             if dimension.get("dimension") == "alpha_readiness":
                 dimension["state"] = "fail"
-                dimension["reason"] = "alpha_readiness_not_promotion_eligible"
+                dimension["reason"] = "hypothesis_not_promotion_eligible"
             if dimension.get("dimension") == "market_context":
                 dimension["state"] = "stale"
                 dimension["reason"] = "market_context_stale"

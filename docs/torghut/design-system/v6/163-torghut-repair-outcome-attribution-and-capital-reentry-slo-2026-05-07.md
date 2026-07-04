@@ -86,7 +86,7 @@ ClickHouse tables, broker state, GitOps resources, AgentRun objects, or trading 
 - Schema lineage had one branch, no duplicate revisions, no orphan parents, and known parent-fork warnings at
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live submission gate was closed with reason `simple_submit_disabled` and capital stage `shadow`.
 - Live TCA had 7334 orders, 7245 filled executions, latest TCA at `2026-05-07T14:23:43.480686Z`, average absolute
@@ -100,7 +100,7 @@ ClickHouse tables, broker state, GitOps resources, AgentRun objects, or trading 
 
 - Simulation `/readyz` returned HTTP `200`.
 - Simulation proof floor was `repair_only`, route state `repair_only`, and capital state `zero_notional`.
-- Simulation blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Simulation blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, and `market_context_stale`.
 - Simulation routeability had one probing symbol, `NVDA`, seven missing symbols, and zero routeable symbols.
 - Simulation TCA had four orders, five filled executions, latest execution at `2026-05-07T09:20:27.213660Z`, and

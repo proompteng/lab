@@ -24,7 +24,7 @@ I am selecting a **Profit Freshness Frontier with a Zero-Notional Repair Market*
 architecture step.
 
 The current trading service is alive, but it is not profit-ready. `/trading/status` reports the live loop running on
-revision `torghut-00320`, but live submission is blocked by `alpha_readiness_not_promotion_eligible`,
+revision `torghut-00320`, but live submission is blocked by `hypothesis_not_promotion_eligible`,
 `empirical_jobs_not_ready`, and `simple_submit_disabled`. Signal lag is about `328k` seconds, market context is stale
 by about `330k` seconds, all major market-context domains are stale, empirical jobs are stale, and no hypotheses are
 promotion-eligible. Argo reports `torghut=Synced/Degraded` and `torghut-options=Synced/Progressing` while multiple
@@ -62,7 +62,7 @@ records, GitOps resources, AgentRuns, broker state, Torghut flags, or ClickHouse
 
 - `/trading/status` reported `enabled=true`, `running=true`, `mode=live`, `autonomy_enabled=false`, and active revision
   `torghut-00320`.
-- Live submission was not allowed. Blocking reasons were `alpha_readiness_not_promotion_eligible`,
+- Live submission was not allowed. Blocking reasons were `hypothesis_not_promotion_eligible`,
   `empirical_jobs_not_ready`, and `simple_submit_disabled`.
 - Quant evidence was degraded. Latest metrics were current in the hot path, but stage evidence showed ingestion lag up
   to about `956k` seconds, with some materialization rows also failing.

@@ -647,9 +647,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryA(SubmissionCouncilTestCase):
         self.assertEqual(gate["reason"], "operational_submission_ready")
         self.assertEqual(gate["capital_stage"], "live")
         self.assertIsNone(gate["evidence_tuple"]["candidate_id"])
-        self.assertNotIn(
-            "alpha_readiness_not_promotion_eligible", gate["blocked_reasons"]
-        )
+        self.assertNotIn("hypothesis_not_promotion_eligible", gate["blocked_reasons"])
 
     def test_load_latest_certificate_evidence_skips_mismatched_runtime_ledger_bucket(
         self,

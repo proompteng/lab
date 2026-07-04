@@ -125,7 +125,7 @@ def build_profitability_proof_floor_receipt(
         add_dimension(
             dimension="alpha_readiness",
             state="fail",
-            reason="alpha_readiness_not_promotion_eligible",
+            reason="hypothesis_not_promotion_eligible",
             capital_effect="paper_hold" if not live_mode else "live_hold",
             source_ref={
                 "promotion_eligible_total": promotion_eligible_total,
@@ -144,7 +144,7 @@ def build_profitability_proof_floor_receipt(
             code="repair_alpha_readiness",
             dimension="alpha_readiness",
             action="clear_hypothesis_blockers_before_capital",
-            reason="alpha_readiness_not_promotion_eligible",
+            reason="hypothesis_not_promotion_eligible",
             priority=70,
             expected_unblock_value=max(1, len(reasons)),
         )

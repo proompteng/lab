@@ -36,7 +36,7 @@ plane still returns `dependency_quorum.decision=delay` because `execution_trust_
 authority reason. Torghut live serves `/healthz` with HTTP 200, and its scheduler, Postgres, ClickHouse, Alpaca, schema,
 universe, empirical job, and DSPy readiness dimensions all report through the typed `/readyz` payload. The live
 `/readyz` response is still HTTP 503 because capital is intentionally held at zero notional by `simple_submit_disabled`,
-`alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `quant_pipeline_degraded`.
+`hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `quant_pipeline_degraded`.
 
 That evidence supports the merged design rather than a new fork. Jangar must not treat a healthy serving route as
 rollout or capital authority. Torghut must not treat a healthy liveness route, reachable databases, or stale empirical
@@ -271,7 +271,7 @@ fork warnings. `/readyz` still returns HTTP 503, which is the right answer while
 
 Capital remains intentionally closed. Torghut reports `live_submission_gate.allowed=false`,
 `reason=simple_submit_disabled`, `capital_stage=shadow`, proof-floor `capital_state=zero_notional`, and
-`max_notional=0`. Current proof-floor blockers are `alpha_readiness_not_promotion_eligible`, `degraded`,
+`max_notional=0`. Current proof-floor blockers are `hypothesis_not_promotion_eligible`, `degraded`,
 `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`. The route reacquisition
 book has `0` routeable symbols out of `8`: `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA` are blocked by execution TCA,
 while `AMZN`, `GOOGL`, and `ORCL` are missing execution TCA evidence.

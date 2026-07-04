@@ -71,11 +71,11 @@ flags, GitOps manifests, or AgentRun objects.
 - Direct secret and database access is forbidden for `system:serviceaccount:agents:agents-sa`, so database evidence for
   this pass comes from the Torghut runtime database contracts and Kubernetes endpoints.
 - `/trading/status` reports `enabled=true`, `mode=live`, `running=true`, live submission
-  `allowed=false`, and blocked reasons `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`.
+  `allowed=false`, and blocked reasons `hypothesis_not_promotion_eligible` and `simple_submit_disabled`.
 - `profit_signal_quorum` reports three observe-only quorums, three zero-notional quorums, zero paper candidates, zero
   routeable candidates, and fourteen blocked or stale evidence cells.
 - `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `hypothesis_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
   `quant_pipeline_stages_missing`.
 - `/trading/consumer-evidence` reports route-proven profit state `repair`, proof floor `repair_only`,
   capital state `zero_notional`, seven zero-notional repair lots, and zero routeable candidates.

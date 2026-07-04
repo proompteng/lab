@@ -91,7 +91,7 @@ flags, broker state, AgentRuns, GitOps resources, or market data.
 
 - `/trading/revenue-repair` reported `business_state=repair_only` and `revenue_ready=false`.
 - Top queue item: `repair_alpha_readiness`.
-- Top reason: `alpha_readiness_not_promotion_eligible`.
+- Top reason: `hypothesis_not_promotion_eligible`.
 - Value gate: `routeable_candidate_count`.
 - Required output receipt: `torghut.executable-alpha-receipts.v1`.
 - Capital rule: `zero_notional_repair_only`, with `max_notional=0`.

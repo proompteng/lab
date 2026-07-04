@@ -79,7 +79,7 @@ records, ClickHouse data, broker state, GitOps resources, AgentRun objects, or t
   readiness cache, and broker status were OK.
 - Live submission gate was closed with `simple_submit_disabled`, capital stage `shadow`, and live submit disabled.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live TCA had `7334` orders, `7245` filled executions, latest TCA around `2026-05-07T14:23:43Z`,
   average absolute slippage about `13.82 bps`, guardrail `8 bps`, zero routeable symbols, five blocked symbols, and

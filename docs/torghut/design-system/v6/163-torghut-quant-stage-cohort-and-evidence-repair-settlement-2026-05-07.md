@@ -106,7 +106,7 @@ tables, GitOps resources, AgentRun objects, broker state, empirical artifacts, o
   was `0`.
 - Live submission gate was closed with reason `simple_submit_disabled` and capital stage `shadow`.
 - Alpha readiness had three hypotheses, all shadow; zero were promotion eligible; all three required rollback.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Execution TCA had 7334 orders and 7245 filled executions. Latest TCA was
   `2026-05-07T14:23:43.480686Z`, while latest execution creation was `2026-04-02T19:00:29.586040Z`.

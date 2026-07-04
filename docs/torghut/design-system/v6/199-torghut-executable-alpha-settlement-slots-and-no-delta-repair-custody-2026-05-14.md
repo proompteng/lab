@@ -79,7 +79,7 @@ All evidence was collected read-only on 2026-05-14.
   `schema_version=torghut.revenue-repair-digest.v1`, `business_state=repair_only`, and `revenue_ready=false`.
 - Top repair queue item:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `dimension=alpha_readiness`
   - `action=clear_hypothesis_blockers_before_capital`
   - `priority=70`

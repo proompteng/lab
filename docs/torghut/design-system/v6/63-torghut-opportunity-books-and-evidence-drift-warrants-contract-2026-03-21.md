@@ -29,7 +29,7 @@ Jangar recovery warrants.
 The live evidence on `2026-03-21` makes this the higher-leverage direction:
 
 - `GET http://torghut-00156-private.torghut.svc.cluster.local:8012/trading/status`
-  - at `2026-03-21T00:15Z` reports `blocked_reasons=["alpha_readiness_not_promotion_eligible","empirical_jobs_not_ready","dependency_quorum_block","quant_health_fetch_failed","live_promotion_disabled"]`;
+  - at `2026-03-21T00:15Z` reports `blocked_reasons=["hypothesis_not_promotion_eligible","empirical_jobs_not_ready","dependency_quorum_block","quant_health_fetch_failed","live_promotion_disabled"]`;
   - still reports all three hypotheses held in `shadow` or `blocked`;
   - still points `quant_evidence.source_url` at the generic Jangar status route.
 - `GET http://torghut-00156-private.torghut.svc.cluster.local:8012/trading/health`

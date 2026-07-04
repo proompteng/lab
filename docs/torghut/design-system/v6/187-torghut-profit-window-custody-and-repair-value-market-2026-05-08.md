@@ -26,7 +26,7 @@ HTTP 503 with `status=degraded`. Postgres, ClickHouse, schema lineage, and empir
 `live_submission_gate.ok=false`, `profitability_proof_floor.ok=false`, `capital_state=zero_notional`, and
 `simple_submit_disabled` remained active. Jangar consumed a current Torghut consumer-evidence receipt, but that receipt
 still reported `decision=repair`, `max_notional=0`, and blockers including `forecast_registry_degraded`,
-`simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `market_context_stale`.
+`simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `market_context_stale`.
 
 The profitable opportunity is not to widen notional. It is to spend repair effort where it has measurable expected
 unblock value. The live readiness payload already exposes useful ingredients: profit windows, profit leases, consumer
@@ -68,7 +68,7 @@ flags, GitOps resources, or AgentRun objects.
 ### Data And Profit Signals
 
 - `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, blocked reasons
-  `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`, `capital_stage=shadow`, and
+  `hypothesis_not_promotion_eligible` and `simple_submit_disabled`, `capital_stage=shadow`, and
   `capital_state=observe`.
 - The proof floor was `repair_only` with `capital_state=zero_notional`.
 - Quant evidence for `PA3SX7FYNUTF/15m` had `180` latest metric rows and a recent update, but also

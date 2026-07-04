@@ -29,7 +29,7 @@ parent-fork warnings. Jangar quant runtime was enabled and had 144 latest metric
 The business state remains blocked. `/readyz` returned `status=degraded`; live submission was closed by
 `simple_submit_disabled`; proof floor was `repair_only`; capital state was `zero_notional`; and revenue repair digest
 reported `revenue_ready=false`, `business_state=repair_only`, with blockers
-`alpha_readiness_not_promotion_eligible`, `simple_submit_disabled`, and `quant_pipeline_stages_missing`. Market context
+`hypothesis_not_promotion_eligible`, `simple_submit_disabled`, and `quant_pipeline_stages_missing`. Market context
 was stale for technicals, news, and regime. Quant latest metrics were present, but scoped pipeline stages were missing.
 
 The next design step is not a broader proof marketplace or a paper probe. It is an acceptance ledger that says which

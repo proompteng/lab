@@ -237,7 +237,7 @@ def evaluate_certificate_candidates(
         blocked_segments: list[str] = []
         if runtime_item:
             if not bool(runtime_item.get("promotion_eligible")):
-                reasons.append("alpha_hypothesis_not_promotion_eligible")
+                reasons.append("hypothesis_not_promotion_eligible")
             runtime_stage = _safe_text(runtime_item.get("capital_stage"))
             if runtime_stage in {None, "shadow"}:
                 reasons.append("alpha_hypothesis_shadow_only")

@@ -80,7 +80,7 @@ flags, broker state, or market data.
 ### Revenue-Repair Surface
 
 - `/trading/revenue-repair` returned `business_state=repair_only`.
-- The repair queue included `repair_alpha_readiness` with reason `alpha_readiness_not_promotion_eligible`, priority
+- The repair queue included `repair_alpha_readiness` with reason `hypothesis_not_promotion_eligible`, priority
   `70`, value gate `routeable_candidate_count`, required output `torghut.executable-alpha-receipts.v1`, and
   `max_notional=0`.
 - The same queue included lower-priority live-submit, empirical, degraded, and empirical-not-ready repairs.

@@ -522,7 +522,7 @@ def _build_candidate_tickets(
                 "ticket_id": ticket_id,
                 "ticket_class": spec.get("ticket_class"),
                 "target_value_gate": selected_value_gate,
-                "expected_gate_delta": "retire_alpha_readiness_not_promotion_eligible",
+                "expected_gate_delta": "retire_hypothesis_not_promotion_eligible",
                 "release_condition": release_condition,
                 "required_output_receipt": spec.get("required_output_receipt"),
                 "validation_commands": _string_list(spec.get("validation_commands")),

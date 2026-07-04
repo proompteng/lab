@@ -25,7 +25,7 @@ I am selecting **alpha-readiness repair escrow** as the Jangar control-plane com
 The current live state is not a control-plane outage. Jangar is serving, the agents deployment is available, agents
 controllers are `2/2` ready, and Argo reports Jangar healthy. The failure mode is subtler: runner capacity can be used
 by lower-leverage repair lots while Torghut's business evidence says the top revenue blocker is
-`alpha_readiness_not_promotion_eligible`. That is a control-plane reliability problem because Jangar can appear healthy
+`hypothesis_not_promotion_eligible`. That is a control-plane reliability problem because Jangar can appear healthy
 while starving the work that would improve `routeable_candidate_count`.
 
 Jangar should admit one bounded promotion-custody repair when Torghut proves all of these facts:

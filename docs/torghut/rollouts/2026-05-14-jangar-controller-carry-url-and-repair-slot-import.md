@@ -10,7 +10,7 @@ Governing design:
 ## Runtime Requirement
 
 `GET http://torghut.torghut.svc.cluster.local/trading/revenue-repair` is the revenue-blocker source of truth. The
-selected live queue item remains `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate
+selected live queue item remains `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate
 `routeable_candidate_count`, and capital rule `zero_notional_repair_only`.
 
 ## Evidence

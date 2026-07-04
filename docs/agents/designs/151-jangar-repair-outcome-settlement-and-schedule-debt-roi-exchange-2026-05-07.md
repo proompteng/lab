@@ -91,7 +91,7 @@ records, broker state, GitOps resources, AgentRun objects, or Torghut trading fl
 - Live Torghut `/readyz` returned `status=degraded` while Postgres, ClickHouse, Alpaca, schema, Jangar universe,
   readiness cache, and empirical jobs were healthy.
 - Live proof floor was `repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Execution TCA had `13,775` orders, `13,571` filled executions, average absolute slippage
   `13.7594875295276693` bps, and an `8` bps guardrail.

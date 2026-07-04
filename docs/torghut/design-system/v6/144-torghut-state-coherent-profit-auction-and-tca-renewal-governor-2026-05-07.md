@@ -28,7 +28,7 @@ Postgres, ClickHouse, Alpaca, and the Jangar universe dependency are healthy; em
 repair priority; and the current quant latest store is not empty. That supports observation and zero-notional repair.
 
 It does not support paper or live capital. At `2026-05-07T09:29Z`, Torghut proof floor was `repair_only`,
-`capital_state=zero_notional`, with blocking reasons `alpha_readiness_not_promotion_eligible`,
+`capital_state=zero_notional`, with blocking reasons `hypothesis_not_promotion_eligible`,
 `execution_tca_stale`, and `simple_submit_disabled`. TCA was last computed on `2026-04-02T20:59:45.136640Z`, average
 absolute slippage was about `568.61` bps against an `8` bps guardrail, and expected shortfall coverage was `0`. All
 three hypotheses were shadow or blocked with capital multiplier `0`, zero promotion eligible, and three rollback

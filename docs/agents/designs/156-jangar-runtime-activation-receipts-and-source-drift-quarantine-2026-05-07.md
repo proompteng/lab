@@ -112,7 +112,7 @@ tables, broker state, AgentRun objects, GitOps resources, trading flags, or empi
   healthy, but proof floor remained `repair_only` and capital state remained `zero_notional`.
 - Live `/trading/status` had `proof_floor` but top-level `route_reacquisition_book=null`, and
   `proof_floor.route_reacquisition_book` was absent.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live execution TCA had 7334 orders, 7245 filled executions, zero routeable symbols, five blocked symbols
   (`AAPL`, `AMD`, `AVGO`, `INTC`, `NVDA`), three missing symbols (`AMZN`, `GOOGL`, `ORCL`), average absolute slippage

@@ -117,10 +117,7 @@ def first_mapping(values: Sequence[object]) -> Mapping[str, Any]:
 
 
 def is_alpha_readiness_repair(item: Mapping[str, Any]) -> bool:
-    return (
-        as_text(item.get("code")) == "repair_alpha_readiness"
-        or as_text(item.get("reason")) == "alpha_readiness_not_promotion_eligible"
-    )
+    return as_text(item.get("code")) == "repair_alpha_readiness"
 
 
 def routeable_candidate_count(evidence: Mapping[str, Any]) -> int:

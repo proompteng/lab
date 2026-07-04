@@ -107,7 +107,7 @@ state, trading flags, AgentRun objects, or live services.
   `88d9f39d06f7cfde06a980ab133afef50bd20e19`, active revision `torghut-00338`, and `image_digest=null`.
 - Runtime profitability over `72h` reported `29` decisions, `0` executions, `500` TCA samples, and every decision
   blocked.
-- Live submission remains blocked by `simple_submit_disabled` and `alpha_readiness_not_promotion_eligible`; active
+- Live submission remains blocked by `simple_submit_disabled` and `hypothesis_not_promotion_eligible`; active
   capital stage is `shadow`.
 - Route warrants reported `warrant_state=repair_only`, `max_notional=0`, `routeable_candidate_count=0`,
   `zero_notional_or_stale_evidence_rate=0.8`, and `capital_gate_safety=zero_notional_safe`.

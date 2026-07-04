@@ -69,7 +69,7 @@ flags, or empirical artifacts.
 - The live submission gate returned `allowed=false`, `reason=simple_submit_disabled`, `capital_stage=shadow`,
   `configured_live_promotion=false`, and `promotion_eligible_total=0`.
 - The proof floor returned `floor_state=repair_only`, `capital_state=zero_notional`, `max_notional=0`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - The proof floor empirical dimension was `pass` with candidate
   `chip-paper-microbar-composite@execution-proof` and dataset `torghut-chip-full-day-20260505-5e447b6d-r1`.
 - The proof floor quant-ingestion dimension was informationally degraded with account `PA3SX7FYNUTF`, window `15m`,

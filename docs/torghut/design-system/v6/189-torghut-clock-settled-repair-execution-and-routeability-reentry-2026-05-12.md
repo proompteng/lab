@@ -23,7 +23,7 @@ Extends:
 I am selecting **clock-settled repair execution with routeability reentry gates** as the next Torghut architecture
 step.
 
-The current live system is safer than it is useful. Torghut `/healthz` returns HTTP 200, but `/readyz` returns HTTP 503. Live submission is held by `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and
+The current live system is safer than it is useful. Torghut `/healthz` returns HTTP 200, but `/readyz` returns HTTP 503. Live submission is held by `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and
 `empirical_jobs_not_ready`. The live `evidence_clock_arbiter` reports `routeable_candidate_count=0`,
 `zero_notional_or_stale_evidence_rate=0.9`, one current clock, and nine non-current clocks. Capital remains
 `repair_only` with `max_notional=0`.

@@ -128,7 +128,7 @@ GitOps resources, AgentRun objects, broker state, ClickHouse tables, or trading 
 - Torghut database schema was current at Alembic head `0029_whitepaper_embedding_dimension_4096` with one branch, no
   duplicate revisions, no orphan parents, and known parent-fork warnings.
 - Live proof floor was `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live proof floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live TCA had 7334 orders, 7245 filled executions, average absolute slippage about `13.82` bps, guardrail `8` bps,
   zero routeable symbols, five blocked symbols, and three missing symbols.

@@ -24,7 +24,7 @@ I am selecting **a repair alpha carry exchange with a paper settlement ledger** 
 Torghut now exposes the right raw facts. Live `/readyz` reported Postgres, ClickHouse, Alpaca, universe, database
 schema, and empirical jobs as available, but the service remained `degraded` because the profitability proof floor was
 `repair_only`, `capital_state=zero_notional`, and `max_notional=0`. The live proof floor named four blockers:
-`alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
+`hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
 `simple_submit_disabled`.
 
 That is correct capital behavior. The system should not trade live while alpha readiness is missing, execution quality
@@ -75,7 +75,7 @@ Kubernetes resources, GitOps manifests, or empirical artifacts.
 - Profitability proof floor was required and not ok: `repair_only`, `capital_state=zero_notional`.
 - Quant evidence was informational but degraded for the `15m` window.
 - Live proof-floor blockers were:
-  - `alpha_readiness_not_promotion_eligible`
+  - `hypothesis_not_promotion_eligible`
   - `execution_tca_slippage_guardrail_exceeded`
   - `market_context_stale`
   - `simple_submit_disabled`

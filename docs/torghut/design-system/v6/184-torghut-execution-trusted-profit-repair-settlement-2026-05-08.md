@@ -29,10 +29,10 @@ running. `/db-check` is current at Alembic head `0030_evidence_epochs`.
 
 The profit and action gates are still closed for good reasons. Live `/readyz` returns `status=degraded`.
 `proof_floor.floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
-Live submission is blocked by `simple_submit_disabled` and `alpha_readiness_not_promotion_eligible`. The current
+Live submission is blocked by `simple_submit_disabled` and `hypothesis_not_promotion_eligible`. The current
 consumer-evidence receipt is live and current, but it still reports `paper=blocked`, `live=blocked`, `max_notional=0`,
 and reason codes `forecast_registry_degraded`, `simple_submit_disabled`, and
-`alpha_readiness_not_promotion_eligible`.
+`hypothesis_not_promotion_eligible`.
 
 The market evidence names the next scarce repair. Live execution TCA has 7,334 orders and 7,245 filled executions, with
 average absolute slippage around `13.82` bps against an 8 bps guardrail. AAPL is probing, not capital-ready. AMD, AVGO,
