@@ -205,6 +205,8 @@ describe('Torghut manifest scheduling', () => {
     expect(data.KAFKA_READY_MAX_AGE_MS).toBe('120000')
     expect(data.CLICKHOUSE_READY_MAX_AGE_MS).toBe('300000')
     expect(data.CLICKHOUSE_TABLE_READY_MAX_AGE_MS).toBe('300000')
+    expect(data.HYPERLIQUID_TOP_MARKET_COUNT).toBe('12')
+    expect(data.HYPERLIQUID_PINNED_PERP_COINS).toBe('BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     const feedContainer = getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0])
@@ -225,9 +227,15 @@ describe('Torghut manifest scheduling', () => {
         value: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       }),
     )
+    expect(feedEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'HYPERLIQUID_PINNED_PERP_COINS',
+        value: 'BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD',
+      }),
+    )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-top12-readiness-20260704a')
+    ).toBe('hyperliquid-feed-pinned-runtime-universe-20260704a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
@@ -285,12 +293,16 @@ describe('Torghut manifest scheduling', () => {
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TIF).toBe('Ioc')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS).toBe('10')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_OPEN_ORDERS_PER_SYMBOL).toBe('1')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_FEED_READINESS_URL).toBe(
+      'http://torghut-hyperliquid-feed.torghut.svc.cluster.local/readyz',
+    )
+    expect(runtimeData.HYPERLIQUID_EXECUTION_FEED_READINESS_TIMEOUT_SECONDS).toBe('3')
 
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-top12-universe-20260704a',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-feed-readiness-gate-20260704a',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')

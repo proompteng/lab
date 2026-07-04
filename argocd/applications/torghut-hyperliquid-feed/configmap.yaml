@@ -13,9 +13,9 @@ data:
   HYPERLIQUID_INCLUDE_SPOT: "false"
   HYPERLIQUID_MARKET_COVERAGE: "top-volume"
   HYPERLIQUID_TOP_MARKET_COUNT: "12"
-  HYPERLIQUID_PINNED_PERP_COINS: ""
+  HYPERLIQUID_PINNED_PERP_COINS: "BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD"
   HYPERLIQUID_WS_CHANNELS: "allMids,bbo,candle,activeAssetCtx,allDexsAssetCtxs"
-  # Five candle windows over the top 12 execution markets keep websocket and Kafka load bounded.
+  # Five candle windows over the top 12 volume markets plus the pinned execution universe keep feed coverage explicit.
   HYPERLIQUID_CANDLE_INTERVALS: "1m,3m,5m,15m,1h"
   HYPERLIQUID_MAX_WS_CONNECTIONS: "8"
   HYPERLIQUID_MAX_SUBSCRIPTIONS_PER_CONNECTION: "125"

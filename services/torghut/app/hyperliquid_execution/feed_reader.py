@@ -226,7 +226,7 @@ class ClickHouseFeedReader:
                     if key in {"readinessBlockers", "websocket", "kafka", "clickhouse"}
                 }
             )
-        ready = status < 300 and payload.get("ready") is not False
+        ready = status < 300 and payload.get("ready") is True
         if ready:
             return RuntimeDependencyStatus(
                 "hyperliquid_feed_service", True, details=details

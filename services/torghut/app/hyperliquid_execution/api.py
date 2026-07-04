@@ -15,7 +15,7 @@ from .config import HyperliquidExecutionConfig
 from .exchange import exchange_from_config
 from .feed_reader import ClickHouseFeedReader
 from .metrics import HyperliquidExecutionMetrics
-from .models import CycleResult
+from .models import CycleResult, RuntimeDependencyStatus
 from .repository import HyperliquidExecutionRepository
 from .service import HyperliquidExecutionService, runtime_readiness
 
@@ -88,6 +88,36 @@ def readyz(response: Response) -> dict[str, object]:
             }
             for dependency in dependencies
         ],
+    }
+
+
+@app.get("/trading/status")
+def trading_status() -> dict[str, object]:
+    ready, reasons, dependencies = runtime_readiness(
+        config=runtime_state.config,
+        latest_cycle=runtime_state.latest_cycle,
+        latest_error=runtime_state.latest_error,
+    )
+    gate = _operational_submission_gate(
+        ready=ready,
+        reasons=reasons,
+        config=runtime_state.config,
+    )
+    return {
+        "ready": ready,
+        "reasons": reasons,
+        "trading_enabled": runtime_state.config.trading_enabled,
+        "execution_route": runtime_state.config.execution_network,
+        "order_policy": runtime_state.config.order_policy,
+        "execution_network": runtime_state.config.execution_network,
+        "market_data_network": runtime_state.config.market_data_network,
+        "dependencies": [
+            _dependency_payload(dependency) for dependency in dependencies
+        ],
+        "latest_cycle": _runtime_report_payload(),
+        "config": _config_payload(),
+        "operational_submission_gate": gate,
+        "live_submission_gate": dict(gate),
     }
 
 
@@ -189,3 +219,47 @@ def _config_payload() -> dict[str, object]:
         "maintenance_reduce_only_close_enabled": config.maintenance_reduce_only_close_enabled,
         "sample_ready_fill_floor": 40,
     }
+
+
+def _dependency_payload(dependency: RuntimeDependencyStatus) -> dict[str, object]:
+    return {
+        "name": dependency.name,
+        "ready": dependency.ready,
+        "observed_at": dependency.observed_at.isoformat()
+        if dependency.observed_at
+        else None,
+        "lag_seconds": dependency.lag_seconds,
+        "reason": dependency.reason,
+        "details": dependency.details,
+    }
+
+
+def _operational_submission_gate(
+    *,
+    ready: bool,
+    reasons: list[str],
+    config: HyperliquidExecutionConfig,
+) -> dict[str, object]:
+    blockers = list(reasons)
+    if not config.enabled:
+        blockers.append("runtime_disabled")
+    if not config.trading_enabled:
+        blockers.append("trading_disabled")
+    deduped_blockers = _dedupe_strings(blockers)
+    allowed = ready and config.trading_enabled and not deduped_blockers
+    return {
+        "allowed": allowed,
+        "enabled": allowed,
+        "blockers": deduped_blockers,
+    }
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
