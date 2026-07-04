@@ -267,6 +267,60 @@ describe('validatePostDeployEvidence', () => {
     expect(result.summaryLines.join('\n')).toContain('Live submit contract: `shadow_zero_notional_gate_closed`')
   })
 
+  it('accepts 2xx readyz with operational submission ready but capital still zero-notional repair-only', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: {
+        ...baseDigest,
+        capital: {
+          live_submission_allowed: true,
+          live_submission_reason: 'operational_submission_ready',
+          capital_stage: 'live',
+          capital_state: 'zero_notional',
+          configured_live_promotion: false,
+          max_notional: '0',
+          proof_floor_state: 'repair_only',
+          route_state: 'repair_only',
+        },
+        health: {
+          ...baseDigest.health,
+          readyz_status: 'ok',
+          readyz_ok: true,
+          dependency_failures: [{ name: 'profitability_proof_floor', detail: 'repair_only' }],
+        },
+        repair_queue: [],
+      },
+      tradingStatus: {
+        ...baseTradingStatus,
+        empirical_jobs: {
+          ready: false,
+          status: 'degraded',
+          blocked_reasons: ['job_stale'],
+        },
+        operational_submission_gate: {
+          allowed: true,
+          blocked_reasons: [],
+          reason: 'operational_submission_ready',
+          execution_route: {
+            route: 'testnet',
+            reason: 'alpaca_regular_session_closed',
+            testnet_after_hours_enabled: true,
+          },
+        },
+        proof_floor: {
+          floor_state: 'repair_only',
+          capital_state: 'zero_notional',
+          max_notional: '0',
+        },
+      },
+    })
+
+    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
+    expect(result.liveSubmitContract).toBe('operational_zero_notional_repair')
+    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `operational_zero_notional_repair`')
+  })
+
   it('accepts healthy readyz after live submit activation expiry when live submit is blocked', () => {
     const result = validatePostDeployEvidence({
       readyzHttpStatus: '200',

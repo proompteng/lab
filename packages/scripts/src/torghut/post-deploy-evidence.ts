@@ -30,6 +30,7 @@ type PostDeployEvidenceInput = {
 type LiveSubmitContract =
   | 'bounded_live_submit_active'
   | 'expired_activation_blocked'
+  | 'operational_zero_notional_repair'
   | 'shadow_zero_notional_gate_closed'
 
 export type PostDeployEvidenceResult = {
@@ -396,6 +397,72 @@ const assertShadowZeroNotionalGateClosedContract = (status: JsonObject, digest: 
   return 'shadow_zero_notional_gate_closed'
 }
 
+const assertOperationalZeroNotionalRepairContract = (status: JsonObject, digest: JsonObject): LiveSubmitContract => {
+  const capital = requireObject(digest.capital, 'torghut revenue repair digest capital')
+  if (
+    digest.business_state !== 'repair_only' ||
+    digest.revenue_ready !== false ||
+    capital.capital_state !== 'zero_notional' ||
+    formatScalar(capital.max_notional, '') !== '0'
+  ) {
+    throw new Error('operational repair-only rollout acceptance requires repair_only zero_notional max_notional=0')
+  }
+  requireScalarValue(
+    capital.proof_floor_state,
+    'repair_only',
+    'torghut revenue repair digest capital.proof_floor_state',
+  )
+  requireScalarValue(capital.route_state, 'repair_only', 'torghut revenue repair digest capital.route_state')
+  if (
+    requireBoolean(capital.live_submission_allowed, 'torghut revenue repair digest capital.live_submission_allowed') !==
+    true
+  ) {
+    throw new Error('operational repair-only rollout acceptance requires live_submission_allowed=true')
+  }
+  requireScalarValue(
+    capital.live_submission_reason,
+    'operational_submission_ready',
+    'torghut revenue repair digest capital.live_submission_reason',
+  )
+
+  const liveSubmissionGate = requireObject(status.live_submission_gate, 'torghut status live_submission_gate')
+  const operationalSubmissionGate = requireObject(
+    status.operational_submission_gate,
+    'torghut status operational_submission_gate',
+  )
+  const proofFloor = requireObject(status.proof_floor, 'torghut status proof_floor')
+
+  if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
+    throw new Error('torghut status autonomy_enabled must be false for operational zero-notional repair rollout')
+  }
+  if (requireBoolean(liveSubmissionGate.allowed, 'torghut status live_submission_gate.allowed') !== true) {
+    throw new Error('operational repair-only rollout acceptance requires live_submission_gate.allowed=true')
+  }
+  if (
+    requireBoolean(operationalSubmissionGate.allowed, 'torghut status operational_submission_gate.allowed') !== true
+  ) {
+    throw new Error('operational repair-only rollout acceptance requires operational_submission_gate.allowed=true')
+  }
+  requireScalarValue(
+    operationalSubmissionGate.reason,
+    'operational_submission_ready',
+    'torghut status operational_submission_gate.reason',
+  )
+  requireScalarValue(proofFloor.floor_state, 'repair_only', 'torghut status proof_floor.floor_state')
+  requireScalarValue(proofFloor.capital_state, 'zero_notional', 'torghut status proof_floor.capital_state')
+  requireScalarValue(proofFloor.max_notional, '0', 'torghut status proof_floor.max_notional')
+
+  assertSimpleLaneCaps(status, liveSubmissionGate)
+  assertLiveSubmitActivationContract(
+    requireObject(
+      liveSubmissionGate.live_submit_activation,
+      'torghut status live_submission_gate.live_submit_activation',
+    ),
+  )
+
+  return 'operational_zero_notional_repair'
+}
+
 const isRepairOnlyZeroNotionalCandidate = (status: JsonObject, digest: JsonObject): boolean => {
   const capital =
     digest.capital && typeof digest.capital === 'object' && !Array.isArray(digest.capital)
@@ -416,11 +483,14 @@ const isRepairOnlyZeroNotionalCandidate = (status: JsonObject, digest: JsonObjec
   return (
     digest.business_state === 'repair_only' &&
     digest.revenue_ready === false &&
-    capital.live_submission_allowed === false &&
     capital.capital_state === 'zero_notional' &&
     formatScalar(capital.max_notional, '') === '0' &&
-    liveSubmissionGate.allowed === false &&
-    activation.configured === false
+    ((capital.live_submission_allowed === false &&
+      liveSubmissionGate.allowed === false &&
+      activation.configured === false) ||
+      (capital.live_submission_allowed === true &&
+        liveSubmissionGate.allowed === true &&
+        activation.configured === true))
   )
 }
 
@@ -765,7 +835,11 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     }
   } else {
     if (isRepairOnlyZeroNotionalCandidate(status, digest)) {
-      liveSubmitContract = assertShadowZeroNotionalGateClosedContract(status, digest)
+      const capital = requireObject(digest.capital, 'torghut revenue repair digest capital')
+      liveSubmitContract =
+        capital.live_submission_allowed === true
+          ? assertOperationalZeroNotionalRepairContract(status, digest)
+          : assertShadowZeroNotionalGateClosedContract(status, digest)
       readyzAcceptedReason = 'repair_only_zero_notional'
     } else {
       liveSubmitContract = assertBoundedLiveSubmitContract(status)
