@@ -131,7 +131,7 @@ jobs:
           perl -0pi -e 's#image:\s+(?:ghcr\.io/actions/actions-runner:latest|registry\.ide-newton\.ts\.net/lab/arc-runner\@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' argocd/applications/arc/application.yaml
           test "$(grep -cF "image: ${IMAGE_REF}" argocd/applications/arc/application.yaml)" -eq 6
           grep -F 'image: docker:dind' argocd/applications/arc/application.yaml >/dev/null
-          grep -F 'storageClassName: "rook-ceph-block"' argocd/applications/arc/application.yaml >/dev/null
+          test "$(grep -cF 'sizeLimit: 80Gi' argocd/applications/arc/application.yaml)" -eq 2
 
       - name: Create ARC runner release pull request
         if: steps.meta.outputs.promote == 'true'
@@ -145,7 +145,7 @@ jobs:
 
             - Promote ARC runner containers to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
             - Source commit: `${{ steps.meta.outputs.source_sha }}`.
-            - Keep `docker:dind`, runner PVC settings, and storage classes unchanged.
+            - Keep `docker:dind` unchanged and preserve node-local lab runner work dirs.
 
             ## Related Issues
 
