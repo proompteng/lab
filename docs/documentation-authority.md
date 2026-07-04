@@ -50,6 +50,7 @@ Start from these before using any dated design file:
 - Repository/root operations: `README.md`, `AGENTS.md`, `CLAUDE.md`
 - Agents platform: `docs/agents/README.md`, `services/jangar/README.md`, `charts/agents/**`, `argocd/applications/agents/**`
 - Torghut: `docs/torghut/README.md`, `services/torghut/README.md`, `argocd/applications/torghut/**`, `argocd/applications/torghut-options/**`
+- Source-read snapshots: `docs/agents/current-source-state.md`, `docs/torghut/current-source-state.md`
 - Incidents: `docs/incidents/README.md`
 - Whitepapers: `docs/whitepapers/README.md`
 
