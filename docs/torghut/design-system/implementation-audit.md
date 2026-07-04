@@ -32,11 +32,19 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 - `docs/torghut/design-system/v1/component-kafka-topics-and-retention.md`
 - `docs/torghut/design-system/v1/component-ws-forwarder.md`
 
+### Batch 3: LLM and AI advisory layer
+
+- `docs/torghut/design-system/v1/ai-layer-circuit-breakers-and-fallbacks.md`
+- `docs/torghut/design-system/v1/ai-layer-evaluation-and-benchmarks.md`
+- `docs/torghut/design-system/v1/ai-layer-llm-review-and-policy.md`
+- `docs/torghut/design-system/v1/ai-layer-model-risk-management.md`
+- `docs/torghut/design-system/v1/ai-layer-prompting-and-schemas.md`
+
 ## Audit Coverage
 
 - Design documents with source audit blocks: 458
-- Deep-dive batch documents: 10
-- Triage audit documents remaining: 448
+- Deep-dive batch documents: 15
+- Triage audit documents remaining: 443
 
 ## Implementation Area Counts
 
@@ -48,9 +56,9 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 - 24: CI/CD, release, GitOps, Argo, Knative, and deployment automation
 - 24: Jangar/control-plane integration
 - 21: Simulation, replay, backtesting, and Lean
-- 20: LLM, DSPy, AI review, and model governance
 - 17: Options lane
 - 16: Whitepaper/autoresearch workflow
+- 15: LLM, DSPy, AI review, and model governance
 - 11: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding
 - 10: Security, secrets, RBAC, audit, governance, and compliance
 - 5: Empirical jobs and promotion evidence
@@ -61,6 +69,11 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 - 1: Flink watermarks and latency
 - 1: Hyperliquid / crypto lane
 - 1: Kafka topics and retention
+- 1: LLM circuit breakers and fallback controls
+- 1: LLM evaluation workflow
+- 1: LLM model risk guardrails
+- 1: LLM prompting and schemas
+- 1: LLM review and policy guard
 - 1: Postgres schema and migrations
 - 1: Risk engine and simple-risk caps
 - 1: Strategy catalog and hot reload
@@ -69,4 +82,4 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 
 ## Reading Rule
 
-For batch-1 and batch-2 documents, use the detailed source-read audit section in each document first. For remaining documents, the existing source audit block is a triage marker and must be deepened in later batches of five.
+For batch-1 through batch-3 documents, use the detailed source-read audit section in each document first. For remaining documents, the existing source audit block is a triage marker and must be deepened in later batches of five.

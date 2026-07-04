@@ -9,16 +9,28 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented/prototyped: LLM review, DSPy scripts, discovery stress modules, and Jangar OpenAI-compatible routes exist; many ML/LOB designs remain research/prototype.
-- Matched implementation area: LLM, DSPy, AI review, and model governance.
+- Implementation status: **Partially implemented as engineering guardrails and metrics, not as a complete formal MRM program.** Model inventory, evaluation report, effective challenge, shadow completion, model-version lock, adjustment approval, rollout stage, committee roles, and token budget are represented in settings/guardrails, but current GitOps disables the runtime.
+- Matched implementation area: LLM model risk guardrails.
 - Current source evidence:
-  - `services/torghut/app/trading/llm`
-  - `services/torghut/scripts/run_dspy_workflow.py`
-  - `services/torghut/scripts/compile_dspy_program.py`
-  - `services/jangar/src/routes/openai/v1/chat/completions.ts`
-  - `services/torghut/app/trading/discovery/order_flow_features.py`
-- Design drift note: Distinguish production review gates from research/prototype model ideas.
-
+  - `services/torghut/app/config/llm_fields.py`
+  - `services/torghut/app/trading/llm/guardrails.py::evaluate_llm_guardrails`
+  - `services/torghut/app/models/entities/runtime_cursors.py::LLMDecisionReview`
+  - `argocd/applications/torghut/llm-guardrails-exporter-configmap.yaml`
+  - `argocd/applications/torghut/knative-service.yaml`
+- What is implemented from the design:
+  - model inventory and model-version-lock settings;
+  - evaluation, effective-challenge, and shadow-completion evidence settings;
+  - prompt allowlist and prompt-template existence checks;
+  - adjustment approval and committee role validation;
+  - persisted review audit rows;
+  - Prometheus-style guardrail metrics.
+- What changed from the design:
+  - MRM is now tied to DSPy runtime mode, artifact hash, and committee metadata rather than a generic provider inventory alone;
+  - current source has a code-level guardrail evaluator, but not a complete regulatory-style MRM report generator;
+  - active deployment is disabled, so current MRM posture is preventive rather than monitoring active model decisions.
+- Remaining gaps / operator caveats:
+  - the design's required artifacts are represented as fields and checks, but not automatically assembled into one report;
+  - treat this as engineering MRM guardrails, not broker-dealer compliance documentation.
 
 ## Purpose
 
@@ -52,9 +64,9 @@ flowchart LR
 - Prompt versions (stored in repo) and change log.
   - Example: `services/torghut/app/trading/llm/prompt_templates/system_v1.txt`
 - Output schemas and policy bounds.
-  - Example: `services/torghut/app/trading/llm/schema.py`, `services/torghut/app/config.py`
+  - Example: `services/torghut/app/trading/llm/schema.py`, `services/torghut/app/config/llm_fields.py`
 - Audit records for each review:
-  - `llm_decision_reviews` table (`services/torghut/app/models/entities.py`)
+  - `llm_decision_reviews` table (`services/torghut/app/models/entities/runtime_cursors.py`)
 
 ## Guardrail configuration (v1)
 
