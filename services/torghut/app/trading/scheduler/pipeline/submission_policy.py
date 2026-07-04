@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from decimal import Decimal
 from typing import Any, Optional, cast
 
 from sqlalchemy.orm import Session
@@ -15,6 +16,7 @@ from ....models import (
 from ....observability import capture_posthog_event
 from ...models import StrategyDecision
 from ...prices import MarketSnapshot
+from ...execution_runtime import ExecutionOrderResult, record_last_execution_order
 from ...tca import derive_adaptive_execution_policy
 from ..state import (
     RuntimeUncertaintyGate,
@@ -46,6 +48,36 @@ from .support import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _decision_execution_notional(decision: StrategyDecision) -> Decimal:
+    portfolio_sizing = decision.params.get("portfolio_sizing")
+    if isinstance(portfolio_sizing, Mapping):
+        portfolio_sizing_map = cast(Mapping[str, Any], portfolio_sizing)
+        output = portfolio_sizing_map.get("output")
+        if isinstance(output, Mapping):
+            output_map = cast(Mapping[str, Any], output)
+            final_notional = optional_decimal(output_map.get("final_notional"))
+            if final_notional is not None and final_notional > 0:
+                return final_notional
+    for key in (
+        "notional",
+        "notional_usd",
+        "target_notional",
+        "target_notional_usd",
+        "final_notional",
+    ):
+        value = optional_decimal(decision.params.get(key))
+        if value is not None and value > 0:
+            return value
+    price = (
+        optional_decimal(decision.params.get("price"))
+        or decision.limit_price
+        or decision.stop_price
+    )
+    if price is not None and price > 0 and decision.qty > 0:
+        return decision.qty * price
+    return Decimal("0")
 
 
 class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
@@ -735,6 +767,18 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
                 status="accepted",
                 adapter=selected_adapter_name,
             )
+            record_last_execution_order(
+                state=self.state,
+                order=ExecutionOrderResult(
+                    route=selected_adapter_name,
+                    symbol=decision.symbol,
+                    side=decision.action,
+                    notional=_decision_execution_notional(decision),
+                    broker_order_id=None,
+                    status="accepted",
+                    submitted_at=decision.event_ts.isoformat(),
+                ),
+            )
             self.executor.update_decision_json(
                 session,
                 decision_row,
@@ -780,6 +824,18 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
         self.state.metrics.record_execution_submit_result(
             status="accepted",
             adapter=actual_adapter_name,
+        )
+        record_last_execution_order(
+            state=self.state,
+            order=ExecutionOrderResult(
+                route=actual_adapter_name,
+                symbol=decision.symbol,
+                side=decision.action,
+                notional=_decision_execution_notional(decision),
+                broker_order_id=execution.alpaca_order_id,
+                status=str(getattr(execution, "status", "accepted") or "accepted"),
+                submitted_at=decision.event_ts.isoformat(),
+            ),
         )
         self._emit_domain_telemetry(
             DomainTelemetryEvent(

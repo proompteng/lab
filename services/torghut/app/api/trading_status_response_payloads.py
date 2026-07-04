@@ -35,13 +35,9 @@ def _add_runtime_payloads(build: TradingStatusResponseBuild) -> None:
     )
     payloads["shorting_metadata_status"] = context.scheduler.shorting_metadata_status()
     payloads["rejection_alert_status"] = context.scheduler.rejection_alert_status()
-    payloads["simple_lane_reject_reason_totals"] = (
-        deps.simple_lane_reject_reason_totals(context.state)
-    )
     payloads["simple_lane_status"] = deps.build_simple_lane_status_payload()
     payloads["submission_authority"] = deps.build_submission_authority_status(
         core.live_submission_gate,
-        simple_lane_status=payload(payloads, "simple_lane_status"),
     )
     payloads["build_payload"] = {
         "version": BUILD_VERSION,

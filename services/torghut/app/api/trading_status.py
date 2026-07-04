@@ -94,9 +94,6 @@ from .proof_floor_payloads import (
 from .proof_floor_payloads import (
     load_rejected_signal_outcome_learning_summary,
 )
-from .proof_floor_payloads import (
-    simple_lane_reject_reason_totals as _simple_lane_reject_reason_totals,
-)
 from .status_helpers import (
     TradingStatusReadBudget,
     budget_unavailable_hypothesis_runtime_payload,
@@ -230,10 +227,6 @@ def _trading_status_section_dependencies() -> TradingStatusSectionDependencies:
     )
 
 
-def _simple_lane_reject_reason_totals_payload(state: object) -> dict[str, object]:
-    return dict(_simple_lane_reject_reason_totals(state))
-
-
 def _trading_status_response_dependencies() -> TradingStatusResponseDependencies:
     return TradingStatusResponseDependencies(
         build_autonomy_bridge_status=_build_autonomy_bridge_status,
@@ -292,7 +285,6 @@ def _trading_status_response_dependencies() -> TradingStatusResponseDependencies
         ),
         build_submission_authority_status=_build_submission_authority_status,
         route_claim_symbols=_route_claim_symbols,
-        simple_lane_reject_reason_totals=_simple_lane_reject_reason_totals_payload,
     )
 
 

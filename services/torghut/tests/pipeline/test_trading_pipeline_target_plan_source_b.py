@@ -165,7 +165,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
                 "trading_simple_paper_route_probe_allow_live_mode"
             ]
 
-    def test_live_gate_records_expired_activation_on_simple_lane(self) -> None:
+    def test_live_gate_ignores_expired_activation_for_operational_gate(self) -> None:
         from app import config
 
         original = {
@@ -232,12 +232,11 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             ]
 
         self.assertTrue(gate["allowed"])
-        simple_lane = cast(dict[str, Any], gate["simple_lane"])
-        self.assertEqual(simple_lane["blocked_reasons"], [])
-        self.assertEqual(
-            simple_lane["live_submit_activation"]["reason"],
-            "live_submit_activation_expired",
-        )
+        self.assertNotIn("simple_lane", gate)
+        self.assertNotIn("live_submit_activation_expired", gate["blocked_reasons"])
+        operational_gate = cast(dict[str, Any], gate["operational_submission_gate"])
+        self.assertTrue(operational_gate["allowed"])
+        self.assertEqual(operational_gate["blocked_reasons"], [])
 
     def test_live_bounded_paper_route_probe_passes_collection_only_proof_floor(
         self,

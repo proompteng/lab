@@ -715,7 +715,7 @@ def test_live_bounded_paper_route_source_collection_contract_blockers() -> None:
         settings.trading_simple_submit_enabled = False
         assert (
             pipeline._live_bounded_paper_route_source_collection_blocker(now)
-            == "simple_submit_disabled"
+            == "submit_disabled"
         )
 
         settings.trading_simple_submit_enabled = True

@@ -477,7 +477,7 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             [
                 "trading_disabled",
                 "kill_switch_enabled",
-                "simple_submit_disabled",
+                "submit_disabled",
                 "live_submit_disabled",
             ],
         )

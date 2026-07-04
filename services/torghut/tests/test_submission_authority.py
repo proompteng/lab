@@ -40,7 +40,7 @@ def test_submission_authority_allows_operational_submission() -> None:
             "alpaca_regular_session_open": False,
         },
     }
-    assert status["simple_lane_contract"]["max_notional_per_order"] == 100.0
+    assert "simple_lane_contract" not in status
     assert "promotion_allowed" not in status
     assert "final_promotion_allowed" not in status
 
@@ -99,7 +99,10 @@ def test_submission_authority_diagnostic_reasons_do_not_block() -> None:
             "allowed": False,
             "reason": "hypothesis_not_promotion_eligible",
             "blocked_reasons": [
+                "alpha_readiness_not_promotion_eligible",
                 "hypothesis_not_promotion_eligible",
+                "runtime_ledger_profit_target_source_collection_pending",
+                "runtime_ledger_source_collection_pending",
                 "runtime_profit_target_import_required",
                 "runtime_window_import_required",
             ],

@@ -756,7 +756,7 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
             )
             self.assertEqual(gate.get("reason"), "profit_window_underfunded")
 
-    def test_simple_pipeline_blocks_live_order_when_simple_submit_disabled_with_shared_gate_metadata(
+    def test_simple_pipeline_blocks_live_order_when_submit_disabled_with_operational_gate_metadata(
         self,
     ) -> None:
         from app import config
@@ -839,21 +839,17 @@ class TestTradingPipelineWarmupSubmissionB(TradingPipelineTestCaseBase):
                 dict[str, Any], decision_json.get("control_plane_snapshot")
             )
             gate = cast(dict[str, Any], control_plane.get("live_submission_gate"))
-            simple_lane = cast(dict[str, Any], gate.get("simple_lane"))
             self.assertEqual(decision.status, "blocked")
             self.assertEqual(
                 decision_json.get("submission_block_reason"),
-                "simple_submit_disabled",
+                "submit_disabled",
             )
-            self.assertEqual(gate.get("reason"), "simple_submit_disabled")
+            self.assertEqual(gate.get("reason"), "submit_disabled")
             self.assertEqual(
                 gate.get("profit_window_contract", {}).get("summary"),
                 {"windows_total": 1},
             )
-            self.assertEqual(simple_lane.get("shared_gate_enforced"), True)
-            self.assertEqual(
-                simple_lane.get("blocked_reasons"), ["simple_submit_disabled"]
-            )
+            self.assertNotIn("simple_lane", gate)
 
     def test_simple_pipeline_blocks_paper_order_when_profitability_floor_zero_notional(
         self,

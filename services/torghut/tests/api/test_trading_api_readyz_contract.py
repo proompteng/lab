@@ -155,7 +155,7 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                 "readyz_core_dependencies_only",
                 "trading_disabled",
                 "kill_switch_enabled",
-                "simple_submit_disabled",
+                "submit_disabled",
                 "live_submit_disabled",
             ],
         )

@@ -293,8 +293,10 @@ def _repair_only_status() -> dict[str, object]:
                 }
             ],
         },
-        "simple_lane_reject_reason_totals": {
-            "insufficient_buying_power": 8,
+        "execution": {
+            "reject_reason_totals": {
+                "insufficient_buying_power": 8,
+            },
         },
     }
 

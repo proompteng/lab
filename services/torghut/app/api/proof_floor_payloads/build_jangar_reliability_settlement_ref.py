@@ -12,9 +12,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.build_metadata import BUILD_COMMIT
-from app.api.proof_contracts import (
-    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-)
 from app.api.health_checks.shared_context import (
     empirical_jobs_status as _empirical_jobs_status,
 )
@@ -409,20 +406,6 @@ def route_continuity_packet_for_proof_floor(
     }
 
 
-def simple_lane_reject_reason_totals(state: object) -> dict[str, int]:
-    metrics = getattr(state, "metrics", None)
-    totals = getattr(metrics, "decision_reject_reason_total", {})
-    if not isinstance(totals, Mapping):
-        return {}
-    payload: dict[str, int] = {}
-    for key, value in cast(Mapping[object, Any], totals).items():
-        normalized = str(key)
-        if normalized not in _SIMPLE_LANE_ALLOWED_REJECT_REASONS:
-            continue
-        payload[normalized] = int(value)
-    return payload
-
-
 def build_rejected_signal_outcome_learning_payload(
     state: object,
     *,
@@ -655,7 +638,6 @@ __all__ = (
     "build_quality_adjusted_profit_frontier_payload",
     "build_autonomy_capital_replay_projection",
     "route_continuity_packet_for_proof_floor",
-    "simple_lane_reject_reason_totals",
     "build_rejected_signal_outcome_learning_payload",
     "load_rejected_signal_outcome_learning_summary",
     "load_route_provenance_summary",

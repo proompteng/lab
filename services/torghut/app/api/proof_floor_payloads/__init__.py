@@ -43,7 +43,6 @@ from .build_jangar_reliability_settlement_ref import (
     load_rejected_signal_outcome_learning_summary,
     load_route_provenance_summary,
     route_continuity_packet_for_proof_floor,
-    simple_lane_reject_reason_totals,
 )
 
 
@@ -73,7 +72,6 @@ __all__ = (
     "build_quality_adjusted_profit_frontier_payload",
     "build_autonomy_capital_replay_projection",
     "route_continuity_packet_for_proof_floor",
-    "simple_lane_reject_reason_totals",
     "build_rejected_signal_outcome_learning_payload",
     "load_route_provenance_summary",
 )

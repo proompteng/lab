@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import cast
 
 from app.config import settings
+from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.time_source import trading_time_status
 
 from .trading_status_response_model import (
@@ -38,6 +39,10 @@ def project_trading_status_response(
         "running": state.running,
         "execution_route": execution_route,
         "execution_route_details": execution_route_details,
+        "execution": build_execution_status_payload(
+            state=state,
+            live_submission_gate=build.core.live_submission_gate,
+        ),
         "operational_submission_gate": build.core.live_submission_gate.get(
             "operational_submission_gate", build.core.live_submission_gate
         ),
@@ -107,11 +112,6 @@ def project_trading_status_response(
         "route_reacquisition_board": payload(payloads, "route_reacquisition_board"),
         "quant_evidence": build.context.quant_evidence,
         "last_decision_at": build.late.last_decision_at,
-        "simple_lane_status": payload(payloads, "simple_lane_status"),
-        "simple_lane_reject_reason_totals": payload(
-            payloads, "simple_lane_reject_reason_totals"
-        ),
-        "simple_lane_orders_submitted_total": state.metrics.orders_submitted_total,
         "last_run_at": state.last_run_at,
         "last_reconcile_at": state.last_reconcile_at,
         "last_error": state.last_error,

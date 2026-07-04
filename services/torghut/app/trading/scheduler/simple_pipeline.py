@@ -28,9 +28,6 @@ from ..submission_council import (
     build_submission_gate_market_context_status,
     load_quant_evidence_status,
 )
-from ..live_submit_activation import (
-    live_submit_activation_status,
-)
 from ..tca import build_tca_gate_inputs
 from ..time_source import trading_now
 from .pipeline import TradingPipeline
@@ -479,7 +476,13 @@ class SimpleTradingPipeline(
         if not settings.trading_simple_paper_route_probe_enabled:
             return None
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        if not self._is_market_session_open(now):
+        market_session_open = self._is_market_session_open(now)
+        testnet_after_hours_route = (
+            settings.trading_mode == "live"
+            and not market_session_open
+            and settings.trading_testnet_after_hours_enabled
+        )
+        if not market_session_open and not testnet_after_hours_route:
             return None
         target_symbols, target_plan_error, targets = (
             self._external_paper_route_target_probe_symbols_cached(
@@ -488,6 +491,11 @@ class SimpleTradingPipeline(
             )
         )
         if target_plan_error:
+            if (
+                testnet_after_hours_route
+                and target_plan_error == "paper_route_session_window_not_open"
+            ):
+                return self._live_bounded_collection_fallback_signal_scope(strategies)
             self._record_bounded_target_plan_blocker(
                 reason=target_plan_error,
                 symbols=target_symbols,
@@ -557,7 +565,7 @@ class SimpleTradingPipeline(
         if settings.trading_kill_switch_enabled:
             simple_blocked_reasons.append("kill_switch_enabled")
         if not settings.trading_simple_submit_enabled:
-            simple_blocked_reasons.append("simple_submit_disabled")
+            simple_blocked_reasons.append("submit_disabled")
         if not settings.trading_live_submit_enabled:
             simple_blocked_reasons.append("live_submit_disabled")
         if settings.trading_emergency_stop_enabled and bool(
@@ -598,31 +606,12 @@ class SimpleTradingPipeline(
         elif allowed:
             gate["capital_stage"] = "live"
             gate["capital_state"] = "live"
-        gate["pipeline_mode"] = "simple"
         gate["operational_submission_gate"] = {
             "allowed": allowed,
             "reason": reason,
             "blocked_reasons": merged_blocked_reasons,
             "execution_route": operational_gate.get("execution_route")
             or gate.get("execution_route"),
-        }
-        gate["simple_lane"] = {
-            "submit_enabled": settings.trading_simple_submit_enabled,
-            "live_submit_enabled": settings.trading_live_submit_enabled,
-            "shared_gate_enforced": True,
-            "blocked_reasons": simple_blocked_reasons,
-            "live_submit_activation": live_submit_activation_status(),
-            "paper_route_probe_allow_live_mode": (
-                settings.trading_simple_paper_route_probe_allow_live_mode
-            ),
-            "paper_route_probe_max_notional": (
-                settings.trading_simple_paper_route_probe_max_notional
-            ),
-            "max_notional_per_order": settings.trading_simple_max_notional_per_order,
-            "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
-            "max_gross_exposure_pct_equity": (
-                settings.trading_simple_max_gross_exposure_pct_equity
-            ),
         }
         self._last_live_submission_gate = dict(gate)
         return gate

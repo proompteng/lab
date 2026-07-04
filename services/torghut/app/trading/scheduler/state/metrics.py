@@ -634,6 +634,7 @@ class TradingState:
     last_ingest_window_start: Optional[datetime] = None
     last_ingest_window_end: Optional[datetime] = None
     last_ingest_reason: Optional[str] = None
+    last_execution_order: Optional[dict[str, object]] = None
     market_session_open: Optional[bool] = None
     last_signal_continuity_state: Optional[str] = None
     last_signal_continuity_reason: Optional[str] = None
