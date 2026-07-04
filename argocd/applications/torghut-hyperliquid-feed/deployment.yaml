@@ -39,9 +39,9 @@ spec:
                 name: torghut-hyperliquid-feed-config
           env:
             - name: TORGHUT_HYPERLIQUID_FEED_VERSION
-              value: main-sha-5e046147da58bd014bca17565cbd731626ec875b
+              value: main-sha-00b160b172fa87faf374c1aa063e1c55766a4f63
             - name: TORGHUT_HYPERLIQUID_FEED_COMMIT
-              value: 5e046147da58bd014bca17565cbd731626ec875b
+              value: 00b160b172fa87faf374c1aa063e1c55766a4f63
             - name: TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST
               value: sha256:e2c22b1073e02c3f5fe5f6d088b436da9496a752fd2de224225c9dea8595c5ce
             - name: KAFKA_SASL_USER
