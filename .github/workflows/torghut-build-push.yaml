@@ -7,11 +7,6 @@ on:
   pull_request:
     paths:
       - 'services/torghut/**'
-      - 'packages/scripts/src/torghut/**'
-      - '!packages/scripts/src/torghut/__tests__/**'
-      - '!packages/scripts/src/torghut/**/*.test.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'nix/images/torghut.nix'
       - 'nix/cache-push.sh'
       - 'nix/ci-nix-oci-summary.sh'
@@ -21,20 +16,11 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'services/torghut/uv.lock'
-      - '.github/workflows/torghut-build-push.yaml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
     paths:
       - 'services/torghut/**'
-      - 'packages/scripts/src/torghut/**'
-      - '!packages/scripts/src/torghut/__tests__/**'
-      - '!packages/scripts/src/torghut/**/*.test.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'nix/images/torghut.nix'
       - 'nix/cache-push.sh'
       - 'nix/ci-nix-oci-summary.sh'
@@ -44,10 +30,6 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'services/torghut/uv.lock'
-      - '.github/workflows/torghut-build-push.yaml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:

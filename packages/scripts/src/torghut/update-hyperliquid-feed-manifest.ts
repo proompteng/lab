@@ -44,6 +44,15 @@ const replaceSingle = (source: string, pattern: RegExp, replacement: string, lab
   return source.replace(pattern, replacement)
 }
 
+const extractSingle = (source: string, pattern: RegExp, label: string): string => {
+  const match = source.match(pattern)
+  const value = match?.[1]
+  if (!value) {
+    throw new Error(`Unable to locate ${label} in hyperliquid feed manifest`)
+  }
+  return value.trim()
+}
+
 const updateHyperliquidFeedManifest = (
   imageName: string,
   digest: string,
@@ -56,6 +65,21 @@ const updateHyperliquidFeedManifest = (
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${imageName}@${digest}`
   const containerPattern = escapeRegExp(containerName)
+  const currentImageRef = extractSingle(
+    source,
+    new RegExp(`- name:\\s*${containerPattern}[\\s\\S]*?\\n\\s*image:\\s*([^\\n]+)`),
+    `${containerName} image reference`,
+  )
+  const currentImageDigest = normalizeDigest(currentImageRef)
+  const currentEnvDigest = normalizeDigest(
+    extractSingle(
+      source,
+      /- name:\s*TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST\s*\n\s*value:\s*([^\n]+)/,
+      'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
+    ),
+  )
+  const sourceMetadataOnlyChange =
+    currentImageRef === imageRef && currentImageDigest === digest && currentEnvDigest === digest
 
   let updated = replaceSingle(
     source,
@@ -63,6 +87,21 @@ const updateHyperliquidFeedManifest = (
     `$1${imageRef}`,
     `${containerName} image reference`,
   )
+  updated = replaceSingle(
+    updated,
+    /(- name:\s*TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/,
+    `$1${digest}`,
+    'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
+  )
+
+  if (sourceMetadataOnlyChange) {
+    return {
+      manifestPath,
+      imageRef,
+      changed: false,
+    }
+  }
+
   updated = replaceSingle(
     updated,
     /(- name:\s*TORGHUT_HYPERLIQUID_FEED_VERSION\s*\n\s*value:\s*)([^\n]+)/,
@@ -74,12 +113,6 @@ const updateHyperliquidFeedManifest = (
     /(- name:\s*TORGHUT_HYPERLIQUID_FEED_COMMIT\s*\n\s*value:\s*)([^\n]+)/,
     `$1${commit}`,
     'TORGHUT_HYPERLIQUID_FEED_COMMIT',
-  )
-  updated = replaceSingle(
-    updated,
-    /(- name:\s*TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/,
-    `$1${digest}`,
-    'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
   )
 
   if (updated !== source) {
@@ -198,6 +231,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  extractSingle,
   normalizeDigest,
   parseArgs,
   replaceSingle,
