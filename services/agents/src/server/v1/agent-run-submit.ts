@@ -1168,13 +1168,21 @@ export const submitAgentRunWithServicesEffect = (
 
           if (!dryRun) {
             const auditEventId = yield* ids.next
-            yield* stores.createAuditEvent(activeStore, {
-              entityType: 'PolicyDecision',
-              entityId: auditEventId,
-              eventType: 'policy.allowed',
-              context: auditContext,
-              details: { subject: policyChecks.subject, checks: policyChecks },
-            })
+            yield* stores
+              .createAuditEvent(activeStore, {
+                entityType: 'PolicyDecision',
+                entityId: auditEventId,
+                eventType: 'policy.allowed',
+                context: auditContext,
+                details: { subject: policyChecks.subject, checks: policyChecks },
+              })
+              .pipe(
+                Effect.catchAll((error) =>
+                  Effect.sync(() => {
+                    console.warn('[agents] failed to persist AgentRun policy.allowed audit event', error)
+                  }),
+                ),
+              )
           }
 
           const admissionRepository = resolveRepositoryFromParams(parsed.parameters) || null
@@ -1350,19 +1358,27 @@ export const submitAgentRunWithServicesEffect = (
             externalRunId,
             payload: { request: payload, resource: applied, status: asRecord(applied.status) ?? {} },
           })
-          yield* stores.createAuditEvent(activeStore, {
-            entityType: 'AgentRun',
-            entityId: record.id,
-            eventType: 'agent_run.created',
-            context: auditContext,
-            details: {
-              agent: parsed.agentRef.name,
-              agentRunId: record.id,
-              agentRunName: externalRunId,
-              agentRunUid: asString(asRecord(applied.metadata)?.uid),
-              provider: runtimeProvider,
-            },
-          })
+          yield* stores
+            .createAuditEvent(activeStore, {
+              entityType: 'AgentRun',
+              entityId: record.id,
+              eventType: 'agent_run.created',
+              context: auditContext,
+              details: {
+                agent: parsed.agentRef.name,
+                agentRunId: record.id,
+                agentRunName: externalRunId,
+                agentRunUid: asString(asRecord(applied.metadata)?.uid),
+                provider: runtimeProvider,
+              },
+            })
+            .pipe(
+              Effect.catchAll((error) =>
+                Effect.sync(() => {
+                  console.warn('[agents] failed to persist AgentRun created audit event', error)
+                }),
+              ),
+            )
           return { status: 201, body: { ok: true, agentRun: record, resource: applied } }
         }),
       stores.close,

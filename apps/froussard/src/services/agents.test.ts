@@ -89,10 +89,7 @@ describe('agents service submissions', () => {
         head: 'codex/issue-42-test',
         stage: 'implementation',
         deliveryId: 'delivery-42',
-        codexPrompt: 'Implement this issue',
-        codex_prompt: 'Implement this issue',
         issueTitle: 'Ship the feature',
-        issueBody: 'Detailed issue body',
         issueUrl: 'https://github.com/owner/repo/issues/42',
         metadataVersion: '2',
       },
@@ -102,6 +99,25 @@ describe('agents service submissions', () => {
       vcsPolicy: { required: true, mode: 'read-write' },
       ttlSecondsAfterFinished: 86_400,
     })
+  })
+
+  it('keeps long issue content out of AgentRun parameters', () => {
+    const longPrompt = 'Implement the issue.\n\n'.repeat(300)
+    const payload = buildGithubIssueAgentRunPayload(
+      config,
+      { ...request, prompt: longPrompt, issueBody: longPrompt },
+      'delivery-long',
+    )
+
+    expect(payload).toMatchObject({
+      implementation: { text: longPrompt },
+      goal: { objective: longPrompt },
+    })
+    const parameters = payload.parameters as Record<string, string>
+    expect(parameters.codexPrompt).toBeUndefined()
+    expect(parameters.codex_prompt).toBeUndefined()
+    expect(parameters.issueBody).toBeUndefined()
+    expect(Object.values(parameters).every((value) => new TextEncoder().encode(value).length <= 2048)).toBe(true)
   })
 
   it('uses the configured Agents service endpoint and client name', async () => {

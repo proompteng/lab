@@ -137,6 +137,39 @@ describe('AgentRun v1 API', () => {
     )
   })
 
+  it('continues AgentRun submissions when audit persistence times out', async () => {
+    const store = createStoreMock()
+    const kube = createKubeMock()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    ;(store.createAuditEvent as unknown as { mockRejectedValue: (error: unknown) => void }).mockRejectedValue(
+      new Error('Query read timeout'),
+    )
+
+    try {
+      const response = await postAgentRunsHandler(
+        buildRequest({
+          agentRef: { name: 'demo-agent' },
+          namespace: 'agents',
+          implementation: { text: 'Implement the requested change.' },
+          runtime: { type: 'job', config: {} },
+          parameters: { repository: 'proompteng/lab' },
+        }),
+        {
+          storeFactory: () => store,
+          kubeClient: kube,
+          validatePolicies: vi.fn(async () => {}),
+        },
+      )
+
+      expect(response.status).toBe(201)
+      expect(kube.apply).toHaveBeenCalled()
+      expect(store.createAgentRun).toHaveBeenCalled()
+      expect(store.createAuditEvent).toHaveBeenCalledTimes(2)
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('injects runtime config for idempotency instead of reading global process env', async () => {
     const store = createStoreMock()
     const kube = createKubeMock()
