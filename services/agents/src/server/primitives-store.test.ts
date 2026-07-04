@@ -30,7 +30,14 @@ const makeIdempotencyRow = (overrides: Partial<IdempotencyDbRow> = {}): Idempote
   ...overrides,
 })
 
-const makeFakeDb = (options: { insertedRow?: IdempotencyDbRow; existingRow?: IdempotencyDbRow }) => {
+const makeFakeDb = (options: {
+  insertedRow?: IdempotencyDbRow
+  existingRow?: IdempotencyDbRow
+  insertedRows?: Array<IdempotencyDbRow | undefined>
+  existingRows?: Array<IdempotencyDbRow | undefined>
+}) => {
+  const insertedRows = [...(options.insertedRows ?? [options.insertedRow])]
+  const existingRows = [...(options.existingRows ?? [options.existingRow])]
   const doNothing = vi.fn()
   const columns = vi.fn(() => ({ doNothing }))
   const insertBuilder = {
@@ -51,11 +58,11 @@ const makeFakeDb = (options: { insertedRow?: IdempotencyDbRow; existingRow?: Ide
     return insertBuilder
   })
   insertBuilder.returningAll.mockReturnValue(insertBuilder)
-  insertBuilder.executeTakeFirst.mockResolvedValue(options.insertedRow)
+  insertBuilder.executeTakeFirst.mockImplementation(async () => insertedRows.shift())
 
   selectBuilder.selectAll.mockReturnValue(selectBuilder)
   selectBuilder.where.mockReturnValue(selectBuilder)
-  selectBuilder.executeTakeFirst.mockResolvedValue(options.existingRow)
+  selectBuilder.executeTakeFirst.mockImplementation(async () => existingRows.shift())
 
   const db = {
     insertInto: vi.fn(() => insertBuilder),
@@ -131,6 +138,36 @@ describe('createPrimitivesStore', () => {
         agentRunName: 'codex-agent-existing',
       },
     })
+    expect(selectBuilder.executeTakeFirst).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries reservation when the conflicting key disappears before lookup', async () => {
+    const insertedRow = makeIdempotencyRow({ id: 'idempotency-2' })
+    const { db, insertBuilder, selectBuilder } = makeFakeDb({
+      insertedRows: [undefined, insertedRow],
+      existingRows: [undefined],
+    })
+    const store = createPrimitivesStore({
+      url: 'postgresql://user:pass@localhost:5432/agents',
+      createDb: () => db,
+    })
+
+    const result = await store.reserveAgentRunIdempotencyKey({
+      namespace: 'agents',
+      agentName: 'codex-agent',
+      idempotencyKey: 'delivery-1',
+    })
+
+    expect(result).toMatchObject({
+      created: true,
+      record: {
+        id: 'idempotency-2',
+        namespace: 'agents',
+        agentName: 'codex-agent',
+        idempotencyKey: 'delivery-1',
+      },
+    })
+    expect(insertBuilder.executeTakeFirst).toHaveBeenCalledTimes(2)
     expect(selectBuilder.executeTakeFirst).toHaveBeenCalledTimes(1)
   })
 })
