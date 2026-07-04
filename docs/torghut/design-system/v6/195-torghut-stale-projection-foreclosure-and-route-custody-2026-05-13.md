@@ -1,22 +1,20 @@
 # 195. Torghut Stale Projection Foreclosure And Route Custody (2026-05-13)
 
 Status: Accepted for Jangar engineer and deployer handoff
-Date: 2026-05-13
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut stale market, route, execution, and repair receipt projections; Jangar projection foreclosure notary
-integration; zero-notional route custody; measurable trading hypotheses; validation; rollout; rollback; and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/190-jangar-projection-foreclosure-notary-and-stage-custody-repair-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
-- `193-torghut-route-repair-yield-board-and-hypothesis-reentry-guardrails-2026-05-13.md`
-- `192-torghut-freshness-carry-and-repair-proof-slo-2026-05-13.md`
-- `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
-- `127-torghut-market-context-claims-and-lane-profit-settlement-2026-05-06.md`
 
 ## Decision
 

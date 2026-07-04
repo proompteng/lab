@@ -1,5 +1,19 @@
 # 23. Readiness Schema Drift Diagnostics for Deployment Stability (2026-03-04)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Dorvud WS/TA, Torghut ClickHouse/GitOps, and TA Flink deployments exist; exact topics/tables must be verified from current manifests/code.
+- Matched implementation area: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding.
+- Current source evidence:
+  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
+  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
+  - `argocd/applications/torghut/ws/deployment.yaml`
+  - `argocd/applications/torghut/ta/flinkdeployment.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
+- Design drift note: Data-plane diagrams can be directionally right while specific topic/table/runtime claims drift.
+
+
 ## Summary
 
 `torghut` currently reports readiness health as boolean pass/fail for schema readiness in `/readyz` and `/db-check`, but operators cannot quickly distinguish migration drift types when failures occur. When rollout probes flap, teams lose time reconstructing whether a failure is due to missing expected Alembic heads, unexpected extra heads, or a configuration bypass in single-account mode. This proposal adds deterministic schema-drift diagnostics to both readiness and db-check responses.

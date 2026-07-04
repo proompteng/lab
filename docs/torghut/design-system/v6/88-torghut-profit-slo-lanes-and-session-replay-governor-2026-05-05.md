@@ -1,21 +1,20 @@
 # 88. Torghut Profit SLO Lanes and Session Replay Governor (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability architecture, measurable hypothesis promotion, capital guardrails, and Jangar settlement
-consumer behavior.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/84-jangar-material-action-settlement-ledger-and-slo-arbiter-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
-- `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
-- `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
-- `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
 
 ## Decision
 

@@ -1,21 +1,20 @@
 # 130. Torghut Evidence Product Order Book And Profit Carry Ladder (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, Jangar evidence-product consumption, scoped quant freshness, empirical proof,
-market-context repair, LLM governance, capital reentry, and rollback-safe trading hypotheses.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/126-jangar-projection-witness-exchange-and-material-evidence-products-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `129-torghut-proof-carry-watermarks-and-zero-decision-capital-drain-2026-05-06.md`
-- `128-torghut-data-plane-disruption-premium-and-freshness-settlement-2026-05-06.md`
-- `110-torghut-evidence-freshness-repair-market-and-capital-reentry-2026-05-06.md`
-- `108-torghut-capital-clearance-market-and-negative-evidence-ledger-2026-05-06.md`
 
 ## Decision
 

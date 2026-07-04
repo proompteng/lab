@@ -1,21 +1,20 @@
 # 188. Torghut Profit-Repair Clearance Packets And Market-Context SLOs (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, zero-notional repair admission, market-context freshness, route/TCA repair value,
-Jangar stage-clearance integration, validation, rollout, rollback, and handoff gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/184-jangar-stage-clearance-packets-and-freeze-aware-launch-governor-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
-- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
-- `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`
-- `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
 
 ## Decision
 

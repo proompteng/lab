@@ -1,21 +1,20 @@
 # 142. Torghut Alpha Truth Windows And Capital Reentry Warrants (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, alpha truth windows, post-cost evidence, scoped quant health, TCA repair,
-forecast proof, doc29 gates, capital reentry, validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/138-jangar-proof-truth-windows-and-contradiction-arbiter-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `141-torghut-watch-debt-profit-repair-market-and-capital-reentry-gates-2026-05-07.md`
-- `140-torghut-post-cost-alpha-reentry-and-proof-query-market-2026-05-07.md`
-- `139-torghut-profit-evidence-custody-and-capital-reentry-auction-2026-05-07.md`
-- `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
 
 ## Decision
 

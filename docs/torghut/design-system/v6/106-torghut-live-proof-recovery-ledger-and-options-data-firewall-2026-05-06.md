@@ -1,22 +1,20 @@
 # 106. Torghut Live Proof Recovery Ledger And Options Data Firewall (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, live proof recovery, account-scoped quant freshness, empirical replay, broker-event
-reconciliation, options data readiness, Jangar dispatch authority, rollout/rollback gates, and measurable hypothesis
-promotion.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/102-jangar-dual-authority-dispatch-ledger-and-capital-proof-firewall-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `105-torghut-account-scoped-hypothesis-liquidity-and-options-bootstrap-2026-05-06.md`
-- `105-torghut-proof-provenance-firewall-and-profit-lease-graduation-2026-05-06.md`
-- `104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
-- `103-torghut-hypothesis-lease-arbiter-and-options-profit-runway-2026-05-06.md`
 
 ## Decision
 

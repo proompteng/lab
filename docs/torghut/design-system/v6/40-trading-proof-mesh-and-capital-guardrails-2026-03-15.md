@@ -7,6 +7,20 @@ Date: 2026-03-15
 Scope: Torghut readiness and promotion architecture
 Mission: jangar-control-plane / discover
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
+
+
 ## Executive summary
 
 Torghut currently computes many readiness signals from aggregate, reset-prone counters and infers freshness through expensive or lossy paths. This creates profitable decision ambiguity: capital-stage transitions are gated in aggregate even when evidence is hypothesis-variant, and a broad Jangar watch-reliability delay can suppress all hypothesis promotion at once.

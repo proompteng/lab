@@ -1,21 +1,20 @@
 # 147. Torghut Stale-Proof Repair Exchange And Route-Stable Capital Quorum (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, stale proof repair ranking, Jangar route-stability consumption, paper/live capital quorum,
-validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `146-torghut-submission-quorum-handoff-and-profit-repair-gates-2026-05-07.md`
-- `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md`
-- `144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
-- `139-torghut-profit-data-witness-and-forecast-repair-exchange-2026-05-07.md`
 
 ## Decision
 

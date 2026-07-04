@@ -1,21 +1,21 @@
 # 181. Torghut Quality-Adjusted Profit Frontier And Hypothesis Escrow (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, evidence quality, hypothesis promotion, Jangar quality-ledger consumption, capital
-guardrails, validation, rollout, rollback, and measurable trading hypotheses.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/177-jangar-evidence-quality-admission-ledger-and-degradation-backpressure-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `180-torghut-resource-priced-evidence-frontier-and-context-spend-escrow-2026-05-08.md`
-- `179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
-- `177-torghut-profit-repair-broker-and-capital-promotion-gates-2026-05-08.md`
-- `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
 
 ## Decision
 

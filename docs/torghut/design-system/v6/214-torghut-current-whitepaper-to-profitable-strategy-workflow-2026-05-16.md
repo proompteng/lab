@@ -1,15 +1,18 @@
 # 214. Torghut Current Whitepaper to Profitable Strategy Workflow (2026-05-16)
 
-This is the current operating workflow for turning a research paper into a Torghut strategy or
-portfolio sleeve that can eventually trade. It is intentionally stricter than "find a high backtest":
-the only acceptable output is a replayed, post-cost, capital-feasible portfolio candidate with runtime
-closure, paper or shadow evidence, and promotion receipts. MLX can accelerate search, but it cannot
-approve promotion or bypass replay.
+## Source Implementation Audit (2026-07-04)
 
-Current status: the workflow exists, but the latest live epochs still did not find a valid portfolio
-candidate. The current fix is to align the harness with the real objective: portfolio-level average
-`$500/day` post-cost net PnL with bounded drawdown, not "every day must be profitable" and not a
-single sleeve that prints `$500` daily.
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: whitepaper ingestion, claim compilation, dispatch, finalization, and Jangar library/API surfaces exist.
+- Matched implementation area: Whitepaper/autoresearch workflow.
+- Current source evidence:
+  - `services/torghut/app/api/whitepaper.py`
+  - `services/torghut/app/whitepapers/workflow`
+  - `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py`
+  - `services/jangar/src/routes/api/whitepapers/index.ts`
+  - `services/jangar/src/routes/library/whitepapers/index.tsx`
+- Design drift note: Old workflow-template assumptions are stale; current authority is service-owned workflow plus Jangar routes.
+
 
 ## End-to-End Flow
 

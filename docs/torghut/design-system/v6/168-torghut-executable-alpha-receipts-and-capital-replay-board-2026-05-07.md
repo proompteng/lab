@@ -1,21 +1,20 @@
 # 168. Torghut Executable Alpha Receipts And Capital Replay Board (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, executable alpha receipt custody, zero-notional capital replay, scoped hypothesis
-measurement, Jangar contract-graduation consumption, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/164-jangar-contract-graduation-brake-and-runtime-receipt-gates-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `167-torghut-scoped-profit-repair-options-and-freshness-debt-retirement-2026-05-07.md`
-- `166-torghut-paper-edge-witness-notary-and-zero-notional-repair-queue-2026-05-07.md`
-- `166-torghut-executable-profit-receipts-and-repair-convoy-settlement-2026-05-07.md`
-- `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
 
 ## Decision
 

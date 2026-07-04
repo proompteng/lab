@@ -13,6 +13,20 @@
 - Implementation status: `Partial`
 - Primary objective: turn empirical promotion from durable-but-partially-scaffolded into promotion-authoritative evidence without redesigning already-landed control-plane machinery
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and changed: empirical status/proof concepts remain in code, but old empirical job scripts and Argo workflow templates were removed.
+- Matched implementation area: Empirical jobs and promotion evidence.
+- Current source evidence:
+  - `services/torghut/app/trading/empirical_jobs.py`
+  - `services/torghut/app/api/health_checks/shared_context.py`
+  - `services/torghut/app/trading/profit_windows.py`
+  - `services/torghut/app/trading/profit_leases.py`
+  - `services/torghut/scripts/build_historical_profitability_proof.py`
+- Design drift note: Old empirical-promotion scripts/templates must not be cited as live source authority.
+
+
 ## Context
 
 The repository already has the outer control-plane surfaces needed for empirical promotion:

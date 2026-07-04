@@ -1,21 +1,21 @@
 # 170. Torghut Data Witness Capability Bonds And Capital Observation Gates (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut data witness capability, route reacquisition, profit hypotheses, Jangar observer leases, capital
-gating, validation, rollout, rollback, and measurable trading guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/166-jangar-evidence-capability-ledger-and-observer-lease-gates-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
-- `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
-- `166-torghut-paper-edge-witness-notary-and-zero-notional-repair-queue-2026-05-07.md`
-- `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
 
 ## Decision
 

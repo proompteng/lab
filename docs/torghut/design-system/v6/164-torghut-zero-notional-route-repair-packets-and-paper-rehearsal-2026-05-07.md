@@ -1,21 +1,20 @@
 # 164. Torghut Zero-Notional Route Repair Packets And Paper Rehearsal (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, zero-notional route repair, paper rehearsal readiness, Jangar split-authority repair
-packets, execution TCA, market-context freshness, validation, rollout, rollback, and acceptance gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/160-jangar-split-authority-repair-escrow-and-dispatch-reentry-packets-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `163-torghut-repair-outcome-attribution-and-capital-reentry-slo-2026-05-07.md`
-- `162-torghut-profit-evidence-refill-and-capital-route-reentry-2026-05-07.md`
-- `159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
-- `158-torghut-route-reacquisition-and-market-context-repair-cells-2026-05-07.md`
 
 ## Decision
 

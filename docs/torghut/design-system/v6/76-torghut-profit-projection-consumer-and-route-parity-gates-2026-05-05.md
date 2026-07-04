@@ -1,20 +1,20 @@
 # 76. Torghut Profit Projection Consumer and Route-Parity Gates (2026-05-05)
 
 Status: Ready for implementation
-Date: `2026-05-05`
-Owner: Victor Chen (Jangar Engineering)
-Scope: Torghut profitability, capital safety, route parity, and consumption of Jangar least-privilege evidence
-projections.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/71-jangar-least-privilege-evidence-projection-broker-and-deploy-gates-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
-- `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
-- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
 
 ## Executive Summary
 

@@ -15,6 +15,20 @@
 - Implementation status: `Not started`
 - Primary objective: define the research-backed multi-sleeve strategy family Torghut should test on the retained March 16 through March 27, 2026 internal window, and define an honest proof workflow for the March 23 through March 27, 2026 holdout week using only currently available internal data
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: whitepaper ingestion, claim compilation, dispatch, finalization, and Jangar library/API surfaces exist.
+- Matched implementation area: Whitepaper/autoresearch workflow.
+- Current source evidence:
+  - `services/torghut/app/api/whitepaper.py`
+  - `services/torghut/app/whitepapers/workflow`
+  - `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py`
+  - `services/jangar/src/routes/api/whitepapers/index.ts`
+  - `services/jangar/src/routes/library/whitepapers/index.tsx`
+- Design drift note: Old workflow-template assumptions are stale; current authority is service-owned workflow plus Jangar routes.
+
+
 ## Executive summary
 
 The current archive/proof document in doc53 answers **how Torghut must preserve and certify evidence**.

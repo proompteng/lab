@@ -1,20 +1,20 @@
 # 184. Torghut Profit Frontier Reclocking And Capital Reentry Guardrails (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability proof, forecast and quant repair prioritization, zero-notional route rehearsal, and Jangar
-consumer evidence admission.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/180-jangar-evidence-settlement-reclocking-and-profit-gated-rollouts-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
-- `183-torghut-forecast-registry-repair-and-route-rehearsal-profit-gates-2026-05-08.md`
-- `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
 
 ## Decision
 

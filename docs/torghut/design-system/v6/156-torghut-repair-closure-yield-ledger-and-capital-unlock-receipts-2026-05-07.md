@@ -1,20 +1,21 @@
 # 156. Torghut Repair Closure Yield Ledger And Capital Unlock Receipts (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut repair closure, capital unlock receipts, proof-floor blocker retirement, post-cost edge measurement,
-Jangar verdict authority consumption, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/152-jangar-material-verdict-authority-and-contradiction-debt-ledger-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `154-torghut-marginal-proof-spend-portfolio-and-capital-repair-budget-2026-05-07.md`
-- `153-torghut-useful-evidence-capital-escrow-and-provider-repair-gates-2026-05-07.md`
-- `152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
 
 ## Decision
 

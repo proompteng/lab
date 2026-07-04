@@ -11,6 +11,20 @@
   - `docs/torghut/design-system/v6/32-authoritative-alpha-readiness-and-empirical-promotion-closeout-2026-03-08.md`
   - `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md`
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
+
+
 ## Why this doc exists
 
 The current Torghut readiness contract is still aggregate-first. That design is useful for uptime, but weak for profitability governance.

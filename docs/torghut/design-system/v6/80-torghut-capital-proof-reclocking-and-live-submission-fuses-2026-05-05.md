@@ -1,21 +1,20 @@
 # 80. Torghut Capital Proof Reclocking and Live Submission Fuses
 
 Status: Accepted for implementation planning
-Date: `2026-05-05`
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut capital gates, live submission parity, Jangar settlement consumption, empirical proof freshness, and
-profitability rollback.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `79-torghut-capital-holdbacks-and-profit-repair-ledger-2026-05-05.md`
-- `78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
-- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
-- `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
 
 ## Decision
 

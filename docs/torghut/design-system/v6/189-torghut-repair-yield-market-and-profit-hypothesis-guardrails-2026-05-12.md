@@ -1,22 +1,20 @@
 # 189. Torghut Repair Yield Market And Profit Hypothesis Guardrails (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability recovery, Jangar dispatch consumption, zero-notional repair ranking, empirical proof
-freshness, market-context freshness, quant ingestion freshness, TCA quality, capital gates, rollout, rollback, and
-handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/185-jangar-clearance-market-and-rollout-truth-settlement-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `188-torghut-profit-freshness-frontier-and-zero-notional-repair-market-2026-05-12.md`
-- `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
-- `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
-- `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
 
 ## Decision
 

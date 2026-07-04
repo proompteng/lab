@@ -1,21 +1,20 @@
 # 190. Torghut Repair-Bid Settlement And Routeability Proof Compaction (2026-05-13)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-13
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, route-evidence clearinghouse settlement, zero-notional repair execution,
-routeable-candidate proof compaction, active-session TCA quality, Jangar dispatch custody, rollout image proof,
-capital safety, validation, rollout, rollback, and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/186-jangar-repair-bid-admission-and-settlement-custody-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
-- `189-torghut-clock-settled-repair-execution-and-routeability-reentry-2026-05-12.md`
-- `docs/agents/designs/185-jangar-clock-settled-repair-dispatch-and-rollout-custody-2026-05-12.md`
 
 ## Decision
 

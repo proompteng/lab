@@ -1,14 +1,20 @@
 # 111. Torghut Reciprocal Evidence Authority And Profit Escrow (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut quant profitability gates, Jangar evidence verdict consumption, shadow experiments, paper/live capital
-promotion.
 
-Companion Jangar decision:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/107-jangar-reciprocal-evidence-authority-and-contradiction-escrow-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
+
 
 ## Decision
 

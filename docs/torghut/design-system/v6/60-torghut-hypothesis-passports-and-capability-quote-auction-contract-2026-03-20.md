@@ -1,24 +1,21 @@
 # 60. Torghut Hypothesis Passports and Capability Quote Auction Contract (2026-03-20)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-03-20`
-Owner: Victor Chen (Jangar Engineering)
-Mission: `codex/swarm-jangar-control-plane-plan`
-Swarm impacts:
 
-- `torghut-quant`
-- `jangar-control-plane`
+## Source Implementation Audit (2026-07-04)
 
-Companion doc:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-- `docs/agents/designs/61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`
-
-Extends:
-
-- `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
-- `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
-- `57-torghut-profit-reserves-forecast-calibration-escrow-and-probe-auction-2026-03-20.md`
-- `56-torghut-capability-leases-and-profit-clocks-2026-03-20.md`
 
 ## Executive summary
 

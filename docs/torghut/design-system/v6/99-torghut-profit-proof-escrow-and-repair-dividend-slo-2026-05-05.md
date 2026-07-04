@@ -1,20 +1,20 @@
 # 99. Torghut Profit Proof Escrow And Repair Dividend SLO (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability proof, zero-notional repair ranking, capital reentry guardrails, and Jangar launch escrow
-integration.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/95-jangar-evidence-settlement-slo-and-launch-escrow-runway-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `98-torghut-repair-dividend-ledger-and-capital-reentry-guard-2026-05-05.md`
-- `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
-- `96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
 
 ## Decision
 

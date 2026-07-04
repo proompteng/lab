@@ -1,21 +1,20 @@
 # 174. Torghut Route-Local Profit Lab And Capital Frontier (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut route-local profitability research, execution-cost settlement, quant evidence repair, promotion
-custody, capital frontier admission, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/170-jangar-profit-witness-broker-and-source-truth-capital-custody-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `173-torghut-no-notional-repair-options-desk-and-promotion-custody-2026-05-07.md`
-- `172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
-- `171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
-- `docs/agents/designs/170-jangar-profit-witness-broker-and-source-truth-capital-custody-2026-05-08.md`
 
 ## Decision
 

@@ -1,20 +1,20 @@
 # 121. Torghut Opening Bell Proof Ladder And Account-Scoped Alpha Reentry (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut opening-session proof, account-scoped alpha reentry, empirical refresh, market-context repair,
-Jangar proof reconciliation consumption, and paper/live capital guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/117-jangar-opening-proof-reconciliation-and-account-scope-capital-veto-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
-- `119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
-- `118-torghut-proof-route-parity-and-options-informed-repair-scheduler-2026-05-06.md`
 
 ## Decision
 

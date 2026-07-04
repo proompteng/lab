@@ -1,23 +1,20 @@
 # 201. Torghut Alpha Closure Settlement And Feature Replay Market (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant revenue repair, alpha-closure settlement, feature replay, zero-notional capital safety, Jangar
-runner admission, validation, rollout, rollback, and next implementation gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
-- `197-torghut-alpha-readiness-strike-ledger-and-routeable-candidate-ladder-2026-05-13.md`
-- `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md`
 
 ## Decision
 

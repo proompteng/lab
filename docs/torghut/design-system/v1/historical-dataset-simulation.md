@@ -10,6 +10,20 @@
 - Implementation gaps: no first-class recurring trading-day planner/day-run registry and no dedicated zero-touch recurring evidence publication control loop for production operators yet.
 - Rollout and verification: keep this doc implementation-ready by wiring one-click/cron automation against pre-generated manifests and validating isolation deltas in `run_manifest.json`.
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
+
+
 ## Implementation update (2026-03-09)
 
 This document was stale where it still read like the historical simulation surface was mostly prospective.

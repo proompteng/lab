@@ -1,18 +1,20 @@
 # 68. Torghut Strategy Factory, Formal Validity, and Sequential Promotion (2026-04-04)
 
 Status: Proposed (`design`)
-Date: `2026-04-04`
-Owner: Codex (repository-local design draft)
-Scope: Replace heuristic strategy discovery with an offline strategy factory that uses constrained synthesis, formal
-validity checks, robust statistical ranking, and sequential promotion before capital reaches the live allocator.
 
-Extends:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/torghut/design-system/v6/08-profitability-research-validation-execution-governance-system.md`
-- `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
-- `docs/torghut/design-system/v6/56-torghut-profit-clocks-and-capital-allocation-auction-2026-03-20.md`
-- `docs/torghut/design-system/v6/64-torghut-hypothesis-vaults-and-post-cost-profit-tapes-contract-2026-03-21.md`
-- `docs/torghut/design-system/v6/67-torghut-trading-engine-glossary-and-mechanics-2026-03-29.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
+
 
 ## Executive summary
 

@@ -1,21 +1,21 @@
 # 98. Torghut Repair Dividend Ledger and Capital Reentry Guard (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut quant profitability, stale empirical proof repair, runtime rejection analysis, options data proof, and
-capital reentry guardrails consumed by Jangar.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/94-jangar-proof-backed-rollout-brake-and-repair-debt-ledger-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `97-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
-- `96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
-- `95-torghut-hypothesis-warrant-reclocking-and-profit-repair-contract-2026-05-05.md`
-- `docs/agents/designs/93-jangar-torghut-proof-sample-settlement-and-repair-close-loop-2026-05-05.md`
 
 ## Decision
 

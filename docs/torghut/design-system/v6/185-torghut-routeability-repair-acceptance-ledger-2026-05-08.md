@@ -1,21 +1,20 @@
 # 185. Torghut Routeability Repair Acceptance Ledger (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Gideon Park, Torghut Traders Architecture Lead
-Scope: Torghut quant profitability, routeability repair, data freshness, TCA quality, market-context repair, Jangar
-admission, capital safety, implementation scope, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/181-jangar-proof-production-debt-and-routeability-admission-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
-- `183-torghut-session-open-route-microcanaries-and-profit-evidence-notary-2026-05-08.md`
-- `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 
 ## Decision
 

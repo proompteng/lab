@@ -1,22 +1,20 @@
 # 192. Torghut Freshness Carry And Repair Proof SLO (2026-05-13)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-13
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut quant freshness, routeability repair value, zero-notional repair, ClickHouse guardrails, trading
-readiness, capital safety, validation, rollout, rollback, and Jangar pressure-ledger handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
-- `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
-- `docs/agents/designs/188-jangar-evidence-pressure-ledger-and-watch-backoff-governor-2026-05-13.md`
 
 ## Decision
 

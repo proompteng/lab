@@ -12,6 +12,10 @@
 Current authority note: this file is retained as a historical map. It must not be used as the current priority list
 without validating against `docs/torghut/README.md`, live GitOps, service code, runtime endpoints, and CI.
 
+2026-07-04 source-read audit note: each existing design document in this corpus now carries a
+`Source Implementation Audit (2026-07-04)` block. Use that block, plus current source/GitOps, before relying on any
+older priority ordering or handoff claim in this file.
+
 ## Why this document exists
 
 The Torghut design corpus has accumulated several generations of:

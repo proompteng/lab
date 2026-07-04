@@ -1,20 +1,20 @@
 # 79. Torghut Market-State Capital Oracle and Proof-Lane Rollout Sentry (2026-05-05)
 
 Status: Approved for implementation (`discover`)
-Date: `2026-05-05`
-Owner: Gideon Park (Torghut Traders architecture)
-Scope: Torghut quant profitability, capital routing, market-state proof, data freshness, rollout safety, Jangar sentry
-consumption, and engineer/deployer handoff gates.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/75-jangar-rollout-sentry-and-market-state-capital-oracle-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
 
-Extends:
-
-- `docs/torghut/design-system/v6/78-torghut-quant-evidence-settlement-and-capital-routing-2026-05-05.md`
-- `docs/torghut/design-system/v6/77-torghut-profit-admission-cells-and-materialized-evidence-contract-2026-05-05.md`
-- `docs/torghut/design-system/v6/72-torghut-cross-plane-evidence-epochs-and-portfolio-proof-lanes-2026-05-05.md`
 
 ## Decision
 

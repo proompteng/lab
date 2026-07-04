@@ -1,20 +1,20 @@
 # 96. Torghut Control-Plane Proof Feed and Profit Route Budget Contract (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Gideon Park, Torghut Traders
-Scope: Torghut quant profitability, proof-feed production, status-route decomposition, route budgets, hypothesis repair,
-Jangar dependency consumption, and capital guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/92-jangar-torghut-proof-feed-route-budget-and-quorum-split-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
 
-Extends:
-
-- `95-torghut-hypothesis-warrant-reclocking-and-profit-repair-contract-2026-05-05.md`
-- `94-torghut-session-edge-ledger-and-cost-aware-capital-allocator-2026-05-05.md`
-- `90-torghut-proof-receipt-router-and-capital-query-firebreak-2026-05-05.md`
 
 ## Decision
 

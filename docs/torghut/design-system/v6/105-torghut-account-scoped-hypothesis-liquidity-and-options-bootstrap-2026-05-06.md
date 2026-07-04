@@ -1,21 +1,20 @@
 # 105. Torghut Account-Scoped Hypothesis Liquidity And Options Bootstrap (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, account-scoped proof, stale empirical jobs, options data bootstrap, broker event
-reconciliation, capital routing, and Jangar proof consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/101-jangar-account-scoped-proof-liquidity-and-query-budget-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `104-torghut-proof-expiry-clock-and-hypothesis-rehydration-lanes-2026-05-06.md`
-- `103-torghut-hypothesis-lease-arbiter-and-options-profit-runway-2026-05-06.md`
-- `102-torghut-profit-proof-exchange-and-capital-slo-budget-2026-05-06.md`
-- `100-torghut-session-proof-train-and-profitability-warrants-2026-05-06.md`
 
 ## Decision
 

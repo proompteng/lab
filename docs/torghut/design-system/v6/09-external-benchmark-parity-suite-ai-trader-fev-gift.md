@@ -16,6 +16,21 @@
   - `services/torghut/tests/test_empirical_jobs.py`
 - Rollout gap: Wave 4 benchmark parity contract closure is implemented (`2026-03-03`), but several benchmark-family artifacts are still deterministic scaffold outputs with `blocked_missing_empirical_authority`; remaining closure is replacing those placeholders with authoritative empirical evidence and exercising them recurrently.
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
+
+
 ## Implementation update (2026-03-09)
 
 This document was stale where it sounded like the remaining work was generic Wave 5-6 program completion rather than a concrete authority problem.

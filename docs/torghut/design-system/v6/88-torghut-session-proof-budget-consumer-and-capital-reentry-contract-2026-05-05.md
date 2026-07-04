@@ -1,21 +1,20 @@
 # 88. Torghut Session Proof Budget Consumer and Capital Reentry Contract (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability recovery, Jangar settlement consumption, session proof budgets, and paper/live capital
-reentry gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/84-jangar-material-action-settlement-and-proof-budget-cutover-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: secrets/RBAC/policies exist in GitOps and code, but compliance/governance designs are broader than current automated enforcement.
+- Matched implementation area: Security, secrets, RBAC, audit, governance, and compliance.
+- Current source evidence:
+  - `argocd/applications/torghut/role.yaml`
+  - `argocd/applications/torghut/rolebinding.yaml`
+  - `argocd/applications/torghut/sealed-secrets.yaml`
+  - `services/torghut/app/trading/autonomy/policy_checks.py`
+  - `services/torghut/scripts/run_governance_policy_dry_run.py`
+- Design drift note: Governance/compliance designs need tests and GitOps policy wiring before being treated as fully enforced.
 
-Extends:
-
-- `87-torghut-repair-alpha-exchange-and-session-proof-budgets-2026-05-05.md`
-- `87-torghut-capital-lease-consumer-and-profit-repair-marketplace-2026-05-05.md`
-- `86-torghut-profit-debt-ledger-and-repair-sla-experiments-2026-05-05.md`
-- `85-torghut-proof-fresh-profitability-governor-and-causal-replay-quarantine-2026-05-05.md`
 
 ## Decision
 

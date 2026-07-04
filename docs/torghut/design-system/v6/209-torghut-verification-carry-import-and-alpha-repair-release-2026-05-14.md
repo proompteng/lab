@@ -1,24 +1,20 @@
 # 209. Torghut Verification Carry Import And Alpha Repair Release (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut verification-carry import, alpha-repair no-delta release, Jangar foreclosure witness consumption,
-zero-notional routeable-candidate recovery, validation, rollout, rollback, and cross-swarm handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/203-jangar-foreclosure-carry-rollout-witness-and-stage-debt-repair-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `208-torghut-jangar-verification-carry-bridge-and-no-delta-reentry-market-2026-05-14.md`
-- `docs/agents/designs/202-jangar-verification-carry-export-and-repair-slot-reconciliation-2026-05-14.md`
-- `207-torghut-quant-plan-closeout-and-alpha-repair-reentry-handoff-2026-05-14.md`
-- `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `204-torghut-alpha-repair-dividend-ledger-and-custody-flight-recorder-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
 
 ## Decision
 

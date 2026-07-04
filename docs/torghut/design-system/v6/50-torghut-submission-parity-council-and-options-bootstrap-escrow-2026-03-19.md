@@ -1,16 +1,20 @@
 # 50. Torghut Submission Parity Council and Options Bootstrap Escrow (2026-03-19)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-03-19`
-Owner: Victor Chen (Jangar Engineering)
-Mission: `codex/swarm-jangar-control-plane-plan`
-Swarm impact: `torghut-quant`
 
-Companion documents:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/51-jangar-control-plane-execution-cells-and-collaboration-failover-2026-03-19.md`
-- `docs/agents/designs/50-torghut-hypothesis-capital-governor-and-data-quorum-2026-03-19.md`
-- `49-torghut-quant-source-of-truth-and-profit-circuit-handoff-2026-03-19.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
+
 
 ## Executive summary
 

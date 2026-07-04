@@ -7,6 +7,20 @@
 - Scope: migrate Torghut market-data ingest from equity-only websocket assumptions to crypto pairs `BTC/USD`, `ETH/USD`, `SOL/USD`
 - Environments: Kubernetes (`torghut`, `kafka`) with Argo CD GitOps
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Hyperliquid feed/runtime lane exists in source and GitOps; older generic crypto designs are superseded by this lane.
+- Matched implementation area: Hyperliquid / crypto lane.
+- Current source evidence:
+  - `services/torghut/app/hyperliquid_execution/service.py`
+  - `services/torghut/app/hyperliquid_execution/exchange.py`
+  - `services/torghut/app/hyperliquid_execution/risk.py`
+  - `argocd/applications/torghut-hyperliquid-feed/deployment.yaml`
+  - `argocd/applications/torghut-hyperliquid-runtime/deployment.yaml`
+- Design drift note: Crypto/perp docs must be reconciled with the current Hyperliquid source/GitOps lane.
+
+
 ## Audit Update (2026-02-26)
 
 - The `2026-02-22` runtime snapshot in section 3 is historical and should not be treated as current-state telemetry.

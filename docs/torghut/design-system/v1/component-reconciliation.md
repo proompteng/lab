@@ -6,6 +6,20 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: TigerBeetle journal/reconcile modules and GitOps resources exist, but financial-ledger docs need current runtime verification.
+- Matched implementation area: TigerBeetle ledger and reconciliation.
+- Current source evidence:
+  - `services/torghut/app/trading/tigerbeetle_journal`
+  - `services/torghut/app/trading/tigerbeetle_reconcile`
+  - `services/torghut/scripts/journal_tigerbeetle_order_events.py`
+  - `services/torghut/scripts/verify_tigerbeetle_ledger.py`
+  - `argocd/applications/torghut/tigerbeetle-cluster.yaml`
+- Design drift note: Ledger designs are partial until checked against journal/reconcile scripts and cluster state.
+
+
 ## Purpose
 
 Define how Torghut reconciles broker state (orders, positions) with local Postgres audit records so incidents (timeouts,
