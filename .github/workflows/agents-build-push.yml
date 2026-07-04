@@ -29,9 +29,6 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
-      - '.github/workflows/agents-build-push.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -59,9 +56,6 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
-      - '.github/workflows/agents-build-push.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:
@@ -76,7 +70,7 @@ jobs:
       image_name: agents-controller
       package_attr: agents-controller-image
       tag: sha-${{ github.sha }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'agents-controller-release-contract' || '' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'agents-controller-release-contract' || '' }}
     secrets: inherit
 
   control-plane-image:
@@ -86,7 +80,7 @@ jobs:
       image_name: agents-control-plane
       package_attr: agents-control-plane-image
       tag: sha-${{ github.sha }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'agents-control-plane-release-contract' || '' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'agents-control-plane-release-contract' || '' }}
     secrets: inherit
 
   agents-shell-image:
@@ -96,11 +90,11 @@ jobs:
       image_name: agents-shell
       package_attr: agents-shell-image
       tag: sha-${{ github.sha }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'agents-shell-release-contract' || '' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'agents-shell-release-contract' || '' }}
     secrets: inherit
 
   write-values:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:
       - controller-image
       - control-plane-image

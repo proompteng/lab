@@ -26,8 +26,10 @@ const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.ym
 const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service.nix')
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
+const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
+const symphonyCiWorkflow = readRepoFile('.github/workflows/symphony-ci.yml')
 const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
 const symphonyReleaseMetadataScript = readRepoFile('packages/scripts/src/symphony/resolve-release-metadata.ts')
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
@@ -485,6 +487,36 @@ describe('native OCI build workflows', () => {
     expect(symphonyReleaseMetadataScript).toContain('packages\\/scripts\\/src\\/shared\\/(?:cli|git)\\.ts$')
   })
 
+  it('does not fan out migrated image builds on workflow-only changes', () => {
+    const migratedImageWorkflows = [
+      atticWorkflow,
+      oiratWorkflow,
+      bumbaWorkflow,
+      froussardWorkflow,
+      productNixWorkflow,
+      agentsBuildWorkflow,
+      symphonyBuildWorkflow,
+      sagBuildWorkflow,
+      torghutBuildWorkflow,
+      torghutTaBuildWorkflow,
+      torghutWsBuildWorkflow,
+      torghutHyperliquidFeedBuildWorkflow,
+    ]
+
+    for (const workflow of migratedImageWorkflows) {
+      expect(workflow).not.toContain("- '.github/workflows/")
+      expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+    }
+  })
+
+  it('does not fan out service CI on image workflow-only changes', () => {
+    for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
+      expect(workflow).not.toContain("- '.github/workflows/")
+      expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+    }
+    expect(torghutCiWorkflow).not.toContain('github/workflows/torghut-')
+  })
+
   it('does not fan out migrated image builds on unrelated flake attr changes', () => {
     for (const workflow of [
       atticWorkflow,
@@ -608,6 +640,44 @@ describe('native OCI build workflows', () => {
       expect(workflow).toContain('tag: sha-${{ github.sha }}')
       expect(workflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
     }
+  })
+
+  it('lets workflow-dispatched main image builds publish release contracts', () => {
+    const mainDispatchPredicate =
+      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+
+    expect(nixOciWorkflow).toContain(`if: ${mainDispatchPredicate}`)
+    expect(nixOciWorkflow).toContain('name: Push platform image without Docker')
+    expect(nixOciWorkflow).toContain('name: Warm Nix image archive closure in Attic')
+    expect(nixOciWorkflow).toContain('publish-index:')
+
+    for (const [workflow, artifact] of [
+      [oiratWorkflow, 'oirat-release-contract'],
+      [bumbaWorkflow, 'bumba-release-contract'],
+      [froussardWorkflow, 'froussard-release-contract'],
+      [sagBuildWorkflow, 'sag-release-contract'],
+      [symphonyBuildWorkflow, 'symphony-release-contract'],
+      [torghutBuildWorkflow, 'torghut-release-contract'],
+      [torghutTaBuildWorkflow, 'torghut-ta-release-contract'],
+      [torghutWsBuildWorkflow, 'torghut-ws-release-contract'],
+      [torghutHyperliquidFeedBuildWorkflow, 'torghut-hyperliquid-feed-release-contract'],
+    ] as const) {
+      expect(workflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
+      expect(workflow).toContain(`release_artifact_name: \${{ ${mainDispatchPredicate} && '${artifact}' || '' }}`)
+    }
+
+    for (const artifact of [
+      'agents-controller-release-contract',
+      'agents-control-plane-release-contract',
+      'agents-shell-release-contract',
+    ]) {
+      expect(agentsBuildWorkflow).toContain(
+        `release_artifact_name: \${{ ${mainDispatchPredicate} && '${artifact}' || '' }}`,
+      )
+    }
+    expect(agentsBuildWorkflow).toContain(`write-values:\n    if: ${mainDispatchPredicate}`)
+    expect(atticWorkflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
+    expect(atticWorkflow).toContain('release_artifact_name: attic-release-contract')
   })
 
   it('routes the enabled Symphony fleet image through a real Nix OCI attr', () => {

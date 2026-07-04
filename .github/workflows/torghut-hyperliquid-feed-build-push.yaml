@@ -22,10 +22,6 @@ on:
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
-      - '.github/workflows/torghut-hyperliquid-feed-build-push.yaml'
-      - '.github/workflows/torghut-hyperliquid-feed-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -46,10 +42,6 @@ on:
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
-      - '.github/workflows/torghut-hyperliquid-feed-build-push.yaml'
-      - '.github/workflows/torghut-hyperliquid-feed-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:
@@ -64,6 +56,6 @@ jobs:
       image_name: torghut-hyperliquid-feed
       package_attr: torghut-hyperliquid-feed-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'torghut-hyperliquid-feed-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-hyperliquid-feed-release-contract' || '' }}
     secrets: inherit

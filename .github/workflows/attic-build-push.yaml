@@ -17,9 +17,6 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'docs/nix-cache.md'
       - 'docs/nix-oci-real-image-build-adoption-plan.md'
-      - '.github/workflows/attic-build-push.yaml'
-      - '.github/workflows/attic-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
   push:
     branches:
       - main
@@ -35,9 +32,6 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'docs/nix-cache.md'
       - 'docs/nix-oci-real-image-build-adoption-plan.md'
-      - '.github/workflows/attic-build-push.yaml'
-      - '.github/workflows/attic-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
   workflow_dispatch:
 
 concurrency:
@@ -51,6 +45,6 @@ jobs:
       image_name: attic
       package_attr: atticd-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: attic-release-contract
     secrets: inherit

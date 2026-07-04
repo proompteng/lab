@@ -7,9 +7,6 @@ on:
     paths:
       - 'services/oirat/**'
       - 'packages/scripts/src/oirat/**'
-      - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
       - 'flake.lock'
       - 'nix/images/oirat.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -26,9 +23,6 @@ on:
     paths:
       - 'services/oirat/**'
       - 'packages/scripts/src/oirat/**'
-      - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
       - 'flake.lock'
       - 'nix/images/oirat.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -68,6 +62,6 @@ jobs:
       image_name: oirat
       package_attr: oirat-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
     secrets: inherit

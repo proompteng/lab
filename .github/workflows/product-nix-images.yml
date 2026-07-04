@@ -35,10 +35,6 @@ on:
       - 'flake.lock'
       - 'bun.lock'
       - 'package.json'
-      - '.github/workflows/product-nix-images.yml'
-      - '.github/workflows/enabled-product-nix-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -72,10 +68,6 @@ on:
       - 'flake.lock'
       - 'bun.lock'
       - 'package.json'
-      - '.github/workflows/product-nix-images.yml'
-      - '.github/workflows/enabled-product-nix-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -143,10 +135,6 @@ jobs:
               - 'flake.lock'
               - 'bun.lock'
               - 'package.json'
-              - '.github/workflows/product-nix-images.yml'
-              - '.github/workflows/enabled-product-nix-release.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - '.github/actions/setup-nix-toolchain/**'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -160,10 +148,6 @@ jobs:
               - 'flake.lock'
               - 'bun.lock'
               - 'package.json'
-              - '.github/workflows/product-nix-images.yml'
-              - '.github/workflows/enabled-product-nix-release.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - '.github/actions/setup-nix-toolchain/**'
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
@@ -177,10 +161,6 @@ jobs:
               - 'flake.lock'
               - 'bun.lock'
               - 'package.json'
-              - '.github/workflows/product-nix-images.yml'
-              - '.github/workflows/enabled-product-nix-release.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - '.github/actions/setup-nix-toolchain/**'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
@@ -194,10 +174,6 @@ jobs:
               - 'flake.lock'
               - 'bun.lock'
               - 'package.json'
-              - '.github/workflows/product-nix-images.yml'
-              - '.github/workflows/enabled-product-nix-release.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - '.github/actions/setup-nix-toolchain/**'
             olden:
               - 'apps/olden/**'
               - 'packages/design/**'
@@ -211,10 +187,6 @@ jobs:
               - 'flake.lock'
               - 'bun.lock'
               - 'package.json'
-              - '.github/workflows/product-nix-images.yml'
-              - '.github/workflows/enabled-product-nix-release.yml'
-              - '.github/workflows/nix-oci-build-common.yml'
-              - '.github/actions/setup-nix-toolchain/**'
 
       - name: Manual build selection
         id: manual

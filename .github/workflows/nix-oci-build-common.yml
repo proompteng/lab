@@ -160,7 +160,7 @@ jobs:
             bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         id: push
         env:
           IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
@@ -182,7 +182,7 @@ jobs:
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
       - name: Warm Nix image archive closure in Attic
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
@@ -213,7 +213,7 @@ jobs:
         run: bash nix/ci-nix-oci-summary.sh
 
   publish-index:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: build-platform
     runs-on: arc-arm64
     outputs:

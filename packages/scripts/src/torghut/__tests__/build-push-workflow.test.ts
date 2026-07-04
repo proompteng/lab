@@ -88,9 +88,12 @@ describe('torghut build-push workflow', () => {
   })
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {
-    expect(workflow).toContain("latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
+    const mainDispatchPredicate =
+      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+
+    expect(workflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
     expect(workflow).toContain(
-      "release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'torghut-release-contract' || '' }}",
+      `release_artifact_name: \${{ ${mainDispatchPredicate} && 'torghut-release-contract' || '' }}`,
     )
   })
 
