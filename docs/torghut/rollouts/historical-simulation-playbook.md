@@ -430,13 +430,13 @@ ENGINE = ReplicatedReplacingMergeTree(
   - Torghut logged repeated `Feature quality gate failed ... reasons=['non_monotonic_progression']`,
   - `trade_decisions` and `executions` remained `0`.
 - Root cause was sequential:
-  - the simulation script configures `TRADING_SIGNAL_ALLOWED_SOURCES=ws,ta` in [`scripts.historical_simulation_startup`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/scripts/historical_simulation_startup#L2715), so mixed-source batches can contain a `ws` row with a large `seq` followed by `ta` rows that restart at `seq=1`,
+  - the simulation script configures `TRADING_SIGNAL_ALLOWED_SOURCES=ws,ta` in [`scripts.historical_simulation_startup`](../../../services/torghut/scripts/historical_simulation_startup/runtime_migrations.py), so mixed-source batches can contain a `ws` row with a large `seq` followed by `ta` rows that restart at `seq=1`,
   - even after narrowing to `ta` only for diagnosis, the deployed ingest path still returned multi-symbol rows in ClickHouse query order when no dedupe occurred, while the feature-quality gate validates monotonicity on `(event_ts, symbol, seq)`.
 - Relevant code:
-  - ingest fetch path returns `_filter_signals(self._dedupe_signals(signals))` at [`ingest.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/ingest.py#L782),
-  - `_dedupe_signals()` only sorts when dedupe removed at least one row at [`ingest.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/ingest.py#L791),
-  - feature quality marks the batch non-monotonic from `(signal.event_ts, signal.symbol, signal.seq or 0)` at [`feature_quality.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/feature_quality.py#L132),
-  - the scheduler rejects and commits cursor immediately at [`pipeline.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/scheduler/pipeline.py#L222).
+  - ingest fetch path returns `_filter_signals(self._dedupe_signals(signals))` at [`ingest.py`](../../../services/torghut/app/trading/ingest/clickhouse_signal_ingestor_core_methods.py),
+  - `_dedupe_signals()` only sorts when dedupe removed at least one row at [`ingest.py`](../../../services/torghut/app/trading/ingest/clickhouse_signal_ingestor_market_methods.py),
+  - feature quality marks the batch non-monotonic from `(signal.event_ts, signal.symbol, signal.seq or 0)` at [`feature_quality.py`](../../../services/torghut/app/trading/feature_quality.py),
+  - the scheduler rejects and commits cursor immediately at [`pipeline.py`](../../../services/torghut/app/trading/scheduler/pipeline/run_cycle.py).
 - Operational guidance:
   - do not interpret fresh TA tables as proof that Torghut is evaluating signals,
   - if logs show `non_monotonic_progression`, inspect the actual `ta_signals` ordering before debugging strategy logic,
@@ -455,10 +455,10 @@ ENGINE = ReplicatedReplacingMergeTree(
   - `source="local_pre_submit"`
   - `code="local_qty_invalid_increment"`
 - Relevant code:
-  - rejection is raised in [`execution.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/execution.py#L1236),
-  - execution-side fractional gating is derived by `_fractional_equities_enabled_for_request()` in [`execution.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/execution.py#L776),
-  - `fractional_equities_enabled_for_trade()` disables fractional sizing for `sell` requests when `position_qty <= 0` in [`quantity_rules.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/quantity_rules.py#L56),
-  - the simulation adapter reports no current positions from `list_positions()` in [`execution_adapters.py`](/Users/gregkonush/.codex/worktrees/4b2e/lab/services/torghut/app/trading/execution_adapters.py#L285).
+  - rejection is raised in [`execution.py`](../../../services/torghut/app/trading/execution/order_executor_submission_methods.py),
+  - execution-side fractional gating is derived by `_fractional_equities_enabled_for_request()` in [`execution.py`](../../../services/torghut/app/trading/execution/order_executor_submission_methods.py),
+  - `fractional_equities_enabled_for_trade()` disables fractional sizing for `sell` requests when `position_qty <= 0` in [`quantity_rules.py`](../../../services/torghut/app/trading/quantity_rules.py),
+  - the simulation adapter reports no current positions from `list_positions()` in [`execution_adapters.py`](../../../services/torghut/app/trading/execution_adapters/adapter_types.py).
 - This means a replay can size a fractional `sell` from decision/portfolio logic and still fail at execution time when that sell is treated as a short-increasing order with a whole-share step.
 - Operational guidance:
   - do not treat nonzero `trade_decisions` as execution proof,

@@ -4,6 +4,10 @@
 
 Use this runbook when Huly appears alive at the ingress or pod level but account-backed flows are broken, or when the swarm Huly identities need a full rebuild.
 
+Repository status: this is a historical Huly recovery runbook. The Huly GitOps app, Huly API skill, and Huly swarm
+secret generation helper are not present in the current repository tree. Use the commands below only after restoring or
+reintroducing equivalent Huly manifests and helper scripts.
+
 This runbook covers:
 
 - verifying real Huly health beyond Argo and pod status
@@ -51,9 +55,9 @@ Healthy state means:
 
 The live repair path for the March 19 incident was:
 
-1. Keep these GitOps resources current:
-   - [argocd/applications/huly/cockroach/cockroach-account-migration-repair-job.yaml](../../argocd/applications/huly/cockroach/cockroach-account-migration-repair-job.yaml)
-   - [argocd/applications/huly/config/healthcheck-scripts-configmap.yaml](../../argocd/applications/huly/config/healthcheck-scripts-configmap.yaml)
+1. Keep the Huly GitOps resources current if the Huly app is restored in this repo:
+   - `argocd/applications/huly/cockroach/cockroach-account-migration-repair-job.yaml`
+   - `argocd/applications/huly/config/healthcheck-scripts-configmap.yaml`
 2. If the migration is already stuck and GitOps has not yet converged, repair Cockroach with the same DDL the job uses:
    - `ALTER TABLE defaultdb.global_account.otp DROP CONSTRAINT IF EXISTS otp_social_id_fk;`
    - `ALTER TABLE defaultdb.global_account.social_id ALTER PRIMARY KEY USING COLUMNS (_id);`
@@ -179,10 +183,10 @@ Use the helper script:
 bun scripts/generate-huly-swarm-sealed-secrets.ts --input /tmp/huly-swarm-auth.json
 ```
 
-That updates:
+In the March 2026 layout that updated:
 
-- [argocd/applications/agents/huly-api-jangar-sealedsecret.yaml](../../argocd/applications/agents/huly-api-jangar-sealedsecret.yaml)
-- [argocd/applications/agents/huly-api-torghut-sealedsecret.yaml](../../argocd/applications/agents/huly-api-torghut-sealedsecret.yaml)
+- `argocd/applications/agents/huly-api-jangar-sealedsecret.yaml`
+- `argocd/applications/agents/huly-api-torghut-sealedsecret.yaml`
 
 The helper preserves the shared Huly config keys:
 
@@ -216,5 +220,5 @@ and rotates only the per-worker token and expected-actor values.
 ## References
 
 - [docs/incidents/2026-03-19-huly-account-migration-recovery-and-swarm-rebuild.md](../incidents/2026-03-19-huly-account-migration-recovery-and-swarm-rebuild.md)
-- [skills/huly-api/SKILL.md](../../skills/huly-api/SKILL.md)
-- [scripts/generate-huly-swarm-sealed-secrets.ts](../../scripts/generate-huly-swarm-sealed-secrets.ts)
+- Historical helper path: `skills/huly-api/SKILL.md`
+- Historical helper path: `scripts/generate-huly-swarm-sealed-secrets.ts`

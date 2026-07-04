@@ -26,7 +26,7 @@ The runner registration credentials are stored in:
 Regenerate the sealed secret with a real org runner token before syncing this app:
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/f89a/lab
+cd <repo-root>
 scripts/seal-generic-secret.sh \
   forgejo-runners \
   forgejo-runners-token \
@@ -54,7 +54,7 @@ Use Forgejo-hosted mirrored actions only. Do not reference GitHub-hosted actions
 - Workflow action references must be pinned to full commit SHA.
 - Workflow action references must exist in the internal allowlist.
 - Mirror refresh cadence: monthly and emergency refresh as needed.
-- Use [`scripts/check-forgejo-actions-allowlist.sh`](/Users/gregkonush/.codex/worktrees/f89a/lab/scripts/check-forgejo-actions-allowlist.sh) in CI:
+- Use [`scripts/check-forgejo-actions-allowlist.sh`](../../../scripts/check-forgejo-actions-allowlist.sh) in CI:
 
 ```bash
 scripts/check-forgejo-actions-allowlist.sh .forgejo/workflows argocd/applications/forgejo-runners/actions-allowlist.txt

@@ -41,7 +41,7 @@ docker build -f apps/kitty-krew/Dockerfile -t kitty-krew:local .
 
 ## GitHub Actions build flow
 
-Image publishing is wired through `.github/workflows/docker-build-push.yaml`.
+Image publishing is wired through `the owning build workflow`.
 
 - trigger: `push` to `main` when `apps/kitty-krew/**` changes
 - reusable workflow: `.github/workflows/docker-build-common.yaml`

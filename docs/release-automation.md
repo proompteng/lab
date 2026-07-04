@@ -12,15 +12,10 @@ PRs created from release branches can be auto-merged by [`.github/workflows/rele
 - PR author is allowlisted GitHub Actions identity.
 - PR head repository matches the base repository.
 - Label `do-not-automerge` is not present.
-- All changed files are allowlisted release artifacts (currently:
-  - `argocd/applications/proompteng/kustomization.yaml`
-  - `argocd/applications/synthesis/kustomization.yaml`
-  - `argocd/applications/bumba/kustomization.yaml`
+- All changed files are allowlisted release artifacts. Current automerge allowlist:
   - `argocd/applications/khoshut/kustomization.yaml`
   - `argocd/applications/analysis/kustomization.yaml`
   - `argocd/applications/bilig/kustomization.yaml`
-  - `argocd/applications/olden/kustomization.yaml`
-    ).
 
 The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only after all eligibility checks pass. GitHub still enforces required checks and merge rules before the merge actually executes.
 
@@ -41,13 +36,13 @@ The workflow enables squash auto-merge (`gh pr merge --auto --squash`) only afte
 
 ## Enabling Docker Image Publishing
 
-When a new application should ship a container image, mirror its registration in [`.github/workflows/docker-build-push.yaml`](../.github/workflows/docker-build-push.yaml).
+When a new application should ship a container image, mirror its registration in the owning service or app build workflow. Reuse [`.github/workflows/docker-build-common.yaml`](../.github/workflows/docker-build-common.yaml) when the image is published through the shared Docker build path.
 
-1. Add the application under the `dorny/paths-filter` step so that commits touching its source trigger a build.
+1. Add the application under the owning workflow path filter so that commits touching its source trigger a build.
 2. Confirm the workflow declares explicit `permissions:` at the top level (for example `contents: read`) and only grants broader access to the individual jobs that require it.
 3. If the app is Next.js-based, set `output: 'standalone'` in `next.config.mjs` so the build generates the `/standalone` server bundle consumed by the Dockerfile.
-4. Create a `build-<app>` job that calls `docker-build-common.yaml` with the application's image name, Dockerfile path, and build context.
-5. Append the job to the `cleanup-release` `needs` list so failed builds automatically roll back the tag and release.
+4. Create or update the service-specific build workflow job that calls `docker-build-common.yaml` with the application's image name, Dockerfile path, and build context when that workflow family is used.
+5. Update cleanup or rollback dependencies in that owning workflow if the workflow manages release tags or cleanup jobs.
 
 This keeps the continuous delivery release tagging and the image publishing workflow in sync whenever a new app comes online.
 

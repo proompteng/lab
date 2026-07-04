@@ -336,7 +336,7 @@ across `1526` files in `app`, `scripts`, `tests`, and `migrations`. No scoped Py
 Inventory:
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/ccea/lab
+cd <repo-root>
 rg --files services/torghut/app services/torghut/scripts services/torghut/tests services/torghut/migrations \
   | rg '\.py$' \
   | xargs wc -l \
@@ -369,7 +369,7 @@ uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xm
 Repo-level validation:
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/ccea/lab
+cd <repo-root>
 git diff --check
 bun run lint:argocd
 ```

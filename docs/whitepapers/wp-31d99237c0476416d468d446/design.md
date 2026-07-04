@@ -78,13 +78,13 @@ where controls `c` include future trend, volatility, liquidity, and order-flow i
 
 1. Ingestion schema is indicator-centric, not full depth-L2 trajectory centric:
 
-- Flat signal columns include `microstructure_signal_v1` but no complete top-K LOB tensor stream ([services/torghut/app/trading/ingest.py](/workspace/lab/services/torghut/app/trading/ingest.py)).
+- Flat signal columns include `microstructure_signal_v1` but no complete top-K LOB tensor stream ([services/torghut/app/trading/ingest.py](../../../services/torghut/app/trading/ingest/clickhouse_signal_ingestor_core_methods.py)).
 
-2. Microstructure contract is compact execution metadata (`spread_bps`, `depth_top5_usd`, `order_flow_imbalance`, etc.), not sequence-generation-ready state tensors ([microstructure.py](/workspace/lab/services/torghut/app/trading/microstructure.py)).
+2. Microstructure contract is compact execution metadata (`spread_bps`, `depth_top5_usd`, `order_flow_imbalance`, etc.), not sequence-generation-ready state tensors ([microstructure.py](../../../services/torghut/app/trading/microstructure.py)).
 
-3. Service dependencies currently omit diffusion-training stack requirements (for example `torch`), and runtime is designed as trading API/orchestration service, not GPU model training host ([pyproject.toml](/workspace/lab/services/torghut/pyproject.toml)).
+3. Service dependencies currently omit diffusion-training stack requirements (for example `torch`), and runtime is designed as trading API/orchestration service, not GPU model training host ([pyproject.toml](../../../services/torghut/pyproject.toml)).
 
-4. Positive fit: repo already supports deterministic whitepaper-derived scaffolds and evidence artifacts (example Janus-Q scaffold), which is a viable integration pattern for DiffLOB-adjacent research contracts ([janus_q.py](/workspace/lab/services/torghut/app/trading/autonomy/janus_q.py)).
+4. Positive fit: repo already supports deterministic whitepaper-derived scaffolds and evidence artifacts (example Janus-Q scaffold), which is a viable integration pattern for DiffLOB-adjacent research contracts ([janus_q.py](../../../services/torghut/app/trading/autonomy/janus_q.py)).
 
 ## 5.2 Decision
 

@@ -170,7 +170,7 @@ Expected: `services/torghut/uv.lock` includes Pylint and its transitive dependen
 Run:
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/ccea/lab
+cd <repo-root>
 rg --files services/torghut/app services/torghut/scripts services/torghut/tests services/torghut/migrations \
   | rg '\.py$' \
   | xargs wc -l \
@@ -321,7 +321,7 @@ Expected: CI exposes function-level complexity hotspots while the file-length cl
 Run:
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/ccea/lab
+cd <repo-root>
 bun run lint:argocd
 cd services/torghut
 uv run --frozen pylint app scripts tests migrations --disable=all --enable=too-many-lines --score=n
@@ -1527,7 +1527,7 @@ Expected: pytest passes, branch coverage remains above configured threshold, cha
 Run:
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/ccea/lab
+cd <repo-root>
 git diff --check
 bun run lint:argocd
 ```

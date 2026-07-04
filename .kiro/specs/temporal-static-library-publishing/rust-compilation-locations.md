@@ -85,7 +85,7 @@ The following locations were scanned but do not contain Rust compilation:
 
 - `apps/base/Dockerfile` - Node.js base image
 - `apps/docs/Dockerfile` - Next.js application
-- `apps/proompteng/Dockerfile` - Next.js application
+- `apps/landing/Dockerfile` - Next.js application
 - `apps/reviseur/Dockerfile` - Node.js application
 - `services/dernier/Dockerfile` - Ruby application
 - `services/facteur/Dockerfile` - Go application

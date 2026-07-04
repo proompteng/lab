@@ -3,7 +3,7 @@
 ## Status
 
 - Date: `2026-03-08`
-- Maturity: `implementation contract`
+- Maturity: `historical implementation contract; verify against live code before use`
 - Scope: `services/dorvud/websockets/**`, `services/dorvud/technical-analysis/**`, `argocd/applications/kafka/**`,
   `argocd/applications/torghut/**`, Torghut Postgres, Torghut ClickHouse, Karapace, and live Kafka credentials
 - Depends on: `33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
@@ -46,7 +46,7 @@ The implementation contract is:
 ### 1. Transport standard
 
 All raw options topics use the existing Torghut envelope defined in
-[`services/dorvud/platform/src/main/kotlin/ai/proompteng/dorvud/platform/Envelope.kt`](services/dorvud/platform/src/main/kotlin/ai/proompteng/dorvud/platform/Envelope.kt).
+[`services/dorvud/platform/src/main/kotlin/ai/proompteng/dorvud/platform/Envelope.kt`](../../../../services/dorvud/platform/src/main/kotlin/ai/proompteng/dorvud/platform/Envelope.kt).
 
 Required envelope fields:
 
@@ -232,8 +232,8 @@ Semantics:
 ### 3. Derived TA topic contracts
 
 Derived topics use flattened Avro schemas registered in Karapace, following the same pattern as
-[`ta-bars-1s.avsc`](services/dorvud/technical-analysis/src/main/resources/schemas/ta-bars-1s.avsc) and
-[`ta-signals.avsc`](services/dorvud/technical-analysis/src/main/resources/schemas/ta-signals.avsc).
+[`ta-bars-1s.avsc`](../../../../services/dorvud/technical-analysis/src/main/resources/schemas/ta-bars-1s.avsc) and
+[`ta-signals.avsc`](../../../../services/dorvud/technical-analysis/src/main/resources/schemas/ta-signals.avsc).
 
 #### `torghut.options.ta.contract-bars.1s.v1`
 

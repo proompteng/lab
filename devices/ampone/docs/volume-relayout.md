@@ -34,7 +34,7 @@ The local-path provisioner uses a per-node path map. Ensure it contains:
 
 Source of truth:
 
-- `/Users/gregkonush/.codex/worktrees/0133/lab/argocd/applications/local-path/patches/local-path-config.patch.yaml`
+- `[`argocd/applications/local-path/patches/local-path-config.patch.yaml`](../../../argocd/applications/local-path/patches/local-path-config.patch.yaml)`
 
 ## 1) Snapshot etcd + verify health
 
@@ -98,20 +98,20 @@ talosctl --insecure wipe disk -n 192.168.1.203 -e 192.168.1.203 --drop-partition
 
 Apply the same patches used for install/join, including the volume configs:
 
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/install-nvme0n1.patch.yaml`
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml`
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/hostname.patch.yaml`
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/ephemeral-volume.patch.yaml`
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/local-path.patch.yaml`
+- `devices/ampone/manifests/install-nvme0n1.patch.yaml`
+- `devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml`
+- `devices/ampone/manifests/hostname.patch.yaml`
+- `devices/ampone/manifests/ephemeral-volume.patch.yaml`
+- `devices/ampone/manifests/local-path.patch.yaml`
 
 ```bash
 talosctl --insecure apply-config -n 192.168.1.203 -e 192.168.1.203 \
-  -f /Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/controlplane.yaml \
-  --config-patch @/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/install-nvme0n1.patch.yaml \
-  --config-patch @/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml \
-  --config-patch @/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/hostname.patch.yaml \
-  --config-patch @/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/ephemeral-volume.patch.yaml \
-  --config-patch @/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/local-path.patch.yaml \
+  -f <generated-controlplane.yaml> \
+  --config-patch @devices/ampone/manifests/install-nvme0n1.patch.yaml \
+  --config-patch @devices/ampone/manifests/controlplane-endpoint-nuc.patch.yaml \
+  --config-patch @devices/ampone/manifests/hostname.patch.yaml \
+  --config-patch @devices/ampone/manifests/ephemeral-volume.patch.yaml \
+  --config-patch @devices/ampone/manifests/local-path.patch.yaml \
   --mode=reboot
 ```
 
@@ -146,4 +146,4 @@ Talos volume growth behavior is controlled by the volume config:
 
 Source of truth:
 
-- `/Users/gregkonush/.codex/worktrees/0133/lab/devices/ampone/manifests/local-path.patch.yaml`
+- `devices/ampone/manifests/local-path.patch.yaml`

@@ -72,7 +72,7 @@ Create:
 - `argocd/applications/olden/service.yaml` - service.
 - `argocd/applications/olden/kustomization.yaml` - image tag and resources.
 - `argocd/applications/cloudflare/configmap.yaml` - explicit Cloudflare Tunnel ingress route for `olden.proompteng.ai`.
-- `.github/workflows/docker-build-push.yaml` - publish `registry.ide-newton.ts.net/lab/olden:<semver>` on main.
+- `.github/workflows/product-nix-images.yml` - publish `registry.ide-newton.ts.net/lab/olden:<semver>` on main.
 - `.github/workflows/pull-request.yml` - run Olden tests/build on PRs.
 - `.github/workflows/release-pr-automerge.yml` - allow Image Updater release PRs for Olden to auto-merge.
 
@@ -1094,7 +1094,7 @@ git commit -m "build(olden): add image build and deploy tooling"
 - Modify: `argocd/applications/cloudflare/configmap.yaml`
 - Modify: `argocd/applicationsets/product.yaml`
 - Modify: `argocd/applications/argocd/base/image-updater-product.yaml`
-- Modify: `.github/workflows/docker-build-push.yaml`
+- Modify: `.github/workflows/product-nix-images.yml`
 - Modify: `.github/workflows/pull-request.yml`
 - Modify: `.github/workflows/release-pr-automerge.yml`
 
@@ -1228,7 +1228,7 @@ Expected: Image Updater watches semver `0.x` image tags and writes only `argocd/
 
 - [ ] **Step 7: Add GitHub Actions release path**
 
-Modify `.github/workflows/docker-build-push.yaml` so `apps/olden/**` and `packages/design/**` publish `registry.ide-newton.ts.net/lab/olden` through `docker-build-common.yaml`.
+Modify `.github/workflows/product-nix-images.yml` so `apps/olden/**` and `packages/design/**` publish `registry.ide-newton.ts.net/lab/olden` through `docker-build-common.yaml`.
 
 Modify `.github/workflows/pull-request.yml` so Olden PRs run:
 
@@ -1254,7 +1254,7 @@ Expected: olden deployment and service render; no kubeconform failures for the n
 - [ ] **Step 9: Commit manifests and automation**
 
 ```bash
-git add argocd/applications/olden argocd/applications/cloudflare/configmap.yaml argocd/applicationsets/product.yaml argocd/applications/argocd/base/image-updater-product.yaml .github/workflows/docker-build-push.yaml .github/workflows/pull-request.yml .github/workflows/release-pr-automerge.yml
+git add argocd/applications/olden argocd/applications/cloudflare/configmap.yaml argocd/applicationsets/product.yaml argocd/applications/argocd/base/image-updater-product.yaml .github/workflows/product-nix-images.yml .github/workflows/pull-request.yml .github/workflows/release-pr-automerge.yml
 git commit -m "deploy(olden): add GitOps release automation"
 ```
 
@@ -1320,12 +1320,12 @@ git commit -m "fix(olden): resolve verification findings"
 
 After CI is green and the PR is approved, squash-merge the application PR. Do not manually patch live manifests for normal rollout.
 
-Expected: the push to `main` triggers `.github/workflows/docker-build-push.yaml`.
+Expected: the push to `main` triggers `.github/workflows/product-nix-images.yml`.
 
 - [ ] **Step 2: Verify GitHub Actions image publish**
 
 ```bash
-gh run list -R proompteng/lab --workflow docker-build-push.yaml --limit 5
+gh run list -R proompteng/lab --workflow product-nix-images.yml --limit 5
 gh run watch <run-id> -R proompteng/lab
 ```
 
