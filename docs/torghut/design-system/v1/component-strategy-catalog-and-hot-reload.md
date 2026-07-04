@@ -10,16 +10,26 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
-- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Implementation status: **Implemented.** The strategy catalog is a declarative mounted ConfigMap parsed by Pydantic, refreshed by digest and interval, and applied to the `strategies` table with `merge` or `sync` semantics.
 - Current source evidence:
-  - `services/torghut/app/strategies/catalog.py`
-  - `services/torghut/app/trading/alpha/tsmom.py`
-  - `services/torghut/app/trading/strategy_runtime`
-  - `services/torghut/app/trading/discovery/candidate_specs.py`
-  - `services/torghut/app/trading/portfolio`
-- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
-
+  - `services/torghut/app/strategies/catalog.py::StrategyConfig` defines the strict declarative schema with `extra="forbid"`, strategy id/type/version, params, priority, universe symbols, max notional, and max position percent.
+  - `services/torghut/app/strategies/catalog.py::StrategyCatalog.from_settings` builds the catalog from `settings.trading_strategy_config_path`, `trading_strategy_config_mode`, and `trading_strategy_reload_seconds`.
+  - `StrategyCatalog.refresh` rate-limits reloads, computes a SHA-256 digest, skips unchanged payloads, parses YAML/JSON, applies the catalog, commits, and stores the last digest.
+  - `_apply_catalog` validates duplicate names, upserts `Strategy` rows, persists catalog metadata in the description, maps strategy type to universe type, and disables missing strategies in `sync` mode.
+  - `argocd/applications/torghut/strategy-configmap.yaml` currently mounts many strategy entries, including enabled paper sleeves and disabled research sleeves.
+  - Tests: `services/torghut/tests/test_strategy_catalog.py`, `services/torghut/tests/test_strategy_specs.py`, `services/torghut/tests/test_strategy_seed.py`, and strategy-factory validation tests.
+- What is implemented from the design:
+  - declarative strategy YAML;
+  - no arbitrary runtime code loading;
+  - `merge`/`sync` behavior;
+  - hot reload interval and digest skip;
+  - DB persistence into `Strategy` rows;
+  - validation for duplicate names and invalid payloads.
+- What changed from the design:
+  - The current catalog carries more governance metadata than v1 described: `strategy_id`, `strategy_type`, `version`, `priority`, metadata marker payloads, and research/paper promotion context in descriptions/params.
+  - The active ConfigMap includes paper and research sleeves; enabled in the catalog does not automatically mean live-capital promotion.
+- Remaining gaps / operator caveats:
+  - Hot reload applies config safely, but strategy promotion still depends on runtime proof/readiness gates. Do not interpret catalog presence as production profitability approval.
 
 ## Purpose
 
