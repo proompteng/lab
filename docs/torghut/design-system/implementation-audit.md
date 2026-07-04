@@ -4,7 +4,7 @@ Status: Current source-read audit, refreshed 2026-07-04.
 
 Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
 
-This file summarizes the per-document audit blocks inserted into the Torghut design corpus. Five core runtime documents have been deepened beyond the initial source-audit stamp with document-specific implemented/drift/gap analysis.
+This file summarizes the per-document audit blocks inserted into the Torghut design corpus. Core documents are being deepened in batches of five with document-specific implemented/drift/gap analysis.
 
 ## Source Surfaces Read
 
@@ -14,19 +14,29 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 - Dorvud market-data/TA source: `services/dorvud/websockets/**`, `services/dorvud/technical-analysis-flink/**`
 - Jangar/Torghut integration source: `services/jangar/src/routes/api/torghut/**`, `services/jangar/src/server/control-plane-torghut-*.ts`, `services/jangar/src/server/control-plane-*.ts`
 
-## Batch 1 Deep-Dive Documents
+## Deep-Dive Batches Completed
 
-- `docs/torghut/design-system/v1/component-trading-loop.md`
+### Batch 1: core Torghut runtime
+
 - `docs/torghut/design-system/v1/component-order-execution-and-idempotency.md`
+- `docs/torghut/design-system/v1/component-postgres-schema-and-migrations.md`
 - `docs/torghut/design-system/v1/component-risk-engine.md`
 - `docs/torghut/design-system/v1/component-strategy-catalog-and-hot-reload.md`
-- `docs/torghut/design-system/v1/component-postgres-schema-and-migrations.md`
+- `docs/torghut/design-system/v1/component-trading-loop.md`
+
+### Batch 2: market-data and TA data plane
+
+- `docs/torghut/design-system/v1/component-clickhouse-schema-and-views.md`
+- `docs/torghut/design-system/v1/component-flink-ta-job.md`
+- `docs/torghut/design-system/v1/component-flink-watermarks-and-latency.md`
+- `docs/torghut/design-system/v1/component-kafka-topics-and-retention.md`
+- `docs/torghut/design-system/v1/component-ws-forwarder.md`
 
 ## Audit Coverage
 
 - Design documents with source audit blocks: 458
-- Deep-dive batch documents: 5
-- Existing audit/index files updated separately: `README.md`, `implementation-audit.md`, `implementation-status-matrix-2026-02-21.md`, `current-source-of-truth-and-priority-guide-2026-03-09.md`
+- Deep-dive batch documents: 10
+- Triage audit documents remaining: 448
 
 ## Implementation Area Counts
 
@@ -40,18 +50,23 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 - 21: Simulation, replay, backtesting, and Lean
 - 20: LLM, DSPy, AI review, and model governance
 - 17: Options lane
-- 16: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding
 - 16: Whitepaper/autoresearch workflow
+- 11: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding
 - 10: Security, secrets, RBAC, audit, governance, and compliance
 - 5: Empirical jobs and promotion evidence
 - 2: TigerBeetle ledger and reconciliation
+- 1: ClickHouse schema and views
 - 1: Execution and idempotency
+- 1: Flink TA job
+- 1: Flink watermarks and latency
 - 1: Hyperliquid / crypto lane
+- 1: Kafka topics and retention
 - 1: Postgres schema and migrations
 - 1: Risk engine and simple-risk caps
 - 1: Strategy catalog and hot reload
 - 1: Trading loop runtime
+- 1: WS forwarder
 
 ## Reading Rule
 
-For the five batch-1 documents, use the detailed source-read audit section in each document first. For remaining documents, the existing source audit block is a triage marker and must be deepened in later batches of five.
+For batch-1 and batch-2 documents, use the detailed source-read audit section in each document first. For remaining documents, the existing source audit block is a triage marker and must be deepened in later batches of five.

@@ -9,16 +9,25 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Implemented/partially evolved: Dorvud WS/TA, Torghut ClickHouse/GitOps, and TA Flink deployments exist; exact topics/tables must be verified from current manifests/code.
-- Matched implementation area: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding.
+- Implementation status: **Implemented for event-time watermarks and latency/status signaling, with additional quote-freshness logic.** The current TA job assigns timestamps/watermarks from envelope event time, uses processing-time status heartbeats, and tracks quote staleness for signal quality.
 - Current source evidence:
-  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
-  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
-  - `argocd/applications/torghut/ws/deployment.yaml`
-  - `argocd/applications/torghut/ta/flinkdeployment.yaml`
-  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
-- Design drift note: Data-plane diagrams can be directionally right while specific topic/table/runtime claims drift.
-
+  - `FlinkTechnicalAnalysisJob.kt` imports `WatermarkStrategy`, reads Kafka with `WatermarkStrategy.noWatermarks()` first, then applies `assignTimestampsAndWatermarks(watermarkStrategy(config))` to trades, quotes, and bars streams.
+  - `watermarkStrategy(config)` uses `config.maxOutOfOrderMs`; GitOps sets `TA_MAX_OUT_OF_ORDER_MS=2000`.
+  - `StatusHeartbeatProcessFunction` emits status payloads with current watermark, lag, and last-event context when `TA_STATUS_TOPIC` is configured.
+  - `TaSignalsFunction` uses `freshQuotePayloadForBar` and `config.quoteStaleAfterMs`; GitOps sets `TA_QUOTE_STALE_AFTER_MS=15000` for the capped chip universe.
+  - `ForwarderApp.recordLag` records provider message lag from `eventTs` to `ingestTs`, and the WS deployment exposes metrics on port 9090.
+- What is implemented from the design:
+  - bounded out-of-order watermark tolerance;
+  - event-time windows for microbars/signals;
+  - status/heartbeat topic support;
+  - explicit quote freshness gates for signal quality;
+  - operational checkpoint cadence and restart configuration in FlinkDeployment.
+- What changed from the design:
+  - The current latency story is split between WS metrics/readiness and TA status/watermarks; it is not only a Flink concern.
+  - Current GitOps runs `TA_PARALLELISM=8`, `TA_CHECKPOINT_INTERVAL_MS=60000`, and `TA_QUOTE_STALE_AFTER_MS=15000`, so old latency budget assumptions must be checked before use.
+- Remaining gaps / operator caveats:
+  - This doc gives source-level implementation evidence, not live lag values. Live watermark lag still requires reading the TA status topic, ClickHouse max event time, Flink metrics, and pod logs.
+  - Increasing watermark tolerance can improve late-event correctness but may worsen freshness; current code exposes the knob, not an automatic optimizer.
 
 ## Purpose
 

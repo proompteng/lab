@@ -9,16 +9,26 @@
 ## Source Implementation Audit (2026-07-04)
 
 - Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
-- Implementation status: Implemented/partially evolved: Dorvud WS/TA, Torghut ClickHouse/GitOps, and TA Flink deployments exist; exact topics/tables must be verified from current manifests/code.
-- Matched implementation area: Market data, Kafka, Flink, ClickHouse, TA, and WS forwarding.
+- Implementation status: **Implemented and expanded.** The v1 `ta_microbars` / `ta_signals` tables exist in current schema, but the schema has grown to include options contract bars/features/surface features and explicit schema initialization from the Flink TA job.
 - Current source evidence:
-  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderApp.kt`
-  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt`
-  - `argocd/applications/torghut/ws/deployment.yaml`
-  - `argocd/applications/torghut/ta/flinkdeployment.yaml`
-  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
-- Design drift note: Data-plane diagrams can be directionally right while specific topic/table/runtime claims drift.
-
+  - `services/dorvud/technical-analysis-flink/src/main/resources/ta-schema.sql` creates `torghut.ta_microbars` and `torghut.ta_signals` with `ReplicatedReplacingMergeTree`, `ORDER BY (symbol, event_ts, seq)`, and 35-day TTLs.
+  - The same schema file now also creates options tables such as `options_contract_bars_1s`, `options_contract_features`, and `options_surface_features` with shorter options TTLs.
+  - `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt::ensureClickhouseSchema` loads and applies the SQL resource before enabling ClickHouse sinks when `TA_CLICKHOUSE_URL` is set.
+  - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml` defines a 1-shard/2-replica Altinity ClickHouseInstallation, Keeper-backed replication, 50Gi Rook-Ceph volumes, Prometheus metrics, and bounded system-log TTLs.
+  - `argocd/applications/torghut/ta/configmap.yaml` points the TA job at `jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/torghut` and sets schema-init retry/strictness knobs.
+- What is implemented from the design:
+  - replicated MergeTree storage for microbars/signals;
+  - symbol/event-time/sequence ordering for dedup-friendly reads;
+  - TTL-managed storage;
+  - ClickHouse schema ensured by deployed TA runtime;
+  - ClickHouse cluster desired state in GitOps.
+- What changed from the design:
+  - `ta-schema.sql` is not just v1 equity TA anymore; it includes options feature tables and schema evolution statements;
+  - the table TTLs are concrete in source: 35 days for equity TA and 14 days for options contract feature tables;
+  - operational ClickHouse settings now include bounded internal logs and disabled heavy profiler logs in the cluster manifest.
+- Remaining gaps / operator caveats:
+  - This doc should not claim every materialized view exists. Current source evidence is table DDL plus Flink inserts; any view/query claim must be rechecked in ClickHouse or code.
+  - The schema is deployed through TA job schema-init and GitOps, so runtime truth also depends on Flink job health and ClickHouse schema-init success.
 
 ## Purpose
 
@@ -38,13 +48,16 @@ dedup, and fast query patterns for both trading and visualization.
 
 ## Current schema source of truth
 
-The schema is created/ensured by the TA job and captured in:
+The current schema source is:
 
 - `services/dorvud/technical-analysis-flink/src/main/resources/ta-schema.sql`
 
-Deployed ClickHouse cluster:
+The deployed ClickHouse cluster and operational settings are:
 
 - `argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml`
+- `argocd/applications/torghut/clickhouse/clickhouse-keeper.yaml`
+- `argocd/applications/torghut/ta/configmap.yaml` (`TA_CLICKHOUSE_*`, schema-init retry and strictness settings)
+- `services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/FlinkTechnicalAnalysisJob.kt` (`ensureClickhouseSchema`, JDBC sinks)
 
 ## Tables (v1)
 
