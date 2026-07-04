@@ -53,7 +53,8 @@ TigerBeetle operator code lives in the standalone `proompteng/tigresse` reposito
 - `ansible/`: provisioning and operational playbooks
 - `devices/`: machine-specific infrastructure notes and manifests
 - `proto/`, `schemas/`: shared contracts and schema assets
-- `docs/`: design docs, runbooks, incidents, and architecture references
+- `docs/`: design docs, runbooks, incidents, and architecture references; start with `docs/README.md` and
+  `docs/documentation-authority.md` before treating dated designs as current truth
 - `skills/`: reusable agent skills
 
 ## Quick Start

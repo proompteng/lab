@@ -249,7 +249,7 @@ def test_trading_status_exposes_execution_not_simple_lane(client) -> None:
 - [ ] **Step 4: Run the focused tests and confirm they fail before implementation**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/execution/test_execution_path_contract.py tests/api/test_trading_api_status_contract.py tests/api/test_trading_api_live_gate_llm.py -q
 ```
 
@@ -332,7 +332,7 @@ def build_execution_gate(
 - [ ] **Step 3: Run unit tests**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/execution/test_execution_path_contract.py -q
 ```
 
@@ -370,7 +370,7 @@ assert alpaca market closed is not a blocker when route == "testnet"
 - [ ] **Step 3: Run route tests**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/api/test_trading_api_live_gate_llm.py -q
 ```
 
@@ -411,7 +411,7 @@ Delete `bounded_live_paper_collection_gate` from operational authority output. I
 - [ ] **Step 4: Run old-field grep**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab
+cd <repo-root>
 rg -n "simple_lane_orders_submitted_total|simple_lane_reject_reason_totals|simple_lane_status|bounded_live_paper_collection_gate" services/torghut/app services/torghut/tests
 ```
 
@@ -465,7 +465,7 @@ default order notional: min(10 USD, remaining per-symbol capacity, remaining gro
 - [ ] **Step 4: Run target selection tests**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/execution/test_execution_path_contract.py tests/simple_pipeline -q
 ```
 
@@ -516,7 +516,7 @@ runtime execution table
 - [ ] **Step 4: Run submission tests**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/execution/test_execution_path_contract.py tests/journal_tigerbeetle_order_events -q
 ```
 
@@ -565,7 +565,7 @@ portfolio_runtime_ledger_summary_missing
 - [ ] **Step 3: Run diagnostic contract tests**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/api/test_trading_api_status_contract.py -q
 ```
 
@@ -610,7 +610,7 @@ else:
 - [ ] **Step 4: Run Hyperliquid tests**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest tests/hyperliquid_execution/test_runtime_surfaces.py tests/hyperliquid_execution/test_maintenance.py -q
 ```
 
@@ -644,7 +644,7 @@ Keep backward-compatible env parsing in Python only if needed for one release, b
 - [ ] **Step 3: Run Argo lint**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab
+cd <repo-root>
 bun run lint:argocd
 ```
 
@@ -658,7 +658,7 @@ Expected result: Argo manifests render and lint.
 - [ ] **Step 1: Sync dev environment**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv sync --frozen --extra dev
 ```
 
@@ -667,7 +667,7 @@ Expected result: dependency sync succeeds without lockfile edits.
 - [ ] **Step 2: Run pyright profiles**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pyright --project pyrightconfig.json
 uv run --frozen pyright --project pyrightconfig.alpha.json
 uv run --frozen pyright --project pyrightconfig.scripts.json
@@ -678,7 +678,7 @@ Expected result: all three pyright profiles pass.
 - [ ] **Step 3: Run focused pytest suite**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab/services/torghut
+cd <repo-root>/services/torghut
 uv run --frozen pytest \
   tests/execution/test_execution_path_contract.py \
   tests/api/test_trading_api_status_contract.py \
@@ -693,7 +693,7 @@ Expected result: targeted Torghut execution, status, routing, and Hyperliquid te
 - [ ] **Step 4: Run app manifest lint**
 
 ```bash
-cd /Users/gregkonush/.codex/worktrees/2cf1/lab
+cd <repo-root>
 bun run lint:argocd
 ```
 
