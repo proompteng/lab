@@ -5,8 +5,8 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 
 import { fatal, repoRoot } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { inspectOciImageDigest } from '../shared/oci-digest'
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut-ta'
@@ -201,7 +201,7 @@ const main = (cliOptions?: CliOptions) => {
   const tag = parsed.tag ?? process.env.TORGHUT_TA_IMAGE_TAG ?? execGit(['rev-parse', '--short=8', 'HEAD'])
   const imageName = `${registry}/${repository}`
   const digest = normalizeDigest(
-    parsed.digest ?? process.env.TORGHUT_TA_IMAGE_DIGEST ?? inspectImageDigest(`${imageName}:${tag}`),
+    parsed.digest ?? process.env.TORGHUT_TA_IMAGE_DIGEST ?? inspectOciImageDigest(`${imageName}:${tag}`),
   )
 
   if (!digestPattern.test(digest)) {

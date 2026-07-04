@@ -260,6 +260,22 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "torghut-image" = import ./nix/images/torghut.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-ws-image" = import ./nix/images/torghut-ws.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-ta-image" = import ./nix/images/torghut-ta.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-hyperliquid-feed-image" = import ./nix/images/torghut-hyperliquid-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
           } // (import ./nix/images/agents.nix {
             inherit
               pkgs

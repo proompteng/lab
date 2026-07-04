@@ -1,88 +1,85 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import type { DockerBuildOptions } from '../../shared/docker'
+import type { BuildAndPushNixImageOptions } from '../../shared/nix-oci-deploy'
 import { __private, buildImage } from '../build-image'
 
 afterEach(() => {
-  __private.setBuildAndPushDockerImage()
+  __private.setBuildAndPushNixImage()
   __private.setExecGit()
-  delete process.env.TORGHUT_IMAGE_CACHE_REF
-  delete process.env.TORGHUT_IMAGE_CACHE_MODE
-  delete process.env.TORGHUT_IMAGE_PLATFORMS
 })
 
 describe('buildImage', () => {
-  it('passes registry cache settings to the Docker builder when configured', async () => {
-    let captured: DockerBuildOptions | undefined
+  it('builds the core Torghut image through the Nix OCI helper', async () => {
+    let captured: BuildAndPushNixImageOptions | undefined
 
     __private.setExecGit((args) => {
       if (args[0] === 'describe') return 'v0.1.0'
       if (args[0] === 'rev-parse') return '0123456789abcdef0123456789abcdef01234567'
       throw new Error(`unexpected git command: ${args.join(' ')}`)
     })
-    __private.setBuildAndPushDockerImage(async (options) => {
+    __private.setBuildAndPushNixImage(async (options) => {
       captured = options
       return {
-        ...options,
-        image: `${options.registry}/${options.repository}:${options.tag}`,
+        service: options.service,
+        image: `${options.registry}/${options.repository}`,
+        tag: options.tag ?? 'latest',
+        digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        reference: `${options.registry}/${options.repository}@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,
+        sourceSha: options.sourceSha ?? '',
+        packageAttr: options.packageAttr,
+        contractPath: '.artifacts/torghut/manual-release-contract.json',
       }
     })
 
-    process.env.TORGHUT_IMAGE_CACHE_REF = 'registry.ide-newton.ts.net/lab/torghut:buildcache'
-    process.env.TORGHUT_IMAGE_CACHE_MODE = 'min'
-
-    await buildImage({
+    const result = await buildImage({
       registry: 'registry.ide-newton.ts.net',
       repository: 'lab/torghut',
       tag: '01234567',
-      platforms: ['linux/arm64'],
     })
 
-    expect(captured?.cacheRef).toBe('registry.ide-newton.ts.net/lab/torghut:buildcache')
-    expect(captured?.cacheMode).toBe('min')
+    expect(captured).toMatchObject({
+      service: 'torghut',
+      imageName: 'torghut',
+      packageAttr: 'torghut-image',
+      registry: 'registry.ide-newton.ts.net',
+      repository: 'lab/torghut',
+      tag: '01234567',
+      sourceSha: '0123456789abcdef0123456789abcdef01234567',
+      latestTag: 'latest',
+    })
+    expect(result).toEqual({
+      image: 'registry.ide-newton.ts.net/lab/torghut:01234567',
+      digest:
+        'registry.ide-newton.ts.net/lab/torghut@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      version: 'v0.1.0',
+      commit: '0123456789abcdef0123456789abcdef01234567',
+    })
   })
 
-  it('treats a none cache ref as disabled', async () => {
-    let captured: DockerBuildOptions | undefined
+  it('propagates dry-run mode to the Nix OCI helper', async () => {
+    let captured: BuildAndPushNixImageOptions | undefined
 
     __private.setExecGit((args) => {
       if (args[0] === 'describe') return 'v0.1.0'
       if (args[0] === 'rev-parse') return '0123456789abcdef0123456789abcdef01234567'
       throw new Error(`unexpected git command: ${args.join(' ')}`)
     })
-    __private.setBuildAndPushDockerImage(async (options) => {
+    __private.setBuildAndPushNixImage(async (options) => {
       captured = options
       return {
-        ...options,
-        image: `${options.registry}/${options.repository}:${options.tag}`,
+        service: options.service,
+        image: `${options.registry}/${options.repository}`,
+        tag: options.tag ?? 'latest',
+        digest: 'sha256:dry-run',
+        reference: `${options.registry}/${options.repository}@sha256:dry-run`,
+        sourceSha: options.sourceSha ?? '',
+        packageAttr: options.packageAttr,
+        contractPath: '.artifacts/torghut/manual-release-contract.json',
       }
     })
 
-    process.env.TORGHUT_IMAGE_CACHE_REF = 'none'
+    await buildImage({ tag: '01234567', dryRun: true })
 
-    await buildImage({ tag: '01234567' })
-
-    expect(captured?.cacheRef).toBeUndefined()
-  })
-
-  it('defaults to amd64 and arm64 image platforms', async () => {
-    let captured: DockerBuildOptions | undefined
-
-    __private.setExecGit((args) => {
-      if (args[0] === 'describe') return 'v0.1.0'
-      if (args[0] === 'rev-parse') return '0123456789abcdef0123456789abcdef01234567'
-      throw new Error(`unexpected git command: ${args.join(' ')}`)
-    })
-    __private.setBuildAndPushDockerImage(async (options) => {
-      captured = options
-      return {
-        ...options,
-        image: `${options.registry}/${options.repository}:${options.tag}`,
-      }
-    })
-
-    await buildImage({ tag: '01234567' })
-
-    expect(captured?.platforms).toEqual(['linux/amd64', 'linux/arm64'])
+    expect(captured?.dryRun).toBe(true)
   })
 })

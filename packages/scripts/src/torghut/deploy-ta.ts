@@ -4,8 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushDockerImage, inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 
 const taDeploymentPath = resolve(
   repoRoot,
@@ -14,7 +14,8 @@ const taDeploymentPath = resolve(
 const taKustomizePath = resolve(repoRoot, process.env.TORGHUT_TA_KUSTOMIZE_PATH ?? 'argocd/applications/torghut/ta')
 
 const ensureTools = () => {
-  ensureCli('docker')
+  ensureCli('nix')
+  ensureCli('crane')
   ensureCli('kubectl')
   ensureCli('git')
 }
@@ -23,33 +24,21 @@ const buildTechnicalAnalysisImage = async () => {
   const registry = process.env.TORGHUT_TA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
   const repository = process.env.TORGHUT_TA_IMAGE_REPOSITORY ?? 'lab/torghut-ta'
   const tag = process.env.TORGHUT_TA_IMAGE_TAG ?? 'latest'
-  const context = resolve(repoRoot, process.env.TORGHUT_TA_IMAGE_CONTEXT ?? 'services/dorvud')
-  const dockerfile = resolve(
-    repoRoot,
-    process.env.TORGHUT_TA_IMAGE_DOCKERFILE ?? 'services/dorvud/technical-analysis-flink/Dockerfile',
-  )
-  const platforms = process.env.TORGHUT_TA_IMAGE_PLATFORMS?.split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean) ?? ['linux/amd64', 'linux/arm64']
-  const codexAuthPath = process.env.TORGHUT_TA_CODEX_AUTH_PATH
   const version = execGit(['describe', '--tags', '--always'])
   const commit = execGit(['rev-parse', 'HEAD'])
 
-  const result = await buildAndPushDockerImage({
+  const result = await buildAndPushNixImage({
+    service: 'torghut-ta',
+    imageName: 'torghut-ta',
+    packageAttr: 'torghut-ta-image',
     registry,
     repository,
     tag,
-    context,
-    dockerfile,
-    platforms,
-    codexAuthPath,
-    buildArgs: {
-      TORGHUT_TA_VERSION: version,
-      TORGHUT_TA_COMMIT: commit,
-    },
+    sourceSha: commit,
+    latestTag: 'latest',
   })
 
-  return { ...result, version, commit }
+  return { image: `${result.image}:${result.tag}`, digest: result.reference, version, commit }
 }
 
 const updateTechnicalAnalysisDeployment = (image: string, version: string, commit: string) => {
@@ -101,9 +90,8 @@ const applyTechnicalAnalysisResources = async () => {
 
 const main = async () => {
   ensureTools()
-  const { image, version, commit } = await buildTechnicalAnalysisImage()
-  const digestRef = inspectImageDigest(image)
-  updateTechnicalAnalysisDeployment(digestRef, version, commit)
+  const { digest, version, commit } = await buildTechnicalAnalysisImage()
+  updateTechnicalAnalysisDeployment(digest, version, commit)
   await applyTechnicalAnalysisResources()
   console.log('torghut technical analysis deployment updated; commit manifest changes for Argo CD reconciliation.')
 }

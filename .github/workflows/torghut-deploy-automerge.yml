@@ -58,7 +58,7 @@ jobs:
         github.event.pull_request.draft == false
       }}
     # The private registry is only reachable from the ARC runners on the lab network.
-    # This pull_request_target job does not check out pull request code.
+    # This pull_request_target job checks out trusted base code only, never pull request code.
     runs-on: arc-arm64
     permissions:
       contents: write
@@ -184,9 +184,17 @@ jobs:
           printf 'eligible=%s\n' "${ELIGIBLE}"
           printf 'reason=%s\n' "${REASON}"
 
-      - name: Set up Docker Buildx
+      - name: Checkout trusted base
         if: steps.gates.outputs.eligible == 'true'
-        uses: docker/setup-buildx-action@v3
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+
+      - name: Set up Nix toolchain
+        if: steps.gates.outputs.eligible == 'true'
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
 
       - name: Verify source image digest contract
         if: steps.gates.outputs.eligible == 'true' && steps.gates.outputs.release_lane != 'hyperliquid-feed'
@@ -261,7 +269,7 @@ jobs:
 
           assert_multi_arch_image() {
             local image_ref="$1"
-            local image_digest manifest_json platform platform_digest
+            local image_digest
 
             image_digest="${image_ref#*@}"
             if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
@@ -269,19 +277,7 @@ jobs:
               exit 1
             fi
 
-            manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image_ref}")"
-            for platform in linux/amd64 linux/arm64; do
-              platform_digest="$(
-                jq -r --arg platform "${platform}" \
-                  '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                  <<< "${manifest_json}" | head -n 1
-              )"
-              if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-                echo "Release manifest image ${image_ref} is missing required platform ${platform}"
-                docker buildx imagetools inspect "${image_ref}"
-                exit 1
-              fi
-            done
+            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
           }
 
           source_sha="$(resolve_env_value "${source_env_name}")"
@@ -351,19 +347,7 @@ jobs:
             exit 1
           fi
 
-          manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image_ref}")"
-          for platform in linux/amd64 linux/arm64; do
-            platform_digest="$(
-              jq -r --arg platform "${platform}" \
-                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                <<< "${manifest_json}" | head -n 1
-            )"
-            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Hyperliquid feed release manifest image ${image_ref} is missing required platform ${platform}"
-              docker buildx imagetools inspect "${image_ref}"
-              exit 1
-            fi
-          done
+          nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
 
           echo "Hyperliquid feed release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
 

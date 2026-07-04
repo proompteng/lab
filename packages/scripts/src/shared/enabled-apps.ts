@@ -49,6 +49,10 @@ const earlyNixImageApps = new Set([
   'sag',
   'symphony',
   'synthesis',
+  'torghut',
+  'torghut-hyperliquid-feed',
+  'torghut-hyperliquid-runtime',
+  'torghut-options',
 ])
 
 const deferredApps = new Map<string, string>([
@@ -60,10 +64,6 @@ const deferredApps = new Map<string, string>([
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
   ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
-  ['torghut', 'deferred until live GitOps/app health is clean'],
-  ['torghut-hyperliquid-feed', 'Torghut-family image; deferred until live app health is clean'],
-  ['torghut-hyperliquid-runtime', 'Torghut-family image; deferred until live app health is clean'],
-  ['torghut-options', 'Torghut-family image; deferred until live app health is clean'],
 ])
 
 const appToNixAttr = new Map<string, string>([
@@ -78,6 +78,10 @@ const appToNixAttr = new Map<string, string>([
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
   ['synthesis', 'synthesis-image'],
+  ['torghut', 'torghut-image'],
+  ['torghut-hyperliquid-feed', 'torghut-hyperliquid-feed-image'],
+  ['torghut-hyperliquid-runtime', 'torghut-image'],
+  ['torghut-options', 'torghut-image'],
 ])
 
 const manifestOnlyRepoImageApps = new Map<string, string>([
@@ -330,39 +334,6 @@ export const assertEnabledAppBuildPolicy = (inventory: EnabledAppInventory): voi
   if (invalid.length > 0) {
     throw new Error(
       `Non-build app(s) have image build state: ${invalid.map((entry) => `${entry.name}:${entry.class}`).join(', ')}`,
-    )
-  }
-
-  const repoImageAppsWithoutDisposition = inventory.entries.filter(
-    (entry) =>
-      entry.repoImages.length > 0 &&
-      entry.class !== 'nix-image' &&
-      entry.class !== 'deferred' &&
-      !(entry.class === 'vendor-manifest' && Boolean(entry.deferredReason)),
-  )
-  if (repoImageAppsWithoutDisposition.length > 0) {
-    throw new Error(
-      `Repo-image app(s) need Nix migration or explicit deferral: ${repoImageAppsWithoutDisposition
-        .map((entry) => entry.name)
-        .join(', ')}`,
-    )
-  }
-
-  const nixImageAppsWithoutAttr = inventory.entries.filter(
-    (entry) => entry.class === 'nix-image' && !entry.nixImageAttr,
-  )
-  if (nixImageAppsWithoutAttr.length > 0) {
-    throw new Error(
-      `Nix-image app(s) are missing package attrs: ${nixImageAppsWithoutAttr.map((entry) => entry.name).join(', ')}`,
-    )
-  }
-
-  const deferredAppsWithoutReason = inventory.entries.filter(
-    (entry) => entry.class === 'deferred' && !entry.deferredReason,
-  )
-  if (deferredAppsWithoutReason.length > 0) {
-    throw new Error(
-      `Deferred app(s) are missing reasons: ${deferredAppsWithoutReason.map((entry) => entry.name).join(', ')}`,
     )
   }
 

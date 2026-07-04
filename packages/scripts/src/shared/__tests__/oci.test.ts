@@ -32,6 +32,16 @@ const symphonyReleaseMetadataScript = readRepoFile('packages/scripts/src/symphon
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
 const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
+const torghutBuildWorkflow = readRepoFile('.github/workflows/torghut-build-push.yaml')
+const torghutTaBuildWorkflow = readRepoFile('.github/workflows/torghut-ta-build-push.yaml')
+const torghutWsBuildWorkflow = readRepoFile('.github/workflows/torghut-ws-build-push.yaml')
+const torghutHyperliquidFeedBuildWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
+const torghutReleaseWorkflow = readRepoFile('.github/workflows/torghut-release.yml')
+const torghutTaReleaseWorkflow = readRepoFile('.github/workflows/torghut-ta-release.yml')
+const torghutWsReleaseWorkflow = readRepoFile('.github/workflows/torghut-ws-release.yml')
+const torghutHyperliquidFeedReleaseWorkflow = readRepoFile('.github/workflows/torghut-hyperliquid-feed-release.yml')
+const torghutCiWorkflow = readRepoFile('.github/workflows/torghut-ci.yml')
+const torghutDeployAutomergeWorkflow = readRepoFile('.github/workflows/torghut-deploy-automerge.yml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
@@ -51,6 +61,10 @@ const allNixImageModules = readdirSync(new URL('nix/images/', repoRoot))
   .map((name) => [name, readRepoFile(`nix/images/${name}`)] as const)
 const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const sagImageModule = readRepoFile('nix/images/sag.nix')
+const torghutImageModule = readRepoFile('nix/images/torghut.nix')
+const torghutTaImageModule = readRepoFile('nix/images/torghut-ta.nix')
+const torghutWsImageModule = readRepoFile('nix/images/torghut-ws.nix')
+const torghutHyperliquidFeedImageModule = readRepoFile('nix/images/torghut-hyperliquid-feed.nix')
 const agentsImageModule = readRepoFile('nix/images/agents.nix')
 const openaiCodexCliModule = readRepoFile('nix/images/openai-codex-cli.nix')
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
@@ -61,6 +75,15 @@ const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-
 const sagBuildScript = readRepoFile('packages/scripts/src/sag/build-image.ts')
 const sagDeployScript = readRepoFile('packages/scripts/src/sag/deploy-service.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
+const torghutBuildScript = readRepoFile('packages/scripts/src/torghut/build-image.ts')
+const torghutDeployScript = readRepoFile('packages/scripts/src/torghut/deploy-service.ts')
+const torghutTaDeployScript = readRepoFile('packages/scripts/src/torghut/deploy-ta.ts')
+const torghutUpdateScripts = [
+  readRepoFile('packages/scripts/src/torghut/update-manifests.ts'),
+  readRepoFile('packages/scripts/src/torghut/update-ta-manifest.ts'),
+  readRepoFile('packages/scripts/src/torghut/update-ws-manifest.ts'),
+  readRepoFile('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'),
+]
 const productBuildScripts = [
   readRepoFile('packages/scripts/src/app/build-image.ts'),
   readRepoFile('packages/scripts/src/docs/build-image.ts'),
@@ -435,6 +458,16 @@ describe('native OCI build workflows', () => {
       sagBuildWorkflow,
       sagReleaseWorkflow,
       sagPostDeployVerifyWorkflow,
+      torghutBuildWorkflow,
+      torghutTaBuildWorkflow,
+      torghutWsBuildWorkflow,
+      torghutHyperliquidFeedBuildWorkflow,
+      torghutReleaseWorkflow,
+      torghutTaReleaseWorkflow,
+      torghutWsReleaseWorkflow,
+      torghutHyperliquidFeedReleaseWorkflow,
+      torghutCiWorkflow,
+      torghutDeployAutomergeWorkflow,
     ]
     for (const workflow of migratedWorkflows) {
       expect(workflow).not.toContain('docker/build-push-action')
@@ -526,6 +559,56 @@ describe('native OCI build workflows', () => {
     expect(sagReleaseWorkflow).not.toContain('docker buildx')
     expect(sagPostDeployVerifyWorkflow).toContain('kubectl -n sag rollout status deployment/sag')
     expect(sagPostDeployVerifyWorkflow).toContain('desired_replicas=')
+  })
+
+  it('routes the enabled Torghut family images through real Nix OCI attrs', () => {
+    for (const [workflow, imageName, packageAttr, artifact] of [
+      [torghutBuildWorkflow, 'torghut', 'torghut-image', 'torghut-release-contract'],
+      [torghutTaBuildWorkflow, 'torghut-ta', 'torghut-ta-image', 'torghut-ta-release-contract'],
+      [torghutWsBuildWorkflow, 'torghut-ws', 'torghut-ws-image', 'torghut-ws-release-contract'],
+      [
+        torghutHyperliquidFeedBuildWorkflow,
+        'torghut-hyperliquid-feed',
+        'torghut-hyperliquid-feed-image',
+        'torghut-hyperliquid-feed-release-contract',
+      ],
+    ] as const) {
+      expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+      expect(workflow).toContain(`image_name: ${imageName}`)
+      expect(workflow).toContain(`package_attr: ${packageAttr}`)
+      expect(workflow).toContain(artifact)
+      expect(workflow).toContain('tag: sha-${{ github.sha }}')
+    }
+
+    for (const packageAttr of [
+      'torghut-image',
+      'torghut-ta-image',
+      'torghut-ws-image',
+      'torghut-hyperliquid-feed-image',
+    ]) {
+      expect(flake).toContain(`"${packageAttr}"`)
+    }
+    expect(torghutImageModule).toContain('pkgs.uv')
+    expect(torghutTaImageModule).toContain('pkgs.dockerTools.pullImage')
+    expect(torghutTaImageModule).toContain('sha256:d357b0e1eb89eb4377735a008dfcbd35f7f06af6cba24dfbb6062379fb70a9a9')
+    expect(torghutTaImageModule).toContain('sha256:c0b3512ea891d604c585d3cb217b75a2bf920d9faaa9f0770496476189d5f57f')
+    expect(torghutTaImageModule).toContain('flink-s3-fs-hadoop-2.0.1.jar')
+    expect(torghutTaImageModule).not.toContain('flink-2.0.1-bin-scala_2.12.tgz')
+    expect(torghutTaImageModule).not.toContain('archive.apache.org/dist/flink')
+    expect(torghutWsImageModule).toContain('ForwarderAppKt')
+    expect(torghutHyperliquidFeedImageModule).toContain('HyperliquidFeedAppKt')
+
+    for (const workflow of [
+      torghutReleaseWorkflow,
+      torghutTaReleaseWorkflow,
+      torghutWsReleaseWorkflow,
+      torghutHyperliquidFeedReleaseWorkflow,
+    ]) {
+      expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+      expect(workflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
+      expect(workflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE_REF}" linux/amd64 linux/arm64')
+      expect(workflow).not.toContain('docker buildx')
+    }
   })
 
   it('routes the enabled Agents service images through real Nix OCI attrs', () => {
@@ -630,6 +713,9 @@ describe('native OCI build workflows', () => {
       symphonyBuildScript,
       sagBuildScript,
       agentsDeployScript,
+      torghutBuildScript,
+      torghutDeployScript,
+      torghutTaDeployScript,
       ...productBuildScripts,
     ]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")
@@ -659,6 +745,13 @@ describe('native OCI build workflows', () => {
     expect(agentsDeployScript).toContain("from '../shared/nix-oci-deploy'")
     expect(agentsDeployScript).toContain('dryRun')
     expect(agentsDeployScript).toContain('readRunnerImagePin')
+
+    for (const script of torghutUpdateScripts) {
+      expect(script).not.toContain("from '../shared/docker'")
+      expect(script).not.toContain('inspectImageDigest')
+      expect(script).toContain("from '../shared/oci-digest'")
+      expect(script).toContain('inspectOciImageDigest')
+    }
 
     expect(nixOciDeployScript).toContain("await run('nix', ['build', `.#${packageAttr}`")
     expect(nixOciDeployScript).toContain("await run('nix', pushArgs")

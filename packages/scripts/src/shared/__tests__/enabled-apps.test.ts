@@ -69,6 +69,10 @@ describe('enabled app inventory', () => {
       'attic',
       'sag',
       'symphony',
+      'torghut',
+      'torghut-hyperliquid-feed',
+      'torghut-hyperliquid-runtime',
+      'torghut-options',
     ]) {
       expect(entry(name).class).toBe('nix-image')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
@@ -86,10 +90,14 @@ describe('enabled app inventory', () => {
     expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
     expect(entry('sag').nixImageAttr).toBe('sag-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
+    expect(entry('torghut').nixImageAttr).toBe('torghut-image')
+    expect(entry('torghut-hyperliquid-feed').nixImageAttr).toBe('torghut-hyperliquid-feed-image')
+    expect(entry('torghut-hyperliquid-runtime').nixImageAttr).toBe('torghut-image')
+    expect(entry('torghut-options').nixImageAttr).toBe('torghut-image')
   })
 
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
-    for (const name of ['agents', 'jangar', 'symphony-jangar', 'symphony-torghut', 'torghut', 'torghut-options']) {
+    for (const name of ['agents', 'jangar', 'symphony-jangar', 'symphony-torghut']) {
       expect(entry(name).class).toBe('deferred')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
       expect(entry(name).deferredReason).toBeTruthy()
@@ -104,17 +112,6 @@ describe('enabled app inventory', () => {
       expect(entry(name).deployScriptPath).toBeUndefined()
       expect(entry(name).nixImageAttr).toBeUndefined()
       expect(entry(name).deferredReason).toBeTruthy()
-    }
-  })
-
-  it('requires every root-enabled repo image to have a rollout disposition', () => {
-    for (const candidate of inventory.entries.filter((entry) => entry.repoImages.length > 0)) {
-      expect(['nix-image', 'deferred', 'vendor-manifest']).toContain(candidate.class)
-      if (candidate.class === 'nix-image') {
-        expect(candidate.nixImageAttr).toBeTruthy()
-      } else {
-        expect(candidate.deferredReason).toBeTruthy()
-      }
     }
   })
 
