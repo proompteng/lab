@@ -721,8 +721,7 @@ def _paper_route_preopen_conditions(
         ),
         "target_plan_health_gate_ready": _bool(target_plan_health_gate.get("ready")),
         "target_plan_import_blockers_only_session_not_open": all(
-            blocker == "paper_route_session_window_not_open"
-            for blocker in import_blockers
+            blocker == "alpaca_regular_session_closed" for blocker in import_blockers
         ),
     }
 

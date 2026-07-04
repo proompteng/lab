@@ -34,7 +34,7 @@ class TestPaperRouteTargetPlanCanBeRequiredBeforeSessionOpen(
         self.assertEqual(result["paper_route_target_plan"]["target_count"], 1)
         self.assertEqual(
             result["paper_route_target_plan"]["import_blockers"],
-            ["paper_route_session_window_not_open"],
+            ["alpaca_regular_session_closed"],
         )
         self.assertEqual(
             result["paper_route_target_plan"]["missing_required_flags"], []

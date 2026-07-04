@@ -23,6 +23,7 @@ from ...runtime_decision_authority import (
 )
 from ..target_plan_helpers import (
     PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK as _PAPER_ROUTE_TARGET_PROFIT_PROOF_EXPOSURE_LOOKBACK,
+    after_hours_testnet_route_enabled as _after_hours_testnet_route_enabled,
     target_bounded_collection_authorized as _target_bounded_collection_authorized,
     bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
     bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
@@ -163,9 +164,20 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         ):
             self._record_bounded_target_plan_blocker(reason=blocker)
             return None
-        if not self._is_market_session_open(now):
+        market_session_open = self._is_market_session_open(now)
+        if not market_session_open and _after_hours_testnet_route_enabled(
+            trading_mode=trading_mode,
+            paper_route_probe_enabled=settings.trading_simple_paper_route_probe_enabled,
+            paper_route_probe_allow_live_mode=(
+                settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
+            testnet_after_hours_enabled=settings.trading_testnet_after_hours_enabled,
+            market_session_open=market_session_open,
+        ):
+            return None
+        if not market_session_open:
             self._record_bounded_target_plan_blocker(
-                reason="paper_route_session_window_not_open"
+                reason="alpaca_regular_session_closed"
             )
             return None
         target_symbols, target_plan_error, target_plan_targets = (

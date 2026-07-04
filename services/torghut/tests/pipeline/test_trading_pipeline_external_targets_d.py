@@ -427,7 +427,7 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
                 "trading_static_symbols_raw"
             ]
 
-    def test_live_bounded_collection_fallback_respects_disabled_and_empty_scopes(
+    def test_live_bounded_collection_scope_respects_disabled_and_empty_scopes(
         self,
     ) -> None:
         from app import config
@@ -457,18 +457,14 @@ class TestTradingPipelineExternalTargetsD(TradingPipelineTestCaseBase):
             config.settings.trading_static_symbols_raw = "AAPL"
 
             self.assertIsNone(
-                pipeline._live_bounded_collection_fallback_signal_scope(
-                    [dynamic_strategy]
-                )
+                pipeline._live_bounded_collection_signal_scope([dynamic_strategy])
             )
 
             config.settings.trading_simple_paper_route_probe_enabled = True
             config.settings.trading_static_symbols_raw = ""
 
             self.assertIsNone(
-                pipeline._live_bounded_collection_fallback_signal_scope(
-                    [dynamic_strategy]
-                )
+                pipeline._live_bounded_collection_signal_scope([dynamic_strategy])
             )
         finally:
             config.settings.trading_mode = original["trading_mode"]

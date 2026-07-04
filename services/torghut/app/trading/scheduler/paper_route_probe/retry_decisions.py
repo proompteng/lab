@@ -24,6 +24,7 @@ from ..target_plan_helpers import (
     FLATTEN_CLOSE_DECISION_SCHEMA_VERSION as _FLATTEN_CLOSE_DECISION_SCHEMA_VERSION,
     PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS as _PAPER_ROUTE_PROBE_EXIT_PENDING_GRACE_SECONDS,
     REGULAR_SESSION_MINUTES as _REGULAR_SESSION_MINUTES,
+    after_hours_testnet_route_enabled as _after_hours_testnet_route_enabled,
     bounded_paper_route_collection_entry_metadata as _bounded_paper_route_collection_entry_metadata,
     merge_paper_route_probe_lineage as _merge_paper_route_probe_lineage,
     optional_decimal as _optional_decimal,
@@ -554,11 +555,18 @@ class SimplePipelinePaperRouteProbeRetryDecisionMixin(PaperRouteProbeRuntime):
             return False
         if not settings.trading_simple_paper_route_probe_enabled:
             return False
-        if self._is_market_session_open(now):
+        market_session_open = self._is_market_session_open(now)
+        if market_session_open or _after_hours_testnet_route_enabled(
+            trading_mode=settings.trading_mode,
+            paper_route_probe_enabled=settings.trading_simple_paper_route_probe_enabled,
+            paper_route_probe_allow_live_mode=(
+                settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
+            testnet_after_hours_enabled=settings.trading_testnet_after_hours_enabled,
+            market_session_open=market_session_open,
+        ):
             return True
-        self._record_bounded_target_plan_blocker(
-            reason="paper_route_session_window_not_open"
-        )
+        self._record_bounded_target_plan_blocker(reason="alpaca_regular_session_closed")
         return False
 
     def _paper_route_probe_exit_exposures(

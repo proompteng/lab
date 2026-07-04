@@ -53,7 +53,7 @@ class TestAuthorityOneDayBlockersAreStableJsonCodes(_TestRuntimeLedgerProofPacke
             proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(
                 import_ready=False,
-                import_blockers=["paper_route_session_window_not_open"],
+                import_blockers=["alpaca_regular_session_closed"],
             ),
             generated_at="2026-05-25T21:05:00+00:00",
         )
@@ -62,7 +62,7 @@ class TestAuthorityOneDayBlockersAreStableJsonCodes(_TestRuntimeLedgerProofPacke
         self.assertEqual(result["verdict"], "waiting_for_runtime_window")
         self.assertEqual(
             result["promotion_authority"]["blocking_reasons"],
-            ["paper_route_session_window_not_open"],
+            ["alpaca_regular_session_closed"],
         )
         self.assertEqual(
             result["required_actions"],
@@ -79,7 +79,7 @@ class TestAuthorityOneDayBlockersAreStableJsonCodes(_TestRuntimeLedgerProofPacke
     ) -> None:
         evidence = _paper_route_evidence(
             import_ready=False,
-            import_blockers=["paper_route_session_window_not_open"],
+            import_blockers=["alpaca_regular_session_closed"],
         )
         plan = evidence["next_paper_route_runtime_window_targets"]
         assert isinstance(plan, dict)
@@ -133,7 +133,7 @@ class TestAuthorityOneDayBlockersAreStableJsonCodes(_TestRuntimeLedgerProofPacke
             proof_mode="authority",
             paper_route_evidence=_paper_route_evidence(
                 import_ready=False,
-                import_blockers=["paper_route_session_window_not_open"],
+                import_blockers=["alpaca_regular_session_closed"],
             ),
             completion_status=completion,
             generated_at="2026-05-25T21:05:00+00:00",
@@ -142,7 +142,7 @@ class TestAuthorityOneDayBlockersAreStableJsonCodes(_TestRuntimeLedgerProofPacke
         self.assertEqual(result["verdict"], "waiting_for_runtime_window")
         self.assertEqual(
             result["post_cost_proof_authority"]["blocking_reasons"],
-            ["paper_route_session_window_not_open"],
+            ["alpaca_regular_session_closed"],
         )
         self.assertEqual(
             result["required_actions"],

@@ -416,7 +416,7 @@ class TestPacketAcceptsAlternateRuntimePlanAndCompletionGateShapes(
                 json.dumps(
                     _paper_route_evidence(
                         import_ready=False,
-                        import_blockers=["paper_route_session_window_not_open"],
+                        import_blockers=["alpaca_regular_session_closed"],
                     )
                 ),
                 encoding="utf-8",

@@ -29,7 +29,7 @@
 - Inspect: `argocd/applications/torghut/*paper*runtime*`
 
 - [ ] Re-read `/trading/paper-route-evidence` after the market session opens.
-- [ ] Verify `paper_route_session_window_not_open` clears during the session.
+- [ ] Verify `alpaca_regular_session_closed` clears during the session.
 - [ ] Verify target-account audit produces clean-window state instead of `paper_route_target_account_audit_unavailable`.
 - [ ] If clean-window audit still blocks, patch the exact readback path with a regression test.
 

@@ -65,6 +65,7 @@ from .submission_preparation.quote_sizing import (
 from .target_plan_helpers import (
     PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS as _PAPER_ROUTE_TARGET_PLAN_FETCH_ATTEMPTS,
     SIGNAL_INGEST_UNAVAILABLE_REASONS as _SIGNAL_INGEST_UNAVAILABLE_REASONS,
+    after_hours_testnet_route_enabled as _after_hours_testnet_route_enabled,
     bounded_sim_collection_reserves_account as _bounded_sim_collection_reserves_account,
     safe_text as _safe_text,
     simple_drift_feature_thresholds as _simple_drift_feature_thresholds,
@@ -329,9 +330,7 @@ class SimpleTradingPipeline(
         strategies: Sequence[Strategy] | None = None,
     ) -> SignalBatch:
         if signal_scope is None:
-            signal_scope = self._live_bounded_collection_fallback_signal_scope(
-                strategies or ()
-            )
+            signal_scope = self._live_bounded_collection_signal_scope(strategies or ())
         if signal_scope is None:
             return self.ingestor.fetch_signals(session)
         symbols, timeframes = signal_scope
@@ -345,14 +344,14 @@ class SimpleTradingPipeline(
             if "unexpected keyword" not in str(exc):
                 raise
             logger.warning(
-                "Signal ingestor does not support scoped polling; falling back to unscoped fetch account_label=%s symbols=%s timeframes=%s",
+                "Signal ingestor does not support scoped polling; using unscoped fetch account_label=%s symbols=%s timeframes=%s",
                 self.account_label,
                 ",".join(sorted(symbols)) or "*",
                 ",".join(sorted(timeframes)) or "*",
             )
             return self.ingestor.fetch_signals(session)
 
-    def _live_bounded_collection_fallback_signal_scope(
+    def _live_bounded_collection_signal_scope(
         self,
         strategies: Sequence[Strategy],
     ) -> tuple[set[str], set[str]] | None:
@@ -409,7 +408,7 @@ class SimpleTradingPipeline(
             "symbols": sorted(symbols),
             "timeframes": sorted(timeframes),
             "signals_authoritative": batch.signals_authoritative,
-            "fallback_signal_count": len(batch.fallback_signals),
+            "degraded_signal_count": len(batch.fallback_signals),
             "degraded_signal_source": batch.degraded_signal_source,
             "query_start": batch.query_start.isoformat()
             if batch.query_start is not None
@@ -420,7 +419,7 @@ class SimpleTradingPipeline(
         }
         setattr(self.state, "last_bounded_evidence_collection_blocker", blocker)
         logger.warning(
-            "Blocking bounded paper-route evidence decisions because signal ingest is unavailable account_label=%s reason=%s symbols=%s timeframes=%s fallback_signal_count=%s",
+            "Blocking bounded paper-route evidence decisions because signal ingest is unavailable account_label=%s reason=%s symbols=%s timeframes=%s degraded_signal_count=%s",
             self.account_label,
             reason,
             ",".join(sorted(symbols)) or "*",
@@ -477,13 +476,19 @@ class SimpleTradingPipeline(
             return None
         now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
         market_session_open = self._is_market_session_open(now)
-        testnet_after_hours_route = (
-            settings.trading_mode == "live"
-            and not market_session_open
-            and settings.trading_testnet_after_hours_enabled
+        testnet_after_hours_route = _after_hours_testnet_route_enabled(
+            trading_mode=settings.trading_mode,
+            paper_route_probe_enabled=settings.trading_simple_paper_route_probe_enabled,
+            paper_route_probe_allow_live_mode=(
+                settings.trading_simple_paper_route_probe_allow_live_mode
+            ),
+            testnet_after_hours_enabled=settings.trading_testnet_after_hours_enabled,
+            market_session_open=market_session_open,
         )
         if not market_session_open and not testnet_after_hours_route:
             return None
+        if testnet_after_hours_route:
+            return self._live_bounded_collection_signal_scope(strategies)
         target_symbols, target_plan_error, targets = (
             self._external_paper_route_target_probe_symbols_cached(
                 session=session,
@@ -491,11 +496,6 @@ class SimpleTradingPipeline(
             )
         )
         if target_plan_error:
-            if (
-                testnet_after_hours_route
-                and target_plan_error == "paper_route_session_window_not_open"
-            ):
-                return self._live_bounded_collection_fallback_signal_scope(strategies)
             self._record_bounded_target_plan_blocker(
                 reason=target_plan_error,
                 symbols=target_symbols,

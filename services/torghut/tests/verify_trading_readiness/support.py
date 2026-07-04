@@ -203,7 +203,7 @@ def _paper_route_evidence(
     blockers = (
         import_blockers
         if import_blockers is not None
-        else ([] if import_ready else ["paper_route_session_window_not_open"])
+        else ([] if import_ready else ["alpaca_regular_session_closed"])
     )
     target = {
         "hypothesis_id": "H-PAIRS-01",

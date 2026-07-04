@@ -44,6 +44,7 @@ from .bounded_collection import (
 
 from .target_probe import (
     TargetProbeQuantityResolution,
+    after_hours_testnet_route_enabled,
     bounded_sim_collection_metadata_from_decision,
     decimal_from_mapping,
     mapping_value,
@@ -131,6 +132,7 @@ __all__ = [
     "target_symbols",
     "target_truthy",
     "TargetProbeQuantityResolution",
+    "after_hours_testnet_route_enabled",
     "bounded_sim_collection_metadata_from_decision",
     "decimal_from_mapping",
     "mapping_value",

@@ -654,7 +654,7 @@ def build_runtime_ledger_proof_packet(
     promotion_blockers = list(blockers)
     _extend_unique(promotion_blockers, promotion_prerequisite_blockers)
     waiting_blockers = {
-        "paper_route_session_window_not_open",
+        "alpaca_regular_session_closed",
         "paper_route_session_window_not_closed",
         "paper_route_session_settlement_pending",
         "paper_route_import_not_ready",
