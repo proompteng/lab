@@ -79,7 +79,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Live submission gate was closed: `allowed=false`, `reason=simple_submit_disabled`, `capital_stage=shadow`.
 - Live profitability proof floor was `repair_only`, route state was `repair_only`, and capital state was
   `zero_notional`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live empirical jobs were healthy for candidate `chip-paper-microbar-composite@execution-proof` and dataset
   `torghut-chip-full-day-20260505-5e447b6d-r1`.

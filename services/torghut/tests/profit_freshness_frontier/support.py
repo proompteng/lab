@@ -26,7 +26,7 @@ def _base_inputs() -> dict[str, object]:
             "route_state": "repair_only",
             "capital_state": "zero_notional",
             "max_notional": "0",
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "proof_dimensions": [
                 {
                     "dimension": "execution_tca",

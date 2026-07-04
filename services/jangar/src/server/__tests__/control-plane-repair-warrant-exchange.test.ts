@@ -167,7 +167,7 @@ const scheduledJob = (overrides: Partial<RepairScheduleJob> = {}): RepairSchedul
 describe('repair warrant exchange', () => {
   it('admits bounded zero-notional warrants from Torghut proof-floor blockers', () => {
     const exchange = buildExchange({
-      blockers: ['execution_tca_stale', 'market_context_stale', 'alpha_readiness_not_promotion_eligible'],
+      blockers: ['execution_tca_stale', 'market_context_stale', 'hypothesis_not_promotion_eligible'],
     })
 
     expect(exchange).toMatchObject({

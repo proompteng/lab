@@ -89,7 +89,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Live scheduler was running, startup grace was inactive, Postgres and ClickHouse were healthy, Alpaca live account
   `PA3SX7FYNUTF` was active, and Jangar universe was fresh with eight symbols.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, capital stage `shadow`.
 - Live alpha readiness showed three hypotheses, all `shadow`, zero promotion eligible, and three rollback-required.

@@ -30,7 +30,7 @@ The evidence is explicit:
 - `GET http://torghut.torghut.svc.cluster.local/trading/status` at `2026-03-21T00:31:44Z`
   - reports `running=true` and `mode="live"`;
   - reports `live_submission_gate.allowed=false` with blocked reasons
-    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, `dependency_quorum_block`,
+    `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, `dependency_quorum_block`,
     `quant_health_fetch_failed`, and `live_promotion_disabled`;
   - still projects `quant_evidence.source_url="http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?account=PA3SX7FYNUTF&window=15m"`
     even though manifests now declare the typed quant-health route.

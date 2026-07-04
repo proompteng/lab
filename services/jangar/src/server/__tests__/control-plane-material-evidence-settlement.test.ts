@@ -205,7 +205,7 @@ const repairBidAdmission = (overrides: Partial<RepairBidAdmissionState> = {}): R
         action_class: 'dispatch_repair',
         repair_class: 'alpha_readiness',
         target_value_gate: 'routeable_candidate_count',
-        expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+        expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
         launch_allowed: true,
         max_parallelism: 1,
         max_runtime_seconds: 1200,
@@ -237,7 +237,7 @@ const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {})
   revenue_repair_queue: [
     {
       code: 'repair_alpha_readiness',
-      reason: 'alpha_readiness_not_promotion_eligible',
+      reason: 'hypothesis_not_promotion_eligible',
       dimension: 'alpha_readiness',
       action: 'clear_hypothesis_blockers_before_capital',
       priority: 70,

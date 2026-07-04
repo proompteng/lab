@@ -63,7 +63,7 @@ ClickHouse data, broker state, trading flags, or AgentRun objects.
 - `GET /healthz` returned HTTP 200 with `{"status":"ok","service":"torghut"}`.
 - `GET /readyz` returned HTTP 503.
 - `GET /trading/status` reported live mode and a running loop, but `live_submission_gate.allowed=false` with
-  `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `empirical_jobs_not_ready`.
+  `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `empirical_jobs_not_ready`.
 - Scoped Jangar quant evidence was `status=degraded`; ingestion lag reached `985772` seconds on one strategy and
   materialization was also degraded for two strategies.
 - `GET /trading/revenue-repair` reported `business_state=repair_only`, `revenue_ready=false`,

@@ -25,7 +25,7 @@ Torghut is not capital-ready, but it is producing useful repair evidence. On 202
 returned `status=ok`, `/db-check` returned `ok=true` with Alembic head `0029_whitepaper_embedding_dimension_4096`,
 and live `/readyz` returned `status=degraded` for the right reasons: proof floor `repair_only`, route state
 `repair_only`, capital state `zero_notional`, max notional `0`, and blockers
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 Route evidence covered 8 symbols, with AAPL probing, 4 symbols blocked by route evidence, and 3 missing route
 evidence. Alpha readiness had 3 hypotheses, 0 promotion-eligible, and 3 rollback-required.
 
@@ -85,7 +85,7 @@ All evidence in this pass was collected read-only.
   `0029_whitepaper_embedding_dimension_4096`, `schema_graph_lineage_ready=true`, and known historical parent-fork
   warnings after `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Proof floor blockers were `alpha_readiness_not_promotion_eligible`,
+- Proof floor blockers were `hypothesis_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 - Empirical evidence passed with candidate `chip-paper-microbar-composite@execution-proof`.
 - Quant ingestion was informational because `quant_pipeline_stages_missing`, with latest metrics updated at

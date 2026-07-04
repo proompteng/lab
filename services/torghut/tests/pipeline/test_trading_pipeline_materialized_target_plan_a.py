@@ -117,7 +117,7 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
             "capital_state": "zero_notional",
             "max_notional": "0",
             "market_window": {"session_open": True},
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
         }
         alpaca_client = FakeAlpacaClient()
         pipeline = SimpleTradingPipeline(
@@ -452,7 +452,7 @@ class TestTradingPipelineMaterializedTargetPlanA(TradingPipelineTestCaseBase):
                     "capital_state": "zero_notional",
                     "max_notional": "0",
                     "market_window": {"session_open": True},
-                    "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+                    "blocking_reasons": ["hypothesis_not_promotion_eligible"],
                 },
             ),
             patch(

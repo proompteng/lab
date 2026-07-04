@@ -112,10 +112,10 @@ state, trading flags, GitOps resources, AgentRuns, or market data.
 - `GET /trading/revenue-repair` generated at `2026-05-14T12:11:24.819445+00:00`.
 - `business_state=repair_only`, `revenue_ready=false`, `capital_stage=shadow`, `capital_state=zero_notional`,
   `live_submission_allowed=false`, and `max_notional=0`.
-- Top queue item was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, priority `70`, action
+- Top queue item was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, priority `70`, action
   `clear_hypothesis_blockers_before_capital`, value gate `routeable_candidate_count`, and required output
   `torghut.executable-alpha-receipts.v1`.
-- Blockers included `alpha_readiness_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, and
+- Blockers included `hypothesis_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, and
   `empirical_jobs_not_ready`.
 - Alpha readiness had `3` hypotheses, `0` promotion-eligible hypotheses, and all hypotheses blocked:
   `H-CONT-01`, `H-MICRO-01`, and `H-REV-01`.

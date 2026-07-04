@@ -86,7 +86,7 @@ records, secrets, GitOps resources, AgentRuns, or trading flags.
   `0`.
 - Live submission gate was blocked by `simple_submit_disabled`.
 - Alpha readiness reported 3 total hypotheses, 1 blocked, 2 shadow, 0 promotion eligible, and 2 rollback required.
-- Proof blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+- Proof blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - Live route TCA covered eight scoped symbols. `AAPL` was probing, `AMD`, `AVGO`, `INTC`, and `NVDA` were blocked by
   route TCA, and `AMZN`, `GOOGL`, and `ORCL` had missing route evidence.

@@ -109,7 +109,7 @@ broker state, AgentRun objects, GitOps resources, or trading flags.
 - Torghut live submission gate was closed: `allowed=false`, `reason=simple_submit_disabled`,
   `capital_stage=shadow`.
 - Torghut proof floor was `repair_only`, `capital_state=zero_notional`, with blocking reasons
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Execution TCA had `13,775` orders, `13,571` filled executions, latest computed time
   `2026-05-07T14:23:44.018621+00:00`, average absolute slippage `13.7594875295276693` bps, and guardrail `8` bps.

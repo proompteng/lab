@@ -784,7 +784,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertEqual(result["capital_state"], "live")
         self.assertEqual(result["reason"], "operational_submission_ready")
         self.assertNotIn(
-            "alpha_hypothesis_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             result["blocked_reasons"],
         )
         self.assertNotIn("alpha_hypothesis_shadow_only", result["blocked_reasons"])

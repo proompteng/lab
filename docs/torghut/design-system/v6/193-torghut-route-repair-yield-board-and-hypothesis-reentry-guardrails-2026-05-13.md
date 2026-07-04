@@ -56,7 +56,7 @@ All assessment was read-only.
   - `live_readiness_state=blocked`
   - `max_notional=0`
   - reason codes included `forecast_registry_degraded`, `simple_submit_disabled`, and
-    `alpha_readiness_not_promotion_eligible`
+    `hypothesis_not_promotion_eligible`
 - Route-proven profit receipt:
   - `proof_floor_state=repair_only`
   - `route_state=repair_only`

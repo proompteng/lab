@@ -19,7 +19,7 @@ Before implementation, 2026-05-14T11:05:48Z:
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top queue item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top queue item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - affected value gate: `routeable_candidate_count`
 - `routeable_candidate_count=0`
 - `zero_notional_or_stale_evidence_rate=1.0`
@@ -84,5 +84,5 @@ remain the fallback surfaces. Capital stays `max_notional=0`.
 ## Owner Status
 
 The revenue metric targeted is `routeable_candidate_count`. The current smallest revenue blocker remains
-`alpha_readiness_not_promotion_eligible`; this PR adds compact dividend accounting so Torghut and Jangar can prove
+`hypothesis_not_promotion_eligible`; this PR adds compact dividend accounting so Torghut and Jangar can prove
 whether the selected alpha repair paid, no-deltaed, or must be held before another zero-notional repair launch.

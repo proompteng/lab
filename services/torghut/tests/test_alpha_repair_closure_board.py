@@ -18,7 +18,7 @@ def _repair_queue() -> list[dict[str, object]]:
     return [
         {
             "code": "repair_alpha_readiness",
-            "reason": "alpha_readiness_not_promotion_eligible",
+            "reason": "hypothesis_not_promotion_eligible",
             "priority": 70,
             "expected_unblock_value": 4,
             "value_gate": "routeable_candidate_count",
@@ -65,7 +65,7 @@ def _repair_receipts() -> dict[str, object]:
             "receipt_id": "executable-alpha-repair-receipt:test",
             "source_revenue_repair_ref": "torghut-revenue-repair-digest:test",
             "hypothesis_id": "H-AAPL-ROUTE-REHAB",
-            "reason_codes": ["alpha_readiness_not_promotion_eligible"],
+            "reason_codes": ["hypothesis_not_promotion_eligible"],
             "validation_commands": [
                 "uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py -k promotion"
             ],
@@ -197,7 +197,7 @@ def test_alpha_repair_closure_board_selects_micro_feature_replay_market_first() 
 
     closure = cast(list[Mapping[str, Any]], board["repair_closures"])[0]
     assert closure["hypothesis_id"] == "H-MICRO-01"
-    assert closure["reason_code"] == "alpha_readiness_not_promotion_eligible"
+    assert closure["reason_code"] == "hypothesis_not_promotion_eligible"
     assert closure["max_notional"] == "0"
     market = cast(Mapping[str, Any], board["alpha_closure_settlement_market"])
     assert market["selected_hypothesis_id"] == "H-MICRO-01"
@@ -248,8 +248,8 @@ def test_alpha_repair_closure_board_uses_receipt_fallback_and_positive_delta() -
     selected_receipt = cast(dict[str, object], repair_receipts.pop("selected_receipt"))
     selected_receipt["measured_delta"] = "2.0"
     selected_receipt["reason_codes"] = [
-        "alpha_readiness_not_promotion_eligible",
-        "alpha_readiness_not_promotion_eligible",
+        "hypothesis_not_promotion_eligible",
+        "hypothesis_not_promotion_eligible",
         "",
     ]
     repair_receipts["receipts"] = [selected_receipt]

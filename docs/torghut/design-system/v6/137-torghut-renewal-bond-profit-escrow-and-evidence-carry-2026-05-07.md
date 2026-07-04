@@ -29,7 +29,7 @@ heads. Empirical jobs were fresh and promotion-authority eligible for
 
 Capital still had to remain at zero. `/readyz` was degraded because the live submission gate was closed,
 profitability proof floor was `repair_only`, capital state was `zero_notional`, and blocking reasons were
-`alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Quant latest metrics
+`hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Quant latest metrics
 were fresh, but ingestion lag was `41138` seconds and materialization lag was `20` seconds. The Jangar market-context
 route reported `overallState=down`, with technicals and regime in error, fundamentals and news missing, and ClickHouse
 ingestion unavailable because `CH_HOST` was not configured. TCA was stale from `2026-04-02T20:59:45.136640Z`, with
@@ -79,7 +79,7 @@ flags, GitOps manifests, ClickHouse tables, or empirical artifacts.
 ### Profit And Freshness Evidence
 
 - Proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Empirical proof passed with candidate `chip-paper-microbar-composite@execution-proof` and dataset snapshot
   `torghut-chip-full-day-20260505-5e447b6d-r1`.

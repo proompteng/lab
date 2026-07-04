@@ -27,7 +27,7 @@ increment.
 The live business surface is explicit and still capital-safe. On 2026-05-14 at 00:27 UTC,
 `GET /trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`,
 `routeable_candidate_count=0`, `max_notional=0`, and `capital_rule=zero_notional_repair_only`. The top queue item
-remained `repair_alpha_readiness` for `alpha_readiness_not_promotion_eligible`, value gate
+remained `repair_alpha_readiness` for `hypothesis_not_promotion_eligible`, value gate
 `routeable_candidate_count`, expected unblock value `4`, and required output receipt
 `torghut.executable-alpha-receipts.v1`.
 
@@ -137,7 +137,7 @@ broker state, GitOps resources, AgentRuns, or market data.
   `capital_stage=shadow`, `proof_floor_state=repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
 - Top queue item:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `value_gate=routeable_candidate_count`
   - `expected_unblock_value=4`
   - `required_output_receipt=torghut.executable-alpha-receipts.v1`
@@ -443,5 +443,5 @@ Deployer: validate that the board is visible and capital remains closed. A succe
 revenue-ready; it means the next zero-notional repair can be admitted and audited.
 
 Revenue metric: this targets `routeable_candidate_count`. The smallest blocker preventing immediate revenue impact is
-`alpha_readiness_not_promotion_eligible` with feature rows, drift checks, and required feature set evidence missing on
+`hypothesis_not_promotion_eligible` with feature rows, drift checks, and required feature set evidence missing on
 the lineage-ready `H-MICRO-01` lane.

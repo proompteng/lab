@@ -487,7 +487,7 @@ def _alpha_blockers(
     if state and state not in _ACCEPTED_STATES:
         blockers.append(f"alpha_readiness_{state}")
     if _int(source_ref.get("promotion_eligible_total"), default=-1) == 0:
-        blockers.append("alpha_readiness_not_promotion_eligible")
+        blockers.append("hypothesis_not_promotion_eligible")
     return _unique(blockers)
 
 

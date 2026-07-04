@@ -65,7 +65,7 @@ flags, broker state, GitOps resources, or AgentRun objects.
 
 ### Data And Capital Evidence
 
-- Live submission was blocked by `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and
+- Live submission was blocked by `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and
   `empirical_jobs_not_ready`.
 - Profitability proof floor was `repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
 - Consumer evidence produced a current receipt and a route-proven-profit repair decision with `route_repair_value=14`.

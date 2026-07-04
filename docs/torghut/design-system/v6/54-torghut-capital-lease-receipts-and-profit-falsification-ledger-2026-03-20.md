@@ -29,13 +29,13 @@ Read-only evidence captured on `2026-03-20` shows the current contradiction:
   - `schema_current_heads = ["0025_widen_lean_shadow_parity_status"]`
   - `expected_heads = ["0024_simulation_runtime_context"]`
   - `live_submission_gate.allowed = false`
-  - `live_submission_gate.reason = "alpha_readiness_not_promotion_eligible"`
+  - `live_submission_gate.reason = "hypothesis_not_promotion_eligible"`
 - `curl -fsS 'http://torghut.torghut.svc.cluster.local/trading/health'`
   - `dependencies.live_submission_gate.ok = true`
   - `dependencies.live_submission_gate.capital_stage = "0.10x canary"`
 - `curl -fsS 'http://torghut.torghut.svc.cluster.local/trading/status'`
-  - `live_submission_gate.reason = "alpha_readiness_not_promotion_eligible"`
-  - `live_submission_gate.blocked_reasons = ["alpha_readiness_not_promotion_eligible", "live_promotion_disabled"]`
+  - `live_submission_gate.reason = "hypothesis_not_promotion_eligible"`
+  - `live_submission_gate.blocked_reasons = ["hypothesis_not_promotion_eligible", "live_promotion_disabled"]`
   - `live_submission_gate.dependency_quorum_decision = "allow"`
 - `curl -fsS 'http://jangar.jangar.svc.cluster.local/api/torghut/trading/control-plane/quant/health?window=15m'`
   - `status = "degraded"`

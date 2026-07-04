@@ -32,7 +32,7 @@ The reason is visible in the current live system on `2026-03-20`:
   - returns `live_submission_gate.allowed = false`
   - returns `promotion_eligible_total = 0`
   - includes blocked reasons:
-    - `alpha_readiness_not_promotion_eligible`
+    - `hypothesis_not_promotion_eligible`
     - `empirical_jobs_not_ready`
     - `dependency_quorum_block`
     - `quant_health_fetch_failed`

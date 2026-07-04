@@ -130,7 +130,7 @@ trading flags, broker state, GitOps applications, AgentRuns, or market data.
 - `/trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`, active revision
   `torghut-00371`, source commit `8d84f9f5ce028214bfb5326e0791638bc35625f5`, live submission disabled, capital stage
   `shadow`, proof floor `repair_only`, and max notional `0`.
-- The top repair queue item was `repair_alpha_readiness` with reason `alpha_readiness_not_promotion_eligible`,
+- The top repair queue item was `repair_alpha_readiness` with reason `hypothesis_not_promotion_eligible`,
   value gate `routeable_candidate_count`, expected unblock value `4`, required output
   `torghut.executable-alpha-receipts.v1`, and max notional `0`.
 - The selected executable alpha repair receipt was

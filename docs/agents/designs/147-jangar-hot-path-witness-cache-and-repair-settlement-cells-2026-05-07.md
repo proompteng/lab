@@ -133,7 +133,7 @@ AgentRun objects, trading flags, ClickHouse tables, or empirical artifacts.
 - Torghut schema lineage still warns about historic parent forks at `0010_execution_provenance_and_governance_trace`
   and `0015_whitepaper_workflow_tables`.
 - Torghut live `/readyz` was `degraded` because the profitability proof floor was `repair_only` and `zero_notional`.
-- Live proof blockers were `alpha_readiness_not_promotion_eligible`,
+- Live proof blockers were `hypothesis_not_promotion_eligible`,
   `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and `simple_submit_disabled`.
 - Live quant evidence was informational but degraded: latest metrics updated at `2026-05-07T13:24:44.656Z` with
   max stage lag `70813` seconds.

@@ -29,7 +29,7 @@ fresh with `12` symbols, and empirical jobs were healthy.
 
 The profit evidence still says no. Live submission was closed by `simple_submit_disabled` with
 `capital_stage=shadow`. The proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`,
-and max notional `0`. Blocking reasons included `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`,
+and max notional `0`. Blocking reasons included `hypothesis_not_promotion_eligible`, `execution_tca_stale`,
 `market_context_stale`, and `simple_submit_disabled`. Execution TCA was last computed on
 `2026-04-02T20:59:45.136640Z`, average absolute slippage was about `568.61` bps against an `8` bps guardrail, quant
 ingestion lag was `62,654` seconds, forecast authority was degraded with `registry_empty`, and zero hypotheses were
@@ -102,7 +102,7 @@ state, trading flags, AgentRun objects, GitOps resources, or empirical artifacts
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, with `capital_stage=shadow`.
 - Profitability proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max
   notional `0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`,
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Execution TCA had `13,775` orders, last computed `2026-04-02T20:59:45.136640Z`, average absolute slippage about
   `568.61` bps, and slippage guardrail `8` bps.

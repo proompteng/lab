@@ -25,7 +25,7 @@ board.
 
 The live business surface is still repair-only. On 2026-05-14, `GET /trading/revenue-repair` returned
 `revenue_ready=false`, `business_state=repair_only`, and top queue item `repair_alpha_readiness`. The top item targets
-`routeable_candidate_count`, has reason `alpha_readiness_not_promotion_eligible`, expected unblock value `4`, max
+`routeable_candidate_count`, has reason `hypothesis_not_promotion_eligible`, expected unblock value `4`, max
 notional `0`, capital rule `zero_notional_repair_only`, and required output receipt
 `torghut.executable-alpha-receipts.v1`.
 
@@ -78,7 +78,7 @@ All evidence was collected read-only on 2026-05-14.
   `business_state=repair_only`.
 - The top queue item was:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `dimension=alpha_readiness`
   - `action=clear_hypothesis_blockers_before_capital`
   - `priority=70`

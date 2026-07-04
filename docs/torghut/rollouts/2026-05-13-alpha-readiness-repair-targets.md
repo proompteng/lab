@@ -17,7 +17,7 @@ Read-only source: `GET http://torghut.torghut.svc.cluster.local/trading/revenue-
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top `repair_queue` item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top `repair_queue` item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - selected value gate: `routeable_candidate_count`
 - capital remained `zero_notional` with `max_notional=0`
 - routeable candidate count remained `0`
@@ -64,7 +64,7 @@ Broader local validation:
 
 Risk is limited to additive evidence payload fields. The change does not alter submission gates, notional sizing,
 route-state decisions, or live submit configuration. If a downstream consumer rejects the added fields, roll back by
-reverting this PR; the prior behavior falls back to generic `alpha_readiness_not_promotion_eligible` repair evidence
+reverting this PR; the prior behavior falls back to generic `hypothesis_not_promotion_eligible` repair evidence
 with capital still held at `max_notional=0`.
 
 ## Owner-Facing Status

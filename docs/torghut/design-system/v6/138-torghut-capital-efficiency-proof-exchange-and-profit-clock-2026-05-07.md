@@ -29,7 +29,7 @@ Cluster and runtime:
 - Torghut live revision `torghut-00250` is serving, but `/readyz` and `/trading/health` are degraded.
 - Live trading status shows `capital_stage: shadow`, `live_submission_gate.allowed: false`,
   `simple_submit_disabled`, and proof-floor `route_state: repair_only`.
-- Live proof-floor blocking reasons include `alpha_readiness_not_promotion_eligible`,
+- Live proof-floor blocking reasons include `hypothesis_not_promotion_eligible`,
   `execution_tca_stale`, and `simple_submit_disabled`.
 - Live quant evidence reports `quant_pipeline_degraded` with `maxStageLagSeconds: 44777`. Compute is current,
   while ingestion and materialization are not coherent.

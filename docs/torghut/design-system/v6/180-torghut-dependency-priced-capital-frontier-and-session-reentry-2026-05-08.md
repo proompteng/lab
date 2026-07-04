@@ -77,7 +77,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
 - `/trading/status` returned HTTP 200 and confirmed `TRADING_MODE=live`, `TRADING_STRATEGY_RUNTIME_MODE=scheduler_v3`,
   live submit disabled, autonomy disabled, and kill switch disabled.
 - The live submission gate blocked on `simple_submit_disabled`.
-- The proof floor blocked on `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+- The proof floor blocked on `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - Jangar account/window quant health returned HTTP 200 but `status=degraded` and `latestMetricsCount=0` for
   `account=paper&window=15m`.

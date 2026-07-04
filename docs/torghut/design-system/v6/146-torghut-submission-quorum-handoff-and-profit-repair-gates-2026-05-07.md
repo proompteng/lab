@@ -28,7 +28,7 @@ empirical jobs were healthy.
 
 The trading route still returned HTTP `503` with `status=degraded`. The live submission gate was closed by
 `simple_submit_disabled`, proof floor state was `repair_only`, capital state was `zero_notional`, and the blocking
-reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Execution
+reasons were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Execution
 TCA was last computed on `2026-04-02T20:59:45.136640Z`; average absolute slippage was about `568.61` bps against an
 `8` bps guardrail; quant ingestion lag was `59,905` seconds; and zero hypotheses were promotion eligible.
 
@@ -84,7 +84,7 @@ state, trading flags, AgentRun records, GitOps resources, or empirical artifacts
   `torghut-chip-full-day-20260505-5e447b6d-r1`.
 - Live submission was `allowed=false`, reason `simple_submit_disabled`, with `capital_stage=shadow`.
 - Proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Quant evidence was informationally degraded: latest metrics count was `144`, metrics pipeline lag was `6` seconds,
   but max stage lag was `59,905` seconds and the ingestion stage was not OK.

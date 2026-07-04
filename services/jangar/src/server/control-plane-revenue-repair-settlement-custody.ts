@@ -83,8 +83,7 @@ export const deriveRevenueRepairReadiness = (status: TorghutConsumerEvidenceStat
   return { topRepairQueueItem: topItem, businessState, revenueReady }
 }
 
-const isTopAlphaRepair = (item: TorghutRevenueRepairQueueItem | null) =>
-  item?.code === 'repair_alpha_readiness' || item?.reason === 'alpha_readiness_not_promotion_eligible'
+const isTopAlphaRepair = (item: TorghutRevenueRepairQueueItem | null) => item?.code === 'repair_alpha_readiness'
 
 type AlphaSettlementEvidence = {
   source: 'alpha_readiness_settlement_conveyor' | 'alpha_repair_closure_board' | 'executable_alpha_repair_receipt'

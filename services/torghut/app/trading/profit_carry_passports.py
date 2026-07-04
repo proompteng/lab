@@ -427,7 +427,7 @@ def _alpha_passport(
         ]
     )
     if not current_blockers and not bool(micro.get("promotion_eligible")):
-        current_blockers = ["alpha_readiness_not_promotion_eligible"]
+        current_blockers = ["hypothesis_not_promotion_eligible"]
     repair_class = "alpha_window_evidence_refill"
     no_delta_downgraded = _no_delta_matches(
         repair_class=repair_class,

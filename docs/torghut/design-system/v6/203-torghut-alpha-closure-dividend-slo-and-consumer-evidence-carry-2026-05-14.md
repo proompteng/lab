@@ -116,7 +116,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
 
 - `/trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`, and top queue item
   `repair_alpha_readiness`.
-- The top item cited reason `alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`, expected
+- The top item cited reason `hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`, expected
   unblock value `4`, required output `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - The full alpha repair closure board was selected with board id
   `alpha-repair-closure-board:a99bea7acfa184abcd5d297c` and value gate `routeable_candidate_count`.

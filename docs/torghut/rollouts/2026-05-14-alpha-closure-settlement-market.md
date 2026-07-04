@@ -15,7 +15,7 @@ Before evidence at `2026-05-14T02:17:19Z`:
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top `repair_queue` item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top `repair_queue` item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - affected value gate: `routeable_candidate_count`
 - `routeable_candidate_count=0`
 - `zero_notional_or_stale_evidence_rate=1.0`
@@ -28,7 +28,7 @@ Before evidence at `2026-05-14T02:17:19Z`:
 `alpha_repair_closure_board` now includes a nested
 `torghut.alpha-closure-settlement-market.v1` object. The market follows doc 201 by selecting `H-MICRO-01` as the first
 feature-replay closure while the live alpha-readiness queue remains topped by
-`alpha_readiness_not_promotion_eligible` and the hypothesis carries feature, drift, or required feature-set blockers.
+`hypothesis_not_promotion_eligible` and the hypothesis carries feature, drift, or required feature-set blockers.
 
 The market carries:
 

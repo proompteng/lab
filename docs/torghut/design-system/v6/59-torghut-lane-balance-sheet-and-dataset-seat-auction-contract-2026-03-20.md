@@ -30,7 +30,7 @@ The reason is concrete in the live system on `2026-03-20`:
 - `GET http://torghut.torghut.svc.cluster.local/trading/status`
   - returns HTTP `200`
   - reports `build.active_revision="torghut-00156"`
-  - reports `live_submission_gate.blocked_reasons=["alpha_readiness_not_promotion_eligible","empirical_jobs_not_ready","dependency_quorum_block","quant_health_fetch_failed","live_promotion_disabled"]`
+  - reports `live_submission_gate.blocked_reasons=["hypothesis_not_promotion_eligible","empirical_jobs_not_ready","dependency_quorum_block","quant_health_fetch_failed","live_promotion_disabled"]`
   - reports `forecast_service.status="degraded"`
   - reports `feature_staleness_ms_p95=421444`
   - reports `feature_quality_rejections_total=22`

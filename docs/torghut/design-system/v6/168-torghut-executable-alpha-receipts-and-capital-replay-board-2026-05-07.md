@@ -103,7 +103,7 @@ records, GitOps resources, AgentRuns, broker state, Torghut flags, or ClickHouse
 - Live `/trading/health` returned HTTP 503 with service `status=degraded`, even though Postgres, ClickHouse, Alpaca,
   universe, and readiness cache were OK.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, `market_context_stale`, and `simple_submit_disabled`.
 - Live route-reacquisition had one probing candidate, `AAPL`, and seven repair candidates. `NVDA`, `AMD`, `INTC`, and
   `AVGO` were blocked by route/TCA evidence; `AMZN`, `GOOGL`, and `ORCL` were missing TCA symbol evidence.

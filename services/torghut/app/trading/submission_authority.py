@@ -8,7 +8,7 @@ from typing import Any, cast
 
 _RETIRED_SUBMISSION_AUTHORITY_BLOCKERS = frozenset(
     {
-        "alpha_readiness_not_promotion_eligible",
+        "hypothesis_not_promotion_eligible",
         "runtime_ledger_profit_target_source_collection_pending",
         "runtime_ledger_source_collection_pending",
     }

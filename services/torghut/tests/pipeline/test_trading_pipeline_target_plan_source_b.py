@@ -86,7 +86,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             gate = {
                 "allowed": False,
                 "blocked_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "runtime_ledger_source_collection_pending",
                     "runtime_ledger_profit_target_source_collection_pending",
                 ],
@@ -299,7 +299,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             gate = {
                 "allowed": False,
                 "blocked_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "runtime_ledger_source_collection_pending",
                     "runtime_ledger_profit_target_source_collection_pending",
                 ],
@@ -534,7 +534,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
             "max_notional": "0",
             "market_window": {"session_open": True},
             "blocking_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "execution_tca_symbol_missing",
             ],
             "route_reacquisition_book": {
@@ -847,7 +847,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
 
         no_route_reason_floor = {
             **proof_floor,
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
         }
         self.assertIsNone(
             pipeline._paper_route_probe_context(
@@ -858,7 +858,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
 
         record_level_route_repair_floor = {
             **proof_floor,
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "route_reacquisition_book": {
                 "summary": {"candidate_symbols": ["NVDA"]},
                 "records": [
@@ -885,7 +885,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
 
         symbol_level_route_repair_floor = {
             **proof_floor,
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "route_reacquisition_book": {
                 "summary": {
                     "repair_candidate_symbols": ["NVDA"],
@@ -915,7 +915,7 @@ class TestTradingPipelineTargetPlanSourceB(TradingPipelineTestCaseBase):
 
         paper_route_probe_symbol_floor = {
             **proof_floor,
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "route_reacquisition_book": {
                 "summary": {
                     "repair_candidate_symbols": ["MU"],

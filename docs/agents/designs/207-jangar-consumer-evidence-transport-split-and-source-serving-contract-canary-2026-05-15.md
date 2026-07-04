@@ -118,7 +118,7 @@ database records, AgentRuns, GitOps state, broker state, market data, or trading
 
 - `/trading/revenue-repair` returned `schema_version=torghut.revenue-repair-digest.v1`, `business_state=repair_only`,
   and `revenue_ready=false`.
-- The top repair queue item was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate
+- The top repair queue item was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate
   `routeable_candidate_count`, required output `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - Torghut `jangar_controller_ingestion_carry.carry_state=lagging` with reasons including
   `source_serving_contract_unavailable_on_ready_hot_path`, `rollout_health_unknown`, and

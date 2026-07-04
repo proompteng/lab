@@ -29,7 +29,7 @@ The live business surface is specific. On 2026-05-14 at 00:25 UTC,
 `GET http://torghut.torghut.svc.cluster.local/trading/revenue-repair` returned `revenue_ready=false`,
 `business_state=repair_only`, `capital_state=zero_notional`, `max_notional=0`, and top queue item
 `repair_alpha_readiness`. That top item targets `routeable_candidate_count`, cites
-`alpha_readiness_not_promotion_eligible`, has expected unblock value `4`, and requires
+`hypothesis_not_promotion_eligible`, has expected unblock value `4`, and requires
 `torghut.executable-alpha-receipts.v1`.
 
 The current evidence is not telling us to relax capital. It is telling us to make the alpha repair measurable enough

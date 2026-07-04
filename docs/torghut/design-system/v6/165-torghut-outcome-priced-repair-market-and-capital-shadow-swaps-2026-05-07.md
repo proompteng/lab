@@ -97,7 +97,7 @@ records, ClickHouse tables, broker state, GitOps resources, AgentRun objects, or
 - Live submission gate was closed by `simple_submit_disabled`; capital stage remained `shadow`.
 - Proof floor was `repair_only`; route state was `repair_only`; capital state was `zero_notional`; max notional was
   `0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Alpha readiness had three shadow hypotheses, zero promotion eligible, and three rollback required.
 - Execution TCA had 7334 orders and 7245 filled executions. Latest TCA computation was
@@ -112,7 +112,7 @@ records, ClickHouse tables, broker state, GitOps resources, AgentRun objects, or
 - Simulation `/trading/health` returned `status=ok` operationally, but proof floor remained `repair_only` and capital
   state remained `zero_notional`.
 - Simulation routeability had one probing symbol, `NVDA`, seven missing symbols, and zero routeable symbols.
-- Simulation blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Simulation blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, and `market_context_stale`.
 - Jangar quant health for live account/window returned 144 latest metrics and a fresh latest update during one direct
   read, but stage coverage was empty.

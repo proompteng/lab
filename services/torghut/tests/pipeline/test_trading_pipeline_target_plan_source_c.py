@@ -107,7 +107,7 @@ class TestTradingPipelineTargetPlanSourceC(TradingPipelineTestCaseBase):
         )
         proof_floor = {
             "market_window": {"session_open": True},
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "route_reacquisition_book": {
                 "summary": {
                     "repair_candidate_symbols": ["AAPL", "NVDA"],

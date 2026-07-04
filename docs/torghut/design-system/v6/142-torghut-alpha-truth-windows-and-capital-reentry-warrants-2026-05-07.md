@@ -97,7 +97,7 @@ or trading flags.
 - The live submission gate was closed with `reason=simple_submit_disabled`, `capital_stage=shadow`, and
   `promotion_eligible_total=0`.
 - The proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`, and blocked by
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - `/trading/profitability/runtime` reported a 72-hour window with `25` decisions, `0` executions, `0` TCA samples, and
   realized PnL proxy `0`.
 - `/trading/tca?limit=5` reported `13,775` historical TCA rows, average absolute slippage about `568.61bps`, expected

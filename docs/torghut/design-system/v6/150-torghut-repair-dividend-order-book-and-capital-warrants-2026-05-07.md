@@ -83,7 +83,7 @@ broker state, AgentRun objects, GitOps resources, trading flags, or empirical ar
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, `capital_stage=shadow`.
 - Live proof floor was `floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and
   `max_notional=0`.
-- Live proof blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`,
+- Live proof blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`,
   and `simple_submit_disabled`.
 - Live quant evidence was degraded: latest metrics were current, but ingestion lag was `67203` seconds and
   materialization was unhealthy.

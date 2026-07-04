@@ -21,7 +21,7 @@ Read-only sample at `2026-05-14T14:34:43Z`:
 - active revision `torghut-00392`
 - source commit `637239a49a577d20596ded51244d6fb3b0cf3d72`
 - top queue item `repair_alpha_readiness`
-- top queue reason `alpha_readiness_not_promotion_eligible`
+- top queue reason `hypothesis_not_promotion_eligible`
 - top queue value gate `routeable_candidate_count`
 - `accepted_routeable_candidate_count=0`
 - repair-bid settlement `routeable_candidate_count=0`
@@ -36,7 +36,7 @@ Read-only sample after local implementation, before deploy, at `2026-05-14T14:49
 - active revision `torghut-00393`
 - source commit `637239a49a577d20596ded51244d6fb3b0cf3d72`
 - top queue item `repair_alpha_readiness`
-- top queue reason `alpha_readiness_not_promotion_eligible`
+- top queue reason `hypothesis_not_promotion_eligible`
 - top queue value gate `routeable_candidate_count`
 - `accepted_routeable_candidate_count=0`
 - repair-bid settlement `routeable_candidate_count=0`

@@ -30,7 +30,7 @@ inside `/trading/status`.
 The receipt correctly keeps capital closed. Live `/readyz` returned HTTP 503 `degraded` while dependencies were
 reachable: Postgres, ClickHouse, Alpaca, schema lineage, empirical jobs, and quant evidence all reported usable
 runtime status. The blockers are profitability and admission blockers, not service liveness blockers:
-`forecast_registry_degraded`, `simple_submit_disabled`, and `alpha_readiness_not_promotion_eligible`. The proof floor
+`forecast_registry_degraded`, `simple_submit_disabled`, and `hypothesis_not_promotion_eligible`. The proof floor
 is `repair_only`, capital state is `zero_notional`, and the live submission gate is closed.
 
 The route book now tells us where to spend the next engineering dollar. AAPL is a probing candidate with TCA evidence
@@ -86,7 +86,7 @@ flags, or broker state.
 ### Data Quality And Freshness
 
 - Live proof floor had `route_state=repair_only`, `capital_state=zero_notional`, and blockers
-  `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible` and `simple_submit_disabled`.
 - Route reacquisition showed 8 scoped symbols, 0 routeable symbols, 1 probing symbol, 4 blocked symbols, 3 missing
   symbols, and 7 repair candidates.
 - AAPL was the only probing candidate. NVDA, AMD, INTC, and AVGO were blocked by

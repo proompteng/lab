@@ -43,9 +43,9 @@ def test_simple_live_submission_gate_drops_retired_source_collection_blockers(
             _ = self, inputs
             return {
                 "allowed": False,
-                "reason": "alpha_readiness_not_promotion_eligible",
+                "reason": "hypothesis_not_promotion_eligible",
                 "blocked_reasons": [
-                    "alpha_readiness_not_promotion_eligible",
+                    "hypothesis_not_promotion_eligible",
                     "runtime_ledger_profit_target_source_collection_pending",
                     "runtime_ledger_source_collection_pending",
                 ],
@@ -118,7 +118,7 @@ def test_live_profitability_proof_floor_is_diagnostic_for_runtime_ledger_blocker
             "capital_state": "zero_notional",
             "max_notional": "0",
             "blocking_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "runtime_ledger_profit_target_source_collection_pending",
                 "runtime_ledger_source_collection_pending",
             ],

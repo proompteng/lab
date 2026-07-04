@@ -28,7 +28,7 @@ const executableAlphaReceipt = (
   hypothesis_id: 'H-MICRO-01',
   repair_class: 'capital_replay_board_refresh',
   target_value_gate: 'routeable_candidate_count',
-  reason_codes: ['alpha_readiness_not_promotion_eligible'],
+  reason_codes: ['hypothesis_not_promotion_eligible'],
   account_id: 'PA3SX7FYNUTF',
   window: '15m',
   trading_mode: 'live',
@@ -38,7 +38,7 @@ const executableAlphaReceipt = (
   evidence_window_status: 'current',
   alpha_readiness_state: 'blocked',
   expected_unblock_value: 3,
-  expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+  expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
   required_input_refs: ['capital-replay:current'],
   required_output_receipts: [
     'alpha_readiness_receipt',
@@ -81,7 +81,7 @@ const torghutEvidence = (
     revenue_repair_queue: [
       {
         code: 'repair_alpha_readiness',
-        reason: 'alpha_readiness_not_promotion_eligible',
+        reason: 'hypothesis_not_promotion_eligible',
         dimension: 'alpha_readiness',
         action: 'clear_hypothesis_blockers_before_capital',
         priority: 70,
@@ -111,7 +111,7 @@ const torghutEvidence = (
       revenue_repair_digest_ref: 'torghut-revenue-repair-digest:current',
       selected_business_blocker: {
         code: 'repair_alpha_readiness',
-        reason: 'alpha_readiness_not_promotion_eligible',
+        reason: 'hypothesis_not_promotion_eligible',
         value_gate: 'routeable_candidate_count',
         required_output_receipt: 'torghut.executable-alpha-receipts.v1',
       },
@@ -140,10 +140,10 @@ const torghutEvidence = (
       routeable_candidate_count_before: 0,
       max_notional: '0',
       capital_rule: 'zero_notional_repair_only',
-      reason_codes: ['alpha_readiness_not_promotion_eligible'],
+      reason_codes: ['hypothesis_not_promotion_eligible'],
       rollback_target: 'stop emitting executable alpha repair receipts',
     },
-    reason_codes: ['alpha_readiness_not_promotion_eligible'],
+    reason_codes: ['hypothesis_not_promotion_eligible'],
     message: 'current',
     ...overrides,
   }
@@ -166,12 +166,12 @@ const materialReceipt = (selectedReceiptId = 'executable-alpha-repair-receipt:cu
     'uv run --frozen pytest services/torghut/tests/test_executable_alpha_repair_receipts.py',
   ],
   value_gates: ['routeable_candidate_count'],
-  expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+  expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
   max_parallelism: 1,
   max_runtime_seconds: 1200,
   max_notional: 0,
   evidence_refs: ['torghut-route-proven-profit:current', selectedReceiptId],
-  reason_codes: ['alpha_readiness_not_promotion_eligible'],
+  reason_codes: ['hypothesis_not_promotion_eligible'],
   rollback_target: 'disable material reentry clearinghouse emission and keep Torghut max_notional=0',
   implementer_dispatch: null,
 })

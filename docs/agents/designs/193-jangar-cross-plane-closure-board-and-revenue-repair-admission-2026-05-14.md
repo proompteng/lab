@@ -148,7 +148,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
   capital stayed `zero_notional`; active capital stage was `shadow`.
 - `GET http://torghut.torghut.svc.cluster.local/trading/revenue-repair` returned `revenue_ready=false`,
   `business_state=repair_only`, and top queue item `repair_alpha_readiness` with reason
-  `alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`, expected unblock value `4`, and
+  `hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`, expected unblock value `4`, and
   required output receipt `torghut.executable-alpha-receipts.v1`.
 - Jangar `/ready` saw Torghut consumer evidence current with decision `repair`, `route_repair_value=14`,
   `routeability_aggregate_state=blocked`, selected compacted lots, three dispatchable lots, and blockers including

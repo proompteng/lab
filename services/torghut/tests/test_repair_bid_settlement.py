@@ -192,7 +192,7 @@ def test_feature_coverage_preempts_generic_rollout_repair() -> None:
             "execution_tca_stale",
             "route_adjacent_workload_proof_missing",
             "post_cost_expectancy_non_positive",
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             "feature_rows_missing",
             "required_feature_set_unavailable",
         ]
@@ -230,7 +230,7 @@ def test_alpha_readiness_strike_reserves_promotion_custody_dispatch_capacity() -
             "route_adjacent_workload_proof_missing",
             "post_cost_expectancy_non_positive",
             "hypothesis_not_promotion_eligible",
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             "simple_submit_disabled",
         ]
     )
@@ -251,7 +251,7 @@ def test_alpha_readiness_strike_reserves_promotion_custody_dispatch_capacity() -
         == "torghut.executable-alpha-receipts.v1"
     )
     assert promotion_lot["expected_gate_delta"] == (
-        "retire_alpha_readiness_not_promotion_eligible"
+        "retire_hypothesis_not_promotion_eligible"
     )
     assert promotion_lot["max_notional"] == "0"
     assert ledger["capital_decision"] == "repair_only"
@@ -273,7 +273,7 @@ def test_profit_freshness_selected_repair_becomes_ticketable_zero_notional_lot()
     ledger = _build(
         reason_codes=[
             "quant_health_not_configured",
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             "execution_tca_stale",
         ],
         profit_freshness_frontier={

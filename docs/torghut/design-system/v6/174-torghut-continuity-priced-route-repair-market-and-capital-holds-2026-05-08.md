@@ -74,7 +74,7 @@ All evidence was collected read-only.
 - Schema lineage was ready, with warnings for known parent forks after revisions
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Proof floor state was `repair_only`; route state was `repair_only`; capital state was `zero_notional`.
-- Proof floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+- Proof floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - Alpha readiness had 3 hypotheses, state totals `blocked=1` and `shadow=2`, 0 promotion-eligible hypotheses, and 2
   rollback-required hypotheses.

@@ -109,7 +109,7 @@ records, ClickHouse tables, broker state, GitOps resources, AgentRun objects, or
   Jangar universe fresh with eight symbols, readiness cache fresh, and quant evidence informational.
 - Live submission gate was closed by `simple_submit_disabled`; capital stage was `shadow`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live alpha readiness had three shadow hypotheses, zero promotion eligible, and three rollback required.
 - Live routeability had zero routeable symbols, five blocked symbols, and three missing symbols.
@@ -127,7 +127,7 @@ records, ClickHouse tables, broker state, GitOps resources, AgentRun objects, or
 - Simulation `/trading/health` returned operational `status=ok`.
 - Simulation proof floor still reported `repair_only`, `capital_state=zero_notional`, and max notional `0`.
 - Simulation alpha readiness had three shadow hypotheses, zero promotion eligible, and three rollback required.
-- Simulation blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Simulation blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, and `market_context_stale`.
 - Simulation routeability had one probing symbol, `NVDA`, seven missing symbols, and zero routeable symbols.
 - Simulation TCA was stale at about 94266 seconds versus an 86400 second threshold, and there was one unsettled

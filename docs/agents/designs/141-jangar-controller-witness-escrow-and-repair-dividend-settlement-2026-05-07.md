@@ -116,7 +116,7 @@ rechecked the current runtime state before writing this contract.
   jobs, and DSPy informational checks were reachable.
 - Live submission was blocked by `simple_submit_disabled` with `capital_stage=shadow`.
 - Profitability proof floor was `repair_only`, `capital_state=zero_notional`, with blocking reasons
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Quant evidence was informationally degraded because ingestion lag was stale: latest metrics were current, but max
   stage lag was `59069` seconds and ingestion was not OK.
 - TCA was stale from `2026-04-02T20:59:45.136640Z`, average absolute slippage was about `568.61` bps, and the guardrail

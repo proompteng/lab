@@ -33,7 +33,7 @@ The reason is visible in the live system on `2026-03-20`:
   - reports `live_submission_gate.allowed=false`
   - reports `capital_stage="shadow"` and `capital_state="observe"`
   - reports blocked reasons:
-    - `alpha_readiness_not_promotion_eligible`
+    - `hypothesis_not_promotion_eligible`
     - `empirical_jobs_not_ready`
     - `dependency_quorum_block`
     - `quant_health_fetch_failed`

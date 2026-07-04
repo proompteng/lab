@@ -31,9 +31,8 @@ HPAIRS_SOURCE_PROOF_CENSUS_STATUS_SCHEMA_VERSION = (
 )
 CAPITAL_PROMOTION_STATUS_BLOCKERS = frozenset(
     {
-        "alpha_hypothesis_not_promotion_eligible",
+        "hypothesis_not_promotion_eligible",
         "alpha_hypothesis_shadow_only",
-        "alpha_readiness_not_promotion_eligible",
         "drift_checks_not_ok",
         "hypothesis_window_evidence_stale",
         "paper_probation_evidence_collection_only",

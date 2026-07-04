@@ -92,7 +92,7 @@ const alphaStrikeLedger = (
   revenue_repair_digest_ref: 'torghut-revenue-repair-digest:test',
   selected_business_blocker: {
     code: 'repair_alpha_readiness',
-    reason: 'alpha_readiness_not_promotion_eligible',
+    reason: 'hypothesis_not_promotion_eligible',
     value_gate: 'routeable_candidate_count',
     required_output_receipt: 'torghut.executable-alpha-receipts.v1',
   },
@@ -212,7 +212,7 @@ describe('control-plane repair bid admission', () => {
           lot_class: 'promotion_custody',
           target_value_gate: 'routeable_candidate_count',
           priority: 60,
-          expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+          expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
           required_output_receipt: 'torghut.promotion-custody-decision-receipt.v1',
           dedupe_key: 'PA3SX7FYNUTF:15m:promotion_custody',
           state: 'held',

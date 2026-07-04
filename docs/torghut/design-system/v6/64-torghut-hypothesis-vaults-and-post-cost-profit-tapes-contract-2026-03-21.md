@@ -33,7 +33,7 @@ The March 21, 2026 evidence is explicit:
 
 - `GET http://torghut.torghut.svc.cluster.local/trading/status` at `2026-03-21T00:30:06Z`
   - reports `live_submission_gate.allowed=false`;
-  - reports `blocked_reasons` including `alpha_readiness_not_promotion_eligible`,
+  - reports `blocked_reasons` including `hypothesis_not_promotion_eligible`,
     `empirical_jobs_not_ready`, `dependency_quorum_unknown`, and `quant_health_fetch_failed`;
   - reports `quant_evidence.reason="quant_health_fetch_failed"` even though the typed Jangar quant-health route is
     reachable separately;

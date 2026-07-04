@@ -75,7 +75,7 @@ def _repair_only_status() -> dict[str, object]:
             "capital_state": "zero_notional",
             "max_notional": "0",
             "blocking_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "execution_tca_stale",
                 "quant_pipeline_degraded",
                 "simple_submit_disabled",
@@ -90,7 +90,7 @@ def _repair_only_status() -> dict[str, object]:
                 },
                 {
                     "code": "repair_alpha_readiness",
-                    "reason": "alpha_readiness_not_promotion_eligible",
+                    "reason": "hypothesis_not_promotion_eligible",
                     "priority": 70,
                     "expected_unblock_value": 3,
                 },
@@ -127,7 +127,7 @@ def _repair_only_status() -> dict[str, object]:
                                 "state": "shadow",
                                 "promotion_eligible": False,
                                 "reasons": [
-                                    "alpha_readiness_not_promotion_eligible",
+                                    "hypothesis_not_promotion_eligible",
                                     "post_cost_expectancy_non_positive",
                                 ],
                                 "informational_reasons": [
@@ -225,7 +225,7 @@ def _repair_only_status() -> dict[str, object]:
                     "replay_class": "route_rehab",
                     "target_symbols": ["AAPL"],
                     "remaining_blockers": [
-                        "alpha_readiness_not_promotion_eligible",
+                        "hypothesis_not_promotion_eligible",
                         "market_context_stale",
                     ],
                     "required_after_refs": [
@@ -253,7 +253,7 @@ def _repair_only_status() -> dict[str, object]:
                     "hypothesis_id": "H-AAPL-ROUTE-REHAB",
                     "graduation_state": "candidate",
                     "remaining_blockers": [
-                        "alpha_readiness_not_promotion_eligible",
+                        "hypothesis_not_promotion_eligible",
                     ],
                     "guardrail_result": {"state": "blocked", "passed": False},
                     "capital_effect": {
@@ -279,8 +279,8 @@ def _repair_only_status() -> dict[str, object]:
                     "lot_class": "promotion_custody",
                     "target_value_gate": "routeable_candidate_count",
                     "priority": 60,
-                    "expected_gate_delta": "retire_alpha_readiness_not_promotion_eligible",
-                    "raw_reason_codes": ["alpha_readiness_not_promotion_eligible"],
+                    "expected_gate_delta": "retire_hypothesis_not_promotion_eligible",
+                    "raw_reason_codes": ["hypothesis_not_promotion_eligible"],
                     "required_output_receipt": "torghut.promotion-custody-decision-receipt.v1",
                     "dedupe_key": "PA3SX7FYNUTF:15m:promotion_custody",
                     "ttl_seconds": 900,

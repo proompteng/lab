@@ -55,7 +55,7 @@ class TestDirectScriptExecutionSupportsHelp(_TestBuildRevenueRepairDigestBase):
         self.assertGreaterEqual(
             blockers,
             {
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "execution_tca_stale",
                 "quant_pipeline_degraded",
                 "simple_submit_disabled",

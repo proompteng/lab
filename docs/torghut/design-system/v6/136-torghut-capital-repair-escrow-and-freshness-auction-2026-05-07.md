@@ -95,7 +95,7 @@ flags, GitOps manifests, ClickHouse tables, or empirical artifacts.
 
 - The proof floor was `repair_only`; route state was `repair_only`; capital state was `zero_notional`; max notional was
   `0`.
-- Proof-floor blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Quant evidence was degraded but non-empty: latest metrics count `144`, latest metrics updated at
   `2026-05-07T04:55:19.536Z`, metrics pipeline lag `5` seconds, max stage lag `40241` seconds.

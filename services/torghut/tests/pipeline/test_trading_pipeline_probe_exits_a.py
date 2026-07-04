@@ -105,10 +105,8 @@ class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
             decision_json.update(
                 {
                     "submission_stage": "blocked_profitability_proof_floor",
-                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
-                    "submission_block_atomic": [
-                        "alpha_readiness_not_promotion_eligible"
-                    ],
+                    "submission_block_reason": "hypothesis_not_promotion_eligible",
+                    "submission_block_atomic": ["hypothesis_not_promotion_eligible"],
                     "profitability_proof_floor": proof_floor,
                 }
             )
@@ -170,7 +168,7 @@ class TestTradingPipelineProbeExitsA(TradingPipelineTestCaseBase):
             self.assertEqual(simple_lane.get("paper_route_probe_cap_applied"), True)
             self.assertEqual(
                 retry.get("previous_submission_block_reason"),
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
             )
             self.assertEqual(refreshed_json.get("paper_route_probe_retry_attempts"), 1)
 

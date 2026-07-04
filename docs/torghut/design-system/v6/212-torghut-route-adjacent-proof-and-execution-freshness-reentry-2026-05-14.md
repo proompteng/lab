@@ -32,7 +32,7 @@ active-session execution samples are fresh enough to let alpha-readiness repair 
 
 The evidence is concrete. `/trading/revenue-repair` is `repair_only`, `revenue_ready=false`, `capital_state=zero_notional`,
 and `max_notional=0`. The top queue item is still `repair_alpha_readiness`, reason
-`alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`, and required output
+`hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`, and required output
 `torghut.executable-alpha-receipts.v1`. The route evidence clearinghouse says source freshness is current, but execution
 freshness is held for stale active-session execution samples, rollout image proof is held for
 `route_adjacent_workload_proof_missing`, profit-window custody is held, and capital is held. The execution book has
@@ -123,7 +123,7 @@ All evidence was collected read-only on 2026-05-14 between 20:24Z and 20:27Z.
 
 ### Business Evidence
 
-- The active top queue item is `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate
+- The active top queue item is `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate
   `routeable_candidate_count`, required output `torghut.executable-alpha-receipts.v1`, `max_notional=0`.
 - Controller-ingestion carry is present with `carry_state=lagging`, settlement decision `hold`, and reasons including
   `source_serving_block`, `torghut_verification_carry_unavailable`, and `empirical_jobs_degraded`.

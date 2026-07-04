@@ -77,7 +77,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
 ### Data And Profitability Evidence
 
 - `/readyz` returned HTTP 503 with proof floor `repair_only`, route state `repair_only`, capital state
-  `zero_notional`, and blockers `alpha_readiness_not_promotion_eligible`,
+  `zero_notional`, and blockers `hypothesis_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 - The proof floor showed 3 hypotheses, 0 promotion-eligible hypotheses, 2 rollback-required hypotheses, and reason
   totals including missing feature rows, missing drift checks, unavailable required feature sets, and slippage budget

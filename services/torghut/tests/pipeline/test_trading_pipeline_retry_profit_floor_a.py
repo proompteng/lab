@@ -175,7 +175,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
             "capital_state": "zero_notional",
             "max_notional": "0",
             "market_window": {"session_open": True},
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
         }
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -306,7 +306,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
             "capital_state": "zero_notional",
             "max_notional": "0",
             "market_window": {"session_open": True},
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
         }
         pipeline = SimpleTradingPipeline(
             alpaca_client=FakeAlpacaClient(),
@@ -343,7 +343,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
             }
             blocked_json["submission_stage"] = "blocked_profitability_proof_floor"
             blocked_json["submission_block_reason"] = (
-                "alpha_readiness_not_promotion_eligible"
+                "hypothesis_not_promotion_eligible"
             )
             blocked_json["profitability_proof_floor"] = proof_floor
             row.status = "blocked"
@@ -389,7 +389,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
         self.assertEqual(row_json.get("paper_route_probe_retry_attempts"), 1)
         self.assertEqual(
             retry.get("previous_submission_block_reason"),
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
         )
         self.assertEqual(params.get("source_decision_mode"), "strategy_signal_paper")
         self.assertFalse(params.get("promotion_allowed"))
@@ -434,7 +434,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                     status="planned",
                     decision_json={
                         "submission_stage": "blocked_profitability_proof_floor",
-                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "submission_block_reason": "hypothesis_not_promotion_eligible",
                         "profitability_proof_floor": {},
                     },
                 )
@@ -450,7 +450,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                 decision_row(
                     decision_json={
                         "submission_stage": "blocked_other",
-                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "submission_block_reason": "hypothesis_not_promotion_eligible",
                         "profitability_proof_floor": {},
                     }
                 )
@@ -472,7 +472,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                 decision_row(
                     decision_json={
                         "submission_stage": "blocked_profitability_proof_floor",
-                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "submission_block_reason": "hypothesis_not_promotion_eligible",
                         "profitability_proof_floor": "not-a-mapping",
                     }
                 )
@@ -483,14 +483,14 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                 decision_row(
                     decision_json={
                         "submission_stage": "blocked_profitability_proof_floor",
-                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "submission_block_reason": "hypothesis_not_promotion_eligible",
                         "profitability_proof_floor": {"route_state": "repair_only"},
                     }
                 )
             ),
             {
                 "previous_submission_stage": "blocked_profitability_proof_floor",
-                "previous_submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                "previous_submission_block_reason": "hypothesis_not_promotion_eligible",
                 "previous_decision_status": "blocked",
                 "previous_paper_route_probe_retry_attempts": 0,
             },
@@ -504,7 +504,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                 decision_row(
                     decision_json={
                         "submission_stage": "blocked_profitability_proof_floor",
-                        "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                        "submission_block_reason": "hypothesis_not_promotion_eligible",
                         "paper_route_probe_retry_attempts": 1,
                         "profitability_proof_floor": {"route_state": "repair_only"},
                     }

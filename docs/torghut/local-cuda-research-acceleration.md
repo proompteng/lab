@@ -82,5 +82,5 @@ evidence stack proves them:
 - existing firewall and promotion blockers cleared by their owning services
 
 The CUDA ranker must not clear `simple_submit_disabled`,
-`alpha_readiness_not_promotion_eligible`, or
+`hypothesis_not_promotion_eligible`, or
 `runtime_ledger_source_collection_pending`.

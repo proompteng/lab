@@ -155,21 +155,21 @@ def test_build_artifacts_exposes_proof_floor_blocker_evidence() -> None:
                 timeframe="1Sec",
                 status="blocked",
                 decision_json={
-                    "submission_block_reason": "alpha_readiness_not_promotion_eligible",
+                    "submission_block_reason": "hypothesis_not_promotion_eligible",
                     "params": {
                         "execution_lane": "simple",
                         "submit_path": "direct_alpaca",
                     },
                     "profitability_proof_floor": {
                         "blocking_reasons": [
-                            "alpha_readiness_not_promotion_eligible",
+                            "hypothesis_not_promotion_eligible",
                             "market_context_stale",
                         ],
                         "proof_dimensions": [
                             {
                                 "dimension": "alpha_readiness",
                                 "state": "fail",
-                                "reason": "alpha_readiness_not_promotion_eligible",
+                                "reason": "hypothesis_not_promotion_eligible",
                                 "source_ref": {
                                     "reason_totals": {
                                         "sample_count_below_canary_minimum": 3
@@ -204,7 +204,7 @@ def test_build_artifacts_exposes_proof_floor_blocker_evidence() -> None:
                             {
                                 "code": "repair_alpha_readiness",
                                 "priority": 70,
-                                "reason": "alpha_readiness_not_promotion_eligible",
+                                "reason": "hypothesis_not_promotion_eligible",
                             }
                         ],
                     },
@@ -241,7 +241,7 @@ def test_build_artifacts_exposes_proof_floor_blocker_evidence() -> None:
     evidence = artifacts.decision_activity["proof_floor_blocker_evidence"]
     assert artifacts.run_summary["acceptance"]["passed"] is False
     assert evidence["blocking_reason_totals"] == {
-        "alpha_readiness_not_promotion_eligible": 1,
+        "hypothesis_not_promotion_eligible": 1,
         "market_context_stale": 1,
     }
     assert evidence["alpha_reason_totals"] == {"sample_count_below_canary_minimum": 3}

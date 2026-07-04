@@ -67,7 +67,7 @@ records, secrets, GitOps manifests, promotion records, or trading flags.
   - `route_state=repair_only`;
   - `capital_state=zero_notional`;
   - `max_notional=0`;
-  - blockers `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+  - blockers `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
     `simple_submit_disabled`.
 - Live route/TCA:
   - scope symbols: `AAPL`, `AMD`, `AMZN`, `AVGO`, `GOOGL`, `INTC`, `NVDA`, `ORCL`;

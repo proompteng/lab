@@ -94,8 +94,8 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         call_order: list[str] = []
         live_submission_gate_payload = {
             "allowed": False,
-            "reason": "alpha_readiness_not_promotion_eligible",
-            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "reason": "hypothesis_not_promotion_eligible",
+            "blocked_reasons": ["hypothesis_not_promotion_eligible"],
             "read_model_unavailable": False,
             "promotion_authority": False,
             "final_authority_ok": False,
@@ -201,8 +201,8 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         budget = ManualBudget()
         live_submission_gate_payload = {
             "allowed": False,
-            "reason": "alpha_readiness_not_promotion_eligible",
-            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "reason": "hypothesis_not_promotion_eligible",
+            "blocked_reasons": ["hypothesis_not_promotion_eligible"],
             "read_model_unavailable": False,
             "promotion_authority": False,
             "final_authority_ok": False,
@@ -261,7 +261,7 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         self.assertFalse(payload["live_submission_gate"]["allowed"])
         self.assertEqual(
             payload["live_submission_gate"]["reason"],
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
         )
         self.assertFalse(payload["live_submission_gate"]["read_model_unavailable"])
         self.assertFalse(payload["status_read_budget"]["exhausted"])
@@ -349,8 +349,8 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         budget = ManualBudget()
         live_submission_gate_payload = {
             "allowed": False,
-            "reason": "alpha_readiness_not_promotion_eligible",
-            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "reason": "hypothesis_not_promotion_eligible",
+            "blocked_reasons": ["hypothesis_not_promotion_eligible"],
             "read_model_unavailable": False,
             "promotion_authority": False,
             "final_authority_ok": False,
@@ -404,7 +404,7 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         self.assertFalse(payload["live_submission_gate"]["allowed"])
         self.assertEqual(
             payload["live_submission_gate"]["reason"],
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
         )
         self.assertFalse(payload["live_submission_gate"]["read_model_unavailable"])
         self.assertFalse(payload["status_read_budget"]["exhausted"])
@@ -436,8 +436,8 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         budget = ManualBudget()
         live_submission_gate_payload = {
             "allowed": False,
-            "reason": "alpha_readiness_not_promotion_eligible",
-            "blocked_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "reason": "hypothesis_not_promotion_eligible",
+            "blocked_reasons": ["hypothesis_not_promotion_eligible"],
             "read_model_unavailable": False,
             "promotion_authority": False,
             "final_authority_ok": False,
@@ -498,5 +498,5 @@ class TestTradingApiStatusReadBudget(TradingApiTestCaseBase):
         self.assertTrue(payload["hypotheses"]["summary"]["read_model_unavailable"])
         self.assertEqual(
             payload["live_submission_gate"]["reason"],
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
         )

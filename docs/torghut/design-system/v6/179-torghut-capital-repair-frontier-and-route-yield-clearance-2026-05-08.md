@@ -31,7 +31,7 @@ The route evidence is actionable. Live TCA had 7334 orders and 7245 filled execu
 about 13.82 bps, and latest execution evidence from 2026-04-02 while TCA was recomputed on 2026-05-07. AAPL was the
 only probing symbol with 2033 orders and about 9.25 bps average absolute slippage. NVDA, AMD, INTC, and AVGO were
 blocked above the guardrail. AMZN, GOOGL, and ORCL had no route samples. The proof floor named the capital blockers:
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 Empirical jobs were fresh and truthful, but zero hypotheses were promotion-eligible and two required rollback.
 
 The decision is to make Torghut choose repair work by expected capital yield, not by whichever blocker is loudest. A

@@ -98,7 +98,7 @@ manifests, AgentRun records, or trading flags.
   `ea859490fefb369075fd650ec2ed1ce5595b2d77`, and live submission `allowed=false` because `simple_submit_disabled`.
 - `GET /trading/health` and `/readyz` returned HTTP `503` with proof floor `repair_only` and capital state
   `zero_notional`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`,
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`,
   and `simple_submit_disabled`.
 - TCA had `13,775` orders, latest computation `2026-04-02T20:59:45.136640Z`, and average absolute slippage around
   `568.61` bps against an `8` bps threshold.
@@ -246,7 +246,7 @@ The lease blockers are concrete:
 - `quant_pipeline_stages_missing`
 - `market_context_stale`
 - `execution_tca_stale`
-- `alpha_readiness_not_promotion_eligible`
+- `hypothesis_not_promotion_eligible`
 - `simple_submit_disabled`
 - `paper_settlement_required`
 
@@ -379,7 +379,7 @@ repair.
 Engineer should implement the lease issuer against existing Jangar status modules, not by duplicating Torghut proof-floor
 logic. The first useful slice is a pure reducer plus a current endpoint that emits the exact blockers seen in this
 assessment: `controller_witness_split`, `forecast_registry_empty`, `quant_pipeline_stages_missing`,
-`market_context_stale`, `execution_tca_stale`, `alpha_readiness_not_promotion_eligible`, and `simple_submit_disabled`.
+`market_context_stale`, `execution_tca_stale`, `hypothesis_not_promotion_eligible`, and `simple_submit_disabled`.
 
 Deployer should treat the lease as a rollout and action-class guard. A green deployment is not a green capital gate. The
 release can widen serving traffic while leases remain `repair_only`, but paper and live gates stay closed until Torghut

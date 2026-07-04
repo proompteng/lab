@@ -425,10 +425,10 @@ def evaluate_alpha_readiness_summary(
         )
     elif require_alpha_readiness:
         if not bool(alpha_readiness.get("promotion_eligible", False)):
-            reasons.append("alpha_readiness_not_promotion_eligible")
+            reasons.append("hypothesis_not_promotion_eligible")
             details.append(
                 {
-                    "reason": "alpha_readiness_not_promotion_eligible",
+                    "reason": "hypothesis_not_promotion_eligible",
                     "promotion_target": promotion_target,
                     "reasons": _list_of_strings(alpha_readiness.get("reasons")),
                     "strategy_families": _list_of_strings(

@@ -124,7 +124,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 
 - Live Torghut `/readyz` returned HTTP `503` with `status=degraded`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live execution TCA had 7334 orders, 7245 filled executions, average absolute slippage
   `13.8203637593029676` bps, guardrail `8` bps, zero routeable symbols, five blocked symbols, and three missing

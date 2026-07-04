@@ -633,13 +633,13 @@ def build_renewal_bond_profit_escrow(
         blockers.append("profitability_proof_floor_zero_notional")
 
     if _int(summary.get("promotion_eligible_total")) <= 0:
-        blockers.append("alpha_readiness_not_promotion_eligible")
+        blockers.append("hypothesis_not_promotion_eligible")
         _add_repair(
             repairs,
             code="repair_alpha_readiness",
             dimension="alpha_readiness",
             action="clear_hypothesis_blockers_before_capital_reentry",
-            reason="alpha_readiness_not_promotion_eligible",
+            reason="hypothesis_not_promotion_eligible",
             priority=70,
             expected_unblock_value=45,
             source_ref={"summary": dict(summary)},

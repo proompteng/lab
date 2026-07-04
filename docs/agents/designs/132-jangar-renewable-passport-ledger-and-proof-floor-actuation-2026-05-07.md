@@ -103,7 +103,7 @@ GitOps manifests, ClickHouse tables, or empirical artifacts.
 - `live_submission_gate.ok=false` with `simple_submit_disabled`, capital stage `shadow`, and
   `promotion_eligible_total=0`.
 - `profitability_proof_floor.route_state=repair_only`, `capital_state=zero_notional`, and blocking reasons included
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Alpha readiness had `3` hypotheses: `1` blocked, `2` shadow, `0` promotion eligible, and `3` requiring rollback.
 - Quant latest metrics were globally fresh with `latestMetricsCount=4032` and `metricsPipelineLagSeconds=0`, but scoped
   live evidence for account `PA3SX7FYNUTF`, window `15m`, reported ingestion lag `40284` seconds.
@@ -123,7 +123,7 @@ GitOps manifests, ClickHouse tables, or empirical artifacts.
 - `services/jangar/src/server/control-plane-runtime-admission.ts` emits runtime kits and admission passports with a
   `5` minute freshness window, runtime-kit digests, and recovery-case digests.
 - `services/torghut/app/trading/proof_floor.py` builds the proof-floor receipt that already translates
-  `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `execution_tca_stale` into repair-only
+  `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `execution_tca_stale` into repair-only
   capital state.
 - `services/torghut/migrations/versions/0021_strategy_hypothesis_governance.py` persists hypothesis, metric window,
   capital allocation, and promotion decision tables; source has `31` Alembic migration files.

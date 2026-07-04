@@ -130,7 +130,7 @@ GitOps resources, AgentRuns, trading flags, broker state, or market data.
 ### Torghut Business And Data Evidence
 
 - `/trading/revenue-repair` returned `business_state=repair_only` with top repair `repair_alpha_readiness`,
-  reason `alpha_readiness_not_promotion_eligible`, required receipt `torghut.executable-alpha-receipts.v1`,
+  reason `hypothesis_not_promotion_eligible`, required receipt `torghut.executable-alpha-receipts.v1`,
   value gate `routeable_candidate_count`, and `max_notional=0`.
 - The selected alpha-readiness settlement lane was `H-MICRO-01`, strategy
   `microbar_volume_continuation_long_top2_chip_v1@paper`, lane `microstructure-breakout`, and measured

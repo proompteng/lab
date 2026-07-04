@@ -111,7 +111,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                 "operational_submission_ready",
             )
             self.assertNotIn(
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 payload["live_submission_gate"]["blocked_reasons"],
             )
             self.assertNotIn(

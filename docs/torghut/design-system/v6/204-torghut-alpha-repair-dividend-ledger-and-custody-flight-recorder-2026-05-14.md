@@ -110,7 +110,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
 ### Revenue Repair Evidence
 
 - Top queue item: `repair_alpha_readiness`.
-- Reason: `alpha_readiness_not_promotion_eligible`.
+- Reason: `hypothesis_not_promotion_eligible`.
 - Dimension: `alpha_readiness`.
 - Action: `clear_hypothesis_blockers_before_capital`.
 - Priority: `70`.

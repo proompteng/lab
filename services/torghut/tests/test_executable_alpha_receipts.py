@@ -20,7 +20,7 @@ def _proof_floor(**overrides: object) -> dict[str, object]:
         "route_state": "repair_only",
         "capital_state": "zero_notional",
         "blocking_reasons": [
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             "market_context_stale",
         ],
         "proof_dimensions": [
@@ -163,7 +163,7 @@ def test_capital_replay_board_prioritizes_live_alpha_runtime_tuple() -> None:
         live_submission_gate={
             "allowed": False,
             "blocked_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "simple_submit_disabled",
             ],
             "evaluated_tuples": [
@@ -198,7 +198,7 @@ def test_capital_replay_board_prioritizes_live_alpha_runtime_tuple() -> None:
                         "recent_slippage_budget_exceeded",
                         "promotion_decision_not_allowed",
                         "promotion_certificate_shadow_only",
-                        "alpha_hypothesis_not_promotion_eligible",
+                        "hypothesis_not_promotion_eligible",
                         "alpha_hypothesis_shadow_only",
                     ],
                     "lineage_ref": {
@@ -266,7 +266,7 @@ def test_capital_replay_board_prioritizes_runtime_ledger_economic_repair_candida
         live_submission_gate={
             "allowed": False,
             "blocked_reasons": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "simple_submit_disabled",
             ],
             "runtime_ledger_repair_candidates": [

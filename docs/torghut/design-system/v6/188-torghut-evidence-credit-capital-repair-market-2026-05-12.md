@@ -27,7 +27,7 @@ Torghut is safe enough to diagnose and not safe enough to trade. At `2026-05-12T
 and latest quant metrics were fresh. The proof and capital gates correctly held: live submission was disabled,
 `capital_stage=shadow`, profitability proof floor was `repair_only`, `capital_state=zero_notional`, alpha readiness had
 three hypotheses with zero promotion-eligible hypotheses, and live submission blockers included
-`alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+`hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
 
 The profitable repair question is now more precise. Torghut should not ask Jangar to run "more research" or "repair
 proof" generically. It should price the next zero-notional repair by the evidence credit it can spend and the capital

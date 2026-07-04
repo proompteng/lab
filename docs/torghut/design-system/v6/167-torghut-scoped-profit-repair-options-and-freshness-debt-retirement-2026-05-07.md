@@ -78,7 +78,7 @@ resources, AgentRuns, broker state, Torghut flags, or ClickHouse tables.
 ### Profitability Evidence
 
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live routeability was zero of eight scoped symbols. `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA` were blocked by TCA
   route evidence. `AMZN`, `GOOGL`, and `ORCL` were missing.
@@ -340,7 +340,7 @@ Read-only runtime evidence showed:
   were not eligible.
 - Alpha readiness had `3` hypotheses, `0` promotion eligible, and `3` rollback required; dependency quorum decision was
   `block` because empirical jobs were degraded.
-- Proof-floor blockers included `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Proof-floor blockers included `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, `market_context_stale`, and `simple_submit_disabled`.
 - Market-context health for `NVDA` was degraded through Jangar: technicals and regime were stale at about `922s`, news
   at about `12363s`, and fundamentals at about `4865116s`.

@@ -56,8 +56,8 @@ def test_repair_read_model_helpers_extract_shared_contract_fields() -> None:
         "code": "repair_alpha_readiness"
     }
     assert is_alpha_readiness_repair({"code": "repair_alpha_readiness"})
-    assert is_alpha_readiness_repair(
-        {"reason": "alpha_readiness_not_promotion_eligible"}
+    assert not is_alpha_readiness_repair(
+        {"reason": "hypothesis_not_promotion_eligible"}
     )
     assert not is_alpha_readiness_repair({"code": "repair_market_context"})
 

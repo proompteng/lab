@@ -30,7 +30,7 @@ const baseRepairBidAdmission = (overrides: Partial<RepairBidAdmissionState> = {}
       stop_conditions: ['fresh_until_expired'],
       max_runtime_seconds: 1200,
       max_notional: 0,
-      expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+      expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
       rollback_target: 'disable repair-bid admission enforcement and keep Torghut max_notional=0',
     },
   ],

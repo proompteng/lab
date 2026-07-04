@@ -113,7 +113,7 @@ def _candidate_replays(evidence: Mapping[str, Any]) -> list[dict[str, object]]:
                 ],
                 "max_runtime_seconds": 1200,
                 "max_notional": _text(replay.get("max_notional"), "0"),
-                "expected_value_gate_delta": "retire_alpha_readiness_not_promotion_eligible",
+                "expected_value_gate_delta": "retire_hypothesis_not_promotion_eligible",
             }
         )
     return replays

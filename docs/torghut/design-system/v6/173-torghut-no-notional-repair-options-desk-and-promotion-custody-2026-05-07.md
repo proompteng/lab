@@ -24,7 +24,7 @@ architecture step.
 
 Torghut should not receive paper or live capital from the current state. `/trading/health` reports `status=degraded`,
 proof floor `repair_only`, capital state `zero_notional`, and maximum notional `0`. Blocking reasons are
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
 `simple_submit_disabled`. The route reacquisition book is still valuable: it shows one probing symbol and seven repair
 candidates, with `NVDA`, `AMD`, `INTC`, and `AVGO` blocked by TCA and `AMZN`, `GOOGL`, and `ORCL` missing route
 evidence. That is not capital evidence, but it is a good repair backlog.
@@ -86,7 +86,7 @@ trading flags, promotion records, or orders.
   - `capital_state=zero_notional`
   - `max_notional=0`
 - Blocking reasons:
-  - `alpha_readiness_not_promotion_eligible`
+  - `hypothesis_not_promotion_eligible`
   - `execution_tca_route_universe_incomplete`
   - `market_context_stale`
   - `simple_submit_disabled`

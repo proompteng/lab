@@ -108,7 +108,7 @@ trading flags, AgentRuns, broker state, market data, or GitOps resources.
 - The failing dependencies were `live_submission_gate=simple_submit_disabled` and
   `profitability_proof_floor=repair_only`; both are correct capital-safety holds.
 - `GET /trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`, top queue item
-  `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, and value gate
+  `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, and value gate
   `routeable_candidate_count`.
 - The top queue item required `torghut.executable-alpha-receipts.v1`, had `expected_unblock_value=2`, and carried
   `max_notional=0` with capital rule `zero_notional_repair_only`.

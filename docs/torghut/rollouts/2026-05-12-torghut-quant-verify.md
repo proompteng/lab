@@ -88,13 +88,13 @@ Runtime and business-value evidence:
   `repair_only` / `zero_notional`.
 - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build `v0.569.1-66-g565d4f065`, commit
   `565d4f0654c301e337bcd02bb5e9d26435d74ff0`, active revision `torghut-00327`.
-- Live submission remains disabled with blockers `alpha_readiness_not_promotion_eligible`,
+- Live submission remains disabled with blockers `hypothesis_not_promotion_eligible`,
   `empirical_jobs_not_ready`, and `simple_submit_disabled`.
 - Routeability remains fail-closed: `accepted_routeable_candidate_count=0`, `routeable_candidate_count=0`,
   `zero_notional_or_stale_evidence_rate=1.0`, `fill_tca_or_slippage_quality=hold`, `capital_decision=repair_only`,
   and `max_notional=0`.
 - `GET /trading/revenue-repair`: `business_state=repair_only`, `revenue_ready=false`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, `empirical_jobs_not_ready`, and
+  `hypothesis_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, `empirical_jobs_not_ready`, and
   `quant_pipeline_degraded`.
 - `GET /trading/consumer-evidence`: empirical jobs remain `degraded` with stale/ineligible jobs
   `benchmark_parity`, `foundation_router_parity`, `janus_event_car`, and `janus_hgrm_reward`; market context alert is
@@ -190,7 +190,7 @@ Current cluster evidence before any `#6235` rollout:
   - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build
     `v0.569.1-66-g565d4f065`, commit `565d4f0654c301e337bcd02bb5e9d26435d74ff0`, active revision
     `torghut-00327`, `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, and blockers
-    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+    `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
   - `GET /trading/status` routeability evidence: `accepted_routeable_candidate_count=0`,
     `zero_notional_or_stale_evidence_rate=1.0`, routeable exchange `routeable_candidate_count=0`,
     `zero_notional_repair_lot_count=9`, and `rejected_candidate_count=3`.
@@ -276,7 +276,7 @@ Current cluster evidence before any `#6235` rollout:
   - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, build
     `v0.569.1-25-g767917346`, commit `767917346dbc3a76451b3b02fc83c9ca05127bc9`, active revision `torghut-00325`,
     `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, and blockers
-    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+    `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
   - `GET /trading/status` routeable exchange summary: `routeable_candidate_count=0`,
     `zero_notional_repair_lot_count=9`, `rejected_candidate_count=3`.
   - `GET /trading/consumer-evidence`: HTTP 200, without current `#6235` consumer fields
@@ -364,7 +364,7 @@ Current cluster evidence before any #6235 rollout:
     profitability proof floor fail closed.
   - `GET /trading/status`: HTTP 200, `running=true`, `mode=live`, `live_submission_gate.allowed=false`,
     `reason=simple_submit_disabled`, blockers
-    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+    `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
   - `GET /trading/status` routeable exchange summary: `routeable_candidate_count=0`,
     `zero_notional_repair_lot_count=9`, `rejected_candidate_count=3`.
   - `GET /trading/consumer-evidence`: HTTP 200, schema `torghut.consumer-evidence-status.v1`, max notional `0`.
@@ -573,7 +573,7 @@ Open PRs reviewed on May 12, 2026:
 - Live readiness is still no-go:
   - `live_submission_gate.allowed=false`
   - `live_submission_gate.reason=simple_submit_disabled`
-  - blockers: `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`
+  - blockers: `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`
   - `profitability_proof_floor.detail=repair_only`
   - `capital_state=zero_notional`
 - Quant evidence is partially fresh but degraded:

@@ -122,7 +122,7 @@ GitOps resources, AgentRuns, trading flags, broker state, or market data.
 - `GET http://agents.agents.svc.cluster.local/ready` returned `status=ok`, service `jangar`, leader election active,
   `business_state=repair_only`, `revenue_ready=false`, and `affected_value_gate=routeable_candidate_count`.
 - `/ready.top_repair_queue_item` was `repair_alpha_readiness` with reason
-  `alpha_readiness_not_promotion_eligible`, priority `70`, required receipt
+  `hypothesis_not_promotion_eligible`, priority `70`, required receipt
   `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - `/ready.execution_trust.status=healthy`; projection watermarks for `jangar_ready`, `control_plane_status`, and
   `deploy_verification` were fresh.
@@ -159,7 +159,7 @@ in the namespace "jangar"`.
 - `GET http://torghut.torghut.svc.cluster.local/trading/revenue-repair` returned
   `business_state=repair_only`.
 - The endpoint did not return a top-level `top_repair_queue_item` in the direct read, but `repair_queue[0]` was
-  `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, dimension `alpha_readiness`, priority
+  `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, dimension `alpha_readiness`, priority
   `70`, value gate `routeable_candidate_count`, required receipt `torghut.executable-alpha-receipts.v1`, and
   `max_notional=0`.
 - The next queue items were `live_submit_gate_closed`, `repair_empirical_jobs`, `repair_degraded`, and

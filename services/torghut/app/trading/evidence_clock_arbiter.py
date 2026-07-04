@@ -490,7 +490,7 @@ def _hypothesis_clock(hypothesis_payload: Mapping[str, Any]) -> dict[str, object
         summary.get("promotion_eligible_total"), default=eligible_count
     )
     if promotion_eligible_total <= 0:
-        reasons.append("alpha_readiness_not_promotion_eligible")
+        reasons.append("hypothesis_not_promotion_eligible")
     return _clock(
         name="hypothesis_lineage",
         state="current" if not reasons else "stale",

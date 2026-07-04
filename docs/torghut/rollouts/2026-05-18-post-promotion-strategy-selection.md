@@ -24,7 +24,7 @@ Evidence:
   no `microbar-cross-sectional-pairs-v1` decisions.
 
 This is not a live-promotion approval. The active `/trading/status` still reports
-`live_submission_gate.allowed=false` with blockers including `alpha_readiness_not_promotion_eligible`
+`live_submission_gate.allowed=false` with blockers including `hypothesis_not_promotion_eligible`
 and `simple_submit_disabled`. `H-TSMOM-01` is the nearest candidate to repair and validate, not a
 strategy with current live-capital authority.
 

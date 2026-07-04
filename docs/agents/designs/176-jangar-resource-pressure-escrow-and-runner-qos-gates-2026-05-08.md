@@ -128,7 +128,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
   `0029_whitepaper_embedding_dimension_4096`, `schema_graph_lineage_ready=true`, and known historical parent-fork
   warnings.
 - Torghut `/readyz` and `/trading/health` were degraded with proof floor `repair_only`, route state `repair_only`,
-  capital state `zero_notional`, blockers `alpha_readiness_not_promotion_eligible`,
+  capital state `zero_notional`, blockers `hypothesis_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 - Torghut market context was informational with market-closed staleness, but the failed news jobs prove provider
   evidence can be resource-degraded even when the final domain state is not a hard capital blocker.

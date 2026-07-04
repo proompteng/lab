@@ -10,7 +10,7 @@ from typing import Any, Mapping, Sequence, cast
 SCHEMA_VERSION = "torghut.revenue-repair-digest.v1"
 
 _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
-    "alpha_readiness_not_promotion_eligible": (
+    "hypothesis_not_promotion_eligible": (
         "repair_alpha_readiness",
         "alpha_readiness",
         "clear_hypothesis_blockers_before_capital",
@@ -104,7 +104,7 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
 }
 
 _REPAIR_METADATA: dict[str, dict[str, object]] = {
-    "alpha_readiness_not_promotion_eligible": {
+    "hypothesis_not_promotion_eligible": {
         "value_gate": "routeable_candidate_count",
         "required_output_receipt": "torghut.executable-alpha-receipts.v1",
         "required_receipts": [

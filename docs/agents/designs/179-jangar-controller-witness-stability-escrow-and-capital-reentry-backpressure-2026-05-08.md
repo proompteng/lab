@@ -27,7 +27,7 @@ The live system has moved past the earlier route-parity failure. At `2026-05-08T
 Jangar control-plane status consumed a current Torghut receipt
 `torghut-consumer-evidence:8c654c9fd7b8fac7`. That receipt is deliberately not capital authority: it carries
 `max_notional=0` and reason codes `forecast_registry_degraded`, `simple_submit_disabled`, and
-`alpha_readiness_not_promotion_eligible`.
+`hypothesis_not_promotion_eligible`.
 
 The Jangar problem is now narrower. Argo CD reports `jangar`, `torghut`, and `symphony-torghut` `Synced` and
 `Healthy` at current `main`; Jangar pods are ready; `agents` and `agents-controllers` are available. But the status
@@ -223,7 +223,7 @@ No implementation step may grant Torghut paper or live notional. This is an auth
 ## Validation Gates
 
 - `capital_gate_safety`: paper and live action classes remain held or blocked while Torghut receipt reasons include
-  `forecast_registry_degraded`, `simple_submit_disabled`, or `alpha_readiness_not_promotion_eligible`.
+  `forecast_registry_degraded`, `simple_submit_disabled`, or `hypothesis_not_promotion_eligible`.
 - `routeable_candidate_count`: Jangar must preserve the current Torghut consumer receipt reference so Torghut can
   prove candidate availability separately from controller witness state.
 - `zero_notional_or_stale_evidence_rate`: all controller-witness holds keep `max_notional=0`.

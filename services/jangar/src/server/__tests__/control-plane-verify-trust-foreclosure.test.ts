@@ -275,7 +275,7 @@ const torghutEvidence = (overrides: Partial<TorghutConsumerEvidenceStatus> = {})
   revenue_repair_queue: [
     {
       code: 'repair_alpha_readiness',
-      reason: 'alpha_readiness_not_promotion_eligible',
+      reason: 'hypothesis_not_promotion_eligible',
       dimension: 'alpha_readiness',
       action: 'clear_hypothesis_blockers_before_capital',
       priority: 70,

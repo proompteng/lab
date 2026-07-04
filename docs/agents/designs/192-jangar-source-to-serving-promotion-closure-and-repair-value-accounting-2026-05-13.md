@@ -148,7 +148,7 @@ GitOps resources, AgentRuns, broker state, trading flags, or market data.
   three rollback required.
 - `/trading/revenue-repair` reported `business_state=repair_only`, `revenue_ready=false`, `32` raw repair bids,
   `5` selected compacted lots, `3` dispatchable compacted lots, routeable count `0`, max notional `0`, and blockers
-  `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible` and `simple_submit_disabled`.
 - `/trading/consumer-evidence` exposed `repair_bid_settlement_ledger`, but not `profit_carry_passport_ledger` in the
   live payload. The repository source contains `services/torghut/app/trading/profit_carry_passports.py`, which proves a
   source-to-serving closure gap rather than missing architecture intent.

@@ -112,7 +112,7 @@ resources, trading flags, AgentRun objects, or empirical artifacts.
   were individually OK.
 - The live submission gate was closed by `simple_submit_disabled` with `capital_stage=shadow`.
 - The proof floor was `repair_only`, `capital_state=zero_notional`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Quant evidence was informationally degraded: latest metrics were current, but ingestion lag was `59,905` seconds for
   the live account/window.
 - Execution TCA was stale from `2026-04-02T20:59:45.136640Z`, with average absolute slippage about `568.61` bps

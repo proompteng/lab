@@ -104,7 +104,7 @@ All evidence was collected read-only on 2026-05-14.
 - The same payload reported evidence-clock split across Torghut quant, Postgres TCA, hypothesis lineage, rollout,
   routeability acceptance, profit signal quorum, and capital gate.
 - `paper_canary` was held and `live_micro_canary` plus `live_scale` were blocked with reasons including
-  `alpha_readiness_not_promotion_eligible`, `feature_rows_missing`, `required_feature_set_unavailable`,
+  `hypothesis_not_promotion_eligible`, `feature_rows_missing`, `required_feature_set_unavailable`,
   `post_cost_expectancy_non_positive`, `execution_tca_stale`, `execution_tca_symbol_missing`,
   `routeability_acceptance_blocked`, `simple_submit_disabled`, and `max_notional_zero`.
 

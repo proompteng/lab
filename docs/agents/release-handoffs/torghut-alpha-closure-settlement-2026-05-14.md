@@ -65,5 +65,5 @@ admit exactly one closure slot when the board is current and no no-delta debt bl
 ## Next Milestone
 
 Implement the Torghut board builder and additive `/trading/revenue-repair` exposure. The revenue metric is
-`routeable_candidate_count`; the smallest current blocker is `alpha_readiness_not_promotion_eligible` with feature
+`routeable_candidate_count`; the smallest current blocker is `hypothesis_not_promotion_eligible` with feature
 rows, drift checks, and required feature set evidence missing for the lineage-ready `H-MICRO-01` lane.

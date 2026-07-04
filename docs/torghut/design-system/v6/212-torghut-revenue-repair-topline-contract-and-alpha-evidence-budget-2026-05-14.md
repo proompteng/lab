@@ -104,7 +104,7 @@ GitOps resources, AgentRuns, broker state, trading flags, or market data.
 ### Revenue Repair
 
 - `GET /trading/revenue-repair` returned `business_state=repair_only`.
-- `repair_queue[0]` was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, dimension
+- `repair_queue[0]` was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, dimension
   `alpha_readiness`, priority `70`, action implied by the catalog as clearing hypothesis blockers before capital,
   value gate `routeable_candidate_count`, required output `torghut.executable-alpha-receipts.v1`, and
   `max_notional=0`.

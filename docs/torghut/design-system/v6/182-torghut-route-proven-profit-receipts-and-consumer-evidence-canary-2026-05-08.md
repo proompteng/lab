@@ -74,7 +74,7 @@ GitOps manifests.
 - `/trading/autonomy` returned a live payload with empirical jobs fresh, signal continuity in expected market-closed
   staleness, forecast service degraded by `registry_empty`, lean authority disabled, and autonomy disabled.
 - `/trading/status` returned proof floor `repair_only`, route state `repair_only`, capital state `zero_notional`, and
-  blockers `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+  blockers `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - `/trading/consumer-evidence` returned HTTP 404 through both the main Torghut service and the active private service.
 

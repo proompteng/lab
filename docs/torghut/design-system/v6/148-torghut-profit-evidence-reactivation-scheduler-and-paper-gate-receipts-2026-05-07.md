@@ -86,7 +86,7 @@ broker state, AgentRun objects, GitOps resources, trading flags, or empirical ar
 - Live submission was `allowed=false`, reason `simple_submit_disabled`, and `capital_stage=shadow`.
 - Profitability proof floor was `floor_state=repair_only`, `route_state=repair_only`,
   `capital_state=zero_notional`, and `max_notional=0`.
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
   `simple_submit_disabled`.
 - TCA had `13,775` orders, last computed `2026-04-02T20:59:45.136640Z`, average absolute slippage about `568.61` bps,
   and slippage guardrail `8` bps.

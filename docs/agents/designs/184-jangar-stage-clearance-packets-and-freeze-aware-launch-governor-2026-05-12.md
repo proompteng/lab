@@ -86,7 +86,7 @@ flags, or AgentRun objects.
   notional budgets.
 - Torghut consumer evidence was current, but its decision was `repair`, `max_notional=0`, `route_repair_value=14`, and
   reason codes included `empirical_jobs_degraded`, `forecast_registry_degraded`, `simple_submit_disabled`,
-  `alpha_readiness_not_promotion_eligible`, `degraded`, and `market_context_stale`.
+  `hypothesis_not_promotion_eligible`, `degraded`, and `market_context_stale`.
 
 ### Source Assessment
 
