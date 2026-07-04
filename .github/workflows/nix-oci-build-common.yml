@@ -55,6 +55,7 @@ jobs:
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+      NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 8m
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
       - name: Start checkout timer
@@ -94,6 +95,10 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 1
 
       - name: Record Nix setup timing
         if: always()
@@ -127,8 +132,28 @@ jobs:
         run: |
           set -euo pipefail
           out_link="result-${ARCH}"
+          build_args=(
+            nix build ".#${PACKAGE_ATTR}"
+            --print-build-logs
+            --out-link "${out_link}"
+            --option fallback true
+            --option connect-timeout 10
+            --option stalled-download-timeout 60
+            --option download-attempts 1
+          )
+          set +e
           bash nix/ci-run-timed.sh "build-image-${ARCH}" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}.log" \
-            nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+            timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" "${build_args[@]}"
+          build_status="$?"
+          set -e
+          if [[ "${build_status}" -ne 0 ]]; then
+            rm -f "${out_link}"
+            echo "::warning title=Nix image archive build retried without Attic::Attic substitution or build timed out/failed for ${PACKAGE_ATTR} on ${ARCH}; retrying with cache.nixos.org only so the runner does not hang on a final image archive copy."
+            fallback_nix_config=$'experimental-features = nix-command flakes\nsubstituters = https://cache.nixos.org/\nfallback = true\nconnect-timeout = 10\nstalled-download-timeout = 60\ndownload-attempts = 1'
+            env NIX_CONFIG="${fallback_nix_config}" \
+              bash nix/ci-run-timed.sh "build-image-${ARCH}-cache-nixos-fallback" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}-cache-nixos-fallback.log" \
+              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+          fi
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
             echo "Nix image output is not a tar file: ${image_tar}" >&2
@@ -267,6 +292,10 @@ jobs:
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 1
 
       - name: Record Nix setup timing
         if: always()
