@@ -138,6 +138,7 @@ jobs:
             fallback_nix_config=$'experimental-features = nix-command flakes\nsubstituters = https://cache.nixos.org/\nfallback = true\nconnect-timeout = 10\nstalled-download-timeout = 60\ndownload-attempts = 1'
             env NIX_CONFIG="${fallback_nix_config}" \
               bash nix/ci-run-timed.sh "build-image-${ARCH}-cache-nixos-fallback" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}-cache-nixos-fallback.log" \
+              timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \
               nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
           fi
           image_tar="$(readlink -f "${out_link}")"
