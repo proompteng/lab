@@ -134,17 +134,18 @@ def measure_torghut_debt(
     paths: Sequence[str] = DEFAULT_PATHS,
     include_pylint_design: bool = True,
 ) -> dict[str, object]:
-    python_files = _python_files(root, paths)
     root_counts: dict[str, dict[str, int]] = {}
-    file_thresholds = _threshold_counter("files_ge", FILE_LINE_THRESHOLDS)
-    function_thresholds = _threshold_counter("functions_ge", FUNCTION_LINE_THRESHOLDS)
-    class_thresholds = _threshold_counter("classes_ge", CLASS_LINE_THRESHOLDS)
+    threshold_counts = {
+        "files": _threshold_counter("files_ge", FILE_LINE_THRESHOLDS),
+        "functions": _threshold_counter("functions_ge", FUNCTION_LINE_THRESHOLDS),
+        "classes": _threshold_counter("classes_ge", CLASS_LINE_THRESHOLDS),
+    }
     marker_counts: dict[str, dict[str, object]] = {
         name: {"total": 0, "by_root": {}} for name in sorted(MARKERS)
     }
     parse_errors: list[str] = []
 
-    for path in python_files:
+    for path in _python_files(root, paths):
         relative = path.relative_to(root)
         root_name = relative.parts[0] if relative.parts else "."
         text = path.read_text(encoding="utf-8", errors="ignore")
@@ -152,7 +153,7 @@ def measure_torghut_debt(
         root_summary = root_counts.setdefault(root_name, {"files": 0, "lines": 0})
         root_summary["files"] += 1
         root_summary["lines"] += len(lines)
-        _increment_thresholds(file_thresholds, "files_ge", len(lines))
+        _increment_thresholds(threshold_counts["files"], "files_ge", len(lines))
         try:
             tree = ast.parse(text)
         except SyntaxError:
@@ -161,7 +162,11 @@ def measure_torghut_debt(
             continue
         _count_ast_markers(marker_counts, root_name, tree)
         _count_comment_markers(marker_counts, root_name, text)
-        _count_ast_thresholds(tree, function_thresholds, class_thresholds)
+        _count_ast_thresholds(
+            tree,
+            threshold_counts["functions"],
+            threshold_counts["classes"],
+        )
 
     pylint_design = (
         measure_pylint_design(root, paths=("app", "scripts"))
@@ -177,9 +182,9 @@ def measure_torghut_debt(
             "lines": sum(item["lines"] for item in root_counts.values()),
         },
         "threshold_counts": {
-            **file_thresholds,
-            **function_thresholds,
-            **class_thresholds,
+            **threshold_counts["files"],
+            **threshold_counts["functions"],
+            **threshold_counts["classes"],
         },
         "markers": marker_counts,
         "pylint_design": pylint_design,
