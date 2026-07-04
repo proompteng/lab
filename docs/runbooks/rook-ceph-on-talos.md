@@ -85,6 +85,64 @@ RWX performance workflow:
 
 1. `docs/runbooks/rook-ceph-rwx-performance.md`
 
+## Post-Migration Performance Posture
+
+After the Turin BlueStore DB/WAL migration is complete and all PGs are clean,
+the steady-state OSD posture is client-first, not recovery-first.
+
+Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
+
+1. `bluestore_cache_autotune: "true"`
+1. `osd_mclock_profile: "high_client_ops"`
+1. `osd_memory_target: "8589934592"` (8Gi)
+1. OSD pod resources: request `1000m` CPU and `8Gi` memory, limit `12Gi`
+1. CSI read affinity enabled with `kubernetes.io/hostname`
+
+Do not leave recovery-only overrides in the Ceph config store after backfill is
+done. In particular, remove these if they were set for a maintenance window:
+
+1. `osd_mclock_override_recovery_settings`
+1. `osd_max_backfills`
+1. `osd_recovery_max_active`
+1. `osd_recovery_max_active_hdd`
+1. `osd_recovery_max_single_start`
+1. `osd_recovery_op_priority`
+1. `osd_recovery_sleep_hdd`
+1. custom `osd_mclock_scheduler_*` reservation or weight overrides
+
+The reason is documented by Ceph: built-in mClock profiles are intended to
+control QoS between client I/O and background work. `high_client_ops` allocates
+more reservation and limit to client operations, while recovery/backfill limit
+overrides are an advanced path gated by
+`osd_mclock_override_recovery_settings` and should not be the default
+steady-state client-performance profile.
+
+References:
+
+1. Ceph mClock profiles and `high_client_ops`: https://docs.ceph.com/en/latest/rados/configuration/mclock-config-ref/
+1. Ceph BlueStore cache autotune and `osd_memory_target`: https://docs.ceph.com/en/latest/rados/configuration/bluestore-config-ref/
+1. Rook CephCluster `cephConfig`, OSD resources, and metadata-device configuration: https://rook.io/docs/rook/latest-release/CRDs/Cluster/ceph-cluster-crd/
+
+Verify live state:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump \
+  | egrep 'osd_mclock_profile|osd_mclock_override_recovery_settings|osd_max_backfills|osd_recovery_max_active|osd_recovery_max_single_start|osd_recovery_op_priority|osd_recovery_sleep_hdd|osd_memory_target'
+kubectl -n rook-ceph get deploy -l app=rook-ceph-osd -o json \
+  | jq -r '.items[] | .metadata.name as $n | .spec.template.spec.containers[] | select(.name=="osd") | [$n,.resources.requests.memory,.resources.limits.memory] | @tsv' \
+  | sort
+```
+
+Expected steady-state readback:
+
+1. `6 osds: 6 up, 6 in`.
+1. No degraded, remapped, recovering, backfilling, undersized, or misplaced PGs.
+1. `osd_mclock_profile` is `high_client_ops`.
+1. `osd_memory_target` is `8589934592`.
+1. No recovery override keys remain in `ceph config dump`.
+1. Every OSD deployment reports memory request `8Gi` and limit `12Gi`.
+
 ## Install / rollout steps
 
 1. Ensure you have verified the disk inventory on each node (example):
