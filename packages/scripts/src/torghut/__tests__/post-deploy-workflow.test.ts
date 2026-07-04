@@ -111,7 +111,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('run_post_deploy_evidence_validator')
   })
 
-  it('retries transient sim paper-route target mirror gaps before rollback', () => {
+  it('retries transient sim paper-route target mirror gaps before failing verification', () => {
     expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry()')
     expect(workflow).toContain('post-deploy-evidence-validator.out')
     expect(workflow).toContain(
@@ -174,32 +174,24 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('patch')
   })
 
-  it('closes superseded automatic rollback pull requests after successful verification', () => {
-    expect(workflow).toContain('Close superseded Torghut rollback pull requests')
-    expect(workflow).toContain("success() && github.event_name == 'push' && github.ref == 'refs/heads/main'")
-    expect(workflow).toContain('uses: actions/github-script@v8')
-    expect(workflow).toContain('codex/torghut-rollback-')
-    expect(workflow).toContain('revert(torghut): rollback failed promotion ')
-    expect(workflow).toContain('github.paginate(github.rest.pulls.list')
-    expect(workflow).toContain('github.rest.pulls.update')
-    expect(workflow).toContain('github.rest.git.deleteRef')
-    expect(workflow).not.toContain('gh pr close')
-  })
+  it('does not create or manage automatic revert pull requests', () => {
+    const forbiddenWorkflowSnippets = [
+      'Close superseded Torghut ' + 'roll' + 'back pull requests',
+      'Prepare ' + 'roll' + 'back manifests',
+      'Close older failed-' + 'promotion ' + 'roll' + 'back pull requests',
+      'Open ' + 'roll' + 'back pull request',
+      'codex/torghut-' + 'roll' + 'back-',
+      'revert(torghut): ' + 'roll' + 'back failed ' + 'promotion ',
+      'should_' + 'roll' + 'back',
+      'git checkout --quiet HEAD^ --',
+      'peter-evans/create-pull-request',
+      'github.rest.pulls.update',
+      'github.rest.git.deleteRef',
+    ]
 
-  it('closes older automatic rollback pull requests before opening a new failed-promotion rollback', () => {
-    expect(workflow).toContain('Close older failed-promotion rollback pull requests')
-    expect(workflow).toContain("failure() && steps.rollback.outputs.should_rollback == 'true'")
-    expect(workflow).toContain(
-      'CURRENT_ROLLBACK_BRANCH: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}',
-    )
-    expect(workflow).toContain('pr.head.ref !== currentBranch')
-    expect(workflow).toContain('because a newer failed promotion rollback is being opened')
-    expect(workflow).not.toContain('gh pr list -R "${GH_REPO}"')
-  })
-
-  it('does not open rollback pull requests for stale main push verifiers', () => {
-    expect(workflow).toContain('MAIN_HEAD="$(git rev-parse origin/main)"')
-    expect(workflow).toContain('Skipping rollback PR because main advanced from ${GITHUB_SHA} to ${MAIN_HEAD}')
-    expect(workflow).toContain('echo "should_rollback=false" >> "$GITHUB_OUTPUT"')
+    for (const snippet of forbiddenWorkflowSnippets) {
+      expect(workflow).not.toContain(snippet)
+    }
+    expect(workflow).toContain('Upload revenue repair evidence')
   })
 })
