@@ -171,7 +171,7 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
             price=Decimal("273.97"),
         )
         params = dict(decision.params)
-        params["simple_lane"] = {"quantity_resolution": "not-a-resolution"}
+        params["execution"] = {"quantity_resolution": "not-a-resolution"}
 
         outcome = policy.evaluate(
             decision.model_copy(update={"params": params}),

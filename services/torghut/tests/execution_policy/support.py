@@ -63,7 +63,7 @@ def _with_simple_lane_quantity_resolution(
     }
     resolution.update(overrides)
     params = dict(decision.params)
-    params["simple_lane"] = {"quantity_resolution": resolution}
+    params["execution"] = {"quantity_resolution": resolution}
     return decision.model_copy(update={"params": params})
 
 

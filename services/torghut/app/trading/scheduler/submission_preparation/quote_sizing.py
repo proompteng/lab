@@ -11,6 +11,10 @@ from ....models import (
     Strategy,
 )
 from ...models import SignalEnvelope, StrategyDecision
+from ...execution_metadata import (
+    mutable_execution_metadata,
+    set_execution_metadata,
+)
 from ...prices import MarketSnapshot
 from ...quantity_rules import quantize_qty_for_symbol, resolve_quantity_resolution
 from ...runtime_decision_authority import (
@@ -472,9 +476,9 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
         }
         params = dict(decision.params)
         params["bounded_paper_route_target_exit_window"] = audit
-        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
-        simple_lane["bounded_paper_route_target_exit_window"] = audit
-        params["simple_lane"] = simple_lane
+        execution = mutable_execution_metadata(params)
+        execution["bounded_paper_route_target_exit_window"] = audit
+        set_execution_metadata(params, execution)
 
         for key in (
             "paper_route_target_plan_source_decision",
@@ -530,15 +534,15 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
 
         reference_price = optional_decimal(audit_payload.get("reference_price"))
         notional = qty * reference_price if reference_price is not None else None
-        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
-        simple_lane["final_qty"] = str(qty)
-        simple_lane["paper_route_target_notional_sizing"] = audit_payload
-        simple_lane["target_source_notional_sized"] = (
+        execution = mutable_execution_metadata(params)
+        execution["final_qty"] = str(qty)
+        execution["paper_route_target_notional_sizing"] = audit_payload
+        execution["target_source_notional_sized"] = (
             safe_text(audit_payload.get("sizing_source")) == "target_notional"
         )
         if notional is not None:
-            simple_lane["notional"] = str(notional)
-        params["simple_lane"] = simple_lane
+            execution["notional"] = str(notional)
+        set_execution_metadata(params, execution)
 
         for key in (
             "paper_route_target_plan_source_decision",

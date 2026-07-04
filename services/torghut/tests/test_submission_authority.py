@@ -16,15 +16,6 @@ def test_submission_authority_allows_operational_submission() -> None:
                 },
             },
         },
-        simple_lane_status={
-            "submit_enabled": True,
-            "live_submit_enabled": True,
-            "paper_route_probe_enabled": True,
-            "paper_route_probe_allow_live_mode": True,
-            "max_notional_per_order": 100.0,
-            "max_notional_per_symbol": 250.0,
-            "max_gross_exposure_pct_equity": 0.05,
-        },
     )
 
     assert status["effective_submit_mode"] == "operational_submission"
@@ -58,7 +49,6 @@ def test_submission_authority_blocks_on_operational_blocker() -> None:
                 },
             },
         },
-        simple_lane_status={"submit_enabled": True, "live_submit_enabled": True},
     )
 
     assert status["effective_submit_mode"] == "blocked"
@@ -81,7 +71,6 @@ def test_submission_authority_accepts_compatibility_gate_payload() -> None:
                 "alpaca_regular_session_open": True,
             },
         },
-        simple_lane_status={"submit_enabled": True, "live_submit_enabled": True},
     )
 
     assert status["effective_submit_mode"] == "operational_submission"
@@ -111,7 +100,6 @@ def test_submission_authority_diagnostic_reasons_do_not_block() -> None:
                 "alpaca_regular_session_open": False,
             },
         },
-        simple_lane_status={"submit_enabled": True, "live_submit_enabled": True},
     )
 
     assert status["effective_submit_mode"] == "operational_submission"

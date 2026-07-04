@@ -11,7 +11,6 @@ from tests.pipeline.trading_pipeline_base import (
     Reconciler,
     RiskEngine,
     SimpleTradingPipeline,
-    SimpleNamespace,
     Strategy,
     StrategyDecision,
     TradingPipelineTestCaseBase,
@@ -22,10 +21,6 @@ from tests.pipeline.trading_pipeline_base import (
     patch,
     select,
     timezone,
-)
-
-from app.trading.scheduler.submission_preparation.shared import (
-    TradingSubmissionRequest,
 )
 
 
@@ -63,7 +58,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                     "bid": "298.17",
                     "ask": "298.23",
                 },
-                "simple_lane": {
+                "execution": {
                     "bounded_live_paper_route_close": True,
                 },
             },
@@ -82,9 +77,9 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
         self.assertEqual(audit["state"], "marketable_limit_adjusted")
         self.assertEqual(audit["original_limit_price"], "298.19")
         self.assertEqual(audit["marketable_limit_price"], "298.17")
-        simple_lane = cast(dict[str, Any], prepared.params["simple_lane"])
+        execution_metadata = cast(dict[str, Any], prepared.params["execution"])
         self.assertEqual(
-            simple_lane["bounded_live_paper_route_close_order"],
+            execution_metadata["bounded_live_paper_route_close_order"],
             audit,
         )
 
@@ -123,7 +118,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
         self.assertEqual(audit["original_limit_price"], "298.20")
         self.assertEqual(audit["marketable_limit_price"], "298.23")
 
-    def test_live_bounded_close_simple_lane_marker_is_marketable(self) -> None:
+    def test_live_bounded_close_execution_marker_is_marketable(self) -> None:
         decision = StrategyDecision(
             strategy_id="strategy-a",
             symbol="AAPL",
@@ -134,7 +129,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             order_type="limit",
             limit_price=Decimal("298.19"),
             params={
-                "simple_lane": {
+                "execution": {
                     "bounded_live_paper_route_close": True,
                 },
                 "price_snapshot": {
@@ -250,7 +245,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
         self.assertEqual(bid, Decimal("298.11"))
         self.assertEqual(ask, Decimal("298.29"))
 
-    def test_live_bounded_paper_route_close_ignores_retired_gate_blockers(
+    def test_live_bounded_paper_route_close_does_not_bypass_closed_live_gate(
         self,
     ) -> None:
         from app import config
@@ -284,6 +279,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             pipeline = self._pipeline(self.session_local)
             gate = {
                 "allowed": False,
+                "reason": "live_submission_gate_blocked",
                 "blocked_reasons": [
                     "hypothesis_not_promotion_eligible",
                     "runtime_window_import_required",
@@ -291,16 +287,6 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 "bounded_live_paper_collection_gate": {
                     "allowed": True,
                     "authority_scope": "bounded_evidence_collection_only",
-                },
-            }
-            proof_floor = {
-                "route_state": "repair_only",
-                "capital_state": "paper",
-                "max_notional": "100",
-                "market_window": {"session_open": True},
-                "blocking_reasons": ["runtime_window_import_required"],
-                "route_reacquisition_book": {
-                    "summary": {"paper_route_probe_eligible_symbols": ["AAPL"]}
                 },
             }
             with self.session_local() as session:
@@ -314,7 +300,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                     qty=Decimal("2"),
                     rationale="strategy-close-existing-bounded-collection-position",
                     params={
-                        "simple_lane": {
+                        "execution": {
                             "quantity_resolution": {
                                 "reason": "sell_reducing_long_fractional_allowed",
                                 "short_increasing": False,
@@ -335,17 +321,8 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                         "_live_submission_gate",
                         return_value=gate,
                     ),
-                    patch.object(
-                        SimpleTradingPipeline,
-                        "_profitability_proof_floor",
-                        return_value=proof_floor,
-                    ),
-                    patch(
-                        "app.trading.scheduler.simple_pipeline.trading_now",
-                        return_value=datetime(2026, 3, 26, 16, 0, tzinfo=timezone.utc),
-                    ),
                 ):
-                    self.assertTrue(
+                    self.assertFalse(
                         pipeline._is_trading_submission_allowed(
                             session=session,
                             decision=decision,
@@ -357,14 +334,11 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 decision_json = cast(dict[str, Any], decision_row.decision_json)
 
             params = cast(dict[str, Any], decision_json["params"])
-            exit_metadata = cast(
-                dict[str, Any],
-                params["paper_route_probe_exit"],
+            self.assertEqual(
+                decision_json["submission_stage"],
+                "blocked_live_submission_gate",
             )
-            simple_lane = cast(dict[str, Any], params["simple_lane"])
-            self.assertEqual(exit_metadata["mode"], "paper_route_exit")
-            self.assertTrue(exit_metadata["live_bounded_paper_route_close"])
-            self.assertTrue(simple_lane["bounded_live_paper_route_close"])
+            self.assertNotIn("paper_route_probe_exit", params)
         finally:
             config.settings.trading_mode = original["trading_mode"]
             config.settings.trading_enabled = original["trading_enabled"]
@@ -557,164 +531,3 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
             config.settings.trading_simple_paper_route_probe_allow_live_mode = original[
                 "trading_simple_paper_route_probe_allow_live_mode"
             ]
-
-    def test_bounded_paper_route_close_exposure_lookup_fail_closed(self) -> None:
-        pipeline = self._pipeline(self.session_local)
-        with self.session_local() as session:
-            strategy = Strategy(
-                name="lookup-fail-closed",
-                description="lookup failures must not authorize closes",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
-            )
-            session.add(strategy)
-            session.commit()
-            session.refresh(strategy)
-            decision = StrategyDecision(
-                strategy_id=str(strategy.id),
-                symbol="AAPL",
-                event_ts=datetime(2026, 3, 26, 16, 0, tzinfo=timezone.utc),
-                timeframe="1Min",
-                action="sell",
-                qty=Decimal("1"),
-                rationale="lookup-fail-closed",
-                params={},
-            )
-            decision_row = OrderExecutor().ensure_decision(
-                session,
-                decision,
-                strategy,
-                "paper",
-            )
-            request = TradingSubmissionRequest(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-            )
-
-            with patch.object(
-                pipeline,
-                "_paper_route_probe_exit_exposures",
-                None,
-            ):
-                self.assertIsNone(
-                    pipeline._bounded_live_paper_route_close_exposure(request)
-                )
-            with patch.object(
-                pipeline,
-                "_paper_route_probe_exit_exposures",
-                side_effect=RuntimeError("boom"),
-            ):
-                self.assertIsNone(
-                    pipeline._bounded_live_paper_route_close_exposure(request)
-                )
-            with patch.object(
-                pipeline,
-                "_paper_route_probe_exit_exposures",
-                return_value=[],
-            ):
-                self.assertIsNone(
-                    pipeline._bounded_live_paper_route_close_exposure(request)
-                )
-
-    def test_bounded_paper_route_close_matches_only_linked_exposure(self) -> None:
-        source = "filled_bounded_paper_route_collection_executions"
-        pipeline = self._pipeline(self.session_local)
-        with self.session_local() as session:
-            strategy = Strategy(
-                name="linked-close-match",
-                description="close matching fixture",
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=["AAPL"],
-            )
-            session.add(strategy)
-            session.commit()
-            session.refresh(strategy)
-            decision = StrategyDecision(
-                strategy_id=str(strategy.id),
-                symbol="AAPL",
-                event_ts=datetime(2026, 3, 26, 16, 0, tzinfo=timezone.utc),
-                timeframe="1Min",
-                action="sell",
-                qty=Decimal("1"),
-                rationale="linked-close-match",
-                params={},
-            )
-            decision_row = OrderExecutor().ensure_decision(
-                session,
-                decision,
-                strategy,
-                "paper",
-            )
-            request = TradingSubmissionRequest(
-                session=session,
-                decision=decision,
-                decision_row=decision_row,
-            )
-            wrong_strategy = SimpleNamespace(
-                strategy=SimpleNamespace(id="wrong"),
-                symbol="AAPL",
-                exit_source=source,
-                exit_action="sell",
-                exit_qty=Decimal("2"),
-            )
-            matching = SimpleNamespace(
-                strategy=SimpleNamespace(id=strategy.id),
-                symbol="AAPL",
-                exit_source=source,
-                exit_action="sell",
-                exit_qty="2",
-            )
-            wrong_symbol = SimpleNamespace(
-                strategy=SimpleNamespace(id=strategy.id),
-                symbol="MSFT",
-                exit_source=source,
-                exit_action="sell",
-                exit_qty=Decimal("2"),
-            )
-            wrong_source = SimpleNamespace(
-                strategy=SimpleNamespace(id=strategy.id),
-                symbol="AAPL",
-                exit_source="manual_close",
-                exit_action="sell",
-                exit_qty=Decimal("2"),
-            )
-            wrong_action = SimpleNamespace(
-                strategy=SimpleNamespace(id=strategy.id),
-                symbol="AAPL",
-                exit_source=source,
-                exit_action="buy",
-                exit_qty=Decimal("2"),
-            )
-
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_close_matches_exposure(
-                    decision,
-                    wrong_symbol,
-                )
-            )
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_close_matches_exposure(
-                    decision,
-                    wrong_source,
-                )
-            )
-            self.assertFalse(
-                pipeline._bounded_live_paper_route_close_matches_exposure(
-                    decision,
-                    wrong_action,
-                )
-            )
-            with patch.object(
-                pipeline,
-                "_paper_route_probe_exit_exposures",
-                return_value={"wrong": wrong_strategy, "match": matching},
-            ):
-                self.assertIs(
-                    pipeline._bounded_live_paper_route_close_exposure(request),
-                    matching,
-                )

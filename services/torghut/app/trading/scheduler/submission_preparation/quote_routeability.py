@@ -10,6 +10,11 @@ from ....config import settings
 from ....models import (
     TradeDecision,
 )
+from ...execution_metadata import (
+    execution_metadata,
+    mutable_execution_metadata,
+    set_execution_metadata,
+)
 from ...models import StrategyDecision
 from ...promotion_authority import capital_blocked_authority
 from ...prices import MarketSnapshot
@@ -465,7 +470,7 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         request = self._submission_request_with_decision(request, decision)
         decision = self._paper_route_probe_capped_submission_decision(request)
         request = self._submission_request_with_decision(request, decision)
-        preparation = self._simple_lane_preparation(request)
+        preparation = self._execution_preparation(request)
         prepared_decision = self._prechecked_target_aligned_decision(preparation)
         return self._finalize_prepared_submission(
             request=request,
@@ -637,7 +642,7 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
                 return capped_decision
         return decision
 
-    def _simple_lane_preparation(
+    def _execution_preparation(
         self,
         request: SubmissionPreparationRequest,
     ) -> Any:
@@ -749,18 +754,16 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
                     preparation.decision.qty * reference_price
                 )
             adjusted_audit["resolved_qty"] = str(preparation.decision.qty)
-            simple_lane_precheck = mapping_value(
-                preparation.decision.params.get("simple_lane")
-            )
-            if simple_lane_precheck is not None:
+            execution_precheck = execution_metadata(preparation.decision.params)
+            if execution_precheck is not None:
                 for key in (
                     "capped_by_order",
                     "capped_by_symbol",
                     "capped_by_buying_power",
                 ):
-                    if key in simple_lane_precheck:
+                    if key in execution_precheck:
                         adjusted_audit[f"precheck_{key}"] = bool(
-                            simple_lane_precheck.get(key)
+                            execution_precheck.get(key)
                         )
             return adjusted_audit
         if target_notional_sizing is None:
@@ -785,7 +788,8 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         )
         if preparation.diagnostics:
             params_update = dict(prepared_decision.params)
-            params_update["simple_lane_precheck"] = preparation.diagnostics
+            params_update["execution_precheck"] = preparation.diagnostics
+            params_update.pop("simple_lane_precheck", None)
             self.executor.update_decision_params(
                 request.session,
                 request.decision_row,
@@ -858,10 +862,10 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
         params = decision.params
         if params.get("bounded_live_paper_route_close") is True:
             return True
-        simple_lane = mapping_value(params.get("simple_lane"))
+        execution = execution_metadata(params)
         if (
-            simple_lane is not None
-            and simple_lane.get("bounded_live_paper_route_close") is True
+            execution is not None
+            and execution.get("bounded_live_paper_route_close") is True
         ):
             return True
         exit_metadata = mapping_value(params.get("paper_route_probe_exit"))
@@ -942,7 +946,7 @@ class SimplePipelineSubmissionQuoteRouteabilityMixin(TradingPipelineBase):
             )
 
         params["bounded_live_paper_route_close_order"] = audit
-        simple_lane = dict(cast(Mapping[str, Any], params.get("simple_lane") or {}))
-        simple_lane["bounded_live_paper_route_close_order"] = audit
-        params["simple_lane"] = simple_lane
+        execution = mutable_execution_metadata(params)
+        execution["bounded_live_paper_route_close_order"] = audit
+        set_execution_metadata(params, execution)
         return decision.model_copy(update={"params": params})

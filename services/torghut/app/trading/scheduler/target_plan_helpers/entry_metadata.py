@@ -8,6 +8,7 @@ from typing import Any, cast
 from ....config import settings
 from ...autonomy import DriftThresholds
 from ...feature_quality import FeatureQualityThresholds
+from ...execution_metadata import execution_metadata
 from ...models import StrategyDecision
 from ...runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
@@ -78,6 +79,7 @@ def _target_notional_sizing_audit_from_params(
         "paper_route_target_plan_source_decision",
         "paper_route_target_plan",
         "paper_route_probe",
+        "execution",
         "simple_lane",
     ):
         metadata = _mapping_value(params.get(key))
@@ -342,10 +344,9 @@ def _pct_cap_to_notional(
 
 
 def _simple_decision_notional(decision: StrategyDecision) -> Decimal | None:
-    simple_lane = decision.params.get("simple_lane")
-    if isinstance(simple_lane, Mapping):
-        simple_lane_payload = cast(Mapping[str, Any], simple_lane)
-        notional = _optional_decimal(simple_lane_payload.get("notional"))
+    execution = execution_metadata(decision.params)
+    if execution is not None:
+        notional = _optional_decimal(execution.get("notional"))
         if notional is not None:
             return notional
     price = _optional_decimal(decision.params.get("price"))

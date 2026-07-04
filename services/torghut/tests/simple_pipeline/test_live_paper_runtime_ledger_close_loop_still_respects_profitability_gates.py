@@ -583,7 +583,7 @@ def test_target_source_decisions_size_default_quantities_from_target_notional(
             assert sizing["overrode_requested_qty"] is True
             assert decision.params["reference_price"] == Decimal("100")
             assert (
-                decision.params["simple_lane"]["paper_route_target_notional_sizing"]
+                decision.params["execution"]["paper_route_target_notional_sizing"]
                 == sizing
             )
     finally:
@@ -681,7 +681,7 @@ def test_source_collection_target_defaults_current_session_probe_contract(
             "AMZN": Decimal("375.0000"),
         }
         actions = {
-            decision.symbol: decision.params["simple_lane"][
+            decision.symbol: decision.params["execution"][
                 "paper_route_probe_leg_action"
             ]
             for decision in decisions

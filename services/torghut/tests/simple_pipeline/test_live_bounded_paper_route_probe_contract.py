@@ -85,21 +85,10 @@ def test_simple_live_submission_gate_drops_retired_source_collection_blockers(
         settings.trading_emergency_stop_enabled = emergency_stop_before
 
 
-def test_bounded_live_paper_route_requires_explicit_collection_gate() -> None:
-    assert not SimpleTradingPipeline._bounded_live_paper_route_collection_gate_allows(
-        {
-            "allowed": False,
-            "reason": "runtime_window_import_required",
-            "blocked_reasons": ["runtime_window_import_required"],
-        }
-    )
-    assert SimpleTradingPipeline._bounded_live_paper_route_collection_gate_allows(
-        {
-            "bounded_live_paper_collection_gate": {
-                "allowed": True,
-                "reason": "explicit_collection_contract",
-            }
-        }
+def test_bounded_live_paper_route_collection_gate_bypass_is_removed() -> None:
+    assert not hasattr(
+        SimpleTradingPipeline,
+        "_bounded_live_paper_route_collection_gate_allows",
     )
 
 

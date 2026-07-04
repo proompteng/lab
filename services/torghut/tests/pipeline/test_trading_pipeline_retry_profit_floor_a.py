@@ -534,7 +534,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                 "candidate_id": "candidate-1",
                 "hypothesis_id": "H-PAIRS-01",
             },
-            "simple_lane_precheck": {
+            "execution_precheck": {
                 "price": None,
                 "requested_qty": "1",
             },
@@ -556,7 +556,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
                         **base_json,
                         "params": {
                             **base_params,
-                            "simple_lane_precheck": {"price": "100"},
+                            "execution_precheck": {"price": "100"},
                         },
                     }
                 )
@@ -642,7 +642,7 @@ class TestTradingPipelineRetryProfitFloorA(TradingPipelineTestCaseBase):
             )
             decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
             params = dict(cast(Mapping[str, Any], decision_json.get("params") or {}))
-            params["simple_lane_precheck"] = {
+            params["execution_precheck"] = {
                 "price": None,
                 "requested_qty": "1",
             }

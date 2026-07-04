@@ -79,7 +79,7 @@ class TestTradingPipelineRetryProfitFloorB(TradingPipelineTestCaseBase):
             )
             decision_json = dict(cast(Mapping[str, Any], decision_row.decision_json))
             params = dict(cast(Mapping[str, Any], decision_json.get("params") or {}))
-            params["simple_lane_precheck"] = {
+            params["execution_precheck"] = {
                 "price": None,
                 "requested_qty": "1",
             }

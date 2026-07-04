@@ -62,7 +62,7 @@ from .decision_helpers import (
     source_collection_has_unrepaired_exposure,
     source_collection_params,
     source_collection_profit_proof_exposure,
-    source_collection_simple_lane,
+    source_collection_execution_metadata,
     source_collection_strategy_exposure,
     source_collection_symbols,
     source_collection_timeframe,
@@ -520,7 +520,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             symbol=symbol,
             action=action,
         )
-        simple_lane = source_collection_simple_lane(
+        execution_metadata = source_collection_execution_metadata(
             context,
             metadata=metadata,
             mode=mode,
@@ -530,7 +530,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             context,
             symbol=symbol,
             metadata=metadata,
-            simple_lane=simple_lane,
+            execution_metadata=execution_metadata,
             mode=mode,
         )
         _merge_paper_route_probe_lineage(
@@ -572,7 +572,7 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             return None
         apply_source_collection_quantity_resolution(
             metadata=metadata,
-            simple_lane=simple_lane,
+            execution_metadata=execution_metadata,
             params=params,
             quantity_resolution=broker_quantity_resolution,
         )

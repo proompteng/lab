@@ -78,7 +78,7 @@ class TestSimpleRisk(TestCase):
         self.assertTrue(result.approved)
         self.assertEqual(result.notional, Decimal("767.984776"))
         self.assertEqual(result.diagnostics["price"], "316.93")
-        self.assertEqual(result.decision.params["simple_lane"]["price"], "316.93")
+        self.assertEqual(result.decision.params["execution"]["price"], "316.93")
 
     def test_rejects_when_symbol_exposure_cap_leaves_less_than_min_qty(self) -> None:
         result = prepare_simple_decision(
@@ -112,7 +112,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.notional, Decimal("200"))
         self.assertEqual(result.diagnostics["buying_power_cap_qty"], "2")
         self.assertEqual(result.diagnostics["final_qty"], "2")
-        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+        self.assertTrue(result.decision.params["execution"]["capped_by_buying_power"])
 
     def test_buying_power_reserve_keeps_capped_order_below_available_cash(self) -> None:
         result = prepare_simple_decision(
@@ -127,7 +127,7 @@ class TestSimpleRisk(TestCase):
         )
 
         self.assertTrue(result.approved)
-        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+        self.assertTrue(result.decision.params["execution"]["capped_by_buying_power"])
         self.assertLess(result.decision.qty, Decimal("0.9027"))
         self.assertEqual(result.diagnostics["buying_power_reserve_bps"], "25")
         self.assertEqual(result.diagnostics["buying_power_after_reserve"], "372.865500")
@@ -180,9 +180,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.decision.qty, Decimal("1"))
         self.assertEqual(result.diagnostics["buying_power_cap_qty"], "1")
         self.assertEqual(result.diagnostics["buying_power_required_notional"], "0")
-        self.assertFalse(
-            result.decision.params["simple_lane"]["capped_by_buying_power"]
-        )
+        self.assertFalse(result.decision.params["execution"]["capped_by_buying_power"])
 
     def test_buy_cover_short_with_zero_buying_power_caps_flip_to_long(self) -> None:
         result = prepare_simple_decision(
@@ -199,7 +197,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.decision.qty, Decimal("1"))
         self.assertEqual(result.diagnostics["buying_power_cap_qty"], "1")
         self.assertEqual(result.diagnostics["buying_power_required_notional"], "0")
-        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+        self.assertTrue(result.decision.params["execution"]["capped_by_buying_power"])
 
     def test_buy_cover_short_with_buying_power_caps_only_flip_to_long_excess(
         self,
@@ -219,7 +217,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.notional, Decimal("300"))
         self.assertEqual(result.diagnostics["buying_power_cap_qty"], "3")
         self.assertEqual(result.diagnostics["buying_power_required_notional"], "200")
-        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+        self.assertTrue(result.decision.params["execution"]["capped_by_buying_power"])
 
     def test_equity_order_cap_limits_large_new_exposure(self) -> None:
         result = prepare_simple_decision(
@@ -237,7 +235,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.decision.qty, Decimal("100"))
         self.assertEqual(result.notional, Decimal("10000"))
         self.assertEqual(result.diagnostics["equity_order_cap_notional"], "10000.00")
-        self.assertTrue(result.decision.params["simple_lane"]["capped_by_order"])
+        self.assertTrue(result.decision.params["execution"]["capped_by_order"])
 
     def test_equity_order_cap_rejects_missing_equity_for_new_exposure(self) -> None:
         result = prepare_simple_decision(
@@ -276,7 +274,7 @@ class TestSimpleRisk(TestCase):
 
         self.assertTrue(close_result.approved)
         self.assertEqual(close_result.decision.qty, Decimal("1"))
-        self.assertTrue(close_result.decision.params["simple_lane"]["capped_by_symbol"])
+        self.assertTrue(close_result.decision.params["execution"]["capped_by_symbol"])
         self.assertFalse(new_exposure_result.approved)
         self.assertEqual(
             new_exposure_result.reject_reason,
@@ -309,8 +307,8 @@ class TestSimpleRisk(TestCase):
 
         self.assertTrue(sell_close.approved)
         self.assertTrue(buy_cover.approved)
-        self.assertFalse(sell_close.decision.params["simple_lane"]["capped_by_gross"])
-        self.assertFalse(buy_cover.decision.params["simple_lane"]["capped_by_gross"])
+        self.assertFalse(sell_close.decision.params["execution"]["capped_by_gross"])
+        self.assertFalse(buy_cover.decision.params["execution"]["capped_by_gross"])
 
     def test_gross_exposure_cap_rejects_missing_equity_for_new_exposure(self) -> None:
         result = prepare_simple_decision(
@@ -353,7 +351,7 @@ class TestSimpleRisk(TestCase):
 
         self.assertTrue(close_result.approved)
         self.assertEqual(close_result.decision.qty, Decimal("1"))
-        self.assertTrue(close_result.decision.params["simple_lane"]["capped_by_gross"])
+        self.assertTrue(close_result.decision.params["execution"]["capped_by_gross"])
         self.assertFalse(new_exposure_result.approved)
         self.assertEqual(
             new_exposure_result.reject_reason,
@@ -391,7 +389,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.notional, Decimal("400"))
         self.assertEqual(result.diagnostics["buying_power_cap_qty"], "4")
         self.assertEqual(result.diagnostics["buying_power_required_notional"], "200")
-        self.assertTrue(result.decision.params["simple_lane"]["capped_by_buying_power"])
+        self.assertTrue(result.decision.params["execution"]["capped_by_buying_power"])
 
     def test_rejects_short_increase_when_shorts_are_disabled(self) -> None:
         result = prepare_simple_decision(
@@ -437,9 +435,7 @@ class TestSimpleRisk(TestCase):
         self.assertEqual(result.notional, Decimal("49.932822"))
         self.assertEqual(result.diagnostics["close_only_requested_qty"], "1382")
         self.assertEqual(result.diagnostics["close_only_position_qty"], "0.1671")
-        quantity_resolution = result.decision.params["simple_lane"][
-            "quantity_resolution"
-        ]
+        quantity_resolution = result.decision.params["execution"]["quantity_resolution"]
         self.assertEqual(
             quantity_resolution["reason"],
             "sell_reducing_long_fractional_allowed",
