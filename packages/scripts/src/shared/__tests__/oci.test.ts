@@ -479,7 +479,10 @@ describe('native OCI build workflows', () => {
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
 
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
-    expect(enabledProductReleaseWorkflow).toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+    expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+    expect(sagReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+    expect(symphonyReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/shared\\/|')
+    expect(symphonyReleaseMetadataScript).toContain('packages\\/scripts\\/src\\/shared\\/(?:cli|git)\\.ts$')
   })
 
   it('does not fan out migrated image builds on unrelated flake attr changes', () => {
@@ -650,6 +653,7 @@ describe('native OCI build workflows', () => {
     expect(sagReleaseWorkflow).toContain('argocd/sag/kustomization.yaml')
     expect(sagReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
     expect(sagReleaseWorkflow).toContain('test "${service}" = "sag"')
+    expect(sagReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
     expect(sagReleaseWorkflow).not.toContain('docker buildx')
     expect(sagPostDeployVerifyWorkflow).toContain('kubectl -n sag rollout status deployment/sag')
     expect(sagPostDeployVerifyWorkflow).toContain('desired_replicas=')
@@ -701,6 +705,8 @@ describe('native OCI build workflows', () => {
       expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
       expect(workflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
       expect(workflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE_REF}" linux/amd64 linux/arm64')
+      expect(workflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+      expect(workflow).not.toContain('packages/scripts/src/shared/oci-digest.ts')
       expect(workflow).not.toContain('docker buildx')
     }
   })
@@ -885,6 +891,7 @@ describe('native OCI build workflows', () => {
     expect(enabledProductReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${image}@${digest}"')
     expect(enabledProductReleaseWorkflow).toContain('service build inputs changed after')
     expect(enabledProductReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
+    expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
     expect(enabledProductReleaseWorkflow).not.toContain('docker buildx')
   })
 

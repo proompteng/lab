@@ -129,8 +129,6 @@ jobs:
                     packages/scripts/src/torghut/update-ta-manifest.ts \
                     packages/scripts/src/shared/cli.ts \
                     packages/scripts/src/shared/git.ts \
-                    packages/scripts/src/shared/nix-oci-deploy.ts \
-                    packages/scripts/src/shared/oci-digest.ts \
                     nix/images/torghut-ta.nix \
                     .github/workflows/torghut-ta-build-push.yaml \
                     .github/workflows/torghut-ta-release.yml
