@@ -245,8 +245,8 @@ describe('validatePostDeployEvidence', () => {
           blocked_reasons: [
             'empirical_jobs_not_ready',
             'hypothesis_not_promotion_eligible',
-            'runtime_ledger_profit_target_source_collection_pending',
-            'runtime_ledger_source_collection_pending',
+            'runtime_profit_target_import_required',
+            'runtime_window_import_required',
           ],
           capital_stage: 'shadow',
           capital_state: 'observe',

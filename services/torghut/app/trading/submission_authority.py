@@ -6,11 +6,11 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 
-_RETIRED_SUBMISSION_AUTHORITY_BLOCKERS = frozenset(
+_DIAGNOSTIC_SUBMISSION_REASONS = frozenset(
     {
         "hypothesis_not_promotion_eligible",
-        "runtime_ledger_profit_target_source_collection_pending",
-        "runtime_ledger_source_collection_pending",
+        "runtime_profit_target_import_required",
+        "runtime_window_import_required",
     }
 )
 
@@ -20,7 +20,7 @@ def build_submission_authority_status(
     *,
     simple_lane_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
-    """Summarize the effective submit authority after retiring proof blockers."""
+    """Summarize effective submit authority from operational blockers only."""
 
     simple_lane = _mapping(simple_lane_status)
     operational_gate = operational_submission_gate_status(live_submission_gate)
@@ -61,7 +61,7 @@ def build_submission_authority_status(
 def operational_submission_gate_status(
     live_submission_gate: Mapping[str, Any],
 ) -> dict[str, object]:
-    """Return the effective operational gate with retired proof blockers removed."""
+    """Return the effective operational gate with diagnostic reasons removed."""
 
     nested_gate = _mapping(live_submission_gate.get("operational_submission_gate"))
     gate = nested_gate or live_submission_gate
@@ -97,7 +97,7 @@ def _active_submission_allowed(
         return False
     if raw_allowed:
         return True
-    if _is_retired_submission_blocker(raw_reason):
+    if _is_diagnostic_submission_reason(raw_reason):
         return True
     if raw_blocked_reasons and not active_blocked_reasons:
         return True
@@ -108,7 +108,7 @@ def _active_submission_blockers(blocked_reasons: list[str]) -> list[str]:
     return [
         reason
         for reason in blocked_reasons
-        if not _is_retired_submission_blocker(reason)
+        if not _is_diagnostic_submission_reason(reason)
     ]
 
 
@@ -119,15 +119,15 @@ def _active_submission_reason(
 ) -> str:
     if blocked_reasons:
         return blocked_reasons[0]
-    if _is_retired_submission_blocker(raw_reason):
+    if _is_diagnostic_submission_reason(raw_reason):
         return "operational_submission_ready"
     if raw_allowed:
         return raw_reason or "operational_submission_ready"
     return raw_reason or "unknown"
 
 
-def _is_retired_submission_blocker(reason: str) -> bool:
-    return reason in _RETIRED_SUBMISSION_AUTHORITY_BLOCKERS
+def _is_diagnostic_submission_reason(reason: str) -> bool:
+    return reason in _DIAGNOSTIC_SUBMISSION_REASONS
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

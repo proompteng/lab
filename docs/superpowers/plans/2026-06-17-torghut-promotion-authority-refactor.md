@@ -774,7 +774,7 @@ Replace direct false promotion fields in `source_collection_bounded_execution_pa
 
 ```python
 **source_collection_authority(
-    blockers=["runtime_ledger_source_collection_pending"],
+    blockers=[],
 ).as_target_fields(),
 ```
 

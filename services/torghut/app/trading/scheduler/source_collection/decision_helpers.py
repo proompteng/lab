@@ -249,8 +249,9 @@ def source_collection_params(
         "paper_route_probe_symbols": metadata.get("paper_route_probe_symbols"),
         "observed_stage": _safe_text(context.target.get("observed_stage")) or "paper",
         "bounded_collection_stage": "bounded_paper_collection",
+        "source_collection_diagnostics": ["runtime_window_import_required"],
         **source_collection_authority(
-            blockers=["runtime_ledger_source_collection_pending"],
+            blockers=[],
         ).as_target_fields(),
         "live_capital_routing_enabled": False,
         **mode.execution_metadata,

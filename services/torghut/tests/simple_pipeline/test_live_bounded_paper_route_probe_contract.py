@@ -46,8 +46,8 @@ def test_simple_live_submission_gate_drops_retired_source_collection_blockers(
                 "reason": "hypothesis_not_promotion_eligible",
                 "blocked_reasons": [
                     "hypothesis_not_promotion_eligible",
-                    "runtime_ledger_profit_target_source_collection_pending",
-                    "runtime_ledger_source_collection_pending",
+                    "runtime_profit_target_import_required",
+                    "runtime_window_import_required",
                 ],
                 "execution_route": {
                     "route": "testnet",
@@ -89,8 +89,8 @@ def test_bounded_live_paper_route_requires_explicit_collection_gate() -> None:
     assert not SimpleTradingPipeline._bounded_live_paper_route_collection_gate_allows(
         {
             "allowed": False,
-            "reason": "runtime_ledger_source_collection_pending",
-            "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+            "reason": "runtime_window_import_required",
+            "blocked_reasons": ["runtime_window_import_required"],
         }
     )
     assert SimpleTradingPipeline._bounded_live_paper_route_collection_gate_allows(
@@ -119,8 +119,8 @@ def test_live_profitability_proof_floor_is_diagnostic_for_runtime_ledger_blocker
             "max_notional": "0",
             "blocking_reasons": [
                 "hypothesis_not_promotion_eligible",
-                "runtime_ledger_profit_target_source_collection_pending",
-                "runtime_ledger_source_collection_pending",
+                "runtime_profit_target_import_required",
+                "runtime_window_import_required",
             ],
         }
         blocks: list[object] = []
@@ -888,7 +888,7 @@ def test_live_profitability_symbol_floor_is_diagnostic_for_runtime_ledger_blocke
             "capital_state": "shadow",
         }
         pipeline._proof_floor_symbol_block_reason = lambda proof_floor, symbol: (
-            "runtime_ledger_source_collection_pending"
+            "runtime_window_import_required"
         )
         blocks: list[object] = []
         pipeline._block_decision_submission = lambda request: blocks.append(request)

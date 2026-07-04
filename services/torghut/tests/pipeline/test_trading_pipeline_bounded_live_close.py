@@ -286,7 +286,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 "allowed": False,
                 "blocked_reasons": [
                     "hypothesis_not_promotion_eligible",
-                    "runtime_ledger_source_collection_pending",
+                    "runtime_window_import_required",
                 ],
                 "bounded_live_paper_collection_gate": {
                     "allowed": True,
@@ -298,7 +298,7 @@ class TestTradingPipelineBoundedLiveClose(TradingPipelineTestCaseBase):
                 "capital_state": "paper",
                 "max_notional": "100",
                 "market_window": {"session_open": True},
-                "blocking_reasons": ["runtime_ledger_source_collection_pending"],
+                "blocking_reasons": ["runtime_window_import_required"],
                 "route_reacquisition_book": {
                     "summary": {"paper_route_probe_eligible_symbols": ["AAPL"]}
                 },

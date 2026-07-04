@@ -17,7 +17,7 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
         70,
         6,
     ),
-    "runtime_ledger_source_collection_pending": (
+    "runtime_window_import_required": (
         "repair_source_runtime_window_import",
         "runtime_window_import",
         "import_source_collection_runtime_ledger_window_before_alpha_promotion",
@@ -113,7 +113,7 @@ _REPAIR_METADATA: dict[str, dict[str, object]] = {
             "capital_replay_board",
         ],
     },
-    "runtime_ledger_source_collection_pending": {
+    "runtime_window_import_required": {
         "value_gate": "routeable_candidate_count",
         "required_output_receipt": "torghut.runtime-window-import-readback.v1",
         "required_receipts": [

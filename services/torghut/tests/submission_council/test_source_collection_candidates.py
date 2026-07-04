@@ -916,11 +916,9 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
 
         self.assertEqual(gate["paper_probation_eligible_total"], 0)
         self.assertEqual(gate["runtime_ledger_paper_probation_eligible_total"], 0)
+        self.assertNotIn("runtime_window_import_required", gate["blocked_reasons"])
         self.assertNotIn(
-            "runtime_ledger_source_collection_pending", gate["blocked_reasons"]
-        )
-        self.assertNotIn(
-            "runtime_ledger_profit_target_source_collection_pending",
+            "runtime_profit_target_import_required",
             gate["blocked_reasons"],
         )
         self.assertTrue(gate["allowed"])

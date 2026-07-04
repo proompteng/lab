@@ -95,9 +95,7 @@ class TestSubmissionCouncilRuntimeCertificateMerge(SubmissionCouncilTestCase):
         self.assertEqual(gate["reason"], "operational_submission_ready")
         self.assertFalse(gate["runtime_ledger_paper_probation_candidates"])
         self.assertFalse(gate["runtime_ledger_source_collection_candidates"])
-        self.assertNotIn(
-            "runtime_ledger_source_collection_pending", gate["blocked_reasons"]
-        )
+        self.assertNotIn("runtime_window_import_required", gate["blocked_reasons"])
         import_plan = gate["runtime_ledger_paper_probation_import_plan"]
         self.assertEqual(
             import_plan["schema_version"],
