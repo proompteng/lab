@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
+from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
 from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
@@ -46,22 +47,18 @@ class HyperliquidExecutionExchange(Protocol):
         self,
         markets: tuple[ExecutionMarket, ...],
     ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        """Return markets active on the testnet execution venue."""
         ...
 
     def filter_crossable_markets(
         self,
         markets: tuple[ExecutionMarket, ...],
     ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        """Return markets with a testnet book crossable by market_open slippage."""
         ...
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit a marketable entry order."""
         ...
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
-        """Cancel a resting order by Hyperliquid oid."""
         ...
 
     def close_position_reduce_only(
@@ -71,27 +68,21 @@ class HyperliquidExecutionExchange(Protocol):
         size: Decimal | None = None,
         slippage: Decimal = Decimal("0.05"),
     ) -> OrderResult:
-        """Close an existing position through a reduce-only order."""
         ...
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
-        """Read fills from the configured testnet account."""
         ...
 
     def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
-        """Read account and position state from the configured testnet account."""
         ...
 
     def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]:
-        """Read coins with open exchange orders."""
         ...
 
     def dependency_status(self) -> RuntimeDependencyStatus:
-        """Return exchange freshness."""
         ...
 
     def execution_metadata_details(self) -> dict[str, object]:
-        """Return active/missing/delisted metadata details for reports."""
         ...
 
 
@@ -416,10 +407,10 @@ class HyperliquidSdkExecutionExchange:
                 return "book_empty"
             slippage = self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
             buy_limit = sdk_slippage_limit_price(
-                info, market.coin, True, mid_price, slippage
+                info, sdk_name, True, mid_price, slippage
             )
             sell_limit = sdk_slippage_limit_price(
-                info, market.coin, False, mid_price, slippage
+                info, sdk_name, False, mid_price, slippage
             )
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             return f"book_unavailable:{type(exc).__name__}"
@@ -593,16 +584,12 @@ def _parse_sdk_status(
 ) -> tuple[OrderStatus, str | None, str | None]:
     if "error" in status_payload:
         return "rejected", None, str(status_payload["error"])
-    for name in ("resting", "filled"):
+    for name, order_status in (("resting", "accepted"), ("filled", "filled")):
         value = status_payload.get(name)
-        if isinstance(value, dict):
-            value_map = cast(Mapping[str, object], value)
-            oid = value_map.get("oid")
-            return (
-                ("accepted" if name == "resting" else "filled"),
-                str(oid) if oid is not None else None,
-                None,
-            )
+        if not isinstance(value, dict):
+            continue
+        oid = cast(Mapping[str, object], value).get("oid")
+        return order_status, str(oid) if oid is not None else None, None
     return "submitted", None, None
 
 
@@ -836,21 +823,6 @@ def _spot_usdc_balances(payload: Mapping[str, object]) -> list[Mapping[str, obje
         if str(balance_map.get("coin") or "").strip().upper() == "USDC":
             usdc_balances.append(balance_map)
     return usdc_balances
-
-
-def _sdk_dex(dex: str) -> str:
-    normalized = dex.strip().lower()
-    if normalized in {"", "default"}:
-        return ""
-    return normalized
-
-
-def _sdk_market_name(coin: str, dex: str) -> str:
-    normalized_coin = coin.strip()
-    if ":" in normalized_coin:
-        return normalized_coin
-    sdk_dex = _sdk_dex(dex)
-    return f"{sdk_dex}:{normalized_coin}" if sdk_dex else normalized_coin
 
 
 def _fill_coin(payload: Mapping[str, object]) -> str:
