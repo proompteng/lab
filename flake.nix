@@ -219,7 +219,7 @@
               bun = exact.bun;
             };
             "bumba-image" = import ./nix/images/bumba.nix {
-              inherit pkgs lib nodejs repoRevision;
+              inherit pkgs lib nodejs;
               repoRoot = ./.;
               bun = exact.bun;
             };
