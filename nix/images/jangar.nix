@@ -95,11 +95,12 @@ import ./bun-workspace-service.nix {
 
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
 
-    for package in agent-contracts codex cx-tools otel temporal-bun-sdk; do
+    for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
     done
 
     cp "$TMPDIR/work/services/jangar/package.json" "$out/app/services/jangar/package.json"
+    cp -R "$TMPDIR/work/services/jangar/node_modules" "$out/app/services/jangar/node_modules"
     cp -R "$TMPDIR/work/services/jangar/.output" "$out/app/services/jangar/.output"
     mkdir -p "$out/app/services/jangar/src"
     cp -R "$TMPDIR/work/services/jangar/src/worker.ts" "$out/app/services/jangar/src/worker.ts"

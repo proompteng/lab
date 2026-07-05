@@ -828,6 +828,10 @@ describe('native OCI build workflows', () => {
     expect(jangarImageModule).toContain('dependencyClosure = "bunCache";')
     expect(jangarImageModule).toContain('"@proompteng/jangar"')
     expect(jangarImageModule).toContain('"@proompteng/cx-tools"')
+    expect(jangarImageModule).toContain(
+      'for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk',
+    )
+    expect(jangarImageModule).toContain('cp -R "$TMPDIR/work/services/jangar/node_modules"')
     expect(jangarImageModule).toContain('import ./openai-codex-cli.nix')
     expect(jangarImageModule).toContain('openvscode-server')
     expect(jangarImageModule).toContain('import ./bun-workspace-service.nix')
