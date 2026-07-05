@@ -20,7 +20,7 @@ V2 contract:
   excluded when they are not enabled in the testnet execution metadata.
 - `SPX` is excluded.
 - Strategy entry uses one testnet IOC execution path: `ORDER_POLICY=marketable_ioc` and `ORDER_TTL_SECONDS=10`.
-- Strategy entry requires edge to clear `max(MIN_EDGE_BPS=3, spread_bps + COST_BUFFER_BPS=2)`.
+- Expected return and estimated cost are persisted as diagnostics; they do not block testnet submission.
 - Signal freshness allows the same `180s` source and quote-lag window used by runtime dependency readiness.
 - Short entries are enabled in the restore lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=true`; entries remain
   bounded by per-symbol Hyperliquid max leverage, account margin utilization, cooldown, and single-open-order controls.

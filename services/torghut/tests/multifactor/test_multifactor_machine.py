@@ -54,7 +54,6 @@ def test_multifactor_machine_builds_executable_target_from_hyperliquid_features(
                 cost_buffer_bps=Decimal("2"),
                 participation_rate=Decimal("0.001"),
             ),
-            min_edge_bps=Decimal("5"),
         ),
         limits=PortfolioLimits(
             min_order_notional_usd=Decimal("10"),

@@ -138,7 +138,6 @@ def _multifactor_controls(
         risk=risk_forecast,
         costs=PortfolioCostInput(
             expected_cost_bps=expected_cost_bps,
-            min_edge_bps=config.min_edge_bps,
         ),
         limits=PortfolioLimits(
             min_order_notional_usd=config.min_order_notional_usd,

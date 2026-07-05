@@ -41,7 +41,7 @@ def test_verifier_accepts_hard_proof_payload() -> None:
     assert evaluate_loop_status(_restored_payload()) == []
 
 
-def test_verifier_accepts_current_no_trade_decision_with_execution_proof() -> None:
+def test_verifier_rejects_zero_target_without_submission_authority() -> None:
     payload = _restored_payload()
     payload["alpha_model"] = {
         "present": True,
@@ -52,10 +52,12 @@ def test_verifier_accepts_current_no_trade_decision_with_execution_proof() -> No
     payload["portfolio_target"] = {
         "present": True,
         "target_notional_positive": False,
-        "clip_reason": "expected_edge_not_above_cost",
+        "clip_reason": "liquidity_capacity_below_min_order",
     }
 
-    assert evaluate_loop_status(payload) == []
+    failures = evaluate_loop_status(payload)
+
+    assert "multifactor_target_notional_not_positive" in failures
 
 
 def test_verifier_rejects_green_runtime_without_fills() -> None:

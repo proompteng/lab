@@ -95,14 +95,15 @@ def test_universe_handles_parse_and_catalog_edge_cases() -> None:
     assert details["missing_from_feed"] == ["abc:NVDA"]
 
 
-def test_strategy_holds_below_cost_adjusted_edge() -> None:
+def test_strategy_routes_directional_signal_even_below_cost_diagnostic() -> None:
     config = HyperliquidExecutionConfig.from_env({})
     feature = _feature(momentum=Decimal("3"), spread=Decimal("2"))
 
     signal = generate_signal(feature, config)
 
-    assert signal.action == "hold"
-    assert signal.reason == "no_edge"
+    assert signal.action == "buy"
+    assert signal.reason == "alpha_direction"
+    assert Decimal("0") < signal.edge_bps < Decimal("5")
 
 
 def test_strategy_buys_or_sells_above_cost_adjusted_edge() -> None:
@@ -113,6 +114,8 @@ def test_strategy_buys_or_sells_above_cost_adjusted_edge() -> None:
 
     assert buy_signal.action == "buy"
     assert sell_signal.action == "sell"
+    assert buy_signal.reason == "alpha_direction"
+    assert sell_signal.reason == "alpha_direction"
 
 
 def test_risk_blocks_disabled_stale_open_order_caps_cooldown_and_missing_quotes() -> (
