@@ -21,6 +21,7 @@ on:
       - 'tsconfig.base.json'
       - 'flake.lock'
       - 'nix/images/agents.nix'
+      - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
       - 'nix/cache-push.sh'
@@ -48,6 +49,7 @@ on:
       - 'tsconfig.base.json'
       - 'flake.lock'
       - 'nix/images/agents.nix'
+      - 'nix/images/openai-codex-cli.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
       - 'nix/cache-push.sh'
@@ -93,12 +95,23 @@ jobs:
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'agents-shell-release-contract' || '' }}
     secrets: inherit
 
+  runner-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: agents-codex-runner
+      package_attr: agents-codex-runner-image
+      tag: sha-${{ github.sha }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'agents-codex-runner-release-contract' || '' }}
+    secrets: inherit
+
   write-values:
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs:
       - controller-image
       - control-plane-image
       - agents-shell-image
+      - runner-image
     runs-on: arc-arm64
     timeout-minutes: 15
     steps:
@@ -116,26 +129,15 @@ jobs:
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
-      - name: Resolve preserved runner image pin
-        id: published
-        run: |
-          bun run packages/scripts/src/agents/resolve-published-agents-images.ts \
-            --values-path argocd/applications/agents/values.yaml \
-            --output "${GITHUB_OUTPUT}"
-
       - name: Write rendered Agents values
         env:
           TAG: sha-${{ github.sha }}
           CONTROLLER_DIGEST: ${{ needs.controller-image.outputs.digest }}
           CONTROL_PLANE_DIGEST: ${{ needs.control-plane-image.outputs.digest }}
           AGENTS_SHELL_DIGEST: ${{ needs.agents-shell-image.outputs.digest }}
-          RUNNER_REPOSITORY: ${{ steps.published.outputs.runner_image_repository }}
-          RUNNER_TAG: ${{ steps.published.outputs.runner_image_tag }}
-          RUNNER_DIGEST: ${{ steps.published.outputs.runner_image_digest }}
+          RUNNER_DIGEST: ${{ needs.runner-image.outputs.digest }}
         run: |
           set -euo pipefail
-          test -n "${RUNNER_REPOSITORY}"
-          test -n "${RUNNER_TAG}"
           test -n "${RUNNER_DIGEST}"
           bun run packages/scripts/src/agents/update-values.ts \
             --values argocd/applications/agents/values.yaml \
@@ -146,8 +148,8 @@ jobs:
             --control-plane-digest "${CONTROL_PLANE_DIGEST}" \
             --agents-shell-repository registry.ide-newton.ts.net/lab/agents-shell \
             --agents-shell-digest "${AGENTS_SHELL_DIGEST}" \
-            --runner-repository "${RUNNER_REPOSITORY}" \
-            --runner-tag "${RUNNER_TAG}" \
+            --runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner \
+            --runner-tag "${TAG}" \
             --runner-digest "${RUNNER_DIGEST}" \
             --source-sha "${GITHUB_SHA}" \
             --run-id "${GITHUB_RUN_ID}" \

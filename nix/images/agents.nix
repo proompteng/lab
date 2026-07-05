@@ -10,6 +10,151 @@
 let
   kubectl = exact.kubectl or pkgs.kubectl;
   yq = exact.yq or pkgs.yq;
+  pythonPackages = pkgs.python312Packages;
+  openaiCodexCli = import ./openai-codex-cli.nix { inherit pkgs; };
+
+  mkPyWheel =
+    {
+      pname,
+      pypiPname ? pname,
+      version,
+      hash,
+      url ? null,
+      dist ? "py3",
+      python ? "py3",
+      propagatedBuildInputs ? [ ],
+      pythonImportsCheck ? [ ],
+    }:
+    pythonPackages.buildPythonPackage {
+      inherit
+        pname
+        version
+        propagatedBuildInputs
+        pythonImportsCheck
+        ;
+      format = "wheel";
+      src =
+        if url == null then
+          pkgs.fetchPypi {
+            pname = pypiPname;
+            inherit version dist python hash;
+            format = "wheel";
+          }
+        else
+          pkgs.fetchurl { inherit url hash; };
+      doCheck = false;
+    };
+
+  dotenv = mkPyWheel {
+    pname = "dotenv";
+    version = "0.9.9";
+    url = "https://files.pythonhosted.org/packages/b2/b7/545d2c10c1fc15e48653c91efde329a790f2eecfbbf2bd16003b5db2bab0/dotenv-0.9.9-py2.py3-none-any.whl";
+    hash = "sha256-Kc90oIezHa/bWkRrbX4Ry86O0nQVQOIznGn775LJTOk=";
+    python = "py2.py3";
+    propagatedBuildInputs = [ pythonPackages."python-dotenv" ];
+    pythonImportsCheck = [ "dotenv" ];
+  };
+
+  pyluach = mkPyWheel {
+    pname = "pyluach";
+    version = "2.3.0";
+    hash = "sha256-RJe3Ma71lQiwedv18AvFv0MprEUJCmzTe1qDdW8Oaas=";
+    pythonImportsCheck = [ "pyluach" ];
+  };
+
+  exchangeCalendars = mkPyWheel {
+    pname = "exchange-calendars";
+    pypiPname = "exchange_calendars";
+    version = "4.13.2";
+    hash = "sha256-/Foq0NYbXDplOaMGHNTLtVxZ9KkDRVzseSbkt5iRmZY=";
+    propagatedBuildInputs = [
+      pythonPackages."korean-lunar-calendar"
+      pythonPackages.numpy
+      pythonPackages.pandas
+      pyluach
+      pythonPackages.toolz
+      pythonPackages.tzdata
+    ];
+    pythonImportsCheck = [ "exchange_calendars" ];
+  };
+
+  pandasTaClassic = mkPyWheel {
+    pname = "pandas-ta-classic";
+    pypiPname = "pandas_ta_classic";
+    version = "0.6.52";
+    hash = "sha256-U5Vt3olpuKGsHNp+5RTHS0r2XYAjhzU4FIFKwuHZSeI=";
+    propagatedBuildInputs = [
+      pythonPackages.numpy
+      pythonPackages.pandas
+    ];
+    pythonImportsCheck = [ "pandas_ta_classic" ];
+  };
+
+  alpacaPy = mkPyWheel {
+    pname = "alpaca-py";
+    pypiPname = "alpaca_py";
+    version = "0.43.5";
+    hash = "sha256-C0ysm3Q4UTEPGfapqoT1fd+VrnW2ATUDlXRqiT9Uoto=";
+    propagatedBuildInputs = [
+      pythonPackages.msgpack
+      pythonPackages.pandas
+      pythonPackages.pydantic
+      pythonPackages.pytz
+      pythonPackages.requests
+      pythonPackages."sseclient-py"
+      pythonPackages.websockets
+    ];
+    pythonImportsCheck = [ "alpaca" ];
+  };
+
+  fastmcp = mkPyWheel {
+    pname = "fastmcp";
+    version = "2.0.0";
+    hash = "sha256-1cQREjOmop+pLtWs2/5P6ukiGRodHBVD8Khe/u8x+7k=";
+    propagatedBuildInputs = [
+      dotenv
+      pythonPackages.fastapi
+      pythonPackages.mcp
+      pythonPackages."openapi-pydantic"
+      pythonPackages.rich
+      pythonPackages.typer
+      pythonPackages.websockets
+    ];
+    pythonImportsCheck = [ "fastmcp" ];
+  };
+
+  alpacaMcpServer = mkPyWheel {
+    pname = "alpaca-mcp-server";
+    pypiPname = "alpaca_mcp_server";
+    version = "2.0.1";
+    hash = "sha256-XjcoNwD8EZmeirHnpLNdlFQle3QCx01MMBryAkIp3gU=";
+    propagatedBuildInputs = [
+      pythonPackages.click
+      fastmcp
+      pythonPackages.httpx
+      pythonPackages."python-dotenv"
+    ];
+    pythonImportsCheck = [ "alpaca_mcp_server" ];
+  };
+
+  runnerPython = pkgs.python312.withPackages (
+    ps: [
+      alpacaMcpServer
+      alpacaPy
+      ps.duckdb
+      exchangeCalendars
+      ps.httpx
+      ps.numpy
+      ps.orjson
+      ps.pandas
+      pandasTaClassic
+      ps.polars
+      ps.pyarrow
+      ps.pydantic
+      ps.tenacity
+    ]
+  );
+
   natsCliVersion = "0.4.0";
   natsCliArch =
     {
@@ -71,6 +216,7 @@ let
   ];
 
   buildCommands = [
+    "patchShebangs --build node_modules"
     "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/codex run build"
     "bun --cwd=packages/otel run build"
@@ -171,6 +317,22 @@ let
     pkgs.wget
   ];
 
+  runnerRuntimeContents = [
+    bun
+    nodejs
+    openaiCodexCli
+    pkgs.bash
+    pkgs.cacert
+    pkgs.coreutils
+    pkgs.curl
+    pkgs.gh
+    pkgs.git
+    pkgs.jq
+    pkgs.openssh
+    pkgs.uv
+    runnerPython
+  ];
+
   mkImage =
     {
       serviceName,
@@ -202,6 +364,94 @@ let
       inherit serviceName imageName;
       dependencyClosure = "bunCache";
       workingDir = "/app/services/agents";
+    };
+
+  runnerRuntimeInstallPhase = ''
+    mkdir -p \
+      "$out/app/node_modules/@proompteng/codex" \
+      "$out/app/services/agents/scripts/codex" \
+      "$out/root/.codex" \
+      "$out/usr/bin" \
+      "$out/usr/local/bin"
+
+    cp "$TMPDIR/work/packages/codex/package.json" "$out/app/node_modules/@proompteng/codex/package.json"
+    cp -R "$TMPDIR/work/packages/codex/dist" "$out/app/node_modules/@proompteng/codex/dist"
+    cp "$TMPDIR/agents-runner/agent-runner.js" "$out/app/services/agents/scripts/codex/agent-runner.js"
+    cp "$TMPDIR/agents-runner/fake-app-server.js" "$out/app/services/agents/scripts/codex/fake-app-server.js"
+    cp "$TMPDIR/work/services/agents/scripts/codex-config-container.toml" "$out/root/.codex/config.toml"
+    printf '{}\n' > "$out/root/.codex/auth.json"
+    printf '%s\n' unspecified > "$out/root/.codex/auth.checksum"
+
+    cat > "$out/usr/local/bin/agent-runner" <<'EOF'
+    #!/usr/bin/env bash
+    exec bun /app/services/agents/scripts/codex/agent-runner.js "$@"
+    EOF
+    cat > "$out/usr/local/bin/agents-fake-codex-app-server" <<'EOF'
+    #!/usr/bin/env bash
+    exec bun /app/services/agents/scripts/codex/fake-app-server.js "$@"
+    EOF
+    ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
+    ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
+    ln -s ${runnerPython}/bin/alpaca-mcp-server "$out/usr/local/bin/alpaca-mcp-server"
+    chmod +x \
+      "$out/usr/local/bin/agent-runner" \
+      "$out/usr/local/bin/agents-fake-codex-app-server" \
+      "$out/app/services/agents/scripts/codex/agent-runner.js" \
+      "$out/app/services/agents/scripts/codex/fake-app-server.js"
+
+    fake_server="$TMPDIR/agents-fake-codex-app-server"
+    cat > "$fake_server" <<EOF
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun "$out/app/services/agents/scripts/codex/fake-app-server.js" "\$@"
+    EOF
+    chmod +x "$fake_server"
+    printf '%s\n' \
+      '{"implementation":{"text":"Write `/tmp/agents-runner-smoke/result.md` and respond OK."},"goal":{"objective":"image smoke"}}' \
+      > "$TMPDIR/agent-runner-run.json"
+    printf '%s\n' \
+      '{"schemaVersion":"agents.proompteng.ai/runner/v1","provider":"image-smoke","payloads":{"eventFilePath":"'"$TMPDIR"'/agent-runner-run.json"},"artifacts":{"statusPath":"'"$TMPDIR"'/agent-runner-status.json","logPath":"'"$TMPDIR"'/agent-runner.log"},"providerSpec":{"outputArtifacts":[{"name":"smoke-result","path":"/tmp/agents-runner-smoke/result.md"}]},"adapter":{"type":"codex-app-server","codex":{"binaryPath":"'"$fake_server"'","model":"agents-fake-codex-app-server","effort":"low","sandbox":"danger-full-access","approval":"never","prompt":"Write `/tmp/agents-runner-smoke/result.md` and respond OK.","goal":{"objective":"image smoke"}}}}' \
+      > "$TMPDIR/agent-runner-smoke.json"
+    ${bun}/bin/bun "$out/app/services/agents/scripts/codex/agent-runner.js" "$TMPDIR/agent-runner-smoke.json"
+    test -s /tmp/agents-runner-smoke/result.md
+    rm -f /tmp/agents-runner-smoke/result.md
+  '';
+
+  mkRunnerImage =
+    import ./bun-workspace-service.nix {
+      inherit
+        pkgs
+        lib
+        repoRoot
+        bun
+        nodejs
+        depsHash
+        installFilters
+        sourcePaths
+        ;
+      depsName = "agents-controller";
+      packageName = "@proompteng/agents-codex-runner";
+      serviceName = "agents-codex-runner";
+      imageName = "agents-codex-runner";
+      dependencyClosure = "bunCache";
+      buildCommands = buildCommands ++ [
+        ''mkdir -p "$TMPDIR/agents-runner"''
+        ''bun build services/agents/scripts/codex/agent-runner.ts --target bun --outfile "$TMPDIR/agents-runner/agent-runner.js"''
+        ''bun build services/agents/scripts/codex/fake-app-server.ts --target bun --outfile "$TMPDIR/agents-runner/fake-app-server.js"''
+      ];
+      runtimeInstallPhase = runnerRuntimeInstallPhase;
+      command = [ "bash" ];
+      workingDir = "/workspace";
+      extraContents = runnerRuntimeContents;
+      env = [
+        "WORKSPACE=/workspace"
+        "WORKTREE=/workspace/lab"
+        "GIT_TERMINAL_PROMPT=0"
+        "AGENTS_CODEX_BINARY=/usr/local/bin/codex"
+        "CODEX_BINARY=/usr/local/bin/codex"
+        "BUN_INSTALL=/usr/local"
+        "BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache"
+        "BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache"
+      ];
     };
 in
 {
@@ -268,4 +518,6 @@ in
       "3000/tcp" = { };
     };
   };
+
+  "agents-codex-runner-image" = mkRunnerImage;
 }

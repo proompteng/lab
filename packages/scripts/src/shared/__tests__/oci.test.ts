@@ -823,6 +823,7 @@ describe('native OCI build workflows', () => {
       ['agents-controller', 'agents-controller-image', 'agents-controller-release-contract'],
       ['agents-control-plane', 'agents-control-plane-image', 'agents-control-plane-release-contract'],
       ['agents-shell', 'agents-shell-image', 'agents-shell-release-contract'],
+      ['agents-codex-runner', 'agents-codex-runner-image', 'agents-codex-runner-release-contract'],
     ] as const) {
       expect(agentsImageModule).toContain(`"${packageAttr}"`)
       expect(agentsBuildWorkflow).toContain(`image_name: ${imageName}`)
@@ -831,10 +832,18 @@ describe('native OCI build workflows', () => {
     }
 
     expect(flake).toContain('import ./nix/images/agents.nix')
+    expect(agentsImageModule).toContain('import ./openai-codex-cli.nix')
+    expect(agentsImageModule).toContain('"agents-codex-runner-image"')
+    expect(agentsImageModule).toContain('pname = "alpaca-mcp-server";')
+    expect(agentsImageModule).toContain('version = "2.0.1";')
+    expect(agentsImageModule).toContain('pname = "alpaca-py";')
+    expect(agentsImageModule).toContain('pname = "pandas-ta-classic";')
+    expect(agentsImageModule).toContain('pythonPackages.buildPythonPackage')
     expect(agentsBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(agentsBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(agentsBuildWorkflow).toContain('Resolve preserved runner image pin')
-    expect(agentsBuildWorkflow).toContain('--runner-tag "${RUNNER_TAG}"')
+    expect(agentsBuildWorkflow).not.toContain('Resolve preserved runner image pin')
+    expect(agentsBuildWorkflow).toContain('--runner-tag "${TAG}"')
+    expect(agentsBuildWorkflow).toContain('--runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner')
     expect(agentsBuildWorkflow).toContain("'charts/agents/crds/**'")
     expect(agentsBuildWorkflow).not.toContain("'charts/agents/**'")
     expect(agentsBuildWorkflow).not.toContain("'argocd/applications/agents/**'")
@@ -849,6 +858,7 @@ describe('native OCI build workflows', () => {
     expect(agentsImageModule).toContain('"agents-controller-image"')
     expect(agentsImageModule).toContain('"agents-control-plane-image"')
     expect(agentsImageModule).toContain('"agents-shell-image"')
+    expect(agentsImageModule).toContain('"agents-codex-runner-image"')
   })
 
   it('preserves isolated Bun workspace runtime dependencies in Agents images', () => {
@@ -952,7 +962,9 @@ describe('native OCI build workflows', () => {
     expect(agentsDeployScript).not.toContain('inspectImageDigest')
     expect(agentsDeployScript).toContain("from '../shared/nix-oci-deploy'")
     expect(agentsDeployScript).toContain('dryRun')
-    expect(agentsDeployScript).toContain('readRunnerImagePin')
+    expect(agentsDeployScript).toContain('runnerRepository')
+    expect(agentsDeployScript).toContain('agents-codex-runner-image')
+    expect(agentsDeployScript).not.toContain('readRunnerImagePin')
 
     for (const script of torghutUpdateScripts) {
       expect(script).not.toContain("from '../shared/docker'")

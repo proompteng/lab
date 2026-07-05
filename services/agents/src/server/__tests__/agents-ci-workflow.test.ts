@@ -3,11 +3,22 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('agents-ci workflow', () => {
-  it('uses the mirrored Bun base image for local Agents integration builds', () => {
+  it('builds local Agents integration images from Nix archives', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
-    expect(workflow).toContain('--build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun"')
-    expect(workflow).not.toContain('--build-arg "BUN_BASE_IMAGE=docker.io/oven/bun"')
+    expect(workflow).toContain('Build and preload local Nix Agents image archives into kind')
+    expect(workflow).toContain('nix build ".#${1}" --print-out-paths --no-link')
+    expect(workflow).toContain(
+      'build_nix_image_archive "${CONTROL_PLANE_IMAGE}" agents-control-plane-image CONTROL_PLANE_ARCHIVE',
+    )
+    expect(workflow).toContain(
+      'build_nix_image_archive "${CONTROLLER_IMAGE}" agents-controller-image CONTROLLER_ARCHIVE',
+    )
+    expect(workflow).toContain('build_nix_image_archive "${RUNNER_IMAGE}" agents-codex-runner-image RUNNER_ARCHIVE')
+    expect(workflow).toContain('kind load image-archive')
+    expect(workflow).not.toContain('--build-arg "BUN_BASE_IMAGE=')
+    expect(workflow).not.toContain('docker build')
+    expect(workflow).not.toContain('kind load docker-image')
   })
 
   it('bounds kubectl downloads so integration runners fail instead of hanging', () => {

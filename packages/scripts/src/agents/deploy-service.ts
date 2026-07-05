@@ -23,9 +23,9 @@ type Options = {
   repository: string
   controlPlaneRepository: string
   agentsShellRepository: string
+  runnerRepository: string
   tag: string
   platforms: string[]
-  buildRunner: boolean
   apply: boolean
   dryRun: boolean
 }
@@ -62,7 +62,13 @@ type AgentsServiceImagePlan = {
 const buildAgentsServiceImagePlans = (
   options: Pick<
     Options,
-    'registry' | 'repository' | 'controlPlaneRepository' | 'agentsShellRepository' | 'tag' | 'platforms'
+    | 'registry'
+    | 'repository'
+    | 'controlPlaneRepository'
+    | 'agentsShellRepository'
+    | 'runnerRepository'
+    | 'tag'
+    | 'platforms'
   >,
 ): AgentsServiceImagePlan[] => [
   {
@@ -84,6 +90,13 @@ const buildAgentsServiceImagePlans = (
     imageName: 'agents-shell',
     packageAttr: 'agents-shell-image',
     repository: options.agentsShellRepository,
+    tag: options.tag,
+  },
+  {
+    service: 'agents-codex-runner',
+    imageName: 'agents-codex-runner',
+    packageAttr: 'agents-codex-runner-image',
+    repository: options.runnerRepository,
     tag: options.tag,
   },
 ]
@@ -177,9 +190,6 @@ const parseArgs = (argv: string[]): Partial<Options> => {
       options.apply = false
       continue
     }
-    if (arg === '--skip-runner') {
-      options.buildRunner = false
-    }
   }
   return options
 }
@@ -195,6 +205,7 @@ const resolveOptions = (): Options => {
   const controlPlaneRepository =
     args.controlPlaneRepository ?? process.env.AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY ?? 'lab/agents-control-plane'
   const agentsShellRepository = process.env.AGENTS_SHELL_IMAGE_REPOSITORY ?? 'lab/agents-shell'
+  const runnerRepository = process.env.AGENTS_RUNNER_IMAGE_REPOSITORY ?? 'lab/agents-codex-runner'
   const tag = args.tag ?? process.env.AGENTS_IMAGE_TAG ?? execGit(['rev-parse', '--short', 'HEAD'])
   const platforms = parsePlatforms(process.env.AGENTS_IMAGE_PLATFORMS) ?? ['linux/amd64', 'linux/arm64']
 
@@ -211,9 +222,9 @@ const resolveOptions = (): Options => {
     repository,
     controlPlaneRepository,
     agentsShellRepository,
+    runnerRepository,
     tag,
     platforms,
-    buildRunner: args.buildRunner ?? parseBoolean(process.env.AGENTS_BUILD_RUNNER, false),
     apply: args.apply ?? parseBoolean(process.env.AGENTS_APPLY, true),
     dryRun: args.dryRun ?? parseBoolean(process.env.AGENTS_DRY_RUN, false),
   }
@@ -412,20 +423,6 @@ const updateValuesFile = (
 
 export const updateAgentsValuesFile = updateValuesFile
 
-const readRunnerImagePin = (valuesPath: string): ImagePin => {
-  const values = YAML.parse(readFileSync(valuesPath, 'utf8')) ?? {}
-  const runnerImage = values.runner?.image
-  const repository = typeof runnerImage?.repository === 'string' ? runnerImage.repository : ''
-  const tag = typeof runnerImage?.tag === 'string' ? runnerImage.tag : ''
-  const digest = typeof runnerImage?.digest === 'string' ? runnerImage.digest : ''
-  if (!repository || !tag || !digest) {
-    fatal(
-      `Runner image pin missing from ${valuesPath}; cannot preserve runner image without repository, tag, and digest.`,
-    )
-  }
-  return { repository, tag, digest }
-}
-
 const normalizeDigest = (value: string): string => {
   const trimmed = value.trim()
   return trimmed.includes('@') ? trimmed.slice(trimmed.lastIndexOf('@') + 1) : trimmed
@@ -459,6 +456,7 @@ const buildAgentsServiceImages = async (options: Options) => {
     controller: pins['agents-controller'] ?? fatal('agents-controller Nix image result was not produced'),
     controlPlane: pins['agents-control-plane'] ?? fatal('agents-control-plane Nix image result was not produced'),
     agentsShell: pins['agents-shell'] ?? fatal('agents-shell Nix image result was not produced'),
+    runner: pins['agents-codex-runner'] ?? fatal('agents-codex-runner Nix image result was not produced'),
   }
 }
 
@@ -547,19 +545,11 @@ const renderAndApply = async (kustomizePath: string) => {
 
 const main = async () => {
   const options = resolveOptions()
-  if (options.buildRunner) {
-    fatal(
-      'agents:deploy no longer builds the agents-codex-runner image. The service image migration preserves the currently pinned runner image; migrate the runner through its own package once its Python/Codex runtime contract is proven.',
-    )
-  }
-
   const servicePins = await buildAgentsServiceImages(options)
   if (options.dryRun) {
     console.log('Dry run complete; Agents values and cluster state were not changed.')
     return
   }
-
-  const runnerPin = readRunnerImagePin(options.valuesPath)
 
   updateValuesFile(
     options.valuesPath,
@@ -572,9 +562,9 @@ const main = async () => {
     servicePins.agentsShell.repository,
     servicePins.agentsShell.tag,
     servicePins.agentsShell.digest,
-    runnerPin.repository,
-    runnerPin.tag,
-    runnerPin.digest,
+    servicePins.runner.repository,
+    servicePins.runner.tag,
+    servicePins.runner.digest,
     {
       sourceHeadSha: execGit(['rev-parse', 'HEAD']),
       gitopsRevision: execGit(['rev-parse', 'HEAD']),
@@ -606,7 +596,6 @@ export const __private = {
   isArgoHookManifest,
   renderAndApply,
   updateValuesFile,
-  readRunnerImagePin,
   buildAgentsServiceImages,
   resolveDatabaseSecretRequirement,
 }
