@@ -867,7 +867,7 @@ export const submitJobRun = async (
   const codexHomePath = authSecret?.mountPath ?? DEFAULT_CODEX_HOME
   const codexHomeAlreadyMounted =
     hasVolumeMountAtPath(volumeMounts, codexHomePath) || hasVolumeMountAtPath(vcsRuntime?.volumeMounts, codexHomePath)
-  if (!codexHomeAlreadyMounted) {
+  if (authSecret && !codexHomeAlreadyMounted) {
     const codexHomeVolumeName = makeName(
       runName,
       authSecret

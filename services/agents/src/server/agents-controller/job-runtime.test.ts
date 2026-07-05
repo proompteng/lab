@@ -186,7 +186,7 @@ describe('agents controller job-runtime module', () => {
     expect(agentRunnerContainer.terminationMessagePolicy).toBe('File')
   })
 
-  it('mounts a writable default Codex home when no auth secret is configured', async () => {
+  it('preserves the image-baked Codex home when no auth secret is configured', async () => {
     const previousName = process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
     const previousKey = process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
     const previousMountPath = process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
@@ -235,10 +235,8 @@ describe('agents controller job-runtime module', () => {
 
       expect(env).toContainEqual({ name: 'CODEX_HOME', value: '/root/.codex' })
       expect(env.find((entry) => entry.name === 'CODEX_AUTH')).toBeUndefined()
-      expect(volumes.find((volume) => volume.name === 'run-1-codex-home')).toMatchObject({ emptyDir: {} })
-      expect(volumeMounts.find((mount) => mount.mountPath === '/root/.codex')).toMatchObject({
-        name: 'run-1-codex-home',
-      })
+      expect(volumes.find((volume) => volume.name === 'run-1-codex-home')).toBeUndefined()
+      expect(volumeMounts.find((mount) => mount.mountPath === '/root/.codex')).toBeUndefined()
     } finally {
       if (previousName === undefined) {
         delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
