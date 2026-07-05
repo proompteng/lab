@@ -77,6 +77,7 @@ const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-im
 const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
 const sagBuildScript = readRepoFile('packages/scripts/src/sag/build-image.ts')
 const sagDeployScript = readRepoFile('packages/scripts/src/sag/deploy-service.ts')
+const agentsBuildScript = readRepoFile('packages/scripts/src/agents/build-image.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
 const torghutBuildScript = readRepoFile('packages/scripts/src/torghut/build-image.ts')
 const torghutDeployScript = readRepoFile('packages/scripts/src/torghut/deploy-service.ts')
@@ -847,6 +848,8 @@ describe('native OCI build workflows', () => {
     expect(agentsBuildWorkflow).toContain("'charts/agents/crds/**'")
     expect(agentsBuildWorkflow).not.toContain("'charts/agents/**'")
     expect(agentsBuildWorkflow).not.toContain("'argocd/applications/agents/**'")
+    expect(agentsBuildWorkflow).toContain("'packages/scripts/src/agents/update-values.ts'")
+    expect(agentsBuildWorkflow).not.toContain("'packages/scripts/src/agents/**'")
     expect(agentsBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(agentsBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(agentsBuildWorkflow).not.toContain('docker buildx')
@@ -930,6 +933,7 @@ describe('native OCI build workflows', () => {
       froussardDeployScript,
       symphonyBuildScript,
       sagBuildScript,
+      agentsBuildScript,
       agentsDeployScript,
       torghutBuildScript,
       torghutDeployScript,
