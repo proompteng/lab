@@ -117,6 +117,9 @@ jobs:
                 TORGHUT_CHANGES="$(
                   git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
                     services/torghut \
+                    packages/scripts/src/torghut \
+                    packages/scripts/src/shared/cli.ts \
+                    packages/scripts/src/shared/git.ts \
                     nix/images/torghut.nix \
                     nix/cache-push.sh \
                     nix/ci-nix-oci-summary.sh \
@@ -125,7 +128,11 @@ jobs:
                     nix/oci-push.sh \
                     nix/oci-release-contract.sh \
                     flake.lock \
-                    services/torghut/uv.lock
+                    services/torghut/uv.lock \
+                    .github/workflows/torghut-build-push.yaml \
+                    .github/workflows/torghut-release.yml \
+                    .github/workflows/nix-oci-build-common.yml \
+                    .github/actions/setup-nix-toolchain
                 )"
                 if [ -n "${TORGHUT_CHANGES}" ]; then
                   echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut build inputs changed:"
@@ -238,7 +245,7 @@ jobs:
           TORGHUT_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
           TORGHUT_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
           TORGHUT_COMMIT: ${{ steps.meta.outputs.source_sha }}
-          TORGHUT_INCLUDE_OPTIONS_MANIFESTS: "false"
+          TORGHUT_INCLUDE_OPTIONS_MANIFESTS: 'false'
         run: |
           set -euo pipefail
           TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"

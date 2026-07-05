@@ -18,6 +18,10 @@ const hyperliquidFeedWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-build-push.yaml', import.meta.url),
   'utf8',
 )
+const releaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-release.yml', import.meta.url),
+  'utf8',
+)
 const taReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-ta-release.yml', import.meta.url),
   'utf8',
@@ -126,6 +130,28 @@ describe('torghut build-push workflow', () => {
     expect(workflow).toContain(
       `release_artifact_name: \${{ ${mainDispatchPredicate} && 'torghut-release-contract' || '' }}`,
     )
+  })
+
+  it('keeps core Torghut stale workflow promotions aligned with build trigger inputs', () => {
+    const freshnessPaths = [
+      'services/torghut',
+      'packages/scripts/src/torghut',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/git.ts',
+      'nix/images/torghut.nix',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain',
+    ]
+
+    expect(releaseWorkflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
+    expect(releaseWorkflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
+    for (const path of freshnessPaths) {
+      expect(releaseWorkflow).toContain(path)
+    }
+    expect(releaseWorkflow).toContain('newer Torghut build inputs changed')
+    expect(releaseWorkflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
   })
 
   it('publishes and contracts TA and WS images through the shared Nix OCI workflow', () => {
