@@ -84,7 +84,7 @@ jobs:
             exit 0
           fi
 
-          allowed_authors=("app/github-actions" "github-actions[bot]")
+          allowed_authors=("app/github-actions" "github-actions[bot]" "gregkonush")
           legacy_release_paths=(
             "argocd/applications/khoshut/kustomization.yaml"
             "argocd/applications/analysis/kustomization.yaml"
