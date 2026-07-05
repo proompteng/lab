@@ -58,6 +58,7 @@ def test_trading_status_projects_runtime_cycle_and_compatibility_gate() -> None:
     assert payload["execution_route"] == "testnet"
     assert payload["latest_cycle"]["orders_submitted"] == 1
     assert payload["config"]["feed_readiness_url_configured"] is False
+    assert payload["config"]["marketable_ioc_slippage_bps"] == "0"
     assert payload["dependencies"][0]["name"] == "hyperliquid_feed_service"
     assert payload["operational_submission_gate"]["enabled"] is False
     assert payload["operational_submission_gate"]["blockers"] == [

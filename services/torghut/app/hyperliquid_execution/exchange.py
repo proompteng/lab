@@ -26,8 +26,7 @@ from .universe import execution_universe_status
 
 _METADATA_REFRESH_SECONDS = 300
 _SUPPORTED_LIMIT_TIFS = {"Ioc"}
-_PERP_MAX_PRICE_DECIMALS = 6
-_MAX_PRICE_SIGNIFICANT_FIGURES = 5
+_BPS_DENOMINATOR = Decimal("10000")
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -41,7 +40,7 @@ class HyperliquidExecutionExchange(Protocol):
         ...
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit a bounded limit order."""
+        """Submit a marketable entry order."""
         ...
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
@@ -159,16 +158,23 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "api_wallet_private_key_missing"},
                 rejection_reason="api_wallet_private_key_missing",
             )
+        if intent.reduce_only:
+            return OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"error": "reduce_only_entry_orders_unsupported"},
+                rejection_reason="reduce_only_entry_orders_unsupported",
+            )
         normalized = self._normalize_order_intent(intent)
         response = cast(
             dict[str, object],
-            self._exchange().order(
+            self._exchange().market_open(
                 name=normalized.coin,
                 is_buy=normalized.side == "buy",
                 sz=float(normalized.size),
-                limit_px=float(normalized.limit_price),
-                order_type={"limit": {"tif": normalized.tif}},
-                reduce_only=normalized.reduce_only,
+                slippage=float(
+                    self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
+                ),
                 cloid=self._cloid(normalized.cloid),
             ),
         )
@@ -315,11 +321,9 @@ class HyperliquidSdkExecutionExchange:
         if size_decimals is not None:
             quant = Decimal("1").scaleb(-size_decimals)
             size = intent.size.quantize(quant, rounding=ROUND_DOWN)
-        price = _normalize_price(
-            intent.limit_price,
-            side=intent.side,
-            size_decimals=size_decimals,
-        )
+        price = intent.limit_price
+        if price <= Decimal("0"):
+            raise ValueError("order_price_must_be_positive")
         notional_usd = (price * size).quantize(Decimal("0.000001"))
         if (
             notional_usd < self._config.min_order_notional_usd
@@ -714,50 +718,6 @@ def _spot_usdc_balances(payload: Mapping[str, object]) -> list[Mapping[str, obje
         if str(balance_map.get("coin") or "").strip().upper() == "USDC":
             usdc_balances.append(balance_map)
     return usdc_balances
-
-
-def _normalize_price(
-    price: Decimal,
-    *,
-    side: str,
-    size_decimals: int | None,
-) -> Decimal:
-    if price <= Decimal("0"):
-        raise ValueError("order_price_must_be_positive")
-    rounding = ROUND_DOWN if side == "buy" else ROUND_UP
-    max_decimals = _PERP_MAX_PRICE_DECIMALS
-    if size_decimals is not None:
-        max_decimals = max(0, _PERP_MAX_PRICE_DECIMALS - size_decimals)
-    rounded = _quantize_decimal_places(price, max_decimals, rounding)
-    if rounded <= Decimal("0"):
-        raise ValueError("order_price_below_exchange_precision")
-    if rounded == rounded.to_integral_value():
-        return rounded
-    normalized = _quantize_significant_figures(
-        rounded,
-        _MAX_PRICE_SIGNIFICANT_FIGURES,
-        rounding,
-    )
-    return normalized
-
-
-def _quantize_decimal_places(
-    value: Decimal,
-    decimals: int,
-    rounding: str,
-) -> Decimal:
-    quantum = Decimal("1").scaleb(-decimals)
-    return value.quantize(quantum, rounding=rounding)
-
-
-def _quantize_significant_figures(
-    value: Decimal,
-    figures: int,
-    rounding: str,
-) -> Decimal:
-    exponent = value.adjusted() - figures + 1
-    quantum = Decimal("1").scaleb(exponent)
-    return value.quantize(quantum, rounding=rounding)
 
 
 def _sdk_dex(dex: str) -> str:

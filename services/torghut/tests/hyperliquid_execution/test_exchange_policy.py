@@ -21,6 +21,7 @@ def test_exchange_submits_ioc_order() -> None:
             {
                 "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
                 "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+                "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "50",
             }
         ),
         sdk=sdk,
@@ -44,8 +45,15 @@ def test_exchange_submits_ioc_order() -> None:
 
     assert result.status == "filled"
     assert result.exchange_order_id == "123"
-    assert sdk.orders[0]["order_type"] == {"limit": {"tif": "Ioc"}}
-    assert sdk.orders[0]["limit_px"] == 10.0
+    assert sdk.market_opens == [
+        {
+            "name": "NVDA",
+            "is_buy": True,
+            "sz": 1.0,
+            "slippage": 0.005,
+            "cloid": "0xabc",
+        }
+    ]
 
 
 def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> None:
@@ -78,7 +86,7 @@ def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> Non
     result = exchange.submit_order(intent)
 
     assert result.status == "accepted"
-    assert sdk.orders[0]["sz"] == 0.2
+    assert sdk.market_opens[0]["sz"] == 0.2
 
 
 def test_exchange_cancels_by_oid() -> None:
@@ -257,15 +265,15 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
 
 class _FakeSdk:
     def __init__(self) -> None:
-        self.orders: list[dict[str, Any]] = []
+        self.market_opens: list[dict[str, Any]] = []
         self.cancels: list[tuple[str, int]] = []
         self.market_closes: list[tuple[str, float | None, float]] = []
         self.next_order_response: dict[str, object] = {
             "response": {"data": {"statuses": [{"resting": {"oid": 123}}]}}
         }
 
-    def order(self, **kwargs: object) -> dict[str, object]:
-        self.orders.append(dict(kwargs))
+    def market_open(self, **kwargs: object) -> dict[str, object]:
+        self.market_opens.append(dict(kwargs))
         return self.next_order_response
 
     def cancel(self, name: str, oid: int) -> dict[str, object]:
