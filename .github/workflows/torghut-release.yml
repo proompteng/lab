@@ -122,6 +122,8 @@ jobs:
                   git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
                     services/torghut \
                     packages/scripts/src/torghut \
+                    ':(glob,exclude)packages/scripts/src/torghut/__tests__/**' \
+                    ':(glob,exclude)packages/scripts/src/torghut/**/*.test.ts' \
                     packages/scripts/src/shared/cli.ts \
                     packages/scripts/src/shared/git.ts \
                     nix/images/torghut.nix \

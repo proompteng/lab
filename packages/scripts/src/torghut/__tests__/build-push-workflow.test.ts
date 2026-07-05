@@ -156,6 +156,8 @@ describe('torghut build-push workflow', () => {
     for (const path of freshnessPaths) {
       expect(releaseWorkflow).toContain(path)
     }
+    expect(releaseWorkflow).toContain("':(glob,exclude)packages/scripts/src/torghut/__tests__/**'")
+    expect(releaseWorkflow).toContain("':(glob,exclude)packages/scripts/src/torghut/**/*.test.ts'")
     expect(releaseWorkflow).toContain('newer Torghut build inputs changed')
     expect(releaseWorkflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
   })
