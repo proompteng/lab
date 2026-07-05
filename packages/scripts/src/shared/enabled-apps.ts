@@ -62,10 +62,6 @@ const earlyNixImageApps = new Set([
   'torghut-options',
 ])
 
-const deferredApps = new Map<string, string>([
-  ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
-])
-
 const appToNixAttr = new Map<string, string>([
   ['app', 'app-image'],
   ['arc', 'arc-runner-image'],
@@ -126,6 +122,10 @@ const appToWorkflowPaths = new Map<string, string[]>([
 const manifestOnlyRepoImageApps = new Map<string, string>([
   ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
   ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
+  [
+    'tigresse',
+    'operator source lives in the private proompteng/tigresse repository; lab only vendors the chart and pins its image digest',
+  ],
 ])
 
 const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort()
@@ -318,11 +318,6 @@ const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => 
   const manifestOnlyReason = manifestOnlyRepoImageApps.get(entry.name)
   if (manifestOnlyReason) {
     return { ...entry, class: 'vendor-manifest', deferredReason: manifestOnlyReason }
-  }
-
-  const deferredReason = deferredApps.get(entry.name)
-  if (deferredReason) {
-    return { ...entry, class: 'deferred', deferredReason }
   }
 
   if (entry.repoImages.length > 0) {

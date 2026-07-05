@@ -22,6 +22,9 @@ Current inventory from the repo guardrail:
   is a build-owning migration target because the live chart values pin `lab/headlamp`.
 - Derived apps that reuse a migrated repo image, such as `symphony-jangar` and `symphony-torghut`, are tracked as
   `nix-image` consumers of that shared image rather than deferred migration proof gaps.
+- `tigresse` is not an in-repo Nix migration gap: this repo vendors the Helm chart and pins
+  `registry.ide-newton.ts.net/lab/tigresse`, but the operator source/build ownership is the separate private
+  `proompteng/tigresse` repository.
 
 Hard exclusions:
 
