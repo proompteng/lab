@@ -65,6 +65,7 @@ jobs:
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
       NIX_IMAGE_BUILD_ATTIC_TIMEOUT: ${{ inputs.image_build_timeout }}
       NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m
+      NIX_IMAGE_CACHE_WARM_MAX_BYTES: 268435456
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
       - name: Start checkout timer
@@ -213,17 +214,39 @@ jobs:
             exit 2
           fi
           status_file="${NIX_OCI_LOG_DIR}/image-cache-push-status-${ARCH}.txt"
+          : > "${status_file}"
+
+          if ! [[ "${NIX_IMAGE_CACHE_WARM_MAX_BYTES}" =~ ^[0-9]+$ ]]; then
+            echo "NIX_IMAGE_CACHE_WARM_MAX_BYTES must be an integer byte limit." >&2
+            exit 2
+          fi
+
+          cache_paths=()
+          for image_path in "${image_paths[@]}"; do
+            image_bytes="$(wc -c < "${image_path}")"
+            if (( image_bytes > NIX_IMAGE_CACHE_WARM_MAX_BYTES )); then
+              printf 'skipped-size\t%s\t%s\n' "${image_bytes}" "${image_path}" >> "${status_file}"
+              echo "::notice title=Attic image output warm skipped::Skipping Attic image output push for ${ARCH}; ${image_bytes} bytes exceeds ${NIX_IMAGE_CACHE_WARM_MAX_BYTES}. Registry image push remains authoritative."
+              continue
+            fi
+            cache_paths+=("${image_path}")
+          done
+
+          if [[ "${#cache_paths[@]}" -eq 0 ]]; then
+            exit 0
+          fi
+
           set +e
           bash nix/ci-run-timed.sh "push-image-archive-output-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
-            timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"
+            timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${cache_paths[@]}"
           status="$?"
           set -e
           if [[ "${status}" -ne 0 ]]; then
-            printf 'failed\t%s\n' "${status}" > "${status_file}"
+            printf 'failed\t%s\n' "${status}" >> "${status_file}"
             echo "::warning title=Attic image output warm failed::Attic image output push failed for ${ARCH}; registry image push remains authoritative. See cache-push-image-${ARCH}.log."
             exit 0
           fi
-          printf 'succeeded\t0\n' > "${status_file}"
+          printf 'succeeded\t0\n' >> "${status_file}"
 
       - name: Summarize Nix OCI cache use
         if: always()
