@@ -102,6 +102,39 @@ describe('memory operations API', () => {
     expect(queryMemory).toHaveBeenCalledWith(connection, 'find notes', 5)
   })
 
+  it('runs embedding index maintenance through the leader-gated operation path', async () => {
+    const connection = {
+      dataset: 'agent-memory',
+      schema: 'public',
+      embeddingDimension: 1536,
+      connectionString: 'postgresql://agents-memory',
+    }
+    const requireLeaderForMutation = vi.fn(() => null)
+    const createMemoryEmbeddingIndexIfReady = vi.fn(async () => true)
+
+    const response = await postMemoryOperationsHandler(
+      request({
+        memoryRef: 'agent-memory',
+        namespace: 'agents',
+        operation: 'embedding-index',
+      }),
+      {
+        kubeClient: {} as never,
+        requireLeaderForMutation,
+        resolveMemoryConnection: vi.fn(async () => connection),
+        createMemoryEmbeddingIndexIfReady,
+      },
+    )
+
+    await expect(json(response)).resolves.toMatchObject({
+      ok: true,
+      operation: 'embedding-index',
+      created: true,
+    })
+    expect(requireLeaderForMutation).toHaveBeenCalled()
+    expect(createMemoryEmbeddingIndexIfReady).toHaveBeenCalledWith(connection)
+  })
+
   it('gates memory mutations on the elected Agents leader', async () => {
     const response = await postMemoryOperationsHandler(
       request({

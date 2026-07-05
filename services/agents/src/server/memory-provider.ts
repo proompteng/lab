@@ -5,6 +5,7 @@ import { Pool } from 'pg'
 import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 import { resolveEmbeddingConfig } from './memory-config'
 import {
+  createMemoryProviderAnnIndexIfReady,
   ensureMemoryProviderSchema,
   qualifyMemoryProviderTable,
   type MemoryProviderQueryable,
@@ -327,6 +328,12 @@ export const queryMemory = async (
     score: row.score,
     metadata: row.metadata ?? {},
   }))
+}
+
+export const createMemoryEmbeddingIndexIfReady = async (connection: MemoryConnection) => {
+  const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
+  return createMemoryProviderAnnIndexIfReady(pool, connection)
 }
 
 export const __test__ = {
