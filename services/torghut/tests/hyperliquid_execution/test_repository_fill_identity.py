@@ -32,6 +32,10 @@ def test_repository_deduplicates_legacy_hash_fill_before_tid_insert() -> None:
     assert "UPDATE hyperliquid_execution_fills" in fill_calls[0][0]
     assert "DELETE FROM hyperliquid_execution_fills" in fill_calls[1][0]
     assert "INSERT INTO hyperliquid_execution_fills" in fill_calls[2][0]
+    assert "CAST(:exchange_order_id AS text) IS NULL" in fill_calls[0][0]
+    assert "CAST(:exchange_order_id AS text) IS NULL" in fill_calls[1][0]
+    assert "OR :exchange_order_id IS NULL" not in fill_calls[0][0]
+    assert "OR :exchange_order_id IS NULL" not in fill_calls[1][0]
     assert fill_calls[0][1] is not None
     assert fill_calls[0][1]["legacy_fill_hash"] == "order-hash"
     assert fill_calls[1][1] is not None
