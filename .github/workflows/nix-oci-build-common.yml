@@ -23,6 +23,10 @@ on:
         required: false
         type: string
         default: ''
+      publish_on_dispatch:
+        required: false
+        type: boolean
+        default: false
     outputs:
       image:
         value: ${{ jobs.publish-index.outputs.image }}
@@ -160,7 +164,14 @@ jobs:
             bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
-        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        if: >-
+          ${{
+            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+            (
+              github.event_name == 'workflow_dispatch' &&
+              (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+            )
+          }}
         id: push
         env:
           IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
@@ -213,7 +224,14 @@ jobs:
         run: bash nix/ci-nix-oci-summary.sh
 
   publish-index:
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    if: >-
+      ${{
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+        )
+      }}
     needs: build-platform
     runs-on: arc-arm64
     outputs:

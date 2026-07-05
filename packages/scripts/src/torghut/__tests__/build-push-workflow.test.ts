@@ -18,6 +18,10 @@ const hyperliquidFeedWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-hyperliquid-feed-build-push.yaml', import.meta.url),
   'utf8',
 )
+const releaseWorkflow = readFileSync(
+  new URL('../../../../../.github/workflows/torghut-release.yml', import.meta.url),
+  'utf8',
+)
 const taReleaseWorkflow = readFileSync(
   new URL('../../../../../.github/workflows/torghut-ta-release.yml', import.meta.url),
   'utf8',
@@ -43,6 +47,9 @@ const arcApplication = readFileSync(
 const pathPatternIndex = (pattern: string): number =>
   workflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
+const pathPatternOccurrences = (pattern: string): number =>
+  workflow.split('\n').filter((line) => line.trim() === `- '${pattern}'`).length
+
 const ciPathPatternIndex = (pattern: string): number =>
   ciWorkflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
@@ -62,15 +69,27 @@ const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string 
 }
 
 describe('torghut build-push workflow', () => {
-  it('does not build the core Torghut image for release helper script changes', () => {
-    expect(pathPatternIndex('packages/scripts/src/torghut/**')).toBe(-1)
+  it('builds the core Torghut image for release helper and shared build changes', () => {
+    const requiredPatterns = [
+      'services/torghut/**',
+      'packages/scripts/src/torghut/**',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/git.ts',
+      'nix/images/torghut.nix',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+    ]
+
+    for (const pattern of requiredPatterns) {
+      expect(pathPatternOccurrences(pattern)).toBe(2)
+    }
+
+    const scriptsInclude = pathPatternIndex('packages/scripts/src/torghut/**')
+    expect(pathPatternIndex('!packages/scripts/src/torghut/__tests__/**')).toBeGreaterThan(scriptsInclude)
+    expect(pathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')).toBeGreaterThan(scriptsInclude)
     expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
-    expect(pathPatternIndex('packages/scripts/src/shared/cli.ts')).toBe(-1)
-    expect(pathPatternIndex('packages/scripts/src/shared/git.ts')).toBe(-1)
-    expect(pathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
-    expect(pathPatternIndex('.github/workflows/nix-oci-build-common.yml')).toBe(-1)
-    expect(pathPatternIndex('services/torghut/**')).toBeGreaterThan(-1)
-    expect(pathPatternIndex('nix/images/torghut.nix')).toBeGreaterThan(-1)
   })
 
   it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {
@@ -96,6 +115,7 @@ describe('torghut build-push workflow', () => {
     expect(workflow).toContain('image_name: torghut')
     expect(workflow).toContain('package_attr: torghut-image')
     expect(workflow).toContain('tag: sha-${{ github.sha }}')
+    expect(workflow).toContain('publish_on_dispatch: true')
     expect(workflow).toContain('torghut-release-contract')
     expect(workflow).not.toContain('docker/setup-buildx-action')
     expect(workflow).not.toContain('docker/build-push-action')
@@ -110,6 +130,36 @@ describe('torghut build-push workflow', () => {
     expect(workflow).toContain(
       `release_artifact_name: \${{ ${mainDispatchPredicate} && 'torghut-release-contract' || '' }}`,
     )
+  })
+
+  it('does not auto-promote manually dispatched Torghut image publishes without a release contract', () => {
+    expect(releaseWorkflow).toContain("github.event.workflow_run.event == 'push'")
+    expect(releaseWorkflow).toContain("github.event_name == 'workflow_dispatch'")
+    expect(releaseWorkflow).toContain('Download release contract artifact from triggering build')
+  })
+
+  it('keeps core Torghut stale workflow promotions aligned with build trigger inputs', () => {
+    const freshnessPaths = [
+      'services/torghut',
+      'packages/scripts/src/torghut',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/git.ts',
+      'nix/images/torghut.nix',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain',
+    ]
+
+    expect(releaseWorkflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
+    expect(releaseWorkflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
+    for (const path of freshnessPaths) {
+      expect(releaseWorkflow).toContain(path)
+    }
+    expect(releaseWorkflow).toContain("':(glob,exclude)packages/scripts/src/torghut/__tests__/**'")
+    expect(releaseWorkflow).toContain("':(glob,exclude)packages/scripts/src/torghut/**/*.test.ts'")
+    expect(releaseWorkflow).toContain('newer Torghut build inputs changed')
+    expect(releaseWorkflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
   })
 
   it('publishes and contracts TA and WS images through the shared Nix OCI workflow', () => {

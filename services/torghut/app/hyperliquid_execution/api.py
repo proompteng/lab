@@ -5,11 +5,19 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from datetime import datetime, timezone
+from typing import AsyncIterator, cast
 
 from fastapi import FastAPI, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
 
 from app.db import SessionLocal
+from app.trading.loop_status import (
+    LoopStatusOptions,
+    QuerySession,
+    build_trading_loop_status,
+)
 
 from .config import HyperliquidExecutionConfig
 from .exchange import exchange_from_config
@@ -121,6 +129,23 @@ def trading_status() -> dict[str, object]:
     }
 
 
+@app.get("/trading/loop/status")
+def trading_loop_status() -> JSONResponse:
+    session = SessionLocal()
+    try:
+        payload = build_trading_loop_status(
+            cast(QuerySession, session),
+            options=LoopStatusOptions(
+                generated_at=datetime.now(timezone.utc),
+                trading_mode=_loop_status_trading_mode(runtime_state.config),
+                trading_enabled=runtime_state.config.trading_enabled,
+            ),
+        )
+    finally:
+        session.close()
+    return JSONResponse(status_code=200, content=jsonable_encoder(payload))
+
+
 @app.get("/metrics")
 def metrics() -> Response:
     return Response(
@@ -219,6 +244,12 @@ def _config_payload() -> dict[str, object]:
         "maintenance_reduce_only_close_enabled": config.maintenance_reduce_only_close_enabled,
         "sample_ready_fill_floor": 40,
     }
+
+
+def _loop_status_trading_mode(config: HyperliquidExecutionConfig) -> str:
+    if config.execution_network in {"mainnet", "live"}:
+        return "live"
+    return "paper"
 
 
 def _dependency_payload(dependency: RuntimeDependencyStatus) -> dict[str, object]:

@@ -9,14 +9,14 @@
 
 ## Source Implementation Audit (2026-07-04)
 
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Source baseline inspected: `0aee01702 fix(torghut): pin loop status runtime image (#11897)`.
 - Implementation status: **Implemented, but materially refactored from this v1 document.** The periodic trading loop exists, but not as the old monolithic `services/torghut/app/trading/scheduler.py` flow. Current runtime is split across `SimpleTradingPipeline`, shared pipeline mixins, source-collection helpers, paper-route materialization, submission policy, and execution/adapters.
 - Current source evidence:
   - `services/torghut/app/trading/scheduler/simple_pipeline.py` defines `SimpleTradingPipeline`, composed from paper-route, source-collection, proof-floor, quote-sizing, direct-submission, and base pipeline mixins.
   - `services/torghut/app/trading/scheduler/simple_pipeline.py::SimpleTradingPipeline.run_once` labels mature rejected-signal outcomes, loads strategies, captures runtime-window account snapshots, warms session context, bounds paper-route signal scope, fetches signals, and processes the batch.
   - `services/torghut/app/trading/scheduler/pipeline/run_cycle.py::TradingPipelineRunCycleMixin.run_once` keeps the generic dependency-driven run cycle for ingestor/decision/risk/executor/reconciler style operation.
   - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py` gates decision submission with allocator rejection, notional extraction, market snapshots, and submission preparation.
-  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_MODE=live`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, a live-submit activation expiry, and bounded simple risk caps.
+  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_MODE=live`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, a live-submit activation expiry, `TRADING_TESTNET_AFTER_HOURS_ENABLED=true`, and bounded simple risk caps.
   - Pipeline behavior is covered by the `services/torghut/tests/pipeline/test_trading_pipeline_*.py` suite.
 - What is implemented from the design:
   - periodic service-owned trading loop;
@@ -84,9 +84,10 @@ From `argocd/applications/torghut/knative-service.yaml`:
 | --- | --- | --- |
 | `TRADING_ENABLED` | Enables loop | `true` |
 | `TRADING_MODE` | `paper` / `live` | `live` in the current manifest |
-| `TRADING_SIMPLE_SUBMIT_ENABLED` | broker submission gate | `true` in the current manifest |
+| `TRADING_SIMPLE_SUBMIT_ENABLED` | simple pipeline submission gate | `true` in the current manifest |
 | `TRADING_LIVE_SUBMIT_ENABLED` | live broker submission gate | `true` in the current manifest |
 | `TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT` | time-bounds live-submit activation | set in the current manifest |
+| `TRADING_TESTNET_AFTER_HOURS_ENABLED` | testnet route outside Alpaca regular hours | `true` in the current manifest |
 | `TRADING_SIGNAL_SOURCE` | signal backend | `clickhouse` |
 | `TRADING_SIGNAL_TABLE` | ClickHouse table | `torghut.ta_signals` |
 | `TRADING_SIGNAL_SCHEMA` | Signals schema selector (`auto`/`envelope`/`flat`) | `auto` |
@@ -137,17 +138,17 @@ Risk engine enforces:
 
 Orders must be idempotent across retries (see `v1/component-order-execution-and-idempotency.md`).
 
-### Rollout/verification (paper-first + live-gate posture)
+### Rollout/verification (live-mode + explicit gate posture)
 
-- GitOps precondition for production:
-  - `TRADING_MODE=paper`
-  - `TRADING_ACCOUNTS_JSON` account entries in paper mode
-  - `LLM_FAIL_OPEN_LIVE_APPROVED=false`
-  - `TRADING_KILL_SWITCH_ENABLED=true`
-  - `TRADING_EMERGENCY_STOP_ENABLED=true`
+- Current GitOps posture:
+  - `TRADING_MODE=live`
+  - `TRADING_SIMPLE_SUBMIT_ENABLED=true`
+  - `TRADING_LIVE_SUBMIT_ENABLED=true`
+  - `TRADING_TESTNET_AFTER_HOURS_ENABLED=true`
+  - bounded simple risk caps in the Knative manifest
 - Verification:
-  - `/trading/status` reports `trading_mode=paper` and no live execution path is active.
-  - confirm new `/trading/executions` records are paper-labeled.
+  - `/trading/status` reports the selected execution route, live-submit gate, blockers, and risk caps.
+  - confirm new `/trading/executions`, broker orders, fills, and exposure records match the selected route.
 
 ## Failure modes, detection, recovery
 
