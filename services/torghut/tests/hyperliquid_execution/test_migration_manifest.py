@@ -71,6 +71,8 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
 def test_runtime_migration_hook_uses_image_path_binaries() -> None:
     manifest = DB_MIGRATIONS_JOB.read_text()
 
+    assert "workingDir: /app" in manifest
+    assert "name: PYTHONPATH\n              value: /app" in manifest
     assert "until python - <<'PY'" in manifest
     assert "alembic -c /app/alembic.ini upgrade heads" in manifest
     assert "/opt/venv/bin/" not in manifest

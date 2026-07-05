@@ -24,6 +24,7 @@ spec:
         - name: migrate
           image: registry.ide-newton.ts.net/lab/torghut@sha256:03a55dcd405376a3f713ea50e64f1455ffc3f5ac3634726a7f680c8f8fd5dc1c
           imagePullPolicy: Always
+          workingDir: /app
           command:
             - /bin/sh
             - -ec
@@ -54,6 +55,8 @@ spec:
               value: 9afbcac4b27576a5911e617ad8f98dd327c645b2
             - name: TORGHUT_IMAGE_DIGEST
               value: sha256:03a55dcd405376a3f713ea50e64f1455ffc3f5ac3634726a7f680c8f8fd5dc1c
+            - name: PYTHONPATH
+              value: /app
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:
