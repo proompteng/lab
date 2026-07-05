@@ -73,7 +73,6 @@ class HyperliquidExecutionConfig:
     reject_cooldown_window_seconds: int
     reject_cooldown_seconds: int
     min_order_size: Decimal
-    min_edge_bps: Decimal
     cost_buffer_bps: Decimal
     marketable_ioc_slippage_bps: Decimal
     maintenance_reduce_only_close_enabled: bool
@@ -159,7 +158,6 @@ class HyperliquidExecutionConfig:
             ),
             reject_cooldown_seconds=_int(source, "REJECT_COOLDOWN_SECONDS", 900),
             min_order_size=_decimal(source, "MIN_ORDER_SIZE", "0.0001"),
-            min_edge_bps=_decimal(source, "MIN_EDGE_BPS", "5"),
             cost_buffer_bps=_decimal(source, "COST_BUFFER_BPS", "2"),
             marketable_ioc_slippage_bps=_decimal(
                 source, "MARKETABLE_IOC_SLIPPAGE_BPS", "0"

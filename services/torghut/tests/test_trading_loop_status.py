@@ -332,7 +332,7 @@ def test_loop_status_blocks_future_event_timestamp_with_stale_quote_lag() -> Non
             "coin": "BNB",
             "action": "buy",
             "edge_bps": "14",
-            "reason": "edge_exceeds_cost",
+            "reason": "alpha_direction",
         },
         latest_order={
             "created_at": now.isoformat(),
@@ -514,9 +514,9 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
             "feature_source_lag_seconds": 1,
             "feature_quote_lag_seconds": 1,
             "coin": "BNB",
-            "action": "hold",
+            "action": "buy",
             "edge_bps": "0.05",
-            "reason": "no_edge",
+            "reason": "alpha_direction",
         },
         latest_order={
             "created_at": old_fill_at.isoformat(),
@@ -572,7 +572,7 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
             "residual_volatility_bps": "50",
             "information_coefficient": "0.05",
             "expected_return_bps": "2",
-            "direction": "hold",
+            "direction": "buy",
         },
         latest_risk_forecast={
             "run_id": "current-run",
@@ -586,14 +586,14 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
         latest_portfolio_target={
             "run_id": "current-run",
             "asset_key": "hyperliquid:hl:perp:default:BNB",
-            "direction": "hold",
-            "target_notional_usd": "0",
-            "delta_notional_usd": "0",
+            "direction": "buy",
+            "target_notional_usd": "10",
+            "delta_notional_usd": "10",
             "expected_return_bps": "2",
             "expected_cost_bps": "4",
             "active_risk_bps": "1",
             "risk_buffer_bps": "1",
-            "clip_reason": "expected_edge_not_above_cost",
+            "clip_reason": None,
         },
         latest_execution_intent={
             "run_id": "historical-run",
@@ -626,9 +626,8 @@ def test_loop_status_uses_current_multifactor_snapshot_with_historical_intent() 
     assert payload["algorithm"]["asset_key"] == "hyperliquid:hl:perp:default:BNB"
     assert payload["execution_intent"]["venue_order_id"] == "555"
     assert payload["alpha_model"]["expected_edge_above_cost"] is False
-    assert payload["portfolio_target"]["target_notional_positive"] is False
+    assert payload["portfolio_target"]["target_notional_positive"] is True
     assert "hyperliquid_market_data_not_fresh" not in payload["blocker_reasons"]
-    assert "multifactor_expected_edge_not_above_cost" not in payload["blocker_reasons"]
     assert "multifactor_target_notional_not_positive" not in payload["blocker_reasons"]
 
 
@@ -668,7 +667,7 @@ def test_loop_status_reads_nested_hyperliquid_dex_positions() -> None:
             "coin": "BNB",
             "action": "buy",
             "edge_bps": "14",
-            "reason": "edge_exceeds_cost",
+            "reason": "alpha_direction",
         },
         latest_order={
             "created_at": now.isoformat(),

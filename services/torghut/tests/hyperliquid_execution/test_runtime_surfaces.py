@@ -92,7 +92,6 @@ def test_api_readiness_metrics_report_and_cycle_paths(monkeypatch: Any) -> None:
         assert report["schema_version"] == "torghut.hyperliquid-execution-report.v2"
         assert report["runtime"]["selected_coins"] == ["NVDA"]
         assert report["config"]["signal_staleness_seconds"] == 120
-        assert report["config"]["min_edge_bps"] == "5"
         assert session.closed
 
         service = _SingleCycleService(cycle)

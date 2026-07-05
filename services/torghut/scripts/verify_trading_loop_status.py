@@ -181,6 +181,17 @@ def evaluate_loop_status(
         "multifactor_portfolio_target_missing",
         failures,
     )
+    if (
+        portfolio_target.get("present") is True
+        and alpha_model.get("present") is True
+        and alpha_model.get("factor_snapshot_present") is True
+        and alpha_model.get("forecast_present") is True
+    ):
+        _require(
+            portfolio_target.get("target_notional_positive") is True,
+            "multifactor_target_notional_not_positive",
+            failures,
+        )
     _require(
         _mapping(payload.get("execution_intent")).get("present") is True,
         "multifactor_execution_intent_missing",
