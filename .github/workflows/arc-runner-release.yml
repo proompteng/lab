@@ -95,9 +95,19 @@ jobs:
             exit 1
           fi
           if [[ "${source_sha}" != "$(git rev-parse HEAD)" ]]; then
-            echo "promote=false" >> "${GITHUB_OUTPUT}"
-            echo "Stale ARC runner build ${source_sha}; current main is $(git rev-parse HEAD)." >&2
-            exit 0
+            changed_paths="$(git diff --name-only "${source_sha}..HEAD")"
+            arc_image_input_changes="$(
+              printf '%s\n' "${changed_paths}" | grep -E \
+                '^(\.github/workflows/arc-runner-build-push\.yml|\.github/workflows/nix-oci-build-common\.yml|flake\.nix|flake\.lock|nix/images/arc-runner\.nix|nix/packages\.nix|nix/oci-push\.sh|nix/cache-push\.sh)$' || true
+            )"
+            if [[ -n "${arc_image_input_changes}" ]]; then
+              echo "promote=false" >> "${GITHUB_OUTPUT}"
+              echo "Stale ARC runner build ${source_sha}; current main is $(git rev-parse HEAD)." >&2
+              echo "ARC runner image inputs changed after the build:" >&2
+              printf '%s\n' "${arc_image_input_changes}" >&2
+              exit 0
+            fi
+            echo "ARC runner image inputs unchanged after ${source_sha}; promoting existing digest from current main." >&2
           fi
 
           {

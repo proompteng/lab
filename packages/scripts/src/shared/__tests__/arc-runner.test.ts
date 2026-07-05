@@ -128,6 +128,23 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
     expect(arcRunnerReleaseWorkflow).toContain("require-preinstalled: 'true'")
     expect(arcRunnerReleaseWorkflow).toContain('crane digest "${image}:${tag}"')
+    expect(arcRunnerReleaseWorkflow).toContain('changed_paths="$(git diff --name-only "${source_sha}..HEAD")"')
+    expect(arcRunnerReleaseWorkflow).toContain('arc_image_input_changes="$(')
+    expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs changed after the build:')
+    expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs unchanged after ${source_sha}')
+    for (const arcImageInput of [
+      '\\.github/workflows/arc-runner-build-push\\.yml',
+      '\\.github/workflows/nix-oci-build-common\\.yml',
+      'flake\\.nix',
+      'flake\\.lock',
+      'nix/images/arc-runner\\.nix',
+      'nix/packages\\.nix',
+      'nix/oci-push\\.sh',
+      'nix/cache-push\\.sh',
+    ]) {
+      expect(arcRunnerReleaseWorkflow).toContain(arcImageInput)
+    }
+    expect(arcRunnerReleaseWorkflow).not.toContain('\\.github/workflows/arc-runner-release\\.yml')
     expect(arcRunnerReleaseWorkflow).toContain('nix run .#assert-oci-platforms')
     expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')
     expect(arcRunnerReleaseWorkflow).not.toContain('docker/setup-buildx-action')
