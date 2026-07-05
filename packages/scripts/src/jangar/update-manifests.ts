@@ -4,7 +4,6 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 
 import { fatal, repoRoot } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 import {
   updateKustomizationImage,
@@ -66,6 +65,14 @@ const normalizeOptional = (value: string | undefined): string | undefined => {
   return trimmed ? trimmed : undefined
 }
 
+const requireDigest = (digest: string | undefined): string => {
+  const normalized = normalizeOptional(digest)
+  if (!normalized) {
+    throw new Error('Jangar manifest updates require an explicit image digest from the release contract')
+  }
+  return normalized
+}
+
 type SourceServingProofEnv = {
   sourceHeadSha?: string
   gitopsRevision?: string
@@ -106,7 +113,7 @@ export const updateJangarManifests = (options: UpdateManifestsOptions) => {
   const kustomizationPath = resolvePath(options.kustomizationPath ?? defaultKustomizationPath)
   const serviceManifestPath = resolvePath(options.serviceManifestPath ?? defaultServiceManifestPath)
   const workerManifestPath = options.workerManifestPath ? resolvePath(options.workerManifestPath) : null
-  const digest = normalizeDigest(options.digest ?? inspectImageDigest(`${options.imageName}:${options.tag}`))
+  const digest = normalizeDigest(requireDigest(options.digest))
   const manifestImageDigest = normalizeOptional(options.manifestImageDigest) ?? digest
   const servingBuildCommit = normalizeOptional(options.servingBuildCommit) ?? normalizeOptional(options.sourceHeadSha)
   const servingImageDigest = normalizeOptional(options.servingImageDigest) ?? digest

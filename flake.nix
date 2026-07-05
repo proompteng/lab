@@ -263,6 +263,17 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "jangar-image" = import ./nix/images/jangar.nix {
+              inherit
+                pkgs
+                lib
+                nodejs
+                exact
+                repoRevision
+                ;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
             "torghut-image" = import ./nix/images/torghut.nix {
               inherit pkgs lib;
               repoRoot = ./.;

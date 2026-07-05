@@ -4,151 +4,70 @@ permissions:
   contents: read
 
 on:
+  pull_request:
+    paths:
+      - 'services/jangar/**'
+      - 'services/bumba/**'
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/cx-tools/**'
+      - 'packages/design/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
+      - 'packages/temporal-bun-sdk/**'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
+      - 'flake.lock'
+      - 'nix/images/jangar.nix'
+      - 'nix/images/openai-codex-cli.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
   push:
     branches:
       - main
     paths:
       - 'services/jangar/**'
-      - 'packages/scripts/src/jangar/build-image.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
-      - 'packages/scripts/src/shared/git.ts'
+      - 'services/bumba/**'
       - 'packages/agent-contracts/**'
       - 'packages/codex/**'
       - 'packages/cx-tools/**'
+      - 'packages/design/**'
+      - 'packages/discord/**'
       - 'packages/otel/**'
       - 'packages/temporal-bun-sdk/**'
-      - 'skills/**'
       - 'bun.lock'
+      - 'tsconfig.base.json'
+      - 'flake.lock'
+      - 'nix/images/jangar.nix'
+      - 'nix/images/openai-codex-cli.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
   workflow_dispatch:
 
 concurrency:
-  group: jangar-build-${{ github.ref }}-${{ github.sha }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-push:
-    runs-on: arc-arm64
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          cache-binary: false
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/scripts --filter @proompteng/jangar
-
-      - name: Prepare pruned build context
-        id: prune
-        shell: bash
-        run: |
-          set -euo pipefail
-          PRUNE_DIR="$(mktemp -d)"
-          bunx turbo prune --scope=@proompteng/jangar --docker --out-dir="$PRUNE_DIR"
-          cp tsconfig.base.json "$PRUNE_DIR/tsconfig.base.json"
-          if [ -d skills ]; then
-            cp -R skills "$PRUNE_DIR/skills"
-          fi
-          if [ -d packages/cx-tools ]; then
-            mkdir -p "$PRUNE_DIR/full/packages" "$PRUNE_DIR/json/packages"
-            cp -R packages/cx-tools "$PRUNE_DIR/full/packages/cx-tools"
-            cp -R packages/cx-tools "$PRUNE_DIR/json/packages/cx-tools"
-          fi
-          echo "context=$PRUNE_DIR" >> "$GITHUB_OUTPUT"
-
-      - name: Prebuild jangar output (pruned context)
-        if: ${{ vars.JANGAR_PREBUILD_ENABLED == 'true' }}
-        continue-on-error: true
-        shell: bash
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
-          CI: 'true'
-          JANGAR_BUILD_MINIFY: '0'
-          JANGAR_BUILD_SOURCEMAP: '0'
-        run: |
-          set -euo pipefail
-          PRUNE_DIR="${{ steps.prune.outputs.context }}"
-          # turbo prune --docker emits package manifests into full/json (not the prune root).
-          if [ -f "$PRUNE_DIR/bun.lock" ]; then
-            cp "$PRUNE_DIR/bun.lock" "$PRUNE_DIR/full/bun.lock"
-          fi
-          if [ -f "$PRUNE_DIR/tsconfig.base.json" ]; then
-            cp "$PRUNE_DIR/tsconfig.base.json" "$PRUNE_DIR/full/tsconfig.base.json"
-          fi
-          bun install --cwd "$PRUNE_DIR/full" --ignore-scripts --filter @proompteng/otel --filter @proompteng/temporal-bun-sdk --filter @proompteng/jangar
-          bun run --cwd "$PRUNE_DIR/full" --filter @proompteng/otel build
-          bun run --cwd "$PRUNE_DIR/full" --filter @proompteng/temporal-bun-sdk build
-          if ! timeout 8m bun --cwd "$PRUNE_DIR/full/services/jangar" run build; then
-            echo "Prebuild failed or timed out; continuing with Docker image build."
-          fi
-
-      - name: Build and push jangar image
-        env:
-          JANGAR_BUILD_CONTEXT: ${{ steps.prune.outputs.context }}
-          JANGAR_IMAGE_TAG: ${{ steps.meta.outputs.tag }}
-          JANGAR_IMAGE_PLATFORMS: linux/arm64
-          JANGAR_BUILD_CACHE_REF: registry.ide-newton.ts.net/lab/jangar:buildcache
-          JANGAR_BUILD_CACHE_MODE: max
-          JANGAR_BUILD_NODE_OPTIONS: --max-old-space-size=4096
-          JANGAR_BUILD_SOURCEMAP: '0'
-          JANGAR_BUILD_CI: 'true'
-          JANGAR_BUILD_LOG_LEVEL: warn
-          DOCKER_BUILD_PROVENANCE: max
-          DOCKER_BUILD_SBOM: 'true'
-        run: bun run packages/scripts/src/jangar/build-image.ts
-
-      - name: Resolve pushed image digest
-        id: digest
-        shell: bash
-        run: |
-          set -euo pipefail
-          IMAGE="registry.ide-newton.ts.net/lab/jangar"
-          TAG="${{ steps.meta.outputs.tag }}"
-          DIGEST="$(docker buildx imagetools inspect "${IMAGE}:${TAG}" | awk '/^Digest:/ { print $2; exit }')"
-          if [ -z "${DIGEST}" ]; then
-            echo "Failed to resolve digest for ${IMAGE}:${TAG}"
-            exit 1
-          fi
-          echo "${DIGEST}" > jangar-image-digest.txt
-          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
-
-      - name: Write release contract artifact
-        shell: bash
-        run: |
-          set -euo pipefail
-          bun run packages/scripts/src/jangar/release-contract.ts write \
-            --path jangar-release-contract.json \
-            --source-sha "${GITHUB_SHA}" \
-            --tag "${{ steps.meta.outputs.tag }}" \
-            --digest "${{ steps.digest.outputs.digest }}" \
-            --image "registry.ide-newton.ts.net/lab/jangar"
-
-      - name: Upload release contract artifact
-        uses: actions/upload-artifact@v6
-        with:
-          name: jangar-release-contract
-          path: jangar-release-contract.json
-          if-no-files-found: error
-          retention-days: 3
-
-      - name: Update latest tag
-        run: |
-          set -euo pipefail
-          IMAGE="registry.ide-newton.ts.net/lab/jangar"
-          TAG="${{ steps.meta.outputs.tag }}"
-          docker buildx imagetools create -t "${IMAGE}:latest" "${IMAGE}:${TAG}"
-          docker buildx imagetools inspect "${IMAGE}:${TAG}"
-          docker buildx imagetools inspect "${IMAGE}:latest"
+  nix-image:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: jangar
+      package_attr: jangar-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'jangar-release-contract' || '' }}
+    secrets: inherit

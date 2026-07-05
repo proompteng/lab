@@ -123,6 +123,22 @@ describe('updateJangarManifests', () => {
     rmSync(fixture.dir, { recursive: true, force: true })
   })
 
+  it('requires an explicit image digest', () => {
+    const fixture = createFixture()
+
+    expect(() =>
+      updateJangarManifests({
+        imageName,
+        tag: 'missing-digest',
+        rolloutTimestamp: '2026-02-20T06:46:00.000Z',
+        kustomizationPath: relative(repoRoot, fixture.kustomizationPath),
+        serviceManifestPath: relative(repoRoot, fixture.serviceManifestPath),
+      }),
+    ).toThrow('explicit image digest')
+
+    rmSync(fixture.dir, { recursive: true, force: true })
+  })
+
   it('updates source rollout truth env when revision metadata is provided', () => {
     const fixture = createFixture()
     const sourceHeadSha = '9e7b87d813d9732d44586e213d9f47ec178f705a'

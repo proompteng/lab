@@ -71,6 +71,7 @@ describe('enabled app inventory', () => {
       'attic',
       'sag',
       'symphony',
+      'jangar',
       'torghut',
       'torghut-hyperliquid-feed',
       'torghut-hyperliquid-runtime',
@@ -94,6 +95,7 @@ describe('enabled app inventory', () => {
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
     expect(entry('sag').nixImageAttr).toBe('sag-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
+    expect(entry('jangar').nixImageAttr).toBe('jangar-image')
     expect(entry('torghut').nixImageAttr).toBe('torghut-image')
     expect(entry('torghut-hyperliquid-feed').nixImageAttr).toBe('torghut-hyperliquid-feed-image')
     expect(entry('torghut-hyperliquid-runtime').nixImageAttr).toBe('torghut-image')
@@ -130,6 +132,16 @@ describe('enabled app inventory', () => {
     expect(entry('froussard').workflowPaths).toContain('.github/workflows/froussard-ci.yml')
   })
 
+  it('tracks Jangar through both GitHub Actions and manual Nix image paths', () => {
+    expect(entry('jangar')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'jangar-image',
+      buildScriptPath: 'packages/scripts/src/jangar/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/jangar/deploy-service.ts',
+    })
+    expect(entry('jangar').workflowPaths).toContain('.github/workflows/jangar-build-push.yaml')
+  })
+
   it('tracks Torghut-family enabled apps through explicit Nix image ownership paths', () => {
     expect(entry('torghut-hyperliquid-feed')).toMatchObject({
       class: 'nix-image',
@@ -161,7 +173,7 @@ describe('enabled app inventory', () => {
   })
 
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
-    for (const name of ['jangar', 'symphony-jangar', 'symphony-torghut']) {
+    for (const name of ['symphony-jangar', 'symphony-torghut']) {
       expect(entry(name).class).toBe('deferred')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
       expect(entry(name).deferredReason).toBeTruthy()
