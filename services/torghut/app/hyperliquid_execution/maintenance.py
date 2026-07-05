@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidSdkExecutionExchange
+from .margin import gross_margin_over_budget, gross_margin_used_usd, over_budget_coins
 from .models import AccountState, OrderResult, RiskState, symbol_key
 
 
@@ -29,6 +31,29 @@ class MaintenanceExchange(Protocol):
     ) -> OrderResult:
         """Close a position through a reduce-only exchange order."""
         ...
+
+
+@dataclass(frozen=True)
+class _OverBudgetState:
+    gross_over_cap: bool
+    symbol_over_cap_coins: set[str]
+
+    @property
+    def symbol_over_cap(self) -> bool:
+        return bool(self.symbol_over_cap_coins)
+
+    @property
+    def over_cap(self) -> bool:
+        return self.gross_over_cap or self.symbol_over_cap
+
+
+@dataclass(frozen=True)
+class _ReduceOnlyActionRequest:
+    exchange: MaintenanceExchange
+    execute: bool
+    slippage: Decimal
+    max_actions: int
+    blockers: tuple[str, ...]
 
 
 def close_excluded_positions(
@@ -100,7 +125,7 @@ def close_largest_positions_over_cap(
     slippage: Decimal = Decimal("0.05"),
     max_actions: int = 1,
 ) -> dict[str, object]:
-    """Close the largest positions first when gross or symbol exposure is over cap."""
+    """Close the largest positions first when gross or symbol margin is over budget."""
 
     observed_at = datetime.now(timezone.utc)
     account = exchange.reconcile_account({})
@@ -109,50 +134,29 @@ def close_largest_positions_over_cap(
         key=lambda position: _decimal(position["notional_usd"]),
         reverse=True,
     )
-    gross_over_cap = account.account.gross_exposure_usd >= config.max_gross_exposure_usd
-    symbol_over_cap_coins = _symbol_over_cap_coins(candidates, config)
-    symbol_over_cap = bool(symbol_over_cap_coins)
-    over_cap = gross_over_cap or symbol_over_cap
-    blockers = _execution_blockers(config) if execute and over_cap else []
-    actions: list[dict[str, object]] = []
-    if over_cap:
-        action_candidates = _over_cap_action_candidates(
+    risk_state = _risk_state_from_account(
+        account=account,
+        candidates=candidates,
+    )
+    over_budget = _over_budget_state(risk_state, config)
+    blockers = (
+        tuple(_execution_blockers(config)) if execute and over_budget.over_cap else ()
+    )
+    actions = (
+        _over_cap_actions(
             candidates,
-            gross_over_cap=gross_over_cap,
-            symbol_over_cap_coins=symbol_over_cap_coins,
-            max_actions=max_actions,
+            over_budget,
+            _ReduceOnlyActionRequest(
+                exchange=exchange,
+                execute=execute,
+                slippage=slippage,
+                max_actions=max_actions,
+                blockers=blockers,
+            ),
         )
-        for candidate in action_candidates:
-            action = {
-                "coin": candidate["coin"],
-                "size": candidate["size"],
-                "notional_usd": candidate["notional_usd"],
-                "reason": _over_cap_reason(
-                    candidate,
-                    gross_over_cap=gross_over_cap,
-                    symbol_over_cap_coins=symbol_over_cap_coins,
-                ),
-            }
-            if blockers:
-                action["status"] = "blocked"
-                action["blockers"] = blockers
-            elif not execute:
-                action["status"] = "dry_run"
-            else:
-                result = exchange.close_position_reduce_only(
-                    str(candidate["coin"]),
-                    size=abs(Decimal(str(candidate["size"]))),
-                    slippage=slippage,
-                )
-                action.update(
-                    {
-                        "status": result.status,
-                        "exchange_order_id": result.exchange_order_id,
-                        "rejection_reason": result.rejection_reason,
-                        "raw_response": result.raw_response,
-                    }
-                )
-            actions.append(action)
+        if over_budget.over_cap
+        else []
+    )
 
     return {
         "schema_version": "torghut.hyperliquid-execution-over-cap-maintenance.v1",
@@ -162,14 +166,16 @@ def close_largest_positions_over_cap(
         "market_data_network": config.market_data_network,
         "execution_network": config.execution_network,
         "account_gross_exposure_usd": str(account.account.gross_exposure_usd),
-        "max_gross_exposure_usd": str(config.max_gross_exposure_usd),
-        "max_symbol_exposure_usd": str(config.max_symbol_exposure_usd),
-        "over_cap": over_cap,
-        "gross_over_cap": gross_over_cap,
-        "symbol_over_cap": symbol_over_cap,
-        "symbol_over_cap_coins": sorted(symbol_over_cap_coins),
+        "account_margin_used_usd": str(gross_margin_used_usd(risk_state)),
+        "target_margin_utilization": str(config.target_margin_utilization),
+        "max_symbol_margin_utilization": str(config.max_symbol_margin_utilization),
+        "max_order_margin_utilization": str(config.max_order_margin_utilization),
+        "over_cap": over_budget.over_cap,
+        "gross_over_cap": over_budget.gross_over_cap,
+        "symbol_over_cap": over_budget.symbol_over_cap,
+        "symbol_over_cap_coins": sorted(over_budget.symbol_over_cap_coins),
         "candidates": candidates,
-        "blockers": blockers,
+        "blockers": list(blockers),
         "actions": actions,
     }
 
@@ -180,12 +186,9 @@ def risk_state_over_cap(
 ) -> bool:
     """Return whether runtime risk state requires reduce-only maintenance."""
 
-    if risk_state.gross_exposure_usd >= config.max_gross_exposure_usd:
+    if gross_margin_over_budget(state=risk_state, config=config):
         return True
-    return any(
-        exposure_usd >= config.max_symbol_exposure_usd
-        for exposure_usd in risk_state.symbol_exposure_usd_by_coin.values()
-    )
+    return bool(over_budget_coins(state=risk_state, config=config))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -280,6 +283,10 @@ def _append_raw_position_rows(
                 "entry_price": _optional_text(position_map.get("entryPx")),
                 "notional_usd": str(_position_exposure_usd(position_map)),
                 "unrealized_pnl_usd": str(position_map.get("unrealizedPnl") or "0"),
+                "max_leverage": _optional_text(
+                    position_map.get("maxLeverage")
+                    or _nested_leverage_value(position_map)
+                ),
             }
         )
 
@@ -294,6 +301,10 @@ def _position_snapshot_rows(account: AccountState) -> list[dict[str, object]]:
             ),
             "notional_usd": str(abs(position.notional_usd)),
             "unrealized_pnl_usd": str(position.unrealized_pnl_usd),
+            "max_leverage": _optional_text(
+                position.raw_payload.get("maxLeverage")
+                or _nested_leverage_value(position.raw_payload)
+            ),
         }
         for position in account.positions
         if position.size != Decimal("0")
@@ -309,14 +320,102 @@ def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:
     return abs(size * entry_price)
 
 
-def _symbol_over_cap_coins(
+def _risk_state_from_account(
+    *,
+    account: AccountState,
     candidates: list[dict[str, object]],
-    config: HyperliquidExecutionConfig,
-) -> set[str]:
-    return {
-        str(candidate["coin"])
+) -> RiskState:
+    exposure_by_coin = {
+        str(candidate["coin"]): _decimal(candidate["notional_usd"])
         for candidate in candidates
-        if _decimal(candidate["notional_usd"]) >= config.max_symbol_exposure_usd
+    }
+    leverage_by_coin = {
+        coin: _candidate_max_leverage(candidate)
+        for coin, candidate in {
+            str(candidate["coin"]): candidate for candidate in candidates
+        }.items()
+    }
+    return RiskState(
+        trading_enabled=True,
+        dependencies=(),
+        gross_exposure_usd=account.account.gross_exposure_usd,
+        daily_realized_pnl_usd=Decimal("0"),
+        open_order_coins=frozenset(),
+        symbol_exposure_usd_by_coin=exposure_by_coin,
+        cooldown_reason_by_coin={},
+        account_value_usd=account.account.account_value_usd,
+        withdrawable_usd=account.account.withdrawable_usd,
+        max_leverage_by_coin=leverage_by_coin,
+    )
+
+
+def _over_budget_state(
+    risk_state: RiskState,
+    config: HyperliquidExecutionConfig,
+) -> _OverBudgetState:
+    return _OverBudgetState(
+        gross_over_cap=gross_margin_over_budget(state=risk_state, config=config),
+        symbol_over_cap_coins=over_budget_coins(state=risk_state, config=config),
+    )
+
+
+def _over_cap_actions(
+    candidates: list[dict[str, object]],
+    over_budget: _OverBudgetState,
+    request: _ReduceOnlyActionRequest,
+) -> list[dict[str, object]]:
+    actions: list[dict[str, object]] = []
+    action_candidates = _over_cap_action_candidates(
+        candidates,
+        gross_over_cap=over_budget.gross_over_cap,
+        symbol_over_cap_coins=over_budget.symbol_over_cap_coins,
+        max_actions=request.max_actions,
+    )
+    for candidate in action_candidates:
+        action = _over_cap_action(candidate, over_budget, request)
+        actions.append(action)
+    return actions
+
+
+def _over_cap_action(
+    candidate: Mapping[str, object],
+    over_budget: _OverBudgetState,
+    request: _ReduceOnlyActionRequest,
+) -> dict[str, object]:
+    action = {
+        "coin": candidate["coin"],
+        "size": candidate["size"],
+        "notional_usd": candidate["notional_usd"],
+        "reason": _over_cap_reason(
+            candidate,
+            gross_over_cap=over_budget.gross_over_cap,
+            symbol_over_cap_coins=over_budget.symbol_over_cap_coins,
+        ),
+    }
+    if request.blockers:
+        action["status"] = "blocked"
+        action["blockers"] = list(request.blockers)
+    elif not request.execute:
+        action["status"] = "dry_run"
+    else:
+        action.update(_reduce_only_close(candidate, request))
+    return action
+
+
+def _reduce_only_close(
+    candidate: Mapping[str, object],
+    request: _ReduceOnlyActionRequest,
+) -> dict[str, object]:
+    result = request.exchange.close_position_reduce_only(
+        str(candidate["coin"]),
+        size=abs(Decimal(str(candidate["size"]))),
+        slippage=request.slippage,
+    )
+    return {
+        "status": result.status,
+        "exchange_order_id": result.exchange_order_id,
+        "rejection_reason": result.rejection_reason,
+        "raw_response": result.raw_response,
     }
 
 
@@ -340,15 +439,27 @@ def _over_cap_action_candidates(
 
 
 def _over_cap_reason(
-    candidate: dict[str, object],
+    candidate: Mapping[str, object],
     *,
     gross_over_cap: bool,
     symbol_over_cap_coins: set[str],
 ) -> str:
     coin = str(candidate["coin"])
     if not gross_over_cap and coin in symbol_over_cap_coins:
-        return "symbol_exposure_cap"
-    return "gross_exposure_cap"
+        return "symbol_margin_budget_exhausted"
+    return "gross_margin_budget_exhausted"
+
+
+def _nested_leverage_value(position: Mapping[str, object]) -> object | None:
+    raw_leverage = position.get("leverage")
+    if not isinstance(raw_leverage, dict):
+        return None
+    return cast(Mapping[str, object], raw_leverage).get("value")
+
+
+def _candidate_max_leverage(candidate: Mapping[str, object]) -> Decimal:
+    max_leverage = _decimal(candidate.get("max_leverage"))
+    return max_leverage if max_leverage > Decimal("0") else Decimal("1")
 
 
 def _decimal(value: object) -> Decimal:

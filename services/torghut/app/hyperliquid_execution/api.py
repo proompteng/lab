@@ -225,9 +225,9 @@ def _config_payload() -> dict[str, object]:
         "trade_coins": list(config.trade_coins),
         "excluded_coins": list(config.excluded_coins),
         "min_order_notional_usd": str(config.min_order_notional_usd),
-        "max_order_notional_usd": str(config.max_order_notional_usd),
-        "max_symbol_exposure_usd": str(config.max_symbol_exposure_usd),
-        "max_gross_exposure_usd": str(config.max_gross_exposure_usd),
+        "target_margin_utilization": str(config.target_margin_utilization),
+        "max_symbol_margin_utilization": str(config.max_symbol_margin_utilization),
+        "max_order_margin_utilization": str(config.max_order_margin_utilization),
         "min_edge_bps": str(config.min_edge_bps),
         "cost_buffer_bps": str(config.cost_buffer_bps),
         "signal_staleness_seconds": config.signal_staleness_seconds,
@@ -235,14 +235,12 @@ def _config_payload() -> dict[str, object]:
         "feed_readiness_timeout_seconds": config.feed_readiness_timeout_seconds,
         "order_policy": config.order_policy,
         "effective_order_tif": config.effective_order_tif,
-        "maker_tif": config.maker_tif,
-        "maker_ttl_seconds": config.maker_ttl_seconds,
+        "order_ttl_seconds": config.order_ttl_seconds,
         "max_open_orders_per_symbol": config.max_open_orders_per_symbol,
         "reject_cooldown_threshold": config.reject_cooldown_threshold,
         "reject_cooldown_window_seconds": config.reject_cooldown_window_seconds,
         "reject_cooldown_seconds": config.reject_cooldown_seconds,
         "maintenance_reduce_only_close_enabled": config.maintenance_reduce_only_close_enabled,
-        "sample_ready_fill_floor": 40,
     }
 
 

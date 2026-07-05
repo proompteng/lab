@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
@@ -351,19 +352,23 @@ def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
             "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
             "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
             "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
-            "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "250",
-            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "50",
+            "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.20",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.05",
+            "HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION": "0.02",
             "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
         }
     )
-    session = _FakeSession(risk_gross_exposure_usd=Decimal("250"))
+    session = _FakeSession(
+        risk_gross_exposure_usd=Decimal("1200"),
+        risk_exposure_usd=Decimal("1200"),
+    )
     exchange = _ServiceExchange(
         now,
         account_state=_account_state(
             now,
-            gross_exposure_usd=Decimal("260"),
-            position_size=Decimal("2.6"),
-            position_notional_usd=Decimal("260"),
+            gross_exposure_usd=Decimal("1200"),
+            position_size=Decimal("12"),
+            position_notional_usd=Decimal("1200"),
         ),
     )
     service = HyperliquidExecutionService(
@@ -377,11 +382,11 @@ def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
     assert result.signals_written == 0
     assert result.orders_submitted == 1
     assert exchange.submitted_coins == []
-    assert exchange.reduce_only_closes == [("NVDA", Decimal("2.6"), Decimal("0.05"))]
+    assert exchange.reduce_only_closes == [("NVDA", Decimal("12"), Decimal("0.05"))]
     maintenance = result.universe_details["maintenance_reduce_only"]
     assert isinstance(maintenance, dict)
     assert maintenance["over_cap"] is True
-    assert maintenance["actions"][0]["reason"] == "gross_exposure_cap"
+    assert maintenance["actions"][0]["reason"] == "symbol_margin_budget_exhausted"
     assert maintenance["actions"][0]["status"] == "filled"
 
 
@@ -663,12 +668,18 @@ class _ServiceExchange:
         self,
         markets: tuple[ExecutionMarket, ...],
     ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        return markets, RuntimeDependencyStatus(
+        selected = tuple(
+            replace(market, max_leverage=Decimal("20")) for market in markets
+        )
+        return selected, RuntimeDependencyStatus(
             "hyperliquid_execution_metadata",
             True,
             details={
-                "active_execution_metadata": [market.coin for market in markets],
-                "selected": [market.coin for market in markets],
+                "active_execution_metadata": [market.coin for market in selected],
+                "selected": [market.coin for market in selected],
+                "max_leverage_by_coin": {
+                    market.coin: str(market.max_leverage) for market in selected
+                },
             },
         )
 
@@ -755,6 +766,8 @@ class _FakeSession:
         if "daily_realized_pnl_usd" in sql:
             return [
                 {
+                    "account_value_usd": "1000",
+                    "withdrawable_usd": "900",
                     "gross_exposure_usd": str(self.risk_gross_exposure_usd),
                     "daily_realized_pnl_usd": "1",
                 }
@@ -954,7 +967,7 @@ def _account_state(
                 notional_usd=position_notional_usd,
                 unrealized_pnl_usd=Decimal("0.25"),
                 observed_at=now,
-                raw_payload={"coin": "NVDA"},
+                raw_payload={"coin": "NVDA", "maxLeverage": "20"},
             ),
         ),
     )

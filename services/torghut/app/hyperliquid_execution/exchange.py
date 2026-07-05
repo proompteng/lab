@@ -25,7 +25,7 @@ from .universe import execution_universe_status
 
 
 _METADATA_REFRESH_SECONDS = 300
-_SUPPORTED_LIMIT_TIFS = {"Alo", "Ioc"}
+_SUPPORTED_LIMIT_TIFS = {"Ioc"}
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -91,6 +91,7 @@ class HyperliquidSdkExecutionExchange:
         self._delisted_by_dex: dict[str, frozenset[str]] = {}
         self._halted_by_dex: dict[str, set[str]] = {}
         self._size_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+        self._max_leverage_by_dex_coin: dict[str, dict[str, Decimal]] = {}
         self._latest_metadata_details: dict[str, object] = {}
 
     def filter_supported_markets(
@@ -113,7 +114,7 @@ class HyperliquidSdkExecutionExchange:
                     reason=f"execution_metadata_unavailable:{type(exc).__name__}",
                 )
         selected = tuple(
-            market
+            self._market_with_execution_metadata(market)
             for market in markets
             if market.coin in self._active_symbols(_sdk_dex(market.dex))
         )
@@ -131,6 +132,11 @@ class HyperliquidSdkExecutionExchange:
         )
         details = dict(self._latest_metadata_details)
         details.update(status.details)
+        details["max_leverage_by_coin"] = {
+            coin: str(leverage)
+            for leverage_by_coin in self._max_leverage_by_dex_coin.values()
+            for coin, leverage in sorted(leverage_by_coin.items())
+        }
         self._latest_metadata_details = details
         return selected, replace(
             status, observed_at=self._last_metadata_at, details=details
@@ -169,11 +175,6 @@ class HyperliquidSdkExecutionExchange:
         if _is_halted(result):
             self._halted_by_dex.setdefault(_sdk_dex(intent.dex), set()).add(intent.coin)
         return result
-
-    def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit an ALO maker limit order for compatibility diagnostics."""
-
-        return self.submit_order(intent)
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
         if not order.exchange_order_id:
@@ -336,32 +337,36 @@ class HyperliquidSdkExecutionExchange:
         active_by_dex: dict[str, frozenset[str]] = {}
         delisted_by_dex: dict[str, frozenset[str]] = {}
         size_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+        max_leverage_by_dex_coin: dict[str, dict[str, Decimal]] = {}
         for dex in sorted({_sdk_dex(market.dex) for market in markets} | {""}):
-            active, delisted, size_decimals = self._metadata_for_dex(dex)
+            active, delisted, size_decimals, max_leverage = self._metadata_for_dex(dex)
             active_by_dex[dex] = active
             delisted_by_dex[dex] = delisted
             size_decimals_by_dex_coin[dex] = size_decimals
+            max_leverage_by_dex_coin[dex] = max_leverage
         observed_at = datetime.now(timezone.utc)
         self._active_by_dex = active_by_dex
         self._delisted_by_dex = delisted_by_dex
         self._size_decimals_by_dex_coin = size_decimals_by_dex_coin
+        self._max_leverage_by_dex_coin = max_leverage_by_dex_coin
         self._last_metadata_at = observed_at
         self._last_read_at = observed_at
 
     def _metadata_for_dex(
         self, dex: str
-    ) -> tuple[frozenset[str], frozenset[str], dict[str, int]]:
+    ) -> tuple[frozenset[str], frozenset[str], dict[str, int], dict[str, Decimal]]:
         meta = cast(Mapping[str, object], self._info().meta(dex=dex))
         universe = meta.get("universe")
         if not isinstance(universe, list):
-            return frozenset(), frozenset(), {}
+            return frozenset(), frozenset(), {}, {}
         active: set[str] = set()
         delisted: set[str] = set()
         size_decimals_by_coin: dict[str, int] = {}
+        max_leverage_by_coin: dict[str, Decimal] = {}
         for asset in cast(list[object], universe):
             if not isinstance(asset, dict):
                 continue
-            name, is_delisted, size_decimals = _asset_metadata(
+            name, is_delisted, size_decimals, max_leverage = _asset_metadata(
                 cast(Mapping[str, object], asset)
             )
             if not name:
@@ -372,7 +377,24 @@ class HyperliquidSdkExecutionExchange:
             active.add(name)
             if size_decimals is not None:
                 size_decimals_by_coin[name] = size_decimals
-        return frozenset(active), frozenset(delisted), size_decimals_by_coin
+            if max_leverage is not None:
+                max_leverage_by_coin[name] = max_leverage
+        return (
+            frozenset(active),
+            frozenset(delisted),
+            size_decimals_by_coin,
+            max_leverage_by_coin,
+        )
+
+    def _market_with_execution_metadata(
+        self, market: ExecutionMarket
+    ) -> ExecutionMarket:
+        dex = _sdk_dex(market.dex)
+        max_leverage = self._max_leverage_by_dex_coin.get(dex, {}).get(market.coin)
+        payload = dict(market.payload)
+        if max_leverage is not None:
+            payload["execution_max_leverage"] = str(max_leverage)
+        return replace(market, max_leverage=max_leverage, payload=payload)
 
     def _metadata_fresh(self) -> bool:
         if self._last_metadata_at is None:
@@ -742,10 +764,13 @@ def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
-def _asset_metadata(asset: Mapping[str, object]) -> tuple[str, bool, int | None]:
+def _asset_metadata(
+    asset: Mapping[str, object],
+) -> tuple[str, bool, int | None, Decimal | None]:
     name = str(asset.get("name") or "").strip()
     return (
         name,
         _truthy(asset.get("isDelisted")),
         _optional_int(asset.get("szDecimals")),
+        _optional_decimal(asset.get("maxLeverage")),
     )

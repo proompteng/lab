@@ -41,11 +41,9 @@ def test_exchange_submits_ioc_restore_order() -> None:
     )
 
     result = exchange.submit_order(intent)
-    maker_result = exchange.submit_maker_order(intent)
 
     assert result.status == "filled"
     assert result.exchange_order_id == "123"
-    assert maker_result.status == "filled"
     assert sdk.orders[0]["order_type"] == {"limit": {"tif": "Ioc"}}
     assert sdk.orders[0]["limit_px"] == 10.0
 
@@ -71,7 +69,7 @@ def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> Non
         limit_price=Decimal("50"),
         notional_usd=Decimal("9.995"),
         cloid="0xabc",
-        tif="Alo",
+        tif="Ioc",
         reduce_only=False,
         signal_id="signal",
         expires_at=datetime.now(timezone.utc),
@@ -128,8 +126,11 @@ def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None
 
     selected, status = exchange.filter_supported_markets(markets)
     assert [market.coin for market in selected] == ["NVDA", "HALT"]
+    assert selected[0].max_leverage == Decimal("20")
+    assert selected[0].payload["execution_max_leverage"] == "20"
     assert status.ready is True
     assert "OLD" in status.details["delisted"]
+    assert status.details["max_leverage_by_coin"]["NVDA"] == "20"
 
     halted_intent = _intent("HALT")
     sdk.next_order_response = {
@@ -214,7 +215,7 @@ def test_exchange_reconciles_spot_state_fallback_paths() -> None:
 def test_exchange_rejects_unsupported_tif_missing_key_and_local_cancel() -> None:
     exchange = _FakeExchange(HyperliquidExecutionConfig.from_env({}), sdk=_FakeSdk())
 
-    unsupported_tif = exchange.submit_order(_intent("NVDA", tif="Gtc"))
+    unsupported_tif = exchange.submit_order(_intent("NVDA", tif="Alo"))
     missing_key = exchange.submit_order(_intent("NVDA", tif="Ioc"))
     local_cancel = exchange.cancel_order(
         OpenOrder(
@@ -287,12 +288,12 @@ class _FakeInfo:
         if dex == "xyz":
             return {
                 "universe": [
-                    {"name": "NVDA", "szDecimals": 2},
+                    {"name": "NVDA", "szDecimals": 2, "maxLeverage": 20},
                     {"name": "OLD", "isDelisted": True, "szDecimals": 2},
-                    {"name": "HALT", "szDecimals": 2},
+                    {"name": "HALT", "szDecimals": 2, "maxLeverage": 10},
                 ]
             }
-        return {"universe": [{"name": "BTC", "szDecimals": 3}]}
+        return {"universe": [{"name": "BTC", "szDecimals": 3, "maxLeverage": 40}]}
 
     def user_fills(self, _account: str) -> list[dict[str, object]]:
         return [
@@ -347,7 +348,7 @@ class _FakeInfo:
 class _UnifiedAccountInfo(_FakeInfo):
     def meta(self, *, dex: str = "") -> dict[str, object]:
         if dex == "xyz":
-            return {"universe": [{"name": "AMD", "szDecimals": 3}]}
+            return {"universe": [{"name": "AMD", "szDecimals": 3, "maxLeverage": 20}]}
         return {"universe": []}
 
     def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
@@ -441,7 +442,7 @@ class _FakeExchange(HyperliquidSdkExecutionExchange):
         return raw
 
 
-def _intent(coin: str, *, tif: str = "Alo") -> OrderIntent:
+def _intent(coin: str, *, tif: str = "Ioc") -> OrderIntent:
     return OrderIntent(
         market_id=f"hl:perp:xyz:{coin}",
         coin=coin,

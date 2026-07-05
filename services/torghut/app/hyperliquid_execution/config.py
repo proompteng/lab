@@ -13,8 +13,11 @@ _FALSE_VALUES = {"0", "false", "no", "n", "off"}
 _ENV_PREFIX = "HYPERLIQUID_EXECUTION_"
 _OLD_ENV_PREFIX = "HYPERLIQUID_RUNTIME_"
 _RESTORE_ORDER_POLICY = "marketable_ioc"
-_MAKER_ORDER_POLICY = "maker_ttl"
-_SUPPORTED_ORDER_POLICIES = {_RESTORE_ORDER_POLICY, _MAKER_ORDER_POLICY}
+_REMOVED_FIXED_CAP_ENV_SUFFIXES = {
+    "MAX_ORDER_NOTIONAL_USD",
+    "MAX_SYMBOL_EXPOSURE_USD",
+    "MAX_GROSS_EXPOSURE_USD",
+}
 _DEFAULT_TRADE_COINS = (
     "BTC",
     "ETH",
@@ -58,14 +61,13 @@ class HyperliquidExecutionConfig:
     excluded_coins: tuple[str, ...]
     max_markets_per_cycle: int
     min_day_notional_volume_usd: Decimal
-    max_order_notional_usd: Decimal
     min_order_notional_usd: Decimal
-    max_symbol_exposure_usd: Decimal
-    max_gross_exposure_usd: Decimal
+    target_margin_utilization: Decimal
+    max_symbol_margin_utilization: Decimal
+    max_order_margin_utilization: Decimal
     max_daily_loss_usd: Decimal
     order_policy: str
-    maker_tif: str
-    maker_ttl_seconds: int
+    order_ttl_seconds: int
     max_open_orders_per_symbol: int
     reject_cooldown_threshold: int
     reject_cooldown_window_seconds: int
@@ -77,6 +79,7 @@ class HyperliquidExecutionConfig:
     maintenance_reduce_only_close_enabled: bool
     metrics_namespace: str
     old_env_names: tuple[str, ...] = ()
+    removed_env_names: tuple[str, ...] = ()
 
     @classmethod
     def from_env(
@@ -84,12 +87,6 @@ class HyperliquidExecutionConfig:
         env: Mapping[str, str] | None = None,
     ) -> "HyperliquidExecutionConfig":
         source = env if env is not None else os.environ
-        old_env_names = tuple(
-            sorted(key for key in source if key.startswith(_OLD_ENV_PREFIX))
-        )
-        max_order_notional_usd = _decimal(source, "MAX_ORDER_NOTIONAL_USD", "10")
-        max_gross_exposure_usd = _decimal(source, "MAX_GROSS_EXPOSURE_USD", "100")
-        max_symbol_exposure_usd = _decimal(source, "MAX_SYMBOL_EXPOSURE_USD", "25")
         return cls(
             enabled=_bool(source, "ENABLED", True),
             trading_enabled=_bool(source, "TRADING_ENABLED", False),
@@ -142,14 +139,19 @@ class HyperliquidExecutionConfig:
             min_day_notional_volume_usd=_decimal(
                 source, "MIN_DAY_NOTIONAL_VOLUME_USD", "0"
             ),
-            max_order_notional_usd=max_order_notional_usd,
             min_order_notional_usd=_decimal(source, "MIN_ORDER_NOTIONAL_USD", "10"),
-            max_symbol_exposure_usd=max_symbol_exposure_usd,
-            max_gross_exposure_usd=max_gross_exposure_usd,
+            target_margin_utilization=_decimal(
+                source, "TARGET_MARGIN_UTILIZATION", "0.35"
+            ),
+            max_symbol_margin_utilization=_decimal(
+                source, "MAX_SYMBOL_MARGIN_UTILIZATION", "0.08"
+            ),
+            max_order_margin_utilization=_decimal(
+                source, "MAX_ORDER_MARGIN_UTILIZATION", "0.02"
+            ),
             max_daily_loss_usd=_decimal(source, "MAX_DAILY_LOSS_USD", "25"),
             order_policy=_text(source, "ORDER_POLICY", _RESTORE_ORDER_POLICY).lower(),
-            maker_tif=_text(source, "MAKER_TIF", "Alo"),
-            maker_ttl_seconds=_int(source, "MAKER_TTL_SECONDS", 10),
+            order_ttl_seconds=_int(source, "ORDER_TTL_SECONDS", 10),
             max_open_orders_per_symbol=_int(source, "MAX_OPEN_ORDERS_PER_SYMBOL", 1),
             reject_cooldown_threshold=_int(source, "REJECT_COOLDOWN_THRESHOLD", 3),
             reject_cooldown_window_seconds=_int(
@@ -170,7 +172,8 @@ class HyperliquidExecutionConfig:
                 "METRICS_NAMESPACE",
                 "torghut_hyperliquid_execution",
             ),
-            old_env_names=old_env_names,
+            old_env_names=_old_runtime_env_names(source),
+            removed_env_names=_removed_fixed_cap_env_names(source),
         )
 
     def validation_errors(self) -> list[str]:
@@ -179,6 +182,8 @@ class HyperliquidExecutionConfig:
         errors: list[str] = []
         if self.old_env_names:
             errors.append("old_hyperliquid_runtime_env_present")
+        if self.removed_env_names:
+            errors.append("removed_fixed_notional_cap_env_present")
         if self.market_data_network != "mainnet":
             errors.append("market_data_network_must_be_mainnet")
         if self.execution_network != "testnet":
@@ -189,28 +194,30 @@ class HyperliquidExecutionConfig:
             errors.append("account_address_required_when_trading_enabled")
         if self.trading_enabled and not self.api_wallet_private_key:
             errors.append("api_wallet_private_key_required_when_trading_enabled")
-        if self.order_policy not in _SUPPORTED_ORDER_POLICIES:
-            errors.append("order_policy_must_be_marketable_ioc_or_maker_ttl")
-        if self.order_policy == _MAKER_ORDER_POLICY and self.maker_tif != "Alo":
-            errors.append("maker_tif_must_be_alo_for_maker_ttl")
+        if self.order_policy != _RESTORE_ORDER_POLICY:
+            errors.append("order_policy_must_be_marketable_ioc")
         if self.marketable_ioc_slippage_bps < Decimal("0"):
             errors.append("marketable_ioc_slippage_bps_must_be_non_negative")
         if self.marketable_ioc_slippage_bps >= Decimal("10000"):
             errors.append("marketable_ioc_slippage_bps_must_be_below_10000")
-        if self.maker_ttl_seconds <= 0:
-            errors.append("maker_ttl_seconds_must_be_positive")
+        if self.order_ttl_seconds <= 0:
+            errors.append("order_ttl_seconds_must_be_positive")
         if self.max_open_orders_per_symbol != 1:
             errors.append("max_open_orders_per_symbol_must_be_one")
-        if self.max_order_notional_usd <= Decimal("0"):
-            errors.append("max_order_notional_usd_must_be_positive")
         if self.min_order_notional_usd <= Decimal("0"):
             errors.append("min_order_notional_usd_must_be_positive")
-        if self.max_order_notional_usd < self.min_order_notional_usd:
-            errors.append("max_order_notional_usd_must_cover_min_order_notional")
-        if self.max_symbol_exposure_usd < self.max_order_notional_usd:
-            errors.append("symbol_cap_must_cover_one_order")
-        if self.max_gross_exposure_usd < self.max_order_notional_usd:
-            errors.append("gross_cap_must_cover_one_order")
+        if self.target_margin_utilization <= Decimal("0"):
+            errors.append("target_margin_utilization_must_be_positive")
+        if self.max_symbol_margin_utilization <= Decimal("0"):
+            errors.append("max_symbol_margin_utilization_must_be_positive")
+        if self.max_order_margin_utilization <= Decimal("0"):
+            errors.append("max_order_margin_utilization_must_be_positive")
+        if self.target_margin_utilization > Decimal("1"):
+            errors.append("target_margin_utilization_must_not_exceed_one")
+        if self.max_symbol_margin_utilization > self.target_margin_utilization:
+            errors.append("symbol_margin_utilization_must_not_exceed_target")
+        if self.max_order_margin_utilization > self.max_symbol_margin_utilization:
+            errors.append("order_margin_utilization_must_not_exceed_symbol")
         if not self.trade_coins:
             errors.append("trade_coins_required")
         if "SPX" not in {
@@ -230,11 +237,25 @@ class HyperliquidExecutionConfig:
 
         if self.order_policy == _RESTORE_ORDER_POLICY:
             return "Ioc"
-        return self.maker_tif
+        return "Ioc"
 
 
 def _env_name(key: str, *, prefixed: bool = True) -> str:
     return f"{_ENV_PREFIX}{key}" if prefixed else key
+
+
+def _old_runtime_env_names(source: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(sorted(key for key in source if key.startswith(_OLD_ENV_PREFIX)))
+
+
+def _removed_fixed_cap_env_names(source: Mapping[str, str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            env_name
+            for key in _REMOVED_FIXED_CAP_ENV_SUFFIXES
+            if (env_name := _env_name(key)) in source
+        )
+    )
 
 
 def _text(

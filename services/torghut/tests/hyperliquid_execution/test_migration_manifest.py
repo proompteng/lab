@@ -56,19 +56,21 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
     assert "app.hyperliquid_execution.api:app" in deployment
     assert "revisionHistoryLimit: 2" in deployment
     assert "HYPERLIQUID_EXECUTION_ORDER_POLICY: marketable_ioc" in configmap
-    assert "HYPERLIQUID_EXECUTION_MAKER_TIF: Ioc" in configmap
-    assert 'HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS: "10"' in configmap
-    assert 'HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD: "12"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_ORDER_TTL_SECONDS: "10"' in configmap
     assert 'HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD: "12"' in configmap
-    assert 'HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD: "250"' in configmap
-    assert 'HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD: "50"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION: "0.35"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION: "0.08"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION: "0.02"' in configmap
     assert 'HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS: "50"' in configmap
     assert (
         'HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED: "true"'
         in configmap
     )
-    assert "hyperliquid-execution-v2-executable-ioc-20260704a" in deployment
+    assert "hyperliquid-execution-margin-aware-ioc-20260705a" in deployment
     assert "HYPERLIQUID_RUNTIME_" not in configmap
+    assert "HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD" not in configmap
+    assert "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD" not in configmap
+    assert "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD" not in configmap
 
 
 def test_runtime_migration_hook_uses_image_path_binaries() -> None:
