@@ -111,6 +111,21 @@ describe('resolve-release-metadata', () => {
     expect(__private.isBuildTriggerPath('package.json')).toBe(false)
   })
 
+  it('does not treat workflow-only changes as Jangar build changes', () => {
+    const decision = __private.evaluateWorkflowRunStaleness({
+      sourceSha: ddd07d2f,
+      mainHead: bf889391,
+      isAncestor: true,
+      changedMainFiles: ['.github/workflows/jangar-build-push.yaml'],
+    })
+
+    expect(decision).toEqual({
+      promote: true,
+      reason: 'newer-main-non-jangar-only',
+    })
+    expect(__private.isBuildTriggerPath('.github/workflows/jangar-build-push.yaml')).toBe(false)
+  })
+
   it('regression from git history fixture: blocks f22a8cbc promotion when newer main has jangar changes', () => {
     const decision = __private.evaluateWorkflowRunStaleness({
       sourceSha: f22a8cbc,
