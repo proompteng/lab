@@ -739,6 +739,8 @@ class _FakeSession:
             ]
         if "SELECT DISTINCT coin" in sql:
             return [{"coin": "NVDA"}] if self.risk_open_coin else []
+        if "SUM(ABS(notional_usd))" in sql:
+            return [{"coin": "NVDA", "exposure_usd": str(self.risk_exposure_usd)}]
         if "GROUP BY coin" in sql and "exposures" in sql:
             return [{"coin": "NVDA", "exposure_usd": str(self.risk_exposure_usd)}]
         if "cooldown_reason" in sql and "cooldown_until > now()" in sql:

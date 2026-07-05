@@ -65,6 +65,16 @@ def risk_state(
             """
         )
     ).mappings()
+    position_exposure_rows = session.execute(
+        text(
+            """
+            SELECT coin, SUM(ABS(notional_usd)) AS exposure_usd
+            FROM hyperliquid_execution_positions
+            WHERE execution_network = 'testnet'
+            GROUP BY coin
+            """
+        )
+    ).mappings()
     cooldown_rows = session.execute(
         text(
             """
@@ -88,6 +98,10 @@ def risk_state(
         },
         cooldown_reason_by_coin={
             str(row["coin"]): str(row["cooldown_reason"]) for row in cooldown_rows
+        },
+        position_exposure_usd_by_coin={
+            str(row["coin"]): Decimal(str(row["exposure_usd"]))
+            for row in position_exposure_rows
         },
         max_leverage_by_coin=dict(max_leverage_by_coin or {}),
     )
