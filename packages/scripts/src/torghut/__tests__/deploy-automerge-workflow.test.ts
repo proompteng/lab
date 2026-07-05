@@ -106,6 +106,14 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).not.toContain('deadline=$((SECONDS + 2700))')
   })
 
+  test('squash-merges generated release PRs after explicit gates instead of enabling brittle automerge', () => {
+    expect(deployAutomergeWorkflow).toContain('name: Squash merge release PR')
+    expect(deployAutomergeWorkflow).toContain('--json state,mergeStateStatus,isDraft')
+    expect(deployAutomergeWorkflow).toContain('CLEAN | UNSTABLE)')
+    expect(deployAutomergeWorkflow).toContain('gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --squash')
+    expect(deployAutomergeWorkflow).not.toContain('gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --auto --squash')
+  })
+
   test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {
     const manifestPath = 'argocd/applications/torghut-hyperliquid-feed/deployment.yaml'
 

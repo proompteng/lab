@@ -421,7 +421,7 @@ jobs:
             sleep 10
           done
 
-      - name: Enable squash auto-merge
+      - name: Squash merge release PR
         if: steps.gates.outputs.eligible == 'true'
         shell: bash
         env:
@@ -430,14 +430,30 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          auto_merge_enabled="$(
+
+          pr_state="$(
             gh pr view "${PR_NUMBER}" \
               -R "${GH_REPO}" \
-              --json autoMergeRequest \
-              --jq '.autoMergeRequest != null'
+              --json state,mergeStateStatus,isDraft \
+              --jq '[.state, .mergeStateStatus, (.isDraft|tostring)] | @tsv'
           )"
-          if [ "${auto_merge_enabled}" = 'true' ]; then
-            echo "Auto-merge already enabled for PR #${PR_NUMBER}"
+          IFS=$'\t' read -r state merge_state is_draft <<< "${pr_state}"
+
+          if [ "${state}" != 'OPEN' ]; then
+            echo "PR #${PR_NUMBER} is not open: ${state}"
             exit 0
           fi
-          gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --auto --squash
+          if [ "${is_draft}" = 'true' ]; then
+            echo "PR #${PR_NUMBER} is draft; skipping merge."
+            exit 0
+          fi
+          case "${merge_state}" in
+            CLEAN | UNSTABLE)
+              ;;
+            *)
+              echo "PR #${PR_NUMBER} is not mergeable after required checks passed: ${merge_state}"
+              exit 1
+              ;;
+          esac
+
+          gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --squash
