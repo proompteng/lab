@@ -9,6 +9,9 @@ from typing import Any
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
 from app.hyperliquid_execution.models import ExecutionMarket, OpenOrder, OrderIntent
+from app.hyperliquid_execution.reconciliation_keys import (
+    market_id_by_reconciliation_coin,
+)
 
 
 def test_exchange_submits_ioc_order() -> None:
@@ -47,10 +50,11 @@ def test_exchange_submits_ioc_order() -> None:
     assert result.exchange_order_id == "123"
     assert sdk.market_opens == [
         {
-            "name": "NVDA",
+            "name": "xyz:NVDA",
             "is_buy": True,
             "sz": 1.0,
-            "slippage": 0.005,
+            "px": 10.0,
+            "slippage": 0.0,
             "cloid": "0xabc",
         }
     ]
@@ -110,7 +114,7 @@ def test_exchange_cancels_by_oid() -> None:
     result = exchange.cancel_order(order)
 
     assert result.status == "cancelled"
-    assert sdk.cancels == [("NVDA", 123)]
+    assert sdk.cancels == [("xyz:NVDA", 123)]
 
 
 def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None:
@@ -185,6 +189,32 @@ def test_exchange_reconciles_unified_account_spot_and_perp_dex_state() -> None:
     assert [position.coin for position in account.positions] == ["AMD"]
     assert "spotUserState" in account.account.raw_payload
     assert "xyz" in account.account.raw_payload["dexStates"]
+
+
+def test_exchange_canonicalizes_scoped_reconciliation_rows() -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=_FakeSdk(),
+        info=_ScopedReconciliationInfo(),
+    )
+    market = _market("NVDA", "xyz")
+    exchange.filter_supported_markets((market,))
+    market_id_by_coin = market_id_by_reconciliation_coin((market,))
+
+    fills = exchange.reconcile_fills(market_id_by_coin)
+    account = exchange.reconcile_account(market_id_by_coin)
+
+    assert fills[0].market_id == "hl:perp:xyz:NVDA"
+    assert fills[0].coin == "NVDA"
+    assert fills[0].raw_payload["coin"] == "xyz:NVDA"
+    assert account.positions[0].market_id == "hl:perp:xyz:NVDA"
+    assert account.positions[0].coin == "NVDA"
+    assert account.positions[0].raw_payload["coin"] == "xyz:NVDA"
 
 
 def test_exchange_reconciles_spot_state_fallback_paths() -> None:
@@ -399,6 +429,52 @@ class _UnifiedAccountInfo(_FakeInfo):
                 }
             ],
             "tokenToAvailableAfterMaintenance": [[0, "987.602738"]],
+        }
+
+
+class _ScopedReconciliationInfo(_FakeInfo):
+    def user_fills(self, _account: str) -> list[dict[str, object]]:
+        return [
+            {
+                "coin": "xyz:NVDA",
+                "px": "100",
+                "sz": "0.1",
+                "fee": "0.01",
+                "closedPnl": "0.50",
+                "oid": "123",
+                "hash": "fill-1",
+                "side": "B",
+                "time": "1781870400000",
+            }
+        ]
+
+    def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
+        if dex == "xyz":
+            return {
+                "marginSummary": {
+                    "accountValue": "1000",
+                    "totalNtlPos": "20",
+                },
+                "withdrawable": "900",
+                "assetPositions": [
+                    {
+                        "position": {
+                            "coin": "xyz:NVDA",
+                            "szi": "0.1",
+                            "entryPx": "100",
+                            "positionValue": "20",
+                            "unrealizedPnl": "0.25",
+                        }
+                    }
+                ],
+            }
+        return {
+            "marginSummary": {
+                "accountValue": "0",
+                "totalNtlPos": "0",
+            },
+            "withdrawable": "0",
+            "assetPositions": [],
         }
 
 

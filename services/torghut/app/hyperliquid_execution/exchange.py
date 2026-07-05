@@ -22,6 +22,7 @@ from .models import (
     PositionSnapshot,
     RuntimeDependencyStatus,
 )
+from .reconciliation_keys import ReconciliationCoinMap
 from .universe import execution_universe_status
 
 
@@ -224,12 +225,11 @@ class HyperliquidSdkExecutionExchange:
         response = cast(
             dict[str, object],
             self._exchange().market_open(
-                name=normalized.coin,
+                name=_sdk_market_name(normalized.coin, normalized.dex),
                 is_buy=normalized.side == "buy",
                 sz=float(normalized.size),
-                slippage=float(
-                    self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
-                ),
+                px=float(normalized.limit_price),
+                slippage=0.0,
                 cloid=self._cloid(normalized.cloid),
             ),
         )
@@ -252,7 +252,9 @@ class HyperliquidSdkExecutionExchange:
             )
         response = cast(
             dict[str, object],
-            self._exchange().cancel(order.coin, int(order.exchange_order_id)),
+            self._exchange().cancel(
+                _sdk_market_name(order.coin, order.dex), int(order.exchange_order_id)
+            ),
         )
         self._last_read_at = datetime.now(timezone.utc)
         return OrderResult(
@@ -399,7 +401,8 @@ class HyperliquidSdkExecutionExchange:
     def _uncrossable_reason(self, market: ExecutionMarket) -> str | None:
         try:
             info = self._info()
-            book = cast(dict[str, object], info.l2_snapshot(market.coin))
+            sdk_name = _sdk_market_name(market.coin, market.dex)
+            book = cast(dict[str, object], info.l2_snapshot(sdk_name))
             self._last_read_at = datetime.now(timezone.utc)
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             return f"book_unavailable:{type(exc).__name__}"
@@ -610,12 +613,17 @@ def _is_halted(result: OrderResult) -> bool:
 def _fill_from_payload(
     payload: Mapping[str, object], market_id_by_coin: dict[str, str]
 ) -> Fill:
-    coin = _fill_coin(payload)
+    reconciliation_coin = _fill_coin(payload)
+    coin = _canonical_reconciliation_coin(reconciliation_coin, market_id_by_coin)
     price = _decimal(payload.get("px") or payload.get("price"))
     size = _decimal(payload.get("sz") or payload.get("size"))
     return Fill(
-        fill_hash=str(payload.get("tid") or payload.get("hash") or f"{coin}:{payload}"),
-        market_id=market_id_by_coin[coin],
+        fill_hash=str(
+            payload.get("tid")
+            or payload.get("hash")
+            or f"{reconciliation_coin}:{payload}"
+        ),
+        market_id=market_id_by_coin[reconciliation_coin],
         coin=coin,
         side="buy"
         if str(payload.get("side") or "").upper().startswith("B")
@@ -651,15 +659,18 @@ def _account_state_from_payload(
             if not isinstance(position, dict):
                 continue
             position_map = cast(Mapping[str, object], position)
-            coin = str(position_map.get("coin") or "").strip()
-            if coin not in market_id_by_coin:
+            reconciliation_coin = str(position_map.get("coin") or "").strip()
+            if reconciliation_coin not in market_id_by_coin:
                 continue
+            coin = _canonical_reconciliation_coin(
+                reconciliation_coin, market_id_by_coin
+            )
             size = _decimal(position_map.get("szi"))
             entry_price = _optional_decimal(position_map.get("entryPx"))
             notional_usd = _position_exposure_usd(position_map)
             positions.append(
                 PositionSnapshot(
-                    market_id=market_id_by_coin[coin],
+                    market_id=market_id_by_coin[reconciliation_coin],
                     coin=coin,
                     size=size,
                     entry_price=entry_price,
@@ -682,6 +693,18 @@ def _account_state_from_payload(
         ),
         positions=tuple(positions),
     )
+
+
+def _canonical_reconciliation_coin(coin: str, market_id_by_coin: dict[str, str]) -> str:
+    if isinstance(market_id_by_coin, ReconciliationCoinMap):
+        return market_id_by_coin.canonical_coin_by_coin.get(coin, coin)
+    market_id = market_id_by_coin.get(coin)
+    if market_id is None:
+        return coin
+    for candidate, candidate_market_id in market_id_by_coin.items():
+        if candidate_market_id == market_id:
+            return candidate
+    return coin
 
 
 def _account_state_from_payloads(
@@ -820,6 +843,16 @@ def _sdk_dex(dex: str) -> str:
     if normalized in {"", "default"}:
         return ""
     return normalized
+
+
+def _sdk_market_name(coin: str, dex: str) -> str:
+    normalized_coin = coin.strip()
+    if ":" in normalized_coin:
+        return normalized_coin
+    sdk_dex = _sdk_dex(dex)
+    if not sdk_dex:
+        return normalized_coin
+    return f"{sdk_dex}:{normalized_coin}"
 
 
 def _fill_coin(payload: Mapping[str, object]) -> str:

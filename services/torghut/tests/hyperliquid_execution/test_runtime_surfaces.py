@@ -365,7 +365,7 @@ def test_service_selects_only_fresh_execution_markets() -> None:
     assert result.universe_details["selected"] == ["NVDA"]
     assert result.universe_details["selected_execution_metadata"] == ["NVDA", "MU"]
     assert result.universe_details["missing_fresh_features"] == ["MU"]
-    assert exchange.reconciled_coins == {"NVDA"}
+    assert exchange.reconciled_coins == {"NVDA", "xyz:NVDA"}
 
 
 def test_service_reports_blocked_signal_reasons() -> None:
