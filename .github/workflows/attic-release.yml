@@ -93,6 +93,7 @@ jobs:
           export IMAGE_REF="${IMAGE}@${DIGEST}"
           for path in argocd/applications/attic/deployment.yaml argocd/applications/attic/gc-cronjob.yaml; do
             perl -0pi -e 's#image:\s+registry\.ide-newton\.ts\.net/lab/attic(?::latest|@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' "${path}"
+            perl -0pi -e 's#\\n[( ]*)nodeSelector:\\n\\1  kubernetes\\.io/arch: (?:amd64|arm64)\\n#\\n#g' "${path}"
             grep -F "image: ${IMAGE_REF}" "${path}" >/dev/null
           done
 

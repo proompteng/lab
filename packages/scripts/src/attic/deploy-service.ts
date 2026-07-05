@@ -236,23 +236,60 @@ const updateImageReferences = (
   }
 }
 
+const clearPodSpecArchitectureNodeSelector = (path: string, podSpecIndent: number): void => {
+  const current = readFileSync(path, 'utf8')
+  const lines = current.split('\n')
+  const childIndent = ' '.repeat(podSpecIndent + 2)
+  const podSpecLine = `${' '.repeat(podSpecIndent)}spec:`
+  const nodeSelectorLine = `${childIndent}nodeSelector:`
+  const archSelectorPrefix = `${childIndent}  kubernetes.io/arch:`
+  const podSpecIndex = lines.findIndex((line) => line === podSpecLine)
+
+  if (podSpecIndex === -1) {
+    throw new Error(`Expected pod spec line ${JSON.stringify(podSpecLine)} in ${path}`)
+  }
+
+  const selectorIndex = podSpecIndex + 1
+  if (lines[selectorIndex] !== nodeSelectorLine) {
+    return
+  }
+
+  let selectorEndIndex = selectorIndex + 1
+  while (lines[selectorEndIndex]?.startsWith(`${childIndent}  `)) {
+    selectorEndIndex += 1
+  }
+  const archSelectorIndex = lines.findIndex(
+    (line, index) => index > selectorIndex && index < selectorEndIndex && line.startsWith(archSelectorPrefix),
+  )
+
+  if (archSelectorIndex === -1) {
+    return
+  }
+
+  lines.splice(archSelectorIndex, 1)
+  selectorEndIndex -= 1
+  if (selectorEndIndex === selectorIndex + 1) {
+    lines.splice(selectorIndex, 1)
+  }
+
+  const updated = lines.join('\n')
+  if (updated !== current) {
+    writeFileSync(path, updated)
+    console.log(`Cleared kubernetes.io/arch node selector from ${path}`)
+  }
+}
+
 const updateAtticImageManifests = (options: ManifestUpdateOptions): void => {
   const imageName = imageNameFor(options.registry ?? defaultImageRegistry, options.repository ?? defaultImageRepository)
   const imageReference = assertAtticImageDigest(options.imageDigest, imageName)
   const manifestPaths = resolveKustomizeManifestPaths(options.kustomizePath)
   const imageNames = imageName === defaultImageName ? [imageName] : [imageName, defaultImageName]
-  updateImageReferences(
-    resolve(repoRoot, options.deploymentPath ?? manifestPaths.deploymentPath),
-    imageReference,
-    2,
-    imageNames,
-  )
-  updateImageReferences(
-    resolve(repoRoot, options.gcCronJobPath ?? manifestPaths.gcCronJobPath),
-    imageReference,
-    1,
-    imageNames,
-  )
+  const deploymentPath = resolve(repoRoot, options.deploymentPath ?? manifestPaths.deploymentPath)
+  const gcCronJobPath = resolve(repoRoot, options.gcCronJobPath ?? manifestPaths.gcCronJobPath)
+  updateImageReferences(deploymentPath, imageReference, 2, imageNames)
+  updateImageReferences(gcCronJobPath, imageReference, 1, imageNames)
+  clearPodSpecArchitectureNodeSelector(deploymentPath, 4)
+  clearPodSpecArchitectureNodeSelector(gcCronJobPath, 8)
 }
 
 export const main = async (argv = process.argv.slice(2)) => {
@@ -310,6 +347,7 @@ export const __private = {
   requireDeployImageDigest,
   resolveOptions,
   resolveKustomizeManifestPaths,
+  clearPodSpecArchitectureNodeSelector,
   updateAtticImageManifests,
   updateImageReferences,
 }

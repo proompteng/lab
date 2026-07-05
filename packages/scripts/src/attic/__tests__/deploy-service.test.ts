@@ -144,6 +144,57 @@ spec:
     rmSync(dir, { recursive: true, force: true })
   })
 
+  it('clears stale architecture selectors while pinning multi-arch manifests', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'attic-clear-arch-selector-'))
+    const deploymentPath = join(dir, 'deployment.yaml')
+    const gcCronJobPath = join(dir, 'gc-cronjob.yaml')
+
+    writeFileSync(
+      deploymentPath,
+      `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      initContainers:
+        - name: db-migrations
+          image: registry.ide-newton.ts.net/lab/attic:latest
+      containers:
+        - name: attic
+          image: registry.ide-newton.ts.net/lab/attic:latest
+`,
+    )
+    writeFileSync(
+      gcCronJobPath,
+      `apiVersion: batch/v1
+kind: CronJob
+spec:
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: attic-gc
+              image: registry.ide-newton.ts.net/lab/attic:latest
+`,
+    )
+
+    __private.updateAtticImageManifests({
+      imageDigest: digestReference,
+      deploymentPath,
+      gcCronJobPath,
+    })
+
+    expect(readFileSync(deploymentPath, 'utf8')).not.toContain('kubernetes.io/arch')
+    expect(readFileSync(gcCronJobPath, 'utf8')).not.toContain('kubernetes.io/arch')
+
+    rmSync(dir, { recursive: true, force: true })
+  })
+
   it('rejects non-digest and non-canonical Attic references', () => {
     expect(() => __private.assertAtticImageDigest('registry.ide-newton.ts.net/lab/attic:latest')).toThrow(
       'Expected Attic digest reference',
