@@ -17,6 +17,9 @@ CONFIGMAP = REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/configm
 DEPLOYMENT = (
     REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/deployment.yaml"
 )
+DB_MIGRATIONS_JOB = (
+    REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml"
+)
 
 
 def test_hard_reset_migration_drops_v1_tables_and_creates_v2_tables() -> None:
@@ -63,3 +66,11 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
     )
     assert "hyperliquid-execution-v2-feed-readiness-gate-20260704a" in deployment
     assert "HYPERLIQUID_RUNTIME_" not in configmap
+
+
+def test_runtime_migration_hook_uses_image_path_binaries() -> None:
+    manifest = DB_MIGRATIONS_JOB.read_text()
+
+    assert "until python - <<'PY'" in manifest
+    assert "alembic -c /app/alembic.ini upgrade heads" in manifest
+    assert "/opt/venv/bin/" not in manifest
