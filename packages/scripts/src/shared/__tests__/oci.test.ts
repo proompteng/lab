@@ -813,6 +813,7 @@ describe('native OCI build workflows', () => {
     expect(headlampImageModule).toContain('etc/ssl/certs/ca-certificates.crt')
     expect(headlampImageModule).toContain('export HOME="$TMPDIR/home"')
     expect(headlampImageModule).toContain('cp main.js package.json "$out/static-plugins/prometheus/"')
+    expect(headlampImageModule).toContain('chmod -R u+w "$out/headlamp/frontend"')
     expect(headlampImageModule).not.toContain('cp prometheus/main.js prometheus/package.json')
     expect(headlampImageModule).not.toContain('created = "now"')
     expect(headlampImageModule).not.toContain('docker build')
