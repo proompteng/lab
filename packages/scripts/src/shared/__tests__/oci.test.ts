@@ -866,6 +866,12 @@ describe('native OCI build workflows', () => {
     expect(agentsImageModule).toContain('"agents-codex-runner-image"')
     expect(agentsImageModule).toContain('pname = "alpaca-mcp-server";')
     expect(agentsImageModule).toContain('version = "2.0.1";')
+    expect(agentsImageModule).toContain('pname = "fastmcp";')
+    expect(agentsImageModule).toContain('version = "2.13.2";')
+    expect(agentsImageModule).toContain('pname = "mcp";')
+    expect(agentsImageModule).toContain('version = "1.19.0";')
+    expect(agentsImageModule).toContain('pname = "beartype";')
+    expect(agentsImageModule).toContain('version = "0.22.2";')
     expect(agentsImageModule).toContain('pname = "alpaca-py";')
     expect(agentsImageModule).toContain('pname = "pandas-ta-classic";')
     expect(agentsImageModule).toContain('pythonPackages.buildPythonPackage')
@@ -891,6 +897,9 @@ describe('native OCI build workflows', () => {
     expect(agentsImageModule).toContain('"agents-control-plane-image"')
     expect(agentsImageModule).toContain('"agents-shell-image"')
     expect(agentsImageModule).toContain('"agents-codex-runner-image"')
+    expect(agentsImageModule).toContain('"$out/workspace"')
+    expect(agentsImageModule).toContain('#!${pkgs.bash}/bin/bash')
+    expect(agentsImageModule).not.toContain('#!/usr/bin/env bash')
   })
 
   it('preserves isolated Bun workspace runtime dependencies in Agents images', () => {

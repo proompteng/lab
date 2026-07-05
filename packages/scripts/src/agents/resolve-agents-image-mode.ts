@@ -13,6 +13,7 @@ const LOCAL_IMAGE_PREFIXES = [
 
 const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'bun.lock',
+  'flake.lock',
   'nix/images/agents.nix',
   'nix/images/bun-workspace-service.nix',
   'nix/images/openai-codex-cli.nix',

@@ -30,4 +30,20 @@ describe('agents-ci workflow', () => {
     expect(workflow).toContain('--retry-all-errors')
     expect(workflow).toContain('timeout -k 30s "${AGENTS_TIMEOUT}" bun run packages/scripts/src/agents/smoke-agents.ts')
   })
+
+  it('runs for Nix Agents image input changes', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    for (const path of [
+      'flake.lock',
+      'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+      'tsconfig.base.json',
+    ]) {
+      expect(workflow.split(`- '${path}'`).length - 1).toBe(2)
+    }
+  })
 })
