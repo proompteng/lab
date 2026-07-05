@@ -107,17 +107,49 @@ let
     pythonImportsCheck = [ "alpaca" ];
   };
 
+  richRst = mkPyWheel {
+    pname = "rich-rst";
+    pypiPname = "rich_rst";
+    version = "1.3.1";
+    hash = "sha256-SYp044llB6sESS0ybnlMPvdufNoHhwOqWS0YU9kQmME=";
+    propagatedBuildInputs = [
+      pythonPackages.docutils
+      pythonPackages.rich
+    ];
+    pythonImportsCheck = [ "rich_rst" ];
+  };
+
+  cyclopts = mkPyWheel {
+    pname = "cyclopts";
+    version = "4.0.0";
+    hash = "sha256-5kgBoshraB8IMj/VARBETulhI2oLrkAqZtLMP+2jPac=";
+    propagatedBuildInputs = [
+      pythonPackages.attrs
+      pythonPackages."docstring-parser"
+      pythonPackages.rich
+      richRst
+    ];
+    pythonImportsCheck = [ "cyclopts" ];
+  };
+
   fastmcp = mkPyWheel {
     pname = "fastmcp";
-    version = "2.0.0";
-    hash = "sha256-1cQREjOmop+pLtWs2/5P6ukiGRodHBVD8Khe/u8x+7k=";
+    version = "2.12.4";
+    hash = "sha256-VhiPu8Gp31jFNwY/JZWMV7XE1xX3PjlcQbUVULJH0UA=";
     propagatedBuildInputs = [
+      cyclopts
       dotenv
-      pythonPackages.fastapi
+      pythonPackages.authlib
+      pythonPackages."email-validator"
+      pythonPackages.exceptiongroup
+      pythonPackages.httpx
       pythonPackages.mcp
+      pythonPackages.openapi-core
       pythonPackages."openapi-pydantic"
+      pythonPackages.pydantic
+      pythonPackages.pyperclip
+      pythonPackages."python-dotenv"
       pythonPackages.rich
-      pythonPackages.typer
       pythonPackages.websockets
     ];
     pythonImportsCheck = [ "fastmcp" ];
@@ -371,6 +403,7 @@ let
       "$out/app/node_modules/@proompteng/codex" \
       "$out/app/services/agents/scripts/codex" \
       "$out/root/.codex" \
+      "$out/workspace" \
       "$out/usr/bin" \
       "$out/usr/local/bin"
 
@@ -382,13 +415,17 @@ let
     printf '{}\n' > "$out/root/.codex/auth.json"
     printf '%s\n' unspecified > "$out/root/.codex/auth.checksum"
 
-    cat > "$out/usr/local/bin/agent-runner" <<'EOF'
-    #!/usr/bin/env bash
-    exec bun /app/services/agents/scripts/codex/agent-runner.js "$@"
+    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+
+    cat > "$out/usr/local/bin/agent-runner" <<EOF
+    #!${pkgs.bash}/bin/bash
+    mkdir -p "''${CODEX_HOME:-/tmp/codex-home}"
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/agent-runner.js "\$@"
     EOF
-    cat > "$out/usr/local/bin/agents-fake-codex-app-server" <<'EOF'
-    #!/usr/bin/env bash
-    exec bun /app/services/agents/scripts/codex/fake-app-server.js "$@"
+    cat > "$out/usr/local/bin/agents-fake-codex-app-server" <<EOF
+    #!${pkgs.bash}/bin/bash
+    mkdir -p "''${CODEX_HOME:-/tmp/codex-home}"
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/fake-app-server.js "\$@"
     EOF
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"
@@ -448,6 +485,7 @@ let
         "GIT_TERMINAL_PROMPT=0"
         "AGENTS_CODEX_BINARY=/usr/local/bin/codex"
         "CODEX_BINARY=/usr/local/bin/codex"
+        "CODEX_HOME=/tmp/codex-home"
         "BUN_INSTALL=/usr/local"
         "BUN_INSTALL_CACHE_DIR=/opt/bun/install/cache"
         "BUN_INSTALL_CACHE_SEED_DIR=/opt/bun/install/cache"
