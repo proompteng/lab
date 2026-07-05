@@ -161,6 +161,7 @@ jobs:
         if: steps.meta.outputs.promote == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/headlamp-nix-release-${{ steps.meta.outputs.tag }}
           title: 'chore(headlamp): promote nix image ${{ steps.meta.outputs.tag }}'
           commit-message: 'chore(headlamp): promote nix image ${{ steps.meta.outputs.tag }}'

@@ -188,6 +188,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')
     expect(arcRunnerReleaseWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
+    expect(arcRunnerReleaseWorkflow).toContain('token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}')
     expect(arcRunnerReleaseWorkflow).toContain('argocd/applications/arc/application.yaml')
     expect(arcRunnerReleaseWorkflow).toContain('nix-oci')
   })
