@@ -15,6 +15,8 @@ export type BuildImageOptions = {
   version?: string
   commit?: string
   dryRun?: boolean
+  amd64ImageRef?: string
+  arm64ImageRef?: string
 }
 
 const service = 'arc-runner'
@@ -22,9 +24,12 @@ const imageName = 'arc-runner'
 const packageAttr = 'arc-runner-image'
 const requiredPlatforms = ['linux/amd64', 'linux/arm64'] as const
 
+type RequiredPlatform = (typeof requiredPlatforms)[number]
+type PlatformRefs = Partial<Record<RequiredPlatform, string>>
+
 const readEnv = (name: string) => process.env[name]?.trim()
 
-const localPlatform = (): (typeof requiredPlatforms)[number] => {
+const localPlatform = (): RequiredPlatform => {
   if (process.arch === 'x64') return 'linux/amd64'
   if (process.arch === 'arm64') return 'linux/arm64'
   throw new Error(`Unsupported ARC runner image build architecture: ${process.arch}`)
@@ -34,8 +39,58 @@ const platformSuffix = (platform: string): string => platform.replace(/^linux\//
 
 const platformTag = (tag: string, platform: string): string => `${tag}-${platformSuffix(platform)}`
 
-const platformIndexTags = (tag: string): OciArchTag[] =>
-  requiredPlatforms.map((platform) => ({ platform, tag: platformTag(tag, platform) }))
+const platformRefEnvName = (platform: RequiredPlatform): string =>
+  `ARC_RUNNER_${platformSuffix(platform).toUpperCase()}_IMAGE_REF`
+
+const platformRefFlagName = (platform: RequiredPlatform): string =>
+  `--${platformSuffix(platform).replaceAll('_', '-')}-image-ref`
+
+const platformRefsFromOptions = (options: BuildImageOptions): PlatformRefs => ({
+  'linux/amd64': options.amd64ImageRef ?? readEnv(platformRefEnvName('linux/amd64')),
+  'linux/arm64': options.arm64ImageRef ?? readEnv(platformRefEnvName('linux/arm64')),
+})
+
+const assertPlatformDigestsInclude = (
+  platformDigests: readonly OciPlatformDigest[],
+  required: readonly string[],
+  imageRef: string,
+): OciPlatformDigest[] => {
+  const observed = new Set(platformDigests.map((entry) => entry.platform))
+  const missing = required.filter((platform) => !observed.has(platform))
+  if (missing.length > 0) {
+    const observedText = [...observed].sort().join(', ') || 'none'
+    throw new Error(
+      `ARC runner image ${imageRef} does not satisfy platform requirement: ${missing.join(', ')}; observed: ${observedText}`,
+    )
+  }
+  return [...platformDigests]
+}
+
+const missingPrebuiltPlatforms = (buildPlatform: RequiredPlatform, platformRefs: PlatformRefs): RequiredPlatform[] =>
+  requiredPlatforms.filter((platform) => platform !== buildPlatform && !platformRefs[platform]?.trim())
+
+const assertPrebuiltPlatformRefs = (tag: string, buildPlatform: RequiredPlatform, platformRefs: PlatformRefs): void => {
+  const missing = missingPrebuiltPlatforms(buildPlatform, platformRefs)
+  if (missing.length === 0) return
+
+  const requirements = missing
+    .map((platform) => `${platform} via ${platformRefFlagName(platform)} or ${platformRefEnvName(platform)}`)
+    .join(', ')
+  throw new Error(
+    `ARC runner manual multi-arch image build for ${tag} requires prebuilt image reference(s) for ${requirements}; refusing to build ${buildPlatform} before the OCI index can be completed.`,
+  )
+}
+
+const platformIndexTags = (options: {
+  tag: string
+  buildPlatform: RequiredPlatform
+  localImageRef: string
+  prebuiltRefs: PlatformRefs
+}): OciArchTag[] =>
+  requiredPlatforms.map((platform) => ({
+    platform,
+    tag: platform === options.buildPlatform ? options.localImageRef : options.prebuiltRefs[platform]!,
+  }))
 
 const platformDigestRecord = (platformDigests: OciPlatformDigest[]): Record<string, string> =>
   Object.fromEntries(platformDigests.map((entry) => [entry.platform, entry.digest]))
@@ -110,6 +165,24 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       options.registry = arg.slice('--registry='.length)
       continue
     }
+    if (arg === '--amd64-image-ref') {
+      options.amd64ImageRef = args[index + 1]
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--amd64-image-ref=')) {
+      options.amd64ImageRef = arg.slice('--amd64-image-ref='.length)
+      continue
+    }
+    if (arg === '--arm64-image-ref') {
+      options.arm64ImageRef = args[index + 1]
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--arm64-image-ref=')) {
+      options.arm64ImageRef = arg.slice('--arm64-image-ref='.length)
+      continue
+    }
     if (arg === '--dry-run') {
       options.dryRun = true
       continue
@@ -154,6 +227,9 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
   }
 
   const buildPlatform = localPlatform()
+  const prebuiltRefs = platformRefsFromOptions(options)
+  assertPrebuiltPlatformRefs(tag, buildPlatform, prebuiltRefs)
+
   const localPlatformTag = platformTag(tag, buildPlatform)
   const result = await buildAndPushNixImage({
     service,
@@ -171,10 +247,20 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     )
   }
 
-  const indexResult = createOciIndex({ image, tag, latest: true, archTags: platformIndexTags(tag) })
+  const indexResult = createOciIndex({
+    image,
+    tag,
+    latest: false,
+    archTags: platformIndexTags({ tag, buildPlatform, localImageRef: result.reference, prebuiltRefs }),
+  })
+  const indexPlatforms = assertPlatformDigestsInclude(
+    indexResult.platformDigests,
+    requiredPlatforms,
+    indexResult.reference,
+  )
   writeIndexReleaseContract(result, indexResult, commit)
 
-  const platforms = indexResult.platformDigests.map((entry) => entry.platform)
+  const platforms = indexPlatforms.map((entry) => entry.platform)
 
   return {
     image: `${image}:${tag}`,
@@ -194,9 +280,14 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  assertPrebuiltPlatformRefs,
   localPlatform,
+  missingPrebuiltPlatforms,
   parseArgs,
   platformIndexTags,
+  platformRefEnvName,
+  platformRefFlagName,
+  platformRefsFromOptions,
   platformSuffix,
   platformTag,
 }
