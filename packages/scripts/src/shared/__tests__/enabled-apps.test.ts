@@ -194,14 +194,8 @@ describe('enabled app inventory', () => {
     expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ta-build-push.yaml')
   })
 
-  it('defers complex repo-image apps without supported build ownership instead of counting them as rollout proof', () => {
-    expect(entry('tigresse').class).toBe('deferred')
-    expect(entry('tigresse').repoImages.length).toBeGreaterThan(0)
-    expect(entry('tigresse').deferredReason).toBeTruthy()
-  })
-
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {
-    for (const name of ['analysis', 'bilig']) {
+    for (const name of ['analysis', 'bilig', 'tigresse']) {
       expect(entry(name).class).toBe('vendor-manifest')
       expect(entry(name).repoImages.length).toBeGreaterThan(0)
       expect(entry(name).buildScriptPath).toBeUndefined()
@@ -209,6 +203,15 @@ describe('enabled app inventory', () => {
       expect(entry(name).nixImageAttr).toBeUndefined()
       expect(entry(name).deferredReason).toBeTruthy()
     }
+  })
+
+  it('tracks Tigresse as a vendored external-operator chart, not an in-repo image build gap', () => {
+    expect(entry('tigresse')).toMatchObject({
+      class: 'vendor-manifest',
+      hasHelmChart: true,
+      repoImages: ['registry.ide-newton.ts.net/lab/tigresse'],
+    })
+    expect(entry('tigresse').deferredReason).toContain('proompteng/tigresse')
   })
 
   it('passes the no-build-for-chart-and-vendor guardrail', () => {
