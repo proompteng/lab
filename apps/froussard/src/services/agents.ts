@@ -20,6 +20,25 @@ const optionalString = (value: string | undefined | null) => {
 
 const issueExternalId = (request: GithubIssueAgentRunRequest) => `${request.repository}#${request.issueNumber}`
 
+const maxGoalObjectiveLength = 4000
+const truncatedObjectiveSuffix = '\n...'
+
+const truncateGoalObjective = (objective: string) => {
+  if (objective.length <= maxGoalObjectiveLength) return objective
+  return `${objective.slice(0, maxGoalObjectiveLength - truncatedObjectiveSuffix.length).trimEnd()}${truncatedObjectiveSuffix}`
+}
+
+export const buildGithubIssueGoalObjective = (request: GithubIssueAgentRunRequest): string =>
+  truncateGoalObjective(
+    [
+      `Implement GitHub issue ${issueExternalId(request)}: ${request.issueTitle}.`,
+      `Issue URL: ${request.issueUrl}.`,
+      `Base branch: ${request.base}.`,
+      `Head branch: ${request.head}.`,
+      'Use implementation.text for the full issue body, requirements, and acceptance criteria.',
+    ].join('\n'),
+  )
+
 export const buildGithubIssueAgentRunPayload = (
   config: FroussardAgentsConfig,
   request: GithubIssueAgentRunRequest,
@@ -48,7 +67,7 @@ export const buildGithubIssueAgentRunPayload = (
     },
   },
   goal: {
-    objective: request.prompt,
+    objective: buildGithubIssueGoalObjective(request),
     tokenBudget: config.goalTokenBudget,
   },
   runtime: {
