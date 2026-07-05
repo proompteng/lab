@@ -9,9 +9,10 @@
 
 ## Source Implementation Audit (2026-07-04)
 
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Source baseline inspected: `d53c7a4e5 docs: deepen torghut AI docs batch 3 (#11893)`.
 - Implementation status: Partially implemented: Hyperliquid feed/runtime lane exists in source and GitOps; older generic crypto designs are superseded by this lane.
 - Matched implementation area: Hyperliquid / crypto lane.
+- Codex review feedback resolution: feed/runtime evidence was rechecked after the original triage baseline; use current feed GitOps and execution source paths as authority.
 - Current source evidence:
   - `services/torghut/app/hyperliquid_execution/service.py`
   - `services/torghut/app/hyperliquid_execution/exchange.py`

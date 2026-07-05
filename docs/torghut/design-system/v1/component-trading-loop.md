@@ -16,7 +16,7 @@
   - `services/torghut/app/trading/scheduler/simple_pipeline.py::SimpleTradingPipeline.run_once` labels mature rejected-signal outcomes, loads strategies, captures runtime-window account snapshots, warms session context, bounds paper-route signal scope, fetches signals, and processes the batch.
   - `services/torghut/app/trading/scheduler/pipeline/run_cycle.py::TradingPipelineRunCycleMixin.run_once` keeps the generic dependency-driven run cycle for ingestor/decision/risk/executor/reconciler style operation.
   - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py` gates decision submission with allocator rejection, notional extraction, market snapshots, and submission preparation.
-  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, and bounded simple risk caps.
+  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_MODE=live`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, a live-submit activation expiry, and bounded simple risk caps.
   - Pipeline behavior is covered by the `services/torghut/tests/pipeline/test_trading_pipeline_*.py` suite.
 - What is implemented from the design:
   - periodic service-owned trading loop;
@@ -36,7 +36,7 @@
 ## Purpose
 
 Describe the trading loop design, including schedule, signal ingestion from ClickHouse, decision lifecycle, and the
-core safety gates that ensure paper-by-default trading.
+core safety gates around the current live-mode deployment posture.
 
 ## Non-goals
 
@@ -82,9 +82,11 @@ flowchart TD
 From `argocd/applications/torghut/knative-service.yaml`:
 | Env var | Purpose | Safe default / current |
 | --- | --- | --- |
-| `TRADING_ENABLED` | Enables loop | `true` (but still paper by default) |
-| `TRADING_MODE` | `paper` / `live` | `paper` |
-| `TRADING_SIMPLE_SUBMIT_ENABLED` | live broker submission gate | `false` |
+| `TRADING_ENABLED` | Enables loop | `true` |
+| `TRADING_MODE` | `paper` / `live` | `live` in the current manifest |
+| `TRADING_SIMPLE_SUBMIT_ENABLED` | broker submission gate | `true` in the current manifest |
+| `TRADING_LIVE_SUBMIT_ENABLED` | live broker submission gate | `true` in the current manifest |
+| `TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT` | time-bounds live-submit activation | set in the current manifest |
 | `TRADING_SIGNAL_SOURCE` | signal backend | `clickhouse` |
 | `TRADING_SIGNAL_TABLE` | ClickHouse table | `torghut.ta_signals` |
 | `TRADING_SIGNAL_SCHEMA` | Signals schema selector (`auto`/`envelope`/`flat`) | `auto` |
