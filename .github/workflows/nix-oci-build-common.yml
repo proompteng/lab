@@ -192,29 +192,30 @@ jobs:
           fi
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
-      - name: Warm Nix image archive closure in Attic
+      - name: Warm Nix image archive output in Attic
         if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+          ATTIC_PUSH_NO_CLOSURE: 'true'
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           test -n "${ATTIC_TOKEN}"
           mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
           if [[ "${#image_paths[@]}" -eq 0 ]]; then
-            echo "No Nix image closure paths were captured." >&2
+            echo "No Nix image output paths were captured." >&2
             exit 2
           fi
           status_file="${NIX_OCI_LOG_DIR}/image-cache-push-status-${ARCH}.txt"
           set +e
-          bash nix/ci-run-timed.sh "push-image-archive-closure-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
+          bash nix/ci-run-timed.sh "push-image-archive-output-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
             bash nix/cache-push.sh "${image_paths[@]}"
           status="$?"
           set -e
           if [[ "${status}" -ne 0 ]]; then
             printf 'failed\t%s\n' "${status}" > "${status_file}"
-            echo "::warning title=Attic image closure warm failed::Attic image closure push failed for ${ARCH}; registry image push remains authoritative. See cache-push-image-${ARCH}.log."
+            echo "::warning title=Attic image output warm failed::Attic image output push failed for ${ARCH}; registry image push remains authoritative. See cache-push-image-${ARCH}.log."
             exit 0
           fi
           printf 'succeeded\t0\n' > "${status_file}"
