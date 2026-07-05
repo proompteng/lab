@@ -4,18 +4,20 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 
 ## Scope
 
-- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`.
+- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`.
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
-  `.github/workflows/froussard-ci.yml`, and `.github/workflows/arc-runner-build-push.yml` using
-  `.github/workflows/nix-oci-build-common.yml`.
-- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`.
+  `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
+  `.github/workflows/attic-build-push.yaml` using `.github/workflows/nix-oci-build-common.yml`.
+- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
   - `packages/scripts/src/froussard/build-image.ts` and `packages/scripts/src/froussard/deploy-service.ts`
   - `packages/scripts/src/arc-runner/build-image.ts` and `packages/scripts/src/arc-runner/deploy-service.ts`
+  - `packages/scripts/src/attic/build-image.ts` and `packages/scripts/src/attic/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
-  `.github/workflows/arc-runner-release.yml`, plus `.github/workflows/release-pr-automerge.yml`.
+  `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
+  `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -35,6 +37,8 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#12015](https://github.com/proompteng/lab/pull/12015) | `6145a5fd5198b313fa93d7f5d323bc70646a6a27` | Harden the ARC runner Nix image and manual build/deploy path before promotion.                   |
 | [#12020](https://github.com/proompteng/lab/pull/12020) | `e31f832a82ba1c5458c1cd5c7db5ee67fa22a338` | Promote ARC runner sets to the Nix-built multi-platform digest.                                  |
 | [#12022](https://github.com/proompteng/lab/pull/12022) | `51afc32c04c41643c8c57452a18033d5ef4c25c0` | Further harden the ARC runner script contract and manual deployment path.                        |
+| [#11576](https://github.com/proompteng/lab/pull/11576) | `b6083af08a7063a28742339c2a341331f11b21ad` | Preserve the Attic image digest through the release workflow.                                    |
+| [#11580](https://github.com/proompteng/lab/pull/11580) | `0b6ef5c947dba634f08718b3d9a3052767a7d833` | Promote Attic deployment and GC CronJob to the Nix-built digest.                                 |
 
 ## Failed Proof That Exposed The Gap
 
@@ -363,6 +367,82 @@ The ARC release contract proves the digest, platforms, lockfile hashes, and tool
 newer `cacheProvenance` or per-phase `timings` objects. This checkpoint therefore uses GitHub job wall times above and
 does not claim ARC cache-hit counts. A future ARC image input change should produce a newer release contract and can be
 used for warm-cache or substitute-only proof without adding synthetic jobs.
+
+## Attic Rollout Proof
+
+Attic is the enabled platform cache service used by the Nix OCI rollout. This checkpoint counts the live Attic image
+rollout and endpoint smoke, not the later build-only dispatches that did not publish a release contract.
+
+### Attic Main Build Proof
+
+Run [28341358905](https://github.com/proompteng/lab/actions/runs/28341358905) succeeded on `main`.
+
+| Phase                        | Result            |
+| ---------------------------- | ----------------- |
+| `linux/amd64` build-platform | passed in `7m43s` |
+| `linux/arm64` build-platform | passed in `6m28s` |
+| publish-index                | passed in `5m30s` |
+| release contract             | uploaded as `attic-release-contract` |
+
+Release contract fields:
+
+- `packageAttr`: `atticd-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `sourceSha`: `b6083af08a7063a28742339c2a341331f11b21ad`
+- `image`: `registry.ide-newton.ts.net/lab/attic`
+- `tag`: `sha-b6083af08a7063a28742339c2a341331f11b21ad`
+- `digest`: `sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747`
+- `reference`:
+  `registry.ide-newton.ts.net/lab/attic@sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747`
+
+The older Attic release contract did not include platform digest, lockfile hash, tool version, timing, or cache
+provenance fields. The workflow still created and verified the OCI index in the `publish-index` job before writing the
+release contract.
+
+### Attic Release Automation Proof
+
+Release PR [#11580](https://github.com/proompteng/lab/pull/11580) promoted
+`registry.ide-newton.ts.net/lab/attic@sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747`.
+
+The PR changed only `argocd/applications/attic/deployment.yaml` and `argocd/applications/attic/gc-cronjob.yaml`:
+
+- deployment init container and app container image references were pinned to the Nix-built digest
+- GC CronJob image reference was pinned to the same Nix-built digest
+- generated testing recorded:
+  `nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/attic@sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747" linux/amd64 linux/arm64`
+
+### Attic Live Rollout Smoke
+
+Current readback:
+
+- Argo Application `attic`: `Synced`, `Healthy`
+- Argo revision: `44e3b7729c6e5b35c1a819aee9f3d2fd9271c415`
+- Deployment `attic`: `1/1` ready and available
+- pod `attic-5dcd5c985f-74h5x`: `1/1 Running`, `0` restarts
+- init container `db-migrations`: ready, `0` restarts
+- live deployment image:
+  `registry.ide-newton.ts.net/lab/attic@sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747`
+- live GC CronJob image:
+  `registry.ide-newton.ts.net/lab/attic@sha256:061938ea73b005333d3138d3940347a80ddde7d82e456d5914c001233a0f6747`
+- in-cluster cache endpoint smoke against `http://attic.attic.svc.cluster.local/lab/nix-cache-info` returned:
+
+```text
+WantMassQuery: 1
+StoreDir: /nix/store
+Priority: 41
+```
+
+- host cache endpoint smoke against `https://attic.ide-newton.ts.net/lab/nix-cache-info` returned the same cache info.
+
+### Attic Cache Status
+
+The live Attic service is reachable from both the in-cluster service URL and the Tailscale host URL, so it is available
+as a substituter for the rollout. The Attic image release itself still uses an older release contract, so this checkpoint
+does not claim per-run Attic substitution counts for the Attic image build.
+
+The later workflow-dispatch run [28722715748](https://github.com/proompteng/lab/actions/runs/28722715748) is explicitly
+not counted as release proof: it built and inspected amd64/arm64 archives, but skipped platform push, skipped Attic
+warming, skipped publish-index, and did not upload `attic-release-contract`.
 
 ## Inventory Audit
 
