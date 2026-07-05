@@ -428,7 +428,7 @@ class HyperliquidExecutionRepository:
                     SELECT id
                     FROM hyperliquid_execution_orders
                     WHERE execution_network = 'testnet'
-                      AND exchange_order_id = :exchange_order_id
+                      AND exchange_order_id = CAST(:exchange_order_id AS text)
                     ORDER BY created_at DESC
                     LIMIT 1
                   ), order_id),
@@ -440,7 +440,7 @@ class HyperliquidExecutionRepository:
                   notional_usd = :notional_usd,
                   fee_usd = :fee_usd,
                   closed_pnl_usd = :closed_pnl_usd,
-                  exchange_order_id = COALESCE(:exchange_order_id, exchange_order_id),
+                  exchange_order_id = COALESCE(CAST(:exchange_order_id AS text), exchange_order_id),
                   event_ts = :event_ts,
                   raw_payload = raw_payload || CAST(:raw_payload AS jsonb)
                 WHERE execution_network = 'testnet'
@@ -448,8 +448,8 @@ class HyperliquidExecutionRepository:
                   AND coin = :coin
                   AND (
                     exchange_order_id IS NULL
-                    OR :exchange_order_id IS NULL
-                    OR exchange_order_id = :exchange_order_id
+                    OR CAST(:exchange_order_id AS text) IS NULL
+                    OR exchange_order_id = CAST(:exchange_order_id AS text)
                   )
                   AND NOT EXISTS (
                     SELECT 1
@@ -470,8 +470,8 @@ class HyperliquidExecutionRepository:
                   AND coin = :coin
                   AND (
                     exchange_order_id IS NULL
-                    OR :exchange_order_id IS NULL
-                    OR exchange_order_id = :exchange_order_id
+                    OR CAST(:exchange_order_id AS text) IS NULL
+                    OR exchange_order_id = CAST(:exchange_order_id AS text)
                   )
                   AND EXISTS (
                     SELECT 1
