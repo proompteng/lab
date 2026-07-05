@@ -40,6 +40,7 @@ const arcRunnerBuildTriggerPaths = Array.from(
 const arcRunnerToolchainScriptPaths = Array.from(
   new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
 )
+const arcRunnerReleaseOnlyScriptPaths = new Set(['nix/oci-release-contract.sh'])
 
 const releaseGuardFragmentForPath = (path: string): string => {
   const guardPath = path.endsWith('/**') ? `${path.slice(0, -3)}/` : path
@@ -158,6 +159,18 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs unchanged after ${source_sha}')
     expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
     expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
+    for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
+      if (arcRunnerReleaseOnlyScriptPaths.has(toolchainScriptPath)) {
+        expect(
+          arcRunnerBuildTriggerPaths,
+          `${toolchainScriptPath} must not fan out ARC runner image builds`,
+        ).not.toContain(toolchainScriptPath)
+        continue
+      }
+      expect(arcRunnerBuildTriggerPaths, `${toolchainScriptPath} must start ARC runner image builds`).toContain(
+        toolchainScriptPath,
+      )
+    }
     for (const arcImageInputPath of [...arcRunnerBuildTriggerPaths, ...arcRunnerToolchainScriptPaths]) {
       expect(arcRunnerReleaseWorkflow, `${arcImageInputPath} must block stale ARC runner promotion`).toContain(
         releaseGuardFragmentForPath(arcImageInputPath),
