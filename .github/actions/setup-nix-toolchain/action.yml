@@ -74,10 +74,23 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "${HOME}/.config/nix"
-        printf '%s\n' "${EXTRA_NIX_CONFIG}" > "${HOME}/.config/nix/nix.conf"
+        nix_config="${EXTRA_NIX_CONFIG}"
+        has_nixbld_group=false
+        if command -v getent >/dev/null 2>&1; then
+          if getent group nixbld >/dev/null 2>&1; then
+            has_nixbld_group=true
+          fi
+        elif [ -r /etc/group ] && grep -q '^nixbld:' /etc/group; then
+          has_nixbld_group=true
+        fi
+        if [ "${has_nixbld_group}" != "true" ] &&
+          ! printf '%s\n' "${nix_config}" | grep -Eq '^[[:space:]]*build-users-group[[:space:]]*='; then
+          nix_config="${nix_config}"$'\n''build-users-group ='
+        fi
+        printf '%s\n' "${nix_config}" > "${HOME}/.config/nix/nix.conf"
         {
           echo 'NIX_CONFIG<<__LAB_NIX_CONFIG__'
-          printf '%s\n' "${EXTRA_NIX_CONFIG}"
+          printf '%s\n' "${nix_config}"
           echo '__LAB_NIX_CONFIG__'
         } >> "${GITHUB_ENV}"
         {
@@ -86,6 +99,44 @@ runs:
         } >> "${GITHUB_PATH}"
         export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
         nix --version
+
+    - name: Validate writable Nix store access
+      shell: bash
+      run: |
+        set -euo pipefail
+        export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+        store_info_log="$(mktemp)"
+        if nix store info >"${store_info_log}" 2>&1; then
+          rm -f "${store_info_log}"
+          exit 0
+        fi
+        if [ -S /nix/var/nix/daemon-socket/socket ]; then
+          echo 'NIX_REMOTE=daemon' >> "${GITHUB_ENV}"
+          export NIX_REMOTE=daemon
+          nix store info
+          rm -f "${store_info_log}"
+          exit 0
+        fi
+        real_nix="$(command -v nix)"
+        if sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" store info >/dev/null 2>&1; then
+          wrapper_dir="${RUNNER_TEMP:-/tmp}/lab-nix-sudo-wrapper"
+          mkdir -p "${wrapper_dir}"
+          cat > "${wrapper_dir}/nix" <<EOF
+        #!/usr/bin/env bash
+        set -euo pipefail
+        exec sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" "\$@"
+        EOF
+          chmod +x "${wrapper_dir}/nix"
+          echo "${wrapper_dir}" >> "${GITHUB_PATH}"
+          echo 'LAB_NIX_WITH_SUDO=true' >> "${GITHUB_ENV}"
+          PATH="${wrapper_dir}:${PATH}" nix store info
+          rm -f "${store_info_log}"
+          exit 0
+        fi
+        cat "${store_info_log}" >&2
+        rm -f "${store_info_log}"
+        echo "Nix is installed but cannot access its store, and neither daemon nor sudo store access is available." >&2
+        exit 1
 
     - name: Ensure repo CI toolchain
       if: inputs.install-ci-toolchain == 'true'
