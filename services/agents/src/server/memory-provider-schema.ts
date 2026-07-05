@@ -10,6 +10,9 @@ export type MemoryProviderSchemaConnection = {
 export type MemoryProviderQueryable = Pick<Pool, 'query'>
 
 const REQUIRED_EXTENSIONS = ['vector', 'pgcrypto'] as const
+const PREFERRED_IVFFLAT_LISTS = 100
+const PREFERRED_IVFFLAT_ROWS_PER_LIST = 1000
+const MIN_IVFFLAT_INDEX_ROWS = PREFERRED_IVFFLAT_LISTS * PREFERRED_IVFFLAT_ROWS_PER_LIST
 
 const quoteIdentifier = (identifier: string) => {
   const normalized = identifier.trim()
@@ -70,11 +73,17 @@ export const getMemoryProviderSchemaStatements = (dimension: number, schema: str
   ]
 }
 
-const getMemoryProviderAnnIndexStatement = (dimension: number, schema: string) => {
+const getMemoryProviderAnnIndexStatement = (dimension: number, schema: string, lists: number) => {
   normalizeEmbeddingDimension(dimension)
+  const normalizedLists = Math.max(1, Math.floor(lists))
   const embeddingsTable = qualifyMemoryProviderTable(schema, 'memory_embeddings')
   return `CREATE INDEX IF NOT EXISTS ${quoteIdentifier('memory_embeddings_embedding_idx')}
-    ON ${embeddingsTable} USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);`
+    ON ${embeddingsTable} USING ivfflat (embedding vector_cosine_ops) WITH (lists = ${normalizedLists});`
+}
+
+const estimateIvfflatLists = (rowCount: number) => {
+  if (rowCount < 1_000_000) return Math.max(1, Math.floor(rowCount / PREFERRED_IVFFLAT_ROWS_PER_LIST))
+  return Math.max(1, Math.floor(Math.sqrt(rowCount)))
 }
 
 export const ensureMemoryProviderExtensions = async (db: MemoryProviderQueryable) => {
@@ -119,12 +128,19 @@ export const createMemoryProviderAnnIndexIfReady = async (
   }
 
   const embeddingsTable = qualifyMemoryProviderTable(connection.schema, 'memory_embeddings')
-  const { rows } = await db.query<{ has_rows: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM ${embeddingsTable} LIMIT 1) AS has_rows`,
+  const { rows } = await db.query<{ row_count: string | number }>(
+    `SELECT COUNT(*)::bigint AS row_count FROM ${embeddingsTable}`,
   )
-  if (!rows[0]?.has_rows) return false
+  const rowCount = Number(rows[0]?.row_count ?? 0)
+  if (!Number.isFinite(rowCount) || rowCount < MIN_IVFFLAT_INDEX_ROWS) return false
 
-  await db.query(getMemoryProviderAnnIndexStatement(connection.embeddingDimension, connection.schema))
+  await db.query(
+    getMemoryProviderAnnIndexStatement(
+      connection.embeddingDimension,
+      connection.schema,
+      estimateIvfflatLists(rowCount),
+    ),
+  )
   return true
 }
 

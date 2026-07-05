@@ -7,7 +7,7 @@ import {
   type MemoryProviderQueryable,
 } from './memory-provider-schema'
 
-const makeQueryable = (options: { hasEmbeddings?: boolean; extensions?: string[] } = {}) => {
+const makeQueryable = (options: { embeddingRows?: number; extensions?: string[] } = {}) => {
   const calls: { sql: string; params?: unknown[] }[] = []
   const query = vi.fn(async (sql: string, params?: unknown[]) => {
     calls.push({ sql, params })
@@ -15,8 +15,8 @@ const makeQueryable = (options: { hasEmbeddings?: boolean; extensions?: string[]
     if (normalized.includes('select extname from pg_extension')) {
       return { rows: (options.extensions ?? ['vector', 'pgcrypto']).map((extname) => ({ extname })) }
     }
-    if (normalized.includes('select exists') && normalized.includes('memory_embeddings')) {
-      return { rows: [{ has_rows: options.hasEmbeddings ?? false }] }
+    if (normalized.includes('select count(*)') && normalized.includes('memory_embeddings')) {
+      return { rows: [{ row_count: options.embeddingRows ?? 0 }] }
     }
     return { rows: [] }
   })
@@ -44,8 +44,8 @@ describe('memory provider schema bootstrap', () => {
     expect(sqlText).not.toContain('using ivfflat')
   })
 
-  it('does not create the ANN index before embeddings exist', async () => {
-    const { calls, db } = makeQueryable({ hasEmbeddings: false })
+  it('does not create the ANN index before enough embeddings exist', async () => {
+    const { calls, db } = makeQueryable({ embeddingRows: 99_999 })
 
     await expect(createMemoryProviderAnnIndexIfReady(db, { schema: 'public', embeddingDimension: 3 })).resolves.toBe(
       false,
@@ -54,13 +54,14 @@ describe('memory provider schema bootstrap', () => {
     expect(calls.some((call) => call.sql.toLowerCase().includes('using ivfflat'))).toBe(false)
   })
 
-  it('creates the ANN index after embeddings exist', async () => {
-    const { calls, db } = makeQueryable({ hasEmbeddings: true })
+  it('creates the ANN index after there are enough embeddings to train it', async () => {
+    const { calls, db } = makeQueryable({ embeddingRows: 100_000 })
     await expect(createMemoryProviderAnnIndexIfReady(db, { schema: 'public', embeddingDimension: 3 })).resolves.toBe(
       true,
     )
 
     expect(calls.some((call) => call.sql.toLowerCase().includes('using ivfflat'))).toBe(true)
+    expect(calls.some((call) => call.sql.toLowerCase().includes('with (lists = 100)'))).toBe(true)
   })
 
   it('fails fast when the provider database is missing required extensions', async () => {

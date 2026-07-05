@@ -5,7 +5,6 @@ import { Pool } from 'pg'
 import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 import { resolveEmbeddingConfig } from './memory-config'
 import {
-  createMemoryProviderAnnIndexIfReady,
   ensureMemoryProviderSchema,
   qualifyMemoryProviderTable,
   type MemoryProviderQueryable,
@@ -30,7 +29,6 @@ type EnvSource = Record<string, string | undefined>
 const DEFAULT_MEMORY_DATABASE_POOL_MAX = 2
 
 const globalState = globalThis as typeof globalThis & {
-  __agentsMemoryProviderAnnReady?: Map<string, Promise<boolean>>
   __agentsMemoryProviderPoolFactory?: (connectionString: string) => MemoryProviderQueryable
   __agentsMemoryProviderPools?: Map<string, Pool>
   __agentsMemoryProviderSchemaReady?: Map<string, Promise<void>>
@@ -118,13 +116,6 @@ const getSchemaReadyCache = () => {
   return globalState.__agentsMemoryProviderSchemaReady
 }
 
-const getAnnReadyCache = () => {
-  if (!globalState.__agentsMemoryProviderAnnReady) {
-    globalState.__agentsMemoryProviderAnnReady = new Map<string, Promise<boolean>>()
-  }
-  return globalState.__agentsMemoryProviderAnnReady
-}
-
 const memoryProviderSchemaCacheKey = (connection: MemoryConnection) =>
   `${connection.connectionString}\0${connection.schema}\0${connection.embeddingDimension}`
 
@@ -145,31 +136,11 @@ const ensureProviderSchemaReady = async (connection: MemoryConnection, pool: Mem
   }
 }
 
-const ensureProviderAnnIndexReady = async (connection: MemoryConnection, pool: MemoryProviderQueryable) => {
-  const cache = getAnnReadyCache()
-  const key = memoryProviderSchemaCacheKey(connection)
-  let ready = cache.get(key)
-  if (!ready) {
-    ready = createMemoryProviderAnnIndexIfReady(pool, connection)
-    cache.set(key, ready)
-  }
-
-  try {
-    const created = await ready
-    if (!created) cache.delete(key)
-    return created
-  } catch (error) {
-    cache.delete(key)
-    throw error
-  }
-}
-
 export const closeMemoryProviderPools = async () => {
   const pools = getPoolCache()
   const activePools = [...pools.values()]
   pools.clear()
   globalState.__agentsMemoryProviderSchemaReady?.clear()
-  globalState.__agentsMemoryProviderAnnReady?.clear()
   await Promise.all(activePools.map((pool) => pool.end()))
 }
 
@@ -332,7 +303,6 @@ export const writeMemoryEmbedding = async (
      VALUES ($1, $2, $3::vector, $4)`,
     [connection.dataset, key, vector, metadata],
   )
-  await ensureProviderAnnIndexReady(connection, pool)
 }
 
 export const queryMemory = async (
@@ -344,7 +314,6 @@ export const queryMemory = async (
   const vector = vectorToPg(embedding)
   const pool = getMemoryPool(connection.connectionString)
   await ensureProviderSchemaReady(connection, pool)
-  await ensureProviderAnnIndexReady(connection, pool)
   const { rows } = await pool.query(
     `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
      FROM ${qualifyMemoryProviderTable(connection.schema, 'memory_embeddings')}
@@ -364,7 +333,6 @@ export const __test__ = {
   resetMemoryProviderState: () => {
     delete globalState.__agentsMemoryProviderPoolFactory
     globalState.__agentsMemoryProviderSchemaReady?.clear()
-    globalState.__agentsMemoryProviderAnnReady?.clear()
   },
   setMemoryProviderPoolFactory: (factory: (connectionString: string) => MemoryProviderQueryable) => {
     globalState.__agentsMemoryProviderPoolFactory = factory

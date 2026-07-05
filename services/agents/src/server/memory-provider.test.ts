@@ -10,16 +10,13 @@ const connection = {
   connectionString: 'postgresql://provider-db',
 }
 
-const makePool = (options: { hasEmbeddings?: boolean } = {}) => {
+const makePool = () => {
   const calls: { sql: string; params?: unknown[] }[] = []
   const query = vi.fn(async (sql: string, params?: unknown[]) => {
     calls.push({ sql, params })
     const normalized = sql.toLowerCase()
     if (normalized.includes('select extname from pg_extension')) {
       return { rows: [{ extname: 'vector' }, { extname: 'pgcrypto' }] }
-    }
-    if (normalized.includes('select exists') && normalized.includes('memory_embeddings')) {
-      return { rows: [{ has_rows: options.hasEmbeddings ?? true }] }
     }
     if (normalized.includes('from "public"."memory_embeddings"') && normalized.includes('embedding <=>')) {
       return { rows: [{ key: 'note-1', score: 0.9, metadata: { source: 'test' } }] }
@@ -78,8 +75,8 @@ describe('memory provider operations', () => {
     expect(calls[insertIndex]?.params).toEqual(['agent-memory', 'sync-started', { ok: true }])
   })
 
-  it('defers the ANN index until an embedding write has inserted data', async () => {
-    const { calls, pool } = makePool({ hasEmbeddings: true })
+  it('does not create the IVFFlat index in the embedding write path', async () => {
+    const { calls, pool } = makePool()
     __test__.setMemoryProviderPoolFactory(() => pool)
 
     await writeMemoryEmbedding(connection, 'note-1', 'hello world', { source: 'test' })
@@ -87,26 +84,24 @@ describe('memory provider operations', () => {
     const insertIndex = calls.findIndex((call) =>
       call.sql.toLowerCase().includes('insert into "public"."memory_embeddings"'),
     )
-    const annIndex = calls.findIndex((call) => call.sql.toLowerCase().includes('using ivfflat'))
     expect(insertIndex).toBeGreaterThanOrEqual(0)
-    expect(annIndex).toBeGreaterThan(insertIndex)
+    expect(calls.some((call) => call.sql.toLowerCase().includes('using ivfflat'))).toBe(false)
   })
 
-  it('creates the ANN index lazily on query only when embeddings already exist', async () => {
-    const { calls, pool } = makePool({ hasEmbeddings: true })
+  it('queries memory without creating an online IVFFlat index', async () => {
+    const { calls, pool } = makePool()
     __test__.setMemoryProviderPoolFactory(() => pool)
 
     await expect(queryMemory(connection, 'hello', 1)).resolves.toEqual([
       { key: 'note-1', score: 0.9, metadata: { source: 'test' } },
     ])
 
-    const annIndex = calls.findIndex((call) => call.sql.toLowerCase().includes('using ivfflat'))
     const queryIndex = calls.findIndex(
       (call) =>
         call.sql.toLowerCase().includes('from "public"."memory_embeddings"') &&
         call.sql.toLowerCase().includes('embedding <=>'),
     )
-    expect(annIndex).toBeGreaterThanOrEqual(0)
-    expect(queryIndex).toBeGreaterThan(annIndex)
+    expect(queryIndex).toBeGreaterThanOrEqual(0)
+    expect(calls.some((call) => call.sql.toLowerCase().includes('using ivfflat'))).toBe(false)
   })
 })
