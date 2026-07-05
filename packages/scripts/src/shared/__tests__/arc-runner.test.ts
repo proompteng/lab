@@ -33,6 +33,20 @@ const runnerScaleSetBlock = (name: string): string => {
   return arcApplication.slice(start, next === -1 ? arcApplication.length : next)
 }
 
+const arcRunnerBuildTriggerPaths = Array.from(
+  new Set(Array.from(arcRunnerBuildWorkflow.matchAll(/^\s+- '([^']+)'$/gm), ([, path]) => path)),
+)
+
+const arcRunnerToolchainScriptPaths = Array.from(
+  new Set(Array.from(flake.matchAll(/builtins\.readFile \.\/(nix\/[^)]+\.sh)/g), ([, path]) => path)),
+)
+const arcRunnerReleaseOnlyScriptPaths = new Set(['nix/oci-release-contract.sh'])
+
+const releaseGuardFragmentForPath = (path: string): string => {
+  const guardPath = path.endsWith('/**') ? `${path.slice(0, -3)}/` : path
+  return guardPath.replaceAll('.', '\\.')
+}
+
 describe('ARC Nix runner toolchain', () => {
   it('keeps lab ARC runners on local work dirs while making runner images releasable by digest', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
@@ -143,18 +157,26 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).toContain('arc_image_input_changes="$(')
     expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs changed after the build:')
     expect(arcRunnerReleaseWorkflow).toContain('ARC runner image inputs unchanged after ${source_sha}')
-    for (const arcImageInput of [
-      '\\.github/workflows/arc-runner-build-push\\.yml',
-      '\\.github/workflows/nix-oci-build-common\\.yml',
-      'flake\\.nix',
-      'flake\\.lock',
-      'nix/images/arc-runner\\.nix',
-      'nix/packages\\.nix',
-      'nix/oci-push\\.sh',
-      'nix/cache-push\\.sh',
-    ]) {
-      expect(arcRunnerReleaseWorkflow).toContain(arcImageInput)
+    expect(arcRunnerBuildTriggerPaths.length).toBeGreaterThan(0)
+    expect(arcRunnerToolchainScriptPaths.length).toBeGreaterThan(0)
+    for (const toolchainScriptPath of arcRunnerToolchainScriptPaths) {
+      if (arcRunnerReleaseOnlyScriptPaths.has(toolchainScriptPath)) {
+        expect(
+          arcRunnerBuildTriggerPaths,
+          `${toolchainScriptPath} must not fan out ARC runner image builds`,
+        ).not.toContain(toolchainScriptPath)
+        continue
+      }
+      expect(arcRunnerBuildTriggerPaths, `${toolchainScriptPath} must start ARC runner image builds`).toContain(
+        toolchainScriptPath,
+      )
     }
+    for (const arcImageInputPath of [...arcRunnerBuildTriggerPaths, ...arcRunnerToolchainScriptPaths]) {
+      expect(arcRunnerReleaseWorkflow, `${arcImageInputPath} must block stale ARC runner promotion`).toContain(
+        releaseGuardFragmentForPath(arcImageInputPath),
+      )
+    }
+    expect(arcRunnerReleaseWorkflow).toContain('flake\\.nix')
     expect(arcRunnerReleaseWorkflow).not.toContain('\\.github/workflows/arc-runner-release\\.yml')
     expect(arcRunnerReleaseWorkflow).toContain('nix run .#assert-oci-platforms')
     expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')

@@ -98,7 +98,23 @@ jobs:
             changed_paths="$(git diff --name-only "${source_sha}..HEAD")"
             arc_image_input_changes="$(
               printf '%s\n' "${changed_paths}" | grep -E \
-                '^(\.github/workflows/arc-runner-build-push\.yml|\.github/workflows/nix-oci-build-common\.yml|flake\.nix|flake\.lock|nix/images/arc-runner\.nix|nix/packages\.nix|nix/oci-push\.sh|nix/cache-push\.sh)$' || true
+                -e '^\.github/actions/setup-nix-toolchain/' \
+                -e '^\.github/workflows/arc-runner-build-push\.yml$' \
+                -e '^\.github/workflows/nix-oci-build-common\.yml$' \
+                -e '^flake\.nix$' \
+                -e '^flake\.lock$' \
+                -e '^nix/images/arc-runner\.nix$' \
+                -e '^nix/packages\.nix$' \
+                -e '^nix/attic-release-metadata\.sh$' \
+                -e '^nix/cache-doctor\.sh$' \
+                -e '^nix/cache-push\.sh$' \
+                -e '^nix/ci-nix-oci-summary\.sh$' \
+                -e '^nix/ci-run-timed\.sh$' \
+                -e '^nix/oci-doctor\.sh$' \
+                -e '^nix/oci-inspect-archive\.sh$' \
+                -e '^nix/oci-push\.sh$' \
+                -e '^nix/oci-release-contract\.sh$' \
+                -e '^nix/toolchain-doctor\.sh$' || true
             )"
             if [[ -n "${arc_image_input_changes}" ]]; then
               echo "promote=false" >> "${GITHUB_OUTPUT}"
