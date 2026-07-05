@@ -4,6 +4,12 @@ import { Pool } from 'pg'
 
 import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 import { resolveEmbeddingConfig } from './memory-config'
+import {
+  createMemoryProviderAnnIndexIfReady,
+  ensureMemoryProviderSchema,
+  qualifyMemoryProviderTable,
+  type MemoryProviderQueryable,
+} from './memory-provider-schema'
 import { asRecord, asString, readNested } from './primitives'
 
 export type MemoryConnection = {
@@ -24,7 +30,10 @@ type EnvSource = Record<string, string | undefined>
 const DEFAULT_MEMORY_DATABASE_POOL_MAX = 2
 
 const globalState = globalThis as typeof globalThis & {
+  __agentsMemoryProviderAnnReady?: Map<string, Promise<boolean>>
+  __agentsMemoryProviderPoolFactory?: (connectionString: string) => MemoryProviderQueryable
   __agentsMemoryProviderPools?: Map<string, Pool>
+  __agentsMemoryProviderSchemaReady?: Map<string, Promise<void>>
 }
 
 const parsePositiveInt = (value: string | undefined, fallback: number) => {
@@ -85,7 +94,10 @@ const getPoolCache = () => {
   return globalState.__agentsMemoryProviderPools
 }
 
-const getMemoryPool = (connectionString: string) => {
+const getMemoryPool = (connectionString: string): MemoryProviderQueryable => {
+  const testPoolFactory = globalState.__agentsMemoryProviderPoolFactory
+  if (testPoolFactory) return testPoolFactory(connectionString)
+
   const pools = getPoolCache()
   const existing = pools.get(connectionString)
   if (existing) return existing
@@ -99,10 +111,65 @@ const getMemoryPool = (connectionString: string) => {
   return created
 }
 
+const getSchemaReadyCache = () => {
+  if (!globalState.__agentsMemoryProviderSchemaReady) {
+    globalState.__agentsMemoryProviderSchemaReady = new Map<string, Promise<void>>()
+  }
+  return globalState.__agentsMemoryProviderSchemaReady
+}
+
+const getAnnReadyCache = () => {
+  if (!globalState.__agentsMemoryProviderAnnReady) {
+    globalState.__agentsMemoryProviderAnnReady = new Map<string, Promise<boolean>>()
+  }
+  return globalState.__agentsMemoryProviderAnnReady
+}
+
+const memoryProviderSchemaCacheKey = (connection: MemoryConnection) =>
+  `${connection.connectionString}\0${connection.schema}\0${connection.embeddingDimension}`
+
+const ensureProviderSchemaReady = async (connection: MemoryConnection, pool: MemoryProviderQueryable) => {
+  const cache = getSchemaReadyCache()
+  const key = memoryProviderSchemaCacheKey(connection)
+  let ready = cache.get(key)
+  if (!ready) {
+    ready = ensureMemoryProviderSchema(pool, connection)
+    cache.set(key, ready)
+  }
+
+  try {
+    await ready
+  } catch (error) {
+    cache.delete(key)
+    throw error
+  }
+}
+
+const ensureProviderAnnIndexReady = async (connection: MemoryConnection, pool: MemoryProviderQueryable) => {
+  const cache = getAnnReadyCache()
+  const key = memoryProviderSchemaCacheKey(connection)
+  let ready = cache.get(key)
+  if (!ready) {
+    ready = createMemoryProviderAnnIndexIfReady(pool, connection)
+    cache.set(key, ready)
+  }
+
+  try {
+    const created = await ready
+    if (!created) cache.delete(key)
+    return created
+  } catch (error) {
+    cache.delete(key)
+    throw error
+  }
+}
+
 export const closeMemoryProviderPools = async () => {
   const pools = getPoolCache()
   const activePools = [...pools.values()]
   pools.clear()
+  globalState.__agentsMemoryProviderSchemaReady?.clear()
+  globalState.__agentsMemoryProviderAnnReady?.clear()
   await Promise.all(activePools.map((pool) => pool.end()))
 }
 
@@ -230,16 +297,19 @@ export const writeMemoryEvent = async (
   payload: Record<string, unknown>,
 ) => {
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
   await pool.query(
-    `INSERT INTO ${connection.schema}.memory_events (dataset, event_type, payload) VALUES ($1, $2, $3)`,
+    `INSERT INTO ${qualifyMemoryProviderTable(connection.schema, 'memory_events')} (dataset, event_type, payload)
+     VALUES ($1, $2, $3)`,
     [connection.dataset, eventType, payload],
   )
 }
 
 export const writeMemoryKv = async (connection: MemoryConnection, key: string, value: Record<string, unknown>) => {
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
   await pool.query(
-    `INSERT INTO ${connection.schema}.memory_kv (dataset, key, value)
+    `INSERT INTO ${qualifyMemoryProviderTable(connection.schema, 'memory_kv')} (dataset, key, value)
      VALUES ($1, $2, $3)
      ON CONFLICT (dataset, key)
      DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
@@ -256,11 +326,13 @@ export const writeMemoryEmbedding = async (
   const embedding = await embedText(text, connection.embeddingDimension)
   const vector = vectorToPg(embedding)
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
   await pool.query(
-    `INSERT INTO ${connection.schema}.memory_embeddings (dataset, key, embedding, metadata)
+    `INSERT INTO ${qualifyMemoryProviderTable(connection.schema, 'memory_embeddings')} (dataset, key, embedding, metadata)
      VALUES ($1, $2, $3::vector, $4)`,
     [connection.dataset, key, vector, metadata],
   )
+  await ensureProviderAnnIndexReady(connection, pool)
 }
 
 export const queryMemory = async (
@@ -271,17 +343,30 @@ export const queryMemory = async (
   const embedding = await embedText(query, connection.embeddingDimension)
   const vector = vectorToPg(embedding)
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
+  await ensureProviderAnnIndexReady(connection, pool)
   const { rows } = await pool.query(
     `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
-     FROM ${connection.schema}.memory_embeddings
+     FROM ${qualifyMemoryProviderTable(connection.schema, 'memory_embeddings')}
      WHERE dataset = $2
      ORDER BY embedding <=> $1::vector
      LIMIT $3`,
     [vector, connection.dataset, limit],
   )
-  return rows.map((row: { key: string; score: number | null; metadata: Record<string, unknown> }) => ({
+  return rows.map((row) => ({
     key: row.key,
     score: row.score,
     metadata: row.metadata ?? {},
   }))
+}
+
+export const __test__ = {
+  resetMemoryProviderState: () => {
+    delete globalState.__agentsMemoryProviderPoolFactory
+    globalState.__agentsMemoryProviderSchemaReady?.clear()
+    globalState.__agentsMemoryProviderAnnReady?.clear()
+  },
+  setMemoryProviderPoolFactory: (factory: (connectionString: string) => MemoryProviderQueryable) => {
+    globalState.__agentsMemoryProviderPoolFactory = factory
+  },
 }
