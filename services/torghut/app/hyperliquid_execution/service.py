@@ -23,6 +23,7 @@ from .models import (
 from .order_policy import build_order_intent
 from .repository import HyperliquidExecutionRepository
 from .risk import evaluate_signal_risk
+from .runtime_details import risk_state_details, universe_details
 from .strategy import generate_signal
 from .universe import UniverseSelectionConfig, select_configured_markets
 
@@ -84,6 +85,9 @@ class HyperliquidExecutionService:
                 for market in context.markets
                 if market.max_leverage is not None
             },
+        )
+        context.universe_details["risk_state"] = risk_state_details(
+            risk_state, self._config
         )
         maintenance_reduce_only = self._reduce_over_cap_exposure(risk_state)
         counts.record_maintenance_reduce_only(maintenance_reduce_only)
@@ -271,11 +275,12 @@ class HyperliquidExecutionService:
                 open_order_status,
                 exchange_status,
             ),
-            universe_details=self._universe_details(
+            universe_details=universe_details(
                 feed_details,
                 (execution_status, liquidity_status),
                 feature_status,
                 selected_markets,
+                self._exchange.execution_metadata_details(),
             ),
         )
 
@@ -313,30 +318,6 @@ class HyperliquidExecutionService:
             observed_at=observed_at,
             details={"open_order_coins": sorted(open_coins)},
         )
-
-    def _universe_details(
-        self,
-        feed_details: dict[str, object],
-        execution_statuses: tuple[RuntimeDependencyStatus, RuntimeDependencyStatus],
-        feature_status: RuntimeDependencyStatus,
-        selected_markets: tuple[ExecutionMarket, ...],
-    ) -> dict[str, object]:
-        execution_status, liquidity_status = execution_statuses
-        details = dict(feed_details)
-        details.update(execution_status.details)
-        details["liquidity"] = dict(liquidity_status.details)
-        details.update(self._exchange.execution_metadata_details())
-        details["selected_execution_metadata"] = _string_list_detail(
-            details.get("selected")
-        )
-        details["selected"] = [market.coin for market in selected_markets]
-        details["fresh_features"] = _string_list_detail(
-            feature_status.details.get("features")
-        )
-        details["missing_fresh_features"] = _string_list_detail(
-            feature_status.details.get("missing")
-        )
-        return details
 
 
 def runtime_readiness(
@@ -437,12 +418,6 @@ def _select_markets_with_fresh_features(
         feature_by_market_id[market.market_id] for market in selected_markets
     )
     return selected_markets, selected_features
-
-
-def _string_list_detail(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in cast(list[object], value)]
 
 
 def _cycle_universe_details(

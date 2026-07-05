@@ -226,6 +226,36 @@ def test_risk_sizes_orders_from_symbol_margin_capacity() -> None:
     assert clipped_budget.order_notional_usd == Decimal("100.000000")
 
 
+def test_daily_loss_stop_uses_margin_scaled_limit() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_MAX_DAILY_LOSS_USD": "100",
+            "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.35",
+        }
+    )
+    signal = generate_signal(
+        _feature(momentum=Decimal("20"), liquidity=Decimal("1000000")),
+        config,
+    )
+
+    just_past_floor = evaluate_signal_risk(
+        signal,
+        replace(_risk_state(), daily_realized_pnl_usd=Decimal("-101.75827000")),
+        config,
+    )
+    past_effective_limit = evaluate_signal_risk(
+        signal,
+        replace(_risk_state(), daily_realized_pnl_usd=Decimal("-351")),
+        config,
+    )
+
+    assert just_past_floor.allowed
+    assert not past_effective_limit.allowed
+    assert past_effective_limit.reason == "daily_loss_stop"
+    assert past_effective_limit.portfolio_target is not None
+    assert past_effective_limit.portfolio_target.clip_reason == "daily_loss_stop"
+
+
 def test_risk_blocks_when_symbol_margin_metadata_is_missing() -> None:
     config = HyperliquidExecutionConfig.from_env({})
     signal = generate_signal(

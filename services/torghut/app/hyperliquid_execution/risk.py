@@ -74,6 +74,17 @@ def evaluate_signal_risk(
     )
 
 
+def effective_daily_loss_limit_usd(
+    state: RiskState,
+    config: HyperliquidExecutionConfig,
+) -> Decimal:
+    """Return the active realized-loss stop from the fixed floor and margin budget."""
+
+    equity_basis = max(state.account_value_usd, state.withdrawable_usd, Decimal("0"))
+    margin_budget = equity_basis * config.target_margin_utilization
+    return max(config.max_daily_loss_usd, margin_budget).quantize(Decimal("0.000001"))
+
+
 def _allowed_margin_budget(
     signal: Signal,
     state: RiskState,
@@ -125,7 +136,7 @@ def _multifactor_controls(
         limits=RiskLimits(
             max_gross_exposure_usd=effective_max_gross_exposure,
             max_symbol_exposure_usd=effective_max_symbol_exposure,
-            max_daily_loss_usd=config.max_daily_loss_usd,
+            max_daily_loss_usd=effective_daily_loss_limit_usd(state, config),
         ),
     )
     expected_cost_bps = estimate_transaction_cost(
@@ -169,7 +180,7 @@ def _blocked_multifactor(
         limits=RiskLimits(
             max_gross_exposure_usd=state.gross_exposure_usd,
             max_symbol_exposure_usd=symbol_exposure,
-            max_daily_loss_usd=config.max_daily_loss_usd,
+            max_daily_loss_usd=effective_daily_loss_limit_usd(state, config),
         ),
     )
     blocked_risk = replace(risk_forecast, blocker=reason or "margin_budget_unavailable")
@@ -250,6 +261,5 @@ def _blocked_reason(
             signal.coin in state.cooldown_reason_by_coin,
             state.cooldown_reason_by_coin.get(signal.coin, "symbol_cooldown"),
         ),
-        (state.daily_realized_pnl_usd <= -config.max_daily_loss_usd, "daily_loss_stop"),
     )
     return next((reason for blocked, reason in checks if blocked), None)
