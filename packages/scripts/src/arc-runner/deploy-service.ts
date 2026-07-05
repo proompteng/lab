@@ -17,6 +17,7 @@ type CliOptions = {
 }
 
 const defaultApplicationPath = 'argocd/applications/arc/application.yaml'
+const requiredArcRunnerPlatforms = ['linux/amd64', 'linux/arm64'] as const
 const arcRunnerImagePattern =
   /(\bimage:\s+)registry\.ide-newton\.ts\.net\/lab\/arc-runner(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})/g
 
@@ -104,6 +105,22 @@ const assertArcRunnerDigest = (imageDigest: string): string => {
   return normalized
 }
 
+const assertArcRunnerDeployableImage = (imageResult: { digest: string; platforms?: readonly string[] }): string => {
+  const imageReference = assertArcRunnerDigest(imageResult.digest)
+  const platforms = imageResult.platforms ?? []
+  const observed = new Set(platforms)
+  const missing = requiredArcRunnerPlatforms.filter((platform) => !observed.has(platform))
+
+  if (missing.length > 0) {
+    const observedText = platforms.length > 0 ? [...platforms].sort().join(', ') : 'none'
+    throw new Error(
+      `ARC runner image ${imageReference} must be a multi-arch OCI index before updating manifests; missing required platform(s): ${missing.join(', ')}; observed: ${observedText}`,
+    )
+  }
+
+  return imageReference
+}
+
 const updateArcRunnerImageManifests = (imageDigest: string, applicationPath = defaultApplicationPath): void => {
   const imageReference = assertArcRunnerDigest(imageDigest)
   const absolutePath = resolve(repoRoot, applicationPath)
@@ -140,13 +157,15 @@ export const main = async (argv = process.argv.slice(2)) => {
     dryRun: options.dryRun,
   })
   console.log(`Image digest: ${imageResult.digest}`)
+  console.log(`Image platforms: ${imageResult.platforms.join(', ') || 'none'}`)
 
   if (options.dryRun) {
     console.log('Dry run complete; manifests and cluster state were not changed.')
     return
   }
 
-  updateArcRunnerImageManifests(imageResult.digest, options.applicationPath)
+  const imageReference = assertArcRunnerDeployableImage(imageResult)
+  updateArcRunnerImageManifests(imageReference, options.applicationPath)
 
   if (!options.apply) {
     console.log('Skipping kubectl apply because --no-apply was requested.')
@@ -161,6 +180,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  assertArcRunnerDeployableImage,
   assertArcRunnerDigest,
   parseArgs,
   resolveOptions,
