@@ -27,7 +27,7 @@ const countOccurrences = (haystack: string, needle: string): number => haystack.
 
 describe('torghut-deploy-automerge workflow', () => {
   test('runs registry digest validation where the private registry is reachable', () => {
-    expect(deployAutomergeWorkflow).toContain('runs-on: arc-arm64')
+    expect(deployAutomergeWorkflow).toContain('runs-on: arc-amd64')
     expect(deployAutomergeWorkflow).not.toContain('runs-on: ubuntu-latest')
     expect(deployAutomergeWorkflow).toContain(
       'This pull_request_target job checks out trusted base code only, never pull request code.',
