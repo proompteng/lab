@@ -107,6 +107,13 @@ let
     pythonImportsCheck = [ "alpaca" ];
   };
 
+  beartype = mkPyWheel {
+    pname = "beartype";
+    version = "0.22.2";
+    hash = "sha256-Egd6/jUo66XFuAH4FnEvf/BvbaVQmZTHlWHim0i87bg=";
+    pythonImportsCheck = [ "beartype" ];
+  };
+
   mcpSdk = mkPyWheel {
     pname = "mcp";
     version = "1.19.0";
@@ -132,7 +139,7 @@ let
     version = "0.3.0";
     hash = "sha256-Ww77p+vKCLsVix6Tr8LwfTC49AwvwSziSkwNhPQvkpg=";
     propagatedBuildInputs = [
-      pythonPackages.beartype
+      beartype
       pythonPackages."typing-extensions"
     ];
     pythonImportsCheck = [ "py_key_value_shared" ];
@@ -145,7 +152,7 @@ let
     hash = "sha256-HHgZFXZgeL/WCNqnaf77l+ZdHXN0aj37ZARg4yIHG2Q=";
     propagatedBuildInputs = [
       pyKeyValueShared
-      pythonPackages.beartype
+      beartype
       pythonPackages.cachetools
       pythonPackages.diskcache
       pythonPackages.pathvalidate

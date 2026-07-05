@@ -870,6 +870,8 @@ describe('native OCI build workflows', () => {
     expect(agentsImageModule).toContain('version = "2.13.2";')
     expect(agentsImageModule).toContain('pname = "mcp";')
     expect(agentsImageModule).toContain('version = "1.19.0";')
+    expect(agentsImageModule).toContain('pname = "beartype";')
+    expect(agentsImageModule).toContain('version = "0.22.2";')
     expect(agentsImageModule).toContain('pname = "alpaca-py";')
     expect(agentsImageModule).toContain('pname = "pandas-ta-classic";')
     expect(agentsImageModule).toContain('pythonPackages.buildPythonPackage')
