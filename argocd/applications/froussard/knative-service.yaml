@@ -24,7 +24,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: app
-          image: registry.ide-newton.ts.net/lab/froussard@sha256:f08be6884e7f9efa1ce515b4e47c4b972067f712a16c62be78e3955b2fe3446f
+          image: registry.ide-newton.ts.net/lab/froussard@sha256:9b191b0f48d5ee844dfcc089009f1a9e03c592e8842e7d92877213f7c50f7c23
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
