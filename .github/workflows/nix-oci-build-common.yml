@@ -60,6 +60,7 @@ jobs:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
       NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 8m
+      NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
       - name: Start checkout timer
@@ -210,7 +211,7 @@ jobs:
           status_file="${NIX_OCI_LOG_DIR}/image-cache-push-status-${ARCH}.txt"
           set +e
           bash nix/ci-run-timed.sh "push-image-archive-output-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
-            bash nix/cache-push.sh "${image_paths[@]}"
+            timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${image_paths[@]}"
           status="$?"
           set -e
           if [[ "${status}" -ne 0 ]]; then
