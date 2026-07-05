@@ -23,6 +23,10 @@ on:
         required: false
         type: string
         default: ''
+      image_build_timeout:
+        required: false
+        type: string
+        default: 8m
       publish_on_dispatch:
         required: false
         type: boolean
@@ -59,7 +63,7 @@ jobs:
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
-      NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 8m
+      NIX_IMAGE_BUILD_ATTIC_TIMEOUT: ${{ inputs.image_build_timeout }}
       NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:

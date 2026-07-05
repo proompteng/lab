@@ -83,6 +83,36 @@ import ./bun-workspace-service.nix {
   ];
   buildCommands = [
     "patchShebangs --build node_modules"
+    ''
+      set -eux
+      export PATH="${lib.makeBinPath [
+        pkgs.gnumake
+        pkgs.node-gyp
+        pkgs.python3
+        pkgs.stdenv.cc
+      ]}:$PATH"
+      node_pty_package_json="$(node -p "require.resolve('node-pty/package.json')" 2>/dev/null || (cd services/jangar && node -p "require.resolve('node-pty/package.json')"))"
+      node_pty_dir="$(dirname "$node_pty_package_json")"
+      cd "$node_pty_dir"
+      case "$(uname -m)" in
+        x86_64) node_arch=x64 ;;
+        aarch64) node_arch=arm64 ;;
+        *) node_arch="$(uname -m)" ;;
+      esac
+      export PYTHON="${pkgs.python3}/bin/python3"
+      export npm_config_build_from_source=true
+      export npm_config_nodedir="${nodejs}"
+      export npm_config_arch="$node_arch"
+      export npm_config_target="$(${nodejs}/bin/node -p 'process.versions.node')"
+      node-gyp rebuild
+      test -f build/Release/pty.node
+      mkdir -p "$TMPDIR/node-pty-artifacts"
+      cp build/Release/pty.node "$TMPDIR/node-pty-artifacts/pty.node"
+      rm -rf build
+      mkdir -p build/Release
+      cp "$TMPDIR/node-pty-artifacts/pty.node" build/Release/pty.node
+      cd "$TMPDIR/work"
+    ''
     "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/codex run build"
     "bun --cwd=packages/otel run build"
@@ -102,6 +132,21 @@ import ./bun-workspace-service.nix {
     cp "$TMPDIR/work/services/jangar/package.json" "$out/app/services/jangar/package.json"
     cp -R "$TMPDIR/work/services/jangar/node_modules" "$out/app/services/jangar/node_modules"
     cp -R "$TMPDIR/work/services/jangar/.output" "$out/app/services/jangar/.output"
+    node_pty_package_json="$(find "$out/app/node_modules/.bun" -path '*/node_modules/node-pty/package.json' -print -quit)"
+    if [ -z "$node_pty_package_json" ]; then
+      echo "node-pty package not found in runtime node_modules" >&2
+      exit 1
+    fi
+    node_pty_dir="$(dirname "$node_pty_package_json")"
+    if [ ! -f "$node_pty_dir/build/Release/pty.node" ]; then
+      echo "node-pty native module missing from runtime node_modules" >&2
+      exit 1
+    fi
+    mkdir -p "$out/app/services/jangar/.output/server/node_modules/node-pty"
+    cp -R "$node_pty_dir/build" "$out/app/services/jangar/.output/server/node_modules/node-pty/build"
+    if [ -d "$node_pty_dir/prebuilds" ]; then
+      cp -R "$node_pty_dir/prebuilds" "$out/app/services/jangar/.output/server/node_modules/node-pty/prebuilds"
+    fi
     mkdir -p "$out/app/services/jangar/src"
     cp -R "$TMPDIR/work/services/jangar/src/worker.ts" "$out/app/services/jangar/src/worker.ts"
     mkdir -p "$out/app/services/jangar/src/server"

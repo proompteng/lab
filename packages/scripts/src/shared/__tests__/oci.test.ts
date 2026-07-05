@@ -405,7 +405,9 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(nixOciWorkflow).toContain('fallback = true')
     expect(nixOciWorkflow).toContain('stalled-download-timeout = 60')
-    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_ATTIC_TIMEOUT: 8m')
+    expect(nixOciWorkflow).toContain('image_build_timeout:')
+    expect(nixOciWorkflow).toContain('default: 8m')
+    expect(nixOciWorkflow).toContain('NIX_IMAGE_BUILD_ATTIC_TIMEOUT: ${{ inputs.image_build_timeout }}')
     expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}"')
     expect(nixOciWorkflow).toContain('build-image-${ARCH}-cache-nixos-fallback')
     expect(nixOciWorkflow).toContain('timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \\')
@@ -832,6 +834,13 @@ describe('native OCI build workflows', () => {
       'for package in agent-contracts codex cx-tools design discord otel temporal-bun-sdk',
     )
     expect(jangarImageModule).toContain('cp -R "$TMPDIR/work/services/jangar/node_modules"')
+    expect(jangarImageModule).toContain('node-gyp rebuild')
+    expect(jangarImageModule).toContain('test -f build/Release/pty.node')
+    expect(jangarImageModule).toContain('rm -rf build')
+    expect(jangarImageModule).toContain('node-pty native module missing from runtime node_modules')
+    expect(jangarImageModule).toContain(
+      'cp -R "$node_pty_dir/build" "$out/app/services/jangar/.output/server/node_modules/node-pty/build"',
+    )
     expect(jangarImageModule).toContain('import ./openai-codex-cli.nix')
     expect(jangarImageModule).toContain('openvscode-server')
     expect(jangarImageModule).toContain('import ./bun-workspace-service.nix')
@@ -843,7 +852,7 @@ describe('native OCI build workflows', () => {
     expect(jangarBuildWorkflow).toContain('package_attr: jangar-image')
     expect(jangarBuildWorkflow).toContain('jangar-release-contract')
     expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
-    expect(jangarBuildWorkflow).not.toContain('image_build_timeout:')
+    expect(jangarBuildWorkflow).toContain('image_build_timeout: 12m')
     expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
     expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
 
