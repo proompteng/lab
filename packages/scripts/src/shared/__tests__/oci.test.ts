@@ -8,6 +8,19 @@ const originalWhich = Bun.which
 const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 const repoFileExists = (path: string): boolean => existsSync(new URL(path, repoRoot))
+const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const expectNixListBlock = (source: string, assignment: string): string => {
+  const match = source.match(new RegExp(`${escapeRegex(assignment)}\\s*=\\s*\\[([\\s\\S]*?)\\];`, 'm'))
+  expect(match?.[1]).toBeDefined()
+  return match?.[1] ?? ''
+}
+const expectNixMakeBinPathBlock = (source: string, assignment: string): string => {
+  const match = source.match(
+    new RegExp(`${escapeRegex(assignment)}\\s*=\\s*lib\\.makeBinPath\\s*\\[([\\s\\S]*?)\\];`, 'm'),
+  )
+  expect(match?.[1]).toBeDefined()
+  return match?.[1] ?? ''
+}
 
 const atticWorkflow = readRepoFile('.github/workflows/attic-build-push.yaml')
 const atticReleaseWorkflow = readRepoFile('.github/workflows/attic-release.yml')
@@ -983,8 +996,11 @@ describe('native OCI build workflows', () => {
     ]) {
       expect(flake).toContain(`"${packageAttr}"`)
     }
+    const torghutRuntimeContents = expectNixListBlock(torghutImageModule, 'contents')
+    const torghutRuntimePath = expectNixMakeBinPathBlock(torghutImageModule, 'runtimePath')
     expect(torghutImageModule).toContain('pkgs.uv')
-    expect(torghutImageModule).toContain('pkgs.bash')
+    expect(torghutRuntimeContents).toContain('pkgs.bash')
+    expect(torghutRuntimePath).toContain('pkgs.bash')
     expect(torghutImageModule).toContain('pkgs.stdenv.cc.cc.lib')
     expect(torghutImageModule).toContain('"LD_LIBRARY_PATH=${runtimeLibraryPath}"')
     expect(torghutImageModule).toContain('"PYTHONPATH=/app"')
