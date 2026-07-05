@@ -53,6 +53,8 @@ const earlyNixImageApps = new Set([
   'proompteng',
   'sag',
   'symphony',
+  'symphony-jangar',
+  'symphony-torghut',
   'synthesis',
   'torghut',
   'torghut-hyperliquid-feed',
@@ -61,8 +63,6 @@ const earlyNixImageApps = new Set([
 ])
 
 const deferredApps = new Map<string, string>([
-  ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
-  ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
   ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
 ])
 
@@ -80,6 +80,8 @@ const appToNixAttr = new Map<string, string>([
   ['proompteng', 'proompteng-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
+  ['symphony-jangar', 'symphony-image'],
+  ['symphony-torghut', 'symphony-image'],
   ['synthesis', 'synthesis-image'],
   ['agents', 'agents-codex-runner-image'],
   ['torghut', 'torghut-image'],
@@ -90,6 +92,8 @@ const appToNixAttr = new Map<string, string>([
 
 const appToBuildScriptPath = new Map<string, string>([
   ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
+  ['symphony-jangar', 'packages/scripts/src/symphony/build-image.ts'],
+  ['symphony-torghut', 'packages/scripts/src/symphony/build-image.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
   ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/build-image.ts'],
   ['torghut-options', 'packages/scripts/src/torghut/build-image.ts'],
@@ -97,12 +101,16 @@ const appToBuildScriptPath = new Map<string, string>([
 
 const appToDeployScriptPath = new Map<string, string>([
   ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
+  ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
+  ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
   ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/update-manifests.ts'],
   ['torghut-options', 'packages/scripts/src/torghut/update-manifests.ts'],
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
+  ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
+  ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
   ['torghut-hyperliquid-feed', ['.github/workflows/torghut-hyperliquid-feed-build-push.yaml']],
   ['torghut-hyperliquid-runtime', ['.github/workflows/torghut-build-push.yaml']],
   [

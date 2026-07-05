@@ -75,6 +75,8 @@ describe('enabled app inventory', () => {
       'attic',
       'sag',
       'symphony',
+      'symphony-jangar',
+      'symphony-torghut',
       'jangar',
       'torghut',
       'torghut-hyperliquid-feed',
@@ -100,6 +102,8 @@ describe('enabled app inventory', () => {
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
     expect(entry('sag').nixImageAttr).toBe('sag-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
+    expect(entry('symphony-jangar').nixImageAttr).toBe('symphony-image')
+    expect(entry('symphony-torghut').nixImageAttr).toBe('symphony-image')
     expect(entry('jangar').nixImageAttr).toBe('jangar-image')
     expect(entry('torghut').nixImageAttr).toBe('torghut-image')
     expect(entry('torghut-hyperliquid-feed').nixImageAttr).toBe('torghut-hyperliquid-feed-image')
@@ -147,6 +151,19 @@ describe('enabled app inventory', () => {
     expect(entry('jangar').workflowPaths).toContain('.github/workflows/jangar-build-push.yaml')
   })
 
+  it('tracks Symphony derivative apps through the shared Symphony Nix image path', () => {
+    for (const name of ['symphony-jangar', 'symphony-torghut']) {
+      expect(entry(name)).toMatchObject({
+        class: 'nix-image',
+        nixImageAttr: 'symphony-image',
+        buildScriptPath: 'packages/scripts/src/symphony/build-image.ts',
+        deployScriptPath: 'packages/scripts/src/symphony/deploy-service.ts',
+      })
+      expect(entry(name).workflowPaths).toContain('.github/workflows/symphony-build-push.yaml')
+      expect(entry(name).deferredReason).toBeUndefined()
+    }
+  })
+
   it('tracks Torghut-family enabled apps through explicit Nix image ownership paths', () => {
     expect(entry('torghut-hyperliquid-feed')).toMatchObject({
       class: 'nix-image',
@@ -177,12 +194,10 @@ describe('enabled app inventory', () => {
     expect(entry('torghut-options').workflowPaths).toContain('.github/workflows/torghut-ta-build-push.yaml')
   })
 
-  it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
-    for (const name of ['symphony-jangar', 'symphony-torghut']) {
-      expect(entry(name).class).toBe('deferred')
-      expect(entry(name).repoImages.length).toBeGreaterThan(0)
-      expect(entry(name).deferredReason).toBeTruthy()
-    }
+  it('defers complex repo-image apps without supported build ownership instead of counting them as rollout proof', () => {
+    expect(entry('tigresse').class).toBe('deferred')
+    expect(entry('tigresse').repoImages.length).toBeGreaterThan(0)
+    expect(entry('tigresse').deferredReason).toBeTruthy()
   })
 
   it('keeps repo-image apps without local build ownership out of Nix migration state', () => {

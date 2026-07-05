@@ -20,6 +20,8 @@ Current inventory from the repo guardrail:
 - Repo-image apps must be either `nix-image`, explicitly `deferred`, or a documented manifest-only exception.
 - Helm values that override chart images with `registry.ide-newton.ts.net/lab/...` count as repo-image references. `headlamp`
   is a build-owning migration target because the live chart values pin `lab/headlamp`.
+- Derived apps that reuse a migrated repo image, such as `symphony-jangar` and `symphony-torghut`, are tracked as
+  `nix-image` consumers of that shared image rather than deferred migration proof gaps.
 
 Hard exclusions:
 
@@ -123,6 +125,8 @@ Same commit plus same lockfiles should reproduce the same Nix output path and OC
    - Package `agents-codex-runner` runtime dependencies through Nix.
    - Remove Docker image build paths for enabled Agents service images once the runner image is migrated.
    - Smoke only the root-enabled Agents app.
+   - Treat derived deployments as Nix-covered only when the shared image release/deploy path updates their manifests
+     together; do not create duplicate image builds for those apps.
 
 4. **PR 4: Torghut-Family Nix Migration**
    - Add uv/Nix derivations for `torghut`, `torghut-hyperliquid-feed`, `torghut-hyperliquid-runtime`, and `torghut-options`.
