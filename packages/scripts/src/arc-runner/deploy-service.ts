@@ -14,6 +14,8 @@ type CliOptions = {
   repository?: string
   tag?: string
   applicationPath: string
+  amd64ImageRef?: string
+  arm64ImageRef?: string
 }
 
 const defaultApplicationPath = 'argocd/applications/arc/application.yaml'
@@ -65,6 +67,24 @@ const parseArgs = (argv: string[]): Partial<CliOptions> => {
       options.repository = arg.slice('--repository='.length)
       continue
     }
+    if (arg === '--amd64-image-ref') {
+      options.amd64ImageRef = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--amd64-image-ref=')) {
+      options.amd64ImageRef = arg.slice('--amd64-image-ref='.length)
+      continue
+    }
+    if (arg === '--arm64-image-ref') {
+      options.arm64ImageRef = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--arm64-image-ref=')) {
+      options.arm64ImageRef = arg.slice('--arm64-image-ref='.length)
+      continue
+    }
     if (arg === '--application-path') {
       options.applicationPath = argv[index + 1]
       index += 1
@@ -92,6 +112,8 @@ const resolveOptions = (argv = process.argv.slice(2)): CliOptions => {
     repository: parsed.repository ?? readEnv('ARC_RUNNER_IMAGE_REPOSITORY') ?? 'lab/arc-runner',
     tag: parsed.tag ?? readEnv('ARC_RUNNER_IMAGE_TAG') ?? execGit(['rev-parse', '--short', 'HEAD']),
     applicationPath: parsed.applicationPath ?? readEnv('ARC_RUNNER_APPLICATION_PATH') ?? defaultApplicationPath,
+    amd64ImageRef: parsed.amd64ImageRef ?? readEnv('ARC_RUNNER_AMD64_IMAGE_REF'),
+    arm64ImageRef: parsed.arm64ImageRef ?? readEnv('ARC_RUNNER_ARM64_IMAGE_REF'),
   }
 }
 
@@ -155,6 +177,8 @@ export const main = async (argv = process.argv.slice(2)) => {
     repository: options.repository,
     tag: options.tag,
     dryRun: options.dryRun,
+    amd64ImageRef: options.amd64ImageRef,
+    arm64ImageRef: options.arm64ImageRef,
   })
   console.log(`Image digest: ${imageResult.digest}`)
   console.log(`Image platforms: ${imageResult.platforms.join(', ') || 'none'}`)
