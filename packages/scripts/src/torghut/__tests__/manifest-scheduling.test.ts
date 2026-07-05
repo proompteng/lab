@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import YAML from 'yaml'
@@ -58,7 +58,28 @@ const parseManifest = (path: string): JsonRecord => YAML.parse(readFileSync(join
 const parseManifestDocuments = (path: string): JsonRecord[] =>
   YAML.parseAllDocuments(readFileSync(join(repoRoot, path), 'utf8')).map((document) => document.toJSON() as JsonRecord)
 
+const collectYamlFiles = (path: string): string[] => {
+  const absolutePath = join(repoRoot, path)
+  const stat = statSync(absolutePath)
+  if (stat.isFile()) {
+    return /\.(ya?ml)$/.test(path) ? [path] : []
+  }
+  return readdirSync(absolutePath).flatMap((entry) => collectYamlFiles(join(path, entry)))
+}
+
 describe('Torghut manifest scheduling', () => {
+  it('uses PATH-resolved Python entrypoints for Nix-built Torghut images', () => {
+    const manifestPaths = [
+      ...collectYamlFiles('argocd/applications/torghut'),
+      ...collectYamlFiles('argocd/applications/torghut-hyperliquid-runtime'),
+    ]
+
+    for (const path of manifestPaths) {
+      const manifest = readFileSync(join(repoRoot, path), 'utf8')
+      expect(manifest, path).not.toContain('/opt/venv/bin/')
+    }
+  })
+
   it('caps revision history for high-churn Torghut deployments', () => {
     const deploymentPaths = [
       'argocd/applications/symphony-torghut/deployment.patch.yaml',

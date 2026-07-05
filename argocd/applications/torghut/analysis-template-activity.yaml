@@ -61,7 +61,7 @@ spec:
                       - >-
                         set -euo pipefail &&
                         cd /app &&
-                        /opt/venv/bin/python scripts/run_simulation_analysis.py activity
+                        python scripts/run_simulation_analysis.py activity
                         --run-id "{{args.runId}}"
                         --dataset-id "{{args.datasetId}}"
                         --namespace "{{args.namespace}}"

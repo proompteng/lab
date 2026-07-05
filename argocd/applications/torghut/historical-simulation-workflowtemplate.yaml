@@ -119,7 +119,7 @@ spec:
           printf '%s' "{{inputs.parameters.datasetManifestB64}}" | base64 -d > "${MANIFEST_PATH}"
           echo "RUN_LOG manifest_written path=${MANIFEST_PATH}"
           echo "RUN_LOG runtime_secret_present name=TORGHUT_SIM_KAFKA_PASSWORD present=${TORGHUT_SIM_KAFKA_PASSWORD:+1}"
-          /opt/venv/bin/python - <<'PY'
+          python - <<'PY'
           import os
           import yaml
 
@@ -226,7 +226,7 @@ spec:
 
           mkdir -p "$OUTPUT_ROOT"
           echo "RUN_LOG invoking_python"
-          /opt/venv/bin/python -u -m scripts.historical_simulation_startup "${SCRIPT_ARGS[@]}"
+          python -u -m scripts.historical_simulation_startup "${SCRIPT_ARGS[@]}"
     outputs:
       artifacts:
         - name: simulation-output
