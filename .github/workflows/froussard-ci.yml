@@ -6,6 +6,10 @@ on:
       - main
     paths:
       - 'apps/froussard/**'
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
       - 'packages/scripts/src/froussard/**'
       - 'flake.lock'
       - 'nix/images/froussard.nix'
@@ -19,9 +23,14 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'apps/froussard/**'
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
       - 'packages/scripts/src/froussard/**'
       - 'flake.lock'
       - 'nix/images/froussard.nix'
@@ -35,6 +44,7 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:

@@ -123,14 +123,15 @@ jobs:
                     services/dorvud/build.gradle.kts \
                     services/dorvud/platform \
                     services/dorvud/websockets \
-                    packages/scripts/src/torghut/release-contract.ts \
-                    packages/scripts/src/torghut/update-ws-manifest.ts \
-                    packages/scripts/src/shared/cli.ts \
-                    packages/scripts/src/shared/git.ts \
                     nix/images/dorvud-jvm-service.nix \
                     nix/images/torghut-ws.nix \
-                    .github/workflows/torghut-ws-build-push.yaml \
-                    .github/workflows/torghut-ws-release.yml
+                    nix/cache-push.sh \
+                    nix/ci-nix-oci-summary.sh \
+                    nix/ci-run-timed.sh \
+                    nix/oci-inspect-archive.sh \
+                    nix/oci-push.sh \
+                    nix/oci-release-contract.sh \
+                    flake.lock
                 )"
                 if [ -n "${WS_CHANGES}" ]; then
                   echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut WS build inputs changed:"

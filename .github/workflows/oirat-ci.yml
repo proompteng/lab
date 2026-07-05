@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'services/oirat/**'
+      - 'packages/discord/**'
       - 'packages/scripts/src/oirat/**'
       - 'flake.lock'
       - 'nix/images/oirat.nix'
@@ -19,9 +20,11 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'services/oirat/**'
+      - 'packages/discord/**'
       - 'packages/scripts/src/oirat/**'
       - 'flake.lock'
       - 'nix/images/oirat.nix'
@@ -35,6 +38,7 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:

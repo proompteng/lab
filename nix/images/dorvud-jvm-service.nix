@@ -7,6 +7,10 @@
   gradleProject,
   gradleTask ? "installDist",
   mainClass,
+  sourceModulePrefixes ? [
+    "platform"
+    gradleProject
+  ],
   copyInstallDist ? true,
   maxLayers ? 24,
 }:
@@ -24,15 +28,6 @@ let
     in
     if pathString == dorvudRootString then "" else lib.removePrefix prefix pathString;
 
-  modulePrefixes = [
-    "flink-integration"
-    "hyperliquid-feed"
-    "platform"
-    "technical-analysis"
-    "technical-analysis-flink"
-    "websockets"
-  ];
-
   source = lib.cleanSourceWith {
     src = dorvudRoot;
     filter = path: type:
@@ -47,7 +42,7 @@ let
         "settings.gradle.kts"
       ]
       || lib.hasPrefix "gradle/" rel
-      || lib.any (prefix: lib.hasPrefix "${prefix}/" rel) modulePrefixes;
+      || lib.any (prefix: lib.hasPrefix "${prefix}/" rel) sourceModulePrefixes;
   };
 
   appRoot = pkgs.stdenvNoCC.mkDerivation {

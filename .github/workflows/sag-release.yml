@@ -107,14 +107,16 @@ jobs:
               nix/images/openai-codex-cli.nix
               nix/images/bun-workspace-service.nix
               nix/packages.nix
+              nix/cache-push.sh
+              nix/ci-nix-oci-summary.sh
+              nix/ci-run-timed.sh
+              nix/oci-inspect-archive.sh
+              nix/oci-push.sh
+              nix/oci-release-contract.sh
               flake.lock
               bun.lock
               package.json
               tsconfig.base.json
-              .github/workflows/sag-build-push.yaml
-              .github/workflows/sag-release.yml
-              .github/workflows/nix-oci-build-common.yml
-              .github/actions/setup-nix-toolchain
             )
 
             if ! git merge-base --is-ancestor "${source_sha}" "${main_head}"; then
