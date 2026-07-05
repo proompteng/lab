@@ -36,16 +36,7 @@ describe('enabled app inventory', () => {
   })
 
   it('keeps chart-only apps out of Nix image migration state', () => {
-    for (const name of [
-      'headlamp',
-      'temporal',
-      'observability',
-      'nats',
-      'kafka',
-      'traefik',
-      'tailscale',
-      'cert-manager',
-    ]) {
+    for (const name of ['temporal', 'observability', 'nats', 'kafka', 'traefik', 'tailscale', 'cert-manager']) {
       expect(entry(name)).toMatchObject({
         class: 'helm-chart',
         hasHelmChart: true,
@@ -54,6 +45,18 @@ describe('enabled app inventory', () => {
       expect(entry(name).nixImageAttr).toBeUndefined()
       expect(entry(name).buildScriptPath).toBeUndefined()
     }
+  })
+
+  it('does not hide repo-owned Helm image overrides as chart-only apps', () => {
+    expect(entry('headlamp')).toMatchObject({
+      class: 'deferred',
+      hasHelmChart: true,
+      repoImages: ['registry.ide-newton.ts.net/lab/headlamp@sha256'],
+      deferredReason:
+        'Helm chart is overridden to run a repo-built lab/headlamp image; migrate the Docker workflow separately',
+    })
+    expect(entry('headlamp').nixImageAttr).toBeUndefined()
+    expect(entry('headlamp').buildScriptPath).toBeUndefined()
   })
 
   it('marks only approved early build-owning apps as Nix image candidates', () => {

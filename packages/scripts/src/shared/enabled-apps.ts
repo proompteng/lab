@@ -36,6 +36,7 @@ type JsonRecord = Record<string, unknown>
 
 const labRepoURL = 'https://github.com/proompteng/lab.git'
 const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
+const labImageRegistry = 'registry.ide-newton.ts.net'
 
 const earlyNixImageApps = new Set([
   'agents',
@@ -59,6 +60,10 @@ const earlyNixImageApps = new Set([
 ])
 
 const deferredApps = new Map<string, string>([
+  [
+    'headlamp',
+    'Helm chart is overridden to run a repo-built lab/headlamp image; migrate the Docker workflow separately',
+  ],
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
   ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
@@ -232,8 +237,12 @@ const collectRepoImages = (yamlPath: string, document: unknown): string[] => {
     const image = asString(record.image)
     if (image?.startsWith(labImagePrefix)) images.add(image)
 
+    const registry = asString(record.registry)
     const repository = asString(record.repository)
     if (repository?.startsWith(labImagePrefix)) images.add(repository)
+    if (registry === labImageRegistry && repository?.startsWith('lab/')) {
+      images.add(`${registry}/${repository}`)
+    }
 
     if (basename(yamlPath) === 'kustomization.yaml' && Array.isArray(record.images)) {
       for (const entry of record.images) {
