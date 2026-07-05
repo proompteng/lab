@@ -2,7 +2,7 @@
 
 Status: Current source-read matrix for 458 audited design documents.
 
-Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+Source baseline inspected: `d53c7a4e5 docs: deepen torghut AI docs batch 3 (#11893)`.
 
 Rows marked as Batch 1, Batch 2, or Batch 3 reflect document-specific deep source audits. Other rows remain triage-level source-audit entries that should be deepened in later batches of five.
 

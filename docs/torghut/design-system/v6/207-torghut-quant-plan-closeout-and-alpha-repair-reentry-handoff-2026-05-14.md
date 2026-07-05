@@ -1,6 +1,24 @@
 # 207. Torghut Quant Plan Closeout And Alpha Repair Reentry Handoff (2026-05-14)
 
 Status: Accepted for plan-lane closeout and engineer/deployer handoff
+Date: 2026-05-14
+Owner: Gideon Park, Torghut Traders Architecture
+Scope: Torghut quant plan closeout, Jangar control-plane resilience linkage, revenue-repair evidence, database
+freshness, alpha-readiness reentry, validation gates, rollout, rollback, and cross-stage handoff.
+
+Current governing contracts:
+
+- `docs/torghut/design-system/v6/206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
+- `docs/agents/designs/201-jangar-verify-trust-foreclosure-and-alpha-repair-reentry-2026-05-14.md`
+- `docs/torghut/design-system/v6/205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
+- `docs/agents/designs/200-jangar-revenue-repair-settlement-conveyor-and-stage-health-custody-2026-05-14.md`
+
+Merged PR evidence:
+
+- `#5854` capital evidence return lane, merged as `b05380736319cd68b17549615d9602adbc1abc46`.
+- `#6418` quant plan closeout handoff.
+- `#6592` alpha readiness settlement conveyor.
+- `#6618` verify trust foreclosure, merged as `4190b42ea61504130458da8fc49f3dfa1820ff76`.
 
 ## Source Implementation Audit (2026-07-04)
 

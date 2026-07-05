@@ -2,7 +2,9 @@
 
 Status: Current source-read audit, refreshed 2026-07-04.
 
-Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+Source baseline inspected: `d53c7a4e5 docs: deepen torghut AI docs batch 3 (#11893)`.
+
+Codex review feedback resolution: this audit summary was refreshed against the current main baseline after the Hyperliquid feed deployment changed after the original triage-audit baseline. Per-document triage blocks that still mention the original baseline remain triage markers until deepened in later batches.
 
 This file summarizes the per-document audit blocks inserted into the Torghut design corpus. Core documents are being deepened in batches of five with document-specific implemented/drift/gap analysis.
 
