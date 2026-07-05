@@ -58,13 +58,16 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
     assert "HYPERLIQUID_EXECUTION_ORDER_POLICY: marketable_ioc" in configmap
     assert "HYPERLIQUID_EXECUTION_MAKER_TIF: Ioc" in configmap
     assert 'HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS: "10"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD: "12"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD: "12"' in configmap
     assert 'HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD: "250"' in configmap
     assert 'HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD: "50"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS: "50"' in configmap
     assert (
         'HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED: "true"'
         in configmap
     )
-    assert "hyperliquid-execution-v2-feed-readiness-gate-20260704a" in deployment
+    assert "hyperliquid-execution-v2-executable-ioc-20260704a" in deployment
     assert "HYPERLIQUID_RUNTIME_" not in configmap
 
 

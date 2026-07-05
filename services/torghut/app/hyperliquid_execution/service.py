@@ -10,7 +10,7 @@ from typing import Protocol, cast
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidExecutionExchange
 from .feed_reader import FeedStatus
-from .maintenance import close_largest_positions_over_cap
+from .maintenance import close_largest_positions_over_cap, risk_state_over_cap
 from .models import (
     CycleRecord,
     CycleResult,
@@ -147,10 +147,13 @@ class HyperliquidExecutionService:
         repository.mark_order_cancelled(expired, result)
 
     def _reduce_over_cap_exposure(self, risk_state: RiskState) -> dict[str, object]:
-        if risk_state.gross_exposure_usd < self._config.max_gross_exposure_usd:
+        if not risk_state_over_cap(risk_state, self._config):
             return {
                 "schema_version": "torghut.hyperliquid-execution-over-cap-maintenance.v1",
                 "over_cap": False,
+                "gross_over_cap": False,
+                "symbol_over_cap": False,
+                "symbol_over_cap_coins": [],
                 "actions": [],
             }
         return close_largest_positions_over_cap(

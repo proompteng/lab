@@ -25,7 +25,7 @@ V2 contract:
 - Signal freshness allows the same `180s` source and quote-lag window used by runtime dependency readiness.
 - Short entries are enabled in the restore lane with `HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES=true`; entries remain
   bounded by the same per-order, per-symbol, gross exposure, cooldown, and single-open-order controls.
-- Caps are intentionally small: `$10` max order notional, `$50` max symbol exposure, and `$250` max gross exposure.
+- Caps are intentionally small: `$12` max order notional, `$50` max symbol exposure, and `$250` max gross exposure.
 - `sample_ready=false` until at least 40 v2 fills exist.
 
 Trading is enabled for capped testnet execution with `HYPERLIQUID_EXECUTION_TRADING_ENABLED=true` after the v2 runtime

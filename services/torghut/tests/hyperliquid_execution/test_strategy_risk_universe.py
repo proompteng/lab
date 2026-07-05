@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -17,6 +18,7 @@ from app.hyperliquid_execution.order_policy import (
     build_order_intent,
 )
 from app.hyperliquid_execution.risk import evaluate_signal_risk
+from app.hyperliquid_execution.maintenance import risk_state_over_cap
 from app.hyperliquid_execution.strategy import generate_signal
 from app.hyperliquid_execution.universe import (
     UniverseSelectionConfig,
@@ -190,9 +192,32 @@ def test_risk_blocks_short_entries_by_default() -> None:
     assert allowed.allowed
 
 
+def test_over_cap_trigger_includes_symbol_exposure_breach() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "250",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "50",
+        }
+    )
+    state = _risk_state()
+
+    assert not risk_state_over_cap(state, config)
+    assert risk_state_over_cap(
+        replace(state, symbol_exposure_usd_by_coin={"NVDA": Decimal("50")}),
+        config,
+    )
+    assert risk_state_over_cap(
+        replace(state, gross_exposure_usd=Decimal("250")),
+        config,
+    )
+
+
 def test_restore_order_policy_uses_ioc_crossing_quote_and_ttl() -> None:
     config = HyperliquidExecutionConfig.from_env(
-        {"HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true"}
+        {
+            "HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true",
+            "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "50",
+        }
     )
     now = datetime(2026, 6, 19, tzinfo=timezone.utc)
     buy_signal = generate_signal(
@@ -223,8 +248,12 @@ def test_restore_order_policy_uses_ioc_crossing_quote_and_ttl() -> None:
 
     assert buy_intent.tif == "Ioc"
     assert sell_intent.tif == "Ioc"
-    assert buy_intent.limit_price == Decimal("10.02")
-    assert sell_intent.limit_price == Decimal("10")
+    assert buy_intent.limit_price == Decimal("10.070100")
+    assert sell_intent.limit_price == Decimal("9.950000")
+    assert buy_signal.feature.ask_price is not None
+    assert sell_signal.feature.bid_price is not None
+    assert buy_intent.limit_price > buy_signal.feature.ask_price
+    assert sell_intent.limit_price < sell_signal.feature.bid_price
     assert buy_intent.expires_at.timestamp() - now.timestamp() == 10
 
 
