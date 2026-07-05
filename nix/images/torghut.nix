@@ -173,6 +173,7 @@ pkgs.dockerTools.buildLayeredImage {
     Env = [
       "PATH=${pythonDeps}/venv/bin:${runtimePath}"
       "LD_LIBRARY_PATH=${runtimeLibraryPath}"
+      "PYTHONPATH=/app"
       "PYTHONDONTWRITEBYTECODE=1"
       "PYTHONUNBUFFERED=1"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
