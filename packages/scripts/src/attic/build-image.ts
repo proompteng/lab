@@ -25,6 +25,15 @@ type BuildConfiguration = {
   dryRun?: boolean
 }
 
+export type BuildImageResult = {
+  image: string
+  digest: string
+  version: string
+  commit: string
+  platforms: string[]
+  platformDigests: Record<string, string>
+}
+
 const dockerOnlyOptionNames = ['context', 'dockerfile', 'platforms', 'cacheRef'] as const
 
 let buildAndPushNixImageImpl = buildAndPushNixImage
@@ -95,7 +104,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
   return options
 }
 
-export const buildImage = async (options: BuildImageOptions = {}) => {
+export const buildImage = async (options: BuildImageOptions = {}): Promise<BuildImageResult> => {
   const config = resolveBuildConfiguration(options)
   const result = await buildAndPushNixImageImpl({
     service: 'attic',
@@ -114,6 +123,8 @@ export const buildImage = async (options: BuildImageOptions = {}) => {
     digest: result.reference,
     version: config.version,
     commit: config.commit,
+    platforms: result.platforms,
+    platformDigests: result.platformDigests,
   }
 }
 
