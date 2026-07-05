@@ -195,6 +195,20 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).not.toContain('BUN_BASE_IMAGE=docker.io/oven/bun')
   })
 
+  it('runs Agents CI when Nix image inputs change', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+    const nixImageInputs = [
+      'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
+    ]
+
+    for (const input of nixImageInputs) {
+      expect(workflow.split(`- '${input}'`).length - 1).toBe(2)
+    }
+  })
+
   it('classifies pull request changes from the merge base', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
