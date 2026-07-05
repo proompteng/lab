@@ -173,6 +173,7 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
     for (const term of [
       'replicas: 1',
       'runtimeClassName: nvidia',
+      'kubernetes.io/arch: arm64',
       'kubernetes.io/hostname: talos-192-168-1-85',
       'nvidia.com/gpu.present: "true"',
       'nvidia.com/gpu: "1"',

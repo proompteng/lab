@@ -9,7 +9,7 @@ This runbook records the hard migration where completion traffic moves to the
 `saigak` is a Kubernetes `StatefulSet` serving Ollama through an embeddings-only
 proxy on port `11434`; it must not expose chat completion endpoints. Its current
 active PVC is `saigak-altra-data`, a local-path cache that binds on first
-consumer to the Altra node (`talos-192-168-1-85`) so the old Turin-bound
+consumer to the ARM64 Altra node (`talos-192-168-1-85`) so the old Turin-bound
 `saigak-data` cache cannot pin the pod away from the RTX 3090. The pod must use
 `runtimeClassName: nvidia`, request and limit `nvidia.com/gpu: "1"`, and keep
 `SAIGAK_REQUIRE_GPU_RESIDENCY=true` so readiness fails unless the 4096-dimensional
