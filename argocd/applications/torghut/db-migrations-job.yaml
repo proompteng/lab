@@ -26,6 +26,7 @@ spec:
         - name: migrate
           imagePullPolicy: IfNotPresent
           image: registry.ide-newton.ts.net/lab/torghut@sha256:24347644d88a213c40b3e6576bcce50de62edc94d947fae92cfef7d582bd99b2
+          workingDir: /app
           command:
             - /bin/sh
             - -ec
@@ -366,6 +367,8 @@ spec:
                   )
               PY
           env:
+            - name: PYTHONPATH
+              value: /app
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:

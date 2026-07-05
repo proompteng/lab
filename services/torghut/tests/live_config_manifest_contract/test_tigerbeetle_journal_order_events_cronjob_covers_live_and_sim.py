@@ -21,6 +21,34 @@ from tests.live_config_manifest_contract.support import (
 )
 
 
+def _migration_job_context() -> tuple[
+    Mapping[str, object],
+    str,
+    set[object],
+    dict[object, Mapping[str, object]],
+    list[object],
+]:
+    manifest = _load_yaml_mapping("argocd/applications/torghut/db-migrations-job.yaml")
+    containers = (
+        manifest.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("containers", [])
+    )
+    if not containers:
+        raise AssertionError("migration job is missing containers")
+    container = cast(Mapping[str, object], containers[0])
+    args = "\n".join(str(item) for item in container.get("args", []))
+    env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
+    return (
+        container,
+        args,
+        {item.get("name") for item in env},
+        {item.get("name"): item for item in env},
+        [item.get("name") for item in env],
+    )
+
+
 class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
     _TestLiveConfigManifestContractBase
 ):
@@ -141,28 +169,15 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertNotIn("empirical-promotion-renewal-cronjob.yaml", resources)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
-        manifest = _load_yaml_mapping(
-            "argocd/applications/torghut/db-migrations-job.yaml"
-        )
-        containers = (
-            manifest.get("spec", {})
-            .get("template", {})
-            .get("spec", {})
-            .get("containers", [])
-        )
-        self.assertTrue(containers)
-        container = containers[0]
-        args = "\n".join(str(item) for item in container.get("args", []))
-        env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
+        container, args, env_names, env_by_name, env_order = _migration_job_context()
         upgrade_to_research_objects = (
             'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini '
             "upgrade 0026_strategy_factory_research_objects"
         )
         upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini upgrade heads'
-        env_names = {item.get("name") for item in env}
-        env_by_name = {item.get("name"): item for item in env}
-        env_order = [item.get("name") for item in env]
 
+        self.assertEqual(container.get("workingDir"), "/app")
+        self.assertEqual(env_by_name["PYTHONPATH"].get("value"), "/app")
         self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
         self.assertIn("TORGHUT_SIM_ADMIN_DSN", env_names)
         self.assertLess(
