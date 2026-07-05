@@ -132,8 +132,9 @@ pkgs.dockerTools.buildLayeredImage {
     pkgs.cacert
   ];
   extraCommands = ''
-    mkdir -p tmp var/tmp
+    mkdir -p tmp var/tmp etc/ssl/certs
     chmod 1777 tmp var/tmp
+    ln -s ${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt etc/ssl/certs/ca-certificates.crt
   '';
   config = {
     Entrypoint = [
@@ -145,6 +146,7 @@ pkgs.dockerTools.buildLayeredImage {
     ];
     Env = [
       "PATH=${lib.makeBinPath [ pkgs.busybox ]}"
+      "HOME=/tmp"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "HEADLAMP_STATIC_PLUGINS_DIR=/headlamp/static-plugins"
     ];

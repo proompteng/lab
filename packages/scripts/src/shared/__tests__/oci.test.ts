@@ -808,6 +808,8 @@ describe('native OCI build workflows', () => {
     expect(headlampImageModule).toContain('pkgs.dockerTools.buildLayeredImage')
     expect(headlampImageModule).toContain('REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER')
     expect(headlampImageModule).toContain('"HEADLAMP_STATIC_PLUGINS_DIR=/headlamp/static-plugins"')
+    expect(headlampImageModule).toContain('"HOME=/tmp"')
+    expect(headlampImageModule).toContain('etc/ssl/certs/ca-certificates.crt')
     expect(headlampImageModule).toContain('export HOME="$TMPDIR/home"')
     expect(headlampImageModule).toContain('cp main.js package.json "$out/static-plugins/prometheus/"')
     expect(headlampImageModule).not.toContain('cp prometheus/main.js prometheus/package.json')
