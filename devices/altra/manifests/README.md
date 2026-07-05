@@ -12,6 +12,7 @@ Files:
 - `devices/altra/manifests/local-path.patch.yaml`
 - `devices/altra/manifests/local-path-extra.patch.yaml`
 - `devices/altra/manifests/nvidia-kernel-modules.patch.yaml`
+- `devices/altra/manifests/node-labels.patch.yaml`
 - `devices/altra/manifests/kubelet-maxpods.patch.yaml`
 - `devices/altra/manifests/tailscale-extension-service.template.yaml`
 - `devices/altra/manifests/tailscale-dns.patch.yaml`

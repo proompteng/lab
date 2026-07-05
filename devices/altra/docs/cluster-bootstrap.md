@@ -80,6 +80,7 @@ talosctl apply-config --insecure -n "$ALTRA_IP" -e "$ALTRA_IP" \
   --config-patch @devices/altra/manifests/ephemeral-volume.patch.yaml \
   --config-patch @devices/altra/manifests/local-path.patch.yaml \
   --config-patch @devices/altra/manifests/nvidia-kernel-modules.patch.yaml \
+  --config-patch @devices/altra/manifests/node-labels.patch.yaml \
   --config-patch @devices/altra/manifests/allow-scheduling-controlplane.patch.yaml \
   --config-patch @devices/altra/manifests/controlplane-endpoint-nuc.patch.yaml \
   --config-patch @devices/altra/manifests/kubelet-maxpods.patch.yaml \
