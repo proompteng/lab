@@ -95,11 +95,24 @@ def gross_margin_used_usd(state: RiskState) -> Decimal:
     """Estimate current margin used from exposure and per-symbol max leverage."""
 
     used = _ZERO
+    mapped_position_notional = _ZERO
+    position_exposure_by_coin = state.position_exposure_usd_by_coin
+    if position_exposure_by_coin is None:
+        position_exposure_by_coin = state.symbol_exposure_usd_by_coin
     for coin, exposure_usd in state.symbol_exposure_usd_by_coin.items():
         leverage = state.max_leverage_by_coin.get(coin, _ONE)
         if leverage <= _ZERO:
             leverage = _ONE
+        mapped_position_notional += abs(position_exposure_by_coin.get(coin, _ZERO))
         used += margin_for_notional(exposure_usd, leverage)
+
+    raw_gross_exposure = _quantize_usd(abs(state.gross_exposure_usd))
+    unmapped_notional = _nonnegative(raw_gross_exposure - mapped_position_notional)
+    if unmapped_notional > _ZERO:
+        used += margin_for_notional(
+            unmapped_notional,
+            _fallback_leverage_for_unmapped_exposure(state),
+        )
     return _quantize_usd(used)
 
 
@@ -121,9 +134,9 @@ def over_budget_coins(
     result: set[str] = set()
     for coin in state.symbol_exposure_usd_by_coin:
         budget, blocker = resolve_margin_budget(coin=coin, state=state, config=config)
-        if blocker == "margin_capacity_below_min_order" and budget is not None:
-            result.add(coin)
-        elif budget is not None and budget.over_budget:
+        if blocker == "symbol_margin_metadata_missing":
+            continue
+        if budget is not None and budget.over_budget:
             result.add(coin)
     return result
 
@@ -149,8 +162,6 @@ def _resolve_equity_basis(state: RiskState) -> tuple[_EquityBasis | None, str | 
     if equity_basis_usd <= _ZERO:
         return None, "account_equity_missing"
     withdrawable_usd = max(state.withdrawable_usd, _ZERO)
-    if withdrawable_usd <= _ZERO:
-        return None, "withdrawable_margin_missing"
     return (
         _EquityBasis(
             equity_basis_usd=_quantize_usd(equity_basis_usd),
@@ -172,9 +183,7 @@ def _resolve_margin_use(
         equity_basis.equity_basis_usd * config.target_margin_utilization
     )
     gross_used = gross_margin_used_usd(state)
-    remaining_gross = _nonnegative(
-        min(target_budget - gross_used, equity_basis.withdrawable_usd)
-    )
+    remaining_gross = _nonnegative(target_budget - gross_used)
     symbol_used = margin_for_notional(
         state.symbol_exposure_usd_by_coin.get(coin, _ZERO),
         max_leverage,
@@ -229,6 +238,15 @@ def _build_budget(
 
 def _nonnegative(value: Decimal) -> Decimal:
     return _quantize_usd(max(value, _ZERO))
+
+
+def _fallback_leverage_for_unmapped_exposure(state: RiskState) -> Decimal:
+    positive_leverages = [
+        leverage for leverage in state.max_leverage_by_coin.values() if leverage > _ZERO
+    ]
+    if not positive_leverages:
+        return _ONE
+    return min(positive_leverages)
 
 
 def _quantize_usd(value: Decimal) -> Decimal:

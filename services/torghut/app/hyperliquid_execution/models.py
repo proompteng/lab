@@ -120,6 +120,7 @@ class RiskState:
     open_order_coins: frozenset[str]
     symbol_exposure_usd_by_coin: dict[str, Decimal]
     cooldown_reason_by_coin: dict[str, str]
+    position_exposure_usd_by_coin: dict[str, Decimal] | None = None
     account_value_usd: Decimal = Decimal("0")
     withdrawable_usd: Decimal = Decimal("0")
     max_leverage_by_coin: dict[str, Decimal] = field(default_factory=_empty_decimal_map)
