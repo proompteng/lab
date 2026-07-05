@@ -222,6 +222,7 @@ type PrimitivesStoreOptions = {
 }
 
 const DEFAULT_RUN_STATUS = 'Pending'
+const AGENT_RUN_IDEMPOTENCY_RESERVATION_ATTEMPTS = 3
 
 const toAgentRunRecord = (row: {
   id: string
@@ -663,38 +664,40 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
 
   const reserveAgentRunIdempotencyKey: PrimitivesStore['reserveAgentRunIdempotencyKey'] = async (input) => {
     await ready
-    const inserted = await db
-      .insertInto('agent_run_idempotency_keys')
-      .values({
-        namespace: input.namespace,
-        agent_name: input.agentName,
-        idempotency_key: input.idempotencyKey,
-        agent_run_name: null,
-        agent_run_uid: null,
-        terminal_phase: null,
-        terminal_at: null,
-      })
-      .onConflict((oc) => oc.columns(['namespace', 'agent_name', 'idempotency_key']).doNothing())
-      .returningAll()
-      .executeTakeFirst()
+    for (let attempt = 1; attempt <= AGENT_RUN_IDEMPOTENCY_RESERVATION_ATTEMPTS; attempt += 1) {
+      const inserted = await db
+        .insertInto('agent_run_idempotency_keys')
+        .values({
+          namespace: input.namespace,
+          agent_name: input.agentName,
+          idempotency_key: input.idempotencyKey,
+          agent_run_name: null,
+          agent_run_uid: null,
+          terminal_phase: null,
+          terminal_at: null,
+        })
+        .onConflict((oc) => oc.columns(['namespace', 'agent_name', 'idempotency_key']).doNothing())
+        .returningAll()
+        .executeTakeFirst()
 
-    if (inserted) {
-      return { record: toAgentRunIdempotencyRecord(inserted), created: true }
+      if (inserted) {
+        return { record: toAgentRunIdempotencyRecord(inserted), created: true }
+      }
+
+      const existing = await db
+        .selectFrom('agent_run_idempotency_keys')
+        .selectAll()
+        .where('namespace', '=', input.namespace)
+        .where('agent_name', '=', input.agentName)
+        .where('idempotency_key', '=', input.idempotencyKey)
+        .executeTakeFirst()
+
+      if (existing) {
+        return { record: toAgentRunIdempotencyRecord(existing), created: false }
+      }
     }
 
-    const existing = await db
-      .selectFrom('agent_run_idempotency_keys')
-      .selectAll()
-      .where('namespace', '=', input.namespace)
-      .where('agent_name', '=', input.agentName)
-      .where('idempotency_key', '=', input.idempotencyKey)
-      .executeTakeFirst()
-
-    if (!existing) {
-      throw new Error('failed to resolve agent run idempotency key after conflict')
-    }
-
-    return { record: toAgentRunIdempotencyRecord(existing), created: false }
+    throw new Error('failed to resolve agent run idempotency key after conflict')
   }
 
   const assignAgentRunIdempotencyKey: PrimitivesStore['assignAgentRunIdempotencyKey'] = async (input) => {
