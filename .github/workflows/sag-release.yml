@@ -112,7 +112,6 @@ jobs:
               nix/oci-release-contract.sh
               flake.lock
               bun.lock
-              package.json
               tsconfig.base.json
             )
 

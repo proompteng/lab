@@ -8,7 +8,6 @@ on:
   pull_request:
     paths:
       - 'bun.lock'
-      - 'package.json'
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
@@ -34,7 +33,6 @@ on:
       - main
     paths:
       - 'bun.lock'
-      - 'package.json'
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'

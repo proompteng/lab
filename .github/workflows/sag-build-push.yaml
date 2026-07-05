@@ -8,7 +8,6 @@ on:
     paths:
       - 'services/sag/**'
       - 'packages/codex/**'
-      - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
       - 'flake.lock'
@@ -28,7 +27,6 @@ on:
     paths:
       - 'services/sag/**'
       - 'packages/codex/**'
-      - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
       - 'flake.lock'

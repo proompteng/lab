@@ -98,6 +98,16 @@ describe('enabled app inventory', () => {
     expect(entry('torghut-options').nixImageAttr).toBe('torghut-image')
   })
 
+  it('tracks the live Attic image through both GitHub Actions and manual deploy paths', () => {
+    expect(entry('attic')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'atticd-image',
+      buildScriptPath: 'packages/scripts/src/attic/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/attic/deploy-service.ts',
+    })
+    expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
+  })
+
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
     for (const name of ['jangar', 'symphony-jangar', 'symphony-torghut']) {
       expect(entry(name).class).toBe('deferred')

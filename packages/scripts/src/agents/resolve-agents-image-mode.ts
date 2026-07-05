@@ -17,7 +17,6 @@ const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'nix/images/bun-workspace-service.nix',
   'nix/images/openai-codex-cli.nix',
   'nix/packages.nix',
-  'package.json',
   'packages/scripts/src/agents/deploy-service.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
   'packages/scripts/src/shared/nix-oci-deploy.ts',
