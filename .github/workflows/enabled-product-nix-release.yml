@@ -123,23 +123,23 @@ jobs:
             case "${service}" in
               proompteng)
                 manifest_path="argocd/applications/proompteng/kustomization.yaml"
-                input_paths=(apps/landing packages/backend packages/design nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json)
+                input_paths=(apps/landing packages/backend packages/design nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock)
                 ;;
               app)
                 manifest_path="argocd/applications/app/kustomization.yaml"
-                input_paths=(apps/app packages/design nix/images/app.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json)
+                input_paths=(apps/app packages/design nix/images/app.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock)
                 ;;
               synthesis)
                 manifest_path="argocd/applications/synthesis/kustomization.yaml"
-                input_paths=(apps/synthesis packages/design nix/images/synthesis.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json)
+                input_paths=(apps/synthesis packages/design nix/images/synthesis.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock)
                 ;;
               docs)
                 manifest_path="argocd/applications/docs/kustomization.yaml"
-                input_paths=(apps/docs packages/design nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json)
+                input_paths=(apps/docs packages/design nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock)
                 ;;
               olden)
                 manifest_path="argocd/applications/olden/kustomization.yaml"
-                input_paths=(apps/olden packages/design nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json)
+                input_paths=(apps/olden packages/design nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock)
                 ;;
               *)
                 echo "Unsupported service in release contract: ${service}" >&2

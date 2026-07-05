@@ -28,7 +28,6 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'bun.lock'
-      - 'package.json'
   push:
     branches:
       - main
@@ -55,7 +54,6 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'bun.lock'
-      - 'package.json'
   workflow_dispatch:
     inputs:
       build_proompteng:
@@ -121,7 +119,6 @@ jobs:
               - 'nix/ci-*.sh'
               - 'flake.lock'
               - 'bun.lock'
-              - 'package.json'
             app:
               - 'apps/app/**'
               - 'packages/design/**'
@@ -133,7 +130,6 @@ jobs:
               - 'nix/ci-*.sh'
               - 'flake.lock'
               - 'bun.lock'
-              - 'package.json'
             synthesis:
               - 'apps/synthesis/**'
               - 'packages/design/**'
@@ -145,7 +141,6 @@ jobs:
               - 'nix/ci-*.sh'
               - 'flake.lock'
               - 'bun.lock'
-              - 'package.json'
             docs:
               - 'apps/docs/**'
               - 'packages/design/**'
@@ -157,7 +152,6 @@ jobs:
               - 'nix/ci-*.sh'
               - 'flake.lock'
               - 'bun.lock'
-              - 'package.json'
             olden:
               - 'apps/olden/**'
               - 'packages/design/**'
@@ -169,7 +163,6 @@ jobs:
               - 'nix/ci-*.sh'
               - 'flake.lock'
               - 'bun.lock'
-              - 'package.json'
 
       - name: Manual build selection
         id: manual

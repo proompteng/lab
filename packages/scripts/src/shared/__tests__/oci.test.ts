@@ -72,6 +72,8 @@ const agentsImageModule = readRepoFile('nix/images/agents.nix')
 const openaiCodexCliModule = readRepoFile('nix/images/openai-codex-cli.nix')
 const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts')
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
+const atticBuildScript = readRepoFile('packages/scripts/src/attic/build-image.ts')
+const atticDeployScript = readRepoFile('packages/scripts/src/attic/deploy-service.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
 const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-image.ts')
 const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
@@ -479,6 +481,20 @@ describe('native OCI build workflows', () => {
 
     expect(productNixWorkflow).not.toContain("'nix/**'")
     expect(agentsBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
+    for (const workflow of [
+      oiratWorkflow,
+      bumbaWorkflow,
+      froussardWorkflow,
+      productNixWorkflow,
+      agentsBuildWorkflow,
+      symphonyBuildWorkflow,
+      sagBuildWorkflow,
+    ]) {
+      expect(workflow).not.toContain("'package.json'")
+    }
+    for (const workflow of [enabledSimpleReleaseWorkflow, enabledProductReleaseWorkflow, sagReleaseWorkflow]) {
+      expect(workflow).not.toContain('package.json')
+    }
 
     for (const workflow of [jangarBuildWorkflow]) {
       expect(workflow).toContain("'packages/scripts/src/shared/cli.ts'")
@@ -550,6 +566,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain("- '.github/workflows/")
       expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
     }
+    expect(agentsCiWorkflow).not.toContain("- 'package.json'")
     expect(torghutCiWorkflow).not.toContain('github/workflows/torghut-')
   })
 
@@ -930,6 +947,7 @@ describe('native OCI build workflows', () => {
     for (const script of [
       oiratBuildScript,
       bumbaBuildScript,
+      atticBuildScript,
       froussardDeployScript,
       symphonyBuildScript,
       sagBuildScript,
@@ -952,6 +970,13 @@ describe('native OCI build workflows', () => {
       expect(script).toContain('noApply')
       expect(script).toContain('digest:')
     }
+    expect(atticDeployScript).not.toContain("from '../shared/docker'")
+    expect(atticDeployScript).not.toContain('inspectImageDigest')
+    expect(atticDeployScript).toContain("from './build-image'")
+    expect(atticDeployScript).toContain('dryRun')
+    expect(atticDeployScript).toContain('no-apply')
+    expect(atticDeployScript).toContain('registry.ide-newton.ts.net/lab/attic@sha256:<64 hex>')
+    expect(atticDeployScript).toContain('gc-cronjob.yaml')
     expect(symphonyDeployScript).not.toContain("from '../shared/docker'")
     expect(symphonyDeployScript).not.toContain('inspectImageDigest')
     expect(symphonyDeployScript).toContain('dryRun')

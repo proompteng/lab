@@ -113,6 +113,12 @@ describe('classifyAgentsImageMode', () => {
     expect(result.matchedPaths).toEqual(['bun.lock'])
   })
 
+  it('reuses the published image for root package script-only changes', () => {
+    const result = classifyAgentsImageMode(['package.json'])
+    expect(result.mode).toBe('reuse-published-image')
+    expect(result.matchedPaths).toEqual([])
+  })
+
   it('builds a local image for Agents Nix image input changes', () => {
     const result = classifyAgentsImageMode([
       'nix/images/agents.nix',

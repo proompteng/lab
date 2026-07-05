@@ -156,7 +156,7 @@ export const main = async () => {
   const { dryRun } = parseArguments()
 
   if (dryRun) {
-    console.log('Running in dry-run mode; skipping Docker push and kubectl apply.')
+    console.log('Running in dry-run mode; skipping Nix image push and kubectl apply.')
   } else {
     ensureCli('kubectl')
   }

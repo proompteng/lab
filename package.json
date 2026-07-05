@@ -64,6 +64,8 @@
     "test:golink": "bun run --filter @proompteng/golink test",
     "test:discord": "bun run --filter @proompteng/discord test",
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
+    "build:attic": "bun run packages/scripts/src/attic/build-image.ts",
+    "attic:deploy": "bun run packages/scripts/src/attic/deploy-service.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
     "agents:deploy": "bun run packages/scripts/src/agents/deploy-service.ts",
     "bonjour:deploy": "bun run packages/scripts/src/bonjour/deploy-service.ts",
