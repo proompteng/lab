@@ -585,6 +585,8 @@ describe('native OCI build workflows', () => {
 
     expect(jangarReleaseMetadataScript).not.toContain('.github\\/workflows\\/')
     expect(jangarReleaseMetadataScript).not.toContain('setup-nix-toolchain')
+    expect(jangarReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/jangar')
+    expect(jangarReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/shared')
     expect(jangarReleaseMetadataScript).toContain('images\\/jangar\\.nix')
     for (const helperInput of nixImageHelperInputs) {
       expect(jangarReleaseMetadataScript).toContain(helperInput.replaceAll('/', '\\/').replaceAll('.', '\\.'))
