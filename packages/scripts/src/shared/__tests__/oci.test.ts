@@ -1398,6 +1398,7 @@ describe('native OCI build workflows', () => {
     )
     expect(releasePrAutomergeWorkflow).toContain('[[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]')
     expect(releasePrAutomergeWorkflow).toContain('for required_label in automated-pr nix-oci')
+    expect(releasePrAutomergeWorkflow).toContain('"gregkonush"')
     expect(releasePrAutomergeWorkflow).toContain('reason=eligible:${release_kind}')
   })
 
