@@ -30,7 +30,7 @@ spec:
           args:
             - |
               deadline=$((SECONDS + 300))
-              until /opt/venv/bin/python - <<'PY'
+              until python - <<'PY'
               import os
               from sqlalchemy import create_engine, text
 
@@ -48,7 +48,7 @@ spec:
                 fi
                 sleep 5
               done
-              /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              alembic -c /app/alembic.ini upgrade heads
           env:
             - name: TORGHUT_COMMIT
               value: 9afbcac4b27576a5911e617ad8f98dd327c645b2
