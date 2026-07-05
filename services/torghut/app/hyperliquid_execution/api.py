@@ -235,6 +235,7 @@ def _config_payload() -> dict[str, object]:
         "feed_readiness_timeout_seconds": config.feed_readiness_timeout_seconds,
         "order_policy": config.order_policy,
         "effective_order_tif": config.effective_order_tif,
+        "marketable_ioc_slippage_bps": str(config.marketable_ioc_slippage_bps),
         "order_ttl_seconds": config.order_ttl_seconds,
         "max_open_orders_per_symbol": config.max_open_orders_per_symbol,
         "reject_cooldown_threshold": config.reject_cooldown_threshold,
