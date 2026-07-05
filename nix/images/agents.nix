@@ -94,6 +94,24 @@ let
       fi
     }
 
+    linkBunIsolatedPackage() {
+      local package_name="$1"
+      local target_path="$2"
+      local package_path
+      local relative_package_path
+
+      package_path="$(find "$out/app/node_modules/.bun" -path "*/node_modules/$package_name" -type d -print -quit)"
+      if [ -z "$package_path" ]; then
+        echo "Bun isolated package not found in runtime image: $package_name" >&2
+        exit 1
+      fi
+      relative_package_path="$(realpath --relative-to="$(dirname "$target_path")" "$package_path")"
+
+      rm -rf "$target_path"
+      mkdir -p "$(dirname "$target_path")"
+      ln -s "$relative_package_path" "$target_path"
+    }
+
     cp -R "$TMPDIR/work/node_modules" "$out/app/node_modules"
     for package in agent-contracts codex cx-tools otel temporal-bun-sdk; do
       cp -R "$TMPDIR/work/packages/$package" "$out/app/packages/$package"
@@ -108,8 +126,7 @@ let
 
     chmod +x "$out/app/services/agents/scripts/agents-shell-entrypoint.sh"
     mkdir -p "$out/app/packages/agent-contracts/node_modules"
-    rm -rf "$out/app/packages/agent-contracts/node_modules/effect"
-    ln -s /app/node_modules/effect "$out/app/packages/agent-contracts/node_modules/effect"
+    linkBunIsolatedPackage "effect" "$out/app/packages/agent-contracts/node_modules/effect"
   '';
 
   scriptWrapper =

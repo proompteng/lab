@@ -858,8 +858,9 @@ describe('native OCI build workflows', () => {
     )
     expect(agentsImageModule).toContain('rm -rf "$target_path"')
     expect(agentsImageModule).toContain('cp -R "$source_path/." "$target_path/"')
-    expect(agentsImageModule).toContain('rm -rf "$out/app/packages/agent-contracts/node_modules/effect"')
-    expect(agentsImageModule).toContain('ln -s /app/node_modules/effect')
+    expect(agentsImageModule).toContain('linkBunIsolatedPackage "effect"')
+    expect(agentsImageModule).toContain('realpath --relative-to="$(dirname "$target_path")" "$package_path"')
+    expect(agentsImageModule).toContain('Bun isolated package not found in runtime image')
   })
 
   it('routes enabled product app image builds through real Nix OCI attrs', () => {
