@@ -167,6 +167,6 @@ def test_trading_status_reports_operational_gate_without_alpha_blockers() -> Non
     assert blockers == ["dependency_not_ready:hyperliquid_feed_service"]
     assert payload["operational_submission_gate"]["enabled"] is False
     assert payload["live_submission_gate"] == payload["operational_submission_gate"]
-    assert "alpha_readiness_not_promotion_eligible" not in blockers
-    assert "runtime_ledger_source_collection_pending" not in blockers
-    assert "runtime_ledger_profit_target_source_collection_pending" not in blockers
+    assert "non_operational_diagnostic" not in blockers
+    assert "proof_collection_pending" not in blockers
+    assert "research_evidence_missing" not in blockers

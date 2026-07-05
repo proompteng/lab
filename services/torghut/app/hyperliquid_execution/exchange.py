@@ -590,7 +590,7 @@ def _fill_from_payload(
     price = _decimal(payload.get("px") or payload.get("price"))
     size = _decimal(payload.get("sz") or payload.get("size"))
     return Fill(
-        fill_hash=str(payload.get("hash") or payload.get("tid") or f"{coin}:{payload}"),
+        fill_hash=str(payload.get("tid") or payload.get("hash") or f"{coin}:{payload}"),
         market_id=market_id_by_coin[coin],
         coin=coin,
         side="buy"

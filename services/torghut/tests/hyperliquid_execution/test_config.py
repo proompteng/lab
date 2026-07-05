@@ -58,17 +58,32 @@ def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     assert config.max_symbol_margin_utilization == Decimal("0.08")
     assert config.max_order_margin_utilization == Decimal("0.02")
     assert config.marketable_ioc_slippage_bps == Decimal("0")
+    assert config.min_after_cost_edge_bps == Decimal("4")
+    assert config.min_edge_cost_ratio == Decimal("2")
+    assert config.max_symbol_turnover_equity_multiple_1h == Decimal("1")
+    assert config.min_seconds_between_symbol_entries == 300
+    assert config.min_seconds_between_side_flip == 900
 
     short_config = HyperliquidExecutionConfig.from_env(
         {
             "HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true",
             "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
             "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "50",
+            "HYPERLIQUID_EXECUTION_MIN_AFTER_COST_EDGE_BPS": "6",
+            "HYPERLIQUID_EXECUTION_MIN_EDGE_COST_RATIO": "3",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_TURNOVER_EQUITY_MULTIPLE_1H": "0.5",
+            "HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SYMBOL_ENTRIES": "60",
+            "HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SIDE_FLIP": "120",
         }
     )
     assert short_config.allow_short_entries is True
     assert short_config.maintenance_reduce_only_close_enabled is True
     assert short_config.marketable_ioc_slippage_bps == Decimal("50")
+    assert short_config.min_after_cost_edge_bps == Decimal("6")
+    assert short_config.min_edge_cost_ratio == Decimal("3")
+    assert short_config.max_symbol_turnover_equity_multiple_1h == Decimal("0.5")
+    assert short_config.min_seconds_between_symbol_entries == 60
+    assert short_config.min_seconds_between_side_flip == 120
 
 
 def test_config_accepts_feed_readiness_dependency_contract() -> None:
@@ -112,6 +127,11 @@ def test_config_reports_all_strict_contract_blockers() -> None:
             "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "1.2",
             "HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION": "1.3",
             "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "-1",
+            "HYPERLIQUID_EXECUTION_MIN_AFTER_COST_EDGE_BPS": "-1",
+            "HYPERLIQUID_EXECUTION_MIN_EDGE_COST_RATIO": "-1",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_TURNOVER_EQUITY_MULTIPLE_1H": "0",
+            "HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SYMBOL_ENTRIES": "-1",
+            "HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SIDE_FLIP": "-1",
             "HYPERLIQUID_EXECUTION_TRADE_COINS": "",
             "HYPERLIQUID_EXECUTION_EXCLUDED_COINS": "BTC",
             "HYPERLIQUID_EXECUTION_POLL_INTERVAL_SECONDS": "7",
@@ -132,6 +152,11 @@ def test_config_reports_all_strict_contract_blockers() -> None:
     assert "symbol_margin_utilization_must_not_exceed_target" in errors
     assert "order_margin_utilization_must_not_exceed_symbol" in errors
     assert "marketable_ioc_slippage_bps_must_be_non_negative" in errors
+    assert "min_after_cost_edge_bps_must_be_non_negative" in errors
+    assert "min_edge_cost_ratio_must_be_non_negative" in errors
+    assert "max_symbol_turnover_equity_multiple_1h_must_be_positive" in errors
+    assert "min_seconds_between_symbol_entries_must_be_non_negative" in errors
+    assert "min_seconds_between_side_flip_must_be_non_negative" in errors
     assert "trade_coins_required" in errors
     assert "spx_must_be_excluded" in errors
 

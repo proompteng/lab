@@ -111,6 +111,7 @@ def trading_status() -> dict[str, object]:
         reasons=reasons,
         config=runtime_state.config,
     )
+    runtime_payload = _runtime_report_payload()
     return {
         "ready": ready,
         "reasons": reasons,
@@ -122,8 +123,9 @@ def trading_status() -> dict[str, object]:
         "dependencies": [
             _dependency_payload(dependency) for dependency in dependencies
         ],
-        "latest_cycle": _runtime_report_payload(),
+        "latest_cycle": runtime_payload,
         "config": _config_payload(),
+        "profitability_gate": _latest_profitability_gate(runtime_payload),
         "operational_submission_gate": gate,
         "live_submission_gate": dict(gate),
     }
@@ -158,10 +160,13 @@ def metrics() -> Response:
 def report() -> dict[str, object]:
     session = SessionLocal()
     try:
-        return HyperliquidExecutionRepository(session).operational_report(
-            runtime_payload=_runtime_report_payload(),
+        runtime_payload = _runtime_report_payload()
+        payload = HyperliquidExecutionRepository(session).operational_report(
+            runtime_payload=runtime_payload,
             config_payload=_config_payload(),
         )
+        payload["profitability_gate"] = _latest_profitability_gate(runtime_payload)
+        return payload
     finally:
         session.close()
 
@@ -230,6 +235,13 @@ def _config_payload() -> dict[str, object]:
         "max_order_margin_utilization": str(config.max_order_margin_utilization),
         "max_daily_loss_usd": str(config.max_daily_loss_usd),
         "cost_buffer_bps": str(config.cost_buffer_bps),
+        "min_after_cost_edge_bps": str(config.min_after_cost_edge_bps),
+        "min_edge_cost_ratio": str(config.min_edge_cost_ratio),
+        "max_symbol_turnover_equity_multiple_1h": str(
+            config.max_symbol_turnover_equity_multiple_1h
+        ),
+        "min_seconds_between_symbol_entries": config.min_seconds_between_symbol_entries,
+        "min_seconds_between_side_flip": config.min_seconds_between_side_flip,
         "signal_staleness_seconds": config.signal_staleness_seconds,
         "feed_readiness_url_configured": config.feed_readiness_url is not None,
         "feed_readiness_timeout_seconds": config.feed_readiness_timeout_seconds,
@@ -243,6 +255,18 @@ def _config_payload() -> dict[str, object]:
         "reject_cooldown_seconds": config.reject_cooldown_seconds,
         "maintenance_reduce_only_close_enabled": config.maintenance_reduce_only_close_enabled,
     }
+
+
+def _latest_profitability_gate(runtime_payload: dict[str, object]) -> dict[str, object]:
+    universe = runtime_payload.get("universe")
+    if not isinstance(universe, dict):
+        return {}
+    typed_universe = cast(dict[str, object], universe)
+    gate = typed_universe.get("profitability_gate")
+    if not isinstance(gate, dict):
+        return {}
+    typed_gate = cast(dict[str, object], gate)
+    return dict(typed_gate)
 
 
 def _loop_status_trading_mode(config: HyperliquidExecutionConfig) -> str:

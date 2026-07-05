@@ -31,9 +31,9 @@ def test_execution_gate_ignores_diagnostics() -> None:
             route=route,
         ),
         diagnostics={
-            "alpha_readiness_not_promotion_eligible": True,
-            "runtime_ledger_profit_target_source_collection_pending": True,
-            "runtime_ledger_source_collection_pending": True,
+            "non_operational_diagnostic": True,
+            "proof_collection_pending": True,
+            "research_evidence_missing": True,
         },
     )
 
@@ -73,9 +73,9 @@ def test_execution_status_filters_diagnostic_reject_reasons() -> None:
         decision_reject_reason_total={
             "broker_submit_failed": 2,
             "capital_stage_shadow": 9,
-            "alpha_readiness_not_promotion_eligible": 1,
-            "runtime_ledger_profit_target_source_collection_pending": 1,
-            "runtime_ledger_source_collection_pending": 1,
+            "non_operational_diagnostic": 1,
+            "proof_collection_pending": 1,
+            "research_evidence_missing": 1,
         },
     )
     state = SimpleNamespace(metrics=metrics, last_execution_order=None)
@@ -84,10 +84,10 @@ def test_execution_status_filters_diagnostic_reject_reasons() -> None:
         state=state,
         live_submission_gate={
             "allowed": False,
-            "reason": "runtime_ledger_source_collection_pending",
+            "reason": "proof_collection_pending",
             "blocked_reasons": [
-                "runtime_ledger_source_collection_pending",
-                "runtime_ledger_profit_target_source_collection_pending",
+                "proof_collection_pending",
+                "research_evidence_missing",
             ],
             "execution_route": {
                 "route": "testnet",
@@ -204,11 +204,11 @@ def test_execution_status_coerces_reject_reason_counts() -> None:
         orders_submitted_total=0,
         orders_rejected_total=5,
         decision_reject_reason_total={
-            "bool_count": True,
-            "float_count": 2.8,
-            "string_count": "3.7",
-            "bad_string_count": "bad",
-            "object_count": object(),
+            "broker_submit_failed": True,
+            "trading_disabled": 2.8,
+            "submit_disabled": "3.7",
+            "live_submit_disabled": "bad",
+            "risk_breach": object(),
         },
     )
     state = SimpleNamespace(metrics=metrics, last_execution_order=None)
@@ -219,9 +219,9 @@ def test_execution_status_coerces_reject_reason_counts() -> None:
     )
 
     assert payload["reject_reason_totals"] == {
-        "bool_count": 1,
-        "float_count": 2,
-        "string_count": 3,
-        "bad_string_count": 1,
-        "object_count": 1,
+        "broker_submit_failed": 1,
+        "trading_disabled": 2,
+        "submit_disabled": 3,
+        "live_submit_disabled": 1,
+        "risk_breach": 1,
     }

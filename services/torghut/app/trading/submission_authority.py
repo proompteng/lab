@@ -6,21 +6,37 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 
-_DIAGNOSTIC_SUBMISSION_REASONS = frozenset(
+_OPERATIONAL_SUBMISSION_REASONS = frozenset(
     {
-        "alpha_readiness_not_promotion_eligible",
-        "hypothesis_not_promotion_eligible",
-        "portfolio_runtime_ledger_summary_missing",
-        "promotion_decision_missing",
-        "route_tca_passed_but_dependency_receipts_block_capital",
-        "runtime_ledger_profit_target_source_collection_pending",
-        "runtime_ledger_rows_missing",
-        "runtime_ledger_source_collection_pending",
-        "runtime_profit_target_import_required",
-        "runtime_window_import_required",
-        "stage_clearance_packet_missing",
+        "broker_submit_failed",
+        "emergency_stop_active",
+        "emergency_stop_triggered",
+        "invalid_order",
+        "kill_switch_enabled",
+        "live_submit_disabled",
+        "risk_breach",
+        "submit_disabled",
+        "testnet_after_hours_disabled",
+        "trading_disabled",
     }
 )
+_OPERATIONAL_SUBMISSION_SUFFIXES = ("_unavailable",)
+_OPERATIONAL_SUBMISSION_PREFIXES = ("dependency_not_ready:",)
+_DIAGNOSTIC_SUBMISSION_REASONS = frozenset(
+    {
+        "non_operational_diagnostic",
+        "runtime_profit_target_import_required",
+        "runtime_window_import_required",
+    }
+)
+_DIAGNOSTIC_SUBMISSION_PREFIXES = (
+    "proof_",
+    "promotion_",
+    "research_",
+    "source_collection_",
+    "runtime_ledger_",
+)
+_DIAGNOSTIC_SUBMISSION_SUFFIXES = ("_not_promotion_eligible",)
 
 
 def build_submission_authority_status(
@@ -56,10 +72,19 @@ def operational_submission_gate_status(
     nested_gate = _mapping(live_submission_gate.get("operational_submission_gate"))
     gate = nested_gate or live_submission_gate
     raw_blocked_reasons = _strings(gate.get("blocked_reasons"))
-    blocked_reasons = _active_submission_blockers(raw_blocked_reasons)
     raw_reason = _text(gate.get("reason"), "")
     raw_allowed = _bool(gate.get("allowed"))
-    reason = _active_submission_reason(raw_reason, blocked_reasons, raw_allowed)
+    blocked_reasons = _active_submission_blockers(
+        raw_blocked_reasons,
+        raw_reason=raw_reason,
+        raw_allowed=raw_allowed,
+    )
+    reason = _active_submission_reason(
+        raw_reason,
+        raw_blocked_reasons,
+        blocked_reasons,
+        raw_allowed,
+    )
     allowed = _active_submission_allowed(
         raw_allowed=raw_allowed,
         raw_reason=raw_reason,
@@ -87,37 +112,71 @@ def _active_submission_allowed(
         return False
     if raw_allowed:
         return True
-    if _is_diagnostic_submission_reason(raw_reason):
-        return True
-    if raw_blocked_reasons and not active_blocked_reasons:
-        return True
-    return False
+    return _has_only_diagnostic_submission_reasons(raw_reason, raw_blocked_reasons)
 
 
-def _active_submission_blockers(blocked_reasons: list[str]) -> list[str]:
-    return [
+def _active_submission_blockers(
+    blocked_reasons: list[str],
+    *,
+    raw_reason: str,
+    raw_allowed: bool,
+) -> list[str]:
+    active = [
         reason
-        for reason in blocked_reasons
-        if not _is_diagnostic_submission_reason(reason)
+        for reason in [raw_reason, *blocked_reasons]
+        if _is_operational_submission_reason(reason)
     ]
+    if raw_allowed:
+        return active
+    unknown_blockers = [
+        reason
+        for reason in [raw_reason, *blocked_reasons]
+        if reason
+        and not _is_operational_submission_reason(reason)
+        and not _is_diagnostic_submission_reason(reason)
+    ]
+    return list(dict.fromkeys([*active, *unknown_blockers]))
 
 
 def _active_submission_reason(
     raw_reason: str,
+    raw_blocked_reasons: list[str],
     blocked_reasons: list[str],
     raw_allowed: bool,
 ) -> str:
     if blocked_reasons:
         return blocked_reasons[0]
-    if _is_diagnostic_submission_reason(raw_reason):
+    if _has_only_diagnostic_submission_reasons(raw_reason, raw_blocked_reasons):
         return "operational_submission_ready"
     if raw_allowed:
         return raw_reason or "operational_submission_ready"
     return raw_reason or "unknown"
 
 
+def _is_operational_submission_reason(reason: str) -> bool:
+    return (
+        reason in _OPERATIONAL_SUBMISSION_REASONS
+        or reason.endswith(_OPERATIONAL_SUBMISSION_SUFFIXES)
+        or reason.startswith(_OPERATIONAL_SUBMISSION_PREFIXES)
+    )
+
+
+def _has_only_diagnostic_submission_reasons(
+    raw_reason: str,
+    raw_blocked_reasons: list[str],
+) -> bool:
+    reasons = [reason for reason in [raw_reason, *raw_blocked_reasons] if reason]
+    return bool(reasons) and all(
+        _is_diagnostic_submission_reason(reason) for reason in reasons
+    )
+
+
 def _is_diagnostic_submission_reason(reason: str) -> bool:
-    return reason in _DIAGNOSTIC_SUBMISSION_REASONS
+    return (
+        reason in _DIAGNOSTIC_SUBMISSION_REASONS
+        or reason.startswith(_DIAGNOSTIC_SUBMISSION_PREFIXES)
+        or reason.endswith(_DIAGNOSTIC_SUBMISSION_SUFFIXES)
+    )
 
 
 def _mapping(value: object) -> Mapping[str, Any]:

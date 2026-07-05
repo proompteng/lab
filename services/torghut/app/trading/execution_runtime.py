@@ -9,22 +9,19 @@ from typing import cast
 
 from .submission_authority import operational_submission_gate_status
 
-_DIAGNOSTIC_REJECT_REASONS = frozenset(
+_OPERATIONAL_REJECT_REASONS = frozenset(
     {
-        "alpha_readiness_not_promotion_eligible",
-        "capital_stage_shadow",
-        "hypothesis_not_promotion_eligible",
-        "portfolio_runtime_ledger_summary_missing",
-        "promotion_decision_missing",
-        "route_tca_passed_but_dependency_receipts_block_capital",
-        "runtime_ledger_profit_target_source_collection_pending",
-        "runtime_ledger_rows_missing",
-        "runtime_ledger_source_collection_pending",
-        "runtime_profit_target_import_required",
-        "runtime_window_import_required",
-        "stage_clearance_packet_missing",
+        "broker_submit_failed",
+        "invalid_order",
+        "kill_switch_enabled",
+        "live_submit_disabled",
+        "risk_breach",
+        "submit_disabled",
+        "trading_disabled",
     }
 )
+_OPERATIONAL_REJECT_SUFFIXES = ("_unavailable",)
+_OPERATIONAL_REJECT_PREFIXES = ("dependency_not_ready:",)
 
 
 @dataclass(frozen=True)
@@ -182,10 +179,18 @@ def _operational_reject_reason_totals(metrics: object) -> dict[str, int]:
     output: dict[str, int] = {}
     for raw_reason, raw_count in cast(Mapping[object, object], totals).items():
         reason = _optional_text(raw_reason)
-        if reason is None or reason in _DIAGNOSTIC_REJECT_REASONS:
+        if reason is None or not _is_operational_reject_reason(reason):
             continue
         output[reason] = _count(raw_count)
     return output
+
+
+def _is_operational_reject_reason(reason: str) -> bool:
+    return (
+        reason in _OPERATIONAL_REJECT_REASONS
+        or reason.endswith(_OPERATIONAL_REJECT_SUFFIXES)
+        or reason.startswith(_OPERATIONAL_REJECT_PREFIXES)
+    )
 
 
 def _count(value: object) -> int:
