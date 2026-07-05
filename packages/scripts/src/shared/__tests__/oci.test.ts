@@ -823,6 +823,7 @@ describe('native OCI build workflows', () => {
     expect(torghutImageModule).toContain('pkgs.bash')
     expect(torghutImageModule).toContain('pkgs.stdenv.cc.cc.lib')
     expect(torghutImageModule).toContain('"LD_LIBRARY_PATH=${runtimeLibraryPath}"')
+    expect(torghutImageModule).toContain('"PYTHONPATH=/app"')
     expect(torghutTaImageModule).toContain('pkgs.dockerTools.pullImage')
     expect(torghutTaImageModule).toContain('sha256:d357b0e1eb89eb4377735a008dfcbd35f7f06af6cba24dfbb6062379fb70a9a9')
     expect(torghutTaImageModule).toContain('sha256:c0b3512ea891d604c585d3cb217b75a2bf920d9faaa9f0770496476189d5f57f')
