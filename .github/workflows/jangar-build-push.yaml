@@ -9,7 +9,7 @@ on:
       - main
     paths:
       - 'services/jangar/**'
-      - 'packages/scripts/src/jangar/**'
+      - 'packages/scripts/src/jangar/build-image.ts'
       - 'packages/scripts/src/shared/cli.ts'
       - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
