@@ -13,10 +13,7 @@ from app.hyperliquid_execution.models import (
     RiskVerdict,
     RuntimeDependencyStatus,
 )
-from app.hyperliquid_execution.order_policy import (
-    build_maker_order_intent,
-    build_order_intent,
-)
+from app.hyperliquid_execution.order_policy import build_order_intent
 from app.hyperliquid_execution.risk import evaluate_signal_risk
 from app.hyperliquid_execution.maintenance import risk_state_over_cap
 from app.hyperliquid_execution.strategy import generate_signal
@@ -126,11 +123,14 @@ def test_risk_blocks_disabled_stale_open_order_caps_cooldown_and_missing_quotes(
     base_state = RiskState(
         trading_enabled=True,
         dependencies=(dependency,),
+        account_value_usd=Decimal("1000"),
+        withdrawable_usd=Decimal("900"),
         gross_exposure_usd=Decimal("0"),
         daily_realized_pnl_usd=Decimal("0"),
         open_order_coins=frozenset(),
         symbol_exposure_usd_by_coin={},
         cooldown_reason_by_coin={},
+        max_leverage_by_coin={"NVDA": Decimal("20")},
     )
     signal = generate_signal(_feature(momentum=Decimal("12")), config)
 
@@ -162,7 +162,8 @@ def test_risk_blocks_disabled_stale_open_order_caps_cooldown_and_missing_quotes(
         base_state.__class__(
             **{
                 **base_state.__dict__,
-                "symbol_exposure_usd_by_coin": {"NVDA": Decimal("25")},
+                "symbol_exposure_usd_by_coin": {"NVDA": Decimal("1600")},
+                "gross_exposure_usd": Decimal("1600"),
             }
         ),
         config,
@@ -192,22 +193,82 @@ def test_risk_blocks_short_entries_by_default() -> None:
     assert allowed.allowed
 
 
-def test_over_cap_trigger_includes_symbol_exposure_breach() -> None:
+def test_risk_sizes_orders_from_symbol_margin_capacity() -> None:
     config = HyperliquidExecutionConfig.from_env(
         {
-            "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "250",
-            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "50",
+            "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.35",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.08",
+            "HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION": "0.02",
+        }
+    )
+    signal = generate_signal(
+        _feature(momentum=Decimal("20"), liquidity=Decimal("1000000")),
+        config,
+    )
+
+    full_budget = evaluate_signal_risk(signal, _risk_state(), config)
+    clipped_budget = evaluate_signal_risk(
+        signal,
+        replace(
+            _risk_state(),
+            gross_exposure_usd=Decimal("1500"),
+            symbol_exposure_usd_by_coin={"NVDA": Decimal("1500")},
+        ),
+        config,
+    )
+
+    assert full_budget.allowed
+    assert full_budget.order_notional_usd == Decimal("400.000000")
+    assert clipped_budget.allowed
+    assert clipped_budget.order_notional_usd == Decimal("100.000000")
+
+
+def test_risk_blocks_when_symbol_margin_metadata_is_missing() -> None:
+    config = HyperliquidExecutionConfig.from_env({})
+    signal = generate_signal(
+        _feature(momentum=Decimal("20"), liquidity=Decimal("1000000")),
+        config,
+    )
+
+    verdict = evaluate_signal_risk(
+        signal,
+        replace(_risk_state(), max_leverage_by_coin={}),
+        config,
+    )
+
+    assert not verdict.allowed
+    assert verdict.reason == "symbol_margin_metadata_missing"
+
+
+def test_over_budget_trigger_uses_margin_not_fixed_notional() -> None:
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.35",
+            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.08",
+            "HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION": "0.02",
         }
     )
     state = _risk_state()
 
     assert not risk_state_over_cap(state, config)
     assert risk_state_over_cap(
-        replace(state, symbol_exposure_usd_by_coin={"NVDA": Decimal("50")}),
+        replace(
+            state,
+            gross_exposure_usd=Decimal("1600"),
+            symbol_exposure_usd_by_coin={"NVDA": Decimal("1600")},
+        ),
         config,
     )
     assert risk_state_over_cap(
-        replace(state, gross_exposure_usd=Decimal("250")),
+        replace(
+            state,
+            gross_exposure_usd=Decimal("7000"),
+            symbol_exposure_usd_by_coin={
+                "NVDA": Decimal("700"),
+                "MU": Decimal("6300"),
+            },
+            max_leverage_by_coin={"NVDA": Decimal("20"), "MU": Decimal("20")},
+        ),
         config,
     )
 
@@ -257,44 +318,7 @@ def test_restore_order_policy_uses_ioc_crossing_quote_and_ttl() -> None:
     assert buy_intent.expires_at.timestamp() - now.timestamp() == 10
 
 
-def test_maker_order_policy_still_uses_alo_bid_ask_when_explicit() -> None:
-    config = HyperliquidExecutionConfig.from_env(
-        {
-            "HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true",
-            "HYPERLIQUID_EXECUTION_ORDER_POLICY": "maker_ttl",
-            "HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS": "45",
-        }
-    )
-    now = datetime(2026, 6, 19, tzinfo=timezone.utc)
-    buy_signal = generate_signal(
-        _feature(momentum=Decimal("12"), bid=Decimal("10"), ask=Decimal("10.02")),
-        config,
-        now=now,
-    )
-
-    intent = build_maker_order_intent(
-        signal=buy_signal,
-        verdict=evaluate_signal_risk(buy_signal, _risk_state(), config),
-        config=config,
-        signal_id="signal-buy",
-        now=now,
-    )
-    active_policy_intent = build_order_intent(
-        signal=buy_signal,
-        verdict=evaluate_signal_risk(buy_signal, _risk_state(), config),
-        config=config,
-        signal_id="signal-buy",
-        now=now,
-    )
-
-    assert intent.tif == "Alo"
-    assert intent.limit_price == Decimal("10")
-    assert intent.expires_at.timestamp() - now.timestamp() == 45
-    assert active_policy_intent.tif == "Alo"
-    assert active_policy_intent.limit_price == Decimal("10")
-
-
-def test_maker_order_policy_rounds_size_up_to_clear_min_notional() -> None:
+def test_ioc_order_policy_rounds_size_up_to_clear_min_notional() -> None:
     config = HyperliquidExecutionConfig.from_env({})
     signal = generate_signal(
         _feature(momentum=Decimal("12"), bid=Decimal("99.5"), ask=Decimal("99.99")),
@@ -312,7 +336,7 @@ def test_maker_order_policy_rounds_size_up_to_clear_min_notional() -> None:
     assert intent.size == Decimal("0.1001")
 
 
-def test_maker_order_policy_rejects_blocked_or_unusable_quotes() -> None:
+def test_ioc_order_policy_rejects_blocked_or_unusable_quotes() -> None:
     config = HyperliquidExecutionConfig.from_env({})
     high_floor_config = HyperliquidExecutionConfig.from_env(
         {"HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD": "100"}
@@ -357,6 +381,7 @@ def _feature(
     *,
     momentum: Decimal,
     spread: Decimal = Decimal("1"),
+    liquidity: Decimal = Decimal("10000"),
     bid: Decimal | None = Decimal("10"),
     ask: Decimal | None = Decimal("10.01"),
     source_lag: int = 1,
@@ -369,7 +394,7 @@ def _feature(
         price=Decimal("10"),
         momentum_5m_bps=momentum,
         spread_bps=spread,
-        liquidity_usd=Decimal("10000"),
+        liquidity_usd=liquidity,
         volatility_bps=Decimal("50"),
         book_imbalance=Decimal("0"),
         source_lag_seconds=source_lag,
@@ -388,4 +413,7 @@ def _risk_state() -> RiskState:
         open_order_coins=frozenset(),
         symbol_exposure_usd_by_coin={},
         cooldown_reason_by_coin={},
+        account_value_usd=Decimal("1000"),
+        withdrawable_usd=Decimal("900"),
+        max_leverage_by_coin={"NVDA": Decimal("20")},
     )

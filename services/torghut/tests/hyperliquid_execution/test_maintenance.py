@@ -30,6 +30,7 @@ def test_reduce_only_close_dry_run_selects_excluded_positions_only() -> None:
             "entry_price": "0.36221",
             "notional_usd": "99.094016",
             "unrealized_pnl_usd": "-0.58",
+            "max_leverage": None,
         }
     ]
     assert report["actions"][0]["status"] == "dry_run"
@@ -91,7 +92,8 @@ def test_reduce_only_over_cap_closes_largest_position_first() -> None:
                 "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
                 "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
                 "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
-                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "50",
+                "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.05",
+                "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.05",
             }
         ),
         exchange=exchange,
@@ -100,7 +102,7 @@ def test_reduce_only_over_cap_closes_largest_position_first() -> None:
 
     assert report["over_cap"] is True
     assert report["blockers"] == []
-    assert report["actions"][0]["reason"] == "gross_exposure_cap"
+    assert report["actions"][0]["reason"] == "gross_margin_budget_exhausted"
     assert report["actions"][0]["status"] == "filled"
     assert report["actions"][0]["coin"] == "SPX"
     assert exchange.closed == [("SPX", Decimal("275.2"), Decimal("0.05"))]
@@ -112,7 +114,8 @@ def test_reduce_only_over_cap_dry_run_marks_largest_position() -> None:
     report = close_largest_positions_over_cap(
         config=HyperliquidExecutionConfig.from_env(
             {
-                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "50",
+                "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.05",
+                "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.05",
             }
         ),
         exchange=exchange,
@@ -120,7 +123,7 @@ def test_reduce_only_over_cap_dry_run_marks_largest_position() -> None:
     )
 
     assert report["over_cap"] is True
-    assert report["actions"][0]["reason"] == "gross_exposure_cap"
+    assert report["actions"][0]["reason"] == "gross_margin_budget_exhausted"
     assert report["actions"][0]["status"] == "dry_run"
     assert exchange.closed == []
 
@@ -135,8 +138,8 @@ def test_reduce_only_over_symbol_cap_closes_symbol_breach_below_gross_cap() -> N
                 "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
                 "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
                 "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
-                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "250",
-                "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "50",
+                "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.35",
+                "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.05",
             }
         ),
         exchange=exchange,
@@ -148,7 +151,7 @@ def test_reduce_only_over_symbol_cap_closes_symbol_breach_below_gross_cap() -> N
     assert report["symbol_over_cap"] is True
     assert report["symbol_over_cap_coins"] == ["SPX"]
     assert report["blockers"] == []
-    assert report["actions"][0]["reason"] == "symbol_exposure_cap"
+    assert report["actions"][0]["reason"] == "symbol_margin_budget_exhausted"
     assert report["actions"][0]["status"] == "filled"
     assert report["actions"][0]["coin"] == "SPX"
     assert exchange.closed == [("SPX", Decimal("275.2"), Decimal("0.05"))]
@@ -163,7 +166,8 @@ def test_reduce_only_over_cap_requires_maintenance_flag_when_executing() -> None
                 "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
                 "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
                 "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "50",
+                "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.05",
+                "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.05",
             }
         ),
         exchange=exchange,

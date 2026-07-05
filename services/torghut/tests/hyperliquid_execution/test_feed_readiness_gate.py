@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -312,12 +313,15 @@ class _Exchange:
         self,
         markets: tuple[ExecutionMarket, ...],
     ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        return markets, RuntimeDependencyStatus(
+        selected = tuple(
+            replace(market, max_leverage=Decimal("20")) for market in markets
+        )
+        return selected, RuntimeDependencyStatus(
             "hyperliquid_execution_metadata",
             True,
             details={
-                "active_execution_metadata": [market.coin for market in markets],
-                "selected": [market.coin for market in markets],
+                "active_execution_metadata": [market.coin for market in selected],
+                "selected": [market.coin for market in selected],
             },
         )
 
@@ -378,7 +382,14 @@ class _Session:
 
     def _rows_for(self, sql: str) -> list[dict[str, object]]:
         if "daily_realized_pnl_usd" in sql:
-            return [{"gross_exposure_usd": "10", "daily_realized_pnl_usd": "1"}]
+            return [
+                {
+                    "account_value_usd": "1000",
+                    "withdrawable_usd": "900",
+                    "gross_exposure_usd": "10",
+                    "daily_realized_pnl_usd": "1",
+                }
+            ]
         if "SELECT DISTINCT coin" in sql:
             return []
         if "GROUP BY coin" in sql and "exposures" in sql:

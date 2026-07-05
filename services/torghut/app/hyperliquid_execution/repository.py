@@ -502,31 +502,9 @@ class HyperliquidExecutionRepository:
         *,
         trading_enabled: bool,
         dependencies: tuple[RuntimeDependencyStatus, ...],
+        max_leverage_by_coin: dict[str, Decimal] | None = None,
     ) -> RiskState:
-        account_row = (
-            self._session.execute(
-                text(
-                    """
-                    SELECT
-                      COALESCE((
-                        SELECT gross_exposure_usd
-                        FROM hyperliquid_execution_account_snapshots
-                        WHERE execution_network = 'testnet'
-                        ORDER BY observed_at DESC
-                        LIMIT 1
-                      ), 0) AS gross_exposure_usd,
-                      COALESCE((
-                        SELECT SUM(closed_pnl_usd - fee_usd)
-                        FROM hyperliquid_execution_fills
-                        WHERE execution_network = 'testnet'
-                          AND event_ts >= date_trunc('day', now())
-                      ), 0) AS daily_realized_pnl_usd
-                    """
-                )
-            )
-            .mappings()
-            .one()
-        )
+        account_row = self._risk_account_row()
         open_rows = self._session.execute(
             text(
                 """
@@ -568,6 +546,8 @@ class HyperliquidExecutionRepository:
         return RiskState(
             trading_enabled=trading_enabled,
             dependencies=dependencies,
+            account_value_usd=Decimal(str(account_row["account_value_usd"])),
+            withdrawable_usd=Decimal(str(account_row["withdrawable_usd"])),
             gross_exposure_usd=Decimal(str(account_row["gross_exposure_usd"])),
             daily_realized_pnl_usd=Decimal(str(account_row["daily_realized_pnl_usd"])),
             open_order_coins=frozenset(str(row["coin"]) for row in open_rows),
@@ -578,6 +558,47 @@ class HyperliquidExecutionRepository:
             cooldown_reason_by_coin={
                 str(row["coin"]): str(row["cooldown_reason"]) for row in cooldown_rows
             },
+            max_leverage_by_coin=dict(max_leverage_by_coin or {}),
+        )
+
+    def _risk_account_row(self) -> Mapping[str, object]:
+        return (
+            self._session.execute(
+                text(
+                    """
+                    SELECT
+                      COALESCE((
+                        SELECT account_value_usd
+                        FROM hyperliquid_execution_account_snapshots
+                        WHERE execution_network = 'testnet'
+                        ORDER BY observed_at DESC
+                        LIMIT 1
+                      ), 0) AS account_value_usd,
+                      COALESCE((
+                        SELECT withdrawable_usd
+                        FROM hyperliquid_execution_account_snapshots
+                        WHERE execution_network = 'testnet'
+                        ORDER BY observed_at DESC
+                        LIMIT 1
+                      ), 0) AS withdrawable_usd,
+                      COALESCE((
+                        SELECT gross_exposure_usd
+                        FROM hyperliquid_execution_account_snapshots
+                        WHERE execution_network = 'testnet'
+                        ORDER BY observed_at DESC
+                        LIMIT 1
+                      ), 0) AS gross_exposure_usd,
+                      COALESCE((
+                        SELECT SUM(closed_pnl_usd - fee_usd)
+                        FROM hyperliquid_execution_fills
+                        WHERE execution_network = 'testnet'
+                          AND event_ts >= date_trunc('day', now())
+                      ), 0) AS daily_realized_pnl_usd
+                    """
+                )
+            )
+            .mappings()
+            .one()
         )
 
     def insert_performance_snapshot(self, *, observed_at: datetime) -> None:

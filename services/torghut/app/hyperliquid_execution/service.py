@@ -91,6 +91,11 @@ class HyperliquidExecutionService:
         risk_state = repository.risk_state(
             trading_enabled=self._config.order_submission_enabled(),
             dependencies=context.dependencies,
+            max_leverage_by_coin={
+                market.coin: market.max_leverage
+                for market in context.markets
+                if market.max_leverage is not None
+            },
         )
         maintenance_reduce_only = self._reduce_over_cap_exposure(risk_state)
         counts.record_maintenance_reduce_only(maintenance_reduce_only)

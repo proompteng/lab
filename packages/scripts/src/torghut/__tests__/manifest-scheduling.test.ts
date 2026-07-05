@@ -293,7 +293,7 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('runs the Hyperliquid v2 hard-reset runtime with capped testnet trading enabled', () => {
+  it('runs the Hyperliquid v2 hard-reset runtime with margin-budgeted testnet trading enabled', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(Object.keys(runtimeData).some((key) => key.startsWith('HYPERLIQUID_RUNTIME_'))).toBe(false)
@@ -305,15 +305,19 @@ describe('Torghut manifest scheduling', () => {
       'BTC,ETH,HYPE,SOL,xyz:SKHX,xyz:MU,xyz:XYZ100,xyz:CL,xyz:SNDK,xyz:MSTR,xyz:SILVER,xyz:GOLD',
     )
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXCLUDED_COINS).toBe('SPX')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('12')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('12')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBe('50')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBe('250')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION).toBe('0.35')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION).toBe('0.08')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION).toBe('0.02')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS).toBe('50')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_POLICY).toBe('marketable_ioc')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TIF).toBe('Ioc')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS).toBe('10')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_TTL_SECONDS).toBe('10')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TIF).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_OPEN_ORDERS_PER_SYMBOL).toBe('1')
     expect(runtimeData.HYPERLIQUID_EXECUTION_FEED_READINESS_URL).toBe(
       'http://torghut-hyperliquid-feed.torghut.svc.cluster.local/readyz',
@@ -324,7 +328,7 @@ describe('Torghut manifest scheduling', () => {
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-executable-ioc-20260704a',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-margin-aware-ioc-20260705a',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')
@@ -408,7 +412,8 @@ describe('Torghut manifest scheduling', () => {
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
     expect(readme).toContain('HYPERLIQUID_EXECUTION_TRADING_ENABLED=true')
     expect(readme).toContain('ORDER_POLICY=marketable_ioc')
-    expect(readme).toContain('MAKER_TIF=Ioc')
+    expect(readme).toContain('ORDER_TTL_SECONDS=10')
+    expect(readme).toContain('TARGET_MARGIN_UTILIZATION=0.35')
     expect(readme).toContain('SPX')
     expect(bootstrapScript).toContain('$0 check')
     expect(bootstrapScript).toContain('check_item()')
