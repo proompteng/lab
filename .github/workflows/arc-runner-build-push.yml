@@ -14,12 +14,8 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'nix/oci-doctor.sh'
       - 'nix/toolchain-doctor.sh'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/arc-runner-build-push.yml'
   push:
     branches:
       - main
@@ -32,12 +28,8 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'nix/oci-doctor.sh'
       - 'nix/toolchain-doctor.sh'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/arc-runner-build-push.yml'
   workflow_dispatch:
 
 concurrency:

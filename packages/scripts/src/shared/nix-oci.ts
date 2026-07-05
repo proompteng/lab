@@ -33,6 +33,8 @@ export type NixOciReleaseContract = {
   sourceSha: string
   packageAttr: string
   platforms: NixOciPlatform[]
+  lockfileHashes: Record<string, string>
+  toolVersions: Record<string, string>
   builder: 'nix-dockerTools-skopeo'
   invocation: 'github-actions' | 'manual-script'
 }
@@ -113,6 +115,8 @@ export const buildNixOciReleaseContract = (input: {
   plan: NixOciBuildPlan
   digest: string
   invocation: NixOciReleaseContract['invocation']
+  lockfileHashes?: Record<string, string>
+  toolVersions?: Record<string, string>
 }): NixOciReleaseContract => {
   const digest = normalizeNonEmpty(input.digest, 'digest')
   if (!digest.startsWith('sha256:')) {
@@ -128,6 +132,8 @@ export const buildNixOciReleaseContract = (input: {
     sourceSha: input.plan.sourceSha,
     packageAttr: input.plan.packageAttr,
     platforms: input.plan.platforms,
+    lockfileHashes: input.lockfileHashes ?? {},
+    toolVersions: input.toolVersions ?? {},
     builder: 'nix-dockerTools-skopeo',
     invocation: input.invocation,
   }

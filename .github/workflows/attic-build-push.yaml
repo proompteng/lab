@@ -14,7 +14,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'docs/nix-cache.md'
       - 'docs/nix-oci-real-image-build-adoption-plan.md'
   push:
@@ -29,7 +28,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'docs/nix-cache.md'
       - 'docs/nix-oci-real-image-build-adoption-plan.md'
   workflow_dispatch:

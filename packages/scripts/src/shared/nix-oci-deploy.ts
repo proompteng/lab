@@ -1,4 +1,5 @@
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from './cli'
@@ -30,6 +31,8 @@ export type BuildAndPushNixImageResult = {
   contractPath: string
   platforms: string[]
   platformDigests: Record<string, string>
+  lockfileHashes: Record<string, string>
+  toolVersions: Record<string, string>
   imageTarPath?: string
   dryRun?: boolean
 }
@@ -55,6 +58,36 @@ const runCapture = (command: string, args: string[]): string => {
   return stdout
 }
 
+const runVersion = (command: string, args: string[]): string | undefined => {
+  if (!Bun.which(command)) {
+    return undefined
+  }
+  const result = Bun.spawnSync([command, ...args], { cwd: repoRoot })
+  if (result.exitCode !== 0) {
+    return undefined
+  }
+  return result.stdout.toString().trim() || result.stderr.toString().trim() || undefined
+}
+
+const collectLockfileHashes = (): Record<string, string> => {
+  const hashes: Record<string, string> = {}
+  for (const path of ['flake.lock', 'bun.lock']) {
+    const absolutePath = resolve(repoRoot, path)
+    if (!existsSync(absolutePath)) continue
+    hashes[path] = createHash('sha256').update(readFileSync(absolutePath)).digest('hex')
+  }
+  return hashes
+}
+
+const collectToolVersions = (): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries({
+      nix: runVersion('nix', ['--version']),
+      skopeo: runVersion('skopeo', ['--version']),
+      crane: runVersion('crane', ['version']),
+    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
+  )
+
 const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'manual-script') => {
   mkdirSync(dirname(result.contractPath), { recursive: true })
   writeFileSync(
@@ -70,6 +103,8 @@ const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'm
         packageAttr: result.packageAttr,
         platforms: result.platforms,
         platformDigests: result.platformDigests,
+        lockfileHashes: result.lockfileHashes,
+        toolVersions: result.toolVersions,
         imageTarPath: result.imageTarPath,
         builder: 'nix-dockerTools-skopeo',
         invocation,
@@ -104,6 +139,8 @@ export const buildAndPushNixImage = async (
     repoRoot,
     options.contractPath ?? `.artifacts/${options.service}/manual-release-contract.json`,
   )
+  const lockfileHashes = collectLockfileHashes()
+  const toolVersions = collectToolVersions()
 
   if (options.dryRun) {
     const dryRunDigest = 'sha256:dry-run'
@@ -118,6 +155,8 @@ export const buildAndPushNixImage = async (
       contractPath,
       platforms: [],
       platformDigests: {},
+      lockfileHashes,
+      toolVersions,
       dryRun: true,
     }
     writeReleaseContract(result, 'manual-script')
@@ -154,6 +193,8 @@ export const buildAndPushNixImage = async (
     contractPath,
     platforms: observedPlatforms.map((entry) => entry.platform),
     platformDigests: Object.fromEntries(observedPlatforms.map((entry) => [entry.platform, entry.digest])),
+    lockfileHashes,
+    toolVersions,
     imageTarPath: tarPath,
   }
   writeReleaseContract(result, 'manual-script')

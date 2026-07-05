@@ -69,17 +69,13 @@ const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string 
 }
 
 describe('torghut build-push workflow', () => {
-  it('builds the core Torghut image for release helper and shared build changes', () => {
+  it('builds the core Torghut image for source and image input changes only', () => {
     const requiredPatterns = [
       'services/torghut/**',
       'packages/scripts/src/torghut/**',
       'packages/scripts/src/shared/cli.ts',
       'packages/scripts/src/shared/git.ts',
       'nix/images/torghut.nix',
-      '.github/workflows/torghut-build-push.yaml',
-      '.github/workflows/torghut-release.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      '.github/actions/setup-nix-toolchain/**',
     ]
 
     for (const pattern of requiredPatterns) {
@@ -90,6 +86,14 @@ describe('torghut build-push workflow', () => {
     expect(pathPatternIndex('!packages/scripts/src/torghut/__tests__/**')).toBeGreaterThan(scriptsInclude)
     expect(pathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')).toBeGreaterThan(scriptsInclude)
     expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
+    for (const workflowOnlyPath of [
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+    ]) {
+      expect(pathPatternIndex(workflowOnlyPath)).toBe(-1)
+    }
   })
 
   it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {
@@ -203,7 +207,7 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/hyperliquid-feed/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/platform/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
-    expect(hyperliquidFeedWorkflow).toContain("- 'nix/oci-release-contract.sh'")
+    expect(hyperliquidFeedWorkflow).not.toContain("- 'nix/oci-release-contract.sh'")
     expect(hyperliquidFeedWorkflow).not.toContain("- 'services/dorvud/**'")
     expect(hyperliquidFeedWorkflow).not.toContain('workflow_run:')
     expect(hyperliquidFeedWorkflow).toContain("github.event_name == 'push'")

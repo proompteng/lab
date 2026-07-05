@@ -27,6 +27,22 @@ for name in "${required_env[@]}"; do
   fi
 done
 
+lockfile_hashes="$(jq -n '{}')"
+for lockfile in flake.lock bun.lock; do
+  if [[ -f "${lockfile}" ]]; then
+    hash="$(sha256sum "${lockfile}" | awk '{print $1}')"
+    lockfile_hashes="$(jq --arg path "${lockfile}" --arg hash "${hash}" '. + {($path): $hash}' <<< "${lockfile_hashes}")"
+  fi
+done
+
+tool_versions="$(
+  jq -n \
+    --arg nix "$(nix --version 2>/dev/null || true)" \
+    --arg skopeo "$(skopeo --version 2>/dev/null || true)" \
+    --arg crane "$(crane version 2>/dev/null || true)" \
+    '{nix: $nix, skopeo: $skopeo, crane: $crane} | with_entries(select(.value != ""))'
+)"
+
 mkdir -p "$(dirname "${output_path}")"
 jq -n \
   --arg service "${SERVICE}" \
@@ -39,6 +55,8 @@ jq -n \
   --arg platforms "${PLATFORMS}" \
   --arg platformDigestAmd64 "${PLATFORM_DIGEST_AMD64}" \
   --arg platformDigestArm64 "${PLATFORM_DIGEST_ARM64}" \
+  --argjson lockfileHashes "${lockfile_hashes}" \
+  --argjson toolVersions "${tool_versions}" \
   --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{
     service: $service,
@@ -53,6 +71,8 @@ jq -n \
       "linux/amd64": $platformDigestAmd64,
       "linux/arm64": $platformDigestArm64
     },
+    lockfileHashes: $lockfileHashes,
+    toolVersions: $toolVersions,
     builder: "nix-dockerTools-skopeo",
     invocation: "github-actions",
     createdAt: $createdAt

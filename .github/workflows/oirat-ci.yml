@@ -16,7 +16,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'bun.lock'
       - 'tsconfig.base.json'
   pull_request:
@@ -32,7 +31,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'bun.lock'
       - 'tsconfig.base.json'
   workflow_dispatch:

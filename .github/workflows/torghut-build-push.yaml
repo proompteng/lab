@@ -18,13 +18,8 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'services/torghut/uv.lock'
-      - '.github/workflows/torghut-build-push.yaml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -41,13 +36,8 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'services/torghut/uv.lock'
-      - '.github/workflows/torghut-build-push.yaml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:

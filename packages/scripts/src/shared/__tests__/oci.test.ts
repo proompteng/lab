@@ -466,6 +466,10 @@ describe('native OCI build workflows', () => {
     expect(ociReleaseContractScript).toContain('platformDigests: {')
     expect(ociReleaseContractScript).toContain('"linux/amd64": $platformDigestAmd64')
     expect(ociReleaseContractScript).toContain('"linux/arm64": $platformDigestArm64')
+    expect(ociReleaseContractScript).toContain('lockfileHashes: $lockfileHashes')
+    expect(ociReleaseContractScript).toContain('toolVersions: $toolVersions')
+    expect(ociReleaseContractScript).toContain('sha256sum "${lockfile}"')
+    expect(ociReleaseContractScript).toContain('skopeo --version')
     expect(ociReleaseContractScript).toContain('createdAt: $createdAt')
   })
 
@@ -524,6 +528,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain("'packages/scripts/src/shared/**'")
       expect(workflow).not.toContain('- packages/scripts/src/shared/**')
       expect(workflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
+      expect(workflow).not.toContain("- 'nix/oci-release-contract.sh'")
     }
 
     expect(productNixWorkflow).not.toContain("'nix/**'")
@@ -552,6 +557,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
       expect(workflow).toContain("'nix/images/jangar.nix'")
       expect(workflow).toContain("'nix/images/bun-workspace-service.nix'")
+      expect(workflow).not.toContain("- 'nix/oci-release-contract.sh'")
     }
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/symphony/**'")
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/cli.ts'")
@@ -609,6 +615,7 @@ describe('native OCI build workflows', () => {
   it('does not fan out migrated image builds on workflow-only changes', () => {
     const migratedImageWorkflows = [
       atticWorkflow,
+      arcRunnerBuildWorkflow,
       oiratWorkflow,
       bumbaWorkflow,
       froussardWorkflow,
@@ -617,6 +624,7 @@ describe('native OCI build workflows', () => {
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
+      torghutBuildWorkflow,
       torghutTaBuildWorkflow,
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
@@ -632,9 +640,11 @@ describe('native OCI build workflows', () => {
     for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
       expect(workflow).not.toContain("- '.github/workflows/")
       expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
+      expect(workflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
     }
     expect(agentsCiWorkflow).not.toContain("- 'package.json'")
     expect(torghutCiWorkflow).not.toContain('github/workflows/torghut-')
+    expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/oci-digest.ts'")
   })
 
   it('does not fan out migrated image builds on unrelated flake attr changes', () => {
@@ -1258,6 +1268,8 @@ describe('native OCI build workflows', () => {
     expect(nixOciDeployScript).toContain('Pushed Nix OCI image has no observable platform metadata')
     expect(nixOciDeployScript).toContain('platformDigests')
     expect(nixOciDeployScript).toContain('imageTarPath')
+    expect(nixOciDeployScript).toContain('collectLockfileHashes')
+    expect(nixOciDeployScript).toContain('collectToolVersions')
     expect(nixOciPlanScript).toContain('Nix OCI image pushes must stay in')
   })
 

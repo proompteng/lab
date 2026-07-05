@@ -19,7 +19,6 @@ on:
       - 'nix/images/symphony.nix'
       - 'nix/images/bun-workspace-service.nix'
       - 'nix/packages.nix'
-      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'package.json'
       - 'bun.lock'
       - 'flake.nix'
