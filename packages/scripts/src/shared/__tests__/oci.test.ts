@@ -83,6 +83,10 @@ const sagDeployScript = readRepoFile('packages/scripts/src/sag/deploy-service.ts
 const agentsBuildScript = readRepoFile('packages/scripts/src/agents/build-image.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
 const torghutBuildScript = readRepoFile('packages/scripts/src/torghut/build-image.ts')
+const torghutImageBuildersScript = readRepoFile('packages/scripts/src/torghut/image-builders.ts')
+const torghutWsBuildScript = readRepoFile('packages/scripts/src/torghut/build-ws-image.ts')
+const torghutTaBuildScript = readRepoFile('packages/scripts/src/torghut/build-ta-image.ts')
+const torghutHyperliquidFeedBuildScript = readRepoFile('packages/scripts/src/torghut/build-hyperliquid-feed-image.ts')
 const torghutDeployScript = readRepoFile('packages/scripts/src/torghut/deploy-service.ts')
 const torghutTaDeployScript = readRepoFile('packages/scripts/src/torghut/deploy-ta.ts')
 const torghutUpdateScripts = [
@@ -957,9 +961,7 @@ describe('native OCI build workflows', () => {
       sagBuildScript,
       agentsBuildScript,
       agentsDeployScript,
-      torghutBuildScript,
-      torghutDeployScript,
-      torghutTaDeployScript,
+      torghutImageBuildersScript,
       ...productBuildScripts,
     ]) {
       expect(script).toContain("from '../shared/nix-oci-deploy'")
@@ -1002,6 +1004,23 @@ describe('native OCI build workflows', () => {
     expect(agentsDeployScript).toContain('runnerRepository')
     expect(agentsDeployScript).toContain('agents-codex-runner-image')
     expect(agentsDeployScript).not.toContain('readRunnerImagePin')
+    expect(torghutBuildScript).toContain("from './image-builders'")
+    expect(torghutWsBuildScript).toContain("from './image-builders'")
+    expect(torghutWsBuildScript).toContain("buildTorghutImage('ws'")
+    expect(torghutTaBuildScript).toContain("from './image-builders'")
+    expect(torghutTaBuildScript).toContain("buildTorghutImage('ta'")
+    expect(torghutHyperliquidFeedBuildScript).toContain("from './image-builders'")
+    expect(torghutHyperliquidFeedBuildScript).toContain("buildTorghutImage('hyperliquid-feed'")
+    expect(torghutDeployScript).not.toContain("from '../shared/docker'")
+    expect(torghutDeployScript).not.toContain('buildAndPushDockerImage')
+    expect(torghutDeployScript).not.toContain("from '../shared/nix-oci-deploy'")
+    expect(torghutDeployScript).toContain("from './build-image'")
+    expect(torghutDeployScript).toContain("from './build-ws-image'")
+    expect(torghutDeployScript).toContain("from './build-ta-image'")
+    expect(torghutTaDeployScript).not.toContain("from '../shared/docker'")
+    expect(torghutTaDeployScript).not.toContain('buildAndPushDockerImage')
+    expect(torghutTaDeployScript).not.toContain("from '../shared/nix-oci-deploy'")
+    expect(torghutTaDeployScript).toContain("from './build-ta-image'")
 
     for (const script of torghutUpdateScripts) {
       expect(script).not.toContain("from '../shared/docker'")

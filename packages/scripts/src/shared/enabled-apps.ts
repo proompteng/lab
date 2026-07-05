@@ -82,6 +82,31 @@ const appToNixAttr = new Map<string, string>([
   ['torghut-options', 'torghut-image'],
 ])
 
+const appToBuildScriptPath = new Map<string, string>([
+  ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
+  ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/build-image.ts'],
+  ['torghut-options', 'packages/scripts/src/torghut/build-image.ts'],
+])
+
+const appToDeployScriptPath = new Map<string, string>([
+  ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
+  ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/update-manifests.ts'],
+  ['torghut-options', 'packages/scripts/src/torghut/update-manifests.ts'],
+])
+
+const appToWorkflowPaths = new Map<string, string[]>([
+  ['torghut-hyperliquid-feed', ['.github/workflows/torghut-hyperliquid-feed-build-push.yaml']],
+  ['torghut-hyperliquid-runtime', ['.github/workflows/torghut-build-push.yaml']],
+  [
+    'torghut-options',
+    [
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-ta-build-push.yaml',
+      '.github/workflows/torghut-ws-build-push.yaml',
+    ],
+  ],
+])
+
 const manifestOnlyRepoImageApps = new Map<string, string>([
   ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
   ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
@@ -239,15 +264,20 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
     }
   }
 
-  const buildScriptPath = `packages/scripts/src/${entry.name}/build-image.ts`
-  const deployScriptPath = `packages/scripts/src/${entry.name}/deploy-service.ts`
-  const workflowPaths = listYamlFiles(resolve(root, '.github/workflows')).filter((path) => {
+  const buildScriptPath = appToBuildScriptPath.get(entry.name) ?? `packages/scripts/src/${entry.name}/build-image.ts`
+  const deployScriptPath =
+    appToDeployScriptPath.get(entry.name) ?? `packages/scripts/src/${entry.name}/deploy-service.ts`
+  const detectedWorkflowPaths = listYamlFiles(resolve(root, '.github/workflows')).filter((path) => {
     const workflow = readFileSync(path, 'utf8')
     return (
       workflow.includes(`image_name: ${entry.name}`) ||
       workflow.includes(`registry.ide-newton.ts.net/lab/${entry.name}`)
     )
   })
+  const workflowPaths = uniqueSorted([
+    ...detectedWorkflowPaths.map((path) => relative(root, path)),
+    ...(appToWorkflowPaths.get(entry.name) ?? []).filter((path) => existsSync(resolve(root, path))),
+  ])
 
   return {
     ...entry,
@@ -255,7 +285,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
     repoImages: uniqueSorted(repoImages),
     buildScriptPath: existsSync(resolve(root, buildScriptPath)) ? buildScriptPath : undefined,
     deployScriptPath: existsSync(resolve(root, deployScriptPath)) ? deployScriptPath : undefined,
-    workflowPaths: workflowPaths.map((path) => relative(root, path)).sort(),
+    workflowPaths,
     nixImageAttr: appToNixAttr.get(entry.name),
   }
 }

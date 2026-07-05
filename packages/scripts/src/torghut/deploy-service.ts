@@ -7,8 +7,9 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
 import { buildImage } from './build-image'
+import { buildTechnicalAnalysisImage } from './build-ta-image'
+import { buildWebsocketImage } from './build-ws-image'
 
 const manifestPath = resolve(repoRoot, 'argocd/applications/torghut/knative-service.yaml')
 const websocketDeploymentPath = resolve(repoRoot, 'argocd/applications/torghut/ws/deployment.yaml')
@@ -334,44 +335,6 @@ const updateManifest = (image: string, version: string, commit: string) => {
   console.log(`Updated ${manifestPath} with image ${image}`)
 }
 
-const buildWebsocketImage = async (commit: string) => {
-  const registry = process.env.TORGHUT_WS_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
-  const repository = process.env.TORGHUT_WS_IMAGE_REPOSITORY ?? 'lab/torghut-ws'
-  const tag = process.env.TORGHUT_WS_IMAGE_TAG ?? 'latest'
-
-  const result = await buildAndPushNixImage({
-    service: 'torghut-ws',
-    imageName: 'torghut-ws',
-    packageAttr: 'torghut-ws-image',
-    registry,
-    repository,
-    tag,
-    sourceSha: commit,
-    latestTag: 'latest',
-  })
-
-  return { image: `${result.image}:${result.tag}`, digest: result.reference }
-}
-
-const buildTechnicalAnalysisImage = async (commit: string) => {
-  const registry = process.env.TORGHUT_TA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
-  const repository = process.env.TORGHUT_TA_IMAGE_REPOSITORY ?? 'lab/torghut-ta'
-  const tag = process.env.TORGHUT_TA_IMAGE_TAG ?? 'latest'
-
-  const result = await buildAndPushNixImage({
-    service: 'torghut-ta',
-    imageName: 'torghut-ta',
-    packageAttr: 'torghut-ta-image',
-    registry,
-    repository,
-    tag,
-    sourceSha: commit,
-    latestTag: 'latest',
-  })
-
-  return { image: `${result.image}:${result.tag}`, digest: result.reference }
-}
-
 const updateWebsocketDeployment = (image: string, version: string, commit: string) => {
   const raw = readFileSync(websocketDeploymentPath, 'utf8')
   const doc = YAML.parse(raw)
@@ -585,9 +548,9 @@ const main = async () => {
 
   const { digest: digestRef, version, commit } = await buildImage()
 
-  const websocketImage = await buildWebsocketImage(commit)
+  const websocketImage = await buildWebsocketImage({ commit })
 
-  const taImage = await buildTechnicalAnalysisImage(commit)
+  const taImage = await buildTechnicalAnalysisImage({ commit })
 
   updateManifest(digestRef, version, commit)
   updateWebsocketDeployment(websocketImage.digest, version, commit)

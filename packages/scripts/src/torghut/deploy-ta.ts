@@ -4,8 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import YAML from 'yaml'
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { execGit } from '../shared/git'
-import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
+import { buildTechnicalAnalysisImage } from './build-ta-image'
 
 const taDeploymentPath = resolve(
   repoRoot,
@@ -18,27 +17,6 @@ const ensureTools = () => {
   ensureCli('crane')
   ensureCli('kubectl')
   ensureCli('git')
-}
-
-const buildTechnicalAnalysisImage = async () => {
-  const registry = process.env.TORGHUT_TA_IMAGE_REGISTRY ?? 'registry.ide-newton.ts.net'
-  const repository = process.env.TORGHUT_TA_IMAGE_REPOSITORY ?? 'lab/torghut-ta'
-  const tag = process.env.TORGHUT_TA_IMAGE_TAG ?? 'latest'
-  const version = execGit(['describe', '--tags', '--always'])
-  const commit = execGit(['rev-parse', 'HEAD'])
-
-  const result = await buildAndPushNixImage({
-    service: 'torghut-ta',
-    imageName: 'torghut-ta',
-    packageAttr: 'torghut-ta-image',
-    registry,
-    repository,
-    tag,
-    sourceSha: commit,
-    latestTag: 'latest',
-  })
-
-  return { image: `${result.image}:${result.tag}`, digest: result.reference, version, commit }
 }
 
 const updateTechnicalAnalysisDeployment = (image: string, version: string, commit: string) => {
