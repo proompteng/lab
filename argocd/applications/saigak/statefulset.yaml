@@ -20,7 +20,7 @@ spec:
     spec:
       runtimeClassName: nvidia
       nodeSelector:
-        kubernetes.io/arch: amd64
+        kubernetes.io/arch: arm64
         kubernetes.io/hostname: talos-192-168-1-85
         nvidia.com/gpu.present: "true"
       tolerations:
