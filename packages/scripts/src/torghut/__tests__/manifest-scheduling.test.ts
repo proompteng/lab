@@ -309,6 +309,7 @@ describe('Torghut manifest scheduling', () => {
     expect(runtimeData.HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION).toBe('0.35')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION).toBe('0.08')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION).toBe('0.02')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_DAILY_LOSS_USD).toBe('100')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBeUndefined()
@@ -328,7 +329,7 @@ describe('Torghut manifest scheduling', () => {
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-margin-aware-ioc-20260705a',
+      'proompteng.ai/config-revision': 'hyperliquid-testnet-loss-cap-20260705a',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')

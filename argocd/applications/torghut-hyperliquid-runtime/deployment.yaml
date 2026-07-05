@@ -18,7 +18,7 @@ spec:
   template:
     metadata:
       annotations:
-        proompteng.ai/config-revision: hyperliquid-execution-margin-aware-ioc-20260705a
+        proompteng.ai/config-revision: hyperliquid-testnet-loss-cap-20260705a
       labels:
         app: torghut-hyperliquid-runtime
     spec:
