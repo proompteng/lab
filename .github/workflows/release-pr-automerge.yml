@@ -13,6 +13,15 @@ on:
       - 'argocd/applications/khoshut/kustomization.yaml'
       - 'argocd/applications/analysis/kustomization.yaml'
       - 'argocd/applications/bilig/kustomization.yaml'
+      - 'argocd/applications/app/kustomization.yaml'
+      - 'argocd/applications/bumba/kustomization.yaml'
+      - 'argocd/applications/docs/kustomization.yaml'
+      - 'argocd/applications/froussard/knative-service.yaml'
+      - 'argocd/applications/headlamp/values.yaml'
+      - 'argocd/applications/oirat/kustomization.yaml'
+      - 'argocd/applications/olden/kustomization.yaml'
+      - 'argocd/applications/proompteng/kustomization.yaml'
+      - 'argocd/applications/synthesis/kustomization.yaml'
       - '.github/workflows/release-pr-automerge.yml'
   workflow_dispatch:
     inputs:
@@ -36,7 +45,13 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         (
           github.event.pull_request.base.ref == 'main' &&
-          startsWith(github.event.pull_request.head.ref, 'release/') &&
+          (
+            startsWith(github.event.pull_request.head.ref, 'release/') ||
+            (
+              startsWith(github.event.pull_request.head.ref, 'codex/') &&
+              contains(github.event.pull_request.head.ref, '-nix-release-')
+            )
+          ) &&
           github.event.pull_request.draft == false
         )
       }}
@@ -64,10 +79,21 @@ jobs:
           fi
 
           allowed_authors=("app/github-actions" "github-actions[bot]")
-          allowed_paths=(
+          legacy_release_paths=(
             "argocd/applications/khoshut/kustomization.yaml"
             "argocd/applications/analysis/kustomization.yaml"
             "argocd/applications/bilig/kustomization.yaml"
+          )
+          nix_oci_release_paths=(
+            "argocd/applications/app/kustomization.yaml"
+            "argocd/applications/bumba/kustomization.yaml"
+            "argocd/applications/docs/kustomization.yaml"
+            "argocd/applications/froussard/knative-service.yaml"
+            "argocd/applications/headlamp/values.yaml"
+            "argocd/applications/oirat/kustomization.yaml"
+            "argocd/applications/olden/kustomization.yaml"
+            "argocd/applications/proompteng/kustomization.yaml"
+            "argocd/applications/synthesis/kustomization.yaml"
           )
 
           contains() {
@@ -103,7 +129,13 @@ jobs:
             exit 0
           fi
 
-          if [[ "$PR_HEAD_REF" != release/* ]]; then
+          release_kind=""
+          if [[ "$PR_HEAD_REF" == release/* ]]; then
+            release_kind="legacy-release"
+          elif [[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]] ||
+            [[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]; then
+            release_kind="nix-oci-release"
+          else
             echo "reason=head-not-release-branch" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -135,6 +167,22 @@ jobs:
             exit 0
           fi
 
+          if [[ "$release_kind" == "nix-oci-release" ]]; then
+            for required_label in automated-pr nix-oci; do
+              has_required_label=$(
+                gh pr view "$PR_NUMBER" \
+                  -R "$GH_REPO" \
+                  --json labels \
+                  --jq 'any(.labels[]?; .name == "'"$required_label"'")'
+              )
+
+              if [[ "$has_required_label" != "true" ]]; then
+                echo "reason=missing-required-label:${required_label}" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          fi
+
           changed_files=()
           for attempt in 1 2 3; do
             mapfile -t changed_files < <(
@@ -156,14 +204,21 @@ jobs:
           fi
 
           for path in "${changed_files[@]}"; do
-            if ! contains "$path" "${allowed_paths[@]}"; then
-              echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
-              exit 0
+            if [[ "$release_kind" == "legacy-release" ]]; then
+              if ! contains "$path" "${legacy_release_paths[@]}"; then
+                echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              if ! contains "$path" "${nix_oci_release_paths[@]}"; then
+                echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
             fi
           done
 
           echo "eligible=true" >> "$GITHUB_OUTPUT"
-          echo "reason=eligible" >> "$GITHUB_OUTPUT"
+          echo "reason=eligible:${release_kind}" >> "$GITHUB_OUTPUT"
 
       - name: Eligibility summary
         shell: bash
