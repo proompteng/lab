@@ -21,7 +21,7 @@ def build_order_intent(
     signal_id: str,
     now: datetime | None = None,
 ) -> OrderIntent:
-    """Create an order intent for the active restore policy."""
+    """Create an order intent for the active execution policy."""
 
     if not verdict.allowed:
         raise ValueError(f"risk_verdict_blocked:{verdict.reason}")

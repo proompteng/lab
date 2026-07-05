@@ -11,7 +11,7 @@ from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
 from app.hyperliquid_execution.models import ExecutionMarket, OpenOrder, OrderIntent
 
 
-def test_exchange_submits_ioc_restore_order() -> None:
+def test_exchange_submits_ioc_order() -> None:
     sdk = _FakeSdk()
     sdk.next_order_response = {
         "response": {"data": {"statuses": [{"filled": {"oid": 123}}]}}
