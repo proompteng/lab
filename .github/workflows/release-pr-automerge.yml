@@ -13,7 +13,10 @@ on:
       - 'argocd/applications/khoshut/kustomization.yaml'
       - 'argocd/applications/analysis/kustomization.yaml'
       - 'argocd/applications/bilig/kustomization.yaml'
+      - 'argocd/applications/arc/application.yaml'
       - 'argocd/applications/app/kustomization.yaml'
+      - 'argocd/applications/attic/deployment.yaml'
+      - 'argocd/applications/attic/gc-cronjob.yaml'
       - 'argocd/applications/bumba/kustomization.yaml'
       - 'argocd/applications/docs/kustomization.yaml'
       - 'argocd/applications/froussard/knative-service.yaml'
@@ -49,7 +52,10 @@ jobs:
             startsWith(github.event.pull_request.head.ref, 'release/') ||
             (
               startsWith(github.event.pull_request.head.ref, 'codex/') &&
-              contains(github.event.pull_request.head.ref, '-nix-release-')
+              (
+                contains(github.event.pull_request.head.ref, '-nix-release-') ||
+                contains(github.event.pull_request.head.ref, '-release-')
+              )
             )
           ) &&
           github.event.pull_request.draft == false
@@ -85,7 +91,10 @@ jobs:
             "argocd/applications/bilig/kustomization.yaml"
           )
           nix_oci_release_paths=(
+            "argocd/applications/arc/application.yaml"
             "argocd/applications/app/kustomization.yaml"
+            "argocd/applications/attic/deployment.yaml"
+            "argocd/applications/attic/gc-cronjob.yaml"
             "argocd/applications/bumba/kustomization.yaml"
             "argocd/applications/docs/kustomization.yaml"
             "argocd/applications/froussard/knative-service.yaml"
@@ -132,7 +141,8 @@ jobs:
           release_kind=""
           if [[ "$PR_HEAD_REF" == release/* ]]; then
             release_kind="legacy-release"
-          elif [[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]] ||
+          elif [[ "$PR_HEAD_REF" =~ ^codex/(attic|arc-runner)-release-sha-[0-9a-f]{40}$ ]] ||
+            [[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]] ||
             [[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]; then
             release_kind="nix-oci-release"
           else
