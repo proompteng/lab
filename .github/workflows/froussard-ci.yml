@@ -6,10 +6,10 @@ on:
       - main
     paths:
       - 'apps/froussard/**'
-      - 'packages/scripts/src/froussard/**'
-      - '.github/workflows/froussard-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
       - 'flake.lock'
       - 'nix/images/froussard.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -22,13 +22,14 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'apps/froussard/**'
-      - 'packages/scripts/src/froussard/**'
-      - '.github/workflows/froussard-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'packages/agent-contracts/**'
+      - 'packages/codex/**'
+      - 'packages/discord/**'
+      - 'packages/otel/**'
       - 'flake.lock'
       - 'nix/images/froussard.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -41,6 +42,7 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:
@@ -65,6 +67,6 @@ jobs:
       image_name: froussard
       package_attr: froussard-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'froussard-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'froussard-release-contract' || '' }}
     secrets: inherit

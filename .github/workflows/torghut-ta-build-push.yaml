@@ -22,10 +22,6 @@ on:
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -46,10 +42,6 @@ on:
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
       - 'flake.lock'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:
@@ -64,6 +56,6 @@ jobs:
       image_name: torghut-ta
       package_attr: torghut-ta-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'torghut-ta-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-ta-release-contract' || '' }}
     secrets: inherit

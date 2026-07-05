@@ -136,13 +136,13 @@ jobs:
 
           case "${SERVICE}" in
             oirat)
-              paths=(services/oirat packages/discord packages/scripts/src/oirat nix/images/oirat.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/oirat packages/discord nix/images/oirat.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json tsconfig.base.json)
               ;;
             bumba)
-              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba nix/images/bumba.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/bumba packages/temporal-bun-sdk nix/images/bumba.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json tsconfig.base.json)
               ;;
             froussard)
-              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard nix/images/froussard.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel nix/images/froussard.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh nix/oci-release-contract.sh flake.lock bun.lock package.json tsconfig.base.json)
               ;;
           esac
 

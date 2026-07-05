@@ -6,10 +6,7 @@ on:
       - main
     paths:
       - 'services/bumba/**'
-      - 'packages/scripts/src/bumba/**'
-      - '.github/workflows/bumba-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'packages/temporal-bun-sdk/**'
       - 'flake.lock'
       - 'nix/images/bumba.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -22,13 +19,11 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'services/bumba/**'
-      - 'packages/scripts/src/bumba/**'
-      - '.github/workflows/bumba-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'packages/temporal-bun-sdk/**'
       - 'flake.lock'
       - 'nix/images/bumba.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -41,6 +36,7 @@ on:
       - 'nix/oci-release-contract.sh'
       - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:
@@ -77,6 +73,6 @@ jobs:
       image_name: bumba
       package_attr: bumba-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'bumba-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'bumba-release-contract' || '' }}
     secrets: inherit

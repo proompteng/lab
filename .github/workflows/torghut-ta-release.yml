@@ -122,16 +122,16 @@ jobs:
                     services/dorvud/settings.gradle.kts \
                     services/dorvud/build.gradle.kts \
                     services/dorvud/platform \
-                    services/dorvud/flink-integration \
                     services/dorvud/technical-analysis \
                     services/dorvud/technical-analysis-flink \
-                    packages/scripts/src/torghut/release-contract.ts \
-                    packages/scripts/src/torghut/update-ta-manifest.ts \
-                    packages/scripts/src/shared/cli.ts \
-                    packages/scripts/src/shared/git.ts \
                     nix/images/torghut-ta.nix \
-                    .github/workflows/torghut-ta-build-push.yaml \
-                    .github/workflows/torghut-ta-release.yml
+                    nix/cache-push.sh \
+                    nix/ci-nix-oci-summary.sh \
+                    nix/ci-run-timed.sh \
+                    nix/oci-inspect-archive.sh \
+                    nix/oci-push.sh \
+                    nix/oci-release-contract.sh \
+                    flake.lock
                 )"
                 if [ -n "${TA_CHANGES}" ]; then
                   echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut TA build inputs changed:"

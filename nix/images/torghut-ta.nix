@@ -17,12 +17,9 @@ let
     if pathString == dorvudRootString then "" else lib.removePrefix prefix pathString;
 
   modulePrefixes = [
-    "flink-integration"
-    "hyperliquid-feed"
     "platform"
     "technical-analysis"
     "technical-analysis-flink"
-    "websockets"
   ];
 
   source = lib.cleanSourceWith {

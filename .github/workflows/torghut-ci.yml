@@ -13,15 +13,6 @@ on:
       - 'packages/scripts/src/shared/git.ts'
       - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'packages/scripts/src/shared/oci-digest.ts'
-      - '.github/workflows/torghut-deploy-automerge.yml'
-      - '.github/workflows/torghut-post-deploy-verify.yml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/torghut-hyperliquid-feed-build-push.yaml'
-      - '.github/workflows/torghut-hyperliquid-feed-release.yml'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/torghut-ws-build-push.yaml'
-      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
@@ -36,15 +27,6 @@ on:
       - 'packages/scripts/src/shared/git.ts'
       - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'packages/scripts/src/shared/oci-digest.ts'
-      - '.github/workflows/torghut-deploy-automerge.yml'
-      - '.github/workflows/torghut-post-deploy-verify.yml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/torghut-hyperliquid-feed-build-push.yaml'
-      - '.github/workflows/torghut-hyperliquid-feed-release.yml'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/torghut-ws-build-push.yaml'
-      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
@@ -133,7 +115,7 @@ jobs:
 
           service=false
           manifests=false
-          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release|hyperliquid-feed-release|ta-release|ws-release)\.yml$|\.github/workflows/torghut-(build-push|hyperliquid-feed-build-push|ta-build-push|ws-build-push)\.yaml$)'; then
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$)'; then
             service=true
           fi
           if matches_any '^argocd/applications/(torghut|torghut-options|torghut-hyperliquid-runtime)/'; then

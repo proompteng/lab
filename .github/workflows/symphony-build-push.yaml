@@ -9,9 +9,6 @@ on:
       - 'services/symphony/**'
       - 'packages/codex/**'
       - 'packages/otel/**'
-      - 'packages/scripts/src/symphony/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
@@ -26,10 +23,6 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
-      - '.github/workflows/symphony-build-push.yaml'
-      - '.github/workflows/symphony-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
@@ -37,9 +30,6 @@ on:
       - 'services/symphony/**'
       - 'packages/codex/**'
       - 'packages/otel/**'
-      - 'packages/scripts/src/symphony/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
@@ -54,10 +44,6 @@ on:
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
       - 'nix/oci-release-contract.sh'
-      - '.github/workflows/symphony-build-push.yaml'
-      - '.github/workflows/symphony-release.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:
@@ -72,6 +58,6 @@ jobs:
       image_name: symphony
       package_attr: symphony-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'symphony-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'symphony-release-contract' || '' }}
     secrets: inherit

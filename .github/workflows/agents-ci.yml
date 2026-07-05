@@ -29,10 +29,6 @@ on:
       - 'services/agents/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
-      - '.github/workflows/agents-build-push.yml'
-      - '.github/workflows/agents-ci.yml'
-      - '.github/workflows/agents-deploy-automerge.yml'
-      - '.github/workflows/agents-release.yml'
   push:
     branches:
       - main
@@ -59,10 +55,6 @@ on:
       - 'services/agents/**'
       - 'scripts/agents/**'
       - 'scripts/download_crd_schema.py'
-      - '.github/workflows/agents-build-push.yml'
-      - '.github/workflows/agents-ci.yml'
-      - '.github/workflows/agents-deploy-automerge.yml'
-      - '.github/workflows/agents-release.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

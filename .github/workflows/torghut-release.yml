@@ -117,19 +117,15 @@ jobs:
                 TORGHUT_CHANGES="$(
                   git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" -- \
                     services/torghut \
-                    packages/scripts/src/torghut \
-                    packages/scripts/src/shared/cli.ts \
-                    packages/scripts/src/shared/git.ts \
                     nix/images/torghut.nix \
-                    .github/workflows/torghut-build-push.yaml \
-                    .github/workflows/torghut-ci.yml \
-                    .github/workflows/torghut-deploy-automerge.yml \
-                    .github/workflows/torghut-post-deploy-verify.yml \
-                    .github/workflows/torghut-release.yml \
-                    .github/workflows/torghut-ta-build-push.yaml \
-                    .github/workflows/torghut-ta-release.yml \
-                    .github/workflows/torghut-ws-build-push.yaml \
-                    .github/workflows/torghut-ws-release.yml
+                    nix/cache-push.sh \
+                    nix/ci-nix-oci-summary.sh \
+                    nix/ci-run-timed.sh \
+                    nix/oci-inspect-archive.sh \
+                    nix/oci-push.sh \
+                    nix/oci-release-contract.sh \
+                    flake.lock \
+                    services/torghut/uv.lock
                 )"
                 if [ -n "${TORGHUT_CHANGES}" ]; then
                   echo "Skipping stale workflow_run promotion for ${SOURCE_SHA}; newer Torghut build inputs changed:"

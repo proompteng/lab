@@ -46,6 +46,21 @@ const pathPatternIndex = (pattern: string): number =>
 const ciPathPatternIndex = (pattern: string): number =>
   ciWorkflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
+const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string => {
+  const markerIndex = releaseWorkflow.indexOf(markerPath)
+  if (markerIndex < 0) {
+    throw new Error(`Missing stale diff marker path: ${markerPath}`)
+  }
+
+  const start = releaseWorkflow.lastIndexOf('git diff --name-only', markerIndex)
+  const end = releaseWorkflow.indexOf(')"', markerIndex)
+  if (start < 0 || end < 0) {
+    throw new Error(`Missing stale diff block for: ${markerPath}`)
+  }
+
+  return releaseWorkflow.slice(start, end)
+}
+
 describe('torghut build-push workflow', () => {
   it('does not build the core Torghut image for release helper script changes', () => {
     expect(pathPatternIndex('packages/scripts/src/torghut/**')).toBe(-1)
@@ -88,9 +103,12 @@ describe('torghut build-push workflow', () => {
   })
 
   it('publishes and contracts the core Torghut image as amd64 and arm64', () => {
-    expect(workflow).toContain("latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}")
+    const mainDispatchPredicate =
+      "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
+
+    expect(workflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
     expect(workflow).toContain(
-      "release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'torghut-release-contract' || '' }}",
+      `release_artifact_name: \${{ ${mainDispatchPredicate} && 'torghut-release-contract' || '' }}`,
     )
   })
 
@@ -277,51 +295,57 @@ describe('torghut build-push workflow', () => {
     const releaseWorkflows = [
       {
         workflow: taReleaseWorkflow,
-        workflowPath: '.github/workflows/torghut-ta-release.yml',
-        buildPath: '.github/workflows/torghut-ta-build-push.yaml',
-        updateScript: 'packages/scripts/src/torghut/update-ta-manifest.ts',
         servicePath: 'services/dorvud/technical-analysis-flink',
         message: 'newer Torghut TA build inputs changed',
       },
       {
         workflow: wsReleaseWorkflow,
-        workflowPath: '.github/workflows/torghut-ws-release.yml',
-        buildPath: '.github/workflows/torghut-ws-build-push.yaml',
-        updateScript: 'packages/scripts/src/torghut/update-ws-manifest.ts',
         servicePath: 'services/dorvud/websockets',
         message: 'newer Torghut WS build inputs changed',
       },
     ]
 
-    for (const { workflow, workflowPath, buildPath, updateScript, servicePath, message } of releaseWorkflows) {
+    for (const { workflow, servicePath, message } of releaseWorkflows) {
+      const staleDiffBlock = staleDiffBlockFor(workflow, servicePath)
+
       expect(workflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
       expect(workflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
-      expect(workflow).toContain(servicePath)
-      expect(workflow).toContain('services/dorvud/platform')
-      expect(workflow).toContain('packages/scripts/src/torghut/release-contract.ts')
-      expect(workflow).toContain(updateScript)
-      expect(workflow).toContain(buildPath)
-      expect(workflow).toContain(workflowPath)
-      expect(workflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-      expect(workflow).not.toContain('packages/scripts/src/shared/oci-digest.ts')
+      expect(staleDiffBlock).toContain(servicePath)
+      expect(staleDiffBlock).toContain('services/dorvud/platform')
+      expect(staleDiffBlock).toContain('nix/cache-push.sh')
+      expect(staleDiffBlock).toContain('nix/ci-nix-oci-summary.sh')
+      expect(staleDiffBlock).toContain('nix/ci-run-timed.sh')
+      expect(staleDiffBlock).toContain('nix/oci-inspect-archive.sh')
+      expect(staleDiffBlock).toContain('nix/oci-push.sh')
+      expect(staleDiffBlock).toContain('nix/oci-release-contract.sh')
+      expect(staleDiffBlock).toContain('flake.lock')
+      expect(staleDiffBlock).not.toContain('.github/workflows/')
+      expect(staleDiffBlock).not.toContain('packages/scripts/src/torghut/release-contract.ts')
+      expect(staleDiffBlock).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+      expect(staleDiffBlock).not.toContain('packages/scripts/src/shared/oci-digest.ts')
       expect(workflow).toContain(message)
       expect(workflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
     }
   })
 
   it('keeps Hyperliquid feed stale workflow promotions path-aware so unrelated main commits do not block release', () => {
+    const staleDiffBlock = staleDiffBlockFor(hyperliquidFeedReleaseWorkflow, 'services/dorvud/hyperliquid-feed')
+
     expect(hyperliquidFeedReleaseWorkflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
     expect(hyperliquidFeedReleaseWorkflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('services/dorvud/hyperliquid-feed')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('services/dorvud/platform')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/torghut/release-contract.ts')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/cli.ts')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('packages/scripts/src/shared/git.ts')
-    expect(hyperliquidFeedReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-    expect(hyperliquidFeedReleaseWorkflow).not.toContain('packages/scripts/src/shared/oci-digest.ts')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('.github/workflows/torghut-hyperliquid-feed-build-push.yaml')
-    expect(hyperliquidFeedReleaseWorkflow).toContain('.github/workflows/torghut-hyperliquid-feed-release.yml')
+    expect(staleDiffBlock).toContain('services/dorvud/hyperliquid-feed')
+    expect(staleDiffBlock).toContain('services/dorvud/platform')
+    expect(staleDiffBlock).toContain('nix/cache-push.sh')
+    expect(staleDiffBlock).toContain('nix/ci-nix-oci-summary.sh')
+    expect(staleDiffBlock).toContain('nix/ci-run-timed.sh')
+    expect(staleDiffBlock).toContain('nix/oci-inspect-archive.sh')
+    expect(staleDiffBlock).toContain('nix/oci-push.sh')
+    expect(staleDiffBlock).toContain('nix/oci-release-contract.sh')
+    expect(staleDiffBlock).toContain('flake.lock')
+    expect(staleDiffBlock).not.toContain('.github/workflows/')
+    expect(staleDiffBlock).not.toContain('packages/scripts/src/torghut/release-contract.ts')
+    expect(staleDiffBlock).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+    expect(staleDiffBlock).not.toContain('packages/scripts/src/shared/oci-digest.ts')
     expect(hyperliquidFeedReleaseWorkflow).toContain('newer Hyperliquid feed build inputs changed')
     expect(hyperliquidFeedReleaseWorkflow).toContain('newer main ${MAIN_HEAD} contains only unrelated changes')
   })
