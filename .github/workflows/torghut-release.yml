@@ -272,7 +272,6 @@ jobs:
             argocd/applications/torghut/knative-service-sim.yaml \
             argocd/applications/torghut/db-migrations-job.yaml \
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml \
-            argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml \
             argocd/applications/torghut/analysis-template-runtime-ready.yaml \
             argocd/applications/torghut/analysis-template-activity.yaml \
             argocd/applications/torghut/analysis-template-teardown-clean.yaml \
@@ -312,7 +311,6 @@ jobs:
             argocd/applications/torghut/knative-service-sim.yaml
             argocd/applications/torghut/db-migrations-job.yaml
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
-            argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
             argocd/applications/torghut/analysis-template-runtime-ready.yaml
             argocd/applications/torghut/analysis-template-activity.yaml
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
@@ -356,7 +354,6 @@ jobs:
             argocd/applications/torghut/knative-service-sim.yaml
             argocd/applications/torghut/db-migrations-job.yaml
             argocd/applications/torghut/historical-simulation-workflowtemplate.yaml
-            argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml
             argocd/applications/torghut/analysis-template-runtime-ready.yaml
             argocd/applications/torghut/analysis-template-activity.yaml
             argocd/applications/torghut/analysis-template-teardown-clean.yaml
