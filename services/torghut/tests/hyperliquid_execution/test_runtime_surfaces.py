@@ -30,11 +30,11 @@ from app.hyperliquid_execution.models import (
     Signal,
 )
 from app.hyperliquid_execution.repository import HyperliquidExecutionRepository
+from app.hyperliquid_execution.runtime_details import _string_list_detail
 from app.hyperliquid_execution.service import (
     HyperliquidExecutionService,
     _CycleCounts,
     _feature_status,
-    _string_list_detail,
     runtime_readiness,
 )
 
@@ -92,6 +92,7 @@ def test_api_readiness_metrics_report_and_cycle_paths(monkeypatch: Any) -> None:
         assert report["schema_version"] == "torghut.hyperliquid-execution-report.v2"
         assert report["runtime"]["selected_coins"] == ["NVDA"]
         assert report["config"]["signal_staleness_seconds"] == 120
+        assert report["config"]["max_daily_loss_usd"] == "25"
         assert session.closed
 
         service = _SingleCycleService(cycle)
@@ -304,6 +305,14 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     assert result.signals_written == 1
     assert result.orders_submitted == 1
     assert result.orders_cancelled == 1
+    assert result.universe_details["risk_state"] == {
+        "account_value_usd": "1000",
+        "withdrawable_usd": "900",
+        "gross_exposure_usd": "10",
+        "daily_realized_pnl_usd": "1",
+        "configured_daily_loss_floor_usd": "25",
+        "effective_daily_loss_limit_usd": "350.000000",
+    }
     assert session.committed
     cycle_calls = [
         index

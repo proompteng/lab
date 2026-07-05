@@ -9,6 +9,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.api import trading_loop_status as trading_loop_status_api
 from app.trading import loop_status as loop_status_module
+from app.trading import loop_status_positions as loop_status_positions_module
 from app.trading.multifactor import status_payloads
 
 from app.trading.loop_status import (
@@ -316,7 +317,7 @@ def test_loop_status_covers_raw_position_and_malformed_value_edges() -> None:
     assert "hyperliquid_exchange_order_ack_missing" in payload["blocker_reasons"]
     assert "hyperliquid_stale_open_orders_present" in payload["blocker_reasons"]
     assert "unexpected_live_alpaca_orders_present" in payload["blocker_reasons"]
-    assert loop_status_module._mapping_payload("{not-json") == {}
+    assert loop_status_positions_module._mapping_payload("{not-json") == {}
     assert loop_status_module._string_list("AMD") == ["AMD"]
 
 
@@ -729,8 +730,20 @@ def test_loop_status_reads_nested_hyperliquid_dex_positions() -> None:
             "unrealized_pnl_usd": "-0.83664",
         }
     ]
-    assert payload["position"]["reconciled"] is False
-    assert "hyperliquid_position_reconciliation_missing" in payload["blocker_reasons"]
+    assert payload["position"]["managed_exchange_positions"] == []
+    assert payload["position"]["unmanaged_exchange_positions"] == [
+        {
+            "coin": "xyz:NVDA",
+            "entry_price": "209.395",
+            "notional_usd": "19.26528",
+            "size": "0.096",
+            "unrealized_pnl_usd": "-0.83664",
+        }
+    ]
+    assert payload["position"]["reconciled"] is True
+    assert (
+        "hyperliquid_position_reconciliation_missing" not in payload["blocker_reasons"]
+    )
 
 
 def test_trading_loop_status_route_uses_runtime_settings(

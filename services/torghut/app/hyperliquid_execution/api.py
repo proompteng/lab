@@ -228,6 +228,7 @@ def _config_payload() -> dict[str, object]:
         "target_margin_utilization": str(config.target_margin_utilization),
         "max_symbol_margin_utilization": str(config.max_symbol_margin_utilization),
         "max_order_margin_utilization": str(config.max_order_margin_utilization),
+        "max_daily_loss_usd": str(config.max_daily_loss_usd),
         "cost_buffer_bps": str(config.cost_buffer_bps),
         "signal_staleness_seconds": config.signal_staleness_seconds,
         "feed_readiness_url_configured": config.feed_readiness_url is not None,
