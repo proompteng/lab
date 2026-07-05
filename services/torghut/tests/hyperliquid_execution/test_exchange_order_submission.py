@@ -13,6 +13,7 @@ from tests.hyperliquid_execution.test_exchange_policy import (
     _market,
 )
 
+
 def test_exchange_submits_ioc_order() -> None:
     sdk = _FakeSdk()
     sdk.next_order_response = {
@@ -114,4 +115,3 @@ def test_exchange_cancels_by_oid() -> None:
 
     assert result.status == "cancelled"
     assert sdk.cancels == [("xyz:NVDA", 123)]
-

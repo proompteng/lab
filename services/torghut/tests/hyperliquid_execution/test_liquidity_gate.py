@@ -175,7 +175,9 @@ def test_exchange_reports_mid_lookup_failure_as_unavailable_liquidity() -> None:
             {"HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "200"}
         ),
         sdk=_Sdk(),
-        info=_FailingMidInfo({"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "101"}]]}}),
+        info=_FailingMidInfo(
+            {"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "101"}]]}}
+        ),
     )
 
     selected, status = exchange.filter_crossable_markets((_market("NVDA", "xyz"),))
