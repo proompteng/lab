@@ -4,20 +4,23 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 
 ## Scope
 
-- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`.
+- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`.
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
-  `.github/workflows/attic-build-push.yaml` using `.github/workflows/nix-oci-build-common.yml`.
-- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`.
+  `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
+  `.github/workflows/nix-oci-build-common.yml`.
+- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
+  `headlamp-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
   - `packages/scripts/src/froussard/build-image.ts` and `packages/scripts/src/froussard/deploy-service.ts`
   - `packages/scripts/src/arc-runner/build-image.ts` and `packages/scripts/src/arc-runner/deploy-service.ts`
   - `packages/scripts/src/attic/build-image.ts` and `packages/scripts/src/attic/deploy-service.ts`
+  - `packages/scripts/src/headlamp/build-image.ts` and `packages/scripts/src/headlamp/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
-  `.github/workflows/release-pr-automerge.yml`.
+  `.github/workflows/headlamp-release.yml` and `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -39,6 +42,9 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#12022](https://github.com/proompteng/lab/pull/12022) | `51afc32c04c41643c8c57452a18033d5ef4c25c0` | Further harden the ARC runner script contract and manual deployment path.                        |
 | [#11576](https://github.com/proompteng/lab/pull/11576) | `b6083af08a7063a28742339c2a341331f11b21ad` | Preserve the Attic image digest through the release workflow.                                    |
 | [#11580](https://github.com/proompteng/lab/pull/11580) | `0b6ef5c947dba634f08718b3d9a3052767a7d833` | Promote Attic deployment and GC CronJob to the Nix-built digest.                                 |
+| [#11988](https://github.com/proompteng/lab/pull/11988) | `b149b5722d85353afe59690b29894b22a6937e0e` | Add the Headlamp Nix image build and release path.                                               |
+| [#11999](https://github.com/proompteng/lab/pull/11999) | `2cefa5e2ed774cc46706d49def73e3ed90b0268e` | Fix Headlamp runtime static index copy in the Nix image.                                         |
+| [#12001](https://github.com/proompteng/lab/pull/12001) | `aa4fdb5cffc9f2e9f97f011278222878170e483e` | Promote Headlamp to the final repaired Nix-built digest.                                         |
 
 ## Failed Proof That Exposed The Gap
 
@@ -443,6 +449,71 @@ does not claim per-run Attic substitution counts for the Attic image build.
 The later workflow-dispatch run [28722715748](https://github.com/proompteng/lab/actions/runs/28722715748) is explicitly
 not counted as release proof: it built and inspected amd64/arm64 archives, but skipped platform push, skipped Attic
 warming, skipped publish-index, and did not upload `attic-release-contract`.
+
+## Headlamp Rollout Proof
+
+Headlamp is an enabled platform app that deploys a chart but overrides the chart image with a repo-built Headlamp image,
+so it counts as a Nix image rollout target.
+
+### Headlamp Repair Trail
+
+The initial migration PR [#11988](https://github.com/proompteng/lab/pull/11988) added the Headlamp Nix image path. The
+final repaired source for the current live image is [#11999](https://github.com/proompteng/lab/pull/11999), which fixed
+the static index copy inside the runtime image after earlier writable-static-mode fixes.
+
+### Headlamp Main Build Proof
+
+Run [28752171560](https://github.com/proompteng/lab/actions/runs/28752171560) succeeded on `main`.
+
+| Phase                        | Result            |
+| ---------------------------- | ----------------- |
+| `linux/amd64` build-platform | passed in `2m53s` |
+| `linux/arm64` build-platform | passed in `5m09s` |
+| publish-index                | passed in `29s`   |
+| release contract             | uploaded as `headlamp-release-contract` |
+
+Release contract fields:
+
+- `service`: `headlamp`
+- `packageAttr`: `headlamp-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `2cefa5e2ed774cc46706d49def73e3ed90b0268e`
+- `image`: `registry.ide-newton.ts.net/lab/headlamp`
+- `digest`: `sha256:6d61f6563c3df42d176b1d445a757df48f0c6f84c02baa4f4f76dbd258ee2ddd`
+- platform digests:
+  - `linux/amd64`: `sha256:001ed86f05c11456b57028b1c1a73dfb6935d1fbd4e2b66d9df811b3adab4c88`
+  - `linux/arm64`: `sha256:903369555829d19233e4d3653e2add3f3fdb0be81eff666a7018225c08b08577`
+- `platforms`: `linux/amd64`, `linux/arm64`
+
+### Headlamp Release Automation Proof
+
+Release PR [#12001](https://github.com/proompteng/lab/pull/12001) promoted
+`registry.ide-newton.ts.net/lab/headlamp@sha256:6d61f6563c3df42d176b1d445a757df48f0c6f84c02baa4f4f76dbd258ee2ddd`.
+
+The PR changed only `argocd/applications/headlamp/values.yaml`:
+
+- chart image override changed to the Nix-built digest
+- generated testing recorded:
+  `nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/headlamp@sha256:6d61f6563c3df42d176b1d445a757df48f0c6f84c02baa4f4f76dbd258ee2ddd" linux/amd64 linux/arm64`
+
+### Headlamp Live Rollout Smoke
+
+Current readback:
+
+- Argo Application `headlamp`: `Synced`, `Healthy`
+- Argo revision: `d111652cc57e6242f628422057d3cbbaac2b53fd`
+- Deployment `headlamp`: `1/1` ready and available
+- pod `headlamp-5b6f9d49d8-7cjh2`: `1/1 Running`, `0` restarts
+- live image:
+  `registry.ide-newton.ts.net/lab/headlamp@sha256:6d61f6563c3df42d176b1d445a757df48f0c6f84c02baa4f4f76dbd258ee2ddd`
+- in-cluster service smoke against `http://headlamp.headlamp.svc.cluster.local/` returned `HTTP/1.1 200 OK`
+
+### Headlamp Cache Status
+
+The Headlamp release contract proves digest, platforms, platform digests, and source SHA, but it does not include the
+newer `cacheProvenance`, lockfile hash, tool version, or per-phase timing objects. This checkpoint therefore uses GitHub
+job wall times above and does not claim Headlamp cache-hit counts.
 
 ## Inventory Audit
 
