@@ -10,6 +10,12 @@ persistentVolumeClaim:
   enabled: false
 podSecurityContext:
   fsGroup: 101
+volumeMounts:
+  - name: headlamp-tmp
+    mountPath: /tmp
+volumes:
+  - name: headlamp-tmp
+    emptyDir: {}
 config:
   oidc:
     secret:

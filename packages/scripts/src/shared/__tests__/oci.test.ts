@@ -57,6 +57,7 @@ const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
 const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
 const headlampReleaseWorkflow = readRepoFile('.github/workflows/headlamp-release.yml')
+const headlampValues = readRepoFile('argocd/applications/headlamp/values.yaml')
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
 const productImageModules = [
@@ -815,6 +816,9 @@ describe('native OCI build workflows', () => {
     expect(headlampImageModule).not.toContain('cp prometheus/main.js prometheus/package.json')
     expect(headlampImageModule).not.toContain('created = "now"')
     expect(headlampImageModule).not.toContain('docker build')
+    expect(headlampValues).toContain('name: headlamp-tmp')
+    expect(headlampValues).toContain('mountPath: /tmp')
+    expect(headlampValues).toContain('emptyDir: {}')
 
     expect(headlampWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(headlampWorkflow).toContain('image_name: headlamp')
