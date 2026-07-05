@@ -43,6 +43,9 @@ const arcApplication = readFileSync(
 const pathPatternIndex = (pattern: string): number =>
   workflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
+const pathPatternOccurrences = (pattern: string): number =>
+  workflow.split('\n').filter((line) => line.trim() === `- '${pattern}'`).length
+
 const ciPathPatternIndex = (pattern: string): number =>
   ciWorkflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
@@ -62,15 +65,27 @@ const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string 
 }
 
 describe('torghut build-push workflow', () => {
-  it('does not build the core Torghut image for release helper script changes', () => {
-    expect(pathPatternIndex('packages/scripts/src/torghut/**')).toBe(-1)
+  it('builds the core Torghut image for release helper and shared build changes', () => {
+    const requiredPatterns = [
+      'services/torghut/**',
+      'packages/scripts/src/torghut/**',
+      'packages/scripts/src/shared/cli.ts',
+      'packages/scripts/src/shared/git.ts',
+      'nix/images/torghut.nix',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+    ]
+
+    for (const pattern of requiredPatterns) {
+      expect(pathPatternOccurrences(pattern)).toBe(2)
+    }
+
+    const scriptsInclude = pathPatternIndex('packages/scripts/src/torghut/**')
+    expect(pathPatternIndex('!packages/scripts/src/torghut/__tests__/**')).toBeGreaterThan(scriptsInclude)
+    expect(pathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')).toBeGreaterThan(scriptsInclude)
     expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
-    expect(pathPatternIndex('packages/scripts/src/shared/cli.ts')).toBe(-1)
-    expect(pathPatternIndex('packages/scripts/src/shared/git.ts')).toBe(-1)
-    expect(pathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
-    expect(pathPatternIndex('.github/workflows/nix-oci-build-common.yml')).toBe(-1)
-    expect(pathPatternIndex('services/torghut/**')).toBeGreaterThan(-1)
-    expect(pathPatternIndex('nix/images/torghut.nix')).toBeGreaterThan(-1)
   })
 
   it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {
@@ -96,6 +111,7 @@ describe('torghut build-push workflow', () => {
     expect(workflow).toContain('image_name: torghut')
     expect(workflow).toContain('package_attr: torghut-image')
     expect(workflow).toContain('tag: sha-${{ github.sha }}')
+    expect(workflow).toContain('publish_on_dispatch: true')
     expect(workflow).toContain('torghut-release-contract')
     expect(workflow).not.toContain('docker/setup-buildx-action')
     expect(workflow).not.toContain('docker/build-push-action')

@@ -359,6 +359,9 @@ describe('native OCI build workflows', () => {
     expect(nixOciWorkflow).toContain('nix build ".#${PACKAGE_ATTR}"')
     expect(nixOciWorkflow).toContain('bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"')
     expect(nixOciWorkflow).toContain('bash nix/oci-push.sh')
+    expect(nixOciWorkflow).toContain('publish_on_dispatch:')
+    expect(nixOciWorkflow).toContain("github.event_name == 'workflow_dispatch'")
+    expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts create-index')
     expect(nixOciWorkflow).toContain('bun run packages/scripts/src/shared/oci.ts assert')
     expect(nixOciWorkflow).toContain('printf \'%s\\n\' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"')
@@ -502,7 +505,6 @@ describe('native OCI build workflows', () => {
       enabledSimpleReleaseWorkflow,
       enabledProductReleaseWorkflow,
       sagReleaseWorkflow,
-      torghutReleaseWorkflow,
       torghutTaReleaseWorkflow,
       torghutWsReleaseWorkflow,
       torghutHyperliquidFeedReleaseWorkflow,
@@ -531,7 +533,6 @@ describe('native OCI build workflows', () => {
       agentsBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
-      torghutBuildWorkflow,
       torghutTaBuildWorkflow,
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
@@ -680,7 +681,9 @@ describe('native OCI build workflows', () => {
     const mainDispatchPredicate =
       "(github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'"
 
-    expect(nixOciWorkflow).toContain(`if: ${mainDispatchPredicate}`)
+    expect(nixOciWorkflow).toContain("github.event_name == 'push' && github.ref == 'refs/heads/main'")
+    expect(nixOciWorkflow).toContain("github.event_name == 'workflow_dispatch'")
+    expect(nixOciWorkflow).toContain("github.ref == 'refs/heads/main' || inputs.publish_on_dispatch")
     expect(nixOciWorkflow).toContain('name: Push platform image without Docker')
     expect(nixOciWorkflow).toContain('name: Warm Nix image archive closure in Attic')
     expect(nixOciWorkflow).toContain('publish-index:')

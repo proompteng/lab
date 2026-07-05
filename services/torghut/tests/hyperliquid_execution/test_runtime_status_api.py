@@ -6,11 +6,13 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.hyperliquid_execution import api
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.models import CycleResult, RuntimeDependencyStatus
+from app.trading.loop_status import LoopStatusOptions
 
 
 @contextmanager
@@ -65,30 +67,64 @@ def test_trading_status_projects_runtime_cycle_and_compatibility_gate() -> None:
     assert payload["live_submission_gate"] == payload["operational_submission_gate"]
 
 
-def test_trading_loop_status_alias_uses_runtime_status_contract() -> None:
-    cycle = CycleResult(
-        observed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
-        markets_seen=1,
-        selected_coins=("BTC",),
-        signals_written=1,
-        orders_submitted=1,
-        orders_cancelled=0,
-        dependencies=(RuntimeDependencyStatus("hyperliquid_feed_service", True),),
-        universe_details={"selected": ["BTC"]},
-    )
+def test_trading_loop_status_route_uses_loop_proof_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _Session:
+        def close(self) -> None:
+            captured["closed"] = True
+
+    def fake_session_local() -> _Session:
+        session = _Session()
+        captured["session"] = session
+        return session
+
+    def fake_build(
+        session: object,
+        *,
+        options: LoopStatusOptions,
+    ) -> dict[str, object]:
+        captured["build_session"] = session
+        captured["options"] = options
+        return {
+            "schema_version": "torghut.trading-loop-status.v1",
+            "restored": False,
+            "runtime": {"status": "blocked"},
+            "market_data": {"fresh": False},
+            "fills": {"recent_count": 0},
+            "position": {"reconciled": False},
+            "blocker_reasons": ["hyperliquid_market_data_not_fresh"],
+        }
+
+    monkeypatch.setattr(api, "SessionLocal", fake_session_local)
+    monkeypatch.setattr(api, "build_trading_loop_status", fake_build)
     config = HyperliquidExecutionConfig.from_env(
-        {"HYPERLIQUID_EXECUTION_ENABLED": "false"}
+        {
+            "HYPERLIQUID_EXECUTION_ENABLED": "false",
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_EXECUTION_NETWORK": "testnet",
+        }
     )
 
-    with _runtime_state(config=config, cycle=cycle):
+    with _runtime_state(config=config, cycle=None):
         response = TestClient(api.app).get("/trading/loop/status")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["ready"] is True
-    assert payload["execution_route"] == "testnet"
-    assert payload["latest_cycle"]["orders_submitted"] == 1
-    assert payload["operational_submission_gate"] == payload["live_submission_gate"]
+    assert payload["schema_version"] == "torghut.trading-loop-status.v1"
+    assert payload["restored"] is False
+    assert payload["runtime"]["status"] == "blocked"
+    assert "ready" not in payload
+    assert "latest_cycle" not in payload
+    assert captured["build_session"] is captured["session"]
+    assert captured["closed"] is True
+    assert isinstance(captured["options"], LoopStatusOptions)
+    options = captured["options"]
+    assert isinstance(options, LoopStatusOptions)
+    assert options.trading_mode == "paper"
+    assert options.trading_enabled is True
 
 
 def test_trading_status_reports_operational_gate_without_alpha_blockers() -> None:
