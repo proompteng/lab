@@ -15,14 +15,16 @@ Current governing contracts:
 
 Merged PR evidence:
 
-- `#5854` capital evidence return lane, merged as `b05380736319cd68b17549615d9602adbc1abc46`.
-- `#6418` quant plan closeout handoff.
-- `#6592` alpha readiness settlement conveyor.
-- `#6618` verify trust foreclosure, merged as `4190b42ea61504130458da8fc49f3dfa1820ff76`.
+- PR `#5854`: `docs(torghut): define capital evidence return lane`, merged as
+  `b05380736319cd68b17549615d9602adbc1abc46`.
+- PR `#6418`: `docs(torghut): add quant plan closeout handoff`, merged on 2026-05-13.
+- PR `#6592`: `docs(torghut): define alpha readiness settlement conveyor`, merged on 2026-05-14.
+- PR `#6618`: `docs(jangar): define verify trust foreclosure`, merged as
+  `4190b42ea61504130458da8fc49f3dfa1820ff76`.
 
 ## Source Implementation Audit (2026-07-04)
 
-- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Source baseline inspected: `0aee01702 fix(torghut): pin loop status runtime image (#11897)`.
 - Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
 - Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
 - Current source evidence:
@@ -32,7 +34,6 @@ Merged PR evidence:
   - `services/torghut/app/trading/discovery/candidate_specs.py`
   - `services/torghut/app/trading/portfolio`
 - Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
-
 
 ## Decision
 
