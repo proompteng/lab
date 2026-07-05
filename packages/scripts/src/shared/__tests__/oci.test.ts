@@ -820,6 +820,7 @@ describe('native OCI build workflows', () => {
       expect(flake).toContain(`"${packageAttr}"`)
     }
     expect(torghutImageModule).toContain('pkgs.uv')
+    expect(torghutImageModule).toContain('pkgs.bash')
     expect(torghutImageModule).toContain('pkgs.stdenv.cc.cc.lib')
     expect(torghutImageModule).toContain('"LD_LIBRARY_PATH=${runtimeLibraryPath}"')
     expect(torghutTaImageModule).toContain('pkgs.dockerTools.pullImage')

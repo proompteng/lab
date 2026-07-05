@@ -118,6 +118,7 @@ let
 
   runtimePath = lib.makeBinPath [
     python
+    pkgs.bash
     pkgs.busybox
     pkgs.coreutils
     pkgs.curl
@@ -142,6 +143,7 @@ pkgs.dockerTools.buildLayeredImage {
     appRoot
     pythonDeps
     python
+    pkgs.bash
     pkgs.busybox
     pkgs.cacert
     pkgs.coreutils
