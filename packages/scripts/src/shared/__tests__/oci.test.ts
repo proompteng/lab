@@ -487,6 +487,7 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
+      jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
     ]) {
