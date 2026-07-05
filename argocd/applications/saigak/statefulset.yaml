@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/component: embeddings
 spec:
   serviceName: saigak
-  replicas: 0
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: saigak
@@ -18,11 +18,16 @@ spec:
         app.kubernetes.io/name: saigak
         app.kubernetes.io/component: embeddings
     spec:
+      runtimeClassName: nvidia
       nodeSelector:
         kubernetes.io/arch: amd64
-        kubernetes.io/hostname: turin
+        kubernetes.io/hostname: talos-192-168-1-85
+        nvidia.com/gpu.present: "true"
       tolerations:
         - key: node-role.kubernetes.io/control-plane
+          operator: Exists
+          effect: NoSchedule
+        - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
       terminationGracePeriodSeconds: 120
@@ -97,6 +102,10 @@ spec:
               value: 30m
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "1"
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility
           livenessProbe:
             exec:
               command:
@@ -110,9 +119,11 @@ spec:
             requests:
               cpu: "8"
               memory: 32Gi
+              nvidia.com/gpu: "1"
             limits:
               cpu: "32"
               memory: 64Gi
+              nvidia.com/gpu: "1"
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -137,7 +148,7 @@ spec:
             - name: SAIGAK_PROXY_TIMEOUT_SECONDS
               value: "120"
             - name: SAIGAK_REQUIRE_GPU_RESIDENCY
-              value: "false"
+              value: "true"
           ports:
             - name: http
               containerPort: 11434
@@ -187,5 +198,5 @@ spec:
             name: saigak-runtime
         - name: model-cache
           persistentVolumeClaim:
-            claimName: saigak-data
+            claimName: saigak-altra-data
       restartPolicy: Always

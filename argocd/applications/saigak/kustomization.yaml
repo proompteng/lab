@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: saigak
 resources:
   - configmap.yaml
+  - pvc-altra.yaml
   - pvc.yaml
   - statefulset.yaml
   - service.yaml
