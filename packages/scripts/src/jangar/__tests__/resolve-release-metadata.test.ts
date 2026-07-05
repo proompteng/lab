@@ -96,6 +96,21 @@ describe('resolve-release-metadata', () => {
     })
   })
 
+  it('does not treat root package script changes as Jangar build changes', () => {
+    const decision = __private.evaluateWorkflowRunStaleness({
+      sourceSha: ddd07d2f,
+      mainHead: bf889391,
+      isAncestor: true,
+      changedMainFiles: ['package.json'],
+    })
+
+    expect(decision).toEqual({
+      promote: true,
+      reason: 'newer-main-non-jangar-only',
+    })
+    expect(__private.isBuildTriggerPath('package.json')).toBe(false)
+  })
+
   it('regression from git history fixture: blocks f22a8cbc promotion when newer main has jangar changes', () => {
     const decision = __private.evaluateWorkflowRunStaleness({
       sourceSha: f22a8cbc,

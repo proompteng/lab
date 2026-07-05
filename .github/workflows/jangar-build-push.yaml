@@ -19,7 +19,6 @@ on:
       - 'packages/otel/**'
       - 'packages/temporal-bun-sdk/**'
       - 'skills/**'
-      - 'package.json'
       - 'bun.lock'
       - '.github/workflows/jangar-build-push.yaml'
   workflow_dispatch:
