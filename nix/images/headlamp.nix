@@ -117,6 +117,7 @@ let
       mkdir -p "$out/headlamp/plugins" "$out/headlamp/static-plugins"
       cp ${backend}/bin/headlamp-server "$out/headlamp/headlamp-server"
       cp -R ${frontend}/frontend "$out/headlamp/frontend"
+      chmod -R u+w "$out/headlamp/frontend"
       cp -R ${prometheusPlugin}/static-plugins/. "$out/headlamp/static-plugins/"
       runHook postInstall
     '';
