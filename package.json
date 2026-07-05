@@ -99,6 +99,7 @@
     "symphony:deploy": "bun run packages/scripts/src/symphony/deploy-service.ts",
     "bumba:enrich-file": "bun run packages/scripts/src/bumba/enrich-file.ts",
     "jangar:cleanup-worktrees": "bun run packages/scripts/src/jangar/cleanup-worktrees.ts",
+    "jangar:deploy": "bun run packages/scripts/src/jangar/deploy-service.ts",
     "flamingo:benchmark": "bun run scripts/jangar/benchmark-flamingo-vllm.ts",
     "flink:build": "bun run packages/scripts/src/dorvud/build-and-push.ts",
     "smoke:torghut-ws": "bun run packages/scripts/src/torghut/ws-smoke.ts",

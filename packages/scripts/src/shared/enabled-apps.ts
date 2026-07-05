@@ -45,6 +45,7 @@ const earlyNixImageApps = new Set([
   'bumba',
   'docs',
   'froussard',
+  'jangar',
   'oirat',
   'olden',
   'proompteng',
@@ -58,7 +59,6 @@ const earlyNixImageApps = new Set([
 ])
 
 const deferredApps = new Map<string, string>([
-  ['jangar', 'complex service plus OpenWebUI chart; requires a dedicated derivation and rollout proof'],
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
   ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
@@ -71,6 +71,7 @@ const appToNixAttr = new Map<string, string>([
   ['bumba', 'bumba-image'],
   ['docs', 'docs-image'],
   ['froussard', 'froussard-image'],
+  ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],
   ['proompteng', 'proompteng-image'],

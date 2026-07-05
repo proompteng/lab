@@ -78,7 +78,7 @@ describe('resolve-release-metadata', () => {
     expect(dddToBfDocsOnlyFiles.some((filePath) => __private.isBuildTriggerPath(filePath))).toBe(false)
   })
 
-  it('does not block Jangar promotion for Agents Codex runtime-only package changes', () => {
+  it('blocks Jangar promotion when newer main has Codex package image inputs', () => {
     const decision = __private.evaluateWorkflowRunStaleness({
       sourceSha: ddd07d2f,
       mainHead: bf889391,
@@ -91,8 +91,8 @@ describe('resolve-release-metadata', () => {
     })
 
     expect(decision).toEqual({
-      promote: true,
-      reason: 'newer-main-non-jangar-only',
+      promote: false,
+      reason: 'newer-main-has-jangar-changes',
     })
   })
 

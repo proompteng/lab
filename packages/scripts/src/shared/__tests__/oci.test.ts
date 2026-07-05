@@ -30,10 +30,12 @@ const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
 const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
+const jangarReleaseWorkflow = readRepoFile('.github/workflows/jangar-release.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
 const symphonyCiWorkflow = readRepoFile('.github/workflows/symphony-ci.yml')
 const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
 const symphonyReleaseMetadataScript = readRepoFile('packages/scripts/src/symphony/resolve-release-metadata.ts')
+const jangarReleaseMetadataScript = readRepoFile('packages/scripts/src/jangar/resolve-release-metadata.ts')
 const sagBuildWorkflow = readRepoFile('.github/workflows/sag-build-push.yaml')
 const sagReleaseWorkflow = readRepoFile('.github/workflows/sag-release.yml')
 const sagPostDeployVerifyWorkflow = readRepoFile('.github/workflows/sag-post-deploy-verify.yml')
@@ -66,6 +68,7 @@ const allNixImageModules = readdirSync(new URL('nix/images/', repoRoot))
   .map((name) => [name, readRepoFile(`nix/images/${name}`)] as const)
 const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const sagImageModule = readRepoFile('nix/images/sag.nix')
+const jangarImageModule = readRepoFile('nix/images/jangar.nix')
 const torghutImageModule = readRepoFile('nix/images/torghut.nix')
 const torghutTaImageModule = readRepoFile('nix/images/torghut-ta.nix')
 const torghutWsImageModule = readRepoFile('nix/images/torghut-ws.nix')
@@ -82,6 +85,9 @@ const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-im
 const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
 const sagBuildScript = readRepoFile('packages/scripts/src/sag/build-image.ts')
 const sagDeployScript = readRepoFile('packages/scripts/src/sag/deploy-service.ts')
+const jangarBuildScript = readRepoFile('packages/scripts/src/jangar/build-image.ts')
+const jangarDeployScript = readRepoFile('packages/scripts/src/jangar/deploy-service.ts')
+const jangarUpdateScript = readRepoFile('packages/scripts/src/jangar/update-manifests.ts')
 const agentsBuildScript = readRepoFile('packages/scripts/src/agents/build-image.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
 const arcRunnerBuildScript = readRepoFile('packages/scripts/src/arc-runner/build-image.ts')
@@ -512,10 +518,10 @@ describe('native OCI build workflows', () => {
 
     for (const workflow of [jangarBuildWorkflow]) {
       expect(workflow).not.toContain("'packages/scripts/src/jangar/**'")
-      expect(workflow).toContain("'packages/scripts/src/jangar/build-image.ts'")
-      expect(workflow).toContain("'packages/scripts/src/shared/cli.ts'")
-      expect(workflow).toContain("'packages/scripts/src/shared/docker.ts'")
-      expect(workflow).toContain("'packages/scripts/src/shared/git.ts'")
+      expect(workflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
+      expect(workflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
+      expect(workflow).toContain("'nix/images/jangar.nix'")
+      expect(workflow).toContain("'nix/images/bun-workspace-service.nix'")
     }
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/symphony/**'")
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/cli.ts'")
@@ -554,6 +560,13 @@ describe('native OCI build workflows', () => {
     for (const helperInput of nixImageHelperInputs) {
       expect(symphonyReleaseMetadataScript).toContain(helperInput.replaceAll('/', '\\/').replaceAll('.', '\\.'))
     }
+
+    expect(jangarReleaseMetadataScript).not.toContain('.github\\/workflows\\/')
+    expect(jangarReleaseMetadataScript).not.toContain('setup-nix-toolchain')
+    expect(jangarReleaseMetadataScript).toContain('images\\/jangar\\.nix')
+    for (const helperInput of nixImageHelperInputs) {
+      expect(jangarReleaseMetadataScript).toContain(helperInput.replaceAll('/', '\\/').replaceAll('.', '\\.'))
+    }
   })
 
   it('does not fan out migrated image builds on workflow-only changes', () => {
@@ -564,6 +577,7 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
+      jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
       torghutTaBuildWorkflow,
@@ -594,6 +608,7 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
+      jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
     ]) {
@@ -614,6 +629,7 @@ describe('native OCI build workflows', () => {
       froussardWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
+      jangarBuildWorkflow,
       sagBuildWorkflow,
     ]) {
       expect(workflow).toContain("- 'flake.lock'")
@@ -653,6 +669,8 @@ describe('native OCI build workflows', () => {
       productNixWorkflow,
       enabledProductReleaseWorkflow,
       agentsBuildWorkflow,
+      jangarBuildWorkflow,
+      jangarReleaseWorkflow,
       symphonyBuildWorkflow,
       symphonyReleaseWorkflow,
       sagBuildWorkflow,
@@ -731,6 +749,7 @@ describe('native OCI build workflows', () => {
       [froussardWorkflow, 'froussard-release-contract'],
       [sagBuildWorkflow, 'sag-release-contract'],
       [symphonyBuildWorkflow, 'symphony-release-contract'],
+      [jangarBuildWorkflow, 'jangar-release-contract'],
       [torghutBuildWorkflow, 'torghut-release-contract'],
       [torghutTaBuildWorkflow, 'torghut-ta-release-contract'],
       [torghutWsBuildWorkflow, 'torghut-ws-release-contract'],
@@ -801,6 +820,34 @@ describe('native OCI build workflows', () => {
     expect(sagReleaseWorkflow).not.toContain('docker buildx')
     expect(sagPostDeployVerifyWorkflow).toContain('kubectl -n sag rollout status deployment/sag')
     expect(sagPostDeployVerifyWorkflow).toContain('desired_replicas=')
+  })
+
+  it('routes the enabled Jangar image through a real Nix OCI attr', () => {
+    expect(flake).toContain('"jangar-image"')
+    expect(repoFileExists('nix/images/jangar.nix')).toBe(true)
+    expect(jangarImageModule).toContain('dependencyClosure = "bunCache";')
+    expect(jangarImageModule).toContain('"@proompteng/jangar"')
+    expect(jangarImageModule).toContain('"@proompteng/cx-tools"')
+    expect(jangarImageModule).toContain('import ./openai-codex-cli.nix')
+    expect(jangarImageModule).toContain('openvscode-server')
+    expect(jangarImageModule).toContain('import ./bun-workspace-service.nix')
+    expect(jangarImageModule).not.toContain('created = "now"')
+    expect(jangarImageModule).not.toContain('docker build')
+
+    expect(jangarBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(jangarBuildWorkflow).toContain('image_name: jangar')
+    expect(jangarBuildWorkflow).toContain('package_attr: jangar-image')
+    expect(jangarBuildWorkflow).toContain('jangar-release-contract')
+    expect(jangarBuildWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(jangarBuildWorkflow).not.toContain('image_build_timeout:')
+    expect(jangarBuildWorkflow).not.toContain('oven-sh/setup-bun')
+    expect(jangarBuildWorkflow).not.toContain('docker/setup-buildx-action')
+
+    expect(jangarReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(jangarReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
+    expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
+    expect(jangarReleaseWorkflow).not.toContain('docker buildx')
+    expect(jangarReleaseWorkflow).not.toContain('docker/setup-buildx-action')
   })
 
   it('routes the enabled Torghut family images through real Nix OCI attrs', () => {
@@ -984,6 +1031,7 @@ describe('native OCI build workflows', () => {
       froussardBuildScript,
       symphonyBuildScript,
       sagBuildScript,
+      jangarBuildScript,
       agentsBuildScript,
       agentsDeployScript,
       torghutImageBuildersScript,
@@ -1029,6 +1077,14 @@ describe('native OCI build workflows', () => {
     expect(sagDeployScript).toContain('dryRun')
     expect(sagDeployScript).toContain('noApply')
     expect(sagDeployScript).toContain('digest:')
+    expect(jangarDeployScript).not.toContain("from '../shared/docker'")
+    expect(jangarDeployScript).not.toContain('inspectImageDigest')
+    expect(jangarDeployScript).toContain('dryRun')
+    expect(jangarDeployScript).toContain('noApply')
+    expect(jangarDeployScript).toContain('digest:')
+    expect(jangarUpdateScript).not.toContain("from '../shared/docker'")
+    expect(jangarUpdateScript).not.toContain('inspectImageDigest')
+    expect(jangarUpdateScript).toContain('requireDigest')
     expect(agentsDeployScript).not.toContain("from '../shared/docker'")
     expect(agentsDeployScript).not.toContain('inspectImageDigest')
     expect(agentsDeployScript).toContain("from '../shared/nix-oci-deploy'")
