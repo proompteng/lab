@@ -43,6 +43,83 @@ tool_versions="$(
     '{nix: $nix, skopeo: $skopeo, crane: $crane} | with_entries(select(.value != ""))'
 )"
 
+contract_log_dirs=()
+if [[ -n "${NIX_OCI_CONTRACT_LOG_DIRS:-}" ]]; then
+  IFS=':' read -r -a contract_log_dirs <<< "${NIX_OCI_CONTRACT_LOG_DIRS}"
+fi
+if [[ -n "${NIX_OCI_LOG_DIR:-}" ]]; then
+  contract_log_dirs+=("${NIX_OCI_LOG_DIR}")
+fi
+
+existing_contract_log_dirs=()
+for log_dir in "${contract_log_dirs[@]}"; do
+  if [[ -n "${log_dir}" && -d "${log_dir}" ]]; then
+    existing_contract_log_dirs+=("${log_dir}")
+  fi
+done
+
+log_dirs_json="$(
+  if [[ "${#existing_contract_log_dirs[@]}" -eq 0 ]]; then
+    jq -n '[]'
+  else
+    printf '%s\n' "${existing_contract_log_dirs[@]}" | jq -R -s 'split("\n") | map(select(length > 0))'
+  fi
+)"
+
+count_log_matches() {
+  local pattern="$1"
+  local total count file
+  total=0
+  for log_dir in "${existing_contract_log_dirs[@]}"; do
+    while IFS= read -r -d '' file; do
+      count="$(grep -E -c "${pattern}" "${file}" 2>/dev/null || true)"
+      total=$((total + count))
+    done < <(find "${log_dir}" -type f -name '*.log' -print0)
+  done
+  echo "${total}"
+}
+
+timings_json="$(
+  timing_files=()
+  for log_dir in "${existing_contract_log_dirs[@]}"; do
+    while IFS= read -r -d '' file; do
+      timing_files+=("${file}")
+    done < <(find "${log_dir}" -type f -name 'timings.tsv' -print0)
+  done
+  if [[ "${#timing_files[@]}" -eq 0 ]]; then
+    jq -n '[]'
+  else
+    jq -R -s '
+      split("\n")
+      | map(select(length > 0) | split("\t"))
+      | map({
+          phase: .[0],
+          status: (.[1] | tonumber? // .),
+          seconds: (.[2] | tonumber? // 0),
+          log: (.[3] // "")
+        })
+    ' "${timing_files[@]}"
+  fi
+)"
+
+cache_provenance="$(
+  jq -n \
+    --arg source "github-actions-logs" \
+    --argjson logDirs "${log_dirs_json}" \
+    --argjson atticSubstitutions "$(count_log_matches "copying path .*from 'http://attic\\.attic\\.svc\\.cluster\\.local/lab'")" \
+    --argjson cacheNixosSubstitutions "$(count_log_matches "copying path .*from 'https://cache\\.nixos\\.org'")" \
+    --argjson localBuilds "$(count_log_matches "building '/nix/store/.*\\.drv'")" \
+    --argjson plannedLocalBuildBlocks "$(count_log_matches 'this derivation will be built:|these [0-9]+ derivations will be built:')" \
+    '{
+      source: $source,
+      logDirs: $logDirs,
+      atticSubstitutions: $atticSubstitutions,
+      cacheNixosSubstitutions: $cacheNixosSubstitutions,
+      localBuilds: $localBuilds,
+      plannedLocalBuildBlocks: $plannedLocalBuildBlocks
+    }'
+)"
+
 mkdir -p "$(dirname "${output_path}")"
 jq -n \
   --arg service "${SERVICE}" \
@@ -57,6 +134,8 @@ jq -n \
   --arg platformDigestArm64 "${PLATFORM_DIGEST_ARM64}" \
   --argjson lockfileHashes "${lockfile_hashes}" \
   --argjson toolVersions "${tool_versions}" \
+  --argjson cacheProvenance "${cache_provenance}" \
+  --argjson timings "${timings_json}" \
   --arg createdAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{
     service: $service,
@@ -73,6 +152,8 @@ jq -n \
     },
     lockfileHashes: $lockfileHashes,
     toolVersions: $toolVersions,
+    cacheProvenance: $cacheProvenance,
+    timings: $timings,
     builder: "nix-dockerTools-skopeo",
     invocation: "github-actions",
     createdAt: $createdAt

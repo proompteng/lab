@@ -4,7 +4,7 @@ import { dirname, resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from './cli'
 import { execGit } from './git'
-import { buildNixOciBuildPlan } from './nix-oci'
+import { buildNixOciBuildPlan, type NixOciCacheProvenance, type NixOciTiming } from './nix-oci'
 import { inspectOciPlatforms } from './oci'
 
 export type BuildAndPushNixImageOptions = {
@@ -33,6 +33,8 @@ export type BuildAndPushNixImageResult = {
   platformDigests: Record<string, string>
   lockfileHashes: Record<string, string>
   toolVersions: Record<string, string>
+  cacheProvenance: NixOciCacheProvenance
+  timings: NixOciTiming[]
   imageTarPath?: string
   dryRun?: boolean
 }
@@ -88,6 +90,10 @@ const collectToolVersions = (): Record<string, string> =>
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
   )
 
+const manualScriptCacheProvenance: NixOciCacheProvenance = {
+  source: 'manual-script-not-collected',
+}
+
 const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'manual-script') => {
   mkdirSync(dirname(result.contractPath), { recursive: true })
   writeFileSync(
@@ -105,6 +111,8 @@ const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'm
         platformDigests: result.platformDigests,
         lockfileHashes: result.lockfileHashes,
         toolVersions: result.toolVersions,
+        cacheProvenance: result.cacheProvenance,
+        timings: result.timings,
         imageTarPath: result.imageTarPath,
         builder: 'nix-dockerTools-skopeo',
         invocation,
@@ -157,6 +165,8 @@ export const buildAndPushNixImage = async (
       platformDigests: {},
       lockfileHashes,
       toolVersions,
+      cacheProvenance: manualScriptCacheProvenance,
+      timings: [],
       dryRun: true,
     }
     writeReleaseContract(result, 'manual-script')
@@ -195,6 +205,8 @@ export const buildAndPushNixImage = async (
     platformDigests: Object.fromEntries(observedPlatforms.map((entry) => [entry.platform, entry.digest])),
     lockfileHashes,
     toolVersions,
+    cacheProvenance: manualScriptCacheProvenance,
+    timings: [],
     imageTarPath: tarPath,
   }
   writeReleaseContract(result, 'manual-script')
