@@ -107,17 +107,71 @@ let
     pythonImportsCheck = [ "alpaca" ];
   };
 
+  mcpSdk = mkPyWheel {
+    pname = "mcp";
+    version = "1.19.0";
+    hash = "sha256-9ZB/4cAWclX5FnGPN20F8JqDCiFTJ6PM3V7IpRny5XI=";
+    propagatedBuildInputs = [
+      pythonPackages.anyio
+      pythonPackages.httpx
+      pythonPackages."httpx-sse"
+      pythonPackages.jsonschema
+      pythonPackages.pydantic
+      pythonPackages."pydantic-settings"
+      pythonPackages."python-multipart"
+      pythonPackages."sse-starlette"
+      pythonPackages.starlette
+      pythonPackages.uvicorn
+    ];
+    pythonImportsCheck = [ "mcp" ];
+  };
+
+  pyKeyValueShared = mkPyWheel {
+    pname = "py-key-value-shared";
+    pypiPname = "py_key_value_shared";
+    version = "0.3.0";
+    hash = "sha256-Ww77p+vKCLsVix6Tr8LwfTC49AwvwSziSkwNhPQvkpg=";
+    propagatedBuildInputs = [
+      pythonPackages.beartype
+      pythonPackages."typing-extensions"
+    ];
+    pythonImportsCheck = [ "py_key_value_shared" ];
+  };
+
+  pyKeyValueAio = mkPyWheel {
+    pname = "py-key-value-aio";
+    pypiPname = "py_key_value_aio";
+    version = "0.3.0";
+    hash = "sha256-HHgZFXZgeL/WCNqnaf77l+ZdHXN0aj37ZARg4yIHG2Q=";
+    propagatedBuildInputs = [
+      pyKeyValueShared
+      pythonPackages.beartype
+      pythonPackages.cachetools
+      pythonPackages.diskcache
+      pythonPackages.pathvalidate
+    ];
+    pythonImportsCheck = [ "py_key_value_aio" ];
+  };
+
   fastmcp = mkPyWheel {
     pname = "fastmcp";
-    version = "2.0.0";
-    hash = "sha256-1cQREjOmop+pLtWs2/5P6ukiGRodHBVD8Khe/u8x+7k=";
+    version = "2.13.2";
+    hash = "sha256-MAxZ65cMI1u50FdYgzIpIuTy4kaKPUXpDL/Wsjt74kU=";
     propagatedBuildInputs = [
       dotenv
-      pythonPackages.fastapi
-      pythonPackages.mcp
+      mcpSdk
+      pyKeyValueAio
+      pythonPackages.authlib
+      pythonPackages.cyclopts
+      pythonPackages."email-validator"
+      pythonPackages.exceptiongroup
       pythonPackages."openapi-pydantic"
+      pythonPackages."jsonschema-path"
+      pythonPackages.platformdirs
+      pythonPackages.pydantic
+      pythonPackages.pyperclip
       pythonPackages.rich
-      pythonPackages.typer
+      pythonPackages.uvicorn
       pythonPackages.websockets
     ];
     pythonImportsCheck = [ "fastmcp" ];
@@ -371,6 +425,7 @@ let
       "$out/app/node_modules/@proompteng/codex" \
       "$out/app/services/agents/scripts/codex" \
       "$out/root/.codex" \
+      "$out/workspace" \
       "$out/usr/bin" \
       "$out/usr/local/bin"
 
@@ -383,12 +438,12 @@ let
     printf '%s\n' unspecified > "$out/root/.codex/auth.checksum"
 
     cat > "$out/usr/local/bin/agent-runner" <<'EOF'
-    #!/usr/bin/env bash
-    exec bun /app/services/agents/scripts/codex/agent-runner.js "$@"
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/agent-runner.js "$@"
     EOF
     cat > "$out/usr/local/bin/agents-fake-codex-app-server" <<'EOF'
-    #!/usr/bin/env bash
-    exec bun /app/services/agents/scripts/codex/fake-app-server.js "$@"
+    #!${pkgs.bash}/bin/bash
+    exec ${bun}/bin/bun /app/services/agents/scripts/codex/fake-app-server.js "$@"
     EOF
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/local/bin/codex"
     ln -s ${openaiCodexCli}/bin/codex "$out/usr/bin/codex"

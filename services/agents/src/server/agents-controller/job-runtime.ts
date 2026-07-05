@@ -14,6 +14,7 @@ import { resolveAgentRunnerDefaultsConfig } from './runtime-config'
 
 const MIN_RUNNER_JOB_TTL_SECONDS = 30
 const MAX_RUNNER_JOB_TTL_SECONDS = 7 * 24 * 60 * 60
+const DEFAULT_CODEX_HOME = '/root/.codex'
 
 const normalizeRunnerJobTtlSeconds = (value: number, source: string) => {
   if (!Number.isFinite(value)) return null
@@ -277,6 +278,9 @@ const buildVolumeSpecs = (workload: Record<string, unknown>) => {
 
   return { volumeSpecs, volumeMounts }
 }
+
+const hasVolumeMountAtPath = (mounts: readonly Record<string, unknown>[] | undefined, mountPath: string) =>
+  (mounts ?? []).some((mount) => asString(mount.mountPath) === mountPath)
 
 const createInputFilesConfigMap = async (
   kube: ReturnType<typeof createKubernetesClient>,
@@ -860,16 +864,35 @@ export const submitJobRun = async (
     })
   }
 
+  const codexHomePath = authSecret?.mountPath ?? DEFAULT_CODEX_HOME
+  const codexHomeAlreadyMounted =
+    hasVolumeMountAtPath(volumeMounts, codexHomePath) || hasVolumeMountAtPath(vcsRuntime?.volumeMounts, codexHomePath)
+  if (!codexHomeAlreadyMounted) {
+    const codexHomeVolumeName = makeName(
+      runName,
+      authSecret
+        ? options.nameSuffix
+          ? `auth-home-${options.nameSuffix}`
+          : 'auth-home'
+        : options.nameSuffix
+          ? `codex-home-${options.nameSuffix}`
+          : 'codex-home',
+    )
+    volumes.push({
+      name: codexHomeVolumeName,
+      spec: { emptyDir: {} },
+    })
+    configVolumeMounts.push({
+      name: codexHomeVolumeName,
+      mountPath: codexHomePath,
+    })
+  }
+
   if (authSecret) {
-    const authHomeVolumeName = makeName(runName, options.nameSuffix ? `auth-home-${options.nameSuffix}` : 'auth-home')
     const authSecretVolumeName = makeName(
       runName,
       options.nameSuffix ? `auth-secret-${options.nameSuffix}` : 'auth-secret',
     )
-    volumes.push({
-      name: authHomeVolumeName,
-      spec: { emptyDir: {} },
-    })
     volumes.push({
       name: authSecretVolumeName,
       spec: {
@@ -878,10 +901,6 @@ export const submitJobRun = async (
           items: [{ key: authSecret.key, path: authSecret.key }],
         },
       },
-    })
-    configVolumeMounts.push({
-      name: authHomeVolumeName,
-      mountPath: authSecret.mountPath,
     })
     configVolumeMounts.push({
       name: authSecretVolumeName,
@@ -912,12 +931,8 @@ export const submitJobRun = async (
         env: [
           { name: 'AGENT_RUN_SPEC', value: '/workspace/run.json' },
           { name: 'AGENT_RUNNER_SPEC_PATH', value: '/workspace/agent-runner.json' },
-          ...(authSecret
-            ? [
-                { name: 'CODEX_HOME', value: authSecret.mountPath },
-                { name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) },
-              ]
-            : []),
+          { name: 'CODEX_HOME', value: codexHomePath },
+          ...(authSecret ? [{ name: 'CODEX_AUTH', value: buildAuthSecretPath(authSecret) }] : []),
           ...env,
           ...(systemPromptRef
             ? [{ name: 'CODEX_SYSTEM_PROMPT_PATH', value: '/workspace/.codex/system-prompt.txt' }]

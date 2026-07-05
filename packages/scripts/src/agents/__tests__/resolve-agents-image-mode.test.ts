@@ -121,15 +121,23 @@ describe('classifyAgentsImageMode', () => {
 
   it('builds a local image for Agents Nix image input changes', () => {
     const result = classifyAgentsImageMode([
+      'flake.lock',
       'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
       'packages/scripts/src/shared/nix-oci-deploy.ts',
+      'tsconfig.base.json',
     ])
     expect(result.mode).toBe('build-local-image')
     expect(result.matchedPaths).toEqual([
+      'flake.lock',
       'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
       'packages/scripts/src/shared/nix-oci-deploy.ts',
+      'tsconfig.base.json',
     ])
   })
 
@@ -198,10 +206,13 @@ describe('agents-ci workflow local Agents image build', () => {
   it('runs Agents CI when Nix image inputs change', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
     const nixImageInputs = [
+      'flake.lock',
       'nix/images/agents.nix',
       'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
       'nix/packages.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+      'tsconfig.base.json',
     ]
 
     for (const input of nixImageInputs) {

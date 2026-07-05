@@ -186,6 +186,160 @@ describe('agents controller job-runtime module', () => {
     expect(agentRunnerContainer.terminationMessagePolicy).toBe('File')
   })
 
+  it('mounts a writable default Codex home when no auth secret is configured', async () => {
+    const previousName = process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    const previousKey = process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    const previousMountPath = process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+    delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+
+    try {
+      const applied: Record<string, unknown>[] = []
+      const kube = {
+        get: vi.fn(async () => null),
+        apply: vi.fn(async (resource: Record<string, unknown>) => {
+          applied.push(resource)
+          return resource
+        }),
+      }
+
+      await submitJobRun(
+        kube as never,
+        { metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' }, spec: {} },
+        { metadata: { name: 'agent-a' }, spec: {} },
+        {
+          metadata: { name: 'codex' },
+          spec: {
+            binary: '/usr/local/bin/agent-runner',
+            adapter: { type: 'codex-app-server', codex: { prompt: 'demo prompt' } },
+          },
+        },
+        { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
+        null,
+        'agents',
+        'registry.example/agents-codex-runner:tag',
+        'job',
+      )
+
+      const job = applied.find((resource) => resource.kind === 'Job')
+      const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as
+        | Record<string, unknown>
+        | undefined
+      const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+      const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+      const container = containers[0] ?? {}
+      const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+      const volumes = (podSpecSpec.volumes as Record<string, unknown>[] | undefined) ?? []
+      const volumeMounts = (container.volumeMounts as Record<string, unknown>[] | undefined) ?? []
+
+      expect(env).toContainEqual({ name: 'CODEX_HOME', value: '/root/.codex' })
+      expect(env.find((entry) => entry.name === 'CODEX_AUTH')).toBeUndefined()
+      expect(volumes.find((volume) => volume.name === 'run-1-codex-home')).toMatchObject({ emptyDir: {} })
+      expect(volumeMounts.find((mount) => mount.mountPath === '/root/.codex')).toMatchObject({
+        name: 'run-1-codex-home',
+      })
+    } finally {
+      if (previousName === undefined) {
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+      } else {
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+      }
+      if (previousKey === undefined) {
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+      } else {
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
+      }
+      if (previousMountPath === undefined) {
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+      } else {
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
+      }
+    }
+  })
+
+  it('does not add a duplicate default Codex home mount when workload already mounts it', async () => {
+    const previousName = process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    const previousKey = process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    const previousMountPath = process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+    delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+    delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+    delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+
+    try {
+      const applied: Record<string, unknown>[] = []
+      const kube = {
+        get: vi.fn(async () => null),
+        apply: vi.fn(async (resource: Record<string, unknown>) => {
+          applied.push(resource)
+          return resource
+        }),
+      }
+
+      await submitJobRun(
+        kube as never,
+        {
+          metadata: { name: 'run-1', uid: 'run-uid-1', namespace: 'agents' },
+          spec: {
+            workload: {
+              volumes: [
+                {
+                  type: 'emptyDir',
+                  name: 'custom-codex-home',
+                  mountPath: '/root/.codex',
+                },
+              ],
+            },
+          },
+        },
+        { metadata: { name: 'agent-a' }, spec: {} },
+        {
+          metadata: { name: 'codex' },
+          spec: {
+            binary: '/usr/local/bin/agent-runner',
+            adapter: { type: 'codex-app-server', codex: { prompt: 'demo prompt' } },
+          },
+        },
+        { metadata: { name: 'impl-a' }, source: { provider: 'github' }, summary: 'Run summary' },
+        null,
+        'agents',
+        'registry.example/agents-codex-runner:tag',
+        'job',
+      )
+
+      const job = applied.find((resource) => resource.kind === 'Job')
+      const podSpec = (job?.spec as Record<string, unknown> | undefined)?.template as
+        | Record<string, unknown>
+        | undefined
+      const podSpecSpec = (podSpec?.spec as Record<string, unknown> | undefined) ?? {}
+      const containers = (podSpecSpec.containers as Record<string, unknown>[] | undefined) ?? []
+      const container = containers[0] ?? {}
+      const env = (container.env as Record<string, unknown>[] | undefined) ?? []
+      const volumeMounts = (container.volumeMounts as Record<string, unknown>[] | undefined) ?? []
+
+      expect(env).toContainEqual({ name: 'CODEX_HOME', value: '/root/.codex' })
+      expect(volumeMounts.filter((mount) => mount.mountPath === '/root/.codex')).toEqual([
+        { name: 'custom-codex-home', mountPath: '/root/.codex', readOnly: false },
+      ])
+    } finally {
+      if (previousName === undefined) {
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME
+      } else {
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_NAME = previousName
+      }
+      if (previousKey === undefined) {
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY
+      } else {
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_KEY = previousKey
+      }
+      if (previousMountPath === undefined) {
+        delete process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH
+      } else {
+        process.env.AGENTS_CONTROLLER_AUTH_SECRET_MOUNT_PATH = previousMountPath
+      }
+    }
+  })
+
   it('returns an existing deterministic job for the same AgentRun', async () => {
     const applied: Record<string, unknown>[] = []
     const existingJob = {
