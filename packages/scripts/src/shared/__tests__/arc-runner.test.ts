@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 
 import { describe, expect, it } from 'bun:test'
 
@@ -7,7 +7,7 @@ const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRo
 
 const setupAction = readRepoFile('.github/actions/setup-nix-toolchain/action.yml')
 const arcApplication = readRepoFile('argocd/applications/arc/application.yaml')
-const arcRunnerDockerfile = readRepoFile('images/arc-runner/Dockerfile')
+const arcRunnerImage = readRepoFile('nix/images/arc-runner.nix')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
 const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
 const nixOciWorkflow = readRepoFile('.github/workflows/nix-oci-build-common.yml')
@@ -79,26 +79,25 @@ describe('ARC Nix runner toolchain', () => {
   })
 
   it('builds a custom actions runner image with pinned Nix CI tools preinstalled', () => {
-    expect(arcRunnerDockerfile).toContain('FROM ${ACTIONS_RUNNER_BASE}')
-    expect(arcRunnerDockerfile).toContain(
-      'ghcr.io/actions/actions-runner@sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29',
+    expect(existsSync(new URL('images/arc-runner/Dockerfile', repoRoot))).toBe(false)
+    expect(arcRunnerImage).toContain('pkgs.dockerTools.pullImage')
+    expect(arcRunnerImage).toContain('pkgs.dockerTools.buildLayeredImageWithNixDb')
+    expect(arcRunnerImage).toContain('ciToolchain')
+    expect(arcRunnerImage).toContain('imageName = "ghcr.io/actions/actions-runner"')
+    expect(arcRunnerImage).toContain(
+      'imageDigest = "sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29"',
     )
-    expect(arcRunnerDockerfile).not.toContain('ghcr.io/actions/actions-runner:latest')
-    expect(arcRunnerDockerfile).toContain('ENV LAB_ARC_RUNNER_TOOLCHAIN=1')
-    expect(arcRunnerDockerfile).toContain('https://releases.nixos.org/nix/nix-2.28.5/install')
-    expect(arcRunnerDockerfile).toContain('ARG LAB_NIX_EXTRA_SUBSTITUTERS=')
-    expect(arcRunnerDockerfile).toContain('ARG LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=')
-    expect(arcRunnerDockerfile).toContain('extra-substituters = ${LAB_NIX_EXTRA_SUBSTITUTERS}')
-    expect(arcRunnerDockerfile).toContain('extra-trusted-public-keys = ${LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS}')
-    expect(arcRunnerDockerfile).toContain('COPY --chown=runner:runner flake.nix flake.lock ./')
-    expect(arcRunnerDockerfile).toContain('COPY --chown=runner:runner nix ./nix')
-    expect(arcRunnerDockerfile).toContain(
-      'sh /tmp/install-nix.sh --no-daemon --yes --no-channel-add --no-modify-profile',
-    )
-    expect(arcRunnerDockerfile).toContain('nix profile install .#ciToolchain --priority 4')
-    expect(arcRunnerDockerfile).toContain('toolchain-doctor')
-    expect(arcRunnerDockerfile).toContain('oci-doctor')
+    expect(arcRunnerImage).not.toContain('ghcr.io/actions/actions-runner:latest')
+    expect(arcRunnerImage).toContain('LAB_ARC_RUNNER_TOOLCHAIN=1')
+    expect(arcRunnerImage).toContain('experimental-features = nix-command flakes')
+    expect(arcRunnerImage).toContain('NIX_PAGER=cat')
+    expect(arcRunnerImage).toContain('User = "runner"')
+    expect(arcRunnerImage).toContain('/home/runner/run.sh')
+    expect(arcRunnerImage).not.toContain('curl')
+    expect(arcRunnerImage).not.toContain('apt-get')
+    expect(arcRunnerImage).not.toContain('created = "now"')
     expect(flake).toContain('ciToolchain = pkgs.buildEnv')
+    expect(flake).toContain('"arc-runner-image" = import ./nix/images/arc-runner.nix')
     expect(flake).toContain('name = "lab-ci-toolchain"')
     expect(flake).toContain('pathsToLink = [ "/bin" ]')
     expect(flake).toContain('ignoreCollisions = true')
@@ -112,42 +111,26 @@ describe('ARC Nix runner toolchain', () => {
   })
 
   it('publishes multi-arch ARC runner images and opens a digest-pinning release PR', () => {
-    expect(arcRunnerBuildWorkflow).toContain('runner: arc-amd64')
-    expect(arcRunnerBuildWorkflow).toContain('runner: arc-arm64')
-    expect(arcRunnerBuildWorkflow).toContain('Smoke PR runner image toolchain')
-    expect(arcRunnerBuildWorkflow).toContain('test "${LAB_ARC_RUNNER_TOOLCHAIN:-}" = "1"')
-    expect(arcRunnerBuildWorkflow).toContain('command -v bun')
-    expect(arcRunnerBuildWorkflow).toContain('command -v uv')
-    expect(arcRunnerBuildWorkflow).toContain('command -v go')
-    expect(arcRunnerBuildWorkflow).toContain('command -v python3.11')
-    expect(arcRunnerBuildWorkflow).toContain('command -v python3.12')
-    expect(arcRunnerBuildWorkflow).toContain('command -v tofu')
-    expect(arcRunnerBuildWorkflow).toContain('toolchain-doctor')
-    expect(arcRunnerBuildWorkflow).toContain('oci-doctor')
-    expect(arcRunnerBuildWorkflow).toContain('Prepare minimal runner image context')
-    expect(arcRunnerBuildWorkflow).toContain('cp flake.nix flake.lock .artifacts/arc-runner-context/')
-    expect(arcRunnerBuildWorkflow).toContain('Require Attic public key')
-    expect(arcRunnerBuildWorkflow).toContain('ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}')
-    expect(arcRunnerBuildWorkflow).toContain(
-      '--build-arg "LAB_NIX_EXTRA_SUBSTITUTERS=http://attic.attic.svc.cluster.local/lab"',
-    )
-    expect(arcRunnerBuildWorkflow).toContain('--build-arg "LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=${ATTIC_PUBLIC_KEY}"')
-    expect(arcRunnerBuildWorkflow).toContain('docker buildx build')
-    expect(arcRunnerBuildWorkflow).toContain('--platform "${PLATFORM}"')
-    expect(arcRunnerBuildWorkflow).toContain(
-      '[[ "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]',
-    )
-    expect(arcRunnerBuildWorkflow).toContain('if [[ "${should_publish}" == "true" ]]; then')
-    expect(arcRunnerBuildWorkflow).toContain('--push')
-    expect(arcRunnerBuildWorkflow).toContain('docker buildx imagetools create')
-    expect(arcRunnerBuildWorkflow).toContain("github.event_name == 'workflow_dispatch'")
-    expect(arcRunnerBuildWorkflow).toContain('linux/amd64')
-    expect(arcRunnerBuildWorkflow).toContain('linux/arm64')
+    expect(arcRunnerBuildWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(arcRunnerBuildWorkflow).toContain('image_name: arc-runner')
+    expect(arcRunnerBuildWorkflow).toContain('package_attr: arc-runner-image')
     expect(arcRunnerBuildWorkflow).toContain('arc-runner-release-contract')
+    expect(arcRunnerBuildWorkflow).toContain(
+      "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
+    )
+    expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
+    expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
+    expect(arcRunnerBuildWorkflow).not.toContain('docker run')
     expect(arcRunnerBuildWorkflow).not.toContain("'.github/workflows/arc-runner-release.yml'")
     expect(arcRunnerBuildWorkflow).not.toContain("'packages/scripts/src/shared/__tests__/arc-runner.test.ts'")
     expect(arcRunnerReleaseWorkflow).toContain('workflows:')
     expect(arcRunnerReleaseWorkflow).toContain('arc-runner-build-push')
+    expect(arcRunnerReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(arcRunnerReleaseWorkflow).toContain("require-preinstalled: 'true'")
+    expect(arcRunnerReleaseWorkflow).toContain('crane digest "${image}:${tag}"')
+    expect(arcRunnerReleaseWorkflow).toContain('nix run .#assert-oci-platforms')
+    expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')
+    expect(arcRunnerReleaseWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
     expect(arcRunnerReleaseWorkflow).toContain('argocd/applications/arc/application.yaml')
   })

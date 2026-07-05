@@ -65,6 +65,8 @@
     "test:discord": "bun run --filter @proompteng/discord test",
     "build:facteur": "bun run packages/scripts/src/facteur/build-image.ts",
     "build:attic": "bun run packages/scripts/src/attic/build-image.ts",
+    "build:arc-runner": "bun run packages/scripts/src/arc-runner/build-image.ts",
+    "arc-runner:deploy": "bun run packages/scripts/src/arc-runner/deploy-service.ts",
     "attic:deploy": "bun run packages/scripts/src/attic/deploy-service.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
     "agents:deploy": "bun run packages/scripts/src/agents/deploy-service.ts",

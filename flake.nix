@@ -210,6 +210,9 @@
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux ({
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
+            "arc-runner-image" = import ./nix/images/arc-runner.nix {
+              inherit pkgs lib ciToolchain;
+            };
             "oirat-image" = import ./nix/images/oirat.nix {
               inherit pkgs lib nodejs;
               repoRoot = ./.;
