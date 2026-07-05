@@ -498,6 +498,8 @@ describe('native OCI build workflows', () => {
     }
 
     for (const workflow of [jangarBuildWorkflow]) {
+      expect(workflow).not.toContain("'packages/scripts/src/jangar/**'")
+      expect(workflow).toContain("'packages/scripts/src/jangar/build-image.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/cli.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/docker.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/git.ts'")
