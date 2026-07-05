@@ -4,13 +4,15 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 
 ## Scope
 
-- Enabled apps proved: `oirat`, `bumba`.
-- Build paths: `.github/workflows/oirat-ci.yml` and `.github/workflows/bumba-ci.yml` using
+- Enabled apps proved: `oirat`, `bumba`, `froussard`.
+- Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`, and
+  `.github/workflows/froussard-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`.
-- Nix attrs: `oirat-image`, `bumba-image`.
+- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
+  - `packages/scripts/src/froussard/build-image.ts` and `packages/scripts/src/froussard/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml` plus `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
@@ -26,6 +28,8 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#12042](https://github.com/proompteng/lab/pull/12042) | `a3218b4d8abd7e64223055e2aedaa2768944acd3` | Fix the Bumba release workflow so it writes the full `bumba@<source-sha>` build id.             |
 | [#12045](https://github.com/proompteng/lab/pull/12045) | `728e5481a807cc799459d76938ea211db81eeefb` | Allow generated Bumba release PRs to update `deployment.yaml` as part of automerge.             |
 | [#12044](https://github.com/proompteng/lab/pull/12044) | `d5b641d7f5513a59d49f5ede295bc89e0b831cda` | Promote Bumba to the corrected Nix-built OCI digest and matching Temporal worker build id.      |
+| [#11923](https://github.com/proompteng/lab/pull/11923) | `404c77437b0565f28e250b62e4335f62d5767ad3` | Add the Froussard manual Nix image build path.                                                  |
+| [#12010](https://github.com/proompteng/lab/pull/12010) | `0aa4503b9a1c2edf189775c9efa527fca2fc10ff` | Promote Froussard to the latest Nix-built OCI digest.                                           |
 
 ## Failed Proof That Exposed The Gap
 
@@ -204,6 +208,78 @@ Do not count the earlier Bumba follow-up run as a reproducibility proof; it was 
 churn from the embedded worker build id. The next valid Bumba cache proof should be a real source-triggered run after the
 corrected closure is already warm, or a substitute-only proof scoped to the same Nix output without creating a new release
 churn PR.
+
+## Froussard Rollout Proof
+
+Froussard is the third simple enabled app with current live Nix OCI rollout proof. This section records current evidence
+only; it does not claim a new build was dispatched for this checkpoint.
+
+### Froussard Main Build Proof
+
+Run [28752511208](https://github.com/proompteng/lab/actions/runs/28752511208) succeeded on `main`.
+
+| Phase                        | Result            |
+| ---------------------------- | ----------------- |
+| monorepo test job            | passed in `32s`   |
+| `linux/amd64` build-platform | passed in `2m15s` |
+| `linux/arm64` build-platform | passed in `3m08s` |
+| publish-index                | passed in `38s`   |
+| release contract             | uploaded as `froussard-release-contract` |
+
+Release contract fields:
+
+- `service`: `froussard`
+- `packageAttr`: `froussard-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `eef803e3aebef1a473d2b691a7f3e3963ce72d6a`
+- `image`: `registry.ide-newton.ts.net/lab/froussard`
+- `digest`: `sha256:f20f361eb6542712ea4dbd966d02bfae65ad0628af01a769d12a9543579ae1f0`
+- platform digests:
+  - `linux/amd64`: `sha256:c356587a2928bcb80c62a575c452b1492da9b5ab74530ccea0a1300a39cc197b`
+  - `linux/arm64`: `sha256:9c0a509aad36c4967536c1b2d178c1307385e5434bd446cd0e88084fa1231a79`
+- `platforms`: `linux/amd64`, `linux/arm64`
+
+The Froussard release contract available from this run did not include the newer `cacheProvenance` or per-phase
+`timings` fields, so this checkpoint uses the GitHub job wall times above and does not claim Froussard cache-hit counts.
+
+### Froussard Release Automation Proof
+
+Release PR [#12010](https://github.com/proompteng/lab/pull/12010) promoted
+`registry.ide-newton.ts.net/lab/froussard@sha256:f20f361eb6542712ea4dbd966d02bfae65ad0628af01a769d12a9543579ae1f0`.
+
+The PR changed only `argocd/applications/froussard/knative-service.yaml`:
+
+- image changed from `sha256:70568478495af17ebb088359e6a7776cb06e233e9f66d9e3df0f8ba1e854006d` to
+  `sha256:f20f361eb6542712ea4dbd966d02bfae65ad0628af01a769d12a9543579ae1f0`
+- `FROUSSARD_COMMIT` changed from `694f2886e8b58d499ae57064f99bddaeb48a23f1` to
+  `eef803e3aebef1a473d2b691a7f3e3963ce72d6a`
+- testing recorded by the generated PR:
+  `nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/froussard@sha256:f20f361eb6542712ea4dbd966d02bfae65ad0628af01a769d12a9543579ae1f0" linux/amd64 linux/arm64`
+
+### Froussard Live Rollout Smoke
+
+Current readback:
+
+- Argo Application `froussard`: `Synced`, `Healthy`
+- Argo revision: `51afc32c04c41643c8c57452a18033d5ef4c25c0`
+- Knative Service `froussard`: `Ready=True`
+- latest ready revision: `froussard-00021`
+- public URL: `https://froussard.proompteng.ai`
+- live image: `registry.ide-newton.ts.net/lab/froussard@sha256:f20f361eb6542712ea4dbd966d02bfae65ad0628af01a769d12a9543579ae1f0`
+- `FROUSSARD_COMMIT`: `eef803e3aebef1a473d2b691a7f3e3963ce72d6a`
+- Deployment status: `1/1` ready and available
+- Pod: `froussard-00021-deployment-59c4866db4-bt9lz`, `2/2 Running`, `0` restarts
+- in-cluster readiness smoke against `/health/readiness`: `OK`
+- log smoke: recent `/health/readiness` and `/health/liveness` requests returned through the running app container, and
+  GitHub webhook events were published to `github.webhook.events`
+
+### Froussard Cache Status
+
+Froussard has current live digest proof but does not yet have a complete cache-provenance checkpoint in this document
+because the downloaded release contract exposed `cacheProvenance=null` and `timings=null`. A future real Froussard source
+change should produce the newer release-contract shape and can be used for warm-cache or substitute-only proof without
+creating a synthetic job.
 
 ## Inventory Audit
 
