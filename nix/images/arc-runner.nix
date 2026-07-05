@@ -48,12 +48,29 @@ pkgs.dockerTools.buildLayeredImageWithNixDb {
   gid = 1001;
   created = "1970-01-01T00:00:01Z";
   extraCommands = ''
-    mkdir -p etc/nix tmp var/tmp
+    mkdir -p \
+      etc/nix \
+      nix/store \
+      nix/var/log/nix/drvs \
+      nix/var/nix/db \
+      nix/var/nix/gcroots/per-user/runner \
+      nix/var/nix/profiles/per-user/runner \
+      nix/var/nix/temproots \
+      nix/var/nix/userpool \
+      tmp \
+      var/tmp
     cat > etc/nix/nix.conf <<'EOF'
     experimental-features = nix-command flakes
     fallback = true
+    build-users-group =
     EOF
+    chmod 0755 nix nix/store nix/var nix/var/log nix/var/log/nix nix/var/log/nix/drvs
+    chmod -R u+rwX,go+rX nix/var/nix
     chmod 1777 tmp var/tmp
+  '';
+  fakeRootCommands = ''
+    chown 1001:1001 ./nix ./nix/store ./nix/var ./nix/var/log ./nix/var/log/nix ./nix/var/log/nix/drvs
+    chown -R 1001:1001 ./nix/var/nix
   '';
   config = {
     Cmd = [ "/home/runner/run.sh" ];
