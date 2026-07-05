@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 
 
@@ -53,15 +55,18 @@ def test_config_accepts_mainnet_data_testnet_execution_contract() -> None:
     assert config.order_policy == "marketable_ioc"
     assert config.effective_order_tif == "Ioc"
     assert config.maker_ttl_seconds == 10
+    assert config.marketable_ioc_slippage_bps == Decimal("0")
 
     short_config = HyperliquidExecutionConfig.from_env(
         {
             "HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true",
             "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "50",
         }
     )
     assert short_config.allow_short_entries is True
     assert short_config.maintenance_reduce_only_close_enabled is True
+    assert short_config.marketable_ioc_slippage_bps == Decimal("50")
 
 
 def test_config_accepts_feed_readiness_dependency_contract() -> None:
@@ -112,6 +117,7 @@ def test_config_reports_all_strict_contract_blockers() -> None:
             "HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD": "6",
             "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "4",
             "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "4",
+            "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "-1",
             "HYPERLIQUID_EXECUTION_TRADE_COINS": "",
             "HYPERLIQUID_EXECUTION_EXCLUDED_COINS": "BTC",
             "HYPERLIQUID_EXECUTION_POLL_INTERVAL_SECONDS": "7",
@@ -131,6 +137,7 @@ def test_config_reports_all_strict_contract_blockers() -> None:
     assert "max_order_notional_usd_must_cover_min_order_notional" in errors
     assert "symbol_cap_must_cover_one_order" in errors
     assert "gross_cap_must_cover_one_order" in errors
+    assert "marketable_ioc_slippage_bps_must_be_non_negative" in errors
     assert "trade_coins_required" in errors
     assert "spx_must_be_excluded" in errors
 

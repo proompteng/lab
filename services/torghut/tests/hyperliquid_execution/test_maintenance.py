@@ -125,6 +125,35 @@ def test_reduce_only_over_cap_dry_run_marks_largest_position() -> None:
     assert exchange.closed == []
 
 
+def test_reduce_only_over_symbol_cap_closes_symbol_breach_below_gross_cap() -> None:
+    exchange = _MaintenanceExchange()
+
+    report = close_largest_positions_over_cap(
+        config=HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
+                "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD": "250",
+                "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD": "50",
+            }
+        ),
+        exchange=exchange,
+        execute=True,
+    )
+
+    assert report["over_cap"] is True
+    assert report["gross_over_cap"] is False
+    assert report["symbol_over_cap"] is True
+    assert report["symbol_over_cap_coins"] == ["SPX"]
+    assert report["blockers"] == []
+    assert report["actions"][0]["reason"] == "symbol_exposure_cap"
+    assert report["actions"][0]["status"] == "filled"
+    assert report["actions"][0]["coin"] == "SPX"
+    assert exchange.closed == [("SPX", Decimal("275.2"), Decimal("0.05"))]
+
+
 def test_reduce_only_over_cap_requires_maintenance_flag_when_executing() -> None:
     exchange = _MaintenanceExchange()
 

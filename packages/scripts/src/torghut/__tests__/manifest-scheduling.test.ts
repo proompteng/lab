@@ -284,10 +284,11 @@ describe('Torghut manifest scheduling', () => {
       'BTC,ETH,HYPE,SOL,xyz:SKHX,xyz:MU,xyz:XYZ100,xyz:CL,xyz:SNDK,xyz:MSTR,xyz:SILVER,xyz:GOLD',
     )
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXCLUDED_COINS).toBe('SPX')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('10')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('10')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('12')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('12')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBe('50')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBe('250')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS).toBe('50')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_POLICY).toBe('marketable_ioc')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TIF).toBe('Ioc')
@@ -302,7 +303,7 @@ describe('Torghut manifest scheduling', () => {
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-feed-readiness-gate-20260704a',
+      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-executable-ioc-20260704a',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')

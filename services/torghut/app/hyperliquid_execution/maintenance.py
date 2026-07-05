@@ -10,7 +10,7 @@ from typing import Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
 from .exchange import HyperliquidSdkExecutionExchange
-from .models import AccountState, OrderResult, symbol_key
+from .models import AccountState, OrderResult, RiskState, symbol_key
 
 
 class MaintenanceExchange(Protocol):
@@ -100,25 +100,38 @@ def close_largest_positions_over_cap(
     slippage: Decimal = Decimal("0.05"),
     max_actions: int = 1,
 ) -> dict[str, object]:
-    """Close the largest positions first when gross exposure is at or over cap."""
+    """Close the largest positions first when gross or symbol exposure is over cap."""
 
     observed_at = datetime.now(timezone.utc)
     account = exchange.reconcile_account({})
-    over_cap = account.account.gross_exposure_usd >= config.max_gross_exposure_usd
     candidates = sorted(
         _raw_position_rows(account),
         key=lambda position: _decimal(position["notional_usd"]),
         reverse=True,
     )
+    gross_over_cap = account.account.gross_exposure_usd >= config.max_gross_exposure_usd
+    symbol_over_cap_coins = _symbol_over_cap_coins(candidates, config)
+    symbol_over_cap = bool(symbol_over_cap_coins)
+    over_cap = gross_over_cap or symbol_over_cap
     blockers = _execution_blockers(config) if execute and over_cap else []
     actions: list[dict[str, object]] = []
     if over_cap:
-        for candidate in candidates[: max(0, max_actions)]:
+        action_candidates = _over_cap_action_candidates(
+            candidates,
+            gross_over_cap=gross_over_cap,
+            symbol_over_cap_coins=symbol_over_cap_coins,
+            max_actions=max_actions,
+        )
+        for candidate in action_candidates:
             action = {
                 "coin": candidate["coin"],
                 "size": candidate["size"],
                 "notional_usd": candidate["notional_usd"],
-                "reason": "gross_exposure_cap",
+                "reason": _over_cap_reason(
+                    candidate,
+                    gross_over_cap=gross_over_cap,
+                    symbol_over_cap_coins=symbol_over_cap_coins,
+                ),
             }
             if blockers:
                 action["status"] = "blocked"
@@ -150,11 +163,29 @@ def close_largest_positions_over_cap(
         "execution_network": config.execution_network,
         "account_gross_exposure_usd": str(account.account.gross_exposure_usd),
         "max_gross_exposure_usd": str(config.max_gross_exposure_usd),
+        "max_symbol_exposure_usd": str(config.max_symbol_exposure_usd),
         "over_cap": over_cap,
+        "gross_over_cap": gross_over_cap,
+        "symbol_over_cap": symbol_over_cap,
+        "symbol_over_cap_coins": sorted(symbol_over_cap_coins),
         "candidates": candidates,
         "blockers": blockers,
         "actions": actions,
     }
+
+
+def risk_state_over_cap(
+    risk_state: RiskState,
+    config: HyperliquidExecutionConfig,
+) -> bool:
+    """Return whether runtime risk state requires reduce-only maintenance."""
+
+    if risk_state.gross_exposure_usd >= config.max_gross_exposure_usd:
+        return True
+    return any(
+        exposure_usd >= config.max_symbol_exposure_usd
+        for exposure_usd in risk_state.symbol_exposure_usd_by_coin.values()
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -276,6 +307,48 @@ def _position_exposure_usd(position: Mapping[str, object]) -> Decimal:
     size = _decimal(position.get("szi"))
     entry_price = _optional_decimal(position.get("entryPx")) or Decimal("0")
     return abs(size * entry_price)
+
+
+def _symbol_over_cap_coins(
+    candidates: list[dict[str, object]],
+    config: HyperliquidExecutionConfig,
+) -> set[str]:
+    return {
+        str(candidate["coin"])
+        for candidate in candidates
+        if _decimal(candidate["notional_usd"]) >= config.max_symbol_exposure_usd
+    }
+
+
+def _over_cap_action_candidates(
+    candidates: list[dict[str, object]],
+    *,
+    gross_over_cap: bool,
+    symbol_over_cap_coins: set[str],
+    max_actions: int,
+) -> list[dict[str, object]]:
+    limit = max(0, max_actions)
+    if limit == 0:
+        return []
+    if gross_over_cap:
+        return candidates[:limit]
+    return [
+        candidate
+        for candidate in candidates
+        if str(candidate["coin"]) in symbol_over_cap_coins
+    ][:limit]
+
+
+def _over_cap_reason(
+    candidate: dict[str, object],
+    *,
+    gross_over_cap: bool,
+    symbol_over_cap_coins: set[str],
+) -> str:
+    coin = str(candidate["coin"])
+    if not gross_over_cap and coin in symbol_over_cap_coins:
+        return "symbol_exposure_cap"
+    return "gross_exposure_cap"
 
 
 def _decimal(value: object) -> Decimal:
