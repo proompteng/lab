@@ -34,11 +34,21 @@ describe('memory provider operations', () => {
   const previousEnv: Record<string, string | undefined> = {}
 
   beforeEach(() => {
-    for (const key of ['NODE_ENV', 'OPENAI_API_KEY', 'OPENAI_EMBEDDING_DIMENSION']) {
+    for (const key of [
+      'NODE_ENV',
+      'OPENAI_API_KEY',
+      'OPENAI_EMBEDDING_API_BASE_URL',
+      'OPENAI_API_BASE_URL',
+      'OPENAI_API_BASE',
+      'OPENAI_EMBEDDING_DIMENSION',
+    ]) {
       previousEnv[key] = process.env[key]
     }
     process.env.NODE_ENV = 'test'
     delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_EMBEDDING_API_BASE_URL
+    delete process.env.OPENAI_API_BASE_URL
+    delete process.env.OPENAI_API_BASE
     process.env.OPENAI_EMBEDDING_DIMENSION = '3'
   })
 
