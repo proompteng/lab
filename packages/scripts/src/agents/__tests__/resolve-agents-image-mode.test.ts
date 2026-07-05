@@ -50,6 +50,19 @@ describe('classifyAgentsImageMode', () => {
     })
   })
 
+  it('reuses the published image for manual image builder changes', () => {
+    expect(
+      classifyAgentsImageMode([
+        'packages/scripts/src/agents/build-image.ts',
+        'packages/scripts/src/agents/__tests__/build-image.test.ts',
+      ]),
+    ).toEqual({
+      mode: 'reuse-published-image',
+      needsLocalAgentsImage: false,
+      matchedPaths: [],
+    })
+  })
+
   it('reuses the published image for Jangar build workflow-only changes', () => {
     expect(
       classifyAgentsImageMode([
@@ -98,6 +111,26 @@ describe('classifyAgentsImageMode', () => {
     const result = classifyAgentsImageMode(['bun.lock'])
     expect(result.mode).toBe('build-local-image')
     expect(result.matchedPaths).toEqual(['bun.lock'])
+  })
+
+  it('builds a local image for Agents Nix image input changes', () => {
+    const result = classifyAgentsImageMode([
+      'nix/images/agents.nix',
+      'nix/images/openai-codex-cli.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+    ])
+    expect(result.mode).toBe('build-local-image')
+    expect(result.matchedPaths).toEqual([
+      'nix/images/agents.nix',
+      'nix/images/openai-codex-cli.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+    ])
+  })
+
+  it('reuses the published image for Docker helper changes', () => {
+    const result = classifyAgentsImageMode(['packages/scripts/src/shared/docker.ts'])
+    expect(result.mode).toBe('reuse-published-image')
+    expect(result.matchedPaths).toEqual([])
   })
 
   it('builds a local image for shared Agents runtime dependency package changes', () => {
@@ -236,6 +269,8 @@ describe('agents-ci workflow local Agents image build', () => {
 
     expect(workflow).not.toContain("      - 'services/jangar/**'")
     expect(workflow).toContain('services/agents/**')
+    expect(workflow).toContain('packages/scripts/src/agents/update-values.ts')
+    expect(workflow).not.toContain('packages/scripts/src/agents/**')
     expect(workflow).toContain('group: agents-build-${{ github.ref }}')
     expect(workflow).not.toContain('group: agents-build-${{ github.ref }}-${{ github.sha }}')
   })
