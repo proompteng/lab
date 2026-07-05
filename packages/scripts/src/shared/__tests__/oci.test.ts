@@ -55,6 +55,8 @@ const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-au
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
+const headlampWorkflow = readRepoFile('.github/workflows/headlamp-ci.yml')
+const headlampReleaseWorkflow = readRepoFile('.github/workflows/headlamp-release.yml')
 const froussardKnativeService = readRepoFile('argocd/applications/froussard/knative-service.yaml')
 const appImageModule = readRepoFile('nix/images/app.nix')
 const productImageModules = [
@@ -70,6 +72,7 @@ const allNixImageModules = readdirSync(new URL('nix/images/', repoRoot))
 const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const sagImageModule = readRepoFile('nix/images/sag.nix')
 const jangarImageModule = readRepoFile('nix/images/jangar.nix')
+const headlampImageModule = readRepoFile('nix/images/headlamp.nix')
 const torghutImageModule = readRepoFile('nix/images/torghut.nix')
 const torghutTaImageModule = readRepoFile('nix/images/torghut-ta.nix')
 const torghutWsImageModule = readRepoFile('nix/images/torghut-ws.nix')
@@ -82,6 +85,8 @@ const atticBuildScript = readRepoFile('packages/scripts/src/attic/build-image.ts
 const atticDeployScript = readRepoFile('packages/scripts/src/attic/deploy-service.ts')
 const froussardBuildScript = readRepoFile('packages/scripts/src/froussard/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
+const headlampBuildScript = readRepoFile('packages/scripts/src/headlamp/build-image.ts')
+const headlampDeployScript = readRepoFile('packages/scripts/src/headlamp/deploy-service.ts')
 const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-image.ts')
 const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
 const sagBuildScript = readRepoFile('packages/scripts/src/sag/build-image.ts')
@@ -493,11 +498,13 @@ describe('native OCI build workflows', () => {
   it('does not fan out expensive image builds on unrelated shared script changes', () => {
     for (const workflow of [
       agentsBuildWorkflow,
+      arcRunnerBuildWorkflow,
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
       productNixWorkflow,
       torghutBuildWorkflow,
+      headlampWorkflow,
     ]) {
       expect(workflow).not.toContain("'packages/scripts/src/shared/**'")
       expect(workflow).not.toContain('- packages/scripts/src/shared/**')
@@ -510,11 +517,13 @@ describe('native OCI build workflows', () => {
       oiratWorkflow,
       bumbaWorkflow,
       froussardWorkflow,
+      headlampWorkflow,
       productNixWorkflow,
       agentsBuildWorkflow,
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
+      headlampWorkflow,
     ]) {
       expect(workflow).not.toContain("'package.json'")
     }
@@ -537,6 +546,10 @@ describe('native OCI build workflows', () => {
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/cli.ts'")
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/git.ts'")
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
+    expect(headlampWorkflow).not.toContain("'argocd/applications/headlamp/**'")
+    expect(headlampWorkflow).not.toContain("'docs/headlamp-setup.md'")
+    expect(headlampWorkflow).not.toContain("'packages/scripts/src/headlamp/**'")
+    expect(headlampWorkflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
 
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
@@ -553,6 +566,7 @@ describe('native OCI build workflows', () => {
       torghutTaReleaseWorkflow,
       torghutWsReleaseWorkflow,
       torghutHyperliquidFeedReleaseWorkflow,
+      headlampReleaseWorkflow,
     ]) {
       expect(workflow).not.toContain('.github/workflows/')
       expect(workflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
@@ -617,6 +631,7 @@ describe('native OCI build workflows', () => {
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
+      headlampWorkflow,
     ]) {
       expect(workflow).not.toContain("- 'flake.nix'")
       expect(workflow).not.toContain('- flake.nix')
@@ -720,14 +735,17 @@ describe('native OCI build workflows', () => {
     expect(flake).toContain('"oirat-image"')
     expect(flake).toContain('"bumba-image"')
     expect(flake).toContain('"froussard-image"')
+    expect(flake).toContain('"headlamp-image"')
     expect(repoFileExists('nix/images/oirat.nix')).toBe(true)
     expect(repoFileExists('nix/images/bumba.nix')).toBe(true)
     expect(repoFileExists('nix/images/froussard.nix')).toBe(true)
+    expect(repoFileExists('nix/images/headlamp.nix')).toBe(true)
 
     for (const [workflow, imageName, packageAttr, artifact] of [
       [oiratWorkflow, 'oirat', 'oirat-image', 'oirat-release-contract'],
       [bumbaWorkflow, 'bumba', 'bumba-image', 'bumba-release-contract'],
       [froussardWorkflow, 'froussard', 'froussard-image', 'froussard-release-contract'],
+      [headlampWorkflow, 'headlamp', 'headlamp-image', 'headlamp-release-contract'],
     ] as const) {
       expect(workflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
       expect(workflow).toContain(`image_name: ${imageName}`)
@@ -760,6 +778,7 @@ describe('native OCI build workflows', () => {
       [torghutTaBuildWorkflow, 'torghut-ta-release-contract'],
       [torghutWsBuildWorkflow, 'torghut-ws-release-contract'],
       [torghutHyperliquidFeedBuildWorkflow, 'torghut-hyperliquid-feed-release-contract'],
+      [headlampWorkflow, 'headlamp-release-contract'],
     ] as const) {
       expect(workflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
       expect(workflow).toContain(`release_artifact_name: \${{ ${mainDispatchPredicate} && '${artifact}' || '' }}`)
@@ -777,6 +796,44 @@ describe('native OCI build workflows', () => {
     expect(agentsBuildWorkflow).toContain(`write-values:\n    if: ${mainDispatchPredicate}`)
     expect(atticWorkflow).toContain(`latest: \${{ ${mainDispatchPredicate} }}`)
     expect(atticWorkflow).toContain('release_artifact_name: attic-release-contract')
+  })
+
+  it('routes the enabled Headlamp image through a real Nix OCI attr', () => {
+    expect(flake).toContain('"headlamp-image"')
+    expect(repoFileExists('nix/images/headlamp.nix')).toBe(true)
+    expect(headlampImageModule).toContain('pkgs.fetchFromGitHub')
+    expect(headlampImageModule).toContain('rev = headlampSha')
+    expect(headlampImageModule).toContain('pkgs.buildGoModule')
+    expect(headlampImageModule).toContain('buildNpmPackage')
+    expect(headlampImageModule).toContain('pkgs.dockerTools.buildLayeredImage')
+    expect(headlampImageModule).toContain('REACT_APP_ENABLE_WEBSOCKET_MULTIPLEXER')
+    expect(headlampImageModule).toContain('"HEADLAMP_STATIC_PLUGINS_DIR=/headlamp/static-plugins"')
+    expect(headlampImageModule).toContain('export HOME="$TMPDIR/home"')
+    expect(headlampImageModule).toContain('cp main.js package.json "$out/static-plugins/prometheus/"')
+    expect(headlampImageModule).not.toContain('cp prometheus/main.js prometheus/package.json')
+    expect(headlampImageModule).not.toContain('created = "now"')
+    expect(headlampImageModule).not.toContain('docker build')
+
+    expect(headlampWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
+    expect(headlampWorkflow).toContain('image_name: headlamp')
+    expect(headlampWorkflow).toContain('package_attr: headlamp-image')
+    expect(headlampWorkflow).toContain('headlamp-release-contract')
+    expect(headlampWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(headlampWorkflow).toContain('image_build_timeout: 20m')
+    expect(headlampWorkflow).toContain('sh services/headlamp/scripts/test-upstream.sh')
+    expect(headlampWorkflow).not.toContain('docker/build-push-action')
+    expect(headlampWorkflow).not.toContain('docker/setup-buildx-action')
+    expect(headlampWorkflow).not.toContain('docker buildx')
+    expect(headlampWorkflow).not.toContain('docker run')
+    expect(headlampWorkflow).not.toContain('docker push')
+
+    expect(headlampReleaseWorkflow).toContain('headlamp-release-contract')
+    expect(headlampReleaseWorkflow).toContain('argocd/applications/headlamp/values.yaml')
+    expect(headlampReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
+    expect(headlampReleaseWorkflow).toContain('repository: lab/headlamp@sha256')
+    expect(headlampReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
+    expect(headlampReleaseWorkflow).not.toContain('docker buildx')
+    expect(headlampReleaseWorkflow).not.toContain('docker/setup-buildx-action')
   })
 
   it('routes the enabled Symphony fleet image through a real Nix OCI attr', () => {
@@ -1048,6 +1105,7 @@ describe('native OCI build workflows', () => {
     expect(bumbaWorkflow).not.toContain("'argocd/applications/bumba/**'")
     expect(bumbaWorkflow).not.toContain("'argocd/applicationsets/product.yaml'")
     expect(froussardWorkflow).not.toContain("'argocd/applications/froussard/**'")
+    expect(headlampWorkflow).not.toContain("'argocd/applications/headlamp/**'")
     expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/oirat argocd/applications/oirat')
     expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/bumba argocd/applications/bumba')
     expect(enabledSimpleReleaseWorkflow).not.toContain('packages/scripts/src/froussard argocd/applications/froussard')
@@ -1060,6 +1118,7 @@ describe('native OCI build workflows', () => {
       bumbaBuildScript,
       atticBuildScript,
       froussardBuildScript,
+      headlampBuildScript,
       symphonyBuildScript,
       sagBuildScript,
       jangarBuildScript,
@@ -1098,6 +1157,13 @@ describe('native OCI build workflows', () => {
     expect(froussardDeployScript).not.toContain('buildAndPushDockerImage')
     expect(froussardDeployScript).not.toContain('inspectImageDigest')
     expect(froussardDeployScript).toContain("from './build-image'")
+    expect(headlampDeployScript).not.toContain("from '../shared/docker'")
+    expect(headlampDeployScript).not.toContain('inspectImageDigest')
+    expect(headlampDeployScript).toContain("from './build-image'")
+    expect(headlampDeployScript).toContain('dryRun')
+    expect(headlampDeployScript).toContain('no-apply')
+    expect(headlampDeployScript).toContain('registry.ide-newton.ts.net/lab/headlamp@sha256:<64 hex>')
+    expect(headlampDeployScript).toContain('values.yaml')
     expect(symphonyDeployScript).not.toContain("from '../shared/docker'")
     expect(symphonyDeployScript).not.toContain('inspectImageDigest')
     expect(symphonyDeployScript).toContain('dryRun')
@@ -1209,6 +1275,7 @@ describe('native OCI build workflows', () => {
       'argocd/applications/app/kustomization.yaml',
       'argocd/applications/bumba/kustomization.yaml',
       'argocd/applications/docs/kustomization.yaml',
+      'argocd/applications/headlamp/values.yaml',
       'argocd/applications/oirat/kustomization.yaml',
       'argocd/applications/olden/kustomization.yaml',
       'argocd/applications/proompteng/kustomization.yaml',

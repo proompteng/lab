@@ -46,6 +46,7 @@ const earlyNixImageApps = new Set([
   'bumba',
   'docs',
   'froussard',
+  'headlamp',
   'jangar',
   'oirat',
   'olden',
@@ -60,10 +61,6 @@ const earlyNixImageApps = new Set([
 ])
 
 const deferredApps = new Map<string, string>([
-  [
-    'headlamp',
-    'Helm chart is overridden to run a repo-built lab/headlamp image; migrate the Docker workflow separately',
-  ],
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
   ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
@@ -76,6 +73,7 @@ const appToNixAttr = new Map<string, string>([
   ['bumba', 'bumba-image'],
   ['docs', 'docs-image'],
   ['froussard', 'froussard-image'],
+  ['headlamp', 'headlamp-image'],
   ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],

@@ -274,6 +274,9 @@
               repoRoot = ./.;
               bun = exact.bun;
             };
+            "headlamp-image" = import ./nix/images/headlamp.nix {
+              inherit pkgs lib repoRevision;
+            };
             "torghut-image" = import ./nix/images/torghut.nix {
               inherit pkgs lib;
               repoRoot = ./.;
