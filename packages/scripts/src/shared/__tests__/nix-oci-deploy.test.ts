@@ -51,6 +51,10 @@ describe('buildAndPushNixImage', () => {
         'bun.lock': expect.stringMatching(/^[0-9a-f]{64}$/),
       },
       toolVersions: expect.any(Object),
+      cacheProvenance: {
+        source: 'manual-script-not-collected',
+      },
+      timings: [],
       builder: 'nix-dockerTools-skopeo',
       invocation: 'manual-script',
       dryRun: true,

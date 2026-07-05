@@ -252,6 +252,15 @@ jobs:
         if: always()
         run: bash nix/ci-nix-oci-summary.sh
 
+      - name: Upload Nix OCI log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nix-oci-logs-${{ inputs.image_name }}-${{ matrix.arch }}
+          path: ${{ env.NIX_OCI_LOG_DIR }}/
+          if-no-files-found: ignore
+          retention-days: 7
+
   publish-index:
     if: >-
       ${{
@@ -351,6 +360,14 @@ jobs:
           bash nix/ci-run-timed.sh "assert-oci-platforms" "${NIX_OCI_LOG_DIR}/assert-oci-platforms.log" \
             bun run packages/scripts/src/shared/oci.ts assert "${IMAGE}:${TAG}" linux/amd64 linux/arm64
 
+      - name: Download build-platform Nix OCI logs
+        if: inputs.release_artifact_name != ''
+        uses: actions/download-artifact@v5
+        with:
+          pattern: nix-oci-logs-${{ inputs.image_name }}-*
+          path: .artifacts/${{ inputs.image_name }}/nix-oci-logs
+          merge-multiple: false
+
       - name: Write release contract
         if: inputs.release_artifact_name != ''
         env:
@@ -363,6 +380,7 @@ jobs:
           PLATFORMS: linux/amd64,linux/arm64
           PLATFORM_DIGEST_AMD64: ${{ steps.oci.outputs.platform_digest_amd64 }}
           PLATFORM_DIGEST_ARM64: ${{ steps.oci.outputs.platform_digest_arm64 }}
+          NIX_OCI_CONTRACT_LOG_DIRS: .artifacts/${{ inputs.image_name }}/nix-oci-logs
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "write-release-contract" "${NIX_OCI_LOG_DIR}/write-release-contract.log" \

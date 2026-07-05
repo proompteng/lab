@@ -24,6 +24,22 @@ export type NixOciBuildPlan = Omit<Required<NixOciBuildPlanInput>, 'platforms'> 
   indexArgs: string[]
 }
 
+export type NixOciTiming = {
+  phase: string
+  status: number | string
+  seconds: number
+  log?: string
+}
+
+export type NixOciCacheProvenance = {
+  source: 'github-actions-logs' | 'manual-script-not-collected'
+  logDirs?: string[]
+  atticSubstitutions?: number
+  cacheNixosSubstitutions?: number
+  localBuilds?: number
+  plannedLocalBuildBlocks?: number
+}
+
 export type NixOciReleaseContract = {
   service: string
   image: string
@@ -35,6 +51,8 @@ export type NixOciReleaseContract = {
   platforms: NixOciPlatform[]
   lockfileHashes: Record<string, string>
   toolVersions: Record<string, string>
+  cacheProvenance: NixOciCacheProvenance
+  timings: NixOciTiming[]
   builder: 'nix-dockerTools-skopeo'
   invocation: 'github-actions' | 'manual-script'
 }
@@ -117,6 +135,8 @@ export const buildNixOciReleaseContract = (input: {
   invocation: NixOciReleaseContract['invocation']
   lockfileHashes?: Record<string, string>
   toolVersions?: Record<string, string>
+  cacheProvenance?: NixOciCacheProvenance
+  timings?: NixOciTiming[]
 }): NixOciReleaseContract => {
   const digest = normalizeNonEmpty(input.digest, 'digest')
   if (!digest.startsWith('sha256:')) {
@@ -134,6 +154,8 @@ export const buildNixOciReleaseContract = (input: {
     platforms: input.plan.platforms,
     lockfileHashes: input.lockfileHashes ?? {},
     toolVersions: input.toolVersions ?? {},
+    cacheProvenance: input.cacheProvenance ?? { source: 'manual-script-not-collected' },
+    timings: input.timings ?? [],
     builder: 'nix-dockerTools-skopeo',
     invocation: input.invocation,
   }

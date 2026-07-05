@@ -55,6 +55,10 @@ describe('Nix OCI build contract', () => {
         toolVersions: {
           nix: 'nix 2.32.4',
         },
+        cacheProvenance: {
+          source: 'manual-script-not-collected',
+        },
+        timings: [],
       }),
     ).toEqual({
       service: 'bumba',
@@ -72,6 +76,10 @@ describe('Nix OCI build contract', () => {
       toolVersions: {
         nix: 'nix 2.32.4',
       },
+      cacheProvenance: {
+        source: 'manual-script-not-collected',
+      },
+      timings: [],
       builder: 'nix-dockerTools-skopeo',
       invocation: 'manual-script',
     })
