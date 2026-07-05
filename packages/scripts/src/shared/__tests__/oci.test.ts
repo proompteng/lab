@@ -89,6 +89,7 @@ const allNixImageModules = readdirSync(new URL('nix/images/', repoRoot))
 const symphonyImageModule = readRepoFile('nix/images/symphony.nix')
 const sagImageModule = readRepoFile('nix/images/sag.nix')
 const jangarImageModule = readRepoFile('nix/images/jangar.nix')
+const bumbaImageModule = readRepoFile('nix/images/bumba.nix')
 const headlampImageModule = readRepoFile('nix/images/headlamp.nix')
 const torghutImageModule = readRepoFile('nix/images/torghut.nix')
 const torghutTaImageModule = readRepoFile('nix/images/torghut-ta.nix')
@@ -1327,10 +1328,22 @@ describe('native OCI build workflows', () => {
     }
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/oirat/kustomization.yaml')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
+    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/deployment.yaml')
+    expect(enabledSimpleReleaseWorkflow).toContain('TEMPORAL_WORKER_BUILD_ID')
+    expect(enabledSimpleReleaseWorkflow).toContain('value: bumba@${SOURCE_SHA}')
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/froussard/knative-service.yaml')
     expect(enabledSimpleReleaseWorkflow).toContain('\\@sha256:[0-9a-f]{64}')
     expect(enabledSimpleReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
     expect(enabledSimpleReleaseWorkflow).not.toContain('docker buildx')
+  })
+
+  it('keeps Bumba image content independent from GitOps-only release commits', () => {
+    expect(bumbaImageModule).not.toContain('repoRevision')
+    expect(bumbaImageModule).not.toContain('TEMPORAL_WORKER_BUILD_ID')
+    expect(flake).not.toContain(
+      'inherit pkgs lib nodejs repoRevision;\n              repoRoot = ./.;\n              bun = exact.bun;',
+    )
+    expect(readRepoFile('argocd/applications/bumba/deployment.yaml')).toContain('TEMPORAL_WORKER_BUILD_ID')
   })
 
   it('opens digest-pinning release PRs for enabled product app Nix builds', () => {

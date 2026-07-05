@@ -189,6 +189,9 @@ jobs:
               path="argocd/applications/bumba/kustomization.yaml"
               perl -0pi -e 's#(-\s*name:\s+registry\.ide-newton\.ts\.net/lab/bumba\s*\n\s*)(?:newTag|digest):\s*.*#$1digest: $ENV{DIGEST}#g' "${path}"
               grep -F "digest: ${DIGEST}" "${path}"
+              deployment_path="argocd/applications/bumba/deployment.yaml"
+              perl -0pi -e 's#(-\s*name:\s+TEMPORAL_WORKER_BUILD_ID\s*\n\s*value:\s*).*#$1bumba@$ENV{SOURCE_SHA}#g' "${deployment_path}"
+              grep -F "value: bumba@${SOURCE_SHA}" "${deployment_path}"
               ;;
             froussard)
               image_ref="${IMAGE}@${DIGEST}"

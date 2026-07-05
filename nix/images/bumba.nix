@@ -4,7 +4,6 @@
   repoRoot,
   bun,
   nodejs,
-  repoRevision,
 }:
 
 import ./bun-workspace-service.nix {
@@ -29,9 +28,6 @@ import ./bun-workspace-service.nix {
   command = [
     "bun"
     "services/bumba/src/worker.ts"
-  ];
-  env = [
-    "TEMPORAL_WORKER_BUILD_ID=bumba@${repoRevision}"
   ];
   extraContents = [
     pkgs.git
