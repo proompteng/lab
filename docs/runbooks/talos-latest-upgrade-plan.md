@@ -365,14 +365,36 @@ kubectl --context "$CTX" get runtimeclass nvidia nvidia-cdi nvidia-legacy \
 kubectl --context "$CTX" label node "$ALTRA_NODE" nvidia.com/gpu.workload.config- --overwrite
 kubectl --context "$CTX" label node "$ALTRA_NODE" \
   platform.proompteng.ai/altra-gpu-container-ready=true --overwrite
+talosctl patch machineconfig -n "$ALTRA_IP" -e "$ALTRA_IP" \
+  --patch @devices/altra/manifests/node-labels.patch.yaml \
+  --mode=no-reboot
+talosctl -n "$ALTRA_IP" -e "$ALTRA_IP" get machineconfig -o yaml \
+  | rg -C 3 'nodeLabels|altra-gpu-container-ready' \
+  | tee "$EVIDENCE_DIR/altra-node-labels.machineconfig.after.txt"
 
+# Preferred when Argo CLI is already pointed at the argocd namespace.
 argocd --core app sync nvidia-gpu-operator --timeout 900
+
+# If core-mode Argo CLI is not using the argocd namespace in this workspace,
+# apply the repo-owned Altra resources directly and let Argo reconcile the app.
+kubectl --context "$CTX" apply -f argocd/applications/nvidia-gpu-operator/altra-nvidia-device-plugin.yaml
 kubectl --context "$CTX" -n gpu-operator rollout status ds/altra-nvidia-device-plugin --timeout=10m
 kubectl --context "$CTX" -n gpu-operator get pods -l app=altra-nvidia-device-plugin -o wide \
   | tee "$EVIDENCE_DIR/altra-device-plugin.after.txt"
 kubectl --context "$CTX" get node "$ALTRA_NODE" -o json \
   | jq -r '.status.capacity["nvidia.com/gpu"], .status.allocatable["nvidia.com/gpu"]' \
   | tee "$EVIDENCE_DIR/altra-gpu-capacity.after.txt"
+```
+
+The Altra device-plugin ConfigMap must not use time-slicing with `replicas: 1`.
+NVIDIA device-plugin `v0.19.x` rejects that config with `number of replicas
+must be >= 2`. For one physical RTX 3090 exposed as one Kubernetes GPU, keep
+`argocd/applications/nvidia-gpu-operator/altra-nvidia-device-plugin.yaml` at:
+
+```yaml
+data:
+  config.yaml: |
+    version: v1
 ```
 
 Run a Kubernetes GPU pod smoke test:
