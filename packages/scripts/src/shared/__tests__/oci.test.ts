@@ -1394,6 +1394,7 @@ describe('native OCI build workflows', () => {
       'argocd/applications/app/kustomization.yaml',
       'argocd/applications/attic/deployment.yaml',
       'argocd/applications/attic/gc-cronjob.yaml',
+      'argocd/applications/bumba/deployment.yaml',
       'argocd/applications/bumba/kustomization.yaml',
       'argocd/applications/docs/kustomization.yaml',
       'argocd/applications/froussard/knative-service.yaml',
