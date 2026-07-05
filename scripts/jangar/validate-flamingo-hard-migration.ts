@@ -91,6 +91,28 @@ function hasSaigakCompletionUrl(content: string): boolean {
   )
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function hasYamlEnvVarValue(content: string, name: string, value: string): boolean {
+  const escapedName = escapeRegExp(name)
+  const escapedValue = escapeRegExp(value)
+  const valuePattern = `(?:"${escapedValue}"|'${escapedValue}'|${escapedValue})`
+  return new RegExp(`^\\s*-\\s*name:\\s*${escapedName}\\s*\\n\\s*value:\\s*${valuePattern}\\s*$`, 'm').test(content)
+}
+
+function hasPvcBoundFieldDiffIgnore(content: string, name: string): boolean {
+  const match = new RegExp(
+    `kind:\\s*PersistentVolumeClaim\\s*\\n\\s*name:\\s*${escapeRegExp(name)}\\s*\\n\\s*jsonPointers:\\s*\\n(?<pointers>(?:\\s*-\\s*/[^\\n]+\\n?)+)`,
+    'm',
+  ).exec(content)
+  const pointers = match?.groups?.pointers ?? ''
+  return ['/metadata/annotations', '/spec/volumeMode', '/spec/volumeName'].every((pointer) =>
+    pointers.includes(`- ${pointer}`),
+  )
+}
+
 export function validateActiveSaigakMigrationContent(files: FileContent[]): string[] {
   const failures: string[] = []
   const byPath = new Map(files.map((file) => [file.path, file.content]))
@@ -153,6 +175,11 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
   if (platform?.includes('namespace: saigak\n          name: saigak')) {
     failures.push('argocd/applicationsets/platform.yaml: Saigak must not keep VirtualMachine diff-ignore desired state')
   }
+  if (platform && !hasPvcBoundFieldDiffIgnore(platform, 'saigak-altra-data')) {
+    failures.push(
+      'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-altra-data',
+    )
+  }
 
   const saigakService = byPath.get('argocd/applications/saigak/service.yaml')
   if (saigakService?.includes('kubevirt.io/domain')) {
@@ -177,8 +204,6 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
       'kubernetes.io/hostname: talos-192-168-1-85',
       'nvidia.com/gpu.present: "true"',
       'nvidia.com/gpu: "1"',
-      'SAIGAK_REQUIRE_GPU_RESIDENCY',
-      'value: "true"',
       'claimName: saigak-altra-data',
     ]) {
       if (!saigakStatefulSet.includes(term)) {
@@ -186,6 +211,11 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
           `argocd/applications/saigak/statefulset.yaml: Saigak must run embeddings on the Altra RTX 3090, missing "${term}"`,
         )
       }
+    }
+    if (!hasYamlEnvVarValue(saigakStatefulSet, 'SAIGAK_REQUIRE_GPU_RESIDENCY', 'true')) {
+      failures.push(
+        'argocd/applications/saigak/statefulset.yaml: Saigak must set SAIGAK_REQUIRE_GPU_RESIDENCY=true on the embedding proxy',
+      )
     }
     for (const term of ['ollama pull qwen3:30b-a3b', 'ollama create qwen3-main-saigak']) {
       if (saigakStatefulSet.includes(term)) {

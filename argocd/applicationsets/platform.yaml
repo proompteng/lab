@@ -164,6 +164,13 @@ spec:
                       - /metadata/annotations
                       - /spec/volumeMode
                       - /spec/volumeName
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-altra-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
                   - group: apps
                     kind: StatefulSet
                     name: saigak
