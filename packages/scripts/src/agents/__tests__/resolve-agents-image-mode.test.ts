@@ -139,17 +139,20 @@ describe('classifyAgentsImageMode', () => {
 })
 
 describe('agents-ci workflow local Agents image build', () => {
-  it('keeps integration validation on a hosted runner while cluster architecture is mixed', () => {
+  it('keeps local image integration validation on the amd64 ARC pool', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
-    expect(workflow).toContain('integration:\n    runs-on: ubuntu-latest')
+    expect(workflow).toContain('integration:\n    runs-on: arc-amd64')
     expect(workflow).not.toContain('integration:\n    runs-on: arc-arm64')
   })
 
-  it('uses the mirrored Bun base image for local CI rebuilds', () => {
+  it('sets up Nix for local CI image archive builds', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
-    expect(workflow).toContain('--build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \\')
+    expect(workflow).toContain('Set up Nix for local Agents image archives')
+    expect(workflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(workflow).toContain("require-preinstalled: 'true'")
+    expect(workflow).toContain('substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/')
     expect(workflow).not.toContain('BUN_BASE_IMAGE=docker.io/oven/bun')
   })
 
@@ -168,12 +171,12 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).toContain('AGENTS_IMAGE_MODE="build-local-image"')
   })
 
-  it('bounds and emits progress for hosted local image prep', () => {
+  it('bounds and emits progress for ARC local image prep', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
     expect(workflow).toContain('timeout-minutes: 45')
-    expect(workflow).toContain('run_with_progress "Turbo prune context"')
-    expect(workflow).toContain('PREP_TIMEOUT_MINUTES=25')
+    expect(workflow).toContain('run_with_progress "Nix image build"')
+    expect(workflow).toContain('run_with_progress "kind load image-archive"')
     expect(workflow).not.toContain('run_step "Prune turbo context"')
   })
 
@@ -247,8 +250,10 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).toContain('package_attr: agents-controller-image')
     expect(workflow).toContain('package_attr: agents-control-plane-image')
     expect(workflow).toContain('package_attr: agents-shell-image')
-    expect(workflow).toContain('Resolve preserved runner image pin')
-    expect(workflow).toContain('--runner-tag "${RUNNER_TAG}"')
+    expect(workflow).toContain('package_attr: agents-codex-runner-image')
+    expect(workflow).not.toContain('Resolve preserved runner image pin')
+    expect(workflow).toContain('--runner-tag "${TAG}"')
+    expect(workflow).toContain('--runner-repository registry.ide-newton.ts.net/lab/agents-codex-runner')
     expect(workflow).not.toContain('docker/setup-buildx-action')
     expect(workflow).not.toContain('docker buildx')
     expect(workflow).not.toContain('AGENTS_RUNNER_BUILD_CACHE_REF')
@@ -258,22 +263,23 @@ describe('agents-ci workflow local Agents image build', () => {
     expect(workflow).toContain('packages/scripts/src/agents/update-values.ts')
   })
 
-  it('builds local Agents smoke images from the Agents Dockerfile', () => {
+  it('builds local Agents smoke images from Nix image archives', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
-    expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
-    expect(workflow).toContain('-f "${WORKSPACE}/services/agents/Dockerfile.codex-runner"')
-    expect(workflow).toContain('--scope=@proompteng/agent-contracts')
-    expect(workflow).toContain('--scope=@proompteng/codex')
-    expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"')
-    expect(workflow).toContain('cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"')
+    expect(workflow).toContain('Build and preload local Nix Agents image archives into kind')
+    expect(workflow).toContain('build_nix_image_archive "${CONTROL_PLANE_IMAGE}" agents-control-plane-image')
+    expect(workflow).toContain('build_nix_image_archive "${CONTROLLER_IMAGE}" agents-controller-image')
+    expect(workflow).toContain('build_nix_image_archive "${RUNNER_IMAGE}" agents-codex-runner-image')
+    expect(workflow).toContain('load_nix_image_archive "${CONTROL_PLANE_IMAGE}" "${CONTROL_PLANE_ARCHIVE}"')
+    expect(workflow).toContain('load_nix_image_archive "${CONTROLLER_IMAGE}" "${CONTROLLER_ARCHIVE}"')
+    expect(workflow).toContain('load_nix_image_archive "${RUNNER_IMAGE}" "${RUNNER_ARCHIVE}"')
     expect(workflow).toContain('packages/agent-contracts/**')
-    expect(workflow).toContain('--target control-plane')
-    expect(workflow).toContain('--target controller')
     expect(workflow).toContain('BUILT_AGENTS_CONTROLLER_IMAGE_REPOSITORY')
     expect(workflow).toContain('BUILT_AGENTS_RUNNER_IMAGE_REPOSITORY')
-    expect(workflow).toContain('agents-runner-image-smoke')
-    expect(workflow).toContain('--build-arg "AGENTS_VERSION=${AGENTS_VERSION}"')
+    expect(workflow).not.toContain('-f "${WORKSPACE}/services/agents/Dockerfile"')
+    expect(workflow).not.toContain('-f "${WORKSPACE}/services/agents/Dockerfile.codex-runner"')
+    expect(workflow).not.toContain('docker build')
+    expect(workflow).not.toContain('docker run')
     expect(workflow).not.toContain('-f "${WORKSPACE}/services/jangar/Dockerfile"')
   })
 })

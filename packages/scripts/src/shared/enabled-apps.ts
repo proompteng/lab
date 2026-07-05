@@ -38,6 +38,7 @@ const labRepoURL = 'https://github.com/proompteng/lab.git'
 const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
 
 const earlyNixImageApps = new Set([
+  'agents',
   'app',
   'attic',
   'bumba',
@@ -56,10 +57,6 @@ const earlyNixImageApps = new Set([
 ])
 
 const deferredApps = new Map<string, string>([
-  [
-    'agents',
-    'service images are Nix OCI migrated; app remains deferred until the separate agents-codex-runner Python/Codex runtime image is migrated',
-  ],
   ['jangar', 'complex service plus OpenWebUI chart; requires a dedicated derivation and rollout proof'],
   ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
   ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
@@ -78,6 +75,7 @@ const appToNixAttr = new Map<string, string>([
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
   ['synthesis', 'synthesis-image'],
+  ['agents', 'agents-codex-runner-image'],
   ['torghut', 'torghut-image'],
   ['torghut-hyperliquid-feed', 'torghut-hyperliquid-feed-image'],
   ['torghut-hyperliquid-runtime', 'torghut-image'],

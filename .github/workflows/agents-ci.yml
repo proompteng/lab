@@ -118,7 +118,7 @@ jobs:
         run: scripts/agents/validate-agents.sh
 
   integration:
-    runs-on: ubuntu-latest
+    runs-on: arc-amd64
     env:
       # ARC runners run with hostNetwork=true; a shared "kind" docker bridge subnet can collide across pods.
       # Use a per-run docker network for kind to keep routing deterministic.
@@ -250,6 +250,19 @@ jobs:
       - name: Build agentctl binary
         run: bun run --filter @proompteng/agentctl build:bin
 
+      - name: Set up Nix for local Agents image archives
+        if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          install-ci-toolchain: 'false'
+          require-preinstalled: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = true
+
       - name: Ensure kind Docker network
         run: scripts/agents/ensure-kind-network.sh
 
@@ -309,20 +322,18 @@ jobs:
             echo "BUILT_AGENTS_IMAGE_SOURCE_SHA=${IMAGE_SOURCE_SHA}"
           } >> "${GITHUB_ENV}"
 
-      - name: Build and preload local Agents images into kind
+      - name: Build and preload local Nix Agents image archives into kind
         if: steps.agents_image_mode.outputs.NEEDS_LOCAL_AGENTS_IMAGE == 'true'
         timeout-minutes: 45
         run: |
           set -euxo pipefail
 
-          WORKSPACE="${GITHUB_WORKSPACE}"
-          CONTROL_PLANE_IMAGE_REPOSITORY="${AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY:-${AGENTS_IMAGE_REPOSITORY:-agents-control-plane-local}}"
-          CONTROLLER_IMAGE_REPOSITORY="${AGENTS_CONTROLLER_IMAGE_REPOSITORY:-agents-controller-local}"
-          RUNNER_IMAGE_REPOSITORY="${AGENTS_RUNNER_IMAGE_REPOSITORY:-agents-codex-runner-local}"
-          DEFAULT_IMAGE_TAG_SUFFIX="${GITHUB_SHA:-unknown}"
-          IMAGE_TAG="${AGENTS_IMAGE_TAG:-ci-$DEFAULT_IMAGE_TAG_SUFFIX}"
-          PRUNE_DIR="$(mktemp -d /tmp/agents-prune-XXXXXX)"
-          KIND_IMAGE_TAR="${RUNNER_TEMP:-/tmp}/agents-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-${IMAGE_TAG}.tar"
+          CONTROL_PLANE_IMAGE_REPOSITORY="registry.ide-newton.ts.net/lab/agents-control-plane"
+          CONTROLLER_IMAGE_REPOSITORY="registry.ide-newton.ts.net/lab/agents-controller"
+          RUNNER_IMAGE_REPOSITORY="registry.ide-newton.ts.net/lab/agents-codex-runner"
+          IMAGE_TAG="nix"
+          NIX_IMAGE_OUTPUT_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/agents-nix-images-XXXXXX")"
+          KIND_ARCHIVE_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/agents-kind-archives-XXXXXX")"
           BUILD_HEARTBEAT_PID=0
           KIND_HEARTBEAT_PID=0
           cleanup_preload_resources() {
@@ -334,10 +345,7 @@ jobs:
               kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
               wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
             fi
-            if [ -f "${KIND_IMAGE_TAR}" ]; then
-              rm -f "${KIND_IMAGE_TAR}"
-            fi
-            rm -rf "${PRUNE_DIR}"
+            rm -rf "${NIX_IMAGE_OUTPUT_DIR}" "${KIND_ARCHIVE_DIR}"
           }
           trap cleanup_preload_resources EXIT
 
@@ -358,10 +366,10 @@ jobs:
             ) &
             heartbeat_pid=$!
 
-            if [ "${phase}" = "Docker build" ]; then
-              BUILD_HEARTBEAT_PID="${heartbeat_pid}"
-            else
+            if [[ "${phase}" == kind* ]]; then
               KIND_HEARTBEAT_PID="${heartbeat_pid}"
+            else
+              BUILD_HEARTBEAT_PID="${heartbeat_pid}"
             fi
 
             if timeout -k 30s "${timeout_minutes}m" "$@"; then
@@ -371,14 +379,14 @@ jobs:
               timeout_status="$status"
             fi
 
-            if [ "${phase}" = "Docker build" ]; then
-              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
-              BUILD_HEARTBEAT_PID=0
-            else
+            if [[ "${phase}" == kind* ]]; then
               kill "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
               wait "${KIND_HEARTBEAT_PID}" 2>/dev/null || true
               KIND_HEARTBEAT_PID=0
+            else
+              kill "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              wait "${BUILD_HEARTBEAT_PID}" 2>/dev/null || true
+              BUILD_HEARTBEAT_PID=0
             fi
 
             if [ "${status}" -ne 0 ]; then
@@ -391,6 +399,59 @@ jobs:
             return "${status}"
           }
 
+          build_nix_image_archive() {
+            local image_ref="$1"
+            local package_attr="$2"
+            local out_var="$3"
+            local path_file="${NIX_IMAGE_OUTPUT_DIR}/${package_attr}.path"
+            local archive_path
+
+            IMAGE="${image_ref}"
+            rm -f "${path_file}"
+            if run_with_progress "Nix image build" "${BUILD_TIMEOUT_MINUTES}" bash -c \
+              'set -euo pipefail; nix build ".#${1}" --print-out-paths --no-link | tee "${2}"' \
+              _ "${package_attr}" "${path_file}"; then
+              :
+            else
+              status=$?
+              run_step_failure "Failed to build Nix image archive ${package_attr}" "${status}"
+            fi
+
+            archive_path="$(tail -n 1 "${path_file}")"
+            if [ ! -f "${archive_path}" ]; then
+              run_step_failure "Nix image archive ${package_attr} did not produce a file at ${archive_path}" 1
+            fi
+
+            printf -v "${out_var}" '%s' "${archive_path}"
+            echo "Built Nix image archive ${package_attr}: ${archive_path}"
+          }
+
+          load_nix_image_archive() {
+            local image_ref="$1"
+            local archive_path="$2"
+            local load_archive="${archive_path}"
+
+            IMAGE="${image_ref}"
+            if [[ "${archive_path}" == *.gz ]]; then
+              load_archive="${KIND_ARCHIVE_DIR}/$(basename "${archive_path%.gz}")"
+              if run_with_progress "decompress image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" bash -c \
+                'set -euo pipefail; gzip -dc "${1}" > "${2}"' \
+                _ "${archive_path}" "${load_archive}"; then
+                :
+              else
+                status=$?
+                run_step_failure "Failed to decompress Nix image archive ${archive_path}" "${status}"
+              fi
+            fi
+
+            if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${load_archive}" --name "${KIND_CLUSTER_NAME}"; then
+              echo "Loaded Nix image archive ${load_archive} for ${image_ref} into kind cluster ${KIND_CLUSTER_NAME}."
+            else
+              status=$?
+              run_step_failure "Failed to preload local image ${image_ref} into kind cluster ${KIND_CLUSTER_NAME}" "${status}"
+            fi
+          }
+
           run_step_failure() {
             local message="$1"
             local code="$2"
@@ -399,191 +460,20 @@ jobs:
             exit 1
           }
 
-          run_kind_load_with_fallback() {
-            if run_with_progress "kind load docker-image" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load docker-image "${IMAGE}" --name "${KIND_CLUSTER_NAME}"; then
-              echo "Loaded local image ${IMAGE} into kind cluster ${KIND_CLUSTER_NAME}."
-              docker image rm "${IMAGE}" >/dev/null 2>&1 || true
-              return 0
-            fi
-
-            echo "kind load docker-image failed; retrying with image archive path."
-            rm -f "${KIND_IMAGE_TAR}"
-
-            if ! run_with_progress "docker save image archive" "${KIND_LOAD_TIMEOUT_MINUTES}" docker save --output "${KIND_IMAGE_TAR}" "${IMAGE}"; then
-              echo "Failed to save local image archive ${KIND_IMAGE_TAR}."
-              rm -f "${KIND_IMAGE_TAR}"
-              return 1
-            fi
-
-            echo "Saved image archive ${KIND_IMAGE_TAR}."
-
-            if run_with_progress "kind load image-archive" "${KIND_LOAD_TIMEOUT_MINUTES}" kind load image-archive "${KIND_IMAGE_TAR}" --name "${KIND_CLUSTER_NAME}"; then
-              echo "Loaded local image archive ${KIND_IMAGE_TAR} into kind cluster ${KIND_CLUSTER_NAME}."
-              rm -f "${KIND_IMAGE_TAR}"
-              docker image rm "${IMAGE}" >/dev/null 2>&1 || true
-              return 0
-            fi
-
-            rm -f "${KIND_IMAGE_TAR}"
-            return 1
-          }
-
-          PREP_TIMEOUT_MINUTES=25
-          echo "Pruning Agents image build context to ${PRUNE_DIR}"
-          IMAGE="agents-ci-prune-context"
-          if run_with_progress "Turbo prune context" "${PREP_TIMEOUT_MINUTES}" bunx turbo prune \
-            --scope=@proompteng/agents \
-            --scope=@proompteng/agent-contracts \
-            --scope=@proompteng/codex \
-            --scope=@proompteng/otel \
-            --scope=@proompteng/temporal-bun-sdk \
-            --docker \
-            --out-dir="${PRUNE_DIR}"; then
-            echo "Pruned Agents Docker build context to ${PRUNE_DIR}."
-          else
-            run_step_failure "Failed to prune Agents Docker build context" "$?"
-          fi
-          cp "${WORKSPACE}/tsconfig.base.json" "${PRUNE_DIR}/tsconfig.base.json"
-          # The runner Dockerfile is intentionally usable from the full repo root for release builds.
-          # The kind integration job builds it from the pruned context, so materialize the same root
-          # paths from Turbo's full workspace output.
-          mkdir -p "${PRUNE_DIR}/services" "${PRUNE_DIR}/packages"
-          cp -R "${PRUNE_DIR}/full/services/agents" "${PRUNE_DIR}/services/agents"
-          cp -R "${PRUNE_DIR}/full/packages/codex" "${PRUNE_DIR}/packages/codex"
-          if [ -d "${WORKSPACE}/skills" ]; then
-            mkdir -p "${PRUNE_DIR}/skills"
-            cp -R "${WORKSPACE}/skills/." "${PRUNE_DIR}/skills/"
-          fi
-          if [ -d "${WORKSPACE}/packages/cx-tools" ]; then
-            mkdir -p "${PRUNE_DIR}/full/packages" "${PRUNE_DIR}/json/packages"
-            cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/full/packages/cx-tools/"
-            cp -R "${WORKSPACE}/packages/cx-tools/." "${PRUNE_DIR}/json/packages/cx-tools/"
-          fi
-
-          find "${PRUNE_DIR}/full" "${PRUNE_DIR}/json" \
-            -type d -name node_modules -prune -exec rm -rf {} +
-
-          copy_pruned_workspace_dist() {
-            local pkg_dir
-            local rel_path
-            local src_dir
-
-            shopt -s nullglob
-            for pkg_dir in "${PRUNE_DIR}/full/packages/"* "${PRUNE_DIR}/full/services/"*; do
-              [ -d "${pkg_dir}" ] || continue
-              rel_path="${pkg_dir#"${PRUNE_DIR}/full/"}"
-              src_dir="${WORKSPACE}/${rel_path}"
-
-              if [ ! -d "${src_dir}/dist" ]; then
-                continue
-              fi
-
-              cp -R "${src_dir}/dist" "${pkg_dir}"
-              mkdir -p "${PRUNE_DIR}/json/${rel_path}"
-              cp -R "${src_dir}/dist" "${PRUNE_DIR}/json/${rel_path}"
-            done
-            shopt -u nullglob
-          }
-          copy_pruned_workspace_dist
-
-          AGENTS_VERSION="$(git -C "${WORKSPACE}" rev-parse --short HEAD)"
-          AGENTS_COMMIT="$(git -C "${WORKSPACE}" rev-parse HEAD)"
           CONTROL_PLANE_IMAGE="${CONTROL_PLANE_IMAGE_REPOSITORY}:${IMAGE_TAG}"
           CONTROLLER_IMAGE="${CONTROLLER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
           RUNNER_IMAGE="${RUNNER_IMAGE_REPOSITORY}:${IMAGE_TAG}"
 
-          # Use the mirror.gcr.io Bun mirror in CI to avoid Docker Hub anonymous pull limits.
-          # Local image rebuilds fail with explicit diagnostics on timeout.
-          # ARC arm64 runners can spend well over 18 minutes in a pruned Agents docker
-          # build while still making forward progress, so give the local image build enough headroom
-          # to complete instead of terminating a healthy build.
           BUILD_TIMEOUT_MINUTES=30
           KIND_LOAD_TIMEOUT_MINUTES=20
 
-          IMAGE="${CONTROL_PLANE_IMAGE}"
-          if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
-            -f "${WORKSPACE}/services/agents/Dockerfile" \
-            --target control-plane \
-            --network=host \
-            -t "${CONTROL_PLANE_IMAGE}" \
-            --build-arg "AGENTS_VERSION=${AGENTS_VERSION}" \
-            --build-arg "AGENTS_COMMIT=${AGENTS_COMMIT}" \
-            --build-arg "AGENTS_BUILD_CI=true" \
-            --build-arg "AGENTS_BUILD_SOURCEMAP=0" \
-            --build-arg "AGENTS_BUILD_LOG_LEVEL=warn" \
-            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
-            --progress=plain \
-            "${PRUNE_DIR}"; then
-            echo "Built local control-plane image ${CONTROL_PLANE_IMAGE}."
-          else
-            run_step_failure "Failed to build local image ${CONTROL_PLANE_IMAGE}" "$?"
-          fi
+          build_nix_image_archive "${CONTROL_PLANE_IMAGE}" agents-control-plane-image CONTROL_PLANE_ARCHIVE
+          build_nix_image_archive "${CONTROLLER_IMAGE}" agents-controller-image CONTROLLER_ARCHIVE
+          build_nix_image_archive "${RUNNER_IMAGE}" agents-codex-runner-image RUNNER_ARCHIVE
 
-          IMAGE="${CONTROLLER_IMAGE}"
-          if run_with_progress "Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
-            -f "${WORKSPACE}/services/agents/Dockerfile" \
-            --target controller \
-            --network=host \
-            -t "${CONTROLLER_IMAGE}" \
-            --build-arg "AGENTS_VERSION=${AGENTS_VERSION}" \
-            --build-arg "AGENTS_COMMIT=${AGENTS_COMMIT}" \
-            --build-arg "AGENTS_BUILD_CI=true" \
-            --build-arg "AGENTS_BUILD_SOURCEMAP=0" \
-            --build-arg "AGENTS_BUILD_LOG_LEVEL=warn" \
-            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
-            --progress=plain \
-            "${PRUNE_DIR}"; then
-            echo "Built local controller image ${CONTROLLER_IMAGE}."
-          else
-            run_step_failure "Failed to build local image ${CONTROLLER_IMAGE}" "$?"
-          fi
-
-          IMAGE="${RUNNER_IMAGE}"
-          if run_with_progress "Runner Docker build" "${BUILD_TIMEOUT_MINUTES}" env DOCKER_BUILDKIT=1 docker build \
-            -f "${WORKSPACE}/services/agents/Dockerfile.codex-runner" \
-            --network=host \
-            -t "${RUNNER_IMAGE}" \
-            --build-arg "BUN_BASE_IMAGE=mirror.gcr.io/oven/bun" \
-            --progress=plain \
-            "${PRUNE_DIR}"; then
-            echo "Built local runner image ${RUNNER_IMAGE}."
-          else
-            run_step_failure "Failed to build local image ${RUNNER_IMAGE}" "$?"
-          fi
-
-          RUNNER_SMOKE_SPEC_JSON="$(cat <<'JSON'
-          {
-            "schemaVersion": "agents.proompteng.ai/runner/v1",
-            "provider": "runner-image-smoke",
-            "providerSpec": {
-              "binary": "/bin/sh",
-              "argsTemplate": ["-c", "echo agents-runner-image-smoke"]
-            },
-            "adapter": {
-              "type": "exec"
-            }
-          }
-          JSON
-          )"
-          docker run --rm \
-            -e AGENT_RUNNER_SPEC="${RUNNER_SMOKE_SPEC_JSON}" \
-            "${RUNNER_IMAGE}" \
-            agent-runner
-
-          IMAGE="${CONTROL_PLANE_IMAGE}"
-          if ! run_kind_load_with_fallback; then
-            run_step_failure "Failed to preload local image ${CONTROL_PLANE_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
-          fi
-
-          IMAGE="${CONTROLLER_IMAGE}"
-          if ! run_kind_load_with_fallback; then
-            run_step_failure "Failed to preload local image ${CONTROLLER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
-          fi
-
-          IMAGE="${RUNNER_IMAGE}"
-          if ! run_kind_load_with_fallback; then
-            run_step_failure "Failed to preload local image ${RUNNER_IMAGE} into kind cluster ${KIND_CLUSTER_NAME}" "$?"
-          fi
+          load_nix_image_archive "${CONTROL_PLANE_IMAGE}" "${CONTROL_PLANE_ARCHIVE}"
+          load_nix_image_archive "${CONTROLLER_IMAGE}" "${CONTROLLER_ARCHIVE}"
+          load_nix_image_archive "${RUNNER_IMAGE}" "${RUNNER_ARCHIVE}"
 
           {
             echo "BUILT_AGENTS_IMAGE_REPOSITORY=${CONTROL_PLANE_IMAGE_REPOSITORY}"
