@@ -13,6 +13,7 @@ const envKeys = [
   'AGENTS_IMAGE_REPOSITORY',
   'AGENTS_IMAGE_TAG',
   'AGENTS_IMAGE_TARGET',
+  'AGENTS_DOCKER_TARGET',
   'AGENTS_NIX_IMAGE_TARGET',
   'AGENTS_RUNNER_IMAGE_REPOSITORY',
   'AGENTS_SHELL_IMAGE_REPOSITORY',
@@ -83,6 +84,50 @@ describe('agents build-image helpers', () => {
     })
   })
 
+  it('honors generic repository overrides for explicit runner and shell targets', () => {
+    process.env.AGENTS_IMAGE_REPOSITORY = 'lab/custom-agents-runtime'
+
+    expect(
+      __private.resolveBuildConfiguration({
+        target: 'runner',
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toMatchObject({
+      repository: 'lab/custom-agents-runtime',
+      target: 'runner',
+      packageAttr: 'agents-codex-runner-image',
+    })
+    expect(
+      __private.resolveBuildConfiguration({
+        target: 'agents-shell',
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toMatchObject({
+      repository: 'lab/custom-agents-runtime',
+      target: 'agents-shell',
+      packageAttr: 'agents-shell-image',
+    })
+  })
+
+  it('prefers target-specific repository overrides over the generic override', () => {
+    process.env.AGENTS_IMAGE_REPOSITORY = 'lab/generic-agents-runtime'
+    process.env.AGENTS_RUNNER_IMAGE_REPOSITORY = 'lab/custom-agents-runner'
+
+    expect(
+      __private.resolveBuildConfiguration({
+        target: 'runner',
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toMatchObject({
+      repository: 'lab/custom-agents-runner',
+      target: 'runner',
+      packageAttr: 'agents-codex-runner-image',
+    })
+  })
+
   it('can infer the target from a canonical repository override', () => {
     expect(
       __private.resolveBuildConfiguration({
@@ -94,6 +139,17 @@ describe('agents build-image helpers', () => {
       target: 'controller',
       packageAttr: 'agents-controller-image',
     })
+  })
+
+  it('rejects the legacy Docker target env var instead of silently defaulting', () => {
+    process.env.AGENTS_DOCKER_TARGET = 'controller'
+
+    expect(() =>
+      __private.resolveBuildConfiguration({
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toThrow('AGENTS_DOCKER_TARGET')
   })
 
   it('rejects old Docker-only build options instead of silently falling back', () => {
@@ -197,6 +253,39 @@ describe('agents build-image helpers', () => {
       'registry.ide-newton.ts.net/lab/agents-control-plane:abc123',
       'registry.ide-newton.ts.net/lab/agents-shell:abc123',
     ])
+  })
+
+  it('parses removed Docker CLI flags so Nix option rejection catches them', () => {
+    const options = __private.parseArgs([
+      '--dockerfile',
+      'services/agents/Dockerfile',
+      '--context=.',
+      '--cache-ref',
+      'registry.example/cache',
+      '--platforms=linux/amd64,linux/arm64',
+      '--target',
+      'runner',
+      '--tag',
+      'abc123',
+    ])
+
+    expect(options).toEqual({
+      dockerfile: 'services/agents/Dockerfile',
+      context: '.',
+      cacheRef: 'registry.example/cache',
+      platforms: ['linux/amd64', 'linux/arm64'],
+      target: 'runner',
+      tag: 'abc123',
+    })
+    expect(() => __private.resolveBuildConfiguration({ ...options, commit: 'abcdef' })).toThrow(
+      'Docker-only option(s): context, dockerfile, cacheRef, platforms',
+    )
+  })
+
+  it('rejects unknown or malformed manual CLI flags before they can be consumed as tags', () => {
+    expect(() => __private.parseArgs(['--unknown'])).toThrow('Unsupported Agents build-image CLI flag: --unknown')
+    expect(() => __private.parseArgs(['--target'])).toThrow('Missing value for --target')
+    expect(() => __private.parseArgs(['abc123', 'extra'])).toThrow('Unexpected positional argument: extra')
   })
 
   it('parses the manual CLI target, tag, repository, registry, and dry-run flags', () => {

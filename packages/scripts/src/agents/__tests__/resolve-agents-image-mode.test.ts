@@ -122,13 +122,17 @@ describe('classifyAgentsImageMode', () => {
   it('builds a local image for Agents Nix image input changes', () => {
     const result = classifyAgentsImageMode([
       'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
       'packages/scripts/src/shared/nix-oci-deploy.ts',
     ])
     expect(result.mode).toBe('build-local-image')
     expect(result.matchedPaths).toEqual([
       'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
       'packages/scripts/src/shared/nix-oci-deploy.ts',
     ])
   })
@@ -199,6 +203,20 @@ describe('agents-ci workflow local Agents image build', () => {
     const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
 
     expect(workflow).toContain('git diff --name-only "${BASE_SHA}...${HEAD_SHA}"')
+  })
+
+  it('triggers Agents CI for local Nix image inputs that the classifier can build', () => {
+    const workflow = readFileSync(new URL('../../../../../.github/workflows/agents-ci.yml', import.meta.url), 'utf8')
+
+    for (const path of [
+      'nix/images/agents.nix',
+      'nix/images/bun-workspace-service.nix',
+      'nix/images/openai-codex-cli.nix',
+      'nix/packages.nix',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+    ]) {
+      expect(workflow).toContain(`      - '${path}'`)
+    }
   })
 
   it('builds local kind smoke images when the published registry is unreachable', () => {

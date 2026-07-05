@@ -8,6 +8,10 @@ on:
   pull_request:
     paths:
       - 'bun.lock'
+      - 'nix/images/agents.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/openai-codex-cli.nix'
+      - 'nix/packages.nix'
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
@@ -23,6 +27,7 @@ on:
       - 'packages/scripts/src/shared/cli.ts'
       - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'packages/scripts/src/shared/__tests__/docker.test.ts'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
@@ -33,6 +38,10 @@ on:
       - main
     paths:
       - 'bun.lock'
+      - 'nix/images/agents.nix'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/openai-codex-cli.nix'
+      - 'nix/packages.nix'
       - 'argocd/applications/argo-workflows/**'
       - 'argocd/applications/agents/**'
       - 'charts/agents/**'
@@ -48,6 +57,7 @@ on:
       - 'packages/scripts/src/shared/cli.ts'
       - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
+      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
       - 'packages/scripts/src/shared/__tests__/docker.test.ts'
       - 'packages/temporal-bun-sdk/**'
       - 'services/agents/**'
