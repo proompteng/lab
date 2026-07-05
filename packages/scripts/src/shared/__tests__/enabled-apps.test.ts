@@ -49,14 +49,14 @@ describe('enabled app inventory', () => {
 
   it('does not hide repo-owned Helm image overrides as chart-only apps', () => {
     expect(entry('headlamp')).toMatchObject({
-      class: 'deferred',
+      class: 'nix-image',
       hasHelmChart: true,
       repoImages: ['registry.ide-newton.ts.net/lab/headlamp@sha256'],
-      deferredReason:
-        'Helm chart is overridden to run a repo-built lab/headlamp image; migrate the Docker workflow separately',
+      nixImageAttr: 'headlamp-image',
+      buildScriptPath: 'packages/scripts/src/headlamp/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/headlamp/deploy-service.ts',
     })
-    expect(entry('headlamp').nixImageAttr).toBeUndefined()
-    expect(entry('headlamp').buildScriptPath).toBeUndefined()
+    expect(entry('headlamp').workflowPaths).toContain('.github/workflows/headlamp-ci.yml')
   })
 
   it('marks only approved early build-owning apps as Nix image candidates', () => {
@@ -66,6 +66,7 @@ describe('enabled app inventory', () => {
       'arc',
       'bumba',
       'froussard',
+      'headlamp',
       'docs',
       'app',
       'proompteng',
@@ -89,6 +90,7 @@ describe('enabled app inventory', () => {
     expect(entry('oirat').nixImageAttr).toBe('oirat-image')
     expect(entry('bumba').nixImageAttr).toBe('bumba-image')
     expect(entry('froussard').nixImageAttr).toBe('froussard-image')
+    expect(entry('headlamp').nixImageAttr).toBe('headlamp-image')
     expect(entry('docs').nixImageAttr).toBe('docs-image')
     expect(entry('app').nixImageAttr).toBe('app-image')
     expect(entry('proompteng').nixImageAttr).toBe('proompteng-image')

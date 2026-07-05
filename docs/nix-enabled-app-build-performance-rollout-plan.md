@@ -19,7 +19,7 @@ Current inventory from the repo guardrail:
 - External-source apps are not repo image migration targets.
 - Repo-image apps must be either `nix-image`, explicitly `deferred`, or a documented manifest-only exception.
 - Helm values that override chart images with `registry.ide-newton.ts.net/lab/...` count as repo-image references. `headlamp`
-  is therefore deferred until its Docker-backed workflow is migrated or intentionally retired.
+  is a build-owning migration target because the live chart values pin `lab/headlamp`.
 
 Hard exclusions:
 
@@ -138,8 +138,8 @@ Same commit plus same lockfiles should reproduce the same Nix output path and OC
 6. **PR 6: Docker Quarantine And Removal**
    - Remove Docker Buildx/CLI build-push paths from migrated enabled apps.
    - Rename remaining Docker helpers as Docker-backed transitional paths.
-   - Migrate or retire `headlamp-ci.yml`; the live Helm release currently overrides the upstream chart with a repo-built
-     `lab/headlamp` image, so it cannot be counted as chart-only.
+   - Keep `headlamp-ci.yml` on the shared Nix OCI workflow; the live Helm release overrides the upstream chart with a
+     repo-built `lab/headlamp` image, so it cannot be counted as chart-only.
    - Disabled and non-owned apps cannot count as rollout proof.
 
 7. **PR 7: Final Rollout Report**

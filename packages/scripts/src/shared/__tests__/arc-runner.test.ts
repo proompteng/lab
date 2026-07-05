@@ -124,6 +124,8 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain(
       "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
     )
+    expect(arcRunnerBuildWorkflow).not.toContain("- 'flake.nix'")
+    expect(arcRunnerBuildWorkflow).not.toContain('- flake.nix')
     expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
     expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerBuildWorkflow).not.toContain('docker run')

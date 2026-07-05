@@ -1,0 +1,204 @@
+name: headlamp-release
+
+on:
+  workflow_run:
+    workflows:
+      - headlamp
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Commit SHA to promote
+        required: true
+        type: string
+      image_digest:
+        description: Image digest to promote (sha256:...)
+        required: true
+        type: string
+      image_tag:
+        description: Image tag to promote
+        required: false
+        type: string
+
+concurrency:
+  group: headlamp-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha }}
+  cancel-in-progress: true
+
+jobs:
+  promote:
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+      }}
+    runs-on: arc-arm64
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v5
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download release contract
+        if: github.event_name == 'workflow_run'
+        uses: actions/download-artifact@v4
+        with:
+          name: headlamp-release-contract
+          path: .artifacts/headlamp
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+
+      - name: Resolve release metadata
+        id: meta
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA_INPUT: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST_INPUT: ${{ inputs.image_digest }}
+          IMAGE_TAG_INPUT: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          contract_path='.artifacts/headlamp/release-contract.json'
+          if [[ "${EVENT_NAME}" == "workflow_run" ]]; then
+            test -s "${contract_path}"
+            image="$(jq -r '.image' "${contract_path}")"
+            tag="$(jq -r '.tag' "${contract_path}")"
+            digest="$(jq -r '.digest' "${contract_path}")"
+            source_sha="$(jq -r '.sourceSha' "${contract_path}")"
+            package_attr="$(jq -r '.packageAttr' "${contract_path}")"
+          else
+            image='registry.ide-newton.ts.net/lab/headlamp'
+            digest="${IMAGE_DIGEST_INPUT}"
+            source_sha="${COMMIT_SHA_INPUT}"
+            tag="${IMAGE_TAG_INPUT:-sha-${COMMIT_SHA_INPUT}}"
+            package_attr='headlamp-image'
+          fi
+
+          if [[ "${image}" != 'registry.ide-newton.ts.net/lab/headlamp' ]]; then
+            echo "Unexpected Headlamp image: ${image}" >&2
+            exit 2
+          fi
+          if [[ "${package_attr}" != 'headlamp-image' ]]; then
+            echo "Unexpected Headlamp package attr: ${package_attr}" >&2
+            exit 2
+          fi
+          if ! [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid digest: ${digest}" >&2
+            exit 2
+          fi
+          if ! git merge-base --is-ancestor "${source_sha}" HEAD; then
+            echo "promote=false" >> "${GITHUB_OUTPUT}"
+            echo "reason=source commit is not an ancestor of main" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          paths=(
+            services/headlamp
+            nix/images/headlamp.nix
+            nix/packages.nix
+            nix/cache-push.sh
+            nix/ci-nix-oci-summary.sh
+            nix/ci-run-timed.sh
+            nix/oci-inspect-archive.sh
+            nix/oci-push.sh
+            nix/oci-release-contract.sh
+            flake.nix
+            flake.lock
+          )
+
+          if ! git diff --quiet "${source_sha}..HEAD" -- "${paths[@]}"; then
+            echo "promote=false" >> "${GITHUB_OUTPUT}"
+            echo "reason=Headlamp image inputs changed after source commit" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          {
+            echo "promote=true"
+            echo "image=${image}"
+            echo "tag=${tag}"
+            echo "digest=${digest}"
+            echo "source_sha=${source_sha}"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Verify promoted OCI index
+        if: steps.meta.outputs.promote == 'true'
+        env:
+          IMAGE: ${{ steps.meta.outputs.image }}
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}" linux/amd64 linux/arm64
+
+      - name: Update Headlamp values
+        if: steps.meta.outputs.promote == 'true'
+        shell: bash
+        env:
+          DIGEST: ${{ steps.meta.outputs.digest }}
+        run: |
+          set -euo pipefail
+          path='argocd/applications/headlamp/values.yaml'
+          digest_hex="${DIGEST#sha256:}"
+          perl -0pi -e 's#(^\s*repository:\s*)lab/headlamp(?:@sha256)?\s*$#$1lab/headlamp@sha256#m' "${path}"
+          DIGEST_HEX="${digest_hex}" perl -0pi -e 's#(^\s*tag:\s*)[A-Za-z0-9_.:-]+(\s*)$#$1$ENV{DIGEST_HEX}$2#m' "${path}"
+          grep -F 'repository: lab/headlamp@sha256' "${path}"
+          grep -F "tag: ${digest_hex}" "${path}"
+
+      - name: Create Headlamp release pull request
+        if: steps.meta.outputs.promote == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: codex/headlamp-nix-release-${{ steps.meta.outputs.tag }}
+          title: 'chore(headlamp): promote nix image ${{ steps.meta.outputs.tag }}'
+          commit-message: 'chore(headlamp): promote nix image ${{ steps.meta.outputs.tag }}'
+          body: |
+            ## Summary
+
+            - Promote Headlamp to `${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}`.
+            - Source commit: `${{ steps.meta.outputs.source_sha }}`.
+            - Built by the shared Nix OCI workflow.
+
+            ## Related Issues
+
+            N/A
+
+            ## Testing
+
+            - `nix run .#assert-oci-platforms -- "${{ steps.meta.outputs.image }}@${{ steps.meta.outputs.digest }}" linux/amd64 linux/arm64`
+
+            ## Screenshots (if applicable)
+
+            N/A
+
+            ## Breaking Changes
+
+            None
+
+            ## Checklist
+
+            - [x] Testing section documents the exact validation performed (or `N/A` with justification).
+            - [x] Screenshots and Breaking Changes sections are handled appropriately (removed or filled in).
+            - [x] Documentation, release notes, and follow-ups are updated or tracked.
+          labels: |
+            automated-pr
+            nix-oci
+            headlamp
+          add-paths: |
+            argocd/applications/headlamp/values.yaml
+
+      - name: Promotion skipped
+        if: steps.meta.outputs.promote != 'true'
+        run: echo 'Skipping stale Headlamp promotion because ${{ steps.meta.outputs.reason }}.'

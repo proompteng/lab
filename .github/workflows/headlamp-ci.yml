@@ -7,23 +7,29 @@ on:
   pull_request:
     paths:
       - 'services/headlamp/**'
-      - 'argocd/applications/headlamp/**'
-      - 'docs/headlamp-setup.md'
-      - 'flake.nix'
       - 'flake.lock'
+      - 'nix/images/headlamp.nix'
       - 'nix/packages.nix'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/headlamp-ci.yml'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
   push:
     branches:
       - main
     paths:
       - 'services/headlamp/**'
-      - 'flake.nix'
       - 'flake.lock'
+      - 'nix/images/headlamp.nix'
       - 'nix/packages.nix'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/headlamp-ci.yml'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
   workflow_dispatch:
 
 concurrency:
@@ -43,160 +49,35 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           require-preinstalled: 'true'
+          install-ci-toolchain: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes
+            substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
+            extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
 
       - name: Render Headlamp manifests
         run: nix run .#render-headlamp
 
-      - name: Run Upstream Multiplexer Regression Tests
-        run: |
-          docker run --rm \
-            -v "$PWD":/workspace \
-            -w /workspace \
-            mirror.gcr.io/golang:1.24.13@sha256:d2d2bc1c84f7e60d7d2438a3836ae7d0c847f4888464e7ec9ba3a1339a1ee804 \
-            sh services/headlamp/scripts/test-upstream.sh
+      - name: Run upstream multiplexer regression tests
+        run: sh services/headlamp/scripts/test-upstream.sh
 
-  validate-image-platform:
-    if: github.event_name == 'pull_request'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v5
-
-      - name: Fetch pinned Headlamp upstream source
-        run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build native Headlamp image
-        run: |
-          docker buildx build \
-            --platform '${{ matrix.platform }}' \
-            --load \
-            --build-arg 'LAB_GIT_SHA=${{ github.sha }}' \
-            -t 'headlamp:test-${{ matrix.arch }}' \
-            services/headlamp
-
-      - name: Verify native multiplexer bundle is present
-        run: docker run --rm --platform '${{ matrix.platform }}' --entrypoint sh 'headlamp:test-${{ matrix.arch }}' -lc "grep -R -n 'wsMultiplexer' /headlamp/frontend/assets >/dev/null"
-
-  build-platform:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Fetch pinned Headlamp upstream source
-        run: sh services/headlamp/scripts/fetch-upstream.sh services/headlamp/.upstream
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Build and push native Headlamp image
-        uses: docker/build-push-action@v6
-        with:
-          platforms: ${{ matrix.platform }}
-          context: ./services/headlamp
-          file: ./services/headlamp/Dockerfile
-          build-args: |
-            LAB_GIT_SHA=${{ github.sha }}
-          tags: |
-            registry.ide-newton.ts.net/lab/headlamp:sha-${{ steps.meta.outputs.tag }}-${{ matrix.arch }}
-            registry.ide-newton.ts.net/lab/headlamp:main-${{ matrix.arch }}
-          push: true
-          cache-from: |
-            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache-${{ matrix.arch }}
-            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:main-${{ matrix.arch }}
-            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache
-          cache-to: |
-            type=registry,ref=registry.ide-newton.ts.net/lab/headlamp:cache-${{ matrix.arch }},mode=max
-            type=inline
-
-  publish-index:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build-platform
-    runs-on: arc-arm64
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=$(git rev-parse --short=7 HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Create multi-arch Headlamp image index
-        shell: bash
-        run: |
-          set -euo pipefail
-          IMAGE='registry.ide-newton.ts.net/lab/headlamp'
-          TAG='${{ steps.meta.outputs.tag }}'
-          docker buildx imagetools create \
-            -t "${IMAGE}:sha-${TAG}" \
-            -t "${IMAGE}:main" \
-            "${IMAGE}:sha-${TAG}-amd64" \
-            "${IMAGE}:sha-${TAG}-arm64"
-
-      - name: Verify multi-arch Headlamp image index
-        shell: bash
-        run: |
-          set -euo pipefail
-          IMAGE='registry.ide-newton.ts.net/lab/headlamp'
-          TAG='${{ steps.meta.outputs.tag }}'
-          MANIFEST_JSON="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}:sha-${TAG}")"
-          DIGEST="$(jq -r '.manifest.digest // empty' <<< "${MANIFEST_JSON}")"
-          if ! printf '%s' "${DIGEST}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-            echo "Failed to resolve digest for ${IMAGE}:sha-${TAG}" >&2
-            docker buildx imagetools inspect "${IMAGE}:sha-${TAG}" >&2
-            exit 1
-          fi
-
-          for platform in linux/amd64 linux/arm64; do
-            platform_digest="$(
-              jq -r --arg platform "${platform}" \
-                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                <<< "${MANIFEST_JSON}" | head -n 1
-            )"
-            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Image ${IMAGE}:sha-${TAG} is missing required platform ${platform}" >&2
-              docker buildx imagetools inspect "${IMAGE}:sha-${TAG}" >&2
-              exit 1
-            fi
-          done
-
-          echo "Published ${IMAGE}:sha-${TAG}@${DIGEST}"
+  nix-image:
+    if: >-
+      ${{
+        github.event_name == 'pull_request' ||
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event_name == 'push' &&
+          github.ref == 'refs/heads/main' &&
+          !contains(github.event.head_commit.message || '', 'automated release PR')
+        )
+      }}
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: headlamp
+      package_attr: headlamp-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'headlamp-release-contract' || '' }}
+      image_build_timeout: 20m
+    secrets: inherit

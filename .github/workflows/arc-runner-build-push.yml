@@ -7,7 +7,6 @@ on:
   pull_request:
     paths:
       - 'nix/images/arc-runner.nix'
-      - 'flake.nix'
       - 'flake.lock'
       - 'nix/packages.nix'
       - 'nix/cache-push.sh'
@@ -26,7 +25,6 @@ on:
       - main
     paths:
       - 'nix/images/arc-runner.nix'
-      - 'flake.nix'
       - 'flake.lock'
       - 'nix/packages.nix'
       - 'nix/cache-push.sh'
