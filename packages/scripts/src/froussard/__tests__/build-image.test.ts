@@ -111,6 +111,36 @@ describe('froussard build-image helpers', () => {
     ).toThrow('context, platforms, cacheRef')
   })
 
+  it('parses stale Docker-only CLI flags for rejection before positional tag fallback', () => {
+    const dockerfileOptions = __private.parseArgs(['--dockerfile', 'Dockerfile'])
+
+    expect(dockerfileOptions).toEqual({ dockerfile: 'Dockerfile' })
+    expect(() => __private.resolveBuildConfiguration(dockerfileOptions)).toThrow(
+      'Froussard Nix image builds do not accept Docker-only option(s): dockerfile',
+    )
+
+    const multiOptionArgs = [
+      '--context',
+      '.',
+      '--platforms=linux/amd64,linux/arm64',
+      '--cache-ref',
+      'registry.example/cache',
+    ]
+
+    expect(__private.parseArgs(multiOptionArgs)).toEqual({
+      context: '.',
+      platforms: ['linux/amd64', 'linux/arm64'],
+      cacheRef: 'registry.example/cache',
+    })
+    expect(() => __private.resolveBuildConfiguration(__private.parseArgs(multiOptionArgs))).toThrow(
+      'context, platforms, cacheRef',
+    )
+  })
+
+  it('rejects unknown CLI flags before consuming the next positional value as a tag', () => {
+    expect(() => __private.parseArgs(['--unknown-flag', 'sha-test'])).toThrow('Unknown option: --unknown-flag')
+  })
+
   it('parses manual CLI tag, registry, repository, and dry-run flags', () => {
     expect(
       __private.parseArgs([
