@@ -32,6 +32,6 @@ spec:
                       - >-
                         set -euo pipefail &&
                         cd /app &&
-                        /opt/venv/bin/python scripts/run_simulation_analysis.py artifact-bundle
+                        python scripts/run_simulation_analysis.py artifact-bundle
                         --run-dir "{{args.runDir}}"
                         --json

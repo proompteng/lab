@@ -46,7 +46,7 @@ spec:
                       - >-
                         set -euo pipefail &&
                         cd /app &&
-                        /opt/venv/bin/python scripts/run_simulation_analysis.py teardown-clean
+                        python scripts/run_simulation_analysis.py teardown-clean
                         --run-id "{{args.runId}}"
                         --dataset-id "{{args.datasetId}}"
                         --namespace "{{args.namespace}}"

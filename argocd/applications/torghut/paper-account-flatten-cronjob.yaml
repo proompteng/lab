@@ -43,7 +43,7 @@ spec:
                   set -euo pipefail
                   cd /app
                   target_plan_readback_args=()
-                  if /opt/venv/bin/python scripts/flatten_paper_account_positions.py --help \
+                  if python scripts/flatten_paper_account_positions.py --help \
                     | grep -q -- '--target-plan-readback-url'; then
                     target_plan_readback_args=(
                       --target-plan-readback-url 'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&full_audit=true&limit=20'
@@ -53,7 +53,7 @@ spec:
                     )
                   fi
                   echo "stage=flatten_paper_account started_at=$(date -Iseconds)"
-                  /opt/venv/bin/python scripts/flatten_paper_account_positions.py \
+                  python scripts/flatten_paper_account_positions.py \
                     --account-label PA3SX7FYNUTF \
                     --expected-account-label PA3SX7FYNUTF \
                     --trading-mode paper \

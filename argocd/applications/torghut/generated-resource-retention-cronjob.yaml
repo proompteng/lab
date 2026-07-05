@@ -45,7 +45,7 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
-                  /opt/venv/bin/python scripts/prune_kubernetes_residue.py \
+                  python scripts/prune_kubernetes_residue.py \
                     --namespace torghut \
                     --analysis-run-prefix torghut-sim- \
                     --analysis-run-max-age-hours 168 \

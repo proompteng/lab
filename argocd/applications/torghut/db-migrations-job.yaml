@@ -36,7 +36,7 @@ spec:
                 dsn="$2"
                 timeout_seconds="$3"
                 database="${4:-}"
-                DB_WAIT_LABEL="${label}" DB_WAIT_DSN="${dsn}" DB_WAIT_TIMEOUT_SECONDS="${timeout_seconds}" DB_WAIT_DATABASE="${database}" /opt/venv/bin/python - <<'PY'
+                DB_WAIT_LABEL="${label}" DB_WAIT_DSN="${dsn}" DB_WAIT_TIMEOUT_SECONDS="${timeout_seconds}" DB_WAIT_DATABASE="${database}" python - <<'PY'
               import os
               import time
               from urllib.parse import urlsplit
@@ -85,9 +85,9 @@ spec:
               }
 
               wait_for_database "torghut app database" "${DB_DSN}" 300
-              /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              alembic -c /app/alembic.ini upgrade heads
               wait_for_database "postgres superuser database" "${TORGHUT_POSTGRES_ADMIN_URI}" 300 postgres
-              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" python - <<'PY'
               import os
               from urllib.parse import urlsplit
 
@@ -204,8 +204,8 @@ spec:
                       )
                       print(f'stamped existing simulation runtime context as {context_revision}')
               PY
-              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade 0026_strategy_factory_research_objects
-              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini upgrade 0026_strategy_factory_research_objects
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" python - <<'PY'
               import os
 
               from sqlalchemy import create_engine, text
@@ -261,8 +261,8 @@ spec:
                       )
                       print(f'stamped existing whitepaper/autoresearch ledger objects as {target_revision}')
               PY
-              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
-              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/python - <<'PY'
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini upgrade heads
+              DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" python - <<'PY'
               import os
 
               from sqlalchemy import create_engine, text

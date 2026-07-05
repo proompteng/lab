@@ -155,10 +155,10 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         args = "\n".join(str(item) for item in container.get("args", []))
         env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
         upgrade_to_research_objects = (
-            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini '
+            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini '
             "upgrade 0026_strategy_factory_research_objects"
         )
-        upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
+        upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini upgrade heads'
         env_names = {item.get("name") for item in env}
         env_by_name = {item.get("name"): item for item in env}
         env_order = [item.get("name") for item in env]
@@ -190,8 +190,8 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertIn("owner_statement = (", args)
         self.assertIn("ALTER {owned_relation['object_type']}", args)
         self.assertIn("{owned_relation['object_name']} OWNER TO {quoted_role}", args)
-        self.assertNotIn("DO $$", args)
-        self.assertNotIn("format(", args)
+        for forbidden_snippet in ("DO $$", "format(", "/opt/venv/bin/"):
+            self.assertNotIn(forbidden_snippet, args)
         self.assertIn(upgrade_to_research_objects, args)
         self.assertIn("0028_autoresearch_epoch_ledgers", args)
         self.assertIn("whitepaper_claims", args)

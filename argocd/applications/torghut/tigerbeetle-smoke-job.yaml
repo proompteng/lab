@@ -47,7 +47,7 @@ spec:
             - |
               set -euo pipefail
               cd /app
-              /opt/venv/bin/python scripts/verify_tigerbeetle_ledger.py --mode smoke
+              python scripts/verify_tigerbeetle_ledger.py --mode smoke
           env:
             - name: TORGHUT_TIGERBEETLE_ENABLED
               value: "true"
