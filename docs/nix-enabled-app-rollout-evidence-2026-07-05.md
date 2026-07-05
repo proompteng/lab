@@ -4,16 +4,18 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 
 ## Scope
 
-- Enabled apps proved: `oirat`, `bumba`, `froussard`.
-- Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`, and
-  `.github/workflows/froussard-ci.yml` using
+- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`.
+- Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
+  `.github/workflows/froussard-ci.yml`, and `.github/workflows/arc-runner-build-push.yml` using
   `.github/workflows/nix-oci-build-common.yml`.
-- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`.
+- Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
   - `packages/scripts/src/froussard/build-image.ts` and `packages/scripts/src/froussard/deploy-service.ts`
-- Release path: `.github/workflows/enabled-simple-nix-release.yml` plus `.github/workflows/release-pr-automerge.yml`.
+  - `packages/scripts/src/arc-runner/build-image.ts` and `packages/scripts/src/arc-runner/deploy-service.ts`
+- Release path: `.github/workflows/enabled-simple-nix-release.yml`,
+  `.github/workflows/arc-runner-release.yml`, plus `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -30,6 +32,9 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#12044](https://github.com/proompteng/lab/pull/12044) | `d5b641d7f5513a59d49f5ede295bc89e0b831cda` | Promote Bumba to the corrected Nix-built OCI digest and matching Temporal worker build id.      |
 | [#11923](https://github.com/proompteng/lab/pull/11923) | `404c77437b0565f28e250b62e4335f62d5767ad3` | Add the Froussard manual Nix image build path.                                                  |
 | [#12010](https://github.com/proompteng/lab/pull/12010) | `0aa4503b9a1c2edf189775c9efa527fca2fc10ff` | Promote Froussard to the latest Nix-built OCI digest.                                           |
+| [#12015](https://github.com/proompteng/lab/pull/12015) | `6145a5fd5198b313fa93d7f5d323bc70646a6a27` | Harden the ARC runner Nix image and manual build/deploy path before promotion.                   |
+| [#12020](https://github.com/proompteng/lab/pull/12020) | `e31f832a82ba1c5458c1cd5c7db5ee67fa22a338` | Promote ARC runner sets to the Nix-built multi-platform digest.                                  |
+| [#12022](https://github.com/proompteng/lab/pull/12022) | `51afc32c04c41643c8c57452a18033d5ef4c25c0` | Further harden the ARC runner script contract and manual deployment path.                        |
 
 ## Failed Proof That Exposed The Gap
 
@@ -280,6 +285,84 @@ Froussard has current live digest proof but does not yet have a complete cache-p
 because the downloaded release contract exposed `cacheProvenance=null` and `timings=null`. A future real Froussard source
 change should produce the newer release-contract shape and can be used for warm-cache or substitute-only proof without
 creating a synthetic job.
+
+## ARC Runner Rollout Proof
+
+ARC is the first enabled platform app counted in this checkpoint. It is a build-performance dependency for the rest of
+the rollout because the `arc-amd64` and `arc-arm64` runner sets execute the real Nix OCI jobs.
+
+### ARC Main Build Proof
+
+Run [28753997784](https://github.com/proompteng/lab/actions/runs/28753997784) succeeded on `main`.
+
+| Phase                        | Result            |
+| ---------------------------- | ----------------- |
+| `linux/amd64` build-platform | passed in `4m24s` |
+| `linux/arm64` build-platform | passed in `5m48s` |
+| publish-index                | passed in `26s`   |
+| release contract             | uploaded as `arc-runner-release-contract` |
+
+Release contract fields:
+
+- `service`: `arc-runner`
+- `packageAttr`: `arc-runner-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `6145a5fd5198b313fa93d7f5d323bc70646a6a27`
+- `image`: `registry.ide-newton.ts.net/lab/arc-runner`
+- `digest`: `sha256:578cfa96457948232aa056412e9f1dbdaeccb976418c7030ff8ba3fb8382eb60`
+- platform digests:
+  - `linux/amd64`: `sha256:3aa57aef2ea2d6b675b0a421e118a6bee32b6556066e1c95917a9608724b99df`
+  - `linux/arm64`: `sha256:6248c0416c3af94b91e5e7c67573f8d32ec8821a6e97a16b5ae947be991de1d8`
+- `platforms`: `linux/amd64`, `linux/arm64`
+- lockfile hashes:
+  - `flake.lock`: `ecff06cebb0e40ac241f0a6eb93b08d00b9c5dc28f5619f5247840f7d0b16857`
+  - `bun.lock`: `d097c7625564044607451e8382833faba62a4a14af630bb9fe1ab4b41236da23`
+- tool versions:
+  - `nix`: `nix (Nix) 2.28.5`
+  - `skopeo`: `skopeo version 1.20.0`
+  - `crane`: `v0.20.6`
+
+### ARC Release Automation Proof
+
+Run [28754170561](https://github.com/proompteng/lab/actions/runs/28754170561) consumed the release contract, verified the
+OCI index, and created release PR [#12020](https://github.com/proompteng/lab/pull/12020).
+
+The release PR changed only `argocd/applications/arc/application.yaml`:
+
+- all six ARC runner image references changed to
+  `registry.ide-newton.ts.net/lab/arc-runner@sha256:578cfa96457948232aa056412e9f1dbdaeccb976418c7030ff8ba3fb8382eb60`
+- `docker:dind` sidecars were left unchanged
+- node-local runner work directory sizing was preserved
+- generated testing recorded:
+  `nix run .#assert-oci-platforms -- "registry.ide-newton.ts.net/lab/arc-runner@sha256:578cfa96457948232aa056412e9f1dbdaeccb976418c7030ff8ba3fb8382eb60" linux/amd64 linux/arm64`
+
+### ARC Live Rollout Smoke
+
+Current readback:
+
+- Argo Application `arc`: `Synced`, `Healthy`
+- Argo revision: `3e223397cc180f31e70e228cbcc54c339a5e84c3`
+- live ARC runner image:
+  `registry.ide-newton.ts.net/lab/arc-runner@sha256:578cfa96457948232aa056412e9f1dbdaeccb976418c7030ff8ba3fb8382eb60`
+- `AutoscalingRunnerSet` capacity:
+  - `arc-amd64`: `minRunners=1`, `maxRunners=10`
+  - `arc-arm64`: `minRunners=1`, `maxRunners=10`
+  - `analysis-arm64`: `minRunners=1`, `maxRunners=5`
+- live pods:
+  - `arc-controller-gha-rs-controller-*`: `1/1 Running`, `0` restarts
+  - `arc-amd64-*listener`: `1/1 Running`, `0` restarts
+  - `arc-amd64-*runner-*`: `2/2 Running`, `0` restarts, runner image digest matches the release contract
+  - `arc-arm64-*listener`: `1/1 Running`, `0` restarts
+  - `arc-arm64-*runner-*`: `2/2 Running`, `0` restarts, runner image digest matches the release contract
+  - `analysis-arm64-*runner-*`: `2/2 Running`, `0` restarts, runner image digest matches the release contract
+
+### ARC Cache Status
+
+The ARC release contract proves the digest, platforms, lockfile hashes, and tool versions, but it does not include the
+newer `cacheProvenance` or per-phase `timings` objects. This checkpoint therefore uses GitHub job wall times above and
+does not claim ARC cache-hit counts. A future ARC image input change should produce a newer release contract and can be
+used for warm-cache or substitute-only proof without adding synthetic jobs.
 
 ## Inventory Audit
 
