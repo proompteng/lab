@@ -31,6 +31,7 @@ const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-
 const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const jangarReleaseWorkflow = readRepoFile('.github/workflows/jangar-release.yml')
+const jangarPostDeployVerifyWorkflow = readRepoFile('.github/workflows/jangar-post-deploy-verify.yml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
 const symphonyCiWorkflow = readRepoFile('.github/workflows/symphony-ci.yml')
 const symphonyReleaseWorkflow = readRepoFile('.github/workflows/symphony-release.yml')
@@ -861,6 +862,20 @@ describe('native OCI build workflows', () => {
     expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
     expect(jangarReleaseWorkflow).not.toContain('docker buildx')
     expect(jangarReleaseWorkflow).not.toContain('docker/setup-buildx-action')
+  })
+
+  it('keeps Jangar post-deploy verification observe-only without rollback PR automation', () => {
+    expect(jangarPostDeployVerifyWorkflow).toContain('name: jangar-post-deploy-verify')
+    expect(jangarPostDeployVerifyWorkflow).toContain('contents: read')
+    expect(jangarPostDeployVerifyWorkflow).toContain('Verify deployment health and digest')
+    expect(jangarPostDeployVerifyWorkflow).toContain('Sync Temporal routing after rollout')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('contents: write')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('pull-requests: write')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('Prepare rollback manifests')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('Open rollback pull request')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('peter-evans/create-pull-request')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('codex/jangar-rollback')
+    expect(jangarPostDeployVerifyWorkflow).not.toContain('rollback(jangar)')
   })
 
   it('routes the enabled Torghut family images through real Nix OCI attrs', () => {
