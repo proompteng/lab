@@ -259,7 +259,7 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="api_wallet_private_key_missing",
             )
         response = self._exchange().market_close(
-            coin,
+            self._market_close_name(coin),
             sz=float(size) if size is not None else None,
             slippage=float(slippage),
         )
@@ -272,6 +272,14 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="no_position_found",
             )
         return _order_result(cast(dict[str, object], response))
+
+    def _market_close_name(self, coin: str) -> str:
+        if ":" in coin:
+            return coin
+        for dex, coins in self._active_by_dex.items():
+            if dex and coin in coins:
+                return _sdk_market_name(coin, dex)
+        return coin
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         account = self._config.account_address
