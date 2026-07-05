@@ -94,6 +94,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 
 1. `bluestore_cache_autotune: "true"`
 1. `osd_mclock_profile: "high_client_ops"`
+1. `osd_mclock_max_sequential_bandwidth_hdd: "285212672"` (272MiB/s)
 1. `osd_memory_target: "8589934592"` (8Gi)
 1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
 1. OSD pod resources: request `1000m` CPU and `8Gi` memory, limit `12Gi`
@@ -109,6 +110,12 @@ done. In particular, remove these if they were set for a maintenance window:
 1. `osd_recovery_max_single_start`
 1. `osd_recovery_op_priority`
 1. `osd_recovery_sleep_hdd`
+1. boosted scrub settings such as `osd_max_scrubs`,
+   `osd_scrub_priority`, `osd_requested_scrub_priority`,
+   `osd_scrub_chunk_min`, `osd_scrub_chunk_max`,
+   `osd_deep_scrub_stride`, and `osd_scrub_load_threshold`
+1. boosted recovery scan/chunk settings such as `osd_backfill_scan_min`,
+   `osd_backfill_scan_max`, and `osd_recovery_max_chunk`
 1. custom `osd_mclock_scheduler_*` reservation or weight overrides
 
 The reason is documented by Ceph: built-in mClock profiles are intended to
@@ -117,11 +124,15 @@ more reservation and limit to client operations, while recovery/backfill limit
 overrides are an advanced path gated by
 `osd_mclock_override_recovery_settings` and should not be the default
 steady-state client-performance profile.
+The HDD bandwidth value is pinned to the Seagate Exos X24 24TB sustained
+transfer spec, 285 MB/s / 272 MiB/s, so the mClock cost model does not fall
+back to Ceph's conservative HDD default.
 
 References:
 
 1. Ceph mClock profiles and `high_client_ops`: https://docs.ceph.com/en/latest/rados/configuration/mclock-config-ref/
 1. Ceph BlueStore cache autotune and `osd_memory_target`: https://docs.ceph.com/en/latest/rados/configuration/bluestore-config-ref/
+1. Seagate Exos X24 24TB sustained transfer rate: https://www.seagate.com/content/dam/seagate/en/content-fragments/products/datasheets/exos-x24/exos-x24-DS2080-2307US-en_US.pdf
 1. Rook CephCluster `cephConfig`, OSD resources, and metadata-device configuration: https://rook.io/docs/rook/latest-release/CRDs/Cluster/ceph-cluster-crd/
 
 Verify live state:
@@ -129,7 +140,7 @@ Verify live state:
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump \
-  | egrep 'osd_mclock_profile|osd_mclock_override_recovery_settings|osd_max_backfills|osd_recovery_max_active|osd_recovery_max_single_start|osd_recovery_op_priority|osd_recovery_sleep_hdd|osd_memory_target|osd_scrub_auto_repair'
+  | egrep 'osd_mclock_profile|osd_mclock_max_sequential_bandwidth_hdd|osd_mclock_override_recovery_settings|osd_max_backfills|osd_recovery_max_active|osd_recovery_max_single_start|osd_recovery_op_priority|osd_recovery_sleep_hdd|osd_memory_target|osd_scrub_auto_repair'
 kubectl -n rook-ceph get deploy -l app=rook-ceph-osd -o json \
   | jq -r '.items[] | .metadata.name as $n | .spec.template.spec.containers[] | select(.name=="osd") | [$n,.resources.requests.memory,.resources.limits.memory] | @tsv' \
   | sort
@@ -140,6 +151,7 @@ Expected steady-state readback:
 1. `6 osds: 6 up, 6 in`.
 1. No degraded, remapped, recovering, backfilling, undersized, or misplaced PGs.
 1. `osd_mclock_profile` is `high_client_ops`.
+1. `osd_mclock_max_sequential_bandwidth_hdd` is `285212672`.
 1. `osd_memory_target` is `8589934592`.
 1. `osd_scrub_auto_repair` is `true`.
 1. `osd_scrub_auto_repair_num_errors` is `5`.
