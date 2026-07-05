@@ -48,13 +48,14 @@ pkgs.dockerTools.buildLayeredImageWithNixDb {
   gid = 1001;
   created = "1970-01-01T00:00:01Z";
   extraCommands = ''
-    mkdir -p home/runner/.config/nix tmp var/tmp
+    mkdir -p home/runner/.config/nix home/runner/tmpDir tmp var/tmp
     cat > home/runner/.config/nix/nix.conf <<'EOF'
     experimental-features = nix-command flakes
     fallback = true
     EOF
     chmod 1777 tmp var/tmp
-    chmod -R u+rwX,go+rX home/runner/.config
+    chown -R 1001:1001 home/runner
+    chmod -R u+rwX,go+rX home/runner
   '';
   config = {
     Cmd = [ "/home/runner/run.sh" ];
