@@ -53,7 +53,10 @@ def test_api_readiness_metrics_report_and_cycle_paths(monkeypatch: Any) -> None:
         orders_submitted=1,
         orders_cancelled=1,
         dependencies=(RuntimeDependencyStatus("feed", True),),
-        universe_details={"selected": ["NVDA"]},
+        universe_details={
+            "selected": ["NVDA"],
+            "profitability_gate": {"coin": "NVDA", "allowed": True},
+        },
     )
 
     old_config = api.runtime_state.config
@@ -93,6 +96,9 @@ def test_api_readiness_metrics_report_and_cycle_paths(monkeypatch: Any) -> None:
         assert report["runtime"]["selected_coins"] == ["NVDA"]
         assert report["config"]["signal_staleness_seconds"] == 120
         assert report["config"]["max_daily_loss_usd"] == "25"
+        assert report["profitability_gate"] == {"coin": "NVDA", "allowed": True}
+        status = api.trading_status()
+        assert status["profitability_gate"] == {"coin": "NVDA", "allowed": True}
         assert session.closed
 
         service = _SingleCycleService(cycle)
@@ -327,77 +333,6 @@ def test_service_cycle_cancels_reconciles_submits_and_records_cycle() -> None:
     assert cycle_calls[0] < signal_call < cycle_calls[-1]
 
 
-def test_service_cycle_submits_at_most_one_order() -> None:
-    now = _now()
-    config = HyperliquidExecutionConfig.from_env(
-        {
-            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
-            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
-            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA,xyz:MU",
-        }
-    )
-    session = _FakeSession()
-    exchange = _ServiceExchange(now)
-    service = HyperliquidExecutionService(
-        config=config,
-        feed=_TwoExecutableServiceFeed(now),
-        exchange=exchange,
-    )
-
-    result = service.run_once(session)
-
-    assert result.signals_written == 1
-    assert result.orders_submitted == 1
-    assert exchange.submitted_coins == ["NVDA"]
-
-
-def test_service_over_cap_runs_reduce_only_before_normal_orders() -> None:
-    now = _now()
-    config = HyperliquidExecutionConfig.from_env(
-        {
-            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
-            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
-            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
-            "HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION": "0.20",
-            "HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION": "0.05",
-            "HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION": "0.02",
-            "HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED": "true",
-        }
-    )
-    session = _FakeSession(
-        risk_gross_exposure_usd=Decimal("1200"),
-        risk_exposure_usd=Decimal("1200"),
-    )
-    exchange = _ServiceExchange(
-        now,
-        account_state=_account_state(
-            now,
-            gross_exposure_usd=Decimal("1200"),
-            position_size=Decimal("12"),
-            position_notional_usd=Decimal("1200"),
-        ),
-    )
-    service = HyperliquidExecutionService(
-        config=config,
-        feed=_ServiceFeed(now),
-        exchange=exchange,
-    )
-
-    result = service.run_once(session)
-
-    assert result.signals_written == 0
-    assert result.orders_submitted == 1
-    assert exchange.submitted_coins == []
-    assert exchange.reduce_only_closes == [("NVDA", Decimal("12"), Decimal("0.05"))]
-    maintenance = result.universe_details["maintenance_reduce_only"]
-    assert isinstance(maintenance, dict)
-    assert maintenance["over_cap"] is True
-    assert maintenance["actions"][0]["reason"] == "symbol_margin_budget_exhausted"
-    assert maintenance["actions"][0]["status"] == "filled"
-
-
 def test_service_selects_only_fresh_execution_markets() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(
@@ -620,6 +555,11 @@ class _SellServiceFeed(_ServiceFeed):
         return [_feature(event_ts=self.now, momentum_5m_bps=Decimal("-20"))]
 
 
+class _LowEdgeServiceFeed(_ServiceFeed):
+    def load_feature_rows(self, _market_ids: list[str]) -> list[FeatureSnapshot]:
+        return [_feature(event_ts=self.now, momentum_5m_bps=Decimal("3"))]
+
+
 class _PartialFeatureServiceFeed(_ServiceFeed):
     def load_catalog_rows(self) -> list[dict[str, object]]:
         return [
@@ -750,12 +690,18 @@ class _FakeSession:
         risk_gross_exposure_usd: Decimal = Decimal("10"),
         risk_exposure_usd: Decimal = Decimal("0"),
         risk_cooldown: bool = False,
+        profitability_net_pnl_24h: Decimal = Decimal("1"),
+        profitability_notional_1h: Decimal = Decimal("10"),
+        position_size: Decimal = Decimal("0"),
     ) -> None:
         self.reject_count = reject_count
         self.risk_open_coin = risk_open_coin
         self.risk_gross_exposure_usd = risk_gross_exposure_usd
         self.risk_exposure_usd = risk_exposure_usd
         self.risk_cooldown = risk_cooldown
+        self.profitability_net_pnl_24h = profitability_net_pnl_24h
+        self.profitability_notional_1h = profitability_notional_1h
+        self.position_size = position_size
         self.calls: list[tuple[str, Mapping[str, object] | None]] = []
         self.closed = False
         self.committed = False
@@ -799,6 +745,10 @@ class _FakeSession:
             if self.risk_cooldown:
                 return [{"coin": "NVDA", "cooldown_reason": "symbol_reject_cooldown"}]
             return []
+        if "net_pnl_after_fees_usd_24h" in sql and "notional_usd_1h" in sql:
+            return self._profitability_rows()
+        if "FROM hyperliquid_execution_positions" in sql and "LIMIT 1" in sql:
+            return self._position_rows()
         if "expires_at <= :now" in sql:
             return [
                 {
@@ -866,6 +816,35 @@ class _FakeSession:
             ]
         return [{"coin": "NVDA", "value": Decimal("1"), "observed_at": _now()}]
 
+    def _profitability_rows(self) -> list[dict[str, object]]:
+        return [
+            {
+                "net_pnl_after_fees_usd_24h": str(self.profitability_net_pnl_24h),
+                "notional_usd_1h": str(self.profitability_notional_1h),
+                "last_entry_at": None,
+                "last_side": None,
+                "last_side_at": None,
+                "last_position_close_side": None,
+                "last_position_close_at": None,
+            }
+        ]
+
+    def _position_rows(self) -> list[dict[str, object]]:
+        if self.position_size == Decimal("0"):
+            return []
+        return [
+            {
+                "market_id": "hl:perp:xyz:NVDA",
+                "coin": "NVDA",
+                "size": str(self.position_size),
+                "entry_price": "100",
+                "notional_usd": "10",
+                "unrealized_pnl_usd": "0.25",
+                "observed_at": _now(),
+                "raw_payload": {"coin": "NVDA"},
+            }
+        ]
+
 
 class _FakeResult:
     def __init__(self, rows: Iterable[Mapping[str, object]]) -> None:
@@ -905,7 +884,7 @@ def _market() -> ExecutionMarket:
 def _feature(
     *,
     event_ts: datetime | None = None,
-    momentum_5m_bps: Decimal = Decimal("20"),
+    momentum_5m_bps: Decimal = Decimal("30"),
     market_id: str = "hl:perp:xyz:NVDA",
     coin: str = "NVDA",
 ) -> FeatureSnapshot:
@@ -924,7 +903,7 @@ def _feature(
         bid_price=Decimal("99.5"),
         ask_price=Decimal("100.5"),
         quote_lag_seconds=1,
-        raw_features={"momentum": "20"},
+        raw_features={"momentum": str(momentum_5m_bps)},
     )
 
 

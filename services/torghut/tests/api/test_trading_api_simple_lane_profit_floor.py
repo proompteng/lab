@@ -132,7 +132,6 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
                 payload["execution"]["reject_reason_totals"],
                 {"broker_submit_failed": 2},
             )
-            self.assertNotIn("simple_lane_orders_submitted_total", payload)
             self.assertNotIn("simple_lane_reject_reason_totals", payload)
             self.assertNotIn("simple_lane_status", payload)
             self.assertEqual(

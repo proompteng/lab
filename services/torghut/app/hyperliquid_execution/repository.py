@@ -19,11 +19,18 @@ from .models import (
     OpenOrder,
     OrderIntent,
     OrderResult,
+    PositionSnapshot,
     RiskState,
     RuntimeDependencyStatus,
     Signal,
 )
 from .multifactor_repository import MultifactorExecutionRepository
+from .profitability import SymbolProfitabilityState
+from .repository_read_models import (
+    position_for_coin,
+    risk_state,
+    symbol_profitability_state,
+)
 from .reporting import build_operational_report, build_performance_metrics
 
 
@@ -343,6 +350,9 @@ class HyperliquidExecutionRepository:
     def upsert_fills(self, fills: Iterable[Fill]) -> int:
         count = 0
         for fill in fills:
+            legacy_fill_hash = _legacy_fill_hash(fill)
+            if legacy_fill_hash is not None:
+                self._deduplicate_legacy_fill(fill, legacy_fill_hash)
             self._session.execute(
                 text(
                     """
@@ -388,20 +398,7 @@ class HyperliquidExecutionRepository:
                     ON CONFLICT (execution_network, fill_hash) DO NOTHING
                     """
                 ),
-                {
-                    "fill_hash": fill.fill_hash,
-                    "market_id": fill.market_id,
-                    "coin": fill.coin,
-                    "side": fill.side,
-                    "price": str(fill.price),
-                    "size": str(fill.size),
-                    "notional_usd": str(fill.notional_usd),
-                    "fee_usd": str(fill.fee_usd),
-                    "closed_pnl_usd": str(fill.closed_pnl_usd),
-                    "exchange_order_id": fill.exchange_order_id,
-                    "event_ts": fill.event_ts,
-                    "raw_payload": json.dumps(fill.raw_payload, sort_keys=True),
-                },
+                _fill_params(fill),
             )
             if fill.exchange_order_id:
                 self._session.execute(
@@ -418,6 +415,74 @@ class HyperliquidExecutionRepository:
                 )
             count += 1
         return count
+
+    def _deduplicate_legacy_fill(self, fill: Fill, legacy_fill_hash: str) -> None:
+        params = _fill_params(fill) | {"legacy_fill_hash": legacy_fill_hash}
+        self._session.execute(
+            text(
+                """
+                UPDATE hyperliquid_execution_fills
+                SET
+                  fill_hash = :fill_hash,
+                  order_id = COALESCE((
+                    SELECT id
+                    FROM hyperliquid_execution_orders
+                    WHERE execution_network = 'testnet'
+                      AND exchange_order_id = :exchange_order_id
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                  ), order_id),
+                  market_id = :market_id,
+                  coin = :coin,
+                  side = :side,
+                  price = :price,
+                  size = :size,
+                  notional_usd = :notional_usd,
+                  fee_usd = :fee_usd,
+                  closed_pnl_usd = :closed_pnl_usd,
+                  exchange_order_id = COALESCE(:exchange_order_id, exchange_order_id),
+                  event_ts = :event_ts,
+                  raw_payload = raw_payload || CAST(:raw_payload AS jsonb)
+                WHERE execution_network = 'testnet'
+                  AND fill_hash = :legacy_fill_hash
+                  AND coin = :coin
+                  AND (
+                    exchange_order_id IS NULL
+                    OR :exchange_order_id IS NULL
+                    OR exchange_order_id = :exchange_order_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM hyperliquid_execution_fills
+                    WHERE execution_network = 'testnet'
+                      AND fill_hash = :fill_hash
+                  )
+                """
+            ),
+            params,
+        )
+        self._session.execute(
+            text(
+                """
+                DELETE FROM hyperliquid_execution_fills
+                WHERE execution_network = 'testnet'
+                  AND fill_hash = :legacy_fill_hash
+                  AND coin = :coin
+                  AND (
+                    exchange_order_id IS NULL
+                    OR :exchange_order_id IS NULL
+                    OR exchange_order_id = :exchange_order_id
+                  )
+                  AND EXISTS (
+                    SELECT 1
+                    FROM hyperliquid_execution_fills
+                    WHERE execution_network = 'testnet'
+                      AND fill_hash = :fill_hash
+                  )
+                """
+            ),
+            params,
+        )
 
     def upsert_account_state(self, state: AccountState) -> None:
         self._session.execute(
@@ -497,6 +562,23 @@ class HyperliquidExecutionRepository:
                 },
             )
 
+    def symbol_profitability_state(
+        self,
+        *,
+        coin: str,
+        now: datetime,
+        account_value_usd: Decimal,
+    ) -> SymbolProfitabilityState:
+        return symbol_profitability_state(
+            self._session,
+            coin=coin,
+            now=now,
+            account_value_usd=account_value_usd,
+        )
+
+    def position_for_coin(self, coin: str) -> PositionSnapshot | None:
+        return position_for_coin(self._session, coin)
+
     def risk_state(
         self,
         *,
@@ -504,101 +586,11 @@ class HyperliquidExecutionRepository:
         dependencies: tuple[RuntimeDependencyStatus, ...],
         max_leverage_by_coin: dict[str, Decimal] | None = None,
     ) -> RiskState:
-        account_row = self._risk_account_row()
-        open_rows = self._session.execute(
-            text(
-                """
-                SELECT DISTINCT coin
-                FROM hyperliquid_execution_orders
-                WHERE execution_network = 'testnet'
-                  AND status IN ('accepted', 'submitted')
-                """
-            )
-        ).mappings()
-        exposure_rows = self._session.execute(
-            text(
-                """
-                SELECT coin, SUM(exposure_usd) AS exposure_usd
-                FROM (
-                  SELECT coin, ABS(notional_usd) AS exposure_usd
-                  FROM hyperliquid_execution_positions
-                  WHERE execution_network = 'testnet'
-                  UNION ALL
-                  SELECT coin, ABS(notional_usd) AS exposure_usd
-                  FROM hyperliquid_execution_orders
-                  WHERE execution_network = 'testnet'
-                    AND status IN ('accepted', 'submitted')
-                ) exposures
-                GROUP BY coin
-                """
-            )
-        ).mappings()
-        cooldown_rows = self._session.execute(
-            text(
-                """
-                SELECT coin, cooldown_reason
-                FROM hyperliquid_execution_symbol_state
-                WHERE cooldown_until IS NOT NULL
-                  AND cooldown_until > now()
-                """
-            )
-        ).mappings()
-        return RiskState(
+        return risk_state(
+            self._session,
             trading_enabled=trading_enabled,
             dependencies=dependencies,
-            account_value_usd=Decimal(str(account_row["account_value_usd"])),
-            withdrawable_usd=Decimal(str(account_row["withdrawable_usd"])),
-            gross_exposure_usd=Decimal(str(account_row["gross_exposure_usd"])),
-            daily_realized_pnl_usd=Decimal(str(account_row["daily_realized_pnl_usd"])),
-            open_order_coins=frozenset(str(row["coin"]) for row in open_rows),
-            symbol_exposure_usd_by_coin={
-                str(row["coin"]): Decimal(str(row["exposure_usd"]))
-                for row in exposure_rows
-            },
-            cooldown_reason_by_coin={
-                str(row["coin"]): str(row["cooldown_reason"]) for row in cooldown_rows
-            },
-            max_leverage_by_coin=dict(max_leverage_by_coin or {}),
-        )
-
-    def _risk_account_row(self) -> Mapping[str, object]:
-        return (
-            self._session.execute(
-                text(
-                    """
-                    SELECT
-                      COALESCE((
-                        SELECT account_value_usd
-                        FROM hyperliquid_execution_account_snapshots
-                        WHERE execution_network = 'testnet'
-                        ORDER BY observed_at DESC
-                        LIMIT 1
-                      ), 0) AS account_value_usd,
-                      COALESCE((
-                        SELECT withdrawable_usd
-                        FROM hyperliquid_execution_account_snapshots
-                        WHERE execution_network = 'testnet'
-                        ORDER BY observed_at DESC
-                        LIMIT 1
-                      ), 0) AS withdrawable_usd,
-                      COALESCE((
-                        SELECT gross_exposure_usd
-                        FROM hyperliquid_execution_account_snapshots
-                        WHERE execution_network = 'testnet'
-                        ORDER BY observed_at DESC
-                        LIMIT 1
-                      ), 0) AS gross_exposure_usd,
-                      COALESCE((
-                        SELECT SUM(closed_pnl_usd - fee_usd)
-                        FROM hyperliquid_execution_fills
-                        WHERE execution_network = 'testnet'
-                          AND event_ts >= date_trunc('day', now())
-                      ), 0) AS daily_realized_pnl_usd
-                    """
-                )
-            )
-            .mappings()
-            .one()
+            max_leverage_by_coin=max_leverage_by_coin,
         )
 
     def insert_performance_snapshot(self, *, observed_at: datetime) -> None:
@@ -783,6 +775,33 @@ def _dependency_payload(dependency: RuntimeDependencyStatus) -> dict[str, object
 
 def _decimal_or_none(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _legacy_fill_hash(fill: Fill) -> str | None:
+    legacy_hash = fill.raw_payload.get("hash")
+    if legacy_hash is None:
+        return None
+    legacy_hash_text = str(legacy_hash).strip()
+    if not legacy_hash_text or legacy_hash_text == fill.fill_hash:
+        return None
+    return legacy_hash_text
+
+
+def _fill_params(fill: Fill) -> dict[str, object]:
+    return {
+        "fill_hash": fill.fill_hash,
+        "market_id": fill.market_id,
+        "coin": fill.coin,
+        "side": fill.side,
+        "price": str(fill.price),
+        "size": str(fill.size),
+        "notional_usd": str(fill.notional_usd),
+        "fee_usd": str(fill.fee_usd),
+        "closed_pnl_usd": str(fill.closed_pnl_usd),
+        "exchange_order_id": fill.exchange_order_id,
+        "event_ts": fill.event_ts,
+        "raw_payload": json.dumps(fill.raw_payload, sort_keys=True),
+    }
 
 
 def _optional_text(value: object) -> str | None:

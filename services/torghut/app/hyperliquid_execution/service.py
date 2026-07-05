@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol, cast
 
 from .config import HyperliquidExecutionConfig
+from .entry_processing import process_features
 from .exchange import HyperliquidExecutionExchange
 from .feed_reader import FeedStatus
 from .maintenance import close_largest_positions_over_cap, risk_state_over_cap
@@ -18,15 +18,11 @@ from .models import (
     ExecutionMarket,
     FeatureSnapshot,
     OpenOrder,
-    OrderIntent,
     RiskState,
     RuntimeDependencyStatus,
 )
-from .order_policy import build_order_intent
 from .repository import HyperliquidExecutionRepository
-from .risk import evaluate_signal_risk
 from .runtime_details import risk_state_details, universe_details
-from .strategy import generate_signal
 from .universe import UniverseSelectionConfig, select_configured_markets
 
 
@@ -169,52 +165,13 @@ class HyperliquidExecutionService:
         context: "_FeatureProcessingContext",
         counts: "_CycleCounts",
     ) -> None:
-        for feature in context.features:
-            signal = generate_signal(
-                feature,
-                self._config,
-                now=context.started_at,
-                run_id=context.cycle_id,
-            )
-            signal_id = repository.insert_signal(
-                cycle_id=context.cycle_id, signal=signal
-            )
-            counts.signals_written += 1
-            verdict = evaluate_signal_risk(signal, context.risk_state, self._config)
-            repository.insert_multifactor_risk_and_target(
-                run_id=context.cycle_id,
-                verdict=verdict,
-            )
-            if not verdict.allowed:
-                counts.record_risk_block(signal.coin, verdict.reason)
-                continue
-            try:
-                intent = build_order_intent(
-                    signal=signal,
-                    verdict=verdict,
-                    config=self._config,
-                    signal_id=signal_id,
-                    now=context.started_at,
-                )
-                intent = _normalize_order_intent(self._exchange, intent)
-                result = self._exchange.submit_order(intent)
-            except Exception as exc:
-                counts.record_order_error(type(exc).__name__)
-                continue
-            repository.insert_order(intent, result)
-            repository.insert_multifactor_execution_intent(
-                run_id=context.cycle_id,
-                intent=intent,
-                result=result,
-                verdict=verdict,
-            )
-            repository.update_reject_cooldown(
-                coin=intent.coin,
-                rejection_reason=result.rejection_reason,
-                config=self._config,
-            )
-            counts.orders_submitted += 1
-            break
+        process_features(
+            repository=repository,
+            config=self._config,
+            exchange=self._exchange,
+            context=context,
+            counts=counts,
+        )
 
     def _cycle_record(
         self,
@@ -323,16 +280,6 @@ class HyperliquidExecutionService:
         )
 
 
-def _normalize_order_intent(
-    exchange: HyperliquidExecutionExchange,
-    intent: OrderIntent,
-) -> OrderIntent:
-    normalize = getattr(exchange, "normalize_order_intent", None)
-    if not callable(normalize):
-        return intent
-    return cast(Callable[[OrderIntent], OrderIntent], normalize)(intent)
-
-
 def runtime_readiness(
     *,
     config: HyperliquidExecutionConfig,
@@ -378,6 +325,10 @@ def _empty_nested_counts() -> dict[str, dict[str, int]]:
     return {}
 
 
+def _empty_gate_details() -> dict[str, dict[str, object]]:
+    return {}
+
+
 @dataclass
 class _CycleCounts:
     signals_written: int = 0
@@ -389,6 +340,11 @@ class _CycleCounts:
     )
     order_errors_by_type: dict[str, int] = field(default_factory=_empty_counts)
     maintenance_reduce_only: dict[str, object] | None = None
+    position_reduce_only: dict[str, object] | None = None
+    profitability_gates: dict[str, dict[str, object]] = field(
+        default_factory=_empty_gate_details
+    )
+    latest_profitability_gate: dict[str, object] | None = None
 
     def record_risk_block(self, coin: str, reason: str) -> None:
         self.risk_blocks_by_reason[reason] = (
@@ -416,6 +372,20 @@ class _CycleCounts:
             and cast(dict[str, object], action).get("status") in submitted_statuses
         )
 
+    def record_position_reduce_only(self, action: dict[str, object]) -> None:
+        self.position_reduce_only = action
+        if action.get("status") in {"accepted", "filled", "submitted"}:
+            self.orders_submitted += 1
+
+    def record_profitability_gate(
+        self,
+        coin: str,
+        gate: dict[str, object],
+    ) -> None:
+        details = {"coin": coin, **gate}
+        self.profitability_gates[coin] = details
+        self.latest_profitability_gate = details
+
 
 def _select_markets_with_fresh_features(
     markets: tuple[ExecutionMarket, ...],
@@ -440,6 +410,15 @@ def _cycle_universe_details(
     details = dict(universe_details)
     if counts.maintenance_reduce_only is not None:
         details["maintenance_reduce_only"] = counts.maintenance_reduce_only
+    if counts.position_reduce_only is not None:
+        details["position_reduce_only"] = counts.position_reduce_only
+    if counts.profitability_gates:
+        details["profitability_gates"] = {
+            coin: dict(gate)
+            for coin, gate in sorted(counts.profitability_gates.items())
+        }
+    if counts.latest_profitability_gate is not None:
+        details["profitability_gate"] = dict(counts.latest_profitability_gate)
     if counts.risk_blocks_by_reason:
         details["risk_blocks_by_reason"] = dict(
             sorted(counts.risk_blocks_by_reason.items())
