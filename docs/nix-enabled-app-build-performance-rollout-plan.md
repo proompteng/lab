@@ -151,11 +151,16 @@ Same commit plus same lockfiles should reproduce the same Nix output path and OC
 
 7. **PR 7: Final Rollout Report**
    - Record PRs, workflow run IDs, before/after timings, cache-hit counts, output paths, digests, Argo revisions, and smoke outputs.
+   - Generate the root-enabled app/image-build audit with
+     `bun run packages/scripts/src/shared/nix-rollout-report.ts`; pass `--contracts-dir <path> --require-contracts`
+     when collected release-contract artifacts are available.
    - Prove faster warm builds, deterministic rebuilds, digest-pinned releases, and no fake jobs/apps counted.
 
 ## Test Plan
 
 - `bun test packages/scripts/src/shared/__tests__/enabled-apps.test.ts packages/scripts/src/shared/__tests__/oci.test.ts packages/scripts/src/shared/__tests__/arc-runner.test.ts`
+- `bun test packages/scripts/src/shared/__tests__/nix-rollout-report.test.ts`
+- `bun run packages/scripts/src/shared/nix-rollout-report.ts --json`
 - `nix flake check --print-build-logs`
 - Build each migrated image attr on both required platforms.
 - Inspect image archives and pushed registry indexes for OCI media types and `linux/amd64` plus `linux/arm64`.
