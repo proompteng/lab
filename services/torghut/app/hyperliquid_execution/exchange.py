@@ -26,6 +26,8 @@ from .universe import execution_universe_status
 
 _METADATA_REFRESH_SECONDS = 300
 _SUPPORTED_LIMIT_TIFS = {"Ioc"}
+_PERP_MAX_PRICE_DECIMALS = 6
+_MAX_PRICE_SIGNIFICANT_FIGURES = 5
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -313,7 +315,11 @@ class HyperliquidSdkExecutionExchange:
         if size_decimals is not None:
             quant = Decimal("1").scaleb(-size_decimals)
             size = intent.size.quantize(quant, rounding=ROUND_DOWN)
-        price = _normalize_price(intent.limit_price, side=intent.side)
+        price = _normalize_price(
+            intent.limit_price,
+            side=intent.side,
+            size_decimals=size_decimals,
+        )
         notional_usd = (price * size).quantize(Decimal("0.000001"))
         if (
             notional_usd < self._config.min_order_notional_usd
@@ -710,9 +716,48 @@ def _spot_usdc_balances(payload: Mapping[str, object]) -> list[Mapping[str, obje
     return usdc_balances
 
 
-def _normalize_price(price: Decimal, *, side: str) -> Decimal:
+def _normalize_price(
+    price: Decimal,
+    *,
+    side: str,
+    size_decimals: int | None,
+) -> Decimal:
+    if price <= Decimal("0"):
+        raise ValueError("order_price_must_be_positive")
     rounding = ROUND_DOWN if side == "buy" else ROUND_UP
-    return price.quantize(Decimal("0.000001"), rounding=rounding)
+    max_decimals = _PERP_MAX_PRICE_DECIMALS
+    if size_decimals is not None:
+        max_decimals = max(0, _PERP_MAX_PRICE_DECIMALS - size_decimals)
+    rounded = _quantize_decimal_places(price, max_decimals, rounding)
+    if rounded <= Decimal("0"):
+        raise ValueError("order_price_below_exchange_precision")
+    if rounded == rounded.to_integral_value():
+        return rounded
+    normalized = _quantize_significant_figures(
+        rounded,
+        _MAX_PRICE_SIGNIFICANT_FIGURES,
+        rounding,
+    )
+    return normalized
+
+
+def _quantize_decimal_places(
+    value: Decimal,
+    decimals: int,
+    rounding: str,
+) -> Decimal:
+    quantum = Decimal("1").scaleb(-decimals)
+    return value.quantize(quantum, rounding=rounding)
+
+
+def _quantize_significant_figures(
+    value: Decimal,
+    figures: int,
+    rounding: str,
+) -> Decimal:
+    exponent = value.adjusted() - figures + 1
+    quantum = Decimal("1").scaleb(exponent)
+    return value.quantize(quantum, rounding=rounding)
 
 
 def _sdk_dex(dex: str) -> str:

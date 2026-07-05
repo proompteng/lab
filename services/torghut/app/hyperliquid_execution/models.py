@@ -142,7 +142,7 @@ class RiskVerdict:
 
 @dataclass(frozen=True)
 class OrderIntent:
-    """Maker-first Hyperliquid limit order intent."""
+    """Hyperliquid limit order intent."""
 
     market_id: str
     coin: str
