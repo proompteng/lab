@@ -40,7 +40,6 @@ describe('agents-ci workflow', () => {
       'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
       'nix/packages.nix',
-      'packages/scripts/src/shared/nix-oci-deploy.ts',
       'tsconfig.base.json',
     ]) {
       expect(workflow.split(`- '${path}'`).length - 1).toBe(2)
