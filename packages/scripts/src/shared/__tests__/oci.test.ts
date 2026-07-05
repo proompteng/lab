@@ -1324,8 +1324,12 @@ describe('native OCI build workflows', () => {
     expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
     expect(releasePrAutomergeWorkflow).toContain('nix_oci_release_paths=(')
     expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-nix-release-')")
+    expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-release-')")
     for (const path of [
+      'argocd/applications/arc/application.yaml',
       'argocd/applications/app/kustomization.yaml',
+      'argocd/applications/attic/deployment.yaml',
+      'argocd/applications/attic/gc-cronjob.yaml',
       'argocd/applications/bumba/kustomization.yaml',
       'argocd/applications/docs/kustomization.yaml',
       'argocd/applications/froussard/knative-service.yaml',
@@ -1337,6 +1341,9 @@ describe('native OCI build workflows', () => {
     ]) {
       expect(releasePrAutomergeWorkflow).toContain(`"${path}"`)
     }
+    expect(releasePrAutomergeWorkflow).toContain(
+      '[[ "$PR_HEAD_REF" =~ ^codex/(attic|arc-runner)-release-sha-[0-9a-f]{40}$ ]]',
+    )
     expect(releasePrAutomergeWorkflow).toContain(
       '[[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]]',
     )
@@ -1365,6 +1372,7 @@ describe('native OCI build workflows', () => {
     expect(atticReleaseWorkflow).toContain('attic-release-contract')
     expect(atticReleaseWorkflow).toContain('argocd/applications/attic/deployment.yaml')
     expect(atticReleaseWorkflow).toContain('argocd/applications/attic/gc-cronjob.yaml')
+    expect(atticReleaseWorkflow).toContain('nix-oci')
     expect(atticReleaseWorkflow).toContain('nix run .#resolve-attic-release-metadata')
     expect(atticReleaseWorkflow).toContain('export IMAGE_REF="${IMAGE}@${DIGEST}"')
     expect(atticReleaseWorkflow).toContain('image: $ENV{IMAGE_REF}')

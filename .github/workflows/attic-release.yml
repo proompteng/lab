@@ -133,6 +133,7 @@ jobs:
             - [x] Documentation, release notes, and follow-ups are updated or tracked.
           labels: |
             automated-pr
+            nix-oci
             attic
           add-paths: |
             argocd/applications/attic/deployment.yaml

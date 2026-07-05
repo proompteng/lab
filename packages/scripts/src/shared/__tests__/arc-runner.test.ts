@@ -158,6 +158,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerReleaseWorkflow).toContain('peter-evans/create-pull-request@v7')
     expect(arcRunnerReleaseWorkflow).toContain('argocd/applications/arc/application.yaml')
+    expect(arcRunnerReleaseWorkflow).toContain('nix-oci')
   })
 
   it('uses a shared setup action so Nix jobs validate preinstalled tools before falling back', () => {
