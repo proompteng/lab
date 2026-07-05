@@ -70,7 +70,7 @@ const imagePlans: AgentsImagePlan[] = [
     imageName: 'agents-shell',
     packageAttr: 'agents-shell-image',
     defaultRepository: 'lab/agents-shell',
-    repositoryEnvKeys: ['AGENTS_SHELL_IMAGE_REPOSITORY'],
+    repositoryEnvKeys: ['AGENTS_SHELL_IMAGE_REPOSITORY', 'AGENTS_IMAGE_REPOSITORY'],
   },
   {
     target: 'runner',
@@ -79,7 +79,7 @@ const imagePlans: AgentsImagePlan[] = [
     imageName: 'agents-codex-runner',
     packageAttr: 'agents-codex-runner-image',
     defaultRepository: 'lab/agents-codex-runner',
-    repositoryEnvKeys: ['AGENTS_RUNNER_IMAGE_REPOSITORY'],
+    repositoryEnvKeys: ['AGENTS_RUNNER_IMAGE_REPOSITORY', 'AGENTS_IMAGE_REPOSITORY'],
   },
 ]
 
@@ -95,6 +95,14 @@ let buildAndPushNixImageImpl = buildAndPushNixImage
 let execGitImpl = execGit
 
 const readEnv = (name: string) => process.env[name]?.trim()
+
+const requireArgValue = (args: string[], index: number, option: string): string => {
+  const value = args[index + 1]
+  if (!value || value.startsWith('-')) {
+    throw new Error(`Missing value for ${option}`)
+  }
+  return value
+}
 
 const resolveTarget = (value: string | undefined, fallback: AgentsImageTarget): AgentsImageTarget => {
   const normalized = value?.trim().toLowerCase()
@@ -119,6 +127,14 @@ const rejectDockerOptions = (options: BuildImageOptions): void => {
   const present = dockerOnlyOptionNames.filter((name) => options[name] !== undefined)
   if (present.length > 0) {
     throw new Error(`Agents Nix image builds do not accept Docker-only option(s): ${present.join(', ')}`)
+  }
+
+  const legacyDockerTarget = readEnv('AGENTS_DOCKER_TARGET')
+  if (legacyDockerTarget) {
+    throw new Error(
+      'Agents Nix image builds do not accept legacy Docker target env var AGENTS_DOCKER_TARGET; ' +
+        'use AGENTS_IMAGE_TARGET or AGENTS_NIX_IMAGE_TARGET',
+    )
   }
 }
 
@@ -202,7 +218,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
     if (!arg) continue
 
     if (arg === '--target') {
-      options.target = args[i + 1]
+      options.target = requireArgValue(args, i, arg)
       i += 1
       continue
     }
@@ -211,7 +227,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--tag') {
-      options.tag = args[i + 1]
+      options.tag = requireArgValue(args, i, arg)
       i += 1
       continue
     }
@@ -220,7 +236,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--repository') {
-      options.repository = args[i + 1]
+      options.repository = requireArgValue(args, i, arg)
       i += 1
       continue
     }
@@ -229,7 +245,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--registry') {
-      options.registry = args[i + 1]
+      options.registry = requireArgValue(args, i, arg)
       i += 1
       continue
     }
@@ -241,9 +257,76 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       options.dryRun = true
       continue
     }
-    if (!arg.startsWith('-') && options.tag === undefined) {
-      options.tag = arg
+    if (arg === '--context') {
+      options.context = requireArgValue(args, i, arg)
+      i += 1
+      continue
     }
+    if (arg.startsWith('--context=')) {
+      options.context = arg.slice('--context='.length)
+      continue
+    }
+    if (arg === '--dockerfile') {
+      options.dockerfile = requireArgValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--dockerfile=')) {
+      options.dockerfile = arg.slice('--dockerfile='.length)
+      continue
+    }
+    if (arg === '--codex-auth-path') {
+      options.codexAuthPath = requireArgValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--codex-auth-path=')) {
+      options.codexAuthPath = arg.slice('--codex-auth-path='.length)
+      continue
+    }
+    if (arg === '--cache-ref') {
+      options.cacheRef = requireArgValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--cache-ref=')) {
+      options.cacheRef = arg.slice('--cache-ref='.length)
+      continue
+    }
+    if (arg === '--platforms') {
+      options.platforms = requireArgValue(args, i, arg)
+        .split(',')
+        .map((platform) => platform.trim())
+        .filter(Boolean)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--platforms=')) {
+      options.platforms = arg
+        .slice('--platforms='.length)
+        .split(',')
+        .map((platform) => platform.trim())
+        .filter(Boolean)
+      continue
+    }
+    if (arg === '--cache-mode') {
+      options.cacheMode = requireArgValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--cache-mode=')) {
+      options.cacheMode = arg.slice('--cache-mode='.length)
+      continue
+    }
+    if (arg.startsWith('-')) {
+      throw new Error(`Unsupported Agents build-image CLI flag: ${arg}`)
+    }
+    if (options.tag === undefined) {
+      options.tag = arg
+      continue
+    }
+
+    throw new Error(`Unexpected positional argument: ${arg}`)
   }
   return options
 }
