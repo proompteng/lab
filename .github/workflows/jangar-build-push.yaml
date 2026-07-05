@@ -20,7 +20,6 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'skills/**'
       - 'bun.lock'
-      - '.github/workflows/jangar-build-push.yaml'
   workflow_dispatch:
 
 concurrency:

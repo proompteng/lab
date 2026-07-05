@@ -12,7 +12,7 @@ const defaultContractPath = '.artifacts/jangar/jangar-release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/jangar'
 
 const buildTriggerPathRegex =
-  /^(services\/jangar\/|packages\/scripts\/src\/jangar\/|packages\/scripts\/src\/shared\/|packages\/otel\/|packages\/temporal-bun-sdk\/|bun\.lock$|\.github\/workflows\/jangar-build-push\.yaml$)/
+  /^(services\/jangar\/|packages\/scripts\/src\/jangar\/|packages\/scripts\/src\/shared\/|packages\/otel\/|packages\/temporal-bun-sdk\/|bun\.lock$)/
 
 type CliOptions = {
   eventName?: string
