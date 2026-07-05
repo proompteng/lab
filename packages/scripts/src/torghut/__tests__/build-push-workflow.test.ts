@@ -132,6 +132,12 @@ describe('torghut build-push workflow', () => {
     )
   })
 
+  it('does not auto-promote manually dispatched Torghut image publishes without a release contract', () => {
+    expect(releaseWorkflow).toContain("github.event.workflow_run.event == 'push'")
+    expect(releaseWorkflow).toContain("github.event_name == 'workflow_dispatch'")
+    expect(releaseWorkflow).toContain('Download release contract artifact from triggering build')
+  })
+
   it('keeps core Torghut stale workflow promotions aligned with build trigger inputs', () => {
     const freshnessPaths = [
       'services/torghut',
