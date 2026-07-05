@@ -125,6 +125,13 @@ let
     pkgs.pigz
     pkgs.zstd
   ];
+
+  runtimeLibraryPath = lib.makeLibraryPath [
+    pkgs.openssl
+    pkgs.postgresql.lib
+    pkgs.stdenv.cc.cc.lib
+    pkgs.zlib
+  ];
 in
 pkgs.dockerTools.buildLayeredImage {
   name = "registry.ide-newton.ts.net/lab/torghut";
@@ -143,6 +150,7 @@ pkgs.dockerTools.buildLayeredImage {
     pkgs.openssl
     pkgs.pigz
     pkgs.postgresql.lib
+    pkgs.stdenv.cc.cc.lib
     pkgs.zlib
     pkgs.zstd
   ];
@@ -162,6 +170,7 @@ pkgs.dockerTools.buildLayeredImage {
     WorkingDir = "/app";
     Env = [
       "PATH=${pythonDeps}/venv/bin:${runtimePath}"
+      "LD_LIBRARY_PATH=${runtimeLibraryPath}"
       "PYTHONDONTWRITEBYTECODE=1"
       "PYTHONUNBUFFERED=1"
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
