@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { execGit } from '../shared/git'
+import { assertOciPlatforms } from '../shared/oci'
 import { buildImage } from './build-image'
 
 type CliOptions = {
@@ -13,6 +14,7 @@ type CliOptions = {
   registry: string
   repository: string
   tag: string
+  imageDigest?: string
   kustomizePath: string
   namespace: string
   deploymentName: string
@@ -107,6 +109,19 @@ const parseArgs = (argv: string[]): Partial<CliOptions> => {
       options.repository = arg.slice('--repository='.length)
       continue
     }
+    if (arg === '--image-digest' || arg === '--image-reference') {
+      options.imageDigest = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--image-digest=')) {
+      options.imageDigest = arg.slice('--image-digest='.length)
+      continue
+    }
+    if (arg.startsWith('--image-reference=')) {
+      options.imageDigest = arg.slice('--image-reference='.length)
+      continue
+    }
     if (arg === '--kustomize-path') {
       options.kustomizePath = argv[index + 1]
       index += 1
@@ -151,6 +166,7 @@ const resolveOptions = (argv = process.argv.slice(2)): CliOptions => {
     registry: parsed.registry ?? readEnv('ATTIC_IMAGE_REGISTRY') ?? defaultImageRegistry,
     repository: parsed.repository ?? readEnv('ATTIC_IMAGE_REPOSITORY') ?? defaultImageRepository,
     tag: parsed.tag ?? readEnv('ATTIC_IMAGE_TAG') ?? execGit(['rev-parse', '--short', 'HEAD']),
+    imageDigest: parsed.imageDigest ?? readEnv('ATTIC_IMAGE_DIGEST') ?? readEnv('ATTIC_IMAGE_REFERENCE'),
     kustomizePath: parsed.kustomizePath ?? readEnv('ATTIC_KUSTOMIZE_PATH') ?? defaultKustomizePath,
     namespace: parsed.namespace ?? readEnv('ATTIC_K8S_NAMESPACE') ?? 'attic',
     deploymentName: parsed.deploymentName ?? readEnv('ATTIC_K8S_DEPLOYMENT') ?? 'attic',
@@ -180,6 +196,21 @@ const assertRequiredImagePlatforms = (
     )
   }
   return platforms
+}
+
+const requireDeployImageDigest = (options: CliOptions): string => {
+  if (!options.imageDigest) {
+    throw new Error(
+      'Non-dry attic:deploy requires --image-digest / ATTIC_IMAGE_DIGEST with a prebuilt multi-arch Attic image reference. Use the Nix OCI workflow release contract digest instead of building a single-platform image in the deploy path.',
+    )
+  }
+  return assertAtticImageDigest(options.imageDigest, imageNameFor(options.registry, options.repository))
+}
+
+const assertDeployImagePlatforms = (imageReference: string): void => {
+  assertRequiredImagePlatforms(
+    assertOciPlatforms(imageReference, [...requiredRuntimePlatforms]).map((entry) => entry.platform),
+  )
 }
 
 const updateImageReferences = (
@@ -231,22 +262,26 @@ export const main = async (argv = process.argv.slice(2)) => {
     ensureCli('kubectl')
   }
 
-  const imageResult = await buildImage({
-    registry: options.registry,
-    repository: options.repository,
-    tag: options.tag,
-    dryRun: options.dryRun,
-  })
-  console.log(`Image digest: ${imageResult.digest}`)
-
   if (options.dryRun) {
+    const imageDigest = options.imageDigest
+      ? assertAtticImageDigest(options.imageDigest, imageNameFor(options.registry, options.repository))
+      : (
+          await buildImage({
+            registry: options.registry,
+            repository: options.repository,
+            tag: options.tag,
+            dryRun: true,
+          })
+        ).digest
+    console.log(`Image digest: ${imageDigest}`)
     console.log('Dry run complete; manifests and cluster state were not changed.')
     return
   }
 
-  assertRequiredImagePlatforms(imageResult.platforms)
+  const imageDigest = requireDeployImageDigest(options)
+  assertDeployImagePlatforms(imageDigest)
   updateAtticImageManifests({
-    imageDigest: imageResult.digest,
+    imageDigest,
     registry: options.registry,
     repository: options.repository,
     kustomizePath: options.kustomizePath,
@@ -268,9 +303,11 @@ if (import.meta.main) {
 
 export const __private = {
   assertAtticImageDigest,
+  assertDeployImagePlatforms,
   assertRequiredImagePlatforms,
   imageNameFor,
   parseArgs,
+  requireDeployImageDigest,
   resolveOptions,
   resolveKustomizeManifestPaths,
   updateAtticImageManifests,

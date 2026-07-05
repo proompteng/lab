@@ -21,6 +21,8 @@ describe('attic deploy-service helpers', () => {
         '--registry',
         'registry.ide-newton.ts.net',
         '--repository=lab/attic',
+        '--image-digest',
+        digestReference,
         '--kustomize-path=argocd/applications/attic',
         '--namespace',
         'attic',
@@ -32,6 +34,7 @@ describe('attic deploy-service helpers', () => {
       tag: 'sha-test',
       registry: 'registry.ide-newton.ts.net',
       repository: 'lab/attic',
+      imageDigest: digestReference,
       kustomizePath: 'argocd/applications/attic',
       namespace: 'attic',
       deploymentName: 'attic',
@@ -163,5 +166,34 @@ spec:
     expect(() => __private.assertRequiredImagePlatforms(['linux/arm64'])).toThrow(
       'must include required platform(s) before manifests can be pinned: linux/amd64',
     )
+  })
+
+  it('requires a prebuilt digest for non-dry deploys instead of building a host-only image', () => {
+    expect(() =>
+      __private.requireDeployImageDigest({
+        dryRun: false,
+        apply: false,
+        registry: 'registry.ide-newton.ts.net',
+        repository: 'lab/attic',
+        tag: 'sha-test',
+        kustomizePath: 'argocd/applications/attic',
+        namespace: 'attic',
+        deploymentName: 'attic',
+      }),
+    ).toThrow('Non-dry attic:deploy requires --image-digest / ATTIC_IMAGE_DIGEST')
+
+    expect(
+      __private.requireDeployImageDigest({
+        dryRun: false,
+        apply: false,
+        registry: 'registry.ide-newton.ts.net',
+        repository: 'lab/attic',
+        tag: 'sha-test',
+        imageDigest: digestReference,
+        kustomizePath: 'argocd/applications/attic',
+        namespace: 'attic',
+        deploymentName: 'attic',
+      }),
+    ).toBe(digestReference)
   })
 })
