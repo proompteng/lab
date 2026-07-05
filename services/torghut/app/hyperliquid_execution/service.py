@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Protocol, cast
@@ -17,6 +18,7 @@ from .models import (
     ExecutionMarket,
     FeatureSnapshot,
     OpenOrder,
+    OrderIntent,
     RiskState,
     RuntimeDependencyStatus,
 )
@@ -194,6 +196,7 @@ class HyperliquidExecutionService:
                     signal_id=signal_id,
                     now=context.started_at,
                 )
+                intent = _normalize_order_intent(self._exchange, intent)
                 result = self._exchange.submit_order(intent)
             except Exception as exc:
                 counts.record_order_error(type(exc).__name__)
@@ -318,6 +321,16 @@ class HyperliquidExecutionService:
             observed_at=observed_at,
             details={"open_order_coins": sorted(open_coins)},
         )
+
+
+def _normalize_order_intent(
+    exchange: HyperliquidExecutionExchange,
+    intent: OrderIntent,
+) -> OrderIntent:
+    normalize = getattr(exchange, "normalize_order_intent", None)
+    if not callable(normalize):
+        return intent
+    return cast(Callable[[OrderIntent], OrderIntent], normalize)(intent)
 
 
 def runtime_readiness(
