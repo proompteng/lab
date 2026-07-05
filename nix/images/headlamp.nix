@@ -23,6 +23,7 @@ let
       ../../services/headlamp/patches/0001-multiplexer-http-watch-stream.patch
       ../../services/headlamp/patches/0002-multiplexer-auth-cookie-scope.patch
       ../../services/headlamp/patches/0003-oidc-refresh-reauth.patch
+      ../../services/headlamp/patches/0004-static-copy-writable.patch
     ];
     nativeBuildInputs = [
       pkgs.gnused
@@ -117,8 +118,6 @@ let
       mkdir -p "$out/headlamp/plugins" "$out/headlamp/static-plugins"
       cp ${backend}/bin/headlamp-server "$out/headlamp/headlamp-server"
       cp -R ${frontend}/frontend "$out/headlamp/frontend"
-      find "$out/headlamp/frontend" -type d -exec chmod 0777 {} +
-      find "$out/headlamp/frontend" -type f -exec chmod 0666 {} +
       cp -R ${prometheusPlugin}/static-plugins/. "$out/headlamp/static-plugins/"
       runHook postInstall
     '';
