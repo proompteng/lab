@@ -60,6 +60,7 @@ describe('enabled app inventory', () => {
     for (const name of [
       'oirat',
       'agents',
+      'arc',
       'bumba',
       'froussard',
       'docs',
@@ -90,6 +91,7 @@ describe('enabled app inventory', () => {
     expect(entry('olden').nixImageAttr).toBe('olden-image')
     expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
     expect(entry('agents').nixImageAttr).toBe('agents-codex-runner-image')
+    expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
     expect(entry('sag').nixImageAttr).toBe('sag-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
     expect(entry('torghut').nixImageAttr).toBe('torghut-image')
@@ -106,6 +108,16 @@ describe('enabled app inventory', () => {
       deployScriptPath: 'packages/scripts/src/attic/deploy-service.ts',
     })
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
+  })
+
+  it('tracks ARC runner images through both GitHub Actions and manual Nix image paths', () => {
+    expect(entry('arc')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'arc-runner-image',
+      buildScriptPath: 'packages/scripts/src/arc-runner/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/arc-runner/deploy-service.ts',
+    })
+    expect(entry('arc').workflowPaths).toContain('.github/workflows/arc-runner-build-push.yml')
   })
 
   it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {

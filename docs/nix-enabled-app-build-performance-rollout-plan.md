@@ -114,6 +114,7 @@ Same commit plus same lockfiles should reproduce the same Nix output path and OC
    - Shared setup action callers running on ARC must set `require-preinstalled: 'true'`; missing Nix or missing CI toolchain commands fail instead of invoking `cachix/install-nix-action` or `nix profile install`.
    - Runner image smoke must execute `toolchain-doctor` and `oci-doctor` inside the built image before a release contract can be emitted.
    - Keep Docker/DinD only while Docker-backed transitional workflows remain.
+   - Build the ARC runner image with `dockerTools.buildLayeredImageWithNixDb` from the pinned upstream Actions runner image plus the Nix CI toolchain layer; do not use the Dockerfile/curl installer path.
 
 3. **PR 3: Finish Agents Nix Runtime**
    - Finish and merge the Agents runtime dependency gap.

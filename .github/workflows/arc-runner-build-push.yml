@@ -6,25 +6,39 @@ permissions:
 on:
   pull_request:
     paths:
-      - 'images/arc-runner/**'
+      - 'nix/images/arc-runner.nix'
       - 'flake.nix'
       - 'flake.lock'
       - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
       - 'nix/oci-doctor.sh'
       - 'nix/toolchain-doctor.sh'
       - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/arc-runner-build-push.yml'
   push:
     branches:
       - main
     paths:
-      - 'images/arc-runner/**'
+      - 'nix/images/arc-runner.nix'
       - 'flake.nix'
       - 'flake.lock'
       - 'nix/packages.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
       - 'nix/oci-doctor.sh'
       - 'nix/toolchain-doctor.sh'
       - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/arc-runner-build-push.yml'
   workflow_dispatch:
 
@@ -33,194 +47,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-platform:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: linux/amd64
-            arch: amd64
-            runner: arc-amd64
-          - platform: linux/arm64
-            arch: arm64
-            runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    timeout-minutes: 90
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          cache-binary: false
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=sha-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-
-      - name: Require Attic public key
-        env:
-          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
-        run: test -n "${ATTIC_PUBLIC_KEY}"
-
-      - name: Prepare minimal runner image context
-        run: |
-          set -euo pipefail
-          rm -rf .artifacts/arc-runner-context
-          mkdir -p .artifacts/arc-runner-context
-          cp flake.nix flake.lock .artifacts/arc-runner-context/
-          cp -R nix .artifacts/arc-runner-context/nix
-
-      - name: Build ARC runner image
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          ARCH: ${{ matrix.arch }}
-          TAG: ${{ steps.meta.outputs.tag }}
-          IMAGE: registry.ide-newton.ts.net/lab/arc-runner
-          ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
-        run: |
-          set -euo pipefail
-          should_publish=false
-          if [[ "${GITHUB_REF}" == "refs/heads/main" ]] && [[ "${GITHUB_EVENT_NAME}" == "push" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            should_publish=true
-          fi
-
-          args=(
-            docker buildx build
-            --platform "${PLATFORM}"
-            --file images/arc-runner/Dockerfile
-            --build-arg "LAB_GIT_SHA=${GITHUB_SHA}"
-            --build-arg "LAB_NIX_EXTRA_SUBSTITUTERS=http://attic.attic.svc.cluster.local/lab"
-            --build-arg "LAB_NIX_EXTRA_TRUSTED_PUBLIC_KEYS=${ATTIC_PUBLIC_KEY}"
-            )
-          if [[ "${should_publish}" == "true" ]]; then
-            args+=(
-              --push
-              --tag "${IMAGE}:${TAG}-${ARCH}"
-              --tag "${IMAGE}:latest-${ARCH}"
-            )
-          else
-            args+=(
-              --load
-              --tag "lab-arc-runner:test-${ARCH}"
-            )
-          fi
-          args+=(.artifacts/arc-runner-context)
-          "${args[@]}"
-
-      - name: Smoke PR runner image toolchain
-        if: github.event_name == 'pull_request'
-        env:
-          ARCH: ${{ matrix.arch }}
-        run: |
-          set -euo pipefail
-          docker run --rm "lab-arc-runner:test-${ARCH}" bash -lc '
-            set -euo pipefail
-            test "${LAB_ARC_RUNNER_TOOLCHAIN:-}" = "1"
-            nix --version
-            command -v node
-            command -v bun
-            command -v go
-            command -v ruby
-            command -v python3.11
-            command -v python3.12
-            command -v uv
-            command -v tofu
-            command -v helm
-            command -v skopeo
-            command -v crane
-            command -v cosign
-            command -v jq
-            command -v yq
-            command -v kustomize
-            command -v toolchain-doctor
-            command -v oci-doctor
-            toolchain-doctor
-            oci-doctor
-            test -d /home/runner/externals
-          '
-
-  publish-index:
-    if: >-
-      ${{
-        github.ref == 'refs/heads/main' &&
-        (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      }}
-    needs: build-platform
-    runs-on: arc-arm64
-    timeout-minutes: 20
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-        with:
-          cache-binary: false
-
-      - name: Resolve image tag
-        id: meta
-        run: echo "tag=sha-${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-
-      - name: Publish ARC runner multi-arch index
-        id: image
-        env:
-          IMAGE: registry.ide-newton.ts.net/lab/arc-runner
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          set -euo pipefail
-          docker buildx imagetools create \
-            -t "${IMAGE}:${TAG}" \
-            -t "${IMAGE}:latest" \
-            "${IMAGE}:${TAG}-amd64" \
-            "${IMAGE}:${TAG}-arm64"
-
-          manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${IMAGE}:${TAG}")"
-          digest="$(jq -r '.manifest.digest // empty' <<< "${manifest_json}")"
-          if ! printf '%s' "${digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-            echo "Failed to resolve digest for ${IMAGE}:${TAG}" >&2
-            docker buildx imagetools inspect "${IMAGE}:${TAG}" >&2
-            exit 1
-          fi
-
-          for platform in linux/amd64 linux/arm64; do
-            platform_digest="$(
-              jq -r --arg platform "${platform}" \
-                '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                <<< "${manifest_json}" | head -n 1
-            )"
-            if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-              echo "Image ${IMAGE}:${TAG} is missing required platform ${platform}" >&2
-              docker buildx imagetools inspect "${IMAGE}:${TAG}" >&2
-              exit 1
-            fi
-          done
-
-          mkdir -p .artifacts/arc-runner
-          jq -n \
-            --arg image "${IMAGE}" \
-            --arg tag "${TAG}" \
-            --arg digest "${digest}" \
-            --arg sourceSha "${GITHUB_SHA}" \
-            --arg workflowRunId "${GITHUB_RUN_ID}" \
-            '{
-              image: $image,
-              tag: $tag,
-              digest: $digest,
-              reference: "\($image)@\($digest)",
-              sourceSha: $sourceSha,
-              workflowRunId: $workflowRunId,
-              platforms: ["linux/amd64", "linux/arm64"],
-              builder: "dockerfile-arc-runner-nix-toolchain"
-            }' > .artifacts/arc-runner/release-contract.json
-
-      - name: Upload ARC runner release contract
-        uses: actions/upload-artifact@v4
-        with:
-          name: arc-runner-release-contract
-          path: .artifacts/arc-runner/release-contract.json
-          if-no-files-found: error
-          retention-days: 3
+  nix-image:
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: arc-runner
+      package_attr: arc-runner-image
+      tag: sha-${{ github.sha }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      publish_on_dispatch: true
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'arc-runner-release-contract' || '' }}
+    secrets: inherit

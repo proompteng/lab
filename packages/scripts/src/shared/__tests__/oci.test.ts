@@ -27,6 +27,8 @@ const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
 const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
+const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
+const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
 const jangarBuildWorkflow = readRepoFile('.github/workflows/jangar-build-push.yaml')
 const symphonyBuildWorkflow = readRepoFile('.github/workflows/symphony-build-push.yaml')
 const symphonyCiWorkflow = readRepoFile('.github/workflows/symphony-ci.yml')
@@ -82,6 +84,8 @@ const sagBuildScript = readRepoFile('packages/scripts/src/sag/build-image.ts')
 const sagDeployScript = readRepoFile('packages/scripts/src/sag/deploy-service.ts')
 const agentsBuildScript = readRepoFile('packages/scripts/src/agents/build-image.ts')
 const agentsDeployScript = readRepoFile('packages/scripts/src/agents/deploy-service.ts')
+const arcRunnerBuildScript = readRepoFile('packages/scripts/src/arc-runner/build-image.ts')
+const arcRunnerDeployScript = readRepoFile('packages/scripts/src/arc-runner/deploy-service.ts')
 const torghutBuildScript = readRepoFile('packages/scripts/src/torghut/build-image.ts')
 const torghutImageBuildersScript = readRepoFile('packages/scripts/src/torghut/image-builders.ts')
 const torghutWsBuildScript = readRepoFile('packages/scripts/src/torghut/build-ws-image.ts')
@@ -638,6 +642,8 @@ describe('native OCI build workflows', () => {
     const migratedWorkflows = [
       atticWorkflow,
       nixOciWorkflow,
+      arcRunnerBuildWorkflow,
+      arcRunnerReleaseWorkflow,
       oiratWorkflow,
       bumbaWorkflow,
       froussardWorkflow,
@@ -683,6 +689,7 @@ describe('native OCI build workflows', () => {
   })
 
   it('routes enabled simple app image builds through real Nix OCI attrs', () => {
+    expect(flake).toContain('"arc-runner-image"')
     expect(flake).toContain('"oirat-image"')
     expect(flake).toContain('"bumba-image"')
     expect(flake).toContain('"froussard-image"')
@@ -967,6 +974,7 @@ describe('native OCI build workflows', () => {
 
   it('keeps manual migrated app deploy scripts on the shared Nix image helper', () => {
     for (const script of [
+      arcRunnerBuildScript,
       oiratBuildScript,
       bumbaBuildScript,
       atticBuildScript,
@@ -997,6 +1005,13 @@ describe('native OCI build workflows', () => {
     expect(atticDeployScript).toContain('no-apply')
     expect(atticDeployScript).toContain('registry.ide-newton.ts.net/lab/attic@sha256:<64 hex>')
     expect(atticDeployScript).toContain('gc-cronjob.yaml')
+    expect(arcRunnerDeployScript).not.toContain("from '../shared/docker'")
+    expect(arcRunnerDeployScript).not.toContain('inspectImageDigest')
+    expect(arcRunnerDeployScript).toContain("from './build-image'")
+    expect(arcRunnerDeployScript).toContain('dryRun')
+    expect(arcRunnerDeployScript).toContain('no-apply')
+    expect(arcRunnerDeployScript).toContain('registry.ide-newton.ts.net/lab/arc-runner@sha256:<64 hex>')
+    expect(arcRunnerDeployScript).toContain('image: docker:dind')
     expect(froussardDeployScript).not.toContain("from '../shared/docker'")
     expect(froussardDeployScript).not.toContain('buildAndPushDockerImage')
     expect(froussardDeployScript).not.toContain('inspectImageDigest')

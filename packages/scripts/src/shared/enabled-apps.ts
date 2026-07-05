@@ -40,6 +40,7 @@ const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
 const earlyNixImageApps = new Set([
   'agents',
   'app',
+  'arc',
   'attic',
   'bumba',
   'docs',
@@ -65,6 +66,7 @@ const deferredApps = new Map<string, string>([
 
 const appToNixAttr = new Map<string, string>([
   ['app', 'app-image'],
+  ['arc', 'arc-runner-image'],
   ['attic', 'atticd-image'],
   ['bumba', 'bumba-image'],
   ['docs', 'docs-image'],
@@ -83,12 +85,14 @@ const appToNixAttr = new Map<string, string>([
 ])
 
 const appToBuildScriptPath = new Map<string, string>([
+  ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
   ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/build-image.ts'],
   ['torghut-options', 'packages/scripts/src/torghut/build-image.ts'],
 ])
 
 const appToDeployScriptPath = new Map<string, string>([
+  ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
   ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
   ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/update-manifests.ts'],
   ['torghut-options', 'packages/scripts/src/torghut/update-manifests.ts'],
