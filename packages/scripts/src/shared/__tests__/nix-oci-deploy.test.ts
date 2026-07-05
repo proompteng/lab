@@ -28,6 +28,10 @@ describe('buildAndPushNixImage', () => {
       digest: 'sha256:dry-run',
       platforms: [],
       platformDigests: {},
+      lockfileHashes: {
+        'flake.lock': expect.any(String),
+        'bun.lock': expect.any(String),
+      },
       dryRun: true,
     })
 
@@ -42,6 +46,11 @@ describe('buildAndPushNixImage', () => {
       packageAttr: 'oirat-image',
       platforms: [],
       platformDigests: {},
+      lockfileHashes: {
+        'flake.lock': expect.stringMatching(/^[0-9a-f]{64}$/),
+        'bun.lock': expect.stringMatching(/^[0-9a-f]{64}$/),
+      },
+      toolVersions: expect.any(Object),
       builder: 'nix-dockerTools-skopeo',
       invocation: 'manual-script',
       dryRun: true,

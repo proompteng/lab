@@ -211,13 +211,13 @@ describe('agents-ci workflow local Agents image build', () => {
       'nix/images/bun-workspace-service.nix',
       'nix/images/openai-codex-cli.nix',
       'nix/packages.nix',
-      'packages/scripts/src/shared/nix-oci-deploy.ts',
       'tsconfig.base.json',
     ]
 
     for (const input of nixImageInputs) {
       expect(workflow.split(`- '${input}'`).length - 1).toBe(2)
     }
+    expect(workflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
   })
 
   it('classifies pull request changes from the merge base', () => {

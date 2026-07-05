@@ -25,7 +25,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'bun.lock'
   push:
@@ -51,7 +50,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
       - 'flake.lock'
       - 'bun.lock'
   workflow_dispatch:
