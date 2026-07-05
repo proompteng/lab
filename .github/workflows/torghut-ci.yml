@@ -131,7 +131,7 @@ jobs:
     name: Release manifest changes
     # The digest contract check inspects registry.ide-newton.ts.net, which is only
     # reachable from ARC runners on the lab network.
-    runs-on: arc-arm64
+    runs-on: arc-amd64
     needs:
       - changes
     if: ${{ needs.changes.outputs.service != 'true' && needs.changes.outputs.manifests == 'true' }}

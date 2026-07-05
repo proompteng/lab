@@ -59,7 +59,7 @@ jobs:
       }}
     # The private registry is only reachable from the ARC runners on the lab network.
     # This pull_request_target job checks out trusted base code only, never pull request code.
-    runs-on: arc-arm64
+    runs-on: arc-amd64
     permissions:
       contents: write
       pull-requests: write
