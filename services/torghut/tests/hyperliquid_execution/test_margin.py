@@ -22,7 +22,7 @@ def test_gross_margin_use_counts_unmapped_raw_account_exposure() -> None:
         max_leverage_by_coin={"NVDA": Decimal("20")},
     )
 
-    assert gross_margin_used_usd(state) == Decimal("350.000000")
+    assert gross_margin_used_usd(state) == Decimal("6050.000000")
     assert gross_margin_over_budget(state=state, config=config)
 
 
@@ -35,7 +35,7 @@ def test_gross_margin_use_keeps_raw_position_offset_position_only() -> None:
         max_leverage_by_coin={"NVDA": Decimal("20")},
     )
 
-    assert gross_margin_used_usd(state) == Decimal("450.000000")
+    assert gross_margin_used_usd(state) == Decimal("6150.000000")
     assert gross_margin_over_budget(state=state, config=config)
 
 
@@ -48,7 +48,7 @@ def test_gross_margin_use_treats_empty_position_map_as_authoritative() -> None:
         max_leverage_by_coin={"NVDA": Decimal("20")},
     )
 
-    assert gross_margin_used_usd(state) == Decimal("500.000000")
+    assert gross_margin_used_usd(state) == Decimal("7150.000000")
     assert gross_margin_over_budget(state=state, config=config)
 
 

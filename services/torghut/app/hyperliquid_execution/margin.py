@@ -241,12 +241,7 @@ def _nonnegative(value: Decimal) -> Decimal:
 
 
 def _fallback_leverage_for_unmapped_exposure(state: RiskState) -> Decimal:
-    positive_leverages = [
-        leverage for leverage in state.max_leverage_by_coin.values() if leverage > _ZERO
-    ]
-    if not positive_leverages:
-        return _ONE
-    return min(positive_leverages)
+    return _ONE
 
 
 def _quantize_usd(value: Decimal) -> Decimal:
