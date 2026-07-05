@@ -123,7 +123,19 @@ const expectAgentRunSubmission = (
     'x-agents-client': 'froussard',
   })
 
+  const expectedGoalObjective = [
+    `Implement GitHub issue owner/repo#${options.issueNumber}: ${options.issueTitle}.`,
+    `Issue URL: ${options.issueUrl}.`,
+    'Base branch: main.',
+    'Head branch: codex/issue-1-test.',
+    'Use implementation.text for the full issue body, requirements, and acceptance criteria.',
+  ].join('\n')
+
   const payload = JSON.parse(String(init.body)) as Record<string, unknown>
+  const goal = payload.goal as { objective?: unknown } | undefined
+  expect(goal?.objective).toBe(expectedGoalObjective)
+  expect(goal?.objective).not.toBe('PROMPT')
+
   expect(payload).toMatchObject({
     namespace: 'agents',
     agentRef: { name: 'codex-agent' },
@@ -132,13 +144,7 @@ const expectAgentRunSubmission = (
       source: { provider: 'github', externalId: `owner/repo#${options.issueNumber}` },
     },
     goal: {
-      objective: [
-        `Implement GitHub issue owner/repo#${options.issueNumber}: ${options.issueTitle}.`,
-        `Issue URL: ${options.issueUrl}.`,
-        'Base branch: main.',
-        'Head branch: codex/issue-1-test.',
-        'Use implementation.text for the full issue body, requirements, and acceptance criteria.',
-      ].join('\n'),
+      objective: expectedGoalObjective,
       tokenBudget: 250000,
     },
     runtime: { type: 'job', config: { serviceAccountName: 'agents-sa' } },
