@@ -1,34 +1,35 @@
 diff --git a/backend/cmd/headlamp.go b/backend/cmd/headlamp.go
-index 811495890..3d3109f45 100644
+index 811495890..ae21b1b85 100644
 --- a/backend/cmd/headlamp.go
 +++ b/backend/cmd/headlamp.go
-@@ -160,6 +160,19 @@ func mustWriteFile(path string, data []byte) {
+@@ -160,6 +160,20 @@ func mustWriteFile(path string, data []byte) {
  	}
  }
  
-+func makeStaticCopyWritable(root string) error {
-+	return filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, err error) error {
-+		if err != nil {
++func makeStaticIndexWritable(staticDir string) error {
++	indexPath := filepath.Join(staticDir, "index.html")
++	data, err := os.ReadFile(indexPath)
++	if err != nil {
++		return err
++	}
++	if err = os.Remove(indexPath); err != nil {
++		if !errors.Is(err, os.ErrNotExist) {
 +			return err
 +		}
-+		mode := fs.FileMode(0o666)
-+		if entry.IsDir() {
-+			mode = fs.FileMode(0o777)
-+		}
-+		return os.Chmod(filePath, mode)
-+	})
++	}
++	return os.WriteFile(indexPath, data, fs.FileMode(0o600))
 +}
 +
  func makeBaseURLReplacements(data []byte, baseURL string) []byte {
  	replaceURL := baseURL
  	if baseURL == "" {
-@@ -1158,6 +1171,12 @@ func startServer(config *HeadlampConfig) {
+@@ -1158,6 +1172,12 @@ func startServer(config *HeadlampConfig) {
  			return
  		}
  
-+		err = makeStaticCopyWritable(dir)
++		err = makeStaticIndexWritable(dir)
 +		if err != nil {
-+			logger.Log(logger.LevelError, nil, err, "Failed to make copied static dir writable")
++			logger.Log(logger.LevelError, nil, err, "Failed to make copied static index writable")
 +			return
 +		}
 +
