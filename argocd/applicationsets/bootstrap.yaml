@@ -79,7 +79,7 @@ spec:
                   namespace: rook-ceph
                   annotations:
                     argocd.argoproj.io/sync-wave: "-1"
-                  automation: manual
+                  automation: auto
                   enabled: "true"
                   ignoreDifferences:
                     - kind: Secret

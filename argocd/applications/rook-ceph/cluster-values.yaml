@@ -35,6 +35,9 @@ cephClusterSpec:
       # Prioritize client IO after the Turin BlueStore DB migration has recovered.
       # Recovery/backfill overrides are intentionally omitted so the built-in mClock profile controls QoS.
       osd_mclock_profile: "high_client_ops"
+      # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
+      # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
+      osd_mclock_max_sequential_bandwidth_hdd: "285212672"
       osd_memory_target: "8589934592"
       # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
       osd_scrub_auto_repair: "true"
