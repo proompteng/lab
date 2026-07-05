@@ -145,11 +145,11 @@ jobs:
           if [[ "${build_status}" -ne 0 ]]; then
             rm -f "${out_link}"
             echo "::warning title=Nix image archive build retried without Attic::Attic substitution or build timed out/failed for ${PACKAGE_ATTR} on ${ARCH}; retrying with cache.nixos.org only so the runner does not hang on a final image archive copy."
-            fallback_nix_config=$'experimental-features = nix-command flakes\nsubstituters = https://cache.nixos.org/\nfallback = true\nconnect-timeout = 10\nstalled-download-timeout = 60\ndownload-attempts = 1'
+            fallback_nix_config=$'experimental-features = nix-command flakes\nsubstituters = https://cache.nixos.org/\nfallback = true\nconnect-timeout = 10\nstalled-download-timeout = 60\ndownload-attempts = 1\nbuild-users-group ='
             env NIX_CONFIG="${fallback_nix_config}" \
               bash nix/ci-run-timed.sh "build-image-${ARCH}-cache-nixos-fallback" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}-cache-nixos-fallback.log" \
               timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \
-              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}" --option build-users-group ''
           fi
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
