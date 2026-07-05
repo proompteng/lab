@@ -60,6 +60,10 @@ function filesWith(contentByPath: Partial<Record<string, string>> = {}): FileCon
   ]
 }
 
+test('accepts the valid Saigak migration fixture', () => {
+  expect(validateActiveSaigakMigrationContent(filesWith())).toEqual([])
+})
+
 test('requires SAIGAK_REQUIRE_GPU_RESIDENCY value to be true on the same env var entry', () => {
   const failures = validateActiveSaigakMigrationContent(
     filesWith({
@@ -71,6 +75,26 @@ test('requires SAIGAK_REQUIRE_GPU_RESIDENCY value to be true on the same env var
         .replace(
           'name: embedding-proxy\n          env:',
           'name: embedding-proxy\n          env:\n            - name: UNRELATED_FLAG\n              value: "true"',
+        ),
+    }),
+  )
+
+  expect(failures).toContain(
+    'argocd/applications/saigak/statefulset.yaml: Saigak must set SAIGAK_REQUIRE_GPU_RESIDENCY=true on the embedding proxy',
+  )
+})
+
+test('does not accept SAIGAK_REQUIRE_GPU_RESIDENCY from a non-proxy container', () => {
+  const failures = validateActiveSaigakMigrationContent(
+    filesWith({
+      'argocd/applications/saigak/statefulset.yaml': validSaigakStatefulSet
+        .replace(
+          'name: embedding-proxy\n          env:\n            - name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "true"',
+          'name: embedding-proxy\n          env:\n            - name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "false"',
+        )
+        .replace(
+          'name: ollama\n          resources:',
+          'name: ollama\n          env:\n            - name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "true"\n          resources:',
         ),
     }),
   )

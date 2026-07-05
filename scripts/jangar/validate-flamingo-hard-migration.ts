@@ -102,6 +102,64 @@ function hasYamlEnvVarValue(content: string, name: string, value: string): boole
   return new RegExp(`^\\s*-\\s*name:\\s*${escapedName}\\s*\\n\\s*value:\\s*${valuePattern}\\s*$`, 'm').test(content)
 }
 
+function getYamlSectionBlock(content: string, sectionName: string): string | null {
+  const sectionPattern = new RegExp(`^(?<indent>\\s*)${escapeRegExp(sectionName)}:\\s*$`)
+  const lines = content.split('\n')
+
+  for (let index = 0; index < lines.length; index++) {
+    const match = sectionPattern.exec(lines[index])
+    const sectionIndent = match?.groups?.indent.length
+    if (sectionIndent === undefined) continue
+
+    let endIndex = lines.length
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
+      if (lines[nextIndex].trim() === '') continue
+
+      const nextIndent = lines[nextIndex].match(/^(\s*)\S/)?.[1].length ?? 0
+      if (nextIndent <= sectionIndent) {
+        endIndex = nextIndex
+        break
+      }
+    }
+
+    return lines.slice(index, endIndex).join('\n')
+  }
+
+  return null
+}
+
+function getYamlListItemBlock(content: string, name: string): string | null {
+  const itemPattern = new RegExp(`^(?<indent>\\s*)-\\s*name:\\s*${escapeRegExp(name)}\\s*$`)
+  const lines = content.split('\n')
+
+  for (let index = 0; index < lines.length; index++) {
+    const match = itemPattern.exec(lines[index])
+    const itemIndent = match?.groups?.indent.length
+    if (itemIndent === undefined) continue
+
+    let endIndex = lines.length
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
+      if (lines[nextIndex].trim() === '') continue
+
+      const nextIndent = lines[nextIndex].match(/^(\s*)\S/)?.[1].length ?? 0
+      if (nextIndent <= itemIndent) {
+        endIndex = nextIndex
+        break
+      }
+    }
+
+    return lines.slice(index, endIndex).join('\n')
+  }
+
+  return null
+}
+
+function hasContainerEnvVarValue(content: string, containerName: string, name: string, value: string): boolean {
+  const containers = getYamlSectionBlock(content, 'containers')
+  const container = containers ? getYamlListItemBlock(containers, containerName) : null
+  return container ? hasYamlEnvVarValue(container, name, value) : false
+}
+
 function hasPvcBoundFieldDiffIgnore(content: string, name: string): boolean {
   const match = new RegExp(
     `kind:\\s*PersistentVolumeClaim\\s*\\n\\s*name:\\s*${escapeRegExp(name)}\\s*\\n\\s*jsonPointers:\\s*\\n(?<pointers>(?:\\s*-\\s*/[^\\n]+\\n?)+)`,
@@ -212,7 +270,7 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
         )
       }
     }
-    if (!hasYamlEnvVarValue(saigakStatefulSet, 'SAIGAK_REQUIRE_GPU_RESIDENCY', 'true')) {
+    if (!hasContainerEnvVarValue(saigakStatefulSet, 'embedding-proxy', 'SAIGAK_REQUIRE_GPU_RESIDENCY', 'true')) {
       failures.push(
         'argocd/applications/saigak/statefulset.yaml: Saigak must set SAIGAK_REQUIRE_GPU_RESIDENCY=true on the embedding proxy',
       )
