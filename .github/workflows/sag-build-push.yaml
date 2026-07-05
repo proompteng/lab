@@ -8,9 +8,6 @@ on:
     paths:
       - 'services/sag/**'
       - 'packages/codex/**'
-      - 'packages/scripts/src/sag/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
@@ -31,9 +28,6 @@ on:
     paths:
       - 'services/sag/**'
       - 'packages/codex/**'
-      - 'packages/scripts/src/sag/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
       - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'

@@ -15,8 +15,6 @@ const buildTriggerPathPatterns = [
   /^services\/symphony\//,
   /^packages\/codex\//,
   /^packages\/otel\//,
-  /^packages\/scripts\/src\/symphony\//,
-  /^packages\/scripts\/src\/shared\/(?:cli|git)\.ts$/,
   /^nix\/images\/symphony\.nix$/,
   /^nix\/images\/openai-codex-cli\.nix$/,
   /^nix\/images\/bun-workspace-service\.nix$/,

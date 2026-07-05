@@ -481,18 +481,20 @@ describe('native OCI build workflows', () => {
       expect(workflow).toContain("'packages/scripts/src/shared/docker.ts'")
       expect(workflow).toContain("'packages/scripts/src/shared/git.ts'")
     }
-    expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/cli.ts'")
-    expect(symphonyBuildWorkflow).toContain("'packages/scripts/src/shared/git.ts'")
+    expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/symphony/**'")
+    expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/cli.ts'")
+    expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/git.ts'")
     expect(symphonyBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
-    expect(sagBuildWorkflow).toContain("'packages/scripts/src/shared/cli.ts'")
-    expect(sagBuildWorkflow).toContain("'packages/scripts/src/shared/git.ts'")
+    expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/sag/**'")
+    expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/cli.ts'")
+    expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/git.ts'")
     expect(sagBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
 
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared nix/images')
     expect(enabledProductReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
     expect(sagReleaseWorkflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
-    expect(symphonyReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/shared\\/|')
-    expect(symphonyReleaseMetadataScript).toContain('packages\\/scripts\\/src\\/shared\\/(?:cli|git)\\.ts$')
+    expect(symphonyReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/symphony')
+    expect(symphonyReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/shared')
   })
 
   it('keeps workflow_run release stale guards aligned to image build triggers', () => {

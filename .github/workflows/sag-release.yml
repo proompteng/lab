@@ -100,9 +100,6 @@ jobs:
             input_paths=(
               services/sag
               packages/codex
-              packages/scripts/src/sag
-              packages/scripts/src/shared/cli.ts
-              packages/scripts/src/shared/git.ts
               nix/images/sag.nix
               nix/images/openai-codex-cli.nix
               nix/images/bun-workspace-service.nix
