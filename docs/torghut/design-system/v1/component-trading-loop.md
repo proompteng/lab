@@ -16,7 +16,7 @@
   - `services/torghut/app/trading/scheduler/simple_pipeline.py::SimpleTradingPipeline.run_once` labels mature rejected-signal outcomes, loads strategies, captures runtime-window account snapshots, warms session context, bounds paper-route signal scope, fetches signals, and processes the batch.
   - `services/torghut/app/trading/scheduler/pipeline/run_cycle.py::TradingPipelineRunCycleMixin.run_once` keeps the generic dependency-driven run cycle for ingestor/decision/risk/executor/reconciler style operation.
   - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py` gates decision submission with allocator rejection, notional extraction, market snapshots, and submission preparation.
-  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_MODE=live`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, a live-submit activation expiry, `TRADING_TESTNET_AFTER_HOURS_ENABLED=true`, and bounded simple risk caps.
+  - `argocd/applications/torghut/knative-service.yaml` currently sets `TRADING_ENABLED=true`, `TRADING_MODE=live`, `TRADING_PIPELINE_MODE=simple`, `TRADING_SIMPLE_SUBMIT_ENABLED=true`, `TRADING_LIVE_SUBMIT_ENABLED=true`, diagnostic live-submit activation expiry metadata, `TRADING_TESTNET_AFTER_HOURS_ENABLED=true`, and bounded simple risk caps.
   - Pipeline behavior is covered by the `services/torghut/tests/pipeline/test_trading_pipeline_*.py` suite.
 - What is implemented from the design:
   - periodic service-owned trading loop;
@@ -86,7 +86,7 @@ From `argocd/applications/torghut/knative-service.yaml`:
 | `TRADING_MODE` | `paper` / `live` | `live` in the current manifest |
 | `TRADING_SIMPLE_SUBMIT_ENABLED` | simple pipeline submission gate | `true` in the current manifest |
 | `TRADING_LIVE_SUBMIT_ENABLED` | live broker submission gate | `true` in the current manifest |
-| `TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT` | time-bounds live-submit activation | set in the current manifest |
+| `TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT` | diagnostic/readiness metadata only; the simple-pipeline operational gate does not block when this timestamp is expired | set in the current manifest |
 | `TRADING_TESTNET_AFTER_HOURS_ENABLED` | testnet route outside Alpaca regular hours | `true` in the current manifest |
 | `TRADING_SIGNAL_SOURCE` | signal backend | `clickhouse` |
 | `TRADING_SIGNAL_TABLE` | ClickHouse table | `torghut.ta_signals` |
@@ -123,7 +123,7 @@ Notes:
 ### Gate 1: Explicit enablement
 
 - Trading loop must be enabled explicitly (`TRADING_ENABLED=true`).
-- Live broker submission also requires `TRADING_SIMPLE_SUBMIT_ENABLED=true` plus a valid live-submit activation.
+- Live broker submission currently requires the operational gate to allow submission plus `TRADING_SIMPLE_SUBMIT_ENABLED=true` and `TRADING_LIVE_SUBMIT_ENABLED=true`. `TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT` is diagnostic/readiness metadata in the simple pipeline; `test_live_gate_ignores_expired_activation_for_operational_gate` asserts an expired activation does not close the operational gate.
 
 ### Gate 2: Deterministic risk policy
 
