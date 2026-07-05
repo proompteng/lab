@@ -850,9 +850,7 @@ def _sdk_market_name(coin: str, dex: str) -> str:
     if ":" in normalized_coin:
         return normalized_coin
     sdk_dex = _sdk_dex(dex)
-    if not sdk_dex:
-        return normalized_coin
-    return f"{sdk_dex}:{normalized_coin}"
+    return f"{sdk_dex}:{normalized_coin}" if sdk_dex else normalized_coin
 
 
 def _fill_coin(payload: Mapping[str, object]) -> str:
