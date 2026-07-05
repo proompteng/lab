@@ -1303,7 +1303,7 @@ describe('native OCI build workflows', () => {
     expect(enabledProductReleaseWorkflow).not.toContain('docker buildx')
   })
 
-  it('blocks stale Docker-era release PRs for migrated simple Nix image apps', () => {
+  it('blocks stale Docker-era release branches but auto-merges generated Nix OCI release PRs', () => {
     expect(autoPrReleaseBranchesWorkflow).toContain('migrated_nix_image_paths=(')
     for (const path of [
       'argocd/applications/app/kustomization.yaml',
@@ -1320,10 +1320,29 @@ describe('native OCI build workflows', () => {
       'argocd/applications/synthesis/kustomization.yaml',
     ]) {
       expect(autoPrReleaseBranchesWorkflow).toContain(`"${path}"`)
-      expect(releasePrAutomergeWorkflow).not.toContain(`'${path}'`)
-      expect(releasePrAutomergeWorkflow).not.toContain(`"${path}"`)
     }
     expect(autoPrReleaseBranchesWorkflow).toContain('reason="migrated-nix-image-app:${path}"')
+    expect(releasePrAutomergeWorkflow).toContain('nix_oci_release_paths=(')
+    expect(releasePrAutomergeWorkflow).toContain("contains(github.event.pull_request.head.ref, '-nix-release-')")
+    for (const path of [
+      'argocd/applications/app/kustomization.yaml',
+      'argocd/applications/bumba/kustomization.yaml',
+      'argocd/applications/docs/kustomization.yaml',
+      'argocd/applications/froussard/knative-service.yaml',
+      'argocd/applications/headlamp/values.yaml',
+      'argocd/applications/oirat/kustomization.yaml',
+      'argocd/applications/olden/kustomization.yaml',
+      'argocd/applications/proompteng/kustomization.yaml',
+      'argocd/applications/synthesis/kustomization.yaml',
+    ]) {
+      expect(releasePrAutomergeWorkflow).toContain(`"${path}"`)
+    }
+    expect(releasePrAutomergeWorkflow).toContain(
+      '[[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]]',
+    )
+    expect(releasePrAutomergeWorkflow).toContain('[[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]')
+    expect(releasePrAutomergeWorkflow).toContain('for required_label in automated-pr nix-oci')
+    expect(releasePrAutomergeWorkflow).toContain('reason=eligible:${release_kind}')
   })
 
   it('keeps Froussard Knative digest rollouts from respecting ignored live annotations during apply', () => {
