@@ -36,6 +36,9 @@ cephClusterSpec:
       # Recovery/backfill overrides are intentionally omitted so the built-in mClock profile controls QoS.
       osd_mclock_profile: "high_client_ops"
       osd_memory_target: "8589934592"
+      # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
+      osd_scrub_auto_repair: "true"
+      osd_scrub_auto_repair_num_errors: "5"
 
   dataDirHostPath: /var/lib/rook
 

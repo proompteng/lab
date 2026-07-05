@@ -95,6 +95,7 @@ Current GitOps target in `argocd/applications/rook-ceph/cluster-values.yaml`:
 1. `bluestore_cache_autotune: "true"`
 1. `osd_mclock_profile: "high_client_ops"`
 1. `osd_memory_target: "8589934592"` (8Gi)
+1. `osd_scrub_auto_repair: "true"` with `osd_scrub_auto_repair_num_errors: "5"`
 1. OSD pod resources: request `1000m` CPU and `8Gi` memory, limit `12Gi`
 1. CSI read affinity enabled with `kubernetes.io/hostname`
 
@@ -128,7 +129,7 @@ Verify live state:
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump \
-  | egrep 'osd_mclock_profile|osd_mclock_override_recovery_settings|osd_max_backfills|osd_recovery_max_active|osd_recovery_max_single_start|osd_recovery_op_priority|osd_recovery_sleep_hdd|osd_memory_target'
+  | egrep 'osd_mclock_profile|osd_mclock_override_recovery_settings|osd_max_backfills|osd_recovery_max_active|osd_recovery_max_single_start|osd_recovery_op_priority|osd_recovery_sleep_hdd|osd_memory_target|osd_scrub_auto_repair'
 kubectl -n rook-ceph get deploy -l app=rook-ceph-osd -o json \
   | jq -r '.items[] | .metadata.name as $n | .spec.template.spec.containers[] | select(.name=="osd") | [$n,.resources.requests.memory,.resources.limits.memory] | @tsv' \
   | sort
@@ -140,6 +141,8 @@ Expected steady-state readback:
 1. No degraded, remapped, recovering, backfilling, undersized, or misplaced PGs.
 1. `osd_mclock_profile` is `high_client_ops`.
 1. `osd_memory_target` is `8589934592`.
+1. `osd_scrub_auto_repair` is `true`.
+1. `osd_scrub_auto_repair_num_errors` is `5`.
 1. No recovery override keys remain in `ceph config dump`.
 1. Every OSD deployment reports memory request `8Gi` and limit `12Gi`.
 
