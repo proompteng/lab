@@ -59,6 +59,11 @@ describe('attic build-image helpers', () => {
         'registry.ide-newton.ts.net/lab/attic@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       version: 'v0.1.0',
       commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      platforms: ['linux/amd64', 'linux/arm64'],
+      platformDigests: {
+        'linux/amd64': 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        'linux/arm64': 'sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+      },
     })
   })
 

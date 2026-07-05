@@ -1,18 +1,20 @@
 #!/usr/bin/env bun
 
 import { readFileSync, writeFileSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
 import { execGit } from '../shared/git'
+import { assertOciPlatforms } from '../shared/oci'
 import { buildImage } from './build-image'
 
 type CliOptions = {
   dryRun: boolean
   apply: boolean
-  registry?: string
-  repository?: string
-  tag?: string
+  registry: string
+  repository: string
+  tag: string
+  imageDigest?: string
   kustomizePath: string
   namespace: string
   deploymentName: string
@@ -20,17 +22,50 @@ type CliOptions = {
 
 type ManifestUpdateOptions = {
   imageDigest: string
+  registry?: string
+  repository?: string
+  kustomizePath?: string
   deploymentPath?: string
   gcCronJobPath?: string
 }
 
 const defaultKustomizePath = 'argocd/applications/attic'
-const defaultDeploymentPath = 'argocd/applications/attic/deployment.yaml'
-const defaultGcCronJobPath = 'argocd/applications/attic/gc-cronjob.yaml'
-const atticImagePattern =
-  /(\bimage:\s+)registry\.ide-newton\.ts\.net\/lab\/attic(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})/g
+const defaultImageRegistry = 'registry.ide-newton.ts.net'
+const defaultImageRepository = 'lab/attic'
+const defaultImageName = `${defaultImageRegistry}/${defaultImageRepository}`
+const requiredRuntimePlatforms = ['linux/amd64', 'linux/arm64'] as const
+const digestPattern = /^sha256:[0-9a-f]{64}$/
 
 const readEnv = (name: string) => process.env[name]?.trim()
+
+const normalizeImagePart = (value: string, field: string): string => {
+  const normalized = value.trim().replace(/^\/+|\/+$/g, '')
+  if (!normalized) {
+    throw new Error(`${field} is required`)
+  }
+  return normalized
+}
+
+const imageNameFor = (registry: string, repository: string): string =>
+  `${normalizeImagePart(registry, 'registry')}/${normalizeImagePart(repository, 'repository')}`
+
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+const atticImagePatternFor = (imageNames: string[]): RegExp => {
+  const escapedImageNames = [...new Set(imageNames.map((name) => name.trim()).filter(Boolean))].map(escapeRegExp)
+  if (escapedImageNames.length === 0) {
+    throw new Error('At least one Attic image name is required')
+  }
+  return new RegExp(`(\\bimage:\\s+)(?:${escapedImageNames.join('|')})(?::[A-Za-z0-9._-]+|@sha256:[0-9a-f]{64})`, 'g')
+}
+
+const resolveKustomizeManifestPaths = (kustomizePath = defaultKustomizePath) => {
+  const basePath = resolve(repoRoot, kustomizePath)
+  return {
+    deploymentPath: join(basePath, 'deployment.yaml'),
+    gcCronJobPath: join(basePath, 'gc-cronjob.yaml'),
+  }
+}
 
 const parseArgs = (argv: string[]): Partial<CliOptions> => {
   const options: Partial<CliOptions> = {}
@@ -74,6 +109,19 @@ const parseArgs = (argv: string[]): Partial<CliOptions> => {
       options.repository = arg.slice('--repository='.length)
       continue
     }
+    if (arg === '--image-digest' || arg === '--image-reference') {
+      options.imageDigest = argv[index + 1]
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--image-digest=')) {
+      options.imageDigest = arg.slice('--image-digest='.length)
+      continue
+    }
+    if (arg.startsWith('--image-reference=')) {
+      options.imageDigest = arg.slice('--image-reference='.length)
+      continue
+    }
     if (arg === '--kustomize-path') {
       options.kustomizePath = argv[index + 1]
       index += 1
@@ -115,28 +163,65 @@ const resolveOptions = (argv = process.argv.slice(2)): CliOptions => {
   return {
     dryRun,
     apply: dryRun ? false : (parsed.apply ?? readEnv('ATTIC_NO_APPLY') !== 'true'),
-    registry: parsed.registry ?? readEnv('ATTIC_IMAGE_REGISTRY') ?? 'registry.ide-newton.ts.net',
-    repository: parsed.repository ?? readEnv('ATTIC_IMAGE_REPOSITORY') ?? 'lab/attic',
+    registry: parsed.registry ?? readEnv('ATTIC_IMAGE_REGISTRY') ?? defaultImageRegistry,
+    repository: parsed.repository ?? readEnv('ATTIC_IMAGE_REPOSITORY') ?? defaultImageRepository,
     tag: parsed.tag ?? readEnv('ATTIC_IMAGE_TAG') ?? execGit(['rev-parse', '--short', 'HEAD']),
+    imageDigest: parsed.imageDigest ?? readEnv('ATTIC_IMAGE_DIGEST') ?? readEnv('ATTIC_IMAGE_REFERENCE'),
     kustomizePath: parsed.kustomizePath ?? readEnv('ATTIC_KUSTOMIZE_PATH') ?? defaultKustomizePath,
     namespace: parsed.namespace ?? readEnv('ATTIC_K8S_NAMESPACE') ?? 'attic',
     deploymentName: parsed.deploymentName ?? readEnv('ATTIC_K8S_DEPLOYMENT') ?? 'attic',
   }
 }
 
-const assertAtticImageDigest = (imageDigest: string): string => {
+const assertAtticImageDigest = (imageDigest: string, imageName = defaultImageName): string => {
   const normalized = imageDigest.trim()
-  if (!/^registry\.ide-newton\.ts\.net\/lab\/attic@sha256:[0-9a-f]{64}$/.test(normalized)) {
-    throw new Error(
-      `Expected Attic digest reference registry.ide-newton.ts.net/lab/attic@sha256:<64 hex>, got ${imageDigest}`,
-    )
+  const expectedPrefix = `${imageName}@`
+  const digest = normalized.startsWith(expectedPrefix) ? normalized.slice(expectedPrefix.length) : ''
+  if (!digestPattern.test(digest)) {
+    throw new Error(`Expected Attic digest reference ${imageName}@sha256:<64 hex>, got ${imageDigest}`)
   }
   return normalized
 }
 
-const updateImageReferences = (path: string, imageReference: string, expectedReferences: number): void => {
+const assertRequiredImagePlatforms = (
+  platforms: string[],
+  requiredPlatforms: readonly string[] = requiredRuntimePlatforms,
+): string[] => {
+  const observed = new Set(platforms.map((platform) => platform.trim()).filter(Boolean))
+  const missing = requiredPlatforms.filter((platform) => !observed.has(platform))
+  if (missing.length > 0) {
+    const observedText = [...observed].sort().join(', ') || 'none'
+    throw new Error(
+      `Attic deployment image must include required platform(s) before manifests can be pinned: ${missing.join(', ')}; observed: ${observedText}`,
+    )
+  }
+  return platforms
+}
+
+const requireDeployImageDigest = (options: CliOptions): string => {
+  if (!options.imageDigest) {
+    throw new Error(
+      'Non-dry attic:deploy requires --image-digest / ATTIC_IMAGE_DIGEST with a prebuilt multi-arch Attic image reference. Use the Nix OCI workflow release contract digest instead of building a single-platform image in the deploy path.',
+    )
+  }
+  return assertAtticImageDigest(options.imageDigest, imageNameFor(options.registry, options.repository))
+}
+
+const assertDeployImagePlatforms = (imageReference: string): void => {
+  assertRequiredImagePlatforms(
+    assertOciPlatforms(imageReference, [...requiredRuntimePlatforms]).map((entry) => entry.platform),
+  )
+}
+
+const updateImageReferences = (
+  path: string,
+  imageReference: string,
+  expectedReferences: number,
+  imageNames = [defaultImageName],
+): void => {
   const current = readFileSync(path, 'utf8')
   let replacementCount = 0
+  const atticImagePattern = atticImagePatternFor(imageNames)
   const updated = current.replace(atticImagePattern, (_match, prefix: string) => {
     replacementCount += 1
     return `${prefix}${imageReference}`
@@ -152,9 +237,22 @@ const updateImageReferences = (path: string, imageReference: string, expectedRef
 }
 
 const updateAtticImageManifests = (options: ManifestUpdateOptions): void => {
-  const imageReference = assertAtticImageDigest(options.imageDigest)
-  updateImageReferences(resolve(repoRoot, options.deploymentPath ?? defaultDeploymentPath), imageReference, 2)
-  updateImageReferences(resolve(repoRoot, options.gcCronJobPath ?? defaultGcCronJobPath), imageReference, 1)
+  const imageName = imageNameFor(options.registry ?? defaultImageRegistry, options.repository ?? defaultImageRepository)
+  const imageReference = assertAtticImageDigest(options.imageDigest, imageName)
+  const manifestPaths = resolveKustomizeManifestPaths(options.kustomizePath)
+  const imageNames = imageName === defaultImageName ? [imageName] : [imageName, defaultImageName]
+  updateImageReferences(
+    resolve(repoRoot, options.deploymentPath ?? manifestPaths.deploymentPath),
+    imageReference,
+    2,
+    imageNames,
+  )
+  updateImageReferences(
+    resolve(repoRoot, options.gcCronJobPath ?? manifestPaths.gcCronJobPath),
+    imageReference,
+    1,
+    imageNames,
+  )
 }
 
 export const main = async (argv = process.argv.slice(2)) => {
@@ -164,20 +262,30 @@ export const main = async (argv = process.argv.slice(2)) => {
     ensureCli('kubectl')
   }
 
-  const imageResult = await buildImage({
-    registry: options.registry,
-    repository: options.repository,
-    tag: options.tag,
-    dryRun: options.dryRun,
-  })
-  console.log(`Image digest: ${imageResult.digest}`)
-
   if (options.dryRun) {
+    const imageDigest = options.imageDigest
+      ? assertAtticImageDigest(options.imageDigest, imageNameFor(options.registry, options.repository))
+      : (
+          await buildImage({
+            registry: options.registry,
+            repository: options.repository,
+            tag: options.tag,
+            dryRun: true,
+          })
+        ).digest
+    console.log(`Image digest: ${imageDigest}`)
     console.log('Dry run complete; manifests and cluster state were not changed.')
     return
   }
 
-  updateAtticImageManifests({ imageDigest: imageResult.digest })
+  const imageDigest = requireDeployImageDigest(options)
+  assertDeployImagePlatforms(imageDigest)
+  updateAtticImageManifests({
+    imageDigest,
+    registry: options.registry,
+    repository: options.repository,
+    kustomizePath: options.kustomizePath,
+  })
 
   if (!options.apply) {
     console.log('Skipping kubectl apply because --no-apply was requested.')
@@ -195,8 +303,13 @@ if (import.meta.main) {
 
 export const __private = {
   assertAtticImageDigest,
+  assertDeployImagePlatforms,
+  assertRequiredImagePlatforms,
+  imageNameFor,
   parseArgs,
+  requireDeployImageDigest,
   resolveOptions,
+  resolveKustomizeManifestPaths,
   updateAtticImageManifests,
   updateImageReferences,
 }
