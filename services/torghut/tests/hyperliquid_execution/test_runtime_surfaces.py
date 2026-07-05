@@ -640,15 +640,16 @@ class _PartialFeatureServiceFeed(_ServiceFeed):
 
 class _TwoExecutableServiceFeed(_PartialFeatureServiceFeed):
     def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
-        assert market_ids == ["hl:perp:xyz:NVDA", "hl:perp:xyz:MU"]
-        return [
-            _feature(event_ts=self.now),
-            _feature(
+        assert set(market_ids) <= {"hl:perp:xyz:NVDA", "hl:perp:xyz:MU"}
+        features_by_market_id = {
+            "hl:perp:xyz:NVDA": _feature(event_ts=self.now),
+            "hl:perp:xyz:MU": _feature(
                 event_ts=self.now,
                 market_id="hl:perp:xyz:MU",
                 coin="MU",
             ),
-        ]
+        }
+        return [features_by_market_id[market_id] for market_id in market_ids]
 
 
 class _ServiceExchange:
@@ -681,6 +682,16 @@ class _ServiceExchange:
                     market.coin: str(market.max_leverage) for market in selected
                 },
             },
+        )
+
+    def filter_crossable_markets(
+        self,
+        markets: tuple[ExecutionMarket, ...],
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
+        return markets, RuntimeDependencyStatus(
+            "hyperliquid_testnet_liquidity",
+            True,
+            details={"selected": [market.coin for market in markets]},
         )
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:

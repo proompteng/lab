@@ -312,7 +312,7 @@ describe('Torghut manifest scheduling', () => {
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBeUndefined()
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS).toBe('50')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS).toBe('1000')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_POLICY).toBe('marketable_ioc')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_TTL_SECONDS).toBe('10')

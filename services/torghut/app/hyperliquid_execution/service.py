@@ -28,30 +28,18 @@ from .universe import UniverseSelectionConfig, select_configured_markets
 
 
 class HyperliquidExecutionFeed(Protocol):
-    """ClickHouse read surface used by one v2 cycle."""
+    def status(self) -> FeedStatus: ...
 
-    def status(self) -> FeedStatus:
-        """Return feed freshness."""
-        ...
+    def load_catalog_rows(self) -> list[dict[str, object]]: ...
 
-    def load_catalog_rows(self) -> list[dict[str, object]]:
-        """Load candidate market catalog rows."""
-        ...
-
-    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
-        """Load latest feature rows."""
-        ...
+    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]: ...
 
 
 class _Session(Protocol):
-    def commit(self) -> None:
-        """Commit one runtime cycle."""
-        ...
+    def commit(self) -> None: ...
 
 
 class HyperliquidExecutionService:
-    """One-cycle v2 orchestrator."""
-
     def __init__(
         self,
         *,
@@ -260,11 +248,14 @@ class HyperliquidExecutionService:
         execution_markets, execution_status = self._exchange.filter_supported_markets(
             feed_markets
         )
-        fresh_features = self._fresh_features(execution_markets)
-        selected_markets, selected_features = _select_markets_with_fresh_features(
-            execution_markets, fresh_features
+        liquid_markets, liquidity_status = self._exchange.filter_crossable_markets(
+            execution_markets
         )
-        feature_status = _feature_status(execution_markets, fresh_features)
+        fresh_features = self._fresh_features(liquid_markets)
+        selected_markets, selected_features = _select_markets_with_fresh_features(
+            liquid_markets, fresh_features
+        )
+        feature_status = _feature_status(liquid_markets, fresh_features)
         open_order_status = self._reconcile_exchange_state(
             repository, selected_markets, observed_at
         )
@@ -273,10 +264,16 @@ class HyperliquidExecutionService:
             markets=selected_markets,
             features=selected_features,
             dependencies=feed_status.statuses
-            + (execution_status, feature_status, open_order_status, exchange_status),
+            + (
+                execution_status,
+                liquidity_status,
+                feature_status,
+                open_order_status,
+                exchange_status,
+            ),
             universe_details=self._universe_details(
                 feed_details,
-                execution_status,
+                (execution_status, liquidity_status),
                 feature_status,
                 selected_markets,
             ),
@@ -320,12 +317,14 @@ class HyperliquidExecutionService:
     def _universe_details(
         self,
         feed_details: dict[str, object],
-        execution_status: RuntimeDependencyStatus,
+        execution_statuses: tuple[RuntimeDependencyStatus, RuntimeDependencyStatus],
         feature_status: RuntimeDependencyStatus,
         selected_markets: tuple[ExecutionMarket, ...],
     ) -> dict[str, object]:
+        execution_status, liquidity_status = execution_statuses
         details = dict(feed_details)
         details.update(execution_status.details)
+        details["liquidity"] = dict(liquidity_status.details)
         details.update(self._exchange.execution_metadata_details())
         details["selected_execution_metadata"] = _string_list_detail(
             details.get("selected")
@@ -346,8 +345,6 @@ def runtime_readiness(
     latest_cycle: CycleResult | None,
     latest_error: str | None,
 ) -> tuple[bool, list[str], tuple[RuntimeDependencyStatus, ...]]:
-    """Return API readiness for the v2 runtime."""
-
     reasons = config.validation_errors()
     if latest_error is not None:
         reasons.append(f"latest_cycle_error:{latest_error}")
