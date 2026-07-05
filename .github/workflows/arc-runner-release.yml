@@ -160,6 +160,7 @@ jobs:
         if: steps.meta.outputs.promote == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/arc-runner-release-${{ steps.meta.outputs.tag }}
           title: 'chore(arc): promote runner image ${{ steps.meta.outputs.tag }}'
           commit-message: 'chore(arc): promote runner image ${{ steps.meta.outputs.tag }}'

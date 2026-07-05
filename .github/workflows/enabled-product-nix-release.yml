@@ -194,6 +194,7 @@ jobs:
         if: steps.promote.outputs.promoted == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/product-nix-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha }}
           title: 'chore(product): promote nix product images'
           commit-message: 'chore(product): promote nix product images'

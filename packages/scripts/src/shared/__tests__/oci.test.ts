@@ -9,6 +9,7 @@ const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 const repoFileExists = (path: string): boolean => existsSync(new URL(path, repoRoot))
 const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const releasePrTokenInput = 'token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}'
 const expectNixListBlock = (source: string, assignment: string): string => {
   const match = source.match(new RegExp(`${escapeRegex(assignment)}\\s*=\\s*\\[([\\s\\S]*?)\\];`, 'm'))
   expect(match?.[1]).toBeDefined()
@@ -39,6 +40,7 @@ const productNixWorkflow = readRepoFile('.github/workflows/product-nix-images.ym
 const bunWorkspaceServiceModule = readRepoFile('nix/images/bun-workspace-service.nix')
 const enabledProductReleaseWorkflow = readRepoFile('.github/workflows/enabled-product-nix-release.yml')
 const agentsBuildWorkflow = readRepoFile('.github/workflows/agents-build-push.yml')
+const agentsReleaseWorkflow = readRepoFile('.github/workflows/agents-release.yml')
 const agentsCiWorkflow = readRepoFile('.github/workflows/agents-ci.yml')
 const arcRunnerBuildWorkflow = readRepoFile('.github/workflows/arc-runner-build-push.yml')
 const arcRunnerReleaseWorkflow = readRepoFile('.github/workflows/arc-runner-release.yml')
@@ -381,6 +383,29 @@ describe('createOciIndex', () => {
 })
 
 describe('native OCI build workflows', () => {
+  it('creates generated release PRs with an app token fallback so automerge can run', () => {
+    for (const [name, workflow] of [
+      ['agents', agentsReleaseWorkflow],
+      ['arc-runner', arcRunnerReleaseWorkflow],
+      ['attic', atticReleaseWorkflow],
+      ['enabled-product', enabledProductReleaseWorkflow],
+      ['enabled-simple', enabledSimpleReleaseWorkflow],
+      ['headlamp', headlampReleaseWorkflow],
+      ['jangar', jangarReleaseWorkflow],
+      ['sag', sagReleaseWorkflow],
+      ['symphony', symphonyReleaseWorkflow],
+      ['torghut', torghutReleaseWorkflow],
+      ['torghut-hyperliquid-feed', torghutHyperliquidFeedReleaseWorkflow],
+      ['torghut-ta', torghutTaReleaseWorkflow],
+      ['torghut-ws', torghutWsReleaseWorkflow],
+    ]) {
+      expect(workflow, `${name} must open generated release PRs through create-pull-request`).toContain(
+        'peter-evans/create-pull-request@',
+      )
+      expect(workflow, `${name} release PRs must not be authored only by GITHUB_TOKEN`).toContain(releasePrTokenInput)
+    }
+  })
+
   it('routes the live Attic image through real Nix OCI builds', () => {
     expect(atticWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(atticWorkflow).toContain('package_attr: atticd-image')
