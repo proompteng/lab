@@ -108,6 +108,16 @@ describe('enabled app inventory', () => {
     expect(entry('attic').workflowPaths).toContain('.github/workflows/attic-build-push.yaml')
   })
 
+  it('tracks Froussard through both GitHub Actions and manual Nix image paths', () => {
+    expect(entry('froussard')).toMatchObject({
+      class: 'nix-image',
+      nixImageAttr: 'froussard-image',
+      buildScriptPath: 'packages/scripts/src/froussard/build-image.ts',
+      deployScriptPath: 'packages/scripts/src/froussard/deploy-service.ts',
+    })
+    expect(entry('froussard').workflowPaths).toContain('.github/workflows/froussard-ci.yml')
+  })
+
   it('defers complex or unhealthy repo-image apps instead of counting them as rollout proof', () => {
     for (const name of ['jangar', 'symphony-jangar', 'symphony-torghut']) {
       expect(entry(name).class).toBe('deferred')

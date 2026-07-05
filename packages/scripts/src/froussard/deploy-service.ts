@@ -4,7 +4,7 @@ import { relative, resolve } from 'node:path'
 import process from 'node:process'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { buildAndPushNixImage } from '../shared/nix-oci-deploy'
+import { buildImage } from './build-image'
 
 const defaultManifestPath = 'argocd/applications/froussard/knative-service.yaml'
 const defaultRegistry = 'registry.ide-newton.ts.net'
@@ -84,20 +84,16 @@ const resolveImageBuildConfig = ({ version }: VersionMetadata): ImageBuildConfig
 const buildFroussardImage = async (config: ImageBuildConfig, { commit }: VersionMetadata): Promise<BuildResult> => {
   console.log(`Building image ${config.registry}/${config.repository}:${config.tag}`)
 
-  const result = await buildAndPushNixImage({
-    service: 'froussard',
-    imageName: 'froussard',
-    packageAttr: 'froussard-image',
+  const result = await buildImage({
     registry: config.registry,
     repository: config.repository,
     tag: config.tag,
-    sourceSha: commit,
-    latestTag: 'latest',
+    commit,
   })
 
-  console.log(`Published ${result.image}:${result.tag} (${result.reference})`)
+  console.log(`Published ${result.image} (${result.digest})`)
 
-  return { image: `${result.image}:${result.tag}`, digest: result.reference }
+  return { image: result.image, digest: result.digest }
 }
 
 type ManifestUpdateOptions = {

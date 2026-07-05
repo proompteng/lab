@@ -74,6 +74,7 @@ const oiratBuildScript = readRepoFile('packages/scripts/src/oirat/build-image.ts
 const bumbaBuildScript = readRepoFile('packages/scripts/src/bumba/build-image.ts')
 const atticBuildScript = readRepoFile('packages/scripts/src/attic/build-image.ts')
 const atticDeployScript = readRepoFile('packages/scripts/src/attic/deploy-service.ts')
+const froussardBuildScript = readRepoFile('packages/scripts/src/froussard/build-image.ts')
 const froussardDeployScript = readRepoFile('packages/scripts/src/froussard/deploy-service.ts')
 const symphonyBuildScript = readRepoFile('packages/scripts/src/symphony/build-image.ts')
 const symphonyDeployScript = readRepoFile('packages/scripts/src/symphony/deploy-service.ts')
@@ -951,7 +952,7 @@ describe('native OCI build workflows', () => {
       oiratBuildScript,
       bumbaBuildScript,
       atticBuildScript,
-      froussardDeployScript,
+      froussardBuildScript,
       symphonyBuildScript,
       sagBuildScript,
       agentsBuildScript,
@@ -980,6 +981,10 @@ describe('native OCI build workflows', () => {
     expect(atticDeployScript).toContain('no-apply')
     expect(atticDeployScript).toContain('registry.ide-newton.ts.net/lab/attic@sha256:<64 hex>')
     expect(atticDeployScript).toContain('gc-cronjob.yaml')
+    expect(froussardDeployScript).not.toContain("from '../shared/docker'")
+    expect(froussardDeployScript).not.toContain('buildAndPushDockerImage')
+    expect(froussardDeployScript).not.toContain('inspectImageDigest')
+    expect(froussardDeployScript).toContain("from './build-image'")
     expect(symphonyDeployScript).not.toContain("from '../shared/docker'")
     expect(symphonyDeployScript).not.toContain('inspectImageDigest')
     expect(symphonyDeployScript).toContain('dryRun')
