@@ -4,13 +4,14 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 
 ## Scope
 
-- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`.
+- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
+  `proompteng`, `olden`, `synthesis`.
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
-  `.github/workflows/nix-oci-build-common.yml`.
+  `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
-  `headlamp-image`.
+  `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -18,9 +19,11 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
   - `packages/scripts/src/arc-runner/build-image.ts` and `packages/scripts/src/arc-runner/deploy-service.ts`
   - `packages/scripts/src/attic/build-image.ts` and `packages/scripts/src/attic/deploy-service.ts`
   - `packages/scripts/src/headlamp/build-image.ts` and `packages/scripts/src/headlamp/deploy-service.ts`
+  - product app build/deploy scripts under `packages/scripts/src/{app,docs,proompteng,olden,synthesis}/`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
-  `.github/workflows/headlamp-release.yml` and `.github/workflows/release-pr-automerge.yml`.
+  `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`, and
+  `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -45,6 +48,8 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#11988](https://github.com/proompteng/lab/pull/11988) | `b149b5722d85353afe59690b29894b22a6937e0e` | Add the Headlamp Nix image build and release path.                                               |
 | [#11999](https://github.com/proompteng/lab/pull/11999) | `2cefa5e2ed774cc46706d49def73e3ed90b0268e` | Fix Headlamp runtime static index copy in the Nix image.                                         |
 | [#12001](https://github.com/proompteng/lab/pull/12001) | `aa4fdb5cffc9f2e9f97f011278222878170e483e` | Promote Headlamp to the final repaired Nix-built digest.                                         |
+| [#11851](https://github.com/proompteng/lab/pull/11851) | `5e046147da58bd014bca17565cbd731626ec875b` | Include platform digests in OCI release contracts used by product apps.                          |
+| [#11866](https://github.com/proompteng/lab/pull/11866) | `7529c68ea151aa2106a821565c514f41719a8e5c` | Promote `app`, `docs`, `proompteng`, `olden`, and `synthesis` to Nix-built digests.              |
 
 ## Failed Proof That Exposed The Gap
 
@@ -514,6 +519,78 @@ Current readback:
 The Headlamp release contract proves digest, platforms, platform digests, and source SHA, but it does not include the
 newer `cacheProvenance`, lockfile hash, tool version, or per-phase timing objects. This checkpoint therefore uses GitHub
 job wall times above and does not claim Headlamp cache-hit counts.
+
+## Product Apps Rollout Proof
+
+This section covers the enabled product apps built by `.github/workflows/product-nix-images.yml`: `app`, `docs`,
+`proompteng`, `olden`, and `synthesis`.
+
+### Product Main Build Proof
+
+Run [28701445310](https://github.com/proompteng/lab/actions/runs/28701445310) succeeded on `main`.
+
+| Service     | Nix attr           | amd64 build | arm64 build | publish-index |
+| ----------- | ------------------ | ----------: | ----------: | ------------: |
+| `app`       | `app-image`        |      `7m24s` |     `41m31s` |        `1m13s` |
+| `docs`      | `docs-image`       |     `13m01s` |      `3m03s` |        `1m07s` |
+| `olden`     | `olden-image`      |      `2m42s` |      `3m31s` |        `1m18s` |
+| `proompteng` | `proompteng-image` |      `4m37s` |     `12m51s` |        `1m11s` |
+| `synthesis` | `synthesis-image`  |      `3m43s` |     `29m31s` |        `1m16s` |
+
+Release contract fields:
+
+| Service     | Digest                                                              | amd64 platform digest                                                  | arm64 platform digest                                                  |
+| ----------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `app`       | `sha256:c410d4f09aa4290dfb12da53982dd950a7c8d5a2630a06912d166fad2abbb9c3` | `sha256:299b53c8dcb45f7e39a7e2514906224c6ce3b07f0e4d5f35ee9a982402e151fe` | `sha256:63e6df8380680f6cd8d79a600f5ca1eb9d6cbd199902359df3a2ef93953ee54a` |
+| `docs`      | `sha256:e9d7ebbff45c66bbf77c8b73a05ed8ec6801297a737ae2e7cdbda410ae1fe58d` | `sha256:790323474421235381f8f3fb4a9c81b90636f760b43cc3feb2242bc3e862f6a1` | `sha256:9f929166566804759675c2200bf9fe9ebb7d8783ff97b7d42f50458cdc940232` |
+| `olden`     | `sha256:84b359d4418e036be781cc56ce2c910fbcc9c2a3c7c52732098d89c9bb22d3b5` | `sha256:872fae03ede1e2e349cab6bd10a3548ea550bcc0d0dc3d4e34620bbabd56a51e` | `sha256:0f19783f5624e3576d562ab7802270780ec3b5c44e91c61f32d5ebbc536f0eb0` |
+| `proompteng` | `sha256:aeb92626912fb5c5f48a37b1ec67531fae4d5e1e4cb57c541bdacc9996074ee2` | `sha256:50f681c72d939834e00ad9422c2c88d1bafb1bef85f40006f57c1cc5063de347` | `sha256:d655ce6d9c74f4bba631e559b7ed894000c8658758a7e7806d5c82d3d16f2836` |
+| `synthesis` | `sha256:62486474c8875e2ed3341abeb5d06a45d385a25e8f53a8a8f7efb3dd6b3cee32` | `sha256:562099c5a4e77ec279dbfde1b2fdc2ca25e6d04c82b376b0d1557d7b8d182f29` | `sha256:c0eff204ca36ca7c256986ba8b120faf18f9bfe3113e2910d177334ab4251b6b` |
+
+Shared contract fields for all five product apps:
+
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `5e046147da58bd014bca17565cbd731626ec875b`
+- `platforms`: `linux/amd64`, `linux/arm64`
+
+### Product Release Automation Proof
+
+Release PR [#11866](https://github.com/proompteng/lab/pull/11866) promoted all five product app digests from source
+commit `5e046147da58bd014bca17565cbd731626ec875b`.
+
+The PR changed only these GitOps image pins:
+
+- `argocd/applications/app/kustomization.yaml`
+- `argocd/applications/docs/kustomization.yaml`
+- `argocd/applications/olden/kustomization.yaml`
+- `argocd/applications/proompteng/kustomization.yaml`
+- `argocd/applications/synthesis/kustomization.yaml`
+
+The generated PR testing recorded `nix run .#assert-oci-platforms -- <image>@<digest> linux/amd64 linux/arm64` for each
+promoted image.
+
+### Product Live Rollout Smoke
+
+Current readback:
+
+| Service     | Argo state       | Live image digest                                                      | Pod state             | Smoke |
+| ----------- | ---------------- | ---------------------------------------------------------------------- | --------------------- | ----- |
+| `app`       | `Synced/Healthy` | `sha256:c410d4f09aa4290dfb12da53982dd950a7c8d5a2630a06912d166fad2abbb9c3` | `1/1 Running`, `0` restarts | `/` returned `307`; following redirect returned `200` |
+| `docs`      | `Synced/Healthy` | `sha256:e9d7ebbff45c66bbf77c8b73a05ed8ec6801297a737ae2e7cdbda410ae1fe58d` | `1/1 Running`, `0` restarts | `/` returned `200` |
+| `olden`     | `Synced/Healthy` | `sha256:84b359d4418e036be781cc56ce2c910fbcc9c2a3c7c52732098d89c9bb22d3b5` | `1/1 Running`, `0` restarts | `/` returned `200` |
+| `proompteng` | `Synced/Healthy` | `sha256:aeb92626912fb5c5f48a37b1ec67531fae4d5e1e4cb57c541bdacc9996074ee2` | `1/1 Running`, `0` restarts | `/` returned `200` |
+| `synthesis` | `Synced/Healthy` | `sha256:62486474c8875e2ed3341abeb5d06a45d385a25e8f53a8a8f7efb3dd6b3cee32` | `1/1 Running`, `0` restarts | `/` returned `200` |
+
+### Product Cache Status
+
+The product build jobs used Attic setup and pushed build-platform helper closures plus image archive closures to Attic.
+The release contracts prove digest and platform identity, but they do not include normalized `cacheProvenance` objects.
+This checkpoint therefore records job wall times and does not claim cache-hit counts.
+
+The July 4 product run is not yet a clean performance win across the board: `app` arm64 took `41m31s` and `synthesis`
+arm64 took `29m31s`, largely in image archive warming. The next product optimization should reduce or bound closure
+warming costs while preserving the digest-pinned Nix OCI release path.
 
 ## Inventory Audit
 
