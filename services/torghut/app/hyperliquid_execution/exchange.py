@@ -9,6 +9,7 @@ from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
+from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
     AccountState,
@@ -27,6 +28,14 @@ from .universe import execution_universe_status
 _METADATA_REFRESH_SECONDS = 300
 _SUPPORTED_LIMIT_TIFS = {"Ioc"}
 _BPS_DENOMINATOR = Decimal("10000")
+_BOOK_UNAVAILABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    AttributeError,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -92,6 +101,7 @@ class HyperliquidSdkExecutionExchange:
         self._config = config
         self._sdk_exchange: Any | None = None
         self._sdk_info: Any | None = None
+        self._sdk_info_perp_dexs: tuple[str, ...] | None = None
         self._sdk_exchange_perp_dexs: tuple[str, ...] | None = None
         self._last_read_at: datetime | None = None
         self._last_metadata_at: datetime | None = None
@@ -164,7 +174,10 @@ class HyperliquidSdkExecutionExchange:
         selected: list[ExecutionMarket] = []
         skipped: dict[str, str] = {}
         for market in markets:
-            reason = self._uncrossable_reason(market)
+            try:
+                reason = self._uncrossable_reason(market)
+            except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
+                reason = f"book_unavailable:{type(exc).__name__}"
             if reason is None:
                 selected.append(market)
                 continue
@@ -385,30 +398,35 @@ class HyperliquidSdkExecutionExchange:
 
     def _uncrossable_reason(self, market: ExecutionMarket) -> str | None:
         try:
-            exchange = self._exchange()
-            slippage = float(
-                self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
-            )
-            buy_limit = Decimal(
-                str(exchange._slippage_price(market.coin, True, slippage))
-            )
-            sell_limit = Decimal(
-                str(exchange._slippage_price(market.coin, False, slippage))
-            )
-            book = cast(dict[str, object], exchange.info.l2_snapshot(market.coin))
+            info = self._info()
+            book = cast(dict[str, object], info.l2_snapshot(market.coin))
             self._last_read_at = datetime.now(timezone.utc)
-        except (LookupError, OSError, TypeError, ValueError) as exc:
+        except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             return f"book_unavailable:{type(exc).__name__}"
         best_bid = _best_level_price(book, 0)
         best_ask = _best_level_price(book, 1)
         if best_bid is None or best_ask is None:
             return "book_empty"
-        buy_crossable = buy_limit >= best_ask
-        sell_crossable = sell_limit <= best_bid
-        if buy_crossable and sell_crossable:
+        try:
+            mid_price = sdk_mid_price(info, market.coin, _sdk_dex(market.dex))
+            if mid_price is None:
+                return "book_empty"
+            slippage = self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
+            buy_limit = sdk_slippage_limit_price(
+                info, market.coin, True, mid_price, slippage
+            )
+            sell_limit = sdk_slippage_limit_price(
+                info, market.coin, False, mid_price, slippage
+            )
+        except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
+            return f"book_unavailable:{type(exc).__name__}"
+        if buy_limit >= best_ask and (
+            not self._config.allow_short_entries or sell_limit <= best_bid
+        ):
             return None
+        expected_sides = "buy,sell" if self._config.allow_short_entries else "buy"
         return (
-            "book_not_crossable:"
+            f"book_not_crossable:sides={expected_sides}:"
             f"bid={best_bid}:ask={best_ask}:buy_limit={buy_limit}:sell_limit={sell_limit}"
         )
 
@@ -515,10 +533,16 @@ class HyperliquidSdkExecutionExchange:
         return self._sdk_exchange
 
     def _info(self) -> Any:
-        if self._sdk_info is None:
+        perp_dexs = self._known_dexes()
+        if self._sdk_info is None or self._sdk_info_perp_dexs != perp_dexs:
             info_module = importlib.import_module("hyperliquid.info")
             info_cls = getattr(info_module, "Info")
-            self._sdk_info = info_cls(self._config.exchange_api_url, skip_ws=True)
+            self._sdk_info = info_cls(
+                self._config.exchange_api_url,
+                skip_ws=True,
+                perp_dexs=list(perp_dexs),
+            )
+            self._sdk_info_perp_dexs = perp_dexs
         return self._sdk_info
 
     def _cloid(self, raw: str) -> Any:
