@@ -225,27 +225,42 @@ const assertLiveSubmitActivationContract = (activation: JsonObject): LiveSubmitC
   return 'bounded_live_submit_active'
 }
 
-const assertSimpleLaneCaps = (status: JsonObject, liveSubmissionGate: JsonObject) => {
-  const simpleLane = requireObject(liveSubmissionGate.simple_lane, 'torghut status live_submission_gate.simple_lane')
-  const simpleLaneStatus = requireObject(status.simple_lane_status, 'torghut status simple_lane_status')
-  if (requireBoolean(simpleLane.submit_enabled, 'torghut live_submission_gate.simple_lane.submit_enabled') !== true) {
-    throw new Error('torghut simple live submit must be enabled for bounded live-submit rollout')
+const assertOperationalSubmissionAuthority = (status: JsonObject) => {
+  const submissionAuthority = requireObject(status.submission_authority, 'torghut status submission_authority')
+  requireScalarValue(
+    submissionAuthority.schema_version,
+    'torghut.submission-authority.v1',
+    'torghut submission_authority.schema_version',
+  )
+  requireScalarValue(
+    submissionAuthority.authority_scope,
+    'operational_submission',
+    'torghut submission_authority.authority_scope',
+  )
+  requireScalarValue(
+    submissionAuthority.effective_submit_mode,
+    'operational_submission',
+    'torghut submission_authority.effective_submit_mode',
+  )
+  requireScalarValue(submissionAuthority.reason, 'operational_submission_ready', 'torghut submission_authority.reason')
+  if (requireBoolean(submissionAuthority.can_submit_now, 'torghut submission_authority.can_submit_now') !== true) {
+    throw new Error('operational repair-only rollout acceptance requires submission_authority.can_submit_now=true')
   }
-  if (requireBoolean(simpleLaneStatus.submit_enabled, 'torghut simple_lane_status.submit_enabled') !== true) {
-    throw new Error('torghut simple_lane_status.submit_enabled must be true')
-  }
+
+  const authorityGate = requireObject(
+    submissionAuthority.operational_submission_gate,
+    'torghut submission_authority.operational_submission_gate',
+  )
   if (
-    requireBoolean(
-      simpleLaneStatus.paper_route_probe_allow_live_mode,
-      'torghut simple_lane_status.paper_route_probe_allow_live_mode',
-    ) !== true
+    requireBoolean(authorityGate.allowed, 'torghut submission_authority.operational_submission_gate.allowed') !== true
   ) {
-    throw new Error('torghut simple_lane_status.paper_route_probe_allow_live_mode must be true')
+    throw new Error('operational repair-only rollout acceptance requires submission_authority gate allowed=true')
   }
-  requireScalarValue(simpleLaneStatus.paper_route_probe_max_notional, '100', 'torghut paper_route_probe_max_notional')
-  requireScalarValue(simpleLaneStatus.max_notional_per_order, '100', 'torghut max_notional_per_order')
-  requireScalarValue(simpleLaneStatus.max_notional_per_symbol, '250', 'torghut max_notional_per_symbol')
-  requireScalarValue(simpleLaneStatus.max_gross_exposure_pct_equity, '0.05', 'torghut max_gross_exposure_pct_equity')
+  requireScalarValue(
+    authorityGate.reason,
+    'operational_submission_ready',
+    'torghut submission_authority.operational_submission_gate.reason',
+  )
 }
 
 const assertCoreDependenciesOnlyReadyz = (readyz: JsonObject) => {
@@ -315,7 +330,7 @@ const assertBoundedLiveSubmitContract = (status: JsonObject): LiveSubmitContract
   if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
     throw new Error('torghut status autonomy_enabled must be false for bounded live-submit rollout')
   }
-  assertSimpleLaneCaps(status, liveSubmissionGate)
+  assertOperationalSubmissionAuthority(status)
   const liveSubmitContract = assertLiveSubmitActivationContract(activation)
   if (liveSubmitContract === 'expired_activation_blocked') {
     if (requireBoolean(liveSubmissionGate.allowed, 'torghut status live_submission_gate.allowed') !== false) {
@@ -372,7 +387,6 @@ const assertShadowZeroNotionalGateClosedContract = (status: JsonObject, digest: 
   if (requireArray(liveSubmissionGate.blocked_reasons, 'torghut live_submission_gate.blocked_reasons').length === 0) {
     throw new Error('shadow zero-notional rollout acceptance requires blocked live_submission_gate reasons')
   }
-  assertSimpleLaneCaps(status, liveSubmissionGate)
   if (requireBoolean(activation.configured, 'torghut live_submit_activation.configured') !== false) {
     throw new Error('shadow zero-notional rollout acceptance requires live_submit_activation.configured=false')
   }
@@ -452,7 +466,7 @@ const assertOperationalZeroNotionalRepairContract = (status: JsonObject, digest:
   requireScalarValue(proofFloor.capital_state, 'zero_notional', 'torghut status proof_floor.capital_state')
   requireScalarValue(proofFloor.max_notional, '0', 'torghut status proof_floor.max_notional')
 
-  assertSimpleLaneCaps(status, liveSubmissionGate)
+  assertOperationalSubmissionAuthority(status)
   assertLiveSubmitActivationContract(
     requireObject(
       liveSubmissionGate.live_submit_activation,

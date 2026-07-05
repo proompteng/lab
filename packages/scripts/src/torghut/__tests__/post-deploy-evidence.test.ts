@@ -39,19 +39,23 @@ const baseTradingStatus = {
     reason: null,
     blocked_reasons: [],
     live_submit_activation: baseLiveSubmitActivation,
-    simple_lane: {
-      submit_enabled: true,
-      shared_gate_enforced: true,
-      blocked_reasons: [],
-    },
   },
-  simple_lane_status: {
-    submit_enabled: true,
-    paper_route_probe_allow_live_mode: true,
-    paper_route_probe_max_notional: 100,
-    max_notional_per_order: 100,
-    max_notional_per_symbol: 250,
-    max_gross_exposure_pct_equity: 0.05,
+  submission_authority: {
+    schema_version: 'torghut.submission-authority.v1',
+    authority_scope: 'operational_submission',
+    effective_submit_mode: 'operational_submission',
+    can_submit_now: true,
+    reason: 'operational_submission_ready',
+    operational_submission_gate: {
+      allowed: true,
+      blocked_reasons: [],
+      reason: 'operational_submission_ready',
+      execution_route: {
+        route: 'testnet',
+        reason: 'alpaca_regular_session_closed',
+        testnet_after_hours_enabled: true,
+      },
+    },
   },
   route_reacquisition_board: baseRouteBoard,
 }
@@ -392,7 +396,7 @@ describe('validatePostDeployEvidence', () => {
     ).toThrow('live_submit_activation.reason must be live_submit_activation_expired')
   })
 
-  it('rejects healthy readyz when live submit caps drift above the GitOps contract', () => {
+  it('rejects healthy readyz when submission authority drifts away from operational submission', () => {
     expect(() =>
       validatePostDeployEvidence({
         readyzHttpStatus: '200',
@@ -400,13 +404,13 @@ describe('validatePostDeployEvidence', () => {
         revenueRepairDigest: { ...baseDigest, repair_queue: [] },
         tradingStatus: {
           ...baseTradingStatus,
-          simple_lane_status: {
-            ...baseTradingStatus.simple_lane_status,
-            max_notional_per_order: 1000,
+          submission_authority: {
+            ...baseTradingStatus.submission_authority,
+            can_submit_now: false,
           },
         },
       }),
-    ).toThrow('max_notional_per_order must be 100')
+    ).toThrow('submission_authority.can_submit_now=true')
   })
 
   it('reports stale empirical jobs as diagnostics without blocking live-submit rollout acceptance', () => {
