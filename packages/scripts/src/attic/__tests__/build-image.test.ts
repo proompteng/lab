@@ -11,6 +11,7 @@ afterEach(() => {
 describe('attic build-image helpers', () => {
   it('builds the Attic image through the shared Nix OCI helper', async () => {
     let captured: BuildAndPushNixImageOptions | undefined
+    const imageDigest = `sha256:${'b'.repeat(64)}`
 
     __private.setExecGit((args) => {
       if (args[0] === 'describe') return 'v0.1.0'
@@ -23,8 +24,8 @@ describe('attic build-image helpers', () => {
         service: options.service,
         image: `${options.registry}/${options.repository}`,
         tag: options.tag ?? 'latest',
-        digest: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-        reference: `${options.registry}/${options.repository}@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`,
+        digest: imageDigest,
+        reference: `${options.registry}/${options.repository}@${imageDigest}`,
         sourceSha: options.sourceSha ?? '',
         packageAttr: options.packageAttr,
         contractPath: '.artifacts/attic/manual-release-contract.json',
@@ -55,8 +56,7 @@ describe('attic build-image helpers', () => {
     })
     expect(result).toEqual({
       image: 'registry.ide-newton.ts.net/lab/attic:sha-test',
-      digest:
-        'registry.ide-newton.ts.net/lab/attic@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      digest: `registry.ide-newton.ts.net/lab/attic@${imageDigest}`,
       version: 'v0.1.0',
       commit: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
       platforms: ['linux/amd64', 'linux/arm64'],
