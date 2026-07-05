@@ -182,6 +182,9 @@ class HyperliquidSdkExecutionExchange:
             },
         )
 
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        return self._normalize_order_intent(intent)
+
     def submit_order(self, intent: OrderIntent) -> OrderResult:
         if intent.tif not in _SUPPORTED_LIMIT_TIFS:
             return OrderResult(
@@ -204,7 +207,7 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "reduce_only_entry_orders_unsupported"},
                 rejection_reason="reduce_only_entry_orders_unsupported",
             )
-        normalized = self._normalize_order_intent(intent)
+        normalized = self.normalize_order_intent(intent)
         response = cast(
             dict[str, object],
             self._exchange().market_open(
