@@ -47,6 +47,20 @@ const rejectDockerOptions = (options: BuildImageOptions): void => {
   }
 }
 
+const requireOptionValue = (args: string[], index: number, optionName: string): string => {
+  const value = args[index + 1]
+  if (value === undefined || value.startsWith('-')) {
+    throw new Error(`Missing value for ${optionName}`)
+  }
+  return value
+}
+
+const parsePlatforms = (value: string): string[] =>
+  value
+    .split(',')
+    .map((platform) => platform.trim())
+    .filter(Boolean)
+
 const resolveBuildConfiguration = (options: BuildImageOptions = {}): BuildConfiguration => {
   rejectDockerOptions(options)
 
@@ -66,7 +80,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
     if (!arg) continue
 
     if (arg === '--tag') {
-      options.tag = args[index + 1]
+      options.tag = requireOptionValue(args, index, arg)
       index += 1
       continue
     }
@@ -75,7 +89,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--repository') {
-      options.repository = args[index + 1]
+      options.repository = requireOptionValue(args, index, arg)
       index += 1
       continue
     }
@@ -84,7 +98,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--registry') {
-      options.registry = args[index + 1]
+      options.registry = requireOptionValue(args, index, arg)
       index += 1
       continue
     }
@@ -96,9 +110,52 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       options.dryRun = true
       continue
     }
+    if (arg === '--context') {
+      options.context = requireOptionValue(args, index, arg)
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--context=')) {
+      options.context = arg.slice('--context='.length)
+      continue
+    }
+    if (arg === '--dockerfile') {
+      options.dockerfile = requireOptionValue(args, index, arg)
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--dockerfile=')) {
+      options.dockerfile = arg.slice('--dockerfile='.length)
+      continue
+    }
+    if (arg === '--platforms') {
+      options.platforms = parsePlatforms(requireOptionValue(args, index, arg))
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--platforms=')) {
+      options.platforms = parsePlatforms(arg.slice('--platforms='.length))
+      continue
+    }
+    if (arg === '--cache-ref') {
+      options.cacheRef = requireOptionValue(args, index, arg)
+      index += 1
+      continue
+    }
+    if (arg.startsWith('--cache-ref=')) {
+      options.cacheRef = arg.slice('--cache-ref='.length)
+      continue
+    }
+    if (arg.startsWith('-')) {
+      const optionName = arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg
+      throw new Error(`Unknown option: ${optionName}`)
+    }
     if (!arg.startsWith('-') && options.tag === undefined) {
       options.tag = arg
+      continue
     }
+
+    throw new Error(`Unexpected positional argument: ${arg}`)
   }
   return options
 }
