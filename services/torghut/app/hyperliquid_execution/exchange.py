@@ -579,7 +579,7 @@ def _parse_sdk_status(
         if not isinstance(value, dict):
             continue
         oid = cast(Mapping[str, object], value).get("oid")
-        return order_status, str(oid) if oid is not None else None, None
+        return cast(OrderStatus, order_status), str(oid) if oid is not None else None, None
     return "submitted", None, None
 
 
