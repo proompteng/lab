@@ -142,7 +142,7 @@ let
       beartype
       pythonPackages."typing-extensions"
     ];
-    pythonImportsCheck = [ "py_key_value_shared" ];
+    pythonImportsCheck = [ "key_value.shared" ];
   };
 
   pyKeyValueAio = mkPyWheel {
@@ -157,7 +157,7 @@ let
       pythonPackages.diskcache
       pythonPackages.pathvalidate
     ];
-    pythonImportsCheck = [ "py_key_value_aio" ];
+    pythonImportsCheck = [ "key_value.aio" ];
   };
 
   fastmcp = mkPyWheel {
