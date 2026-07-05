@@ -1,5 +1,3 @@
-"""Feed readiness dependency regressions for Hyperliquid execution."""
-
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -323,6 +321,16 @@ class _Exchange:
                 "active_execution_metadata": [market.coin for market in selected],
                 "selected": [market.coin for market in selected],
             },
+        )
+
+    def filter_crossable_markets(
+        self,
+        markets: tuple[ExecutionMarket, ...],
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
+        return markets, RuntimeDependencyStatus(
+            "hyperliquid_testnet_liquidity",
+            True,
+            details={"selected": [market.coin for market in markets]},
         )
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:

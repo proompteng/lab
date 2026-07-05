@@ -39,6 +39,13 @@ class HyperliquidExecutionExchange(Protocol):
         """Return markets active on the testnet execution venue."""
         ...
 
+    def filter_crossable_markets(
+        self,
+        markets: tuple[ExecutionMarket, ...],
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
+        """Return markets with a testnet book crossable by market_open slippage."""
+        ...
+
     def submit_order(self, intent: OrderIntent) -> OrderResult:
         """Submit a marketable entry order."""
         ...
@@ -141,6 +148,38 @@ class HyperliquidSdkExecutionExchange:
         self._latest_metadata_details = details
         return selected, replace(
             status, observed_at=self._last_metadata_at, details=details
+        )
+
+    def filter_crossable_markets(
+        self,
+        markets: tuple[ExecutionMarket, ...],
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
+        if not markets:
+            return (), RuntimeDependencyStatus(
+                name="hyperliquid_testnet_liquidity",
+                ready=False,
+                reason="no_execution_markets",
+                details={"slippage_bps": str(self._config.marketable_ioc_slippage_bps)},
+            )
+        selected: list[ExecutionMarket] = []
+        skipped: dict[str, str] = {}
+        for market in markets:
+            reason = self._uncrossable_reason(market)
+            if reason is None:
+                selected.append(market)
+                continue
+            skipped[market.coin] = reason
+        ready = bool(selected)
+        return tuple(selected), RuntimeDependencyStatus(
+            name="hyperliquid_testnet_liquidity",
+            ready=ready,
+            observed_at=datetime.now(timezone.utc),
+            reason=None if ready else "no_crossable_testnet_markets",
+            details={
+                "selected": [market.coin for market in selected],
+                "skipped": skipped,
+                "slippage_bps": str(self._config.marketable_ioc_slippage_bps),
+            },
         )
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:
@@ -340,6 +379,35 @@ class HyperliquidSdkExecutionExchange:
         if notional_usd < self._config.min_order_notional_usd:
             raise ValueError("order_notional_below_minimum")
         return replace(intent, size=size, limit_price=price, notional_usd=notional_usd)
+
+    def _uncrossable_reason(self, market: ExecutionMarket) -> str | None:
+        try:
+            exchange = self._exchange()
+            slippage = float(
+                self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
+            )
+            buy_limit = Decimal(
+                str(exchange._slippage_price(market.coin, True, slippage))
+            )
+            sell_limit = Decimal(
+                str(exchange._slippage_price(market.coin, False, slippage))
+            )
+            book = cast(dict[str, object], exchange.info.l2_snapshot(market.coin))
+            self._last_read_at = datetime.now(timezone.utc)
+        except (LookupError, OSError, TypeError, ValueError) as exc:
+            return f"book_unavailable:{type(exc).__name__}"
+        best_bid = _best_level_price(book, 0)
+        best_ask = _best_level_price(book, 1)
+        if best_bid is None or best_ask is None:
+            return "book_empty"
+        buy_crossable = buy_limit >= best_ask
+        sell_crossable = sell_limit <= best_bid
+        if buy_crossable and sell_crossable:
+            return None
+        return (
+            "book_not_crossable:"
+            f"bid={best_bid}:ask={best_ask}:buy_limit={buy_limit}:sell_limit={sell_limit}"
+        )
 
     def _refresh_metadata(self, markets: tuple[ExecutionMarket, ...]) -> None:
         if self._metadata_fresh():
@@ -755,6 +823,23 @@ def _optional_decimal(value: object) -> Decimal | None:
     if value is None or value == "":
         return None
     return Decimal(str(value))
+
+
+def _best_level_price(book: Mapping[str, object], side_index: int) -> Decimal | None:
+    raw_levels = book.get("levels")
+    if not isinstance(raw_levels, list):
+        return None
+    levels = cast(list[object], raw_levels)
+    if len(levels) <= side_index:
+        return None
+    side = levels[side_index]
+    if not isinstance(side, list) or not side:
+        return None
+    side_levels = cast(list[object], side)
+    level = side_levels[0]
+    if not isinstance(level, Mapping):
+        return None
+    return _optional_decimal(cast(Mapping[str, object], level).get("px"))
 
 
 def _optional_int(value: object) -> int | None:
