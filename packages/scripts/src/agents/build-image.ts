@@ -70,7 +70,7 @@ const imagePlans: AgentsImagePlan[] = [
     imageName: 'agents-shell',
     packageAttr: 'agents-shell-image',
     defaultRepository: 'lab/agents-shell',
-    repositoryEnvKeys: ['AGENTS_SHELL_IMAGE_REPOSITORY'],
+    repositoryEnvKeys: ['AGENTS_SHELL_IMAGE_REPOSITORY', 'AGENTS_IMAGE_REPOSITORY'],
   },
   {
     target: 'runner',
@@ -79,7 +79,7 @@ const imagePlans: AgentsImagePlan[] = [
     imageName: 'agents-codex-runner',
     packageAttr: 'agents-codex-runner-image',
     defaultRepository: 'lab/agents-codex-runner',
-    repositoryEnvKeys: ['AGENTS_RUNNER_IMAGE_REPOSITORY'],
+    repositoryEnvKeys: ['AGENTS_RUNNER_IMAGE_REPOSITORY', 'AGENTS_IMAGE_REPOSITORY'],
   },
 ]
 
@@ -90,6 +90,22 @@ const targetByRepository = new Map(
 )
 
 const dockerOnlyOptionNames = ['context', 'dockerfile', 'codexAuthPath', 'cacheRef', 'platforms', 'cacheMode'] as const
+const dockerOnlyEnvKeys = ['AGENTS_DOCKER_TARGET'] as const
+
+const optionNamesWithRequiredValues = new Set([
+  '--target',
+  '--tag',
+  '--repository',
+  '--registry',
+  '--context',
+  '--dockerfile',
+  '--codex-auth-path',
+  '--cache-ref',
+  '--platforms',
+  '--cache-mode',
+])
+
+const booleanOptionNames = new Set(['--dry-run'])
 
 let buildAndPushNixImageImpl = buildAndPushNixImage
 let execGitImpl = execGit
@@ -116,10 +132,21 @@ const inferTargetFromRepository = (repository: string | undefined): AgentsImageT
 }
 
 const rejectDockerOptions = (options: BuildImageOptions): void => {
-  const present = dockerOnlyOptionNames.filter((name) => options[name] !== undefined)
+  const present = [
+    ...dockerOnlyOptionNames.filter((name) => options[name] !== undefined),
+    ...dockerOnlyEnvKeys.filter((name) => readEnv(name) !== undefined),
+  ]
   if (present.length > 0) {
     throw new Error(`Agents Nix image builds do not accept Docker-only option(s): ${present.join(', ')}`)
   }
+}
+
+const requireOptionValue = (args: string[], index: number, optionName: string): string => {
+  const value = args[index + 1]
+  if (value === undefined || value.startsWith('-')) {
+    throw new Error(`Missing value for ${optionName}`)
+  }
+  return value
 }
 
 const resolveRepository = (plan: AgentsImagePlan, explicitRepository: string | undefined): string => {
@@ -202,7 +229,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
     if (!arg) continue
 
     if (arg === '--target') {
-      options.target = args[i + 1]
+      options.target = requireOptionValue(args, i, arg)
       i += 1
       continue
     }
@@ -211,7 +238,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--tag') {
-      options.tag = args[i + 1]
+      options.tag = requireOptionValue(args, i, arg)
       i += 1
       continue
     }
@@ -220,7 +247,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--repository') {
-      options.repository = args[i + 1]
+      options.repository = requireOptionValue(args, i, arg)
       i += 1
       continue
     }
@@ -229,7 +256,7 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       continue
     }
     if (arg === '--registry') {
-      options.registry = args[i + 1]
+      options.registry = requireOptionValue(args, i, arg)
       i += 1
       continue
     }
@@ -241,9 +268,86 @@ const parseArgs = (args: string[]): BuildImageOptions => {
       options.dryRun = true
       continue
     }
+    if (arg === '--context') {
+      options.context = requireOptionValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--context=')) {
+      options.context = arg.slice('--context='.length)
+      continue
+    }
+    if (arg === '--dockerfile') {
+      options.dockerfile = requireOptionValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--dockerfile=')) {
+      options.dockerfile = arg.slice('--dockerfile='.length)
+      continue
+    }
+    if (arg === '--codex-auth-path') {
+      options.codexAuthPath = requireOptionValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--codex-auth-path=')) {
+      options.codexAuthPath = arg.slice('--codex-auth-path='.length)
+      continue
+    }
+    if (arg === '--cache-ref') {
+      options.cacheRef = requireOptionValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--cache-ref=')) {
+      options.cacheRef = arg.slice('--cache-ref='.length)
+      continue
+    }
+    if (arg === '--platforms') {
+      options.platforms = requireOptionValue(args, i, arg)
+        .split(',')
+        .map((platform) => platform.trim())
+        .filter(Boolean)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--platforms=')) {
+      options.platforms = arg
+        .slice('--platforms='.length)
+        .split(',')
+        .map((platform) => platform.trim())
+        .filter(Boolean)
+      continue
+    }
+    if (arg === '--cache-mode') {
+      options.cacheMode = requireOptionValue(args, i, arg)
+      i += 1
+      continue
+    }
+    if (arg.startsWith('--cache-mode=')) {
+      options.cacheMode = arg.slice('--cache-mode='.length)
+      continue
+    }
+    if (arg.startsWith('-')) {
+      const optionName = arg.includes('=') ? arg.slice(0, arg.indexOf('=')) : arg
+      const expectedSuffix = optionNamesWithRequiredValues.has(optionName)
+        ? ' with a value'
+        : booleanOptionNames.has(optionName)
+          ? ''
+          : undefined
+      throw new Error(
+        expectedSuffix === undefined
+          ? `Unknown option: ${optionName}`
+          : `Unsupported option format: ${arg}; expected ${optionName}${expectedSuffix}`,
+      )
+    }
     if (!arg.startsWith('-') && options.tag === undefined) {
       options.tag = arg
+      continue
     }
+
+    throw new Error(`Unexpected positional argument: ${arg}`)
   }
   return options
 }

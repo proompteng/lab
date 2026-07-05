@@ -9,6 +9,7 @@ const envKeys = [
   'AGENTS_COMMIT',
   'AGENTS_CONTROL_PLANE_IMAGE_REPOSITORY',
   'AGENTS_CONTROLLER_IMAGE_REPOSITORY',
+  'AGENTS_DOCKER_TARGET',
   'AGENTS_IMAGE_REGISTRY',
   'AGENTS_IMAGE_REPOSITORY',
   'AGENTS_IMAGE_TAG',
@@ -96,6 +97,22 @@ describe('agents build-image helpers', () => {
     })
   })
 
+  it('preserves the generic repository override for runner builds', () => {
+    process.env.AGENTS_IMAGE_TARGET = 'runner'
+    process.env.AGENTS_IMAGE_REPOSITORY = 'lab/custom-agents-runner'
+
+    expect(
+      __private.resolveBuildConfiguration({
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toMatchObject({
+      target: 'runner',
+      repository: 'lab/custom-agents-runner',
+      packageAttr: 'agents-codex-runner-image',
+    })
+  })
+
   it('rejects old Docker-only build options instead of silently falling back', () => {
     expect(() =>
       __private.resolveBuildConfiguration({
@@ -114,6 +131,17 @@ describe('agents build-image helpers', () => {
         commit: 'abcdef',
       }),
     ).toThrow('context, cacheRef, platforms')
+  })
+
+  it('rejects the legacy Docker target env var instead of ignoring it', () => {
+    process.env.AGENTS_DOCKER_TARGET = 'controller'
+
+    expect(() =>
+      __private.resolveBuildConfiguration({
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toThrow('AGENTS_DOCKER_TARGET')
   })
 
   it('builds a single Agents image with the shared Nix OCI helper', async () => {
@@ -217,5 +245,33 @@ describe('agents build-image helpers', () => {
       registry: 'registry.ide-newton.ts.net',
       dryRun: true,
     })
+  })
+
+  it('routes removed Docker CLI flags into the Nix-only rejection path', () => {
+    const parsed = __private.parseArgs([
+      '--dockerfile',
+      'services/agents/Dockerfile',
+      '--target',
+      'runner',
+      '--platforms=linux/amd64,linux/arm64',
+    ])
+
+    expect(parsed).toEqual({
+      dockerfile: 'services/agents/Dockerfile',
+      target: 'runner',
+      platforms: ['linux/amd64', 'linux/arm64'],
+    })
+    expect(() =>
+      __private.resolveBuildConfiguration({
+        ...parsed,
+        tag: 'abc123',
+        commit: 'abcdef',
+      }),
+    ).toThrow('dockerfile, platforms')
+  })
+
+  it('rejects unknown CLI flags and extra positional arguments', () => {
+    expect(() => __private.parseArgs(['--unknown', 'value'])).toThrow('Unknown option: --unknown')
+    expect(() => __private.parseArgs(['--tag', 'abc123', 'extra'])).toThrow('Unexpected positional argument: extra')
   })
 })
