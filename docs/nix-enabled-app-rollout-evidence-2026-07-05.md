@@ -1,6 +1,16 @@
-# Nix Enabled-App Rollout Evidence - 2026-07-05
+# Nix Enabled-App Rollout Final Report - 2026-07-05
 
-This is an evidence checkpoint for the enabled-app Nix build performance rollout. It is not the final rollout report.
+This is the final report for the enabled-app Nix build performance rollout as of 2026-07-05.
+
+## Final Status
+
+- All root-enabled, repo-owned image apps have real Nix OCI build/release proof and live readback proof, except Sag
+  runtime smoke which is intentionally skipped while GitOps keeps desired replicas at `0`.
+- No Helm-only, vendor-manifest, or external-source app was counted as an image-build migration target.
+- GitHub Actions and manual build/deploy script paths are present for migrated build-owning apps.
+- No Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage resources were changed for this report.
+- Remaining caveats are limited to older release-contract schema gaps and future warm-cache proof on real source-triggered
+  builds; no enabled live app remains blocked on Nix rollout proof.
 
 ## Scope
 
