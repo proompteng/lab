@@ -35,6 +35,10 @@ cephClusterSpec:
       # Prioritize client IO after the Turin BlueStore DB migration has recovered.
       # Recovery/backfill overrides are intentionally omitted so the built-in mClock profile controls QoS.
       osd_mclock_profile: "high_client_ops"
+      # Fresh 2026-07-06 OSD bench samples measured HDD random-write service capacity
+      # around 280 IOPS median. Keep the mClock HDD capacity model conservative and
+      # remove any per-OSD live overrides that would mask this cluster-wide value.
+      osd_mclock_max_capacity_iops_hdd: "275"
       # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
       # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
       osd_mclock_max_sequential_bandwidth_hdd: "285212672"
@@ -42,6 +46,11 @@ cephClusterSpec:
       # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
       osd_scrub_auto_repair: "true"
       osd_scrub_auto_repair_num_errors: "5"
+    mgr:
+      # Keep capacity balancing conservative during client hours and tighten PG shard
+      # deviation without enabling read-primary balancing while pre-Reef clients exist.
+      target_max_misplaced_ratio: "0.03"
+      mgr/balancer/upmap_max_deviation: "1"
 
   dataDirHostPath: /var/lib/rook
 
@@ -163,6 +172,7 @@ cephClusterSpec:
 # Disable chart-managed default block/filesystem classes to avoid duplicates.
 # Canonical classes are managed in storageclasses.yaml as:
 # - rook-ceph-block (RWO)
+# - rook-ceph-block-nbd-canary (RWO, non-default rbd-nbd proof lane)
 # - rook-cephfs (RWX, kernel-capable nodes only)
 # - rook-cephfs-fuse (RWX on Talos-compatible nodes)
 # - CephFilesystem details such as MDS resources
