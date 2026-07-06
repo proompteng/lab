@@ -5,13 +5,14 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 ## Scope
 
 - Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
-  `proompteng`, `olden`, `synthesis`.
+  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`.
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
-  `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`.
+  `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`,
+  `symphony-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -20,6 +21,7 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
   - `packages/scripts/src/attic/build-image.ts` and `packages/scripts/src/attic/deploy-service.ts`
   - `packages/scripts/src/headlamp/build-image.ts` and `packages/scripts/src/headlamp/deploy-service.ts`
   - product app build/deploy scripts under `packages/scripts/src/{app,docs,proompteng,olden,synthesis}/`
+  - `packages/scripts/src/symphony/build-image.ts` and `packages/scripts/src/symphony/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
   `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`, and
@@ -50,6 +52,8 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#12001](https://github.com/proompteng/lab/pull/12001) | `aa4fdb5cffc9f2e9f97f011278222878170e483e` | Promote Headlamp to the final repaired Nix-built digest.                                         |
 | [#11851](https://github.com/proompteng/lab/pull/11851) | `5e046147da58bd014bca17565cbd731626ec875b` | Include platform digests in OCI release contracts used by product apps.                          |
 | [#11866](https://github.com/proompteng/lab/pull/11866) | `7529c68ea151aa2106a821565c514f41719a8e5c` | Promote `app`, `docs`, `proompteng`, `olden`, and `synthesis` to Nix-built digests.              |
+| [#11676](https://github.com/proompteng/lab/pull/11676) | `c035fd755d223c31a267bbffe8e0c8c2cd2f3fb5` | Add the shared Symphony Nix image build path.                                                    |
+| [#11857](https://github.com/proompteng/lab/pull/11857) | `d8c2aea2d995d14dbf7b6acd68395529a03e37cc` | Promote `symphony`, `symphony-jangar`, and `symphony-torghut` to the Nix-built digest.           |
 
 ## Failed Proof That Exposed The Gap
 
@@ -591,6 +595,69 @@ This checkpoint therefore records job wall times and does not claim cache-hit co
 The July 4 product run is not yet a clean performance win across the board: `app` arm64 took `41m31s` and `synthesis`
 arm64 took `29m31s`, largely in image archive warming. The next product optimization should reduce or bound closure
 warming costs while preserving the digest-pinned Nix OCI release path.
+
+## Symphony Family Rollout Proof
+
+The Symphony family has three enabled Argo Applications that share the same `symphony-image` output:
+`symphony`, `symphony-jangar`, and `symphony-torghut`.
+
+### Symphony Main Build Proof
+
+Run [28701445299](https://github.com/proompteng/lab/actions/runs/28701445299) succeeded on `main`.
+
+| Phase                        | Result           |
+| ---------------------------- | ---------------- |
+| `linux/amd64` build-platform | passed in `3m10s` |
+| `linux/arm64` build-platform | passed in `4m36s` |
+| publish-index                | passed in `1m14s` |
+| release contract             | uploaded as `symphony-release-contract` |
+
+Release contract fields:
+
+- `service`: `symphony`
+- `packageAttr`: `symphony-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `5e046147da58bd014bca17565cbd731626ec875b`
+- `image`: `registry.ide-newton.ts.net/lab/symphony`
+- `digest`: `sha256:8602e26cc30db8af3e1af8eabe3051c8661f36263086ae2db3b18a384e7fc391`
+- platform digests:
+  - `linux/amd64`: `sha256:1257ee187d795a1231d7f90c77893a27822ae9f39aea3c9d3e3cb9220b54e358`
+  - `linux/arm64`: `sha256:0728e2d7958ee4250608e4978ba073e6f97bfc09bce849a73ce77b69a2f1bfdb`
+- `platforms`: `linux/amd64`, `linux/arm64`
+
+### Symphony Release Automation Proof
+
+Release PR [#11857](https://github.com/proompteng/lab/pull/11857) promoted the shared Symphony image digest to all
+three enabled Symphony-family apps.
+
+The PR changed only:
+
+- `argocd/applications/symphony/deployment.patch.yaml`
+- `argocd/applications/symphony/kustomization.yaml`
+- `argocd/applications/symphony-jangar/deployment.patch.yaml`
+- `argocd/applications/symphony-jangar/kustomization.yaml`
+- `argocd/applications/symphony-torghut/deployment.patch.yaml`
+- `argocd/applications/symphony-torghut/kustomization.yaml`
+
+### Symphony Live Rollout Smoke
+
+Current readback:
+
+| App                 | Runtime namespace | Deployment state        | Live image digest                                                      | Smoke |
+| ------------------- | ----------------- | ----------------------- | ---------------------------------------------------------------------- | ----- |
+| `symphony`          | `jangar`          | `1/1` ready and updated | `sha256:8602e26cc30db8af3e1af8eabe3051c8661f36263086ae2db3b18a384e7fc391` | `/readyz` returned `200` |
+| `symphony-jangar`   | `jangar`          | `1/1` ready and updated | `sha256:8602e26cc30db8af3e1af8eabe3051c8661f36263086ae2db3b18a384e7fc391` | `/readyz` returned `200` |
+| `symphony-torghut`  | `torghut`         | `1/1` ready and updated | `sha256:8602e26cc30db8af3e1af8eabe3051c8661f36263086ae2db3b18a384e7fc391` | `/readyz` returned `200` |
+
+All three Argo Applications are `Synced` and `Healthy` at revision
+`88b0e10f5520b9d5b3485c42398220dda7986aa8`.
+
+### Symphony Cache Status
+
+The Symphony build used Attic setup and pushed build-platform helper closures plus the image archive closure to Attic.
+The release contract proves digest and platform identity, but it does not include normalized `cacheProvenance`, lockfile,
+or tool-version fields. This checkpoint therefore records job wall times and does not claim cache-hit counts.
 
 ## Inventory Audit
 
