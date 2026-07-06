@@ -8,6 +8,11 @@ spec:
   failureDomain: host
   replicated:
     size: 2
+  parameters:
+    # The default RBD pool is a hot data pool. Give the PG autoscaler enough
+    # signal to raise PG parallelism for concurrent clients without changing replica safety.
+    bulk: "true"
+    pg_num_min: "128"
 ---
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -19,6 +24,8 @@ provisioner: rook-ceph.rbd.csi.ceph.com
 allowVolumeExpansion: true
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
+mountOptions:
+  - noatime
 parameters:
   clusterID: rook-ceph
   pool: replicapool
@@ -42,6 +49,8 @@ provisioner: rook-ceph.rbd.csi.ceph.com
 allowVolumeExpansion: true
 reclaimPolicy: Delete
 volumeBindingMode: Immediate
+mountOptions:
+  - noatime
 parameters:
   clusterID: rook-ceph
   pool: replicapool
@@ -72,6 +81,9 @@ spec:
       failureDomain: host
       replicated:
         size: 2
+      parameters:
+        bulk: "true"
+        pg_num_min: "128"
   metadataServer:
     # Keep a single active MDS until RWX benchmarks show metadata saturation.
     activeCount: 1
