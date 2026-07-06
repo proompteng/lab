@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 
 def sdk_dex(dex: str) -> str:
     normalized = dex.strip().lower()
@@ -16,3 +18,14 @@ def sdk_market_name(coin: str, dex: str) -> str:
         return normalized_coin
     normalized_dex = sdk_dex(dex)
     return f"{normalized_dex}:{normalized_coin}" if normalized_dex else normalized_coin
+
+
+def sdk_position_close_name(
+    coin: str, active_by_dex: Mapping[str, frozenset[str]]
+) -> str:
+    if ":" in coin:
+        return coin
+    for dex, coins in active_by_dex.items():
+        if dex and coin in coins:
+            return sdk_market_name(coin, dex)
+    return coin

@@ -10,6 +10,8 @@ from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
 from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
+from .market_names import sdk_position_close_name as _sdk_position_close_name
+from .sdk_aliases import register_sdk_market_alias as _register_sdk_market_alias
 from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
@@ -263,7 +265,7 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="api_wallet_private_key_missing",
             )
         response = self._exchange().market_close(
-            self._market_close_name(coin),
+            _sdk_position_close_name(coin, self._active_by_dex),
             sz=float(size) if size is not None else None,
             slippage=float(slippage),
         )
@@ -276,14 +278,6 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="no_position_found",
             )
         return _order_result(cast(dict[str, object], response))
-
-    def _market_close_name(self, coin: str) -> str:
-        if ":" in coin:
-            return coin
-        for dex, coins in self._active_by_dex.items():
-            if dex and coin in coins:
-                return _sdk_market_name(coin, dex)
-        return coin
 
     def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
         account = self._config.account_address
@@ -550,21 +544,6 @@ class HyperliquidSdkExecutionExchange:
         if from_str is None:
             return raw
         return from_str(raw)
-
-
-def _register_sdk_market_alias(
-    sdk_exchange: Any, alias: str, metadata_name: str
-) -> None:
-    if alias == metadata_name:
-        return
-    info = getattr(sdk_exchange, "info", None)
-    raw_name_to_coin = getattr(info, "name_to_coin", None)
-    if not isinstance(raw_name_to_coin, dict):
-        return
-    name_to_coin = cast(dict[str, object], raw_name_to_coin)
-    if alias in name_to_coin or metadata_name not in name_to_coin:
-        return
-    name_to_coin[alias] = name_to_coin[metadata_name]
 
 
 def exchange_from_config(
