@@ -669,6 +669,7 @@ def _account_state_from_payload(
                     raw_payload={
                         str(key): value for key, value in position_map.items()
                     },
+                    sdk_coin=reconciliation_coin,
                 )
             )
     raw_exposure_usd = _raw_account_exposure_usd(payload, positions)

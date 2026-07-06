@@ -295,14 +295,13 @@ class HyperliquidExecutionRepository:
                 """
                 SELECT
                   id,
+                  market_id,
                   coin,
-                  dex,
                   exchange_order_id,
                   cloid,
                   status,
                   expires_at
                 FROM hyperliquid_execution_orders
-                JOIN hyperliquid_execution_symbol_state USING (coin)
                 WHERE execution_network = 'testnet'
                   AND status IN ('accepted', 'submitted')
                   AND expires_at <= :now
@@ -316,7 +315,7 @@ class HyperliquidExecutionRepository:
             OpenOrder(
                 order_id=str(row["id"]),
                 coin=str(row["coin"]),
-                dex=str(row["dex"]),
+                dex=_dex_from_market_id(row["market_id"]),
                 exchange_order_id=_optional_text(row["exchange_order_id"]),
                 cloid=str(row["cloid"]),
                 status=str(row["status"]),
@@ -558,7 +557,9 @@ class HyperliquidExecutionRepository:
                     "notional_usd": str(position.notional_usd),
                     "unrealized_pnl_usd": str(position.unrealized_pnl_usd),
                     "observed_at": position.observed_at,
-                    "raw_payload": json.dumps(position.raw_payload, sort_keys=True),
+                    "raw_payload": json.dumps(
+                        _position_raw_payload(position), sort_keys=True
+                    ),
                 },
             )
 
@@ -758,6 +759,23 @@ class HyperliquidExecutionRepository:
             ),
             {"coin": coin, "reason": reason, "seconds": seconds},
         )
+
+
+def _dex_from_market_id(value: object) -> str:
+    text_value = str(value or "").strip()
+    parts = text_value.split(":")
+    if len(parts) >= 4 and parts[0] == "hl" and parts[1] == "perp":
+        dex = parts[2].strip()
+        if dex:
+            return dex
+    return "default"
+
+
+def _position_raw_payload(position: PositionSnapshot) -> dict[str, object]:
+    payload = dict(position.raw_payload)
+    if position.sdk_coin:
+        payload.setdefault("sdk_coin", position.sdk_coin)
+    return payload
 
 
 def _dependency_payload(dependency: RuntimeDependencyStatus) -> dict[str, object]:

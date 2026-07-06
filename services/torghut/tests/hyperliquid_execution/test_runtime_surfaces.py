@@ -267,6 +267,18 @@ def test_repository_writes_runtime_evidence_and_report_rows() -> None:
     )
 
 
+def test_repository_expired_open_orders_uses_order_market_id_dex() -> None:
+    session = _FakeSession(open_order_market_id="hl:perp:legacy:NVDA")
+    repo = HyperliquidExecutionRepository(session)
+
+    expired = repo.expired_open_orders(now=_now())
+
+    assert expired[0].dex == "legacy"
+    assert not any(
+        "JOIN hyperliquid_execution_symbol_state" in sql for sql, _ in session.calls
+    )
+
+
 def test_repository_cooldowns_repeated_broker_rejects() -> None:
     for rejection_reason, expected_sql in (
         ("Order must have minimum value of $10. asset=750014", "minimum value"),
@@ -693,6 +705,8 @@ class _FakeSession:
         profitability_net_pnl_24h: Decimal = Decimal("1"),
         profitability_notional_1h: Decimal = Decimal("10"),
         position_size: Decimal = Decimal("0"),
+        position_sdk_coin: str | None = None,
+        open_order_market_id: str = "hl:perp:xyz:NVDA",
     ) -> None:
         self.reject_count = reject_count
         self.risk_open_coin = risk_open_coin
@@ -702,6 +716,8 @@ class _FakeSession:
         self.profitability_net_pnl_24h = profitability_net_pnl_24h
         self.profitability_notional_1h = profitability_notional_1h
         self.position_size = position_size
+        self.position_sdk_coin = position_sdk_coin
+        self.open_order_market_id = open_order_market_id
         self.calls: list[tuple[str, Mapping[str, object] | None]] = []
         self.closed = False
         self.committed = False
@@ -755,8 +771,8 @@ class _FakeSession:
             return [
                 {
                     "id": "order-1",
+                    "market_id": self.open_order_market_id,
                     "coin": "NVDA",
-                    "dex": "xyz",
                     "exchange_order_id": "123",
                     "cloid": "0xabc",
                     "status": "accepted",
@@ -843,7 +859,7 @@ class _FakeSession:
                 "notional_usd": "10",
                 "unrealized_pnl_usd": "0.25",
                 "observed_at": _now(),
-                "raw_payload": {"coin": "NVDA"},
+                "raw_payload": {"coin": self.position_sdk_coin or "NVDA"},
             }
         ]
 

@@ -111,6 +111,7 @@ def test_exchange_canonicalizes_scoped_reconciliation_rows() -> None:
     assert fills[0].raw_payload["coin"] == "xyz:NVDA"
     assert account.positions[0].market_id == "hl:perp:xyz:NVDA"
     assert account.positions[0].coin == "NVDA"
+    assert account.positions[0].sdk_coin == "xyz:NVDA"
     assert account.positions[0].raw_payload["coin"] == "xyz:NVDA"
 
 
