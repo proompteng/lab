@@ -277,9 +277,7 @@ class _Info:
         self.mid_dexes: list[str] = []
         metadata_names = [coin.split(":", 1)[-1] for coin in books]
         self.name_to_coin = {coin: coin for coin in metadata_names}
-        self.coin_to_asset = {
-            coin: index for index, coin in enumerate(metadata_names)
-        }
+        self.coin_to_asset = {coin: index for index, coin in enumerate(metadata_names)}
         self.asset_to_sz_decimals = {
             index: 2 for index, _coin in enumerate(metadata_names)
         }
