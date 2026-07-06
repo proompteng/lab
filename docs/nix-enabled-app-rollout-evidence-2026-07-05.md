@@ -5,16 +5,18 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 ## Scope
 
 - Enabled apps with full live runtime proof: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
-  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`.
+  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`, `agents`.
 - Enabled apps with build/release proof but intentionally deferred runtime smoke: `sag` (`replicas: 0` in GitOps).
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`;
-  Jangar uses `.github/workflows/jangar-build-push.yaml`; Sag uses `.github/workflows/sag-build-push.yaml`.
+  Jangar uses `.github/workflows/jangar-build-push.yaml`; Agents uses `.github/workflows/agents-build-push.yml`;
+  Sag uses `.github/workflows/sag-build-push.yaml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
   `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`,
-  `symphony-image`, `jangar-image`, `sag-image`.
+  `symphony-image`, `jangar-image`, `agents-control-plane-image`, `agents-controller-image`,
+  `agents-shell-image`, `agents-codex-runner-image`, `sag-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -25,11 +27,13 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
   - product app build/deploy scripts under `packages/scripts/src/{app,docs,proompteng,olden,synthesis}/`
   - `packages/scripts/src/symphony/build-image.ts` and `packages/scripts/src/symphony/deploy-service.ts`
   - `packages/scripts/src/jangar/build-image.ts` and `packages/scripts/src/jangar/deploy-service.ts`
+  - `packages/scripts/src/agents/build-image.ts` and `packages/scripts/src/agents/deploy-service.ts`
   - `packages/scripts/src/sag/build-image.ts` and `packages/scripts/src/sag/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
   `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`,
-  `.github/workflows/jangar-release.yml`, `.github/workflows/sag-release.yml`, and
+  `.github/workflows/jangar-release.yml`, `.github/workflows/agents-release.yml`,
+  `.github/workflows/agents-deploy-automerge.yml`, `.github/workflows/sag-release.yml`, and
   `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
@@ -61,6 +65,10 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#11857](https://github.com/proompteng/lab/pull/11857) | `d8c2aea2d995d14dbf7b6acd68395529a03e37cc` | Promote `symphony`, `symphony-jangar`, and `symphony-torghut` to the Nix-built digest.           |
 | [#11983](https://github.com/proompteng/lab/pull/11983) | `c4b0fee9ef3b91c10bf57b73540f4e04b3896a62` | Fix the Jangar Nix image so `node-pty` native runtime files are present.                         |
 | [#11984](https://github.com/proompteng/lab/pull/11984) | `28cbdf209b0fa3400b107e5d6ff6903249dc7bf0` | Promote Jangar to the Nix-built digest from source `c4b0fee9ef3b91c10bf57b73540f4e04b3896a62`.  |
+| [#11708](https://github.com/proompteng/lab/pull/11708) | `3a33d805102212867e0e950f16392b1bcf5fdfa6` | Build Agents service images with Nix OCI.                                                        |
+| [#11748](https://github.com/proompteng/lab/pull/11748) | `1f9c53b50cc1d44ab747ea0ccc8180f06486f969` | Preserve Agents runtime dependencies in the Nix-built images.                                    |
+| [#11916](https://github.com/proompteng/lab/pull/11916) | `6e11a1c901706b0a9d068383d35859798d8833ff` | Remove the Docker manual image builder from Agents.                                              |
+| [#12046](https://github.com/proompteng/lab/pull/12046) | `a59b3736c270024aa3191867f4a772fe0f31f416` | Promote Agents service and runner images from source `350c4bde2ca3ed0f704c959eb2c386c9010cc606`. |
 | [#11684](https://github.com/proompteng/lab/pull/11684) | `d6babaa3afaca9756b4453c518e01ca685e390c9` | Add the Sag Nix image build, release, manual deploy, and post-deploy verification paths.          |
 | [#11852](https://github.com/proompteng/lab/pull/11852) | `00b160b172fa87faf374c1aa063e1c55766a4f63` | Trim repeated OCI image setup checks while preserving the Nix/Skopeo build path.                  |
 | [#11876](https://github.com/proompteng/lab/pull/11876) | `fe419be138d8d6c25dc6437caf4d0e89b7ee53f7` | Promote Sag to the Nix-built digest from source `00b160b172fa87faf374c1aa063e1c55766a4f63`.      |
@@ -764,6 +772,101 @@ The Jangar build used Attic setup and pushed the image archive closure to Attic.
 platform identity, but it does not include normalized `cacheProvenance`, lockfile, or tool-version fields. This
 checkpoint therefore records job wall times and does not claim cache-hit counts.
 
+## Agents Rollout Proof
+
+Agents is a root-enabled repo-owned image app with four Nix-built images:
+`agents-control-plane-image`, `agents-controller-image`, `agents-shell-image`, and `agents-codex-runner-image`. This
+checkpoint records the Nix OCI build, generated GitOps values release, targeted Argo Deployment sync, and live service
+smoke.
+
+### Agents Main Build Proof
+
+Run [28757704145](https://github.com/proompteng/lab/actions/runs/28757704145) succeeded on `main`.
+
+| Image                 | Nix attr                    | `linux/amd64` build | `linux/arm64` build | Digest                                                               |
+| --------------------- | --------------------------- | ------------------: | ------------------: | -------------------------------------------------------------------- |
+| `agents-control-plane` | `agents-control-plane-image` |              `154s` |              `318s` | `sha256:bf03a79b1fce3ed2f404e4fe04b2c7e5711740dd9b2ad530a9c3381112202cb3` |
+| `agents-controller`    | `agents-controller-image`    |              `148s` |              `333s` | `sha256:c60652f0ca10496edb27116e1b7afa7c8e59b73e3b7361173602491d9b32d7e5` |
+| `agents-shell`         | `agents-shell-image`         |              `158s` |              `341s` | `sha256:837942c706d7bde2462b08e053b6c91fb3c0d4d30db95874fb0de460438837d0` |
+| `agents-codex-runner`  | `agents-codex-runner-image`  |              `197s` |              `278s` | `sha256:1e9e47aaedadf5429de22359e48262520cb2787f38dbd29bc0971aaaf52e80c7` |
+
+Release contract fields shared by all four images:
+
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `350c4bde2ca3ed0f704c959eb2c386c9010cc606`
+- `platforms`: `linux/amd64`, `linux/arm64`
+- `flake.lock`: `ecff06cebb0e40ac241f0a6eb93b08d00b9c5dc28f5619f5247840f7d0b16857`
+- `bun.lock`: `d097c7625564044607451e8382833faba62a4a14af630bb9fe1ab4b41236da23`
+- `nix`: `nix (Nix) 2.28.5`
+- `skopeo`: `skopeo version 1.20.0`
+- `crane`: `v0.20.6`
+
+Platform digests:
+
+| Image                 | `linux/amd64` digest                                                  | `linux/arm64` digest                                                  |
+| --------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `agents-control-plane` | `sha256:66aea049055ffc961b7fb267cc12e15a05529f7d45bf0a58e820a49ab422885a` | `sha256:c2e2fe6f5a9dd11b0ad4607dc401853a38fd030a87ad2bc1738946b4c8fd0a07` |
+| `agents-controller`    | `sha256:d2b43702587dd0b9817f53bcf6dce136b6ee9e4f89f0ea205f750b4beccd3912` | `sha256:45c6b85a80c981f8c880310645f43004d8852e85641f80484bd15bcd2c7831a8` |
+| `agents-shell`         | `sha256:da61db93f2916b41716f33fd80b6a952276bce39d3a5d88197b3a90ced5b9d36` | `sha256:d93b5737a2f76ec9185867baf413ff241fe18556f8593e465c4156d92fe8a839` |
+| `agents-codex-runner`  | `sha256:2683de3eaa0a9e04d8c09b5b8a945c1c73a1c0dc5350984274f06613498f6761` | `sha256:165806507ebad88672615c95cc6e6a08824792f5f1bba5d2a31895b57509c047` |
+
+### Agents Release Automation Proof
+
+Run [28757953481](https://github.com/proompteng/lab/actions/runs/28757953481) consumed the Agents build artifacts and
+created release PR [#12046](https://github.com/proompteng/lab/pull/12046).
+
+Release PR #12046 changed only `argocd/applications/agents/values.yaml` and promoted:
+
+- `agents-control-plane` to
+  `registry.ide-newton.ts.net/lab/agents-control-plane:sha-350c4bde2ca3ed0f704c959eb2c386c9010cc606@sha256:bf03a79b1fce3ed2f404e4fe04b2c7e5711740dd9b2ad530a9c3381112202cb3`
+- `agents-controller` to
+  `registry.ide-newton.ts.net/lab/agents-controller:sha-350c4bde2ca3ed0f704c959eb2c386c9010cc606@sha256:c60652f0ca10496edb27116e1b7afa7c8e59b73e3b7361173602491d9b32d7e5`
+- `agents-shell` to
+  `registry.ide-newton.ts.net/lab/agents-shell:sha-350c4bde2ca3ed0f704c959eb2c386c9010cc606@sha256:837942c706d7bde2462b08e053b6c91fb3c0d4d30db95874fb0de460438837d0`
+- `agents-codex-runner` to
+  `registry.ide-newton.ts.net/lab/agents-codex-runner:sha-350c4bde2ca3ed0f704c959eb2c386c9010cc606@sha256:1e9e47aaedadf5429de22359e48262520cb2787f38dbd29bc0971aaaf52e80c7`
+
+### Agents Live Rollout Smoke
+
+After #12046 merged, Argo was synced with an explicit allow-list of the three out-of-sync Deployment resources only:
+`agents`, `agents-controllers`, and `agents-shell`. The sync operation used `prune: false` and did not target OBC, PVC,
+Ceph, Talos, or storage resources.
+
+Current readback:
+
+- Argo Application `agents`: `Synced`, `Healthy`
+- Argo sync revision: `6a0a66c4c94bad666b4efec1e4b907eebe40be22`
+- Argo operation revision: `6a0a66c4c94bad666b4efec1e4b907eebe40be22`
+- Deployment `agents`: `ready=1`, `available=1`, `updated=1`
+- Deployment `agents-controllers`: `ready=2`, `available=2`, `updated=2`
+- Deployment `agents-shell`: `ready=1`, `available=1`, `updated=1`
+- rollout status passed for all three Deployments.
+- active Deployment images match the release contract:
+  - `agents-control-plane`: `sha256:bf03a79b1fce3ed2f404e4fe04b2c7e5711740dd9b2ad530a9c3381112202cb3`
+  - `agents-controller`: `sha256:c60652f0ca10496edb27116e1b7afa7c8e59b73e3b7361173602491d9b32d7e5`
+  - `agents-shell`: `sha256:837942c706d7bde2462b08e053b6c91fb3c0d4d30db95874fb0de460438837d0`
+  - `AGENTS_AGENT_RUNNER_IMAGE`: `sha256:1e9e47aaedadf5429de22359e48262520cb2787f38dbd29bc0971aaaf52e80c7`
+- in-cluster service smoke:
+  - `http://agents/ready` returned `HTTP 200`
+  - `http://agents-shell/readyz` returned `HTTP 200`
+
+### Agents Cache Status
+
+The Agents release contracts include cache provenance from the real image build logs. The four-image build still had no
+Attic hits to claim on this run, but it records the exact local and upstream-cache work rather than using a synthetic
+smoke job:
+
+| Image                 | Attic substitutions | cache.nixos.org substitutions | Local builds | Planned local build blocks |
+| --------------------- | ------------------: | ----------------------------: | -----------: | -------------------------: |
+| `agents-control-plane` |                 `0` |                         `124` |         `44` |                        `2` |
+| `agents-controller`    |                 `0` |                         `124` |         `44` |                        `2` |
+| `agents-shell`         |                 `0` |                         `142` |         `46` |                        `2` |
+| `agents-codex-runner`  |                 `0` |                         `360` |         `78` |                        `2` |
+
+The next real Agents source change should be used for warm-cache proof or substitute-only proof. This checkpoint does
+not claim a warm-cache win for Agents.
+
 ## Sag Build And Release Proof
 
 Sag is a root-enabled repo-owned image app with `sag-image`, but the runtime Deployment is intentionally scaled to zero
@@ -870,7 +973,6 @@ Readback:
 
 The rollout is not complete from this checkpoint alone. Remaining full runtime proof still needs to cover:
 
-- `agents`
 - `torghut`
 - `torghut-hyperliquid-feed`
 - `torghut-hyperliquid-runtime`
