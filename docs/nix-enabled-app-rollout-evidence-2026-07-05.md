@@ -5,16 +5,16 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 ## Scope
 
 - Enabled apps with full live runtime proof: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
-  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`.
+  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`.
 - Enabled apps with build/release proof but intentionally deferred runtime smoke: `sag` (`replicas: 0` in GitOps).
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`;
-  Sag uses `.github/workflows/sag-build-push.yaml`.
+  Jangar uses `.github/workflows/jangar-build-push.yaml`; Sag uses `.github/workflows/sag-build-push.yaml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
   `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`,
-  `symphony-image`, `sag-image`.
+  `symphony-image`, `jangar-image`, `sag-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -24,11 +24,13 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
   - `packages/scripts/src/headlamp/build-image.ts` and `packages/scripts/src/headlamp/deploy-service.ts`
   - product app build/deploy scripts under `packages/scripts/src/{app,docs,proompteng,olden,synthesis}/`
   - `packages/scripts/src/symphony/build-image.ts` and `packages/scripts/src/symphony/deploy-service.ts`
+  - `packages/scripts/src/jangar/build-image.ts` and `packages/scripts/src/jangar/deploy-service.ts`
   - `packages/scripts/src/sag/build-image.ts` and `packages/scripts/src/sag/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
-  `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`, and
-  `.github/workflows/sag-release.yml`, and `.github/workflows/release-pr-automerge.yml`.
+  `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`,
+  `.github/workflows/jangar-release.yml`, `.github/workflows/sag-release.yml`, and
+  `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -57,6 +59,8 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#11866](https://github.com/proompteng/lab/pull/11866) | `7529c68ea151aa2106a821565c514f41719a8e5c` | Promote `app`, `docs`, `proompteng`, `olden`, and `synthesis` to Nix-built digests.              |
 | [#11676](https://github.com/proompteng/lab/pull/11676) | `c035fd755d223c31a267bbffe8e0c8c2cd2f3fb5` | Add the shared Symphony Nix image build path.                                                    |
 | [#11857](https://github.com/proompteng/lab/pull/11857) | `d8c2aea2d995d14dbf7b6acd68395529a03e37cc` | Promote `symphony`, `symphony-jangar`, and `symphony-torghut` to the Nix-built digest.           |
+| [#11983](https://github.com/proompteng/lab/pull/11983) | `c4b0fee9ef3b91c10bf57b73540f4e04b3896a62` | Fix the Jangar Nix image so `node-pty` native runtime files are present.                         |
+| [#11984](https://github.com/proompteng/lab/pull/11984) | `28cbdf209b0fa3400b107e5d6ff6903249dc7bf0` | Promote Jangar to the Nix-built digest from source `c4b0fee9ef3b91c10bf57b73540f4e04b3896a62`.  |
 | [#11684](https://github.com/proompteng/lab/pull/11684) | `d6babaa3afaca9756b4453c518e01ca685e390c9` | Add the Sag Nix image build, release, manual deploy, and post-deploy verification paths.          |
 | [#11852](https://github.com/proompteng/lab/pull/11852) | `00b160b172fa87faf374c1aa063e1c55766a4f63` | Trim repeated OCI image setup checks while preserving the Nix/Skopeo build path.                  |
 | [#11876](https://github.com/proompteng/lab/pull/11876) | `fe419be138d8d6c25dc6437caf4d0e89b7ee53f7` | Promote Sag to the Nix-built digest from source `00b160b172fa87faf374c1aa063e1c55766a4f63`.      |
@@ -665,6 +669,101 @@ The Symphony build used Attic setup and pushed build-platform helper closures pl
 The release contract proves digest and platform identity, but it does not include normalized `cacheProvenance`, lockfile,
 or tool-version fields. This checkpoint therefore records job wall times and does not claim cache-hit counts.
 
+## Jangar Rollout Proof
+
+Jangar is a root-enabled repo-owned image app with `jangar-image`. This checkpoint records the repaired Nix image,
+digest-pinned GitOps release, live Argo/runtime readback, and post-deploy verifier proof.
+
+### Jangar Main Build Proof
+
+Run [28746327249](https://github.com/proompteng/lab/actions/runs/28746327249) succeeded on `main`.
+
+| Phase                        | Result            |
+| ---------------------------- | ----------------- |
+| `linux/amd64` build-platform | passed in `6m10s` |
+| `linux/arm64` build-platform | passed in `11m37s` |
+| publish-index                | passed in `24s`   |
+| release contract             | uploaded as `jangar-release-contract` |
+
+Useful timed steps from the same run:
+
+| Platform/job      | Checkout | Nix setup | Build archive | Inspect archive | Push platform image | Warm image closure |
+| ----------------- | -------: | --------: | ------------: | --------------: | ------------------: | -----------------: |
+| `linux/amd64`     |    `13s` |      `1s` |       `4m13s` |           `20s` |              `1m17s` |             `<1s` |
+| `linux/arm64`     |    `11s` |      `1s` |       `9m01s` |           `34s` |              `1m42s` |             `<1s` |
+| publish-index     |    `11s` |      `1s` |          N/A  |            N/A  |                `4s`  |              N/A  |
+
+Release contract fields:
+
+- `service`: `jangar`
+- `packageAttr`: `jangar-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `c4b0fee9ef3b91c10bf57b73540f4e04b3896a62`
+- `image`: `registry.ide-newton.ts.net/lab/jangar`
+- `digest`: `sha256:85dedfa3f1d6dc38be857647c2f530d6aee888ac57385180ca1ce8d1c06b28fa`
+- platform digests:
+  - `linux/amd64`: `sha256:73501c488993a6687403e7a06097bee8f446f034072470fdd5730d7e72654d53`
+  - `linux/arm64`: `sha256:e460cc6a2d4661125654ba42ebff4f4198d4509bf7fa91d66c84b296ed7087c4`
+- `platforms`: `linux/amd64`, `linux/arm64`
+
+### Jangar Release Automation Proof
+
+Run [28746684382](https://github.com/proompteng/lab/actions/runs/28746684382) consumed the release contract, verified
+the Jangar OCI index platforms, updated `argocd/applications/jangar/deployment.yaml` and
+`argocd/applications/jangar/kustomization.yaml`, and created release PR
+[#11984](https://github.com/proompteng/lab/pull/11984).
+
+Release PR #11984 promoted Jangar to:
+
+```text
+registry.ide-newton.ts.net/lab/jangar@sha256:85dedfa3f1d6dc38be857647c2f530d6aee888ac57385180ca1ce8d1c06b28fa
+```
+
+The PR also recorded the source CI run id and serving proof env values so live pods expose the source SHA and image
+digest that the release contract promoted.
+
+### Jangar Live Rollout Smoke
+
+Current readback:
+
+- Argo Application `jangar`: `Synced`, `Healthy`
+- Argo sync revision: `28cbdf209b0fa3400b107e5d6ff6903249dc7bf0`
+- Argo desired revision: `e73895548c800cecf0e2106c2d6fea48405dfc29`
+- Deployment image:
+  `registry.ide-newton.ts.net/lab/jangar:sha-c4b0fee9ef3b91c10bf57b73540f4e04b3896a62@sha256:85dedfa3f1d6dc38be857647c2f530d6aee888ac57385180ca1ce8d1c06b28fa`
+- Deployment status: `ready=1`, `available=1`, `updated=1`, generation equals observed generation
+- Pod: `jangar-5747b5586b-vd62t`, `2/2 Running`, `0` restarts
+- Service endpoints: `10.244.5.21:8080`
+- Readiness smoke: `http://jangar/healthz` returned `200` from an in-cluster `curlimages/curl` pod.
+
+Post-deploy verifier run [28760860423](https://github.com/proompteng/lab/actions/runs/28760860423) proved the
+full Jangar runtime verifier contract on `main`:
+
+- workflow: `.github/workflows/jangar-post-deploy-verify.yml`
+- result: passed in `1m10s`
+- expected revision input:
+  `28cbdf209b0fa3400b107e5d6ff6903249dc7bf0`
+- expected digest:
+  `sha256:85dedfa3f1d6dc38be857647c2f530d6aee888ac57385180ca1ce8d1c06b28fa`
+- verifier output: `Attempt 1: sync=Synced health=Healthy revision=28cbdf209b0fa3400b107e5d6ff6903249dc7bf0`
+- verifier output: `Admission passports verified`
+- verifier output: `Authority provenance verified`
+- verifier output: `Recovery warrants verified`
+- verifier output: `Deploy verification watermarks verified`
+- Temporal routing sync output: `changed=false`, `skippedReason=no_versioned_workflow_pollers`
+
+The earlier manual verifier run
+[28759972850](https://github.com/proompteng/lab/actions/runs/28759972850) failed because it was dispatched with a later
+main revision that did not change `argocd/applications/jangar`. The corrected run above uses the actual Jangar GitOps
+release commit synced by Argo and is the authoritative post-deploy proof for this checkpoint.
+
+### Jangar Cache Status
+
+The Jangar build used Attic setup and pushed the image archive closure to Attic. The release contract proves digest and
+platform identity, but it does not include normalized `cacheProvenance`, lockfile, or tool-version fields. This
+checkpoint therefore records job wall times and does not claim cache-hit counts.
+
 ## Sag Build And Release Proof
 
 Sag is a root-enabled repo-owned image app with `sag-image`, but the runtime Deployment is intentionally scaled to zero
@@ -772,7 +871,6 @@ Readback:
 The rollout is not complete from this checkpoint alone. Remaining full runtime proof still needs to cover:
 
 - `agents`
-- `jangar`
 - `torghut`
 - `torghut-hyperliquid-feed`
 - `torghut-hyperliquid-runtime`
