@@ -733,6 +733,16 @@ were `0`. This checkpoint fixes the verifier contract so it still validates Argo
 then exits successfully when `desired_replicas=0` with an explicit runtime-smoke skip. If replicas are later raised above
 zero, the same verifier keeps the rollout-status and available-replica gates.
 
+Post-merge verifier run [28759790228](https://github.com/proompteng/lab/actions/runs/28759790228) proved the fixed
+contract on `main`:
+
+- workflow: `.github/workflows/sag-post-deploy-verify.yml`
+- result: passed in `1m19s`
+- live image:
+  `registry.ide-newton.ts.net/lab/sag@sha256:2c3151fcc38f9f60b40959fede74a34e47ba6face468dd27521f3b111a590850`
+- desired replicas: `0`
+- verifier output: `Sag desired replicas is 0; runtime rollout smoke is intentionally skipped after digest verification.`
+
 ### Sag Cache Status
 
 The Sag build used Attic setup and pushed build-platform helper closures plus the image archive closure to Attic. The
