@@ -960,6 +960,10 @@ describe('native OCI build workflows', () => {
     expect(sagReleaseWorkflow).not.toContain('docker buildx')
     expect(sagPostDeployVerifyWorkflow).toContain('kubectl -n sag rollout status deployment/sag')
     expect(sagPostDeployVerifyWorkflow).toContain('desired_replicas=')
+    expect(sagPostDeployVerifyWorkflow).toContain(
+      'Sag desired replicas is 0; runtime rollout smoke is intentionally skipped',
+    )
+    expect(sagPostDeployVerifyWorkflow).toContain('Sag deployment image does not contain expected digest')
   })
 
   it('routes the enabled Jangar image through a real Nix OCI attr', () => {
