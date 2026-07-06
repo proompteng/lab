@@ -225,7 +225,8 @@ def position_for_coin(session: _SqlSession, coin: str) -> PositionSnapshot | Non
 
 def _dict_payload(value: object) -> dict[str, object]:
     if isinstance(value, dict):
-        return {str(key): item for key, item in value.items()}
+        payload = cast(Mapping[object, object], value)
+        return {str(key): item for key, item in payload.items()}
     return {}
 
 
