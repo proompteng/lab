@@ -251,10 +251,12 @@ def _close_opposite_position_before_entry(
     )
     if not opposite_position:
         return None
-    result = exchange.close_position_reduce_only(signal.coin, size=abs(position.size))
+    close_coin = position.sdk_coin or signal.coin
+    result = exchange.close_position_reduce_only(close_coin, size=abs(position.size))
     return {
         "schema_version": "torghut.hyperliquid-position-aware-reduce-only.v1",
         "coin": signal.coin,
+        "sdk_coin": close_coin,
         "reason": "reduce_only_close_before_opposite_entry",
         "signal_action": signal.action,
         "previous_position_size": str(position.size),

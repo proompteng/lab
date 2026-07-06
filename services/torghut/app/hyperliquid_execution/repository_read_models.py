@@ -208,16 +208,40 @@ def position_for_coin(session: _SqlSession, coin: str) -> PositionSnapshot | Non
     if not rows:
         return None
     row = rows[0]
+    coin = str(row["coin"])
+    raw_payload = _dict_payload(row.get("raw_payload"))
     return PositionSnapshot(
         market_id=str(row["market_id"]),
-        coin=str(row["coin"]),
+        coin=coin,
         size=Decimal(str(row["size"])),
         entry_price=_optional_decimal(row.get("entry_price")),
         notional_usd=Decimal(str(row["notional_usd"])),
         unrealized_pnl_usd=Decimal(str(row["unrealized_pnl_usd"])),
         observed_at=cast(datetime, row["observed_at"]),
-        raw_payload=cast(dict[str, object], row.get("raw_payload") or {}),
+        raw_payload=raw_payload,
+        sdk_coin=_position_sdk_coin(raw_payload),
     )
+
+
+def _dict_payload(value: object) -> dict[str, object]:
+    if isinstance(value, dict):
+        payload = cast(Mapping[object, object], value)
+        return {str(key): item for key, item in payload.items()}
+    return {}
+
+
+def _position_sdk_coin(raw_payload: Mapping[str, object]) -> str | None:
+    explicit = _optional_text(raw_payload.get("sdk_coin"))
+    if explicit is not None:
+        return explicit
+    return _optional_text(raw_payload.get("coin"))
+
+
+def _optional_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text_value = str(value).strip()
+    return text_value or None
 
 
 def _optional_decimal(value: object) -> Decimal | None:

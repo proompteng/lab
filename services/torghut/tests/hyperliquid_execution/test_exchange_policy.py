@@ -9,108 +9,9 @@ from typing import Any
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
 from app.hyperliquid_execution.models import ExecutionMarket, OpenOrder, OrderIntent
-
-
-def test_exchange_submits_ioc_order() -> None:
-    sdk = _FakeSdk()
-    sdk.next_order_response = {
-        "response": {"data": {"statuses": [{"filled": {"oid": 123}}]}}
-    }
-    exchange = _FakeExchange(
-        HyperliquidExecutionConfig.from_env(
-            {
-                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
-                "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "50",
-            }
-        ),
-        sdk=sdk,
-    )
-    intent = OrderIntent(
-        market_id="hl:perp:xyz:NVDA",
-        coin="NVDA",
-        dex="xyz",
-        side="buy",
-        size=Decimal("1"),
-        limit_price=Decimal("10"),
-        notional_usd=Decimal("10"),
-        cloid="0xabc",
-        tif="Ioc",
-        reduce_only=False,
-        signal_id="signal",
-        expires_at=datetime.now(timezone.utc),
-    )
-
-    result = exchange.submit_order(intent)
-
-    assert result.status == "filled"
-    assert result.exchange_order_id == "123"
-    assert sdk.market_opens == [
-        {
-            "name": "NVDA",
-            "is_buy": True,
-            "sz": 1.0,
-            "slippage": 0.005,
-            "cloid": "0xabc",
-        }
-    ]
-
-
-def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> None:
-    sdk = _FakeSdk()
-    exchange = _FakeExchange(
-        HyperliquidExecutionConfig.from_env(
-            {
-                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
-            }
-        ),
-        sdk=sdk,
-    )
-    exchange.filter_supported_markets((_market("NVDA", "xyz"),))
-    intent = OrderIntent(
-        market_id="hl:perp:xyz:NVDA",
-        coin="NVDA",
-        dex="xyz",
-        side="buy",
-        size=Decimal("0.1999"),
-        limit_price=Decimal("50"),
-        notional_usd=Decimal("9.995"),
-        cloid="0xabc",
-        tif="Ioc",
-        reduce_only=False,
-        signal_id="signal",
-        expires_at=datetime.now(timezone.utc),
-    )
-
-    result = exchange.submit_order(intent)
-
-    assert result.status == "accepted"
-    assert sdk.market_opens[0]["sz"] == 0.2
-
-
-def test_exchange_cancels_by_oid() -> None:
-    sdk = _FakeSdk()
-    exchange = _FakeExchange(
-        HyperliquidExecutionConfig.from_env(
-            {"HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1"}
-        ),
-        sdk=sdk,
-    )
-    order = OpenOrder(
-        order_id="order",
-        coin="NVDA",
-        dex="xyz",
-        exchange_order_id="123",
-        cloid="0xabc",
-        status="accepted",
-        expires_at=datetime.now(timezone.utc),
-    )
-
-    result = exchange.cancel_order(order)
-
-    assert result.status == "cancelled"
-    assert sdk.cancels == [("NVDA", 123)]
+from app.hyperliquid_execution.reconciliation_keys import (
+    market_id_by_reconciliation_coin,
+)
 
 
 def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None:
@@ -187,6 +88,33 @@ def test_exchange_reconciles_unified_account_spot_and_perp_dex_state() -> None:
     assert "xyz" in account.account.raw_payload["dexStates"]
 
 
+def test_exchange_canonicalizes_scoped_reconciliation_rows() -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=_FakeSdk(),
+        info=_ScopedReconciliationInfo(),
+    )
+    market = _market("NVDA", "xyz")
+    exchange.filter_supported_markets((market,))
+    market_id_by_coin = market_id_by_reconciliation_coin((market,))
+
+    fills = exchange.reconcile_fills(market_id_by_coin)
+    account = exchange.reconcile_account(market_id_by_coin)
+
+    assert fills[0].market_id == "hl:perp:xyz:NVDA"
+    assert fills[0].coin == "NVDA"
+    assert fills[0].raw_payload["coin"] == "xyz:NVDA"
+    assert account.positions[0].market_id == "hl:perp:xyz:NVDA"
+    assert account.positions[0].coin == "NVDA"
+    assert account.positions[0].sdk_coin == "xyz:NVDA"
+    assert account.positions[0].raw_payload["coin"] == "xyz:NVDA"
+
+
 def test_exchange_reconciles_spot_state_fallback_paths() -> None:
     config = HyperliquidExecutionConfig.from_env(
         {
@@ -253,18 +181,41 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
         ),
         sdk=sdk,
     )
+    exchange.filter_supported_markets((_market("NVDA", "xyz"),))
 
-    result = exchange.close_position_reduce_only(
+    default_result = exchange.close_position_reduce_only(
+        "NVDA", size=Decimal("1.0"), slippage=Decimal("0.02")
+    )
+    scoped_result = exchange.close_position_reduce_only(
+        "xyz:NVDA", size=Decimal("0.5"), slippage=Decimal("0.02")
+    )
+    spx_result = exchange.close_position_reduce_only(
         "SPX", size=Decimal("275.2"), slippage=Decimal("0.02")
     )
 
-    assert result.status == "filled"
-    assert result.exchange_order_id == "789"
-    assert sdk.market_closes == [("SPX", 275.2, 0.02)]
+    assert default_result.status == "filled"
+    assert scoped_result.status == "filled"
+    assert spx_result.exchange_order_id == "789"
+    assert sdk.market_closes == [
+        ("NVDA", 1.0, 0.02),
+        ("xyz:NVDA", 0.5, 0.02),
+        ("SPX", 275.2, 0.02),
+    ]
+
+
+class _FakeSdkInfo:
+    def __init__(self) -> None:
+        self.name_to_coin: dict[str, int] = {
+            "NVDA": 0,
+            "HALT": 1,
+            "AMD": 2,
+            "SPX": 3,
+        }
 
 
 class _FakeSdk:
     def __init__(self) -> None:
+        self.info = _FakeSdkInfo()
         self.market_opens: list[dict[str, Any]] = []
         self.cancels: list[tuple[str, int]] = []
         self.market_closes: list[tuple[str, float | None, float]] = []
@@ -273,10 +224,12 @@ class _FakeSdk:
         }
 
     def market_open(self, **kwargs: object) -> dict[str, object]:
+        self.info.name_to_coin[str(kwargs["name"])]
         self.market_opens.append(dict(kwargs))
         return self.next_order_response
 
     def cancel(self, name: str, oid: int) -> dict[str, object]:
+        self.info.name_to_coin[name]
         self.cancels.append((name, oid))
         return {"status": "ok"}
 
@@ -287,6 +240,7 @@ class _FakeSdk:
         sz: float | None = None,
         slippage: float = 0.05,
     ) -> dict[str, object]:
+        self.info.name_to_coin[coin]
         self.market_closes.append((coin, sz, slippage))
         return {"response": {"data": {"statuses": [{"filled": {"oid": 789}}]}}}
 
@@ -399,6 +353,52 @@ class _UnifiedAccountInfo(_FakeInfo):
                 }
             ],
             "tokenToAvailableAfterMaintenance": [[0, "987.602738"]],
+        }
+
+
+class _ScopedReconciliationInfo(_FakeInfo):
+    def user_fills(self, _account: str) -> list[dict[str, object]]:
+        return [
+            {
+                "coin": "xyz:NVDA",
+                "px": "100",
+                "sz": "0.1",
+                "fee": "0.01",
+                "closedPnl": "0.50",
+                "oid": "123",
+                "hash": "fill-1",
+                "side": "B",
+                "time": "1781870400000",
+            }
+        ]
+
+    def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
+        if dex == "xyz":
+            return {
+                "marginSummary": {
+                    "accountValue": "1000",
+                    "totalNtlPos": "20",
+                },
+                "withdrawable": "900",
+                "assetPositions": [
+                    {
+                        "position": {
+                            "coin": "xyz:NVDA",
+                            "szi": "0.1",
+                            "entryPx": "100",
+                            "positionValue": "20",
+                            "unrealizedPnl": "0.25",
+                        }
+                    }
+                ],
+            }
+        return {
+            "marginSummary": {
+                "accountValue": "0",
+                "totalNtlPos": "0",
+            },
+            "withdrawable": "0",
+            "assetPositions": [],
         }
 
 

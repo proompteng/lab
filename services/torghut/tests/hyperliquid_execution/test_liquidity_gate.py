@@ -22,8 +22,8 @@ def test_exchange_filters_uncrossable_testnet_books() -> None:
     sdk = _Sdk()
     info = _Info(
         {
-            "NVDA": {"levels": [[{"px": "80"}], [{"px": "120"}]]},
-            "MU": {"levels": [[{"px": "99"}], [{"px": "101"}]]},
+            "xyz:NVDA": {"levels": [[{"px": "80"}], [{"px": "120"}]]},
+            "xyz:MU": {"levels": [[{"px": "99"}], [{"px": "101"}]]},
         },
         mids={"NVDA": "100", "MU": "100"},
     )
@@ -87,10 +87,10 @@ def test_exchange_reports_malformed_testnet_books_as_empty() -> None:
         sdk=sdk,
         info=_Info(
             {
-                "NOLEVELS": {},
-                "ONESIDE": {"levels": [[{"px": "99"}]]},
-                "EMPTY": {"levels": [[], [{"px": "101"}]]},
-                "BADLEVEL": {"levels": [[42], [{"px": "101"}]]},
+                "xyz:NOLEVELS": {},
+                "xyz:ONESIDE": {"levels": [[{"px": "99"}]]},
+                "xyz:EMPTY": {"levels": [[], [{"px": "101"}]]},
+                "xyz:BADLEVEL": {"levels": [[42], [{"px": "101"}]]},
             }
         ),
     )
@@ -111,7 +111,7 @@ def test_exchange_keeps_long_crossable_market_when_sell_side_is_not_crossable() 
         ),
         sdk=_Sdk(),
         info=_Info(
-            {"NVDA": {"levels": [[{"px": "97"}], [{"px": "101"}]]}},
+            {"xyz:NVDA": {"levels": [[{"px": "97"}], [{"px": "101"}]]}},
             mids={"NVDA": "100"},
         ),
     )
@@ -131,7 +131,7 @@ def test_exchange_applies_sdk_price_rounding_before_selecting_market() -> None:
         ),
         sdk=_Sdk(),
         info=_Info(
-            {"NVDA": {"levels": [[{"px": "100"}], [{"px": "100.004"}]]}},
+            {"xyz:NVDA": {"levels": [[{"px": "100"}], [{"px": "100.004"}]]}},
             mids={"NVDA": "100.004"},
         ),
     )
@@ -155,7 +155,7 @@ def test_exchange_requires_buy_crossability_when_short_entries_are_enabled() -> 
         ),
         sdk=_Sdk(),
         info=_Info(
-            {"NVDA": {"levels": [[{"px": "99"}], [{"px": "103"}]]}},
+            {"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "103"}]]}},
             mids={"NVDA": "100"},
         ),
     )
@@ -175,7 +175,9 @@ def test_exchange_reports_mid_lookup_failure_as_unavailable_liquidity() -> None:
             {"HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "200"}
         ),
         sdk=_Sdk(),
-        info=_FailingMidInfo({"NVDA": {"levels": [[{"px": "99"}], [{"px": "101"}]]}}),
+        info=_FailingMidInfo(
+            {"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "101"}]]}}
+        ),
     )
 
     selected, status = exchange.filter_crossable_markets((_market("NVDA", "xyz"),))
@@ -273,11 +275,15 @@ class _Info:
         self._books = books
         self._mids = mids or {}
         self.mid_dexes: list[str] = []
-        self.name_to_coin = {coin: coin for coin in books}
-        self.coin_to_asset = {coin: index for index, coin in enumerate(books)}
-        self.asset_to_sz_decimals = {index: 2 for index, _coin in enumerate(books)}
+        metadata_names = [coin.split(":", 1)[-1] for coin in books]
+        self.name_to_coin = {coin: coin for coin in metadata_names}
+        self.coin_to_asset = {coin: index for index, coin in enumerate(metadata_names)}
+        self.asset_to_sz_decimals = {
+            index: 2 for index, _coin in enumerate(metadata_names)
+        }
 
     def l2_snapshot(self, name: str) -> dict[str, object]:
+        self.name_to_coin[name]
         return self._books[name]
 
     def __getattr__(self, name: str) -> object:

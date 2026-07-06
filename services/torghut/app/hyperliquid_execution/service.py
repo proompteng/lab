@@ -22,6 +22,7 @@ from .models import (
     RuntimeDependencyStatus,
 )
 from .repository import HyperliquidExecutionRepository
+from .reconciliation_keys import market_id_by_reconciliation_coin
 from .runtime_details import risk_state_details, universe_details
 from .universe import UniverseSelectionConfig, select_configured_markets
 
@@ -262,9 +263,7 @@ class HyperliquidExecutionService:
         execution_markets: tuple[ExecutionMarket, ...],
         observed_at: datetime,
     ) -> RuntimeDependencyStatus:
-        market_id_by_coin = {
-            market.coin: market.market_id for market in execution_markets
-        }
+        market_id_by_coin = market_id_by_reconciliation_coin(execution_markets)
         repository.upsert_fills(self._exchange.reconcile_fills(market_id_by_coin))
         repository.upsert_account_state(
             self._exchange.reconcile_account(market_id_by_coin)

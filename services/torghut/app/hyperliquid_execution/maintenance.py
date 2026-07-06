@@ -294,7 +294,7 @@ def _append_raw_position_rows(
 def _position_snapshot_rows(account: AccountState) -> list[dict[str, object]]:
     return [
         {
-            "coin": position.coin,
+            "coin": position.sdk_coin or position.coin,
             "size": str(position.size),
             "entry_price": (
                 str(position.entry_price) if position.entry_price is not None else None

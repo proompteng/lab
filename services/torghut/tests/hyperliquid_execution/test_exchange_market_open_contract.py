@@ -46,6 +46,73 @@ def test_exchange_rejects_non_positive_order_price_before_market_open() -> None:
     assert sdk.market_opens == []
 
 
+def test_exchange_passes_hip3_scope_and_executable_price_to_market_open() -> None:
+    sdk = _FakeSdk()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=sdk,
+    )
+
+    result = exchange.submit_order(_intent())
+
+    assert result.status == "accepted"
+    assert sdk.market_opens == [
+        {
+            "name": "xyz:NVDA",
+            "is_buy": True,
+            "sz": 0.1234,
+            "px": 100.1234567,
+            "slippage": 0.0,
+            "cloid": "0xabc",
+        }
+    ]
+
+
+def test_exchange_does_not_double_scope_pre_scoped_market_name() -> None:
+    sdk = _FakeSdk()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=sdk,
+    )
+
+    result = exchange.submit_order(
+        _intent(coin="xyz:NVDA", market_id="hl:perp:xyz:xyz:NVDA")
+    )
+
+    assert result.status == "accepted"
+    assert sdk.market_opens[0]["name"] == "xyz:NVDA"
+
+
+def test_exchange_leaves_default_dex_market_name_unscoped() -> None:
+    sdk = _FakeSdk()
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=sdk,
+    )
+
+    result = exchange.submit_order(
+        _intent(dex="default", market_id="hl:perp:default:NVDA")
+    )
+
+    assert result.status == "accepted"
+    assert sdk.market_opens[0]["name"] == "NVDA"
+
+
 class _FakeSdk:
     def __init__(self) -> None:
         self.market_opens: list[dict[str, object]] = []
@@ -71,11 +138,14 @@ def _intent(
     *,
     reduce_only: bool = False,
     limit_price: Decimal = Decimal("100.1234567"),
+    coin: str = "NVDA",
+    dex: str = "xyz",
+    market_id: str = "hl:perp:xyz:NVDA",
 ) -> OrderIntent:
     return OrderIntent(
-        market_id="hl:perp:xyz:NVDA",
-        coin="NVDA",
-        dex="xyz",
+        market_id=market_id,
+        coin=coin,
+        dex=dex,
         side="buy",
         size=Decimal("0.1234"),
         limit_price=limit_price,

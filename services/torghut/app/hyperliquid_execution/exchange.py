@@ -9,6 +9,8 @@ from decimal import Decimal, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
+from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
+from .sdk_aliases import register_sdk_market_alias as _register_sdk_market_alias
 from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
@@ -22,6 +24,7 @@ from .models import (
     PositionSnapshot,
     RuntimeDependencyStatus,
 )
+from .reconciliation_keys import ReconciliationCoinMap
 from .universe import execution_universe_status
 
 
@@ -44,24 +47,16 @@ class HyperliquidExecutionExchange(Protocol):
     def filter_supported_markets(
         self,
         markets: tuple[ExecutionMarket, ...],
-    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        """Return markets active on the testnet execution venue."""
-        ...
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]: ...
 
     def filter_crossable_markets(
         self,
         markets: tuple[ExecutionMarket, ...],
-    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        """Return markets with a testnet book crossable by market_open slippage."""
-        ...
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]: ...
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit a marketable entry order."""
-        ...
+    def submit_order(self, intent: OrderIntent) -> OrderResult: ...
 
-    def cancel_order(self, order: OpenOrder) -> OrderResult:
-        """Cancel a resting order by Hyperliquid oid."""
-        ...
+    def cancel_order(self, order: OpenOrder) -> OrderResult: ...
 
     def close_position_reduce_only(
         self,
@@ -69,29 +64,17 @@ class HyperliquidExecutionExchange(Protocol):
         *,
         size: Decimal | None = None,
         slippage: Decimal = Decimal("0.05"),
-    ) -> OrderResult:
-        """Close an existing position through a reduce-only order."""
-        ...
+    ) -> OrderResult: ...
 
-    def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
-        """Read fills from the configured testnet account."""
-        ...
+    def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]: ...
 
-    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
-        """Read account and position state from the configured testnet account."""
-        ...
+    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState: ...
 
-    def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]:
-        """Read coins with open exchange orders."""
-        ...
+    def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]: ...
 
-    def dependency_status(self) -> RuntimeDependencyStatus:
-        """Return exchange freshness."""
-        ...
+    def dependency_status(self) -> RuntimeDependencyStatus: ...
 
-    def execution_metadata_details(self) -> dict[str, object]:
-        """Return active/missing/delisted metadata details for reports."""
-        ...
+    def execution_metadata_details(self) -> dict[str, object]: ...
 
 
 class HyperliquidSdkExecutionExchange:
@@ -221,15 +204,17 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="reduce_only_entry_orders_unsupported",
             )
         normalized = self.normalize_order_intent(intent)
+        sdk_name = _sdk_market_name(normalized.coin, normalized.dex)
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, sdk_name, normalized.coin)
         response = cast(
             dict[str, object],
-            self._exchange().market_open(
-                name=normalized.coin,
+            exchange.market_open(
+                name=sdk_name,
                 is_buy=normalized.side == "buy",
                 sz=float(normalized.size),
-                slippage=float(
-                    self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
-                ),
+                px=float(normalized.limit_price),
+                slippage=0.0,
                 cloid=self._cloid(normalized.cloid),
             ),
         )
@@ -250,9 +235,12 @@ class HyperliquidSdkExecutionExchange:
                 },
                 rejection_reason="missing_exchange_order_id",
             )
+        sdk_name = _sdk_market_name(order.coin, order.dex)
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, sdk_name, order.coin)
         response = cast(
             dict[str, object],
-            self._exchange().cancel(order.coin, int(order.exchange_order_id)),
+            exchange.cancel(sdk_name, int(order.exchange_order_id)),
         )
         self._last_read_at = datetime.now(timezone.utc)
         return OrderResult(
@@ -275,7 +263,9 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "api_wallet_private_key_missing"},
                 rejection_reason="api_wallet_private_key_missing",
             )
-        response = self._exchange().market_close(
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, coin, coin.split(":", 1)[-1])
+        response = exchange.market_close(
             coin,
             sz=float(size) if size is not None else None,
             slippage=float(slippage),
@@ -399,7 +389,9 @@ class HyperliquidSdkExecutionExchange:
     def _uncrossable_reason(self, market: ExecutionMarket) -> str | None:
         try:
             info = self._info()
-            book = cast(dict[str, object], info.l2_snapshot(market.coin))
+            sdk_name = _sdk_market_name(market.coin, market.dex)
+            _register_sdk_market_alias(info, sdk_name, market.coin)
+            book = cast(dict[str, object], info.l2_snapshot(sdk_name))
             self._last_read_at = datetime.now(timezone.utc)
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             return f"book_unavailable:{type(exc).__name__}"
@@ -413,10 +405,10 @@ class HyperliquidSdkExecutionExchange:
                 return "book_empty"
             slippage = self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
             buy_limit = sdk_slippage_limit_price(
-                info, market.coin, True, mid_price, slippage
+                info, sdk_name, True, mid_price, slippage
             )
             sell_limit = sdk_slippage_limit_price(
-                info, market.coin, False, mid_price, slippage
+                info, sdk_name, False, mid_price, slippage
             )
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             return f"book_unavailable:{type(exc).__name__}"
@@ -590,16 +582,16 @@ def _parse_sdk_status(
 ) -> tuple[OrderStatus, str | None, str | None]:
     if "error" in status_payload:
         return "rejected", None, str(status_payload["error"])
-    for name in ("resting", "filled"):
+    for name, order_status in (("resting", "accepted"), ("filled", "filled")):
         value = status_payload.get(name)
-        if isinstance(value, dict):
-            value_map = cast(Mapping[str, object], value)
-            oid = value_map.get("oid")
-            return (
-                ("accepted" if name == "resting" else "filled"),
-                str(oid) if oid is not None else None,
-                None,
-            )
+        if not isinstance(value, dict):
+            continue
+        oid = cast(Mapping[str, object], value).get("oid")
+        return (
+            cast(OrderStatus, order_status),
+            str(oid) if oid is not None else None,
+            None,
+        )
     return "submitted", None, None
 
 
@@ -610,12 +602,17 @@ def _is_halted(result: OrderResult) -> bool:
 def _fill_from_payload(
     payload: Mapping[str, object], market_id_by_coin: dict[str, str]
 ) -> Fill:
-    coin = _fill_coin(payload)
+    reconciliation_coin = _fill_coin(payload)
+    coin = _canonical_reconciliation_coin(reconciliation_coin, market_id_by_coin)
     price = _decimal(payload.get("px") or payload.get("price"))
     size = _decimal(payload.get("sz") or payload.get("size"))
     return Fill(
-        fill_hash=str(payload.get("tid") or payload.get("hash") or f"{coin}:{payload}"),
-        market_id=market_id_by_coin[coin],
+        fill_hash=str(
+            payload.get("tid")
+            or payload.get("hash")
+            or f"{reconciliation_coin}:{payload}"
+        ),
+        market_id=market_id_by_coin[reconciliation_coin],
         coin=coin,
         side="buy"
         if str(payload.get("side") or "").upper().startswith("B")
@@ -651,15 +648,18 @@ def _account_state_from_payload(
             if not isinstance(position, dict):
                 continue
             position_map = cast(Mapping[str, object], position)
-            coin = str(position_map.get("coin") or "").strip()
-            if coin not in market_id_by_coin:
+            reconciliation_coin = str(position_map.get("coin") or "").strip()
+            if reconciliation_coin not in market_id_by_coin:
                 continue
+            coin = _canonical_reconciliation_coin(
+                reconciliation_coin, market_id_by_coin
+            )
             size = _decimal(position_map.get("szi"))
             entry_price = _optional_decimal(position_map.get("entryPx"))
             notional_usd = _position_exposure_usd(position_map)
             positions.append(
                 PositionSnapshot(
-                    market_id=market_id_by_coin[coin],
+                    market_id=market_id_by_coin[reconciliation_coin],
                     coin=coin,
                     size=size,
                     entry_price=entry_price,
@@ -669,6 +669,7 @@ def _account_state_from_payload(
                     raw_payload={
                         str(key): value for key, value in position_map.items()
                     },
+                    sdk_coin=reconciliation_coin,
                 )
             )
     raw_exposure_usd = _raw_account_exposure_usd(payload, positions)
@@ -682,6 +683,18 @@ def _account_state_from_payload(
         ),
         positions=tuple(positions),
     )
+
+
+def _canonical_reconciliation_coin(coin: str, market_id_by_coin: dict[str, str]) -> str:
+    if isinstance(market_id_by_coin, ReconciliationCoinMap):
+        return market_id_by_coin.canonical_coin_by_coin.get(coin, coin)
+    market_id = market_id_by_coin.get(coin)
+    if market_id is None:
+        return coin
+    for candidate, candidate_market_id in market_id_by_coin.items():
+        if candidate_market_id == market_id:
+            return candidate
+    return coin
 
 
 def _account_state_from_payloads(
@@ -813,13 +826,6 @@ def _spot_usdc_balances(payload: Mapping[str, object]) -> list[Mapping[str, obje
         if str(balance_map.get("coin") or "").strip().upper() == "USDC":
             usdc_balances.append(balance_map)
     return usdc_balances
-
-
-def _sdk_dex(dex: str) -> str:
-    normalized = dex.strip().lower()
-    if normalized in {"", "default"}:
-        return ""
-    return normalized
 
 
 def _fill_coin(payload: Mapping[str, object]) -> str:

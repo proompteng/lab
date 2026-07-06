@@ -141,6 +141,40 @@ def test_service_closes_opposite_position_reduce_only_before_new_entry() -> None
     }
 
 
+def test_service_closes_scoped_opposite_position_reduce_only() -> None:
+    now = _now()
+    config = HyperliquidExecutionConfig.from_env(
+        {
+            "HYPERLIQUID_EXECUTION_TRADING_ENABLED": "true",
+            "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+            "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            "HYPERLIQUID_EXECUTION_TRADE_COINS": "xyz:NVDA",
+        }
+    )
+    session = _FakeSession(
+        position_size=Decimal("-0.1"),
+        position_sdk_coin="xyz:NVDA",
+    )
+    exchange = _ServiceExchange(now)
+    service = HyperliquidExecutionService(
+        config=config,
+        feed=_ServiceFeed(now),
+        exchange=exchange,
+    )
+
+    result = service.run_once(session)
+
+    assert result.orders_submitted == 1
+    assert exchange.submitted_coins == []
+    assert exchange.reduce_only_closes == [
+        ("xyz:NVDA", Decimal("0.1"), Decimal("0.05"))
+    ]
+    position_reduce_only = result.universe_details["position_reduce_only"]
+    assert isinstance(position_reduce_only, dict)
+    assert position_reduce_only["coin"] == "NVDA"
+    assert position_reduce_only["sdk_coin"] == "xyz:NVDA"
+
+
 def test_service_stops_cycle_after_submitted_reduce_only_close() -> None:
     now = _now()
     config = HyperliquidExecutionConfig.from_env(

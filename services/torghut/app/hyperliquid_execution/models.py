@@ -212,6 +212,7 @@ class PositionSnapshot:
     unrealized_pnl_usd: Decimal
     observed_at: datetime
     raw_payload: dict[str, object]
+    sdk_coin: str | None = None
 
 
 @dataclass(frozen=True)
