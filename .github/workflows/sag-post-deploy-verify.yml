@@ -113,15 +113,26 @@ jobs:
             sleep 10
           done
 
-          kubectl -n sag rollout status deployment/sag --timeout=180s
-          live_image="$(kubectl -n sag get deployment sag -o json | jq -r '.spec.template.spec.containers[] | select(.name=="sag") | .image')"
+          deployment_json="$(kubectl -n sag get deployment sag -o json)"
+          desired_replicas="$(jq -r '.spec.replicas // 1' <<< "${deployment_json}")"
+          live_image="$(jq -r '.spec.template.spec.containers[] | select(.name=="sag") | .image' <<< "${deployment_json}")"
           echo "live_image=${live_image}"
           if [[ "${live_image}" != *"@${expected_digest}"* ]]; then
             echo "Sag deployment image does not contain expected digest ${expected_digest}" >&2
             exit 1
           fi
 
-          desired_replicas="$(kubectl -n sag get deployment sag -o json | jq -r '.spec.replicas // 1')"
-          available_replicas="$(kubectl -n sag get deployment sag -o json | jq -r '.status.availableReplicas // 0')"
           echo "desired_replicas=${desired_replicas}"
+          if [ "${desired_replicas}" = "0" ]; then
+            echo "Sag desired replicas is 0; runtime rollout smoke is intentionally skipped after digest verification."
+            exit 0
+          fi
+
+          kubectl -n sag rollout status deployment/sag --timeout=180s
+          deployment_json="$(kubectl -n sag get deployment sag -o json)"
+          available_replicas="$(jq -r '.status.availableReplicas // 0' <<< "${deployment_json}")"
           echo "available_replicas=${available_replicas}"
+          if [ "${available_replicas}" -lt "${desired_replicas}" ]; then
+            echo "Sag available replicas ${available_replicas} is below desired replicas ${desired_replicas}" >&2
+            exit 1
+          fi

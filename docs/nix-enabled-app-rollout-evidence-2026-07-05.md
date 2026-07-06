@@ -4,15 +4,17 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 
 ## Scope
 
-- Enabled apps proved: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
+- Enabled apps with full live runtime proof: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
   `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`.
+- Enabled apps with build/release proof but intentionally deferred runtime smoke: `sag` (`replicas: 0` in GitOps).
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
-  `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`.
+  `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`;
+  Sag uses `.github/workflows/sag-build-push.yaml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
   `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`,
-  `symphony-image`.
+  `symphony-image`, `sag-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -22,10 +24,11 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
   - `packages/scripts/src/headlamp/build-image.ts` and `packages/scripts/src/headlamp/deploy-service.ts`
   - product app build/deploy scripts under `packages/scripts/src/{app,docs,proompteng,olden,synthesis}/`
   - `packages/scripts/src/symphony/build-image.ts` and `packages/scripts/src/symphony/deploy-service.ts`
+  - `packages/scripts/src/sag/build-image.ts` and `packages/scripts/src/sag/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
   `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`, and
-  `.github/workflows/release-pr-automerge.yml`.
+  `.github/workflows/sag-release.yml`, and `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -54,6 +57,9 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#11866](https://github.com/proompteng/lab/pull/11866) | `7529c68ea151aa2106a821565c514f41719a8e5c` | Promote `app`, `docs`, `proompteng`, `olden`, and `synthesis` to Nix-built digests.              |
 | [#11676](https://github.com/proompteng/lab/pull/11676) | `c035fd755d223c31a267bbffe8e0c8c2cd2f3fb5` | Add the shared Symphony Nix image build path.                                                    |
 | [#11857](https://github.com/proompteng/lab/pull/11857) | `d8c2aea2d995d14dbf7b6acd68395529a03e37cc` | Promote `symphony`, `symphony-jangar`, and `symphony-torghut` to the Nix-built digest.           |
+| [#11684](https://github.com/proompteng/lab/pull/11684) | `d6babaa3afaca9756b4453c518e01ca685e390c9` | Add the Sag Nix image build, release, manual deploy, and post-deploy verification paths.          |
+| [#11852](https://github.com/proompteng/lab/pull/11852) | `00b160b172fa87faf374c1aa063e1c55766a4f63` | Trim repeated OCI image setup checks while preserving the Nix/Skopeo build path.                  |
+| [#11876](https://github.com/proompteng/lab/pull/11876) | `fe419be138d8d6c25dc6437caf4d0e89b7ee53f7` | Promote Sag to the Nix-built digest from source `00b160b172fa87faf374c1aa063e1c55766a4f63`.      |
 
 ## Failed Proof That Exposed The Gap
 
@@ -659,6 +665,80 @@ The Symphony build used Attic setup and pushed build-platform helper closures pl
 The release contract proves digest and platform identity, but it does not include normalized `cacheProvenance`, lockfile,
 or tool-version fields. This checkpoint therefore records job wall times and does not claim cache-hit counts.
 
+## Sag Build And Release Proof
+
+Sag is a root-enabled repo-owned image app with `sag-image`, but the runtime Deployment is intentionally scaled to zero
+in GitOps. This checkpoint therefore records Sag as build/release proved, not full runtime-smoke proved.
+
+### Sag Main Build Proof
+
+Run [28716205558](https://github.com/proompteng/lab/actions/runs/28716205558) succeeded on `main`.
+
+| Phase                        | Result            |
+| ---------------------------- | ----------------- |
+| `linux/amd64` build-platform | passed in `25m18s` |
+| `linux/arm64` build-platform | passed in `28m46s` |
+| publish-index                | passed in `5m48s`  |
+| release contract             | uploaded as `sag-release-contract` |
+
+Useful timed steps from the same run:
+
+| Platform/job      | Checkout | Nix setup | Prime helpers | Build archive | Push platform image | Warm image closure |
+| ----------------- | -------: | --------: | ------------: | ------------: | ------------------: | -----------------: |
+| `linux/amd64`     |    `16s` |      `1s` |         `10s` |       `2m03s` |               `59s` |            `21m35s` |
+| `linux/arm64`     |    `19s` |      `1s` |         `23s` |       `4m33s` |             `1m13s` |            `21m55s` |
+| publish-index     |    `16s` |      `1s` |         `20s` |       `3m41s` |                 N/A |                N/A |
+
+Release contract fields:
+
+- `service`: `sag`
+- `packageAttr`: `sag-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `sourceSha`: `00b160b172fa87faf374c1aa063e1c55766a4f63`
+- `image`: `registry.ide-newton.ts.net/lab/sag`
+- `digest`: `sha256:2c3151fcc38f9f60b40959fede74a34e47ba6face468dd27521f3b111a590850`
+- platform digests:
+  - `linux/amd64`: `sha256:02e396ca306b0039ebfb6fbd1bb45bc3477a72c256a98950a5475cee0dd26dae`
+  - `linux/arm64`: `sha256:6e59e189df893122813d826fa402fa29a8221c73aa70243ac1761b2460cc691b`
+- `platforms`: `linux/amd64`, `linux/arm64`
+
+### Sag Release Automation Proof
+
+Run [28718740732](https://github.com/proompteng/lab/actions/runs/28718740732) consumed the release contract, verified
+the Sag OCI index platforms, updated `argocd/sag/kustomization.yaml`, and created release PR
+[#11876](https://github.com/proompteng/lab/pull/11876).
+
+Release PR #11876 promoted only `argocd/sag/kustomization.yaml` to:
+
+```text
+registry.ide-newton.ts.net/lab/sag@sha256:2c3151fcc38f9f60b40959fede74a34e47ba6face468dd27521f3b111a590850
+```
+
+### Sag GitOps Readback And Runtime-Smoke Gap
+
+Current readback:
+
+- Argo Application `sag`: `Synced`, `Healthy`
+- Argo revision: `67b0f2139b8190a9ad2d105c5a1c402d6a09db22`
+- Deployment desired replicas: `0`
+- Deployment image:
+  `registry.ide-newton.ts.net/lab/sag@sha256:2c3151fcc38f9f60b40959fede74a34e47ba6face468dd27521f3b111a590850`
+- Service `sag` exists, but its endpoints are intentionally empty because the Deployment is scaled to zero.
+- `sag-db-1` is running, but that proves CNPG state only, not Sag app runtime.
+
+Run [28724773379](https://github.com/proompteng/lab/actions/runs/28724773379) exposed a verifier bug: the
+post-deploy verifier called `kubectl -n sag rollout status deployment/sag --timeout=180s` even when desired replicas
+were `0`. This checkpoint fixes the verifier contract so it still validates Argo state and the deployed image digest,
+then exits successfully when `desired_replicas=0` with an explicit runtime-smoke skip. If replicas are later raised above
+zero, the same verifier keeps the rollout-status and available-replica gates.
+
+### Sag Cache Status
+
+The Sag build used Attic setup and pushed build-platform helper closures plus the image archive closure to Attic. The
+release contract proves digest and platform identity, but it does not include normalized `cacheProvenance`, lockfile, or
+tool-version fields. This checkpoint therefore records job wall times and does not claim cache-hit counts.
+
 ## Inventory Audit
 
 Command:
@@ -679,7 +759,19 @@ Readback:
 
 ## Remaining Work
 
-The rollout is not complete from this checkpoint alone. Remaining proof still needs to cover the other enabled repo-owned image apps with the same evidence shape:
+The rollout is not complete from this checkpoint alone. Remaining full runtime proof still needs to cover:
+
+- `agents`
+- `jangar`
+- `torghut`
+- `torghut-hyperliquid-feed`
+- `torghut-hyperliquid-runtime`
+- `torghut-options`
+
+Sag also needs runtime smoke only if GitOps changes its desired replicas above `0`. Until then, the honest Sag status is
+build/release/digest proof with an intentional runtime-smoke skip.
+
+The remaining apps need the same evidence shape:
 
 - release contract for the app
 - real amd64 and arm64 Nix OCI build proof
