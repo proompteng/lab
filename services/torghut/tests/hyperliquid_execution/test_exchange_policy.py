@@ -181,14 +181,26 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
         ),
         sdk=sdk,
     )
+    exchange.filter_supported_markets((_market("NVDA", "xyz"),))
 
-    result = exchange.close_position_reduce_only(
+    default_result = exchange.close_position_reduce_only(
+        "NVDA", size=Decimal("1.0"), slippage=Decimal("0.02")
+    )
+    scoped_result = exchange.close_position_reduce_only(
+        "xyz:NVDA", size=Decimal("0.5"), slippage=Decimal("0.02")
+    )
+    spx_result = exchange.close_position_reduce_only(
         "SPX", size=Decimal("275.2"), slippage=Decimal("0.02")
     )
 
-    assert result.status == "filled"
-    assert result.exchange_order_id == "789"
-    assert sdk.market_closes == [("SPX", 275.2, 0.02)]
+    assert default_result.status == "filled"
+    assert scoped_result.status == "filled"
+    assert spx_result.exchange_order_id == "789"
+    assert sdk.market_closes == [
+        ("NVDA", 1.0, 0.02),
+        ("xyz:NVDA", 0.5, 0.02),
+        ("SPX", 275.2, 0.02),
+    ]
 
 
 class _FakeSdkInfo:

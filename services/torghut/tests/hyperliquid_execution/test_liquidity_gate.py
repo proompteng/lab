@@ -275,11 +275,13 @@ class _Info:
         self._books = books
         self._mids = mids or {}
         self.mid_dexes: list[str] = []
-        self.name_to_coin = {coin: coin for coin in books}
+        metadata_names = [coin.split(":", 1)[-1] for coin in books]
+        self.name_to_coin = {coin: coin for coin in metadata_names}
         self.coin_to_asset = {coin: index for index, coin in enumerate(books)}
         self.asset_to_sz_decimals = {index: 2 for index, _coin in enumerate(books)}
 
     def l2_snapshot(self, name: str) -> dict[str, object]:
+        self.name_to_coin[name]
         return self._books[name]
 
     def __getattr__(self, name: str) -> object:

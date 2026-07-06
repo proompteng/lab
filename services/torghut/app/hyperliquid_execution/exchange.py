@@ -10,7 +10,6 @@ from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
 from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
-from .market_names import sdk_position_close_name as _sdk_position_close_name
 from .sdk_aliases import register_sdk_market_alias as _register_sdk_market_alias
 from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
@@ -265,7 +264,7 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="api_wallet_private_key_missing",
             )
         response = self._exchange().market_close(
-            _sdk_position_close_name(coin, self._active_by_dex),
+            coin,
             sz=float(size) if size is not None else None,
             slippage=float(slippage),
         )
@@ -389,6 +388,7 @@ class HyperliquidSdkExecutionExchange:
         try:
             info = self._info()
             sdk_name = _sdk_market_name(market.coin, market.dex)
+            _register_sdk_market_alias(info, sdk_name, market.coin)
             book = cast(dict[str, object], info.l2_snapshot(sdk_name))
             self._last_read_at = datetime.now(timezone.utc)
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
