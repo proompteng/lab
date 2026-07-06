@@ -191,8 +191,19 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
     assert sdk.market_closes == [("SPX", 275.2, 0.02)]
 
 
+class _FakeSdkInfo:
+    def __init__(self) -> None:
+        self.name_to_coin: dict[str, int] = {
+            "NVDA": 0,
+            "HALT": 1,
+            "AMD": 2,
+            "SPX": 3,
+        }
+
+
 class _FakeSdk:
     def __init__(self) -> None:
+        self.info = _FakeSdkInfo()
         self.market_opens: list[dict[str, Any]] = []
         self.cancels: list[tuple[str, int]] = []
         self.market_closes: list[tuple[str, float | None, float]] = []
@@ -201,10 +212,12 @@ class _FakeSdk:
         }
 
     def market_open(self, **kwargs: object) -> dict[str, object]:
+        self.info.name_to_coin[str(kwargs["name"])]
         self.market_opens.append(dict(kwargs))
         return self.next_order_response
 
     def cancel(self, name: str, oid: int) -> dict[str, object]:
+        self.info.name_to_coin[name]
         self.cancels.append((name, oid))
         return {"status": "ok"}
 

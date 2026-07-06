@@ -203,10 +203,13 @@ class HyperliquidSdkExecutionExchange:
                 rejection_reason="reduce_only_entry_orders_unsupported",
             )
         normalized = self.normalize_order_intent(intent)
+        sdk_name = _sdk_market_name(normalized.coin, normalized.dex)
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, sdk_name, normalized.coin)
         response = cast(
             dict[str, object],
-            self._exchange().market_open(
-                name=_sdk_market_name(normalized.coin, normalized.dex),
+            exchange.market_open(
+                name=sdk_name,
                 is_buy=normalized.side == "buy",
                 sz=float(normalized.size),
                 px=float(normalized.limit_price),
@@ -231,11 +234,12 @@ class HyperliquidSdkExecutionExchange:
                 },
                 rejection_reason="missing_exchange_order_id",
             )
+        sdk_name = _sdk_market_name(order.coin, order.dex)
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, sdk_name, order.coin)
         response = cast(
             dict[str, object],
-            self._exchange().cancel(
-                _sdk_market_name(order.coin, order.dex), int(order.exchange_order_id)
-            ),
+            exchange.cancel(sdk_name, int(order.exchange_order_id)),
         )
         self._last_read_at = datetime.now(timezone.utc)
         return OrderResult(
@@ -546,6 +550,21 @@ class HyperliquidSdkExecutionExchange:
         if from_str is None:
             return raw
         return from_str(raw)
+
+
+def _register_sdk_market_alias(
+    sdk_exchange: Any, alias: str, metadata_name: str
+) -> None:
+    if alias == metadata_name:
+        return
+    info = getattr(sdk_exchange, "info", None)
+    raw_name_to_coin = getattr(info, "name_to_coin", None)
+    if not isinstance(raw_name_to_coin, dict):
+        return
+    name_to_coin = cast(dict[str, object], raw_name_to_coin)
+    if alias in name_to_coin or metadata_name not in name_to_coin:
+        return
+    name_to_coin[alias] = name_to_coin[metadata_name]
 
 
 def exchange_from_config(
