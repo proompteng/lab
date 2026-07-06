@@ -4,33 +4,33 @@ This is the final report for the enabled-app Nix build performance rollout as of
 
 ## Final Status
 
-- All root-enabled, repo-owned image apps have real Nix OCI build/release proof and live readback proof, except Sag
-  runtime smoke which is intentionally skipped while GitOps keeps desired replicas at `0`.
+- All currently root-enabled, repo-owned image apps have real Nix OCI build/release proof and live readback proof.
 - No Helm-only, vendor-manifest, or external-source app was counted as an image-build migration target.
 - GitHub Actions and manual build/deploy script paths are present for migrated build-owning apps.
 - No Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage resources were changed for this report.
-- Remaining caveats are limited to older release-contract schema gaps and future warm-cache proof on real source-triggered
-  builds; no enabled live app remains blocked on Nix rollout proof.
+- Remaining caveats are limited to older release-contract schema gaps, disabled Sag historical proof, and future
+  warm-cache proof on real source-triggered builds; no enabled live app remains blocked on Nix rollout proof.
 
 ## Scope
 
 - Enabled apps with full live runtime proof: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
   `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`, `agents`,
   `torghut`, `torghut-hyperliquid-feed`, `torghut-hyperliquid-runtime`, `torghut-options`.
-- Enabled apps with build/release proof but intentionally deferred runtime smoke: `sag` (`replicas: 0` in GitOps).
+- Disabled apps with retained build/release proof: `sag` (`enabled: "false"` in the product ApplicationSet).
+- Product ApplicationSet deletion preserves generated app resources, so disabling `sag` removes it from enabled rollout
+  inventory without intentionally pruning historical Sag resources.
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`;
   Jangar uses `.github/workflows/jangar-build-push.yaml`; Agents uses `.github/workflows/agents-build-push.yml`;
   Torghut uses `.github/workflows/torghut-build-push.yaml`, `.github/workflows/torghut-ta-build-push.yaml`,
-  `.github/workflows/torghut-ws-build-push.yaml`, and `.github/workflows/torghut-hyperliquid-feed-build-push.yaml`;
-  Sag uses `.github/workflows/sag-build-push.yaml`.
+  `.github/workflows/torghut-ws-build-push.yaml`, and `.github/workflows/torghut-hyperliquid-feed-build-push.yaml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
   `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`,
   `symphony-image`, `jangar-image`, `agents-control-plane-image`, `agents-controller-image`,
   `agents-shell-image`, `agents-codex-runner-image`, `torghut-image`, `torghut-ta-image`, `torghut-ws-image`,
-  `torghut-hyperliquid-feed-image`, `sag-image`.
+  `torghut-hyperliquid-feed-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -45,7 +45,8 @@ This is the final report for the enabled-app Nix build performance rollout as of
   - `packages/scripts/src/torghut/build-image.ts` and `packages/scripts/src/torghut/deploy-service.ts`
   - `packages/scripts/src/torghut/build-hyperliquid-feed-image.ts` and
     `packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts`
-  - `packages/scripts/src/sag/build-image.ts` and `packages/scripts/src/sag/deploy-service.ts`
+  - `packages/scripts/src/sag/build-image.ts` and `packages/scripts/src/sag/deploy-service.ts` are retained for
+    future re-enable, but Sag is no longer counted as an enabled rollout target.
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
   `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`,
@@ -53,7 +54,8 @@ This is the final report for the enabled-app Nix build performance rollout as of
   `.github/workflows/agents-deploy-automerge.yml`, `.github/workflows/torghut-release.yml`,
   `.github/workflows/torghut-ta-release.yml`, `.github/workflows/torghut-ws-release.yml`,
   `.github/workflows/torghut-hyperliquid-feed-release.yml`, `.github/workflows/torghut-deploy-automerge.yml`,
-  `.github/workflows/sag-release.yml`, and `.github/workflows/release-pr-automerge.yml`.
+  and `.github/workflows/release-pr-automerge.yml`. `.github/workflows/sag-release.yml` is retained for re-enable,
+  but Sag is no longer counted as an enabled rollout target.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -1007,8 +1009,10 @@ TA/WS/feed build should capture the newer release-contract shape.
 
 ## Sag Build And Release Proof
 
-Sag is a root-enabled repo-owned image app with `sag-image`, but the runtime Deployment is intentionally scaled to zero
-in GitOps. This checkpoint therefore records Sag as build/release proved, not full runtime-smoke proved.
+Sag is a disabled repo-owned image app with `sag-image`. This checkpoint preserves its historical build/release proof,
+but Sag is no longer counted as an enabled rollout target while the product ApplicationSet keeps `enabled: "false"`.
+The product ApplicationSet uses `preserveResourcesOnDeletion: true` so the generated Argo Application can be disabled
+without intentionally pruning the historical Sag resources it managed.
 
 ### Sag Main Build Proof
 
@@ -1055,9 +1059,9 @@ Release PR #11876 promoted only `argocd/sag/kustomization.yaml` to:
 registry.ide-newton.ts.net/lab/sag@sha256:2c3151fcc38f9f60b40959fede74a34e47ba6face468dd27521f3b111a590850
 ```
 
-### Sag GitOps Readback And Runtime-Smoke Gap
+### Sag Historical GitOps Readback And Runtime-Smoke Gap
 
-Current readback:
+Historical readback before disabling the ApplicationSet entry:
 
 - Argo Application `sag`: `Synced`, `Healthy`
 - Argo revision: `67b0f2139b8190a9ad2d105c5a1c402d6a09db22`
@@ -1099,10 +1103,10 @@ bun run packages/scripts/src/shared/nix-rollout-report.ts --json
 
 Readback:
 
-- enabled entries: `72`
-- ApplicationSet entries: `71`
+- enabled entries: `71`
+- ApplicationSet entries: `70`
 - direct Applications: `1`
-- class counts: `nix-image=21`, `vendor-manifest=25`, `helm-chart=24`, `external-source=2`
+- class counts: `nix-image=20`, `vendor-manifest=25`, `helm-chart=24`, `external-source=2`
 - missing build contracts: none
 - deferred apps: none
 - manifest-only repo image apps: `3`
@@ -1113,8 +1117,8 @@ No enabled root-managed, repo-owned image app remains without build/release/live
 
 The remaining caveats are explicit:
 
-- Sag runtime smoke is intentionally skipped while GitOps keeps desired replicas at `0`; if replicas are raised above
-  `0`, the runtime smoke gate applies again.
+- Sag is disabled in the product ApplicationSet; if it is re-enabled and replicas are raised above `0`, the runtime
+  smoke gate applies again.
 - Some older release contracts, including Froussard, ARC, Attic, Jangar, Sag, and Torghut TA/WS/feed, do not include the
   normalized `cacheProvenance`, `timings`, `lockfileHashes`, and `toolVersions` fields. They are still real Nix OCI
   build/release proofs, but this checkpoint does not claim warm-cache wins for those older-contract runs.

@@ -1,8 +1,14 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'bun:test'
+import YAML from 'yaml'
 
 import { assertEnabledAppBuildPolicy, loadEnabledAppInventory } from '../enabled-apps'
 
 const inventory = loadEnabledAppInventory()
+const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
+  spec?: { syncPolicy?: { preserveResourcesOnDeletion?: boolean } }
+}
 
 const entry = (name: string) => {
   const found = inventory.entries.find((candidate) => candidate.name === name)
@@ -12,11 +18,16 @@ const entry = (name: string) => {
 
 describe('enabled app inventory', () => {
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
-    expect(inventory.applicationSetEntryCount).toBe(71)
+    expect(inventory.applicationSetEntryCount).toBe(70)
     expect(inventory.directApplicationCount).toBe(1)
-    expect(inventory.entries).toHaveLength(72)
+    expect(inventory.entries).toHaveLength(71)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)
+    expect(inventory.entries.some((candidate) => candidate.name === 'sag')).toBe(false)
+  })
+
+  it('preserves generated app resources when a product app is disabled', () => {
+    expect(productApplicationSet.spec?.syncPolicy?.preserveResourcesOnDeletion).toBe(true)
   })
 
   it('does not inspect local lab manifests for external source applications', () => {
@@ -73,7 +84,6 @@ describe('enabled app inventory', () => {
       'olden',
       'synthesis',
       'attic',
-      'sag',
       'symphony',
       'symphony-jangar',
       'symphony-torghut',
@@ -100,7 +110,6 @@ describe('enabled app inventory', () => {
     expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
     expect(entry('agents').nixImageAttr).toBe('agents-codex-runner-image')
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')
-    expect(entry('sag').nixImageAttr).toBe('sag-image')
     expect(entry('symphony').nixImageAttr).toBe('symphony-image')
     expect(entry('symphony-jangar').nixImageAttr).toBe('symphony-image')
     expect(entry('symphony-torghut').nixImageAttr).toBe('symphony-image')
