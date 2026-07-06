@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import cast
 
 
 def register_sdk_market_alias(
-    sdk_exchange: Any, alias: str, metadata_name: str
+    sdk_exchange: object, alias: str, metadata_name: str
 ) -> None:
     if alias == metadata_name:
         return
