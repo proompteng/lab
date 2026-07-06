@@ -240,6 +240,7 @@ class _FakeSdk:
         sz: float | None = None,
         slippage: float = 0.05,
     ) -> dict[str, object]:
+        self.info.name_to_coin[coin]
         self.market_closes.append((coin, sz, slippage))
         return {"response": {"data": {"statuses": [{"filled": {"oid": 789}}]}}}
 

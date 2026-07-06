@@ -263,7 +263,9 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "api_wallet_private_key_missing"},
                 rejection_reason="api_wallet_private_key_missing",
             )
-        response = self._exchange().market_close(
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, coin, coin.split(":", 1)[-1])
+        response = exchange.market_close(
             coin,
             sz=float(size) if size is not None else None,
             slippage=float(slippage),
