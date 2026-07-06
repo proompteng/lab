@@ -30,6 +30,9 @@ cephClusterSpec:
       osd_pool_default_size: "2"
       osd_pool_default_min_size: "1"
       mon_data_avail_warn: "15"
+      # Prefer msgr2 CRC mode on the trusted in-cluster storage path. This avoids
+      # secure-mode CPU cost while keeping msgr2 and wire CRCs.
+      rbd_default_map_options: "ms_mode=prefer-crc"
     osd:
       bluestore_cache_autotune: "true"
       # Prioritize client IO after the Turin BlueStore DB migration has recovered.
@@ -96,6 +99,12 @@ cephClusterSpec:
     modules:
       - name: stats
         enabled: true
+      - name: balancer
+        enabled: true
+        settings:
+          # Keep capacity balancing active without pg-upmap-primary while kernel
+          # RBD clients still advertise pre-Reef/luminous feature bits.
+          balancerMode: upmap
 
   dashboard:
     enabled: true
@@ -192,6 +201,7 @@ cephObjectStores:
           size: 2
         parameters:
           bulk: "true"
+          pg_num_min: "128"
       preservePoolsOnDelete: true
       gateway:
         port: 80

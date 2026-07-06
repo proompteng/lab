@@ -18,6 +18,82 @@ Live evidence captured on 2026-07-06:
 
 That means read-primary balancing is a real performance opportunity, but it is not safe to enable yet.
 
+## Non-Network Performance Pass
+
+The 2026-07-06 non-network performance pass keeps the existing NICs and network topology. It does not require a
+Talos OS upgrade, host-network migration, Multus, or a new storage subnet.
+
+Stage 1 GitOps target:
+
+1. Persist `rbd_default_map_options=ms_mode=prefer-crc`.
+1. Persist the mgr balancer module in `upmap` mode, not `upmap-read`.
+1. Keep the default RBD class on KRBD; keep `rook-ceph-block-nbd-canary` non-default.
+1. Add `mountOptions: [noatime]` to RBD StorageClasses.
+1. Mark the hot data pools as bulk and pin them at `128` PGs:
+   - `replicapool`
+   - `cephfs-data0`
+   - `objectstore.rgw.buckets.data`
+
+Do not combine Stage 1 with an image rollout while the PG split is remapping. The patch upgrade remains justified,
+but it is Stage 2:
+
+1. Wait until `ceph -s` reports `HEALTH_OK`, zero misplaced objects, zero remapped PGs, and no
+   `active+remapped+backfilling` or `active+remapped+backfill_wait` PGs.
+1. Upgrade the Rook charts and operator image from `v1.19.5` to `v1.19.7`.
+1. Upgrade the Ceph image from `v19.2.3` to `v19.2.4`.
+1. Let Argo roll the patch upgrade and verify `ceph versions`, operator image, CSI pods, and app smoke checks.
+
+Live pool tuning applied on 2026-07-06:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool bulk true
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set cephfs-data0 bulk true
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set objectstore.rgw.buckets.data pg_num_min 128
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool pg_num_min 128
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set cephfs-data0 pg_num_min 128
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph balancer mode upmap
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set global rbd_default_map_options ms_mode=prefer-crc
+```
+
+The first `pg_num_min` attempts for `replicapool` and `cephfs-data0` failed while those pools were still at
+`pg_num=32`; Ceph does not allow `pg_num_min` to exceed current `pg_num`. Setting `bulk=true` gave the autoscaler
+the correct signal, and it raised both pools to `pg_num=128`; after that, `pg_num_min=128` was valid and was pinned.
+
+The expected temporary side effect is remap/backfill while the PG split completes. Do not run final fio or OSD bench
+proof while any of these are non-zero:
+
+```text
+misplaced objects
+active+remapped+backfilling
+active+remapped+backfill_wait
+```
+
+Rerun IOPS and fio only after:
+
+```text
+ceph -s: HEALTH_OK
+0 misplaced objects
+0 remapped/backfilling/backfill_wait PGs
+replicapool pg_num=128 pgp_num=128
+cephfs-data0 pg_num=128 pgp_num=128
+objectstore.rgw.buckets.data pg_num=128 pgp_num=128
+```
+
+Benchmark sequence after clean:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell 'osd.*' bench
+kubectl apply -k kubernetes/rook-ceph-rbd-canary
+kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block.yaml
+kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary.yaml
+kubectl apply -k kubernetes/rook-ceph-rwx-benchmarks
+kubectl apply -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-fuse.yaml
+```
+
+Do not roll the Ceph image upgrade while the PG split is still remapping unless there is an urgent security or data
+integrity reason. Let the hot-pool PG split settle first, then roll the Rook/Ceph patch upgrade through Argo as a
+separate change.
+
 ## Source Basis
 
 1. Ceph read balancer documentation: `read_balance_score > 1` means primary reads are imbalanced, but
