@@ -6,6 +6,8 @@ metadata:
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   generators:
     - matrix:
         generators:
@@ -277,7 +279,7 @@ spec:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: torghut
                 path: argocd/applications/torghut
                 namespace: torghut
