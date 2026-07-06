@@ -5,18 +5,22 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 ## Scope
 
 - Enabled apps with full live runtime proof: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
-  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`, `agents`.
+  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`, `agents`,
+  `torghut`, `torghut-hyperliquid-feed`, `torghut-hyperliquid-runtime`, `torghut-options`.
 - Enabled apps with build/release proof but intentionally deferred runtime smoke: `sag` (`replicas: 0` in GitOps).
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`;
   Jangar uses `.github/workflows/jangar-build-push.yaml`; Agents uses `.github/workflows/agents-build-push.yml`;
+  Torghut uses `.github/workflows/torghut-build-push.yaml`, `.github/workflows/torghut-ta-build-push.yaml`,
+  `.github/workflows/torghut-ws-build-push.yaml`, and `.github/workflows/torghut-hyperliquid-feed-build-push.yaml`;
   Sag uses `.github/workflows/sag-build-push.yaml`.
 - Nix attrs: `oirat-image`, `bumba-image`, `froussard-image`, `arc-runner-image`, `atticd-image`,
   `headlamp-image`, `app-image`, `docs-image`, `proompteng-image`, `olden-image`, `synthesis-image`,
   `symphony-image`, `jangar-image`, `agents-control-plane-image`, `agents-controller-image`,
-  `agents-shell-image`, `agents-codex-runner-image`, `sag-image`.
+  `agents-shell-image`, `agents-codex-runner-image`, `torghut-image`, `torghut-ta-image`, `torghut-ws-image`,
+  `torghut-hyperliquid-feed-image`, `sag-image`.
 - Manual paths present:
   - `packages/scripts/src/oirat/build-image.ts` and `packages/scripts/src/oirat/deploy-service.ts`
   - `packages/scripts/src/bumba/build-image.ts` and `packages/scripts/src/bumba/deploy-service.ts`
@@ -28,13 +32,18 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
   - `packages/scripts/src/symphony/build-image.ts` and `packages/scripts/src/symphony/deploy-service.ts`
   - `packages/scripts/src/jangar/build-image.ts` and `packages/scripts/src/jangar/deploy-service.ts`
   - `packages/scripts/src/agents/build-image.ts` and `packages/scripts/src/agents/deploy-service.ts`
+  - `packages/scripts/src/torghut/build-image.ts` and `packages/scripts/src/torghut/deploy-service.ts`
+  - `packages/scripts/src/torghut/build-hyperliquid-feed-image.ts` and
+    `packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts`
   - `packages/scripts/src/sag/build-image.ts` and `packages/scripts/src/sag/deploy-service.ts`
 - Release path: `.github/workflows/enabled-simple-nix-release.yml`,
   `.github/workflows/arc-runner-release.yml`, `.github/workflows/attic-release.yml`, plus
   `.github/workflows/headlamp-release.yml`, `.github/workflows/enabled-product-nix-release.yml`,
   `.github/workflows/jangar-release.yml`, `.github/workflows/agents-release.yml`,
-  `.github/workflows/agents-deploy-automerge.yml`, `.github/workflows/sag-release.yml`, and
-  `.github/workflows/release-pr-automerge.yml`.
+  `.github/workflows/agents-deploy-automerge.yml`, `.github/workflows/torghut-release.yml`,
+  `.github/workflows/torghut-ta-release.yml`, `.github/workflows/torghut-ws-release.yml`,
+  `.github/workflows/torghut-hyperliquid-feed-release.yml`, `.github/workflows/torghut-deploy-automerge.yml`,
+  `.github/workflows/sag-release.yml`, and `.github/workflows/release-pr-automerge.yml`.
 - Hard exclusions respected: no Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage changes.
 
 ## Fixes Landed
@@ -69,6 +78,12 @@ This is an evidence checkpoint for the enabled-app Nix build performance rollout
 | [#11748](https://github.com/proompteng/lab/pull/11748) | `1f9c53b50cc1d44ab747ea0ccc8180f06486f969` | Preserve Agents runtime dependencies in the Nix-built images.                                    |
 | [#11916](https://github.com/proompteng/lab/pull/11916) | `6e11a1c901706b0a9d068383d35859798d8833ff` | Remove the Docker manual image builder from Agents.                                              |
 | [#12046](https://github.com/proompteng/lab/pull/12046) | `a59b3736c270024aa3191867f4a772fe0f31f416` | Promote Agents service and runner images from source `350c4bde2ca3ed0f704c959eb2c386c9010cc606`. |
+| [#11845](https://github.com/proompteng/lab/pull/11845) | `759b9b816308b875b8518bb9c4ee04af95f50561` | Promote the Torghut image digest later reused by options catalog and enricher.                    |
+| [#11847](https://github.com/proompteng/lab/pull/11847) | `ca7ea9a4bee6583a76d578d110bcd78a6fbe8d6d` | Align `torghut-options` catalog and enricher to the promoted Torghut image digest.                |
+| [#11910](https://github.com/proompteng/lab/pull/11910) | `a95cd442a9e4813cebea4b77b586bdeff7ed7874` | Promote the Torghut Hyperliquid feed Nix image.                                                   |
+| [#11911](https://github.com/proompteng/lab/pull/11911) | `ca36b7a2578833d2e1acd722024e24d4e4ee5946` | Promote the Torghut websocket Nix image.                                                          |
+| [#11917](https://github.com/proompteng/lab/pull/11917) | `529a962e1a138d78748b0093efd6dd920a80f0f0` | Promote the Torghut TA Nix image to live, sim, and options TA manifests.                          |
+| [#12033](https://github.com/proompteng/lab/pull/12033) | `47df7488623461087d2f3fd71abaa1cbb4ad2823` | Promote the current Torghut core image to live, sim, jobs, and Hyperliquid runtime manifests.     |
 | [#11684](https://github.com/proompteng/lab/pull/11684) | `d6babaa3afaca9756b4453c518e01ca685e390c9` | Add the Sag Nix image build, release, manual deploy, and post-deploy verification paths.          |
 | [#11852](https://github.com/proompteng/lab/pull/11852) | `00b160b172fa87faf374c1aa063e1c55766a4f63` | Trim repeated OCI image setup checks while preserving the Nix/Skopeo build path.                  |
 | [#11876](https://github.com/proompteng/lab/pull/11876) | `fe419be138d8d6c25dc6437caf4d0e89b7ee53f7` | Promote Sag to the Nix-built digest from source `00b160b172fa87faf374c1aa063e1c55766a4f63`.      |
@@ -867,6 +882,119 @@ smoke job:
 The next real Agents source change should be used for warm-cache proof or substitute-only proof. This checkpoint does
 not claim a warm-cache win for Agents.
 
+## Torghut-Family Rollout Proof
+
+Torghut is a root-enabled repo-owned image family. Runtime proof is split across the core Torghut image, TA image,
+websocket image, and Hyperliquid feed image. The Hyperliquid runtime and options catalog/enricher reuse the core
+`torghut-image` digest.
+
+### Torghut Core Build And Release Proof
+
+Run [28755711700](https://github.com/proompteng/lab/actions/runs/28755711700) succeeded on `main` for source
+`279405014f2d829dcb1a513817703f5ac5419388`.
+
+Release contract fields:
+
+- `service`: `torghut`
+- `packageAttr`: `torghut-image`
+- `builder`: `nix-dockerTools-skopeo`
+- `invocation`: `github-actions`
+- `image`: `registry.ide-newton.ts.net/lab/torghut`
+- `digest`: `sha256:90ed1643a302d3ffd68ecf2de00626479ae280bd5d34ad36ec7a88ae365cccbf`
+- platform digests:
+  - `linux/amd64`: `sha256:706cb7d2351a11233e8b4e9febfb25de7d0b3f011e3c38177fed62b55321f6f5`
+  - `linux/arm64`: `sha256:d4fb2575147f814e21fe629b0f19fd87f92e88baff0863ae8d80e265eefb8ab3`
+- `platforms`: `linux/amd64`, `linux/arm64`
+- `flake.lock`: `ecff06cebb0e40ac241f0a6eb93b08d00b9c5dc28f5619f5247840f7d0b16857`
+- `bun.lock`: `d097c7625564044607451e8382833faba62a4a14af630bb9fe1ab4b41236da23`
+- `nix`: `nix (Nix) 2.28.5`
+- `skopeo`: `skopeo version 1.20.0`
+- `crane`: `v0.20.6`
+
+Useful timed steps from the same run:
+
+| Platform/job      | Checkout | Nix setup | Build archive | Inspect archive | Push platform image | Warm image closure |
+| ----------------- | -------: | --------: | ------------: | --------------: | ------------------: | -----------------: |
+| `linux/amd64`     |    `13s` |      `1s` |          `35s` |            `2s` |                `22s` |              `36s` |
+| `linux/arm64`     |    `14s` |      `1s` |          `72s` |            `4s` |                `27s` |              `42s` |
+| publish-index     |    `11s` |      `1s` |           N/A  |            N/A  |                 N/A  |               N/A  |
+
+Cache provenance from the contract: `atticSubstitutions=0`, `cacheNixosSubstitutions=96`, `localBuilds=26`,
+`plannedLocalBuildBlocks=2`.
+
+Release PR [#12033](https://github.com/proompteng/lab/pull/12033) promoted the digest to core Torghut, simulation,
+jobs/workflows, and Hyperliquid runtime manifests.
+
+### Torghut TA, WS, Feed, And Options Image Proof
+
+The related Torghut images have digest/platform release contracts, but the older contracts do not include normalized
+cache provenance, timing, lockfile, or tool-version fields.
+
+| Image                              | Run                                                                 | Source SHA                                 | Digest                                                               |
+| ---------------------------------- | ------------------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
+| `torghut-ta`                       | [28724328685](https://github.com/proompteng/lab/actions/runs/28724328685) | `b2bde9f21285e3733e8a25a664f9f7e10d1485b4` | `sha256:1bbd78d041db611c6067ad5f4e4151947cd0aa4c25952d33ec1ba6561e814256` |
+| `torghut-ws`                       | [28724328675](https://github.com/proompteng/lab/actions/runs/28724328675) | `b2bde9f21285e3733e8a25a664f9f7e10d1485b4` | `sha256:b0b4dfec70bd0a002294a90847bad5c4c83690ea85bbc6348f6ee6bc1d127a00` |
+| `torghut-hyperliquid-feed`         | [28724328688](https://github.com/proompteng/lab/actions/runs/28724328688) | `b2bde9f21285e3733e8a25a664f9f7e10d1485b4` | `sha256:87e837baf513737c788b946b0e11b9dffea0180bf705c32500c14387f38dc9fd` |
+| `torghut-options` catalog/enricher | [#11845](https://github.com/proompteng/lab/pull/11845) and [#11847](https://github.com/proompteng/lab/pull/11847) | `c789931929fb3116093abb4a1e9d3a28efe562fb` | `sha256:607af89da76b14c984939adb5d9d6e11726fe7b82f14ab2d0072189012e96e72` |
+
+Platform digests:
+
+| Image                      | `linux/amd64` digest                                                  | `linux/arm64` digest                                                  |
+| -------------------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `torghut-ta`               | `sha256:f4ac88bd07c2a13e3bc18472ba278eabe3fa0bca20466382056994b52b031d63` | `sha256:4da1f49b6e788e74bf5d933a5b4b39c27d4ae7146899f5e773f2b23b4cdaa3d1` |
+| `torghut-ws`               | `sha256:99f67cfa5baafe939b03831675918a2ca649b84499a68789298d83b076afb4f7` | `sha256:a2585da9613bd0ac0868f138615fbd93c2b4884e15565c2c05c288bef1ba7e82` |
+| `torghut-hyperliquid-feed` | `sha256:879d2fbcd0fb16947ecf7e82eeb79432cb41c3148b22179114440ecf46249214` | `sha256:269809af805311b67bf8449eb01af14beabb3019d75101749a752afd2273399d` |
+
+Release PRs:
+
+- [#11917](https://github.com/proompteng/lab/pull/11917) promoted `torghut-ta` to live TA, sim TA, and options TA.
+- [#11911](https://github.com/proompteng/lab/pull/11911) promoted `torghut-ws` to live WS and options WS.
+- [#11910](https://github.com/proompteng/lab/pull/11910) promoted `torghut-hyperliquid-feed`.
+- [#11847](https://github.com/proompteng/lab/pull/11847) aligned options catalog and enricher to the promoted
+  `torghut-image` digest from [#11845](https://github.com/proompteng/lab/pull/11845).
+
+### Torghut Live Rollout Smoke
+
+Current Argo readback:
+
+| App                            | Sync     | Health    | Runtime image digest                                                      |
+| ------------------------------ | -------- | --------- | ------------------------------------------------------------------------- |
+| `torghut`                      | `Synced` | `Healthy` | `torghut@sha256:90ed1643a302d3ffd68ecf2de00626479ae280bd5d34ad36ec7a88ae365cccbf` |
+| `torghut-hyperliquid-feed`     | `Synced` | `Healthy` | `torghut-hyperliquid-feed@sha256:87e837baf513737c788b946b0e11b9dffea0180bf705c32500c14387f38dc9fd` |
+| `torghut-hyperliquid-runtime`  | `Synced` | `Healthy` | `torghut@sha256:90ed1643a302d3ffd68ecf2de00626479ae280bd5d34ad36ec7a88ae365cccbf` |
+| `torghut-options`              | `Synced` | `Healthy` | core `607af...`, TA `1bbd...`, WS `b0b4...` |
+
+Runtime workload readback:
+
+- Knative Service `torghut`: `Ready=True`, latest ready revision `torghut-01386`.
+- Knative Service `torghut-sim`: `Ready=True`, latest ready revision `torghut-sim-01465`.
+- Deployments `torghut-hyperliquid-feed`, `torghut-hyperliquid-runtime`, `torghut-options-catalog`,
+  `torghut-options-enricher`, `torghut-ws`, and `torghut-ws-options`: all `1/1` ready, updated, and available.
+- FlinkDeployments `torghut-ta`, `torghut-ta-sim`, and `torghut-options-ta`: `RUNNING` and `STABLE`.
+
+One bounded in-cluster smoke pod returned `HTTP 200` for:
+
+- `http://torghut.torghut.svc.cluster.local/healthz`
+- `http://torghut.torghut.svc.cluster.local/readyz`
+- `http://torghut-sim.torghut.svc.cluster.local/healthz`
+- `http://torghut-sim.torghut.svc.cluster.local/readyz`
+- `http://torghut-hyperliquid-feed/readyz`
+- `http://torghut-hyperliquid-runtime/readyz`
+- `http://torghut-options-catalog/healthz`
+- `http://torghut-options-enricher/readyz`
+- `http://torghut-ws/readyz`
+- `http://torghut-ws-options/readyz`
+- `http://torghut-ta-rest:8081/overview`
+- `http://torghut-ta-sim-rest:8081/overview`
+- `http://torghut-options-ta-rest:8081/overview`
+
+### Torghut Cache Status
+
+The current core Torghut image has normalized timing, tool, lockfile, and cache-provenance proof. TA, WS, and
+Hyperliquid feed were built with real Nix OCI workflows and release contracts, but their contracts predate the normalized
+cache/timing fields. Do not claim a warm-cache win for those images from this checkpoint. The next real source-triggered
+TA/WS/feed build should capture the newer release-contract shape.
+
 ## Sag Build And Release Proof
 
 Sag is a root-enabled repo-owned image app with `sag-image`, but the runtime Deployment is intentionally scaled to zero
@@ -971,23 +1099,14 @@ Readback:
 
 ## Remaining Work
 
-The rollout is not complete from this checkpoint alone. Remaining full runtime proof still needs to cover:
+No enabled root-managed, repo-owned image app remains without build/release/live-readback proof in this checkpoint.
 
-- `torghut`
-- `torghut-hyperliquid-feed`
-- `torghut-hyperliquid-runtime`
-- `torghut-options`
+The remaining caveats are explicit:
 
-Sag also needs runtime smoke only if GitOps changes its desired replicas above `0`. Until then, the honest Sag status is
-build/release/digest proof with an intentional runtime-smoke skip.
-
-The remaining apps need the same evidence shape:
-
-- release contract for the app
-- real amd64 and arm64 Nix OCI build proof
-- cache provenance and timings
-- digest-pinned GitOps release PR
-- Argo `Synced` and `Healthy`
-- live image digest matching the release contract
-- service-specific smoke
-- warm-cache/substitute-only proof where applicable
+- Sag runtime smoke is intentionally skipped while GitOps keeps desired replicas at `0`; if replicas are raised above
+  `0`, the runtime smoke gate applies again.
+- Some older release contracts, including Froussard, ARC, Attic, Jangar, Sag, and Torghut TA/WS/feed, do not include the
+  normalized `cacheProvenance`, `timings`, `lockfileHashes`, and `toolVersions` fields. They are still real Nix OCI
+  build/release proofs, but this checkpoint does not claim warm-cache wins for those older-contract runs.
+- Future real source-triggered builds should keep using the newer release-contract shape and can be used for
+  substitute-only or warm-cache proof without adding synthetic jobs.
