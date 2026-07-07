@@ -89,6 +89,18 @@ osd_mclock_max_capacity_iops_hdd: "275"
 target_max_misplaced_ratio: "0.03"
 ```
 
+`osd_mclock_max_capacity_iops_hdd=275` is only the fallback for new HDD OSDs. Current OSDs use measured per-daemon
+overrides so the mClock scheduler does not overestimate slower disks:
+
+```yaml
+osd.0: 210
+osd.1: 250
+osd.2: 260
+osd.3: 200
+osd.4: 220
+osd.5: 240
+```
+
 The recovery override keys must be absent in normal operation:
 
 ```yaml
@@ -97,6 +109,41 @@ osd_max_backfills
 osd_recovery_max_active_hdd
 osd_recovery_sleep_hdd
 ```
+
+## mClock IOPS Calibration
+
+Ceph defines `osd_mclock_max_capacity_iops_hdd` as the max random-write IOPS capacity at 4 KiB block size for
+rotational media. The value is used by mClock to calculate QoS shares for client, recovery, scrub, snaptrim, and
+other OSD work. It is not a direct client IOPS throttle.
+
+Ceph's documented OSD-bench calibration command is:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell osd.N cache drop
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell osd.N bench 12288000 4096 4194304 100
+```
+
+Live sample from 2026-07-07, while the cluster was clean from recovery/backfill but still running scrub activity and
+showing the known `osd.0` BlueStore slow-op warning:
+
+| OSD | Measured IOPS | Durable mClock IOPS |
+| --- | ---: | ---: |
+| 0 | 210.51 | 210 |
+| 1 | 257.92 | 250 |
+| 2 | 264.48 | 260 |
+| 3 | 199.97 | 200 |
+| 4 | 219.71 | 220 |
+| 5 | 243.81 | 240 |
+
+Raw evidence file from the calibration run:
+
+```text
+/tmp/ceph-osd-4k-bench-20260706225632.jsonl
+```
+
+Re-run this calibration after the BlueStore slow-op warning clears and no scrub/deep-scrub is active. If the re-run
+materially changes the slowest OSD values, update the per-OSD overrides instead of replacing them with one broad
+cluster-wide number.
 
 ## Temporary Recovery-Surge Mode
 
