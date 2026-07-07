@@ -238,6 +238,86 @@ def test_live_bounded_paper_route_target_generates_capped_source_decisions(
         settings.trading_allow_shorts = allow_shorts_before
 
 
+def test_live_bounded_paper_route_target_stops_entries_after_exit_due_at(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "trading_mode", "live")
+    monkeypatch.setattr(settings, "trading_simple_paper_route_probe_enabled", True)
+    monkeypatch.setattr(
+        settings, "trading_simple_paper_route_probe_allow_live_mode", True
+    )
+    monkeypatch.setattr(settings, "trading_simple_submit_enabled", True)
+    monkeypatch.setattr(
+        settings, "trading_live_submit_activation_expires_at", "2026-06-17T20:05:00Z"
+    )
+    monkeypatch.setattr(settings, "trading_simple_paper_route_probe_max_notional", 100)
+    monkeypatch.setattr(settings, "trading_allow_shorts", True)
+    now = datetime(2026, 6, 17, 19, 50, tzinfo=timezone.utc)
+    target = _bounded_hpairs_target(
+        account_label="TORGHUT_REPLAY",
+        source_account_label="TORGHUT_REPLAY",
+        paper_account_label="TORGHUT_REPLAY",
+        execution_account_label="TORGHUT_REPLAY",
+        target_notional="500",
+        paper_route_probe_next_session_max_notional="500",
+        paper_route_probe_window_start="2026-06-17T13:30:00+00:00",
+        paper_route_probe_window_end="2026-06-17T20:00:00+00:00",
+        paper_route_probe_symbol_quantities={},
+        source_kind="runtime_ledger_source_collection_candidate",
+    )
+    strategy = Strategy(
+        name="microbar-cross-sectional-pairs-v1",
+        description="metadata fixture",
+        enabled=True,
+        base_timeframe="1Sec",
+        universe_type="static",
+        universe_symbols=["AAPL", "AMZN"],
+    )
+    blockers: list[dict[str, object]] = []
+    pipeline = object.__new__(SimpleTradingPipeline)
+    pipeline.account_label = "PA3SX7FYNUTF"
+    pipeline.price_fetcher = SimpleNamespace(
+        fetch_market_snapshot=lambda signal: MarketSnapshot(
+            symbol=signal.symbol,
+            as_of=signal.event_ts,
+            price=Decimal("25"),
+            spread=Decimal("0"),
+            source="fixture",
+            bid=Decimal("25"),
+            ask=Decimal("25"),
+        )
+    )
+    pipeline._is_market_session_open = lambda _now: True
+    pipeline._external_paper_route_target_probe_symbols_cached = lambda **_kwargs: (
+        {"AAPL", "AMZN"},
+        None,
+        [target],
+    )
+    pipeline._record_bounded_target_plan_blocker = lambda **kwargs: blockers.append(
+        kwargs
+    )
+    monkeypatch.setattr(
+        "app.trading.scheduler.simple_pipeline.trading_now",
+        lambda account_label=None: now,
+    )
+
+    decisions = pipeline._paper_route_target_source_decisions(
+        strategies=[strategy],
+        allowed_symbols={"AAPL", "AMZN"},
+        positions=[],
+        session=None,
+    )
+
+    assert decisions == []
+    elapsed_blockers = [
+        blocker
+        for blocker in blockers
+        if blocker["reason"] == "target_plan_entry_window_closed"
+    ]
+    assert len(elapsed_blockers) == 1
+    assert elapsed_blockers[0]["symbols"] == {"AAPL", "AMZN"}
+
+
 def test_live_bounded_source_collection_skips_unactionable_short_open_leg(
     monkeypatch,
 ) -> None:

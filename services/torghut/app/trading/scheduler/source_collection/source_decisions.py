@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
 
@@ -38,6 +38,7 @@ from ..target_plan_helpers import (
     target_plan_has_active_bounded_sim_collection_owner as _target_plan_has_active_bounded_sim_collection_owner,
     target_probe_action as _target_probe_action,
     target_probe_cap as _target_probe_cap,
+    target_probe_exit_minute_after_open as _target_probe_exit_minute_after_open,
     target_probe_symbol_actions as _target_probe_symbol_actions,
     target_probe_symbol_quantities as _target_probe_symbol_quantities,
     target_probe_window as _target_probe_window,
@@ -249,6 +250,12 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
             return None
         if window is None or not source_collection_window_active(window, state.now):
             return None
+        if self._paper_route_target_entry_window_elapsed(
+            target,
+            window=window,
+            state=state,
+        ):
+            return None
         if target_cap is None or target_cap <= 0 or strategy is None:
             return None
 
@@ -278,6 +285,29 @@ class SimplePipelineSourceCollectionDecisionMixin(SourceCollectionRuntimeMixin):
         ):
             return None
         return context
+
+    def _paper_route_target_entry_window_elapsed(
+        self,
+        target: Mapping[str, Any],
+        *,
+        window: tuple[datetime, datetime],
+        state: SourceCollectionState,
+    ) -> bool:
+        exit_minute, _ = _target_probe_exit_minute_after_open(target)
+        if exit_minute is None:
+            return False
+        window_start, window_end = window
+        window_minutes = max(1, int((window_end - window_start).total_seconds() // 60))
+        effective_exit_minute = min(exit_minute, window_minutes - 1)
+        exit_due_at = window_start + timedelta(minutes=effective_exit_minute)
+        if state.now < exit_due_at:
+            return False
+        self._record_bounded_target_plan_blocker(
+            reason="target_plan_entry_window_closed",
+            symbols=state.target_symbols,
+            targets=[target],
+        )
+        return True
 
     def _live_bounded_paper_route_source_collection_blocker(
         self,

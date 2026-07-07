@@ -461,7 +461,7 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
         event_ts: datetime,
         exit_due_at: datetime,
     ) -> StrategyDecision:
-        reason = "bounded_paper_route_target_exit_window_elapsed"
+        reason = "target_plan_entry_window_closed"
         audit = {
             "schema_version": "torghut.bounded-paper-route-exit-window.v1",
             "state": "rejected",
@@ -515,7 +515,7 @@ class SimplePipelineSubmissionQuoteSizingMixin(TradingPipelineBase):
             event_ts=event_ts,
             exit_due_at=exit_due_at,
         )
-        return updated, "bounded_paper_route_target_exit_window_elapsed"
+        return updated, "target_plan_entry_window_closed"
 
     @staticmethod
     def _apply_bounded_collection_target_sizing_audit(
