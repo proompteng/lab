@@ -88,36 +88,40 @@ Durable GitOps settings for recovery surge:
 
 ```yaml
 osd_mclock_profile: "high_recovery_ops"
-osd_mclock_max_capacity_iops_hdd: "500"
+osd_mclock_max_capacity_iops_hdd: "750"
 osd_mclock_override_recovery_settings: "true"
-osd_max_backfills: "3"
-osd_recovery_max_active_hdd: "6"
+osd_max_backfills: "6"
+osd_recovery_max_active_hdd: "12"
 osd_recovery_sleep_hdd: "0"
+target_max_misplaced_ratio: "0.10"
 ```
 
 Live command equivalent:
 
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_recovery_ops
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 500
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 750
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_override_recovery_settings true
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_max_backfills 3
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_recovery_max_active_hdd 6
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_max_backfills 6
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_recovery_max_active_hdd 12
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_recovery_sleep_hdd 0
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.10
 ```
 
 Why these knobs:
 
 1. `high_recovery_ops` is Ceph's built-in mClock profile for prioritizing recovery and backfill over client ops.
-1. `osd_mclock_max_capacity_iops_hdd=500` temporarily prevents the scheduler from under-modeling recovery capacity
+1. `osd_mclock_max_capacity_iops_hdd=750` temporarily prevents the scheduler from under-modeling recovery capacity
    during the surge. The steady-state client setting remains `275`, based on local OSD bench samples.
 1. With mClock active, Ceph resets or ignores legacy recovery/backfill concurrency changes unless
    `osd_mclock_override_recovery_settings=true`.
-1. `osd_max_backfills=3` is a bounded surge value that increases per-OSD backfill reservations beyond the default
-   `1` without using unbounded concurrency.
-1. `osd_recovery_max_active_hdd=6` doubles the HDD active recovery limit from the default `3`.
+1. `osd_max_backfills=6` is an aggressive maintenance value that raises per-OSD backfill reservations beyond the
+   default `1` without using unbounded concurrency.
+1. `osd_recovery_max_active_hdd=12` raises the HDD active recovery limit for the maintenance window.
 1. `osd_recovery_sleep_hdd=0` removes the default HDD sleep between recovery/backfill operations for the
    maintenance window.
+1. `target_max_misplaced_ratio=0.10` lets Ceph expose more of a large PG split at once. This directly addresses the
+   `Too many objects (... > 0.030000) are misplaced; try again later` gate during urgent recovery.
 
 Monitor every 30-60 seconds:
 
@@ -135,6 +139,7 @@ single known OSD:
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_client_ops
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.03
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_mclock_override_recovery_settings
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_max_backfills
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_recovery_max_active_hdd
@@ -147,6 +152,7 @@ in GitOps:
 ```yaml
 osd_mclock_profile: "high_client_ops"
 osd_mclock_max_capacity_iops_hdd: "275"
+target_max_misplaced_ratio: "0.03"
 ```
 
 Remove the recovery override keys from GitOps at the same time:
