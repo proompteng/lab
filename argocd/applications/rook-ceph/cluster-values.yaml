@@ -35,13 +35,17 @@ cephClusterSpec:
       rbd_default_map_options: "ms_mode=prefer-crc"
     osd:
       bluestore_cache_autotune: "true"
-      # Prioritize client IO after the Turin BlueStore DB migration has recovered.
-      # Recovery/backfill overrides are intentionally omitted so the built-in mClock profile controls QoS.
-      osd_mclock_profile: "high_client_ops"
-      # Fresh 2026-07-06 OSD bench samples measured HDD random-write service capacity
-      # around 280 IOPS median. Keep the mClock HDD capacity model conservative and
-      # remove any per-OSD live overrides that would mask this cluster-wide value.
-      osd_mclock_max_capacity_iops_hdd: "275"
+      # Temporary recovery-surge mode for the 32 -> 128 hot-pool PG split.
+      # Revert to high_client_ops and remove the override keys after ceph -s shows
+      # zero misplaced objects and zero remapped/backfilling PGs.
+      osd_mclock_profile: "high_recovery_ops"
+      osd_mclock_override_recovery_settings: "true"
+      osd_max_backfills: "3"
+      osd_recovery_max_active_hdd: "6"
+      osd_recovery_sleep_hdd: "0"
+      # Temporary recovery-surge capacity model. The steady-state client posture
+      # should return this to 275 after the PG split is clean.
+      osd_mclock_max_capacity_iops_hdd: "500"
       # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
       # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
       osd_mclock_max_sequential_bandwidth_hdd: "285212672"
