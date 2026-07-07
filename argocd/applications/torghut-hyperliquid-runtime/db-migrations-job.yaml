@@ -22,7 +22,7 @@ spec:
         kubernetes.io/arch: arm64
       containers:
         - name: migrate
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:46afb693b4e6d1b52b4eef4617298ec818e5bbc982d8f31ffa6e50eee62dbd68
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:2a2b6cd43b66476319403a4e59839d6ef6c9848dfccbf888b16906e4594c053c
           imagePullPolicy: Always
           workingDir: /app
           command:
@@ -54,7 +54,7 @@ spec:
             - name: TORGHUT_COMMIT
               value: 78af4ff542e31241e5d62f8c328dad3935ed3a59
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:46afb693b4e6d1b52b4eef4617298ec818e5bbc982d8f31ffa6e50eee62dbd68
+              value: sha256:2a2b6cd43b66476319403a4e59839d6ef6c9848dfccbf888b16906e4594c053c
             - name: PYTHONPATH
               value: /app
             - name: DB_DSN
