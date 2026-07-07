@@ -419,12 +419,10 @@ class TestTradingPipelinePaperRouteQuoteB(TradingPipelineTestCaseBase):
         self.assertEqual(row.status, "rejected")
         self.assertEqual(
             row_json["reject_reason_atomic"],
-            ["bounded_paper_route_target_exit_window_elapsed"],
+            ["target_plan_entry_window_closed"],
         )
         self.assertEqual(price_fetcher.snapshot_requests, 0)
-        self.assertEqual(
-            exit_window["reason"], "bounded_paper_route_target_exit_window_elapsed"
-        )
+        self.assertEqual(exit_window["reason"], "target_plan_entry_window_closed")
         self.assertEqual(exit_window["event_ts"], now.isoformat())
         self.assertEqual(exit_window["exit_due_at"], exit_due_at.isoformat())
         self.assertEqual(
