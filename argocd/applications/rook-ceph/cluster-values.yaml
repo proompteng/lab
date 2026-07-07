@@ -35,17 +35,10 @@ cephClusterSpec:
       rbd_default_map_options: "ms_mode=prefer-crc"
     osd:
       bluestore_cache_autotune: "true"
-      # Temporary recovery-surge mode for the 32 -> 128 hot-pool PG split.
-      # Revert to high_client_ops and remove the override keys after ceph -s shows
-      # zero misplaced objects and zero remapped/backfilling PGs.
-      osd_mclock_profile: "high_recovery_ops"
-      osd_mclock_override_recovery_settings: "true"
-      osd_max_backfills: "6"
-      osd_recovery_max_active_hdd: "12"
-      osd_recovery_sleep_hdd: "0"
-      # Temporary recovery-surge capacity model. The steady-state client posture
-      # should return this to 275 after the PG split is clean.
-      osd_mclock_max_capacity_iops_hdd: "750"
+      # Steady-state client-ops posture. Temporary recovery-surge overrides belong
+      # only in an active maintenance window and must be removed after recovery is clean.
+      osd_mclock_profile: "high_client_ops"
+      osd_mclock_max_capacity_iops_hdd: "275"
       # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
       # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
       osd_mclock_max_sequential_bandwidth_hdd: "285212672"
@@ -54,12 +47,9 @@ cephClusterSpec:
       osd_scrub_auto_repair: "true"
       osd_scrub_auto_repair_num_errors: "5"
     mgr:
-      # Temporary recovery-surge ceiling for the hot-pool PG split. The previous
-      # 3% ceiling was deliberately pacing pgp_num progress; use 10% during the
-      # maintenance recovery window, then return to 3% for steady client ops.
-      target_max_misplaced_ratio: "0.10"
-      # Keep PG shard deviation tight without enabling read-primary balancing while
-      # pre-Reef clients exist.
+      # Keep PG movement conservative during normal client operations and keep PG
+      # shard deviation tight without enabling read-primary balancing while pre-Reef clients exist.
+      target_max_misplaced_ratio: "0.03"
       mgr/balancer/upmap_max_deviation: "1"
 
   dataDirHostPath: /var/lib/rook

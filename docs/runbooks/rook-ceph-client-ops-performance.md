@@ -79,12 +79,31 @@ cephfs-data0 pg_num=128 pgp_num=128
 objectstore.rgw.buckets.data pg_num=128 pgp_num=128
 ```
 
+## Normal Client-Ops State
+
+Normal operation should prefer client IO after recovery/backfill is clean:
+
+```yaml
+osd_mclock_profile: "high_client_ops"
+osd_mclock_max_capacity_iops_hdd: "275"
+target_max_misplaced_ratio: "0.03"
+```
+
+The recovery override keys must be absent in normal operation:
+
+```yaml
+osd_mclock_override_recovery_settings
+osd_max_backfills
+osd_recovery_max_active_hdd
+osd_recovery_sleep_hdd
+```
+
 ## Temporary Recovery-Surge Mode
 
 If the hot-pool PG split remains active for many hours, switch from client-biased QoS to recovery-biased QoS until
 the split completes. This is temporary maintenance mode, not the final client-ops posture.
 
-Durable GitOps settings for recovery surge:
+Temporary GitOps patch for recovery surge:
 
 ```yaml
 osd_mclock_profile: "high_recovery_ops"
