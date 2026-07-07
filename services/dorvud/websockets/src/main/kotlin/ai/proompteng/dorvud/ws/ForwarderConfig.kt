@@ -61,6 +61,8 @@ data class ForwarderConfig(
   val healthPort: Int = 8080,
   val metricsPort: Int = 9090,
   val healthNotReadyKillAfterMs: Long = 180_000,
+  val marketDataChannelFreshnessMaxMs: Long = 180_000,
+  val marketDataChannelFreshnessWarmupMs: Long = 120_000,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -201,6 +203,12 @@ data class ForwarderConfig(
 
       val healthNotReadyKillAfterMs = mergedEnv["HEALTH_NOT_READY_KILL_AFTER_MS"]?.toLongOrNull() ?: 180_000
       if (healthNotReadyKillAfterMs <= 0) error("HEALTH_NOT_READY_KILL_AFTER_MS must be > 0")
+      val marketDataChannelFreshnessMaxMs =
+        mergedEnv["MARKET_DATA_CHANNEL_FRESHNESS_MAX_MS"]?.toLongOrNull() ?: 180_000
+      if (marketDataChannelFreshnessMaxMs <= 0) error("MARKET_DATA_CHANNEL_FRESHNESS_MAX_MS must be > 0")
+      val marketDataChannelFreshnessWarmupMs =
+        mergedEnv["MARKET_DATA_CHANNEL_FRESHNESS_WARMUP_MS"]?.toLongOrNull() ?: 120_000
+      if (marketDataChannelFreshnessWarmupMs < 0) error("MARKET_DATA_CHANNEL_FRESHNESS_WARMUP_MS must be >= 0")
 
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
@@ -233,6 +241,8 @@ data class ForwarderConfig(
         healthPort = mergedEnv["HEALTH_PORT"]?.toIntOrNull() ?: 8080,
         metricsPort = mergedEnv["METRICS_PORT"]?.toIntOrNull() ?: 9090,
         healthNotReadyKillAfterMs = healthNotReadyKillAfterMs,
+        marketDataChannelFreshnessMaxMs = marketDataChannelFreshnessMaxMs,
+        marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
       )
     }
 

@@ -110,4 +110,57 @@ class ForwarderMetricsTest {
         ?.value(),
     )
   }
+
+  @Test
+  fun `records market data channel readiness gauges`() {
+    val registry = SimpleMeterRegistry()
+    val metrics = ForwarderMetrics(registry)
+
+    metrics.setMarketDataChannelReadiness(
+      listOf(
+        MarketDataChannelReadiness(
+          channel = "trades",
+          ready = false,
+          required = true,
+          latestProviderEventAtMs = 100,
+          latestSerializedAtMs = 110,
+          latestKafkaSuccessAtMs = null,
+          subscribedSymbolCount = 2,
+          observedSymbolCount = 1,
+          observedSymbols = listOf("NVDA"),
+          lagMs = null,
+          maxLagMs = 60_000,
+          reason = "market_data_channel_missing_kafka_success",
+        ),
+      ),
+    )
+
+    assertEquals(
+      0.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "ready")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      -1.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "lag_ms")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "observed_symbol_count")
+        .gauge()
+        ?.value(),
+    )
+  }
 }

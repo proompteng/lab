@@ -241,6 +241,12 @@ class AvroSerde(
 
     record.put("watermark_lag_ms", env.payload.watermarkLagMs)
     record.put("last_event_ts", env.payload.lastEventTs)
+    record.put("last_input_event_ts", env.payload.lastInputEventTs)
+    record.put("last_output_event_ts", env.payload.lastOutputEventTs)
+    record.put("input_event_count", env.payload.inputEventCount)
+    record.put("output_event_count", env.payload.outputEventCount)
+    record.put("input_rate_per_second", env.payload.inputRatePerSecond)
+    record.put("per_symbol_latest_event_ts", env.payload.perSymbolLatestEventTs)
     record.put("status", env.payload.status)
     record.put("heartbeat", env.payload.heartbeat)
     record.put("version", env.version)

@@ -191,6 +191,15 @@ class ForwarderApp(
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
   private val metrics = ForwarderMetrics(Metrics.registry)
+  private val marketDataChannelFreshness =
+    MarketDataChannelFreshnessTracker(
+      requiredChannels = config.alpacaMarketDataChannels,
+      maxLagMs = config.marketDataChannelFreshnessMaxMs,
+      warmupMs = config.marketDataChannelFreshnessWarmupMs,
+      nowMs = nowMs,
+      marketType = config.alpacaMarketType,
+      marketHolidays = config.optionsMarketHolidays,
+    )
   private val reconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
@@ -286,17 +295,23 @@ class ForwarderApp(
     scope.cancel()
   }
 
-  fun isReady(): Boolean = ready.get()
+  fun isReady(): Boolean {
+    refreshReadinessFromMarketDataChannels()
+    return ready.get()
+  }
 
   fun readinessInfo(): ReadinessInfo {
+    refreshReadinessFromMarketDataChannels()
     val readyNow = ready.get()
     val gates = currentReadinessGates()
     val errorClassId = currentReadinessErrorClass(readyNow, gates)?.id
+    val channelSnapshot = marketDataChannelSnapshot()
     return ReadinessInfo(
       status = if (readyNow) "ready" else "not_ready",
       ready = readyNow,
       errorClass = errorClassId,
       gates = gates,
+      marketDataChannels = channelSnapshot,
     )
   }
 
@@ -309,7 +324,7 @@ class ForwarderApp(
       logger.error {
         "liveness failing after readiness remained false for >=${config.healthNotReadyKillAfterMs}ms " +
           "error_class=$errorClass gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} " +
-          "trade_updates:${gates.tradeUpdates}"
+          "trade_updates:${gates.tradeUpdates} market_data_channels:${gates.marketDataChannels}"
       }
     }
     return !staleNotReady
@@ -651,9 +666,11 @@ class ForwarderApp(
                 }
                 if (actualSubscribed.isNotEmpty()) {
                   subscribedSince.compareAndSet(null, Instant.ofEpochMilli(nowMs()))
+                  marketDataChannelFreshness.recordSubscription(actualSubscribed)
                 } else {
                   subscribedSince.set(null)
                   lastOptionsMarketDataEventAt.set(null)
+                  marketDataChannelFreshness.clearSubscription()
                 }
                 subscribedOk = actualSubscribed.isNotEmpty() && missing.isEmpty()
                 updateWsReady()
@@ -1156,6 +1173,7 @@ class ForwarderApp(
     val env = AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) } ?: return null
     recordLag(env)
     metrics.recordProviderMessage(config.alpacaMarketType, env.channel)
+    marketDataChannelFreshness.recordProviderEvent(env.channel, env.symbol)
 
     val topic =
       when (env.channel) {
@@ -1166,7 +1184,8 @@ class ForwarderApp(
         else -> null
       } ?: return null
 
-    sendKafka(producer, topic, env)
+    marketDataChannelFreshness.recordSerializedEvent(env.channel, env.symbol)
+    sendKafka(producer, topic, env, env.channel)
     return env.channel
   }
 
@@ -1174,6 +1193,7 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     topic: String,
     env: Envelope<JsonElement>,
+    marketDataChannel: String? = null,
   ) {
     val payload = json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
@@ -1187,6 +1207,7 @@ class ForwarderApp(
           recordKafkaFailure(exception, topic)
         } else {
           metrics.recordKafkaProduceSuccess(topic)
+          marketDataChannelFreshness.recordKafkaSuccess(marketDataChannel, env.symbol)
           recordKafkaSuccess()
         }
       }
@@ -1226,7 +1247,9 @@ class ForwarderApp(
     kafkaFailureCount.set(0)
     if (!kafkaReady.get()) {
       setKafkaReady(true)
+      return
     }
+    refreshReadinessFromMarketDataChannels()
   }
 
   private fun setKafkaReady(value: Boolean) {
@@ -1234,7 +1257,7 @@ class ForwarderApp(
       kafkaErrorClass.set(null)
     }
     kafkaReady.set(value)
-    markReady(value && wsReady.get() && tradeUpdatesGate())
+    markReady(value && wsReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
   private fun setWsReady(value: Boolean) {
@@ -1245,7 +1268,7 @@ class ForwarderApp(
     if (value && !previous) {
       metrics.wsConnectSuccess.increment()
     }
-    markReady(value && kafkaReady.get() && tradeUpdatesGate())
+    markReady(value && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
   private fun setTradeUpdatesReady(value: Boolean) {
@@ -1253,10 +1276,28 @@ class ForwarderApp(
       tradeUpdatesErrorClass.set(null)
     }
     tradeUpdatesReady.set(value)
-    markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate())
+    markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
   private fun tradeUpdatesGate(): Boolean = if (tradeUpdatesEnabled) tradeUpdatesReady.get() else true
+
+  private fun marketDataChannelsGate(): Boolean = marketDataChannelSnapshot().all { it.ready }
+
+  private fun marketDataChannelSnapshot(): List<MarketDataChannelReadiness> {
+    val snapshot = marketDataChannelFreshness.snapshot()
+    metrics.setMarketDataChannelReadiness(snapshot)
+    return snapshot
+  }
+
+  private fun refreshReadinessFromMarketDataChannels() {
+    val marketDataReady = marketDataChannelsGate()
+    if (!marketDataReady) {
+      readinessErrorClass.set(ReadinessErrorClass.MarketDataChannelStarvation)
+    } else if (readinessErrorClass.get() == ReadinessErrorClass.MarketDataChannelStarvation) {
+      readinessErrorClass.set(null)
+    }
+    markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate() && marketDataReady)
+  }
 
   private fun markReady(value: Boolean) {
     val previous = ready.getAndSet(value)
@@ -1281,7 +1322,8 @@ class ForwarderApp(
     if (previous) {
       logger.warn {
         "readiness changed to not_ready error_class=${errorClass.id} " +
-          "gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} trade_updates:${gates.tradeUpdates}"
+          "gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} " +
+          "trade_updates:${gates.tradeUpdates} market_data_channels:${gates.marketDataChannels}"
       }
       reportedNotReadyClass.set(errorClass)
       metrics.recordReadinessError(errorClass)
@@ -1325,6 +1367,7 @@ class ForwarderApp(
       alpacaWs = wsReady.get(),
       kafka = kafkaReady.get(),
       tradeUpdates = tradeUpdatesGate(),
+      marketDataChannels = marketDataChannelsGate(),
     )
 
   private fun currentReadinessErrorClass(
@@ -1338,6 +1381,7 @@ class ForwarderApp(
       kafkaErrorClass = kafkaErrorClass.get(),
       tradeUpdatesErrorClass = tradeUpdatesErrorClass.get(),
       fallbackErrorClass = readinessErrorClass.get(),
+      marketDataChannelErrorClass = readinessErrorClass.get(),
     )
 
   private suspend fun DefaultClientWebSocketSession.sendSerialized(payload: JsonObject) {
@@ -1523,7 +1567,7 @@ internal fun optionsEventStarved(
   return Duration.between(lastHealthyEvent, now) >= grace
 }
 
-private fun isRegularMarketSession(
+internal fun isRegularMarketSession(
   now: Instant,
   marketHolidays: Set<LocalDate> = emptySet(),
 ): Boolean {

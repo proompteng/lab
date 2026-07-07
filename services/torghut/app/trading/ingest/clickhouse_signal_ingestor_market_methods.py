@@ -25,7 +25,6 @@ from .shared_context import (
     LATEST_SIGNAL_TS_CACHE_TTL,
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SignalBatch,
-    coerce_count as _coerce_count,
 )
 from .clickhouse_signal_ingestor_market_support import (
     ClickHouseRequest as _ClickHouseRequest,
@@ -41,6 +40,12 @@ from .clickhouse_signal_ingestor_market_support import (
     select_columns as _select_columns,
     signal_scope_key as _signal_scope_key,
     split_table as _split_table,
+)
+from .clickhouse_signal_source_freshness import (
+    ClickHouseSignalFreshnessContext as _ClickHouseSignalFreshnessContext,
+    accepted_signal_sources as _accepted_signal_sources,
+    build_accepted_source_freshness_contract as _build_accepted_source_freshness_contract,
+    latest_signal_readiness_counts as _latest_signal_readiness_counts,
 )
 
 logger = logging.getLogger("app.trading.ingest")
@@ -205,54 +210,52 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
             "source_ref": self.table,
             "time_column": time_column,
         }
+        status.update(
+            self._accepted_source_freshness_contract(
+                time_column=time_column,
+                latest_signal_at=latest_signal_at,
+            )
+        )
         try:
             status.update(
-                self._latest_signal_readiness_counts(
+                _latest_signal_readiness_counts(
+                    context=self._signal_freshness_context(),
                     time_column=time_column,
                     latest_signal_at=latest_signal_at,
                 )
             )
-        except Exception as exc:
+        except (RuntimeError, OSError, ValueError, TypeError) as exc:
             logger.warning("Failed to load ClickHouse TA readiness counts: %s", exc)
             status["readiness_reason_codes"] = ["clickhouse_ta_readiness_query_failed"]
             status["readiness_detail"] = str(exc)[:200]
         return status
 
-    def _latest_signal_readiness_counts(
+    def _accepted_source_freshness_contract(
         self,
         *,
         time_column: str,
         latest_signal_at: datetime,
     ) -> dict[str, Any]:
-        safe_time_column = _safe_identifier(time_column, kind="column")
-        lookback_minutes = max(int(self.initial_lookback_minutes or 1), 1)
-        window_start = latest_signal_at - timedelta(minutes=lookback_minutes)
-        where_parts = [
-            f"{safe_time_column} >= {to_datetime64(window_start)}",
-            f"{safe_time_column} <= {to_datetime64(latest_signal_at)}",
-        ]
-        source_clause = self._source_where_clause()
-        if source_clause is not None:
-            where_parts.append(source_clause)
-        query = " ".join(
-            [
-                "SELECT",
-                "count() AS signal_rows, uniqExact(symbol) AS symbol_count",
-                "FROM",
-                self.table,
-                "WHERE",
-                " AND ".join(where_parts),
-                "FORMAT JSONEachRow",
-            ]
+        return _build_accepted_source_freshness_contract(
+            context=self._signal_freshness_context(),
+            time_column=time_column,
+            latest_signal_at=latest_signal_at,
         )
-        rows = self._query_clickhouse(query)
-        row = rows[0] if rows else {}
-        return {
-            "signal_rows": _coerce_count(row.get("signal_rows")),
-            "symbol_count": _coerce_count(row.get("symbol_count")),
-            "readiness_window_start": window_start,
-            "readiness_window_end": latest_signal_at,
-        }
+
+    def _signal_freshness_context(self) -> _ClickHouseSignalFreshnessContext:
+        return _ClickHouseSignalFreshnessContext(
+            table=self.table,
+            simulation_mode=self.simulation_mode,
+            initial_lookback_minutes=self.initial_lookback_minutes,
+            max_staleness_ms=settings.trading_feature_max_staleness_ms,
+            allowed_sources_raw=",".join(self._accepted_signal_sources()),
+            query_clickhouse=self._query_clickhouse,
+            resolve_columns=self._resolve_columns,
+            source_where_clause=self._source_where_clause,
+        )
+
+    def _accepted_signal_sources(self) -> tuple[str, ...]:
+        return _accepted_signal_sources(settings.trading_signal_allowed_sources_raw)
 
     def _latest_signal_timestamp_queries(
         self,

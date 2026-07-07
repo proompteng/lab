@@ -22,6 +22,8 @@ import org.apache.flink.api.common.functions.RichFlatMapFunction
 import org.apache.flink.api.common.serialization.SimpleStringSchema
 import org.apache.flink.api.common.state.ListState
 import org.apache.flink.api.common.state.ListStateDescriptor
+import org.apache.flink.api.common.state.MapState
+import org.apache.flink.api.common.state.MapStateDescriptor
 import org.apache.flink.api.common.state.ValueState
 import org.apache.flink.api.common.state.ValueStateDescriptor
 import org.apache.flink.api.common.typeinfo.TypeHint
@@ -925,11 +927,27 @@ private class StatusHeartbeatProcessFunction(
   private val intervalMs: Long,
 ) : KeyedProcessFunction<String, Envelope<MicroBarPayload>, Envelope<TaStatusPayload>>() {
   private lateinit var lastEventMsState: ValueState<Long>
+  private lateinit var eventCountState: ValueState<Long>
+  private lateinit var lastHeartbeatEventCountState: ValueState<Long>
+  private lateinit var lastHeartbeatMsState: ValueState<Long>
+  private lateinit var perSymbolLatestEventMsState: MapState<String, Long>
   private lateinit var seqState: ValueState<Long>
   private lateinit var nextTimerState: ValueState<Long>
 
   override fun open(openContext: OpenContext) {
     lastEventMsState = runtimeContext.getState(ValueStateDescriptor("status-last-event-ms", Long::class.javaObjectType))
+    eventCountState = runtimeContext.getState(ValueStateDescriptor("status-event-count", Long::class.javaObjectType))
+    lastHeartbeatEventCountState =
+      runtimeContext.getState(ValueStateDescriptor("status-last-heartbeat-event-count", Long::class.javaObjectType))
+    lastHeartbeatMsState = runtimeContext.getState(ValueStateDescriptor("status-last-heartbeat-ms", Long::class.javaObjectType))
+    perSymbolLatestEventMsState =
+      runtimeContext.getMapState(
+        MapStateDescriptor(
+          "status-per-symbol-latest-event-ms",
+          String::class.java,
+          Long::class.javaObjectType,
+        ),
+      )
     seqState = runtimeContext.getState(ValueStateDescriptor("status-seq", Long::class.javaObjectType))
     nextTimerState = runtimeContext.getState(ValueStateDescriptor("status-next-timer-ms", Long::class.javaObjectType))
   }
@@ -944,6 +962,11 @@ private class StatusHeartbeatProcessFunction(
     if (last == null || eventMs > last) {
       lastEventMsState.update(eventMs)
     }
+    val symbolLast = perSymbolLatestEventMsState.get(value.symbol)
+    if (symbolLast == null || eventMs > symbolLast) {
+      perSymbolLatestEventMsState.put(value.symbol, eventMs)
+    }
+    eventCountState.update((eventCountState.value() ?: 0L) + 1L)
     scheduleTimerIfNeeded(ctx)
   }
 
@@ -961,13 +984,35 @@ private class StatusHeartbeatProcessFunction(
         (now.toEpochMilli() - watermark).coerceAtLeast(0)
       }
     val lastEventMs = lastEventMsState.value()
+    val eventCount = eventCountState.value() ?: 0L
+    val lastHeartbeatCount = lastHeartbeatEventCountState.value() ?: eventCount
+    val lastHeartbeatMs = lastHeartbeatMsState.value()
+    val inputRatePerSecond =
+      if (lastHeartbeatMs == null || now.toEpochMilli() <= lastHeartbeatMs) {
+        null
+      } else {
+        val elapsedSeconds = (now.toEpochMilli() - lastHeartbeatMs).toDouble() / 1_000.0
+        (eventCount - lastHeartbeatCount).coerceAtLeast(0).toDouble() / elapsedSeconds
+      }
+    val perSymbolLatestEventTs =
+      perSymbolLatestEventMsState
+        .entries()
+        .associate { (symbol, eventMs) -> symbol to Instant.ofEpochMilli(eventMs).toString() }
     val payload =
       TaStatusPayload(
         watermarkLagMs = lagMs,
         lastEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
+        lastInputEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
+        lastOutputEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
+        inputEventCount = eventCount,
+        outputEventCount = eventCount,
+        inputRatePerSecond = inputRatePerSecond,
+        perSymbolLatestEventTs = perSymbolLatestEventTs,
         status = "ok",
         heartbeat = true,
       )
+    lastHeartbeatEventCountState.update(eventCount)
+    lastHeartbeatMsState.update(now.toEpochMilli())
     val seq = (seqState.value() ?: 0L) + 1
     seqState.update(seq)
     val envelope =
