@@ -23,6 +23,7 @@ enum class ReadinessErrorClass(
   KafkaAuth("kafka_auth"),
   KafkaMetadata("kafka_metadata"),
   KafkaProduce("kafka_produce"),
+  MarketDataChannelStarvation("market_data_channel_starvation"),
   Unknown("unknown"),
 }
 
@@ -37,6 +38,7 @@ data class ReadinessGates(
   @SerialName("alpaca_ws") val alpacaWs: Boolean,
   val kafka: Boolean,
   @SerialName("trade_updates") val tradeUpdates: Boolean,
+  @SerialName("market_data_channels") val marketDataChannels: Boolean = true,
 )
 
 @Serializable
@@ -45,6 +47,7 @@ data class ReadinessInfo(
   val ready: Boolean,
   @SerialName("error_class") val errorClass: String? = null,
   val gates: ReadinessGates,
+  @SerialName("market_data_channels") val marketDataChannels: List<MarketDataChannelReadiness> = emptyList(),
 )
 
 internal enum class KafkaFailureContext {
@@ -68,10 +71,12 @@ internal object ReadinessClassifier {
     kafkaErrorClass: ReadinessErrorClass?,
     tradeUpdatesErrorClass: ReadinessErrorClass?,
     fallbackErrorClass: ReadinessErrorClass?,
+    marketDataChannelErrorClass: ReadinessErrorClass? = null,
   ): ReadinessErrorClass? {
     if (ready) return null
     return when {
       !gates.alpacaWs -> alpacaErrorClass ?: ReadinessErrorClass.Unknown
+      !gates.marketDataChannels -> marketDataChannelErrorClass ?: ReadinessErrorClass.MarketDataChannelStarvation
       !gates.kafka -> kafkaErrorClass ?: ReadinessErrorClass.Unknown
       !gates.tradeUpdates -> tradeUpdatesErrorClass ?: ReadinessErrorClass.Unknown
       else -> fallbackErrorClass ?: ReadinessErrorClass.Unknown

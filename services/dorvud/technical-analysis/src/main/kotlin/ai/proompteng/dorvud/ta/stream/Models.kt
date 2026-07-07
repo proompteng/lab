@@ -77,6 +77,18 @@ data class TaStatusPayload(
   val watermarkLagMs: Long? = null,
   @SerialName("last_event_ts")
   val lastEventTs: String? = null,
+  @SerialName("last_input_event_ts")
+  val lastInputEventTs: String? = null,
+  @SerialName("last_output_event_ts")
+  val lastOutputEventTs: String? = null,
+  @SerialName("input_event_count")
+  val inputEventCount: Long? = null,
+  @SerialName("output_event_count")
+  val outputEventCount: Long? = null,
+  @SerialName("input_rate_per_second")
+  val inputRatePerSecond: Double? = null,
+  @SerialName("per_symbol_latest_event_ts")
+  val perSymbolLatestEventTs: Map<String, String>? = null,
   val status: String = "ok",
   val heartbeat: Boolean = true,
 )

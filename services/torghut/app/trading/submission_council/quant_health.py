@@ -166,6 +166,14 @@ def fresh_clickhouse_signal_continuity(
 ) -> tuple[str, str, str] | None:
     if not isinstance(clickhouse_ta_status, Mapping):
         return None
+    blocking_reason = _safe_text(clickhouse_ta_status.get("blocking_reason"))
+    if blocking_reason:
+        return "false", "clickhouse_ta_status", blocking_reason
+    accepted_source_state = _safe_text(
+        clickhouse_ta_status.get("accepted_source_state")
+    )
+    if accepted_source_state == "stale":
+        return "false", "clickhouse_ta_status", "accepted_ta_signal_stale"
     state = _safe_text(clickhouse_ta_status.get("state"))
     latest_signal_at = _coerce_aware_datetime(
         clickhouse_ta_status.get("latest_signal_at")

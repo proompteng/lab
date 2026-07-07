@@ -80,6 +80,7 @@ class _SubmissionDependencyContext:
     payload: dict[str, Any]
     decision: str
     runtime_window_import_health_gate: dict[str, object]
+    clickhouse_ta_status: dict[str, Any]
     empirical_ready: bool | None
     dspy_mode: str
     dspy_live_ready: bool | None
@@ -308,6 +309,11 @@ def _submission_dependency_context(
             state,
             dependency_quorum_decision=decision,
             clickhouse_ta_status=clickhouse_ta_status,
+        ),
+        clickhouse_ta_status=(
+            dict(clickhouse_ta_status)
+            if isinstance(clickhouse_ta_status, Mapping)
+            else {}
         ),
         empirical_ready=None,
         dspy_mode=dspy_mode,
@@ -596,7 +602,25 @@ def _operational_submission_blocked_reasons(
         and not settings.trading_testnet_after_hours_enabled
     ):
         blocked_reasons.append("testnet_after_hours_disabled")
+    if ta_blocker := _accepted_ta_submission_blocker(
+        context.dependencies.clickhouse_ta_status
+    ):
+        blocked_reasons.append(ta_blocker)
     return _normalize_reason_codes(blocked_reasons)
+
+
+def _accepted_ta_submission_blocker(
+    clickhouse_ta_status: Mapping[str, Any],
+) -> str | None:
+    blocking_reason = _safe_text(clickhouse_ta_status.get("blocking_reason"))
+    if blocking_reason:
+        return blocking_reason
+    accepted_source_state = _safe_text(
+        clickhouse_ta_status.get("accepted_source_state")
+    )
+    if accepted_source_state == "stale":
+        return "accepted_ta_signal_stale"
+    return None
 
 
 def _alpaca_broker_available() -> bool:
