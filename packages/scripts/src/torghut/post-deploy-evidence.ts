@@ -9,6 +9,7 @@ const PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = 'torghut.paper-route-evidence.v1'
 const PAPER_ROUTE_TARGETS_SCHEMA_VERSION = 'torghut.next-paper-route-runtime-window-targets.v1'
 const RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SCHEMA_VERSION = 'torghut.runtime-window-import-health-gate.v1'
 const RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SUMMARY_SCHEMA_VERSION = 'torghut.runtime-window-import-health-gate-summary.v1'
+const ACCEPTED_SOURCE_STALE_REASON = 'accepted_ta_signal_stale'
 
 type JsonObject = Record<string, unknown>
 
@@ -28,6 +29,7 @@ type PostDeployEvidenceInput = {
 }
 
 type LiveSubmitContract =
+  | 'accepted_source_stale_zero_notional'
   | 'bounded_live_submit_active'
   | 'expired_activation_blocked'
   | 'operational_zero_notional_repair'
@@ -89,6 +91,9 @@ const requireArrayIncludes = (value: unknown, expected: string, label: string) =
     throw new Error(`${label} must include ${expected}`)
   }
 }
+
+const arrayIncludesScalar = (value: unknown, expected: string): boolean =>
+  Array.isArray(value) && value.map((item) => formatScalar(item, '')).includes(expected)
 
 const parseHttpStatus = (value: string): number => {
   if (!/^[0-9]{3}$/.test(value)) {
@@ -477,6 +482,118 @@ const assertOperationalZeroNotionalRepairContract = (status: JsonObject, digest:
   return 'operational_zero_notional_repair'
 }
 
+const isAcceptedSourceStaleZeroNotionalCandidate = (status: JsonObject, digest: JsonObject): boolean => {
+  const capital =
+    digest.capital && typeof digest.capital === 'object' && !Array.isArray(digest.capital)
+      ? (digest.capital as JsonObject)
+      : {}
+  const liveSubmissionGate =
+    status.live_submission_gate &&
+    typeof status.live_submission_gate === 'object' &&
+    !Array.isArray(status.live_submission_gate)
+      ? (status.live_submission_gate as JsonObject)
+      : {}
+  const activation =
+    liveSubmissionGate.live_submit_activation &&
+    typeof liveSubmissionGate.live_submit_activation === 'object' &&
+    !Array.isArray(liveSubmissionGate.live_submit_activation)
+      ? (liveSubmissionGate.live_submit_activation as JsonObject)
+      : {}
+  return (
+    digest.business_state === 'repair_only' &&
+    digest.revenue_ready === false &&
+    capital.live_submission_allowed === false &&
+    capital.live_submission_reason === ACCEPTED_SOURCE_STALE_REASON &&
+    capital.capital_state === 'zero_notional' &&
+    formatScalar(capital.max_notional, '') === '0' &&
+    liveSubmissionGate.allowed === false &&
+    activation.configured === true &&
+    arrayIncludesScalar(liveSubmissionGate.blocked_reasons, ACCEPTED_SOURCE_STALE_REASON)
+  )
+}
+
+const assertAcceptedSourceStaleZeroNotionalContract = (status: JsonObject, digest: JsonObject): LiveSubmitContract => {
+  assertRepairOnlyZeroNotionalDigest(digest)
+
+  const capital = requireObject(digest.capital, 'torghut revenue repair digest capital')
+  requireScalarValue(
+    capital.live_submission_reason,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut revenue repair digest capital.live_submission_reason',
+  )
+
+  const liveSubmissionGate = requireObject(status.live_submission_gate, 'torghut status live_submission_gate')
+  const operationalSubmissionGate = requireObject(
+    status.operational_submission_gate,
+    'torghut status operational_submission_gate',
+  )
+  const submissionAuthority = requireObject(status.submission_authority, 'torghut status submission_authority')
+  const freshness = requireObject(
+    liveSubmissionGate.clickhouse_ta_freshness,
+    'torghut status live_submission_gate.clickhouse_ta_freshness',
+  )
+
+  if (requireBoolean(status.autonomy_enabled, 'torghut status autonomy_enabled') !== false) {
+    throw new Error('torghut status autonomy_enabled must be false for accepted-source stale repair rollout')
+  }
+  if (requireBoolean(liveSubmissionGate.allowed, 'torghut status live_submission_gate.allowed') !== false) {
+    throw new Error('accepted-source stale repair rollout requires live_submission_gate.allowed=false')
+  }
+  requireArrayIncludes(
+    liveSubmissionGate.blocked_reasons,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut live_submission_gate.blocked_reasons',
+  )
+  if (
+    requireBoolean(operationalSubmissionGate.allowed, 'torghut status operational_submission_gate.allowed') !== false
+  ) {
+    throw new Error('accepted-source stale repair rollout requires operational_submission_gate.allowed=false')
+  }
+  requireScalarValue(
+    operationalSubmissionGate.reason,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut status operational_submission_gate.reason',
+  )
+  requireArrayIncludes(
+    operationalSubmissionGate.blocked_reasons,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut operational_submission_gate.blocked_reasons',
+  )
+  requireScalarValue(submissionAuthority.authority_scope, 'none', 'torghut submission_authority.authority_scope')
+  requireScalarValue(
+    submissionAuthority.effective_submit_mode,
+    'blocked',
+    'torghut submission_authority.effective_submit_mode',
+  )
+  requireScalarValue(submissionAuthority.reason, ACCEPTED_SOURCE_STALE_REASON, 'torghut submission_authority.reason')
+  if (requireBoolean(submissionAuthority.can_submit_now, 'torghut submission_authority.can_submit_now') !== false) {
+    throw new Error('accepted-source stale repair rollout requires submission_authority.can_submit_now=false')
+  }
+  requireScalarValue(
+    freshness.accepted_source_state,
+    'stale',
+    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_source_state',
+  )
+  requireScalarValue(
+    freshness.blocking_reason,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut live_submission_gate.clickhouse_ta_freshness.blocking_reason',
+  )
+  requireArrayIncludes(
+    freshness.accepted_sources,
+    'ta',
+    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_sources',
+  )
+  assertLiveSubmitActivationContract(
+    requireObject(
+      liveSubmissionGate.live_submit_activation,
+      'torghut status live_submission_gate.live_submit_activation',
+    ),
+  )
+
+  return 'accepted_source_stale_zero_notional'
+}
+
 const isRepairOnlyZeroNotionalCandidate = (status: JsonObject, digest: JsonObject): boolean => {
   const capital =
     digest.capital && typeof digest.capital === 'object' && !Array.isArray(digest.capital)
@@ -502,6 +619,7 @@ const isRepairOnlyZeroNotionalCandidate = (status: JsonObject, digest: JsonObjec
     ((capital.live_submission_allowed === false &&
       liveSubmissionGate.allowed === false &&
       activation.configured === false) ||
+      isAcceptedSourceStaleZeroNotionalCandidate(status, digest) ||
       (capital.live_submission_allowed === true &&
         liveSubmissionGate.allowed === true &&
         activation.configured === true))
@@ -853,7 +971,9 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
       liveSubmitContract =
         capital.live_submission_allowed === true
           ? assertOperationalZeroNotionalRepairContract(status, digest)
-          : assertShadowZeroNotionalGateClosedContract(status, digest)
+          : isAcceptedSourceStaleZeroNotionalCandidate(status, digest)
+            ? assertAcceptedSourceStaleZeroNotionalContract(status, digest)
+            : assertShadowZeroNotionalGateClosedContract(status, digest)
       readyzAcceptedReason = 'repair_only_zero_notional'
     } else {
       liveSubmitContract = assertBoundedLiveSubmitContract(status)
