@@ -40,12 +40,12 @@ cephClusterSpec:
       # zero misplaced objects and zero remapped/backfilling PGs.
       osd_mclock_profile: "high_recovery_ops"
       osd_mclock_override_recovery_settings: "true"
-      osd_max_backfills: "3"
-      osd_recovery_max_active_hdd: "6"
+      osd_max_backfills: "6"
+      osd_recovery_max_active_hdd: "12"
       osd_recovery_sleep_hdd: "0"
       # Temporary recovery-surge capacity model. The steady-state client posture
       # should return this to 275 after the PG split is clean.
-      osd_mclock_max_capacity_iops_hdd: "500"
+      osd_mclock_max_capacity_iops_hdd: "750"
       # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
       # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
       osd_mclock_max_sequential_bandwidth_hdd: "285212672"
@@ -54,9 +54,12 @@ cephClusterSpec:
       osd_scrub_auto_repair: "true"
       osd_scrub_auto_repair_num_errors: "5"
     mgr:
-      # Keep capacity balancing conservative during client hours and tighten PG shard
-      # deviation without enabling read-primary balancing while pre-Reef clients exist.
-      target_max_misplaced_ratio: "0.03"
+      # Temporary recovery-surge ceiling for the hot-pool PG split. The previous
+      # 3% ceiling was deliberately pacing pgp_num progress; use 10% during the
+      # maintenance recovery window, then return to 3% for steady client ops.
+      target_max_misplaced_ratio: "0.10"
+      # Keep PG shard deviation tight without enabling read-primary balancing while
+      # pre-Reef clients exist.
       mgr/balancer/upmap_max_deviation: "1"
 
   dataDirHostPath: /var/lib/rook
