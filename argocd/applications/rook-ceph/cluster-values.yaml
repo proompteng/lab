@@ -38,6 +38,7 @@ cephClusterSpec:
       # Steady-state client-ops posture. Temporary recovery-surge overrides belong
       # only in an active maintenance window and must be removed after recovery is clean.
       osd_mclock_profile: "high_client_ops"
+      # Fallback for future HDD OSDs. Current OSDs have per-daemon measured overrides below.
       osd_mclock_max_capacity_iops_hdd: "275"
       # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
       # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
@@ -46,6 +47,19 @@ cephClusterSpec:
       # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
       osd_scrub_auto_repair: "true"
       osd_scrub_auto_repair_num_errors: "5"
+    # Per-OSD mClock HDD IOPS capacity, measured with Ceph's documented 4 KiB OSD bench path on 2026-07-07.
+    osd.0:
+      osd_mclock_max_capacity_iops_hdd: "210"
+    osd.1:
+      osd_mclock_max_capacity_iops_hdd: "250"
+    osd.2:
+      osd_mclock_max_capacity_iops_hdd: "260"
+    osd.3:
+      osd_mclock_max_capacity_iops_hdd: "200"
+    osd.4:
+      osd_mclock_max_capacity_iops_hdd: "220"
+    osd.5:
+      osd_mclock_max_capacity_iops_hdd: "240"
     mgr:
       # Keep PG movement conservative during normal client operations and keep PG
       # shard deviation tight without enabling read-primary balancing while pre-Reef clients exist.
