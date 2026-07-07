@@ -35,13 +35,186 @@ Stage 1 GitOps target:
    - `objectstore.rgw.buckets.data`
 
 Do not combine Stage 1 with an image rollout while the PG split is remapping. The patch upgrade remains justified,
-but it is Stage 2:
+but it is Stage 2. Stage 2 changes the patch versions only; it does not enable `upmap-read`, change Talos, or
+move traffic to a new network path.
 
 1. Wait until `ceph -s` reports `HEALTH_OK`, zero misplaced objects, zero remapped PGs, and no
    `active+remapped+backfilling` or `active+remapped+backfill_wait` PGs.
 1. Upgrade the Rook charts and operator image from `v1.19.5` to `v1.19.7`.
 1. Upgrade the Ceph image from `v19.2.3` to `v19.2.4`.
 1. Let Argo roll the patch upgrade and verify `ceph versions`, operator image, CSI pods, and app smoke checks.
+
+## GitOps Source Of Truth
+
+Do not rely on one-off `ceph config set` commands as the final state. Live commands are acceptable only to unblock or
+pre-stage a safe setting; the durable state must be represented here:
+
+| Setting | GitOps file | Live proof |
+| --- | --- | --- |
+| Rook chart version | `argocd/applications/rook-ceph/kustomization.yaml` | rendered chart labels and `rook-ceph-operator` image |
+| Rook operator image | `argocd/applications/rook-ceph/operator-values.yaml` | `kubectl -n rook-ceph get deploy rook-ceph-operator` |
+| Ceph image | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph versions` |
+| RBD CRC messenger mode | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph config dump` |
+| mClock/client-ops settings | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph config dump` |
+| mgr balancer `upmap` mode | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph balancer status` |
+| RGW bucket data pool PG floor | `argocd/applications/rook-ceph/cluster-values.yaml` | `ceph osd pool ls detail` |
+| RBD pool PG floor and bulk flag | `argocd/applications/rook-ceph/storageclasses.yaml` | `ceph osd pool ls detail` |
+| CephFS data pool PG floor and bulk flag | `argocd/applications/rook-ceph/storageclasses.yaml` | `ceph osd pool ls detail` |
+| RBD `noatime` mount option | `argocd/applications/rook-ceph/storageclasses.yaml` | `kubectl get storageclass` |
+| NBD canary class | `argocd/applications/rook-ceph/storageclasses.yaml` | `kubectl get storageclass rook-ceph-block-nbd-canary` |
+
+Argo must own the final rollout. Do not patch the generated `rook-ceph` Application as the source of truth; the
+ApplicationSet and repo content must reconcile the desired state.
+
+## Operator Playbook
+
+### 1. Preflight
+
+Run these before changing or merging anything:
+
+```bash
+git fetch origin main
+git status --short --branch
+
+kubectl -n argocd get app rook-ceph \
+  -o jsonpath='{.status.sync.status}{"\t"}{.status.health.status}{"\t"}{.status.sync.revision}{"\n"}'
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool ls detail | \
+  rg 'replicapool|cephfs-data0|objectstore.rgw.buckets.data'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool autoscale-status
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph versions
+```
+
+Stop before Stage 2 if any of these are true:
+
+1. `ceph -s` is not `HEALTH_OK`.
+1. Any objects are misplaced.
+1. Any PG is `active+remapped+backfilling` or `active+remapped+backfill_wait`.
+1. `replicapool`, `cephfs-data0`, or `objectstore.rgw.buckets.data` is not at `pg_num=128` and `pgp_num=128`.
+1. Argo is not `Synced`.
+
+### 2. Validate The Repo Diff
+
+Render and lint from the repo root before opening or updating a PR:
+
+```bash
+mise exec helm@3 -- kustomize build --enable-helm argocd/applications/rook-ceph \
+  >/tmp/rook-ceph.render.yaml
+
+rg -n 'v1\.19\.7|v19\.2\.4|balancerMode: upmap|rbd_default_map_options: ms_mode=prefer-crc|pg_num_min: "128"|bulk: "true"|noatime|osd_mclock_profile: high_client_ops|readAffinity|ROOK_CSI_CEPH_IMAGE' \
+  /tmp/rook-ceph.render.yaml
+
+bun run lint:argocd
+```
+
+The rendered output must keep:
+
+1. `balancerMode: upmap`.
+1. `ROOK_CSI_CEPH_IMAGE: quay.io/cephcsi/cephcsi:v3.16.2` for Rook `v1.19.x`.
+1. RBD default class on KRBD.
+1. `rook-ceph-block-nbd-canary` non-default.
+1. No Talos, Multus, host-network, or new-subnet changes.
+
+### 3. Merge Stage 2 Only After The Clean Gate
+
+The Stage 2 PR may be opened before the remap is clean, but do not merge it until the clean gate passes. After merge:
+
+```bash
+kubectl -n argocd annotate app rook-ceph argocd.argoproj.io/refresh=hard --overwrite
+
+watch -n 10 '
+  kubectl -n argocd get app rook-ceph \
+    -o jsonpath="{.status.sync.status}{\"\t\"}{.status.health.status}{\"\t\"}{.status.sync.revision}{\"\n\"}";
+  kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s | sed -n "1,35p"
+'
+```
+
+The upgrade is not accepted until all of these are true:
+
+```bash
+kubectl -n rook-ceph get deploy rook-ceph-operator \
+  -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph versions
+kubectl -n rook-ceph get pods -o wide | rg 'rook-ceph-operator|rook-ceph-osd|rook-ceph-mon|rook-ceph-mgr|csi'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+```
+
+Expected result:
+
+1. Operator image is `docker.io/rook/ceph:v1.19.7`.
+1. Ceph daemons report `19.2.4`.
+1. RBD CSI remains healthy.
+1. Ceph remains `HEALTH_OK`.
+1. No unexpected remap/backfill is introduced by the patch upgrade.
+
+### 4. Post-Clean Performance Proof
+
+Do not run final performance proof while recovery/backfill is active. After the clean gate:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell 'osd.*' bench
+
+kubectl apply -k kubernetes/rook-ceph-rbd-canary
+kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block.yaml
+kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary.yaml
+kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary-remount.yaml
+
+kubectl apply -k kubernetes/rook-ceph-rwx-benchmarks
+kubectl apply -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-kernel.yaml
+kubectl apply -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-fuse.yaml
+```
+
+Capture:
+
+```bash
+kubectl -n rook-ceph-benchmarks logs job/rook-ceph-block-benchmark
+kubectl -n rook-ceph-benchmarks logs job/rook-ceph-block-nbd-canary-benchmark
+kubectl -n rook-ceph-benchmarks logs job/rook-ceph-block-nbd-canary-remount
+kubectl -n rook-ceph-benchmarks logs job/rook-cephfs-kernel-benchmark
+kubectl -n rook-ceph-benchmarks logs job/rook-cephfs-fuse-benchmark
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd perf
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph balancer eval
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool ls detail | rg read_balance_score
+```
+
+Clean up benchmark resources after logs are captured:
+
+```bash
+kubectl delete -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block.yaml --ignore-not-found
+kubectl delete -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary.yaml --ignore-not-found
+kubectl delete -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary-remount.yaml --ignore-not-found
+kubectl delete -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-kernel.yaml --ignore-not-found
+kubectl delete -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-fuse.yaml --ignore-not-found
+kubectl delete -k kubernetes/rook-ceph-rbd-canary --ignore-not-found
+kubectl delete -k kubernetes/rook-ceph-rwx-benchmarks --ignore-not-found
+```
+
+The goal is not complete until the proof includes:
+
+1. Argo `rook-ceph` `Synced/Healthy` at the merged Git revision.
+1. `ceph -s` `HEALTH_OK`, zero misplaced objects, zero remapped PGs.
+1. The three hot pools at `pg_num=128`, `pgp_num=128`, `pg_num_min=128`, `bulk`.
+1. Operator and Ceph daemon versions at the expected patch versions after Stage 2.
+1. Benchmark logs for RBD KRBD, RBD-NBD canary, CephFS kernel, and CephFS FUSE.
+1. Benchmark resources deleted after capture.
+1. App smoke checks for registry, Kafka, Torghut Postgres/ClickHouse PVCs, and media CephFS mounts.
+
+### 5. Rollback Boundaries
+
+Rollback Stage 2 only through GitOps:
+
+1. Revert the PR that changed `v1.19.7` and `v19.2.4`.
+1. Let Argo sync the revert.
+1. Verify `ceph versions`, operator image, and `ceph -s`.
+
+Do not roll back Stage 1 pool PG floors just because the split is noisy. Reducing PGs is not a quick undo path and
+can create more remap. Only revisit PG counts as a separate capacity/performance plan with fresh Ceph autoscaler
+evidence.
 
 Live pool tuning applied on 2026-07-06:
 
@@ -263,11 +436,23 @@ separate change.
 1. Local Rook source under `~/github.com/rook` shows `balancerMode` supports `upmap-read`, but Rook sets
    `set-require-min-compat-client reef` for `read` or `upmap-read`. Do not configure those modes while
    luminous clients are connected.
+1. Ceph Squid release documentation lists `v19.2.4` as the latest Squid backport release and recommends users
+   update to it.
+   <https://docs.ceph.com/en/latest/releases/squid/>
+1. Rook release notes describe `v1.19.7` as a patch release focused on Ceph operator feature additions and bug fixes.
+   <https://github.com/rook/rook/releases>
 
 ## Safe Changes Applied
 
 1. Keep `osd_mclock_profile=high_client_ops`.
-1. Set `osd_mclock_max_capacity_iops_hdd=275` in GitOps.
+1. Keep `osd_mclock_max_capacity_iops_hdd=275` only as the fallback for future HDD OSDs.
+1. Set measured per-OSD `osd_mclock_max_capacity_iops_hdd` overrides in GitOps for current OSDs:
+   - `osd.0=210`
+   - `osd.1=250`
+   - `osd.2=260`
+   - `osd.3=200`
+   - `osd.4=220`
+   - `osd.5=240`
 1. Keep `osd_mclock_max_sequential_bandwidth_hdd=285212672`.
 1. Keep `osd_memory_target=8589934592`.
 1. Keep CSI read affinity enabled by `kubernetes.io/hostname`.
@@ -278,42 +463,29 @@ separate change.
 1. Leave default `rook-ceph-block` unchanged.
 1. Leave live balancer mode at `upmap`, not `upmap-read`.
 
-The `275` IOPS value comes from two fresh `ceph tell osd.* bench` passes on 2026-07-06:
-
-| OSD | Run 1 IOPS | Run 2 IOPS |
-| --- | ---: | ---: |
-| osd.0 | 277.79 | 265.35 |
-| osd.1 | 257.05 | 218.57 |
-| osd.2 | 297.34 | 297.85 |
-| osd.3 | 249.30 | 259.06 |
-| osd.4 | 304.64 | 297.37 |
-| osd.5 | 282.49 | 284.30 |
-
-The full-sample median is about 280 IOPS. GitOps uses `275` to stay slightly conservative.
-
 ## Live Drift Cleanup
 
-If live config still has per-OSD `1000` overrides, they mask the GitOps cluster-wide value. Remove them after the
-GitOps change is merged or during the same maintenance window:
+If live config still has stale per-OSD `1000` overrides, they mask the measured GitOps values. Replace them with
+the calibrated values, not with a single broad cluster-wide number:
 
 ```bash
-for osd in 0 1 2 3 4 5; do
-  kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
-    ceph config rm "osd.${osd}" osd_mclock_max_capacity_iops_hdd
-done
-
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
-  ceph config set osd osd_mclock_max_capacity_iops_hdd 275
-
-kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
-  ceph config dump | rg 'mclock_max_capacity|mclock_profile|target_max_misplaced|upmap_max_deviation'
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd.0 osd_mclock_max_capacity_iops_hdd 210
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd.1 osd_mclock_max_capacity_iops_hdd 250
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd.2 osd_mclock_max_capacity_iops_hdd 260
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd.3 osd_mclock_max_capacity_iops_hdd 200
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd.4 osd_mclock_max_capacity_iops_hdd 220
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd.5 osd_mclock_max_capacity_iops_hdd 240
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config dump | \
+  rg 'mclock_max_capacity|mclock_profile|target_max_misplaced|upmap_max_deviation'
 ```
 
 Acceptance:
 
 1. No `osd.N osd_mclock_max_capacity_iops_hdd 1000` rows remain.
-1. One `osd osd_mclock_max_capacity_iops_hdd 275` row exists.
-1. `ceph -s` remains `HEALTH_OK`.
+1. The fallback `osd osd_mclock_max_capacity_iops_hdd 275` row exists.
+1. Per-OSD rows exist for `osd.0` through `osd.5` with the calibrated values above.
+1. `ceph -s` has no remapped/backfilling PGs. Existing unrelated scrub or BlueStore warnings must be tracked
+   separately and not hidden by this drift cleanup.
 
 ## RBD-NBD Canary
 
