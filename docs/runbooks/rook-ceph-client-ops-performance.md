@@ -423,6 +423,10 @@ separate change.
 1. Ceph read balancer documentation: `read_balance_score > 1` means primary reads are imbalanced, but
    `read` and `upmap-read` use `pg-upmap-primary` and require no pre-Reef clients.
    <https://docs.ceph.com/en/latest/rados/operations/read-balancer/>
+1. Ceph minimum-compatible-client documentation explains why this gate matters: `pg-upmap-primary` requires
+   Reef, is not implemented in the kernel client, and a single kernel RBD or CephFS mount can hold the whole
+   cluster at an older advertised client release.
+   <https://docs.ceph.com/en/latest/rados/operations/require-min-compat-client/>
 1. Ceph balancer documentation: `upmap-read` combines capacity upmap balancing and read-primary balancing;
    `target_max_misplaced_ratio=0.03` is a conservative convergence setting, and
    `mgr/balancer/upmap_max_deviation=1` is described as reasonable and safe for most clusters.
@@ -533,6 +537,70 @@ canary in that sample, so the default class remains unchanged:
 | --- | ---: | ---: | ---: | ---: |
 | `rook-ceph-block` | 76.57 | 115.9 ms | 34.85 / 15.64 | 7.28 MB/s |
 | `rook-ceph-block-nbd-canary` | 63.38 | 132.6 ms | 24.73 / 11.08 | 7.26 MB/s |
+
+## Legacy RBD Client Plan
+
+Live evidence captured on 2026-07-07 after the Rook `v1.19.7` / Ceph `v19.2.4` patch rollout:
+
+1. `ceph features` still reported three `luminous` clients and 33 `squid` clients.
+1. The luminous clients were `client.csi-rbd-node` sessions from the storage nodes:
+   - `100.100.244.141` (`talos-192-168-1-194`)
+   - `100.100.244.142` (`talos-192-168-1-85`)
+   - `100.100.244.190` (`turin`)
+1. The RBD nodeplugin pods were current (`quay.io/cephcsi/cephcsi:v3.16.2`), so the old-looking client release
+   was not an outdated CSI image.
+1. Each nodeplugin had active kernel RBD mappings:
+   - `talos-192-168-1-194`: 31 mapped RBD devices
+   - `talos-192-168-1-85`: 12 mapped RBD devices
+   - `turin`: 37 mapped RBD devices
+
+This is the important distinction: the blocker is KRBD, not Talos being too old and not the CSI container being
+too old. Ceph's read-primary balancer uses `pg-upmap-primary`, and current Ceph docs state that kernel clients do
+not support those mappings. For this cluster, enabling `upmap-read` while the default `rook-ceph-block` class is
+used by production KRBD mounts can hang or break RBD IO. Do not force `set-require-min-compat-client reef`.
+
+Inventory commands:
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph features
+
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell mon.e sessions --format json | \
+  jq -r '.[] | select(.entity_name=="client.csi-rbd-node") |
+    [.global_id, .con_features_release, .socket_addr.addr, (.remote_host // "-")] | @tsv'
+
+kubectl -n rook-ceph get pods -o wide | rg 'rook-ceph\.rbd\.csi\.ceph\.com-nodeplugin'
+
+for pod in $(kubectl -n rook-ceph get pods -o name | rg 'rook-ceph\.rbd\.csi\.ceph\.com-nodeplugin'); do
+  node="$(kubectl -n rook-ceph get "$pod" -o jsonpath='{.spec.nodeName}')"
+  count="$(kubectl -n rook-ceph exec "${pod#pod/}" -c csi-rbdplugin -- rbd showmapped --format json | jq length)"
+  printf '%s\t%s\t%s\n' "$node" "$pod" "$count"
+done
+```
+
+Execution plan:
+
+1. Keep live and GitOps balancer mode at `upmap`; this is already valid for luminous/KRBD clients.
+1. Keep `rook-ceph-block` on KRBD as the default. It is faster than NBD in the first canary and backs production
+   DB/Kafka/ClickHouse/registry/Torghut PVCs.
+1. Promote `rook-ceph-block-nbd-canary` only to a named userspace class after another canary passes:
+   `rook-ceph-block-userspace-rbd-nbd`, non-default, no automatic migration.
+1. Pick exactly one low-risk rebuildable workload that can tolerate PVC recreation. Do not start with Postgres,
+   Kafka, ClickHouse, registry, or Torghut durable state.
+1. Migrate that workload by creating a new PVC on the userspace class, copying/rebuilding data, and restarting
+   only that workload.
+1. Prove the effect:
+   - `ceph features` luminous client count does not increase for an added NBD canary.
+   - the count only falls when a node has no remaining KRBD maps.
+   - the selected workload mounts through `rbd-nbd` (`/dev/nbd*`), not KRBD (`/dev/rbd*`).
+   - nodeplugin restart/remount works for the selected workload.
+   - fio/app latency is not materially worse than KRBD for that workload.
+1. Only after every active KRBD workload has either stayed intentionally on KRBD or been migrated, re-check:
+   `ceph features` must show zero pre-Reef clients.
+1. Only then change GitOps to `balancerMode: upmap-read` and let Rook set `require_min_compat_client=reef`.
+
+Near-term recommendation: do not chase `upmap-read` as the next cluster-wide change. The hot RBD pool
+`replicapool` improved to `read_balance_score=1.13` after the PG/mClock work, so the incremental read-primary
+win is now smaller than the operational risk of migrating dozens of production KRBD PVCs at once.
 
 ## Read-Primary Balancer Gate
 
