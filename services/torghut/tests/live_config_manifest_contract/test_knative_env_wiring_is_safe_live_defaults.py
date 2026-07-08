@@ -37,6 +37,11 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(settings.trading_mode, "live")
         self.assertEqual(settings.trading_pipeline_mode, "simple")
         self.assertEqual(settings.trading_universe_source, "static")
+        self.assertEqual(
+            _csv_values(env.get("TRADING_SIGNAL_ALLOWED_SOURCES")),
+            {"ta"},
+            "live runtime must fail closed on accepted TA and must not promote REST backfill into live accepted sources",
+        )
         self.assertNotIn("TRADING_STRATEGY_SCHEDULER_ENABLED", env)
         self.assertFalse(settings.trading_autonomy_enabled)
         self.assertFalse(settings.trading_autonomy_allow_live_promotion)

@@ -578,6 +578,16 @@ jobs:
             run_post_deploy_evidence_validator
           fi
 
+      - name: Verify market-data freshness
+        shell: bash
+        env:
+          MARKET_DATA_FRESHNESS_MODE: auto
+          MARKET_DATA_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'
+        run: |
+          set -euo pipefail
+          bun run smoke:torghut-market-data
+
       - name: Upload revenue repair evidence
         if: always()
         uses: actions/upload-artifact@v4
