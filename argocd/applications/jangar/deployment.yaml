@@ -296,9 +296,9 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
-              value: "60"
+              value: "300"
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
-              value: "120"
+              value: "300"
             - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
