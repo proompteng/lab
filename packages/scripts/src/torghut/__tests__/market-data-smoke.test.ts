@@ -860,11 +860,18 @@ describe('market data smoke freshness evaluation', () => {
     })
   })
 
-  it('does not depend on execing into the distroless websocket container', () => {
+  it('uses a non-WS pod proxy for in-cluster HTTP probes by default', () => {
     expect(marketDataSmokeSource).not.toContain('TORGHUT_WS_EXEC_TARGET')
     expect(marketDataSmokeSource).not.toContain('fetchJsonViaWsPod')
-    expect(marketDataSmokeSource).toContain('const wsReadyz = await fetchJson(settings.wsReadyzUrl)')
+    expect(marketDataSmokeSource).toContain('TORGHUT_MARKET_DATA_HTTP_MODE')
+    expect(marketDataSmokeSource).toContain('parseHttpProbeMode(process.env.TORGHUT_MARKET_DATA_HTTP_MODE)')
+    expect(marketDataSmokeSource).toContain(
+      "httpExecTarget: process.env.TORGHUT_MARKET_DATA_HTTP_EXEC_TARGET ?? 'deploy/torghut-ta'",
+    )
+    expect(marketDataSmokeSource).toContain('const wsReadyz = await fetchRuntimeJson(settings.wsReadyzUrl, settings)')
     expect(marketDataSmokeSource).toContain('http://torghut-ws.torghut.svc.cluster.local/readyz')
     expect(marketDataSmokeSource).toContain('KAFKA_TOPIC_PARTITIONS')
+    expect(marketDataSmokeSource).toContain("raw.trim().toLowerCase() === 'auto'")
+    expect(marketDataSmokeSource).toContain("tailArgs(topic, 'partitions', settings, 0, '1')")
   })
 })

@@ -13,6 +13,8 @@ type KafkaRole = 'trades' | 'quotes' | 'bars'
 
 type SmokeMode = 'auto' | 'enforce' | 'observe'
 
+type HttpProbeMode = 'direct' | 'pod'
+
 type MarketSessionState = 'pre' | 'regular' | 'post' | 'closed' | 'weekend' | 'holiday'
 
 type KafkaTopicRecord = {
@@ -115,10 +117,11 @@ const parsePositiveNumber = (raw: string | undefined, fallback: number, label: s
   return parsed
 }
 
-const parsePartitions = (raw: string | undefined): number[] => {
-  const values = parseList(raw, ['0', '1', '2']).map((item) => Number(item))
+const parsePartitions = (raw: string | undefined): number[] | undefined => {
+  if (raw === undefined || raw.trim() === '' || raw.trim().toLowerCase() === 'auto') return undefined
+  const values = parseList(raw, []).map((item) => Number(item))
   if (values.length === 0 || values.some((value) => !Number.isInteger(value) || value < 0)) {
-    fatal('KAFKA_TOPIC_PARTITIONS must be a comma-separated list of non-negative integers')
+    fatal('KAFKA_TOPIC_PARTITIONS must be auto or a comma-separated list of non-negative integers')
   }
   return [...new Set(values)].sort((left, right) => left - right)
 }
@@ -126,7 +129,13 @@ const parsePartitions = (raw: string | undefined): number[] => {
 const parseMode = (raw: string | undefined): SmokeMode => {
   const mode = (raw ?? 'auto').trim().toLowerCase()
   if (mode === 'auto' || mode === 'enforce' || mode === 'observe') return mode
-  fatal('MARKET_DATA_FRESHNESS_MODE must be auto, enforce, or observe')
+  return fatal('MARKET_DATA_FRESHNESS_MODE must be auto, enforce, or observe')
+}
+
+const parseHttpProbeMode = (raw: string | undefined): HttpProbeMode => {
+  const mode = (raw ?? 'pod').trim().toLowerCase()
+  if (mode === 'direct' || mode === 'pod') return mode
+  return fatal('TORGHUT_MARKET_DATA_HTTP_MODE must be direct or pod')
 }
 
 const isObject = (value: unknown): value is JsonObject =>
@@ -199,12 +208,12 @@ const isConditionalNoEventWsChannel = (channel: string, ready: boolean, observed
 const getWsChannels = (readyz: unknown): Map<string, JsonObject> => {
   const root = isObject(readyz) ? readyz : {}
   const channels = Array.isArray(root.market_data_channels) ? root.market_data_channels : []
-  return new Map(
-    channels
-      .filter(isObject)
-      .map((channel) => [asString(channel.channel) ?? '', channel])
-      .filter(([channel]) => channel.length > 0),
-  )
+  const entries: Array<[string, JsonObject]> = []
+  for (const channel of channels.filter(isObject)) {
+    const channelName = asString(channel.channel)
+    if (channelName) entries.push([channelName, channel])
+  }
+  return new Map(entries)
 }
 
 const getAcceptedFreshness = (status: unknown): JsonObject | undefined => {
@@ -598,8 +607,10 @@ const execCapture = async (
   })
 
   if (options.stdin !== undefined) {
-    void subprocess.stdin.write(options.stdin)
-    void subprocess.stdin.end()
+    const stdin = subprocess.stdin
+    if (stdin === undefined) return fatal('Subprocess stdin pipe was not created')
+    void stdin.write(options.stdin)
+    void stdin.end()
   }
 
   const stdout = await new Response(subprocess.stdout).text()
@@ -613,7 +624,7 @@ const execCapture = async (
 
 const tailArgs = (
   topic: string,
-  format: 'summary' | 'json' | 'base64',
+  format: 'summary' | 'json' | 'base64' | 'partitions',
   settings: RuntimeSettings,
   partition: number,
   tail = settings.tail,
@@ -640,19 +651,43 @@ const tailArgs = (
   format,
 ]
 
+const kafkaPartitionsForTopic = async (topic: string, settings: RuntimeSettings): Promise<number[]> => {
+  if (settings.kafkaPartitions) return settings.kafkaPartitions
+  const cached = settings.kafkaPartitionCache.get(topic)
+  if (cached) return cached
+
+  const stdout = await execCapture('bun', tailArgs(topic, 'partitions', settings, 0, '1'), { cwd: repoRoot })
+  const parsed = JSON.parse(stdout) as unknown
+  if (!Array.isArray(parsed)) {
+    return fatal(`Kafka partition discovery for ${topic} did not return a JSON array`)
+  }
+  const partitionRows: unknown[] = parsed
+  const partitionNumbers = partitionRows
+    .filter(isObject)
+    .map((record) => asNumber(record.partition))
+    .filter((partition): partition is number => partition !== undefined)
+  const partitions = [...new Set(partitionNumbers)].sort((left, right) => left - right)
+  if (partitions.length === 0) {
+    fatal(`Kafka partition discovery for ${topic} returned no partitions`)
+  }
+  settings.kafkaPartitionCache.set(topic, partitions)
+  return partitions
+}
+
 const captureLatestKafkaRecord = async (
   role: KafkaRole,
   topic: string,
   settings: RuntimeSettings,
 ): Promise<KafkaTopicRecord | undefined> => {
   const records: KafkaTopicRecord[] = []
-  for (const partition of settings.kafkaPartitions) {
+  for (const partition of await kafkaPartitionsForTopic(topic, settings)) {
     const stdout = await execCapture('bun', tailArgs(topic, 'json', settings, partition), { cwd: repoRoot })
     const parsed = JSON.parse(stdout) as unknown
     if (!Array.isArray(parsed)) {
-      fatal(`Kafka tail for ${topic} partition ${partition} did not return a JSON array`)
+      return fatal(`Kafka tail for ${topic} partition ${partition} did not return a JSON array`)
     }
-    for (const record of parsed.filter(isObject)) {
+    const rows: unknown[] = parsed
+    for (const record of rows.filter(isObject)) {
       const eventTs = asString(record.eventTs)
       if (!eventTs) continue
       records.push({
@@ -684,7 +719,7 @@ const captureLatestTaStatusHeartbeat = async (
   settings: RuntimeSettings,
 ): Promise<TaStatusHeartbeatRecord | undefined> => {
   const heartbeats: TaStatusHeartbeatRecord[] = []
-  for (const partition of settings.kafkaPartitions) {
+  for (const partition of await kafkaPartitionsForTopic(topic, settings)) {
     const stdout = await execCapture('bun', tailArgs(topic, 'base64', settings, partition, '1'), { cwd: repoRoot })
     const encoded = stdout.trim()
     if (!encoded) continue
@@ -704,9 +739,21 @@ const fetchJsonViaPod = async (target: string, url: string, settings: RuntimeSet
     settings.torghutNamespace,
     target,
     '--',
-    'wget',
-    '-qO-',
-    url,
+    'env',
+    `URL=${url}`,
+    'sh',
+    '-lc',
+    [
+      'set -eu',
+      'if command -v wget >/dev/null 2>&1; then',
+      '  exec wget -qO- "$URL"',
+      'fi',
+      'if command -v curl >/dev/null 2>&1; then',
+      '  exec curl -fsSL "$URL"',
+      'fi',
+      'echo "no wget or curl available in probe target" >&2',
+      'exit 127',
+    ].join('\n'),
   ])
   return JSON.parse(stdout) as unknown
 }
@@ -719,6 +766,11 @@ const fetchJson = async (url: string): Promise<unknown> => {
   return (await response.json()) as unknown
 }
 
+const fetchRuntimeJson = async (url: string, settings: RuntimeSettings): Promise<unknown> => {
+  if (settings.httpProbeMode === 'direct') return fetchJson(url)
+  return fetchJsonViaPod(settings.httpExecTarget, url, settings)
+}
+
 type RuntimeSettings = {
   topics: string[]
   topicByRole: Record<KafkaRole, string>
@@ -728,7 +780,8 @@ type RuntimeSettings = {
   passwordSecretName: string
   passwordSecretKey: string
   tail: string
-  kafkaPartitions: number[]
+  kafkaPartitions?: number[]
+  kafkaPartitionCache: Map<string, number[]>
   timeoutMs: string
   mode: SmokeMode
   maxKafkaLagSeconds: number
@@ -737,6 +790,8 @@ type RuntimeSettings = {
   now: Date
   printSummaries: boolean
   torghutNamespace: string
+  httpProbeMode: HttpProbeMode
+  httpExecTarget: string
   wsReadyzUrl: string
   tradingStatusUrl: string
   taConfigMapName: string
@@ -758,6 +813,7 @@ const runtimeSettings = (): RuntimeSettings => ({
   passwordSecretKey: process.env.KAFKA_PASSWORD_SECRET_KEY ?? 'password',
   tail: process.env.TAIL ?? '1',
   kafkaPartitions: parsePartitions(process.env.KAFKA_TOPIC_PARTITIONS),
+  kafkaPartitionCache: new Map(),
   timeoutMs: process.env.TIMEOUT_MS ?? '8000',
   mode: parseMode(process.env.MARKET_DATA_FRESHNESS_MODE),
   maxKafkaLagSeconds: parsePositiveNumber(process.env.MARKET_DATA_MAX_LAG_SECONDS, 300, 'MARKET_DATA_MAX_LAG_SECONDS'),
@@ -770,6 +826,8 @@ const runtimeSettings = (): RuntimeSettings => ({
   now: process.env.MARKET_DATA_NOW ? new Date(process.env.MARKET_DATA_NOW) : new Date(),
   printSummaries: process.env.MARKET_DATA_PRINT_SUMMARIES !== 'false',
   torghutNamespace: process.env.TORGHUT_NAMESPACE ?? 'torghut',
+  httpProbeMode: parseHttpProbeMode(process.env.TORGHUT_MARKET_DATA_HTTP_MODE),
+  httpExecTarget: process.env.TORGHUT_MARKET_DATA_HTTP_EXEC_TARGET ?? 'deploy/torghut-ta',
   wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://torghut-ws.torghut.svc.cluster.local/readyz',
   tradingStatusUrl: process.env.TORGHUT_STATUS_URL ?? 'http://torghut.torghut.svc.cluster.local/trading/status',
   taConfigMapName: process.env.TORGHUT_TA_CONFIGMAP ?? 'torghut-ta-config',
@@ -821,7 +879,10 @@ const fetchFlinkVertexRates = async (
     ? metricCatalog
         .filter(isObject)
         .map((metric) => asString(metric.id))
-        .filter((id) => id?.endsWith('numRecordsInPerSecond') || id?.endsWith('numRecordsOutPerSecond'))
+        .filter(
+          (id): id is string =>
+            typeof id === 'string' && (id.endsWith('numRecordsInPerSecond') || id.endsWith('numRecordsOutPerSecond')),
+        )
     : []
   if (metricIds.length === 0) return {}
 
@@ -885,7 +946,9 @@ const main = async () => {
 
   if (settings.printSummaries) {
     for (const topic of settings.topics) {
-      await run('bun', tailArgs(topic, 'summary', settings, 0), { cwd: repoRoot })
+      for (const partition of await kafkaPartitionsForTopic(topic, settings)) {
+        await run('bun', tailArgs(topic, 'summary', settings, partition), { cwd: repoRoot })
+      }
     }
   }
 
@@ -895,8 +958,8 @@ const main = async () => {
   }
   const taStatusHeartbeat = await captureLatestTaStatusHeartbeat(settings.taStatusTopic, settings)
 
-  const wsReadyz = await fetchJson(settings.wsReadyzUrl)
-  const tradingStatus = await fetchJson(settings.tradingStatusUrl)
+  const wsReadyz = await fetchRuntimeJson(settings.wsReadyzUrl, settings)
+  const tradingStatus = await fetchRuntimeJson(settings.tradingStatusUrl, settings)
   const taRuntimeConfig = await fetchConfigMapData(settings.torghutNamespace, settings.taConfigMapName)
   const taFlinkJob = await fetchTaFlinkJob(settings)
   const result = evaluateMarketDataSmoke({

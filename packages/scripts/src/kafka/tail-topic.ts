@@ -17,7 +17,7 @@ type Args = {
   passwordSecretKey: string
   kafkaNamespace: string
   kafkaPod?: string
-  format: 'raw' | 'summary' | 'json' | 'base64'
+  format: 'raw' | 'summary' | 'json' | 'base64' | 'partitions'
 }
 
 const usage = () =>
@@ -44,7 +44,8 @@ Options:
   --kafka-namespace <ns>              Namespace that contains the Kafka broker pod (default: kafka)
   --kafka-pod <pod>                   Kafka broker pod to exec into (default: auto-detect)
 
-  --format raw|summary|json|base64    Output format (default: summary)
+  --format raw|summary|json|base64|partitions
+                                      Output format (default: summary)
 
 Examples:
   KAFKA_USERNAME=torghut-ws KAFKA_PASSWORD=$(kubectl -n torghut get secret torghut-ws -o jsonpath='{.data.password}' | base64 -d) \\
@@ -130,8 +131,10 @@ const execCapture = async (
   })
 
   if (options.stdin !== undefined) {
-    void subprocess.stdin.write(options.stdin)
-    void subprocess.stdin.end()
+    const stdin = subprocess.stdin
+    if (stdin === undefined) return fatal('Subprocess stdin pipe was not created')
+    void stdin.write(options.stdin)
+    void stdin.end()
   }
 
   const stdout = await new Response(subprocess.stdout).text()
@@ -246,7 +249,7 @@ const main = async () => {
   }
 
   args.format = args.format ?? 'summary'
-  if (!['raw', 'summary', 'json', 'base64'].includes(args.format)) {
+  if (!['raw', 'summary', 'json', 'base64', 'partitions'].includes(args.format)) {
     fatal(`Invalid --format: ${String(args.format)}`)
   }
 
@@ -254,15 +257,16 @@ const main = async () => {
   if (!args.username) fatal('Missing --username (or env KAFKA_USERNAME)')
 
   if (!args.password) {
-    if (!args.passwordSecretName) {
-      fatal('Missing --password (or env KAFKA_PASSWORD), or provide --password-secret-name/namespace/key')
+    const passwordSecretName = args.passwordSecretName
+    if (!passwordSecretName) {
+      return fatal('Missing --password (or env KAFKA_PASSWORD), or provide --password-secret-name/namespace/key')
     }
     const encoded = await execCapture('kubectl', [
       '-n',
       args.passwordSecretNamespace,
       'get',
       'secret',
-      args.passwordSecretName,
+      passwordSecretName,
       '-o',
       `jsonpath={.data.${args.passwordSecretKey}}`,
     ])
@@ -280,7 +284,12 @@ const main = async () => {
     'sasl.mechanism=$SASL_MECHANISM',
     'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="$KAFKA_USERNAME" password="$PASS";',
     'PROPS',
-    'end_offset=$(/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CLIENT" --topic "$TOPIC" --time latest | awk -F: -v p="$PARTITION" \'$2==p{print $3}\' | tail -n 1)',
+    'offsets=$(/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CLIENT" --topic "$TOPIC" --time latest)',
+    'if [ "$FORMAT" = "partitions" ]; then',
+    '  printf "%s\n" "$offsets" | awk -F: \'NF>=3 {printf "{\\\"topic\\\":\\\"%s\\\",\\\"partition\\\":%s,\\\"endOffset\\\":%s}\\n", $1, $2, $3}\'',
+    '  exit 0',
+    'fi',
+    'end_offset=$(printf "%s\n" "$offsets" | awk -F: -v p="$PARTITION" \'$2==p{print $3}\' | tail -n 1)',
     'if [ -z "$end_offset" ]; then end_offset=0; fi',
     'start_offset=$(( end_offset - TAIL ))',
     'if [ "$start_offset" -lt 0 ]; then start_offset=0; fi',
@@ -329,6 +338,12 @@ const main = async () => {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
+
+  if (args.format === 'partitions') {
+    const partitions = lines.map((line) => JSON.parse(line))
+    process.stdout.write(`${JSON.stringify(partitions, null, 2)}\n`)
+    return
+  }
 
   if (args.format === 'raw') {
     process.stdout.write(lines.join('\n') + (lines.length ? '\n' : ''))
