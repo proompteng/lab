@@ -1,6 +1,10 @@
+import { readFileSync } from 'node:fs'
+
 import { describe, expect, it } from 'bun:test'
 
-import { evaluateMarketDataSmoke, marketSessionState } from '../market-data-smoke'
+import { evaluateMarketDataSmoke, marketSessionState, selectLatestKafkaRecord } from '../market-data-smoke'
+
+const marketDataSmokeSource = readFileSync(new URL('../market-data-smoke.ts', import.meta.url), 'utf8')
 
 const freshWsReadyz = {
   market_data_channels: [
@@ -314,7 +318,40 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('ta_flink_zero_source_records')
     expect(result.failures.join('\n')).toContain('ta_flink_zero_signal_records')
-    expect(result.summaryLines.join('\n')).toContain('source_read_records=`0`')
+    expect(result.summaryLines.join('\n')).toContain('source_write_records=`0`')
+  })
+
+  it('uses Flink source output counters when current-rate metrics are missing', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: {
+        ...freshTaFlinkJob,
+        vertices: freshTaFlinkJob.vertices.map((vertex) =>
+          vertex.name.startsWith('Source: ta-')
+            ? {
+                ...vertex,
+                metrics: { 'read-records': 0, 'write-records': 5 },
+              }
+            : vertex,
+        ),
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.failures.join('\n')).not.toContain('ta_flink_zero_source_records')
+    expect(result.summaryLines.join('\n')).toContain('source_write_records=`15`')
   })
 
   it('uses Flink current-rate metrics over lifetime counters when detecting current stalls', () => {
@@ -364,5 +401,27 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.enforceFreshness).toBe(false)
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('ta_flink_not_running')
+  })
+
+  it('selects the freshest Kafka record across sampled partitions', () => {
+    expect(
+      selectLatestKafkaRecord([
+        { topic: 'torghut.trades.v1', partition: 0, eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        { topic: 'torghut.trades.v1', partition: 1, eventTs: '2026-07-07T17:00:10Z', symbol: 'AMD' },
+        { topic: 'torghut.trades.v1', partition: 2, eventTs: 'invalid', symbol: 'AVGO' },
+      ]),
+    ).toMatchObject({
+      partition: 1,
+      eventTs: '2026-07-07T17:00:10Z',
+      symbol: 'AMD',
+    })
+  })
+
+  it('does not depend on execing into the distroless websocket container', () => {
+    expect(marketDataSmokeSource).not.toContain('TORGHUT_WS_EXEC_TARGET')
+    expect(marketDataSmokeSource).not.toContain('fetchJsonViaWsPod')
+    expect(marketDataSmokeSource).toContain('const wsReadyz = await fetchJson(settings.wsReadyzUrl)')
+    expect(marketDataSmokeSource).toContain('http://torghut-ws.torghut.svc.cluster.local/readyz')
+    expect(marketDataSmokeSource).toContain('KAFKA_TOPIC_PARTITIONS')
   })
 })

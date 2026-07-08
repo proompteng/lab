@@ -559,6 +559,11 @@ const assertAcceptedSourceStaleZeroNotionalContract = (status: JsonObject, diges
     ACCEPTED_SOURCE_STALE_REASON,
     'torghut operational_submission_gate.blocked_reasons',
   )
+  requireScalarValue(
+    submissionAuthority.schema_version,
+    'torghut.submission-authority.v1',
+    'torghut submission_authority.schema_version',
+  )
   requireScalarValue(submissionAuthority.authority_scope, 'none', 'torghut submission_authority.authority_scope')
   requireScalarValue(
     submissionAuthority.effective_submit_mode,

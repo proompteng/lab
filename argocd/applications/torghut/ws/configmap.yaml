@@ -15,6 +15,7 @@ data:
   # Full market-data mode (quotes enabled) must stay within account subscription constraints.
   # Keep universe size capped at 12 to preserve headroom and avoid 405 symbol-limit failures.
   ALPACA_MARKET_DATA_CHANNELS: "trades,quotes,bars,updatedBars"
+  OPTIONS_MARKET_HOLIDAYS: "2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25"
   # Static executable universe; the live trading loop must not depend on Jangar.
   SYMBOLS: "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC"
   SYMBOLS_ALLOWLIST: "NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC"

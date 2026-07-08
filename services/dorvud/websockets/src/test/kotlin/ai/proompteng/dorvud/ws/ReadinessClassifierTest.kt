@@ -146,6 +146,29 @@ class ReadinessClassifierTest {
   }
 
   @Test
+  fun `readiness error reports kafka before derived market data starvation`() {
+    val gates =
+      ReadinessGates(
+        alpacaWs = true,
+        kafka = false,
+        tradeUpdates = true,
+        marketDataChannels = false,
+      )
+    assertEquals(
+      ReadinessErrorClass.KafkaAuth,
+      ReadinessClassifier.readinessErrorClassForGates(
+        ready = false,
+        gates = gates,
+        alpacaErrorClass = null,
+        kafkaErrorClass = ReadinessErrorClass.KafkaAuth,
+        tradeUpdatesErrorClass = null,
+        fallbackErrorClass = ReadinessErrorClass.Unknown,
+        marketDataChannelErrorClass = ReadinessErrorClass.MarketDataChannelStarvation,
+      ),
+    )
+  }
+
+  @Test
   fun `readiness error uses trade updates class when trade gate is false`() {
     val gates =
       ReadinessGates(

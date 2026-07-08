@@ -154,19 +154,33 @@ describe('Torghut manifest scheduling', () => {
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources
     expect(Array.isArray(resources)).toBe(true)
+    expect(resources).toContain('torghut-db-ca-prune-tombstone.yaml')
     expect(resources).toContain('torghut-db-ca-reflector-rbac.yaml')
     expect(resources).toContain('torghut-db-ca-prune-guard-job.yaml')
     expect(resources).toContain('torghut-db-ca-reflector-job.yaml')
     expect(resources).not.toContain('torghut-db-ca-reflector-source.yaml')
+
+    const tombstone = parseManifest('argocd/applications/torghut/torghut-db-ca-prune-tombstone.yaml')
+    expect(tombstone.kind).toBe('Secret')
+    expect(getAtPath(tombstone, ['metadata']).name).toBe('torghut-db-ca')
+    expect(getAtPath(tombstone, ['metadata', 'annotations'])).toMatchObject({
+      'argocd.argoproj.io/hook': 'Skip',
+      'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false',
+      'argocd.argoproj.io/compare-options': 'IgnoreExtraneous',
+    })
+    expect('data' in tombstone).toBe(false)
+    expect('stringData' in tombstone).toBe(false)
 
     for (const path of collectYamlFiles('argocd/applications/torghut')) {
       for (const manifest of parseManifestDocuments(path)) {
         if (!manifest) {
           continue
         }
-        expect(manifest.kind === 'Secret' && getAtPath(manifest, ['metadata']).name === 'torghut-db-ca', path).toBe(
-          false,
-        )
+        if (manifest.kind === 'Secret' && getAtPath(manifest, ['metadata']).name === 'torghut-db-ca') {
+          expect(getAtPath(manifest, ['metadata', 'annotations'])['argocd.argoproj.io/hook'], path).toBe('Skip')
+          expect('data' in manifest, path).toBe(false)
+          expect('stringData' in manifest, path).toBe(false)
+        }
       }
     }
 
@@ -508,5 +522,18 @@ describe('Torghut manifest scheduling', () => {
     const deployment = parseManifest('argocd/applications/torghut/ta/flinkdeployment.yaml')
     const spec = getAtPath(deployment, ['spec'])
     expect(spec.restartNonce).toBeGreaterThanOrEqual(20)
+  })
+
+  it('configures 2026 US market holidays for Torghut market-data freshness gates', () => {
+    const expectedHolidays =
+      '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25'
+
+    for (const path of [
+      'argocd/applications/torghut/ws/configmap.yaml',
+      'argocd/applications/torghut-options/ws/configmap.yaml',
+    ]) {
+      const config = parseManifest(path)
+      expect(getAtPath(config, ['data']).OPTIONS_MARKET_HOLIDAYS, path).toBe(expectedHolidays)
+    }
   })
 })
