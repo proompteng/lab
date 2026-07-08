@@ -38,6 +38,7 @@ resources:
   - whitepapers-bucket-bootstrap-job.yaml
   - zero-notional-drift-repair-cronjob.yaml
   - paper-account-flatten-cronjob.yaml
+  - tigerbeetle-journal-order-events-cronjob.yaml
   - generated-resource-retention-rbac.yaml
   - generated-resource-retention-cronjob.yaml
   - historical-simulation-workflowtemplate.yaml

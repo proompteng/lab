@@ -52,25 +52,141 @@ def _migration_job_context() -> tuple[
 class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
     _TestLiveConfigManifestContractBase
 ):
-    def test_tigerbeetle_journal_order_events_is_manual_operator_tool_only(
+    def test_tigerbeetle_journal_order_events_cronjob_runs_bounded_live_and_sim(
         self,
     ) -> None:
         relative_path = (
             "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
         )
-        self.assertFalse((_repo_root() / relative_path).exists())
+        self.assertTrue((_repo_root() / relative_path).is_file())
         kustomization = _load_yaml_mapping(
             "argocd/applications/torghut/kustomization.yaml"
         )
         resources = kustomization.get("resources")
         self.assertIsInstance(resources, list)
-        self.assertNotIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
+        self.assertIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
         self.assertTrue(
             (
                 _repo_root()
                 / "services/torghut/scripts/run_tigerbeetle_journal_cron.py"
             ).is_file()
         )
+
+        manifest = _load_yaml_mapping(relative_path)
+        self.assertEqual(manifest["apiVersion"], "batch/v1")
+        self.assertEqual(manifest["kind"], "CronJob")
+        self.assertEqual(
+            manifest["metadata"],
+            {
+                "name": "torghut-tigerbeetle-journal-order-events",
+                "namespace": "torghut",
+                "labels": {
+                    "app.kubernetes.io/name": "torghut",
+                    "app.kubernetes.io/component": "tigerbeetle-journal-order-events",
+                },
+            },
+        )
+        spec = cast(Mapping[str, object], manifest["spec"])
+        self.assertEqual(spec["schedule"], "0,30 * * * *")
+        self.assertEqual(spec["timeZone"], "UTC")
+        self.assertEqual(spec["concurrencyPolicy"], "Forbid")
+        self.assertEqual(spec["successfulJobsHistoryLimit"], 2)
+        self.assertEqual(spec["failedJobsHistoryLimit"], 2)
+        self.assertEqual(spec["startingDeadlineSeconds"], 600)
+
+        job_template = cast(Mapping[str, object], spec["jobTemplate"])
+        job_spec = cast(Mapping[str, object], job_template["spec"])
+        self.assertEqual(job_spec["ttlSecondsAfterFinished"], 86400)
+        self.assertEqual(job_spec["backoffLimit"], 1)
+        self.assertEqual(job_spec["activeDeadlineSeconds"], 1200)
+
+        template = cast(Mapping[str, object], job_spec["template"])
+        pod_spec = cast(Mapping[str, object], template["spec"])
+        self.assertEqual(pod_spec["restartPolicy"], "Never")
+        self.assertEqual(pod_spec["serviceAccountName"], "torghut-runtime")
+        self.assertEqual(pod_spec["nodeSelector"], {"kubernetes.io/arch": "arm64"})
+        containers = cast(list[object], pod_spec["containers"])
+        self.assertEqual(len(containers), 1)
+        container = cast(Mapping[str, object], containers[0])
+        self.assertEqual(container["name"], "run-tigerbeetle-journal")
+        self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
+        self.assertEqual(
+            container["resources"],
+            {
+                "requests": {
+                    "cpu": "100m",
+                    "memory": "256Mi",
+                    "ephemeral-storage": "128Mi",
+                },
+                "limits": {
+                    "cpu": "1",
+                    "memory": "1Gi",
+                    "ephemeral-storage": "512Mi",
+                },
+            },
+        )
+        self.assertEqual(
+            container["securityContext"],
+            {
+                "seccompProfile": {"type": "Unconfined"},
+                "allowPrivilegeEscalation": False,
+                "capabilities": {"drop": ["ALL"]},
+            },
+        )
+
+        env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
+        env_by_name = {item.get("name"): item for item in env}
+        image_digest = env_by_name["TORGHUT_IMAGE_DIGEST"].get("value")
+        self.assertIsInstance(image_digest, str)
+        self.assertTrue(image_digest.startswith("sha256:"))
+        self.assertEqual(
+            container["image"], f"registry.ide-newton.ts.net/lab/torghut@{image_digest}"
+        )
+        commit = env_by_name["TORGHUT_COMMIT"].get("value")
+        self.assertIsInstance(commit, str)
+        self.assertEqual(len(commit), 40)
+        self.assertEqual(env_by_name["PYTHONUNBUFFERED"].get("value"), "1")
+        self.assertEqual(
+            env_by_name["DB_DSN"].get("valueFrom"),
+            {"secretKeyRef": {"name": "torghut-db-app", "key": "uri"}},
+        )
+        for secret_env, secret_key in (
+            ("TORGHUT_SIM_DB_HOST", "host"),
+            ("TORGHUT_SIM_DB_PORT", "port"),
+            ("TORGHUT_SIM_DB_USER", "username"),
+            ("TORGHUT_SIM_DB_PASSWORD", "password"),
+        ):
+            self.assertEqual(
+                env_by_name[secret_env].get("valueFrom"),
+                {"secretKeyRef": {"name": "torghut-db-app", "key": secret_key}},
+            )
+        self.assertEqual(
+            env_by_name["SIM_DB_DSN"].get("value"),
+            "postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@"
+            "$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default",
+        )
+        expected_tigerbeetle_env = {
+            "TORGHUT_TIGERBEETLE_ENABLED": "true",
+            "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
+            "TORGHUT_TIGERBEETLE_CLUSTER_ID": "2001",
+            "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES": "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
+            "TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS": "5",
+            "TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS": "10",
+        }
+        for key, value in expected_tigerbeetle_env.items():
+            self.assertEqual(env_by_name[key].get("value"), value)
+
+        self.assertEqual(container["command"], ["/bin/bash", "-lc"])
+        args = "\n".join(str(item) for item in container.get("args", []))
+        self.assertIn(
+            "python scripts/run_tigerbeetle_journal_cron.py --preset live --json",
+            args,
+        )
+        self.assertIn(
+            "python scripts/run_tigerbeetle_journal_cron.py --preset sim --json",
+            args,
+        )
+        self.assertNotIn("journal_tigerbeetle_order_events.py", args)
 
         live_execution_commands = [
             command

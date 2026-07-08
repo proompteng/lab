@@ -44,7 +44,8 @@ def test_measurement_counts_files_thresholds_markers_and_ast_debt(
     assert measurement["roots"] == {"app": {"files": 1, "lines": 106}}
     threshold_counts = measurement["threshold_counts"]
     assert threshold_counts["functions_ge_100"] == 1
-    assert threshold_counts["files_ge_500"] == 0
+    assert threshold_counts["files_ge_1000"] == 0
+    assert "files_ge_500" not in threshold_counts
     markers = measurement["markers"]
     assert markers["typing_any_import"]["total"] == 1
     assert markers["broad_exception"]["total"] == 1

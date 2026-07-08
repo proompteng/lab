@@ -1,0 +1,104 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: torghut-tigerbeetle-journal-order-events
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: tigerbeetle-journal-order-events
+spec:
+  schedule: "0,30 * * * *"
+  timeZone: UTC
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 2
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 1
+      activeDeadlineSeconds: 1200
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: torghut-runtime
+          nodeSelector:
+            kubernetes.io/arch: arm64
+          containers:
+            - name: run-tigerbeetle-journal
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:b5b68a06cfbc8b14ea8eb55406aecdcf31c971e1cd8ad1fc2585f8fcb1580c7a
+              imagePullPolicy: IfNotPresent
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                  ephemeral-storage: 128Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+                  ephemeral-storage: 512Mi
+              securityContext:
+                seccompProfile:
+                  type: Unconfined
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop:
+                    - ALL
+              env:
+                - name: PYTHONUNBUFFERED
+                  value: "1"
+                - name: TORGHUT_COMMIT
+                  value: 6a10312c7204319e73bfe7fff9095df0148b336d
+                - name: TORGHUT_IMAGE_DIGEST
+                  value: sha256:b5b68a06cfbc8b14ea8eb55406aecdcf31c971e1cd8ad1fc2585f8fcb1580c7a
+                - name: DB_DSN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: uri
+                - name: TORGHUT_SIM_DB_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: host
+                - name: TORGHUT_SIM_DB_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: port
+                - name: TORGHUT_SIM_DB_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: username
+                - name: TORGHUT_SIM_DB_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-db-app
+                      key: password
+                - name: SIM_DB_DSN
+                  value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+                - name: TORGHUT_TIGERBEETLE_ENABLED
+                  value: "true"
+                - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
+                  value: "true"
+                - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+                  value: "2001"
+                - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+                  value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+                - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
+                  value: "5"
+                - name: TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS
+                  value: "10"
+              command:
+                - /bin/bash
+                - -lc
+              args:
+                - |
+                  set -euo pipefail
+                  cd /app
+                  echo "stage=tigerbeetle_journal preset=live started_at=$(date -Iseconds)"
+                  python scripts/run_tigerbeetle_journal_cron.py --preset live --json
+                  echo "stage=tigerbeetle_journal preset=sim started_at=$(date -Iseconds)"
+                  python scripts/run_tigerbeetle_journal_cron.py --preset sim --json
+                  echo "stage=tigerbeetle_journal completed_at=$(date -Iseconds)"

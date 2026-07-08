@@ -278,6 +278,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml \
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml \
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml \
+            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml \
             argocd/applications/torghut/generated-resource-retention-cronjob.yaml \
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml \
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml \
@@ -317,6 +318,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
+            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
             argocd/applications/torghut/generated-resource-retention-cronjob.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
@@ -360,6 +362,7 @@ jobs:
             argocd/applications/torghut/analysis-template-artifact-bundle.yaml
             argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml
             argocd/applications/torghut/paper-account-flatten-cronjob.yaml
+            argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml
             argocd/applications/torghut/generated-resource-retention-cronjob.yaml
             argocd/applications/torghut/tigerbeetle-smoke-job.yaml
             argocd/applications/torghut-hyperliquid-runtime/deployment.yaml
