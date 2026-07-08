@@ -32,12 +32,19 @@ def build_trading_health_proof_lane(
         dependencies=dict(dependency_snapshot.dependencies),
         deps=deps,
     )
+    _add_clickhouse_ta_status(proof_lane)
     _add_alpha_readiness(proof_lane)
     _add_live_gate_and_proof_floor(proof_lane)
     _add_primary_payloads(proof_lane)
     add_repair_payloads(proof_lane)
     add_dependency_statuses(proof_lane)
     return proof_lane
+
+
+def _add_clickhouse_ta_status(proof_lane: TradingHealthProofLane) -> None:
+    proof_lane.payloads["clickhouse_ta_status"] = (
+        proof_lane.deps.load_clickhouse_ta_status(proof_lane.context.scheduler)
+    )
 
 
 def _add_alpha_readiness(proof_lane: TradingHealthProofLane) -> None:
@@ -59,6 +66,7 @@ def _add_alpha_readiness(proof_lane: TradingHealthProofLane) -> None:
                 scheduler,
                 tca_summary=payload(payloads, "tca_summary"),
                 market_context_status=market_context_status,
+                feature_readiness=payload(payloads, "clickhouse_ta_status"),
             )
         )
     except (SQLAlchemyError, RuntimeError, ValueError, KeyError, TypeError) as exc:
@@ -111,6 +119,7 @@ def _add_live_gate_and_proof_floor(proof_lane: TradingHealthProofLane) -> None:
             empirical_jobs_status=empirical_jobs,
             dspy_runtime_status=dspy_runtime,
             quant_health_status=quant_evidence,
+            clickhouse_ta_status=payload(payloads, "clickhouse_ta_status"),
         )
     payloads["proof_floor"] = deps.build_profitability_proof_floor_payload(
         state=scheduler.state,

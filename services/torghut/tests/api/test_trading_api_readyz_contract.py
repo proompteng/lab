@@ -45,6 +45,7 @@ def _operational_ready_gate() -> dict[str, object]:
         "final_promotion_authorized": False,
         "blocked_reasons": [],
         "reason_codes": ["operational_submission_ready"],
+        "dependency_quorum_decision": "allow",
         "capital_stage": "live",
         "capital_state": "live",
         "read_model_evaluated": False,
@@ -140,8 +141,12 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             live_submission_gate = payload["live_submission_gate"]
             self.assertTrue(live_submission_gate["allowed"])
             self.assertFalse(live_submission_gate["promotion_authority"])
-            self.assertFalse(live_submission_gate["final_authority_ok"])
+            self.assertTrue(live_submission_gate["final_authority_ok"])
             self.assertFalse(live_submission_gate["final_promotion_allowed"])
+            self.assertEqual(
+                live_submission_gate["dependency_quorum_decision"],
+                "allow",
+            )
             self.assertEqual(
                 live_submission_gate["reason"],
                 "operational_submission_ready",
