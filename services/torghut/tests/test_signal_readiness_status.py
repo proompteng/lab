@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 
 from app.trading.ingest import ClickHouseSignalIngestor
+from app.trading.ingest.clickhouse_signal_source_freshness import (
+    ClickHouseSignalFreshnessContext,
+)
 from app.trading.ingest.shared_context import coerce_count
 
 
@@ -53,14 +57,23 @@ class SourceFreshnessIngestor(SourceFilteredReadinessIngestor):
         *args: object,
         source_rows: list[dict[str, object]],
         coverage_rows: list[dict[str, object]],
+        now: datetime | None = None,
         **kwargs: object,
     ) -> None:
         super().__init__(*args, **kwargs)
         self.source_rows = source_rows
         self.coverage_rows = coverage_rows
+        self.now = now
 
     def _accepted_signal_sources(self) -> tuple[str, ...]:
         return ("ta",)
+
+    def _signal_freshness_context(self) -> ClickHouseSignalFreshnessContext:
+        context = super()._signal_freshness_context()
+        now = self.now
+        if now is None:
+            return context
+        return replace(context, now=lambda: now)
 
     def _query_clickhouse(self, query: str) -> list[dict[str, object]]:
         self.queries.append(query)
@@ -142,8 +155,9 @@ def test_latest_signal_readiness_counts_include_source_filter() -> None:
 def test_latest_signal_status_blocks_stale_accepted_source_and_reports_excluded_fresher_source() -> (
     None
 ):
-    latest = datetime(2026, 5, 13, 20, 56, 16, tzinfo=timezone.utc)
-    rest_latest = datetime(2026, 5, 13, 21, 4, 16, tzinfo=timezone.utc)
+    now = datetime(2026, 5, 13, 15, 30, tzinfo=timezone.utc)
+    latest = now - timedelta(minutes=10)
+    rest_latest = now - timedelta(minutes=2)
     ingestor = SourceFreshnessIngestor(
         schema="envelope",
         table="torghut.ta_signals",
@@ -172,6 +186,7 @@ def test_latest_signal_status_blocks_stale_accepted_source_and_reports_excluded_
                 "signal_rows": "3",
             }
         ],
+        now=now,
     )
 
     status = ingestor.latest_signal_status()
@@ -179,6 +194,8 @@ def test_latest_signal_status_blocks_stale_accepted_source_and_reports_excluded_
     assert status["accepted_sources"] == ["ta"]
     assert status["accepted_source_state"] == "stale"
     assert status["blocking_reason"] == "accepted_ta_signal_stale"
+    assert status["market_session_state"] == "regular_open"
+    assert status["regular_session_open"] is True
     assert status["excluded_fresher_sources"] == [
         {
             "source": "rest",
@@ -196,4 +213,54 @@ def test_latest_signal_status_blocks_stale_accepted_source_and_reports_excluded_
             "lag_seconds": 0,
             "signal_rows": 3,
         }
+    ]
+
+
+def test_latest_signal_status_does_not_hard_block_stale_accepted_source_after_close() -> (
+    None
+):
+    now = datetime(2026, 7, 7, 22, 0, tzinfo=timezone.utc)
+    latest = datetime(2026, 7, 7, 20, 47, 5, tzinfo=timezone.utc)
+    rest_latest = datetime(2026, 7, 7, 20, 59, tzinfo=timezone.utc)
+    ingestor = SourceFreshnessIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://example",
+        latest_signal_ts=latest,
+        signal_rows=12,
+        symbol_count=6,
+        source_rows=[
+            {
+                "source": "rest",
+                "latest_signal_ts": rest_latest.isoformat(),
+                "signal_rows": "40",
+                "symbol_count": "10",
+            },
+            {
+                "source": "ta",
+                "latest_signal_ts": latest.isoformat(),
+                "signal_rows": "12",
+                "symbol_count": "6",
+            },
+        ],
+        coverage_rows=[
+            {
+                "symbol": "NVDA",
+                "latest_signal_ts": latest.isoformat(),
+                "signal_rows": "3",
+            }
+        ],
+        now=now,
+    )
+
+    status = ingestor.latest_signal_status()
+
+    assert status["accepted_sources"] == ["ta"]
+    assert status["accepted_lag_seconds"] > status["accepted_max_lag_seconds"]
+    assert status["accepted_source_state"] == "outside_regular_session"
+    assert status["blocking_reason"] is None
+    assert status["market_session_state"] == "after_market_close"
+    assert status["regular_session_open"] is False
+    assert status["freshness_reason_codes"] == [
+        "accepted_ta_signal_outside_regular_session"
     ]

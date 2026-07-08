@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import TypeAlias
+from zoneinfo import ZoneInfo
 
 from ..clickhouse import to_datetime64
 from .clickhouse_signal_ingestor_market_support import (
@@ -21,8 +22,13 @@ ColumnResolver: TypeAlias = Callable[[], set[str] | None]
 SourceWhereClause: TypeAlias = Callable[[], str | None]
 
 _DIAGNOSTIC_EXCEPTIONS = (RuntimeError, OSError, ValueError, TypeError)
+_EASTERN_TZ = ZoneInfo("America/New_York")
 
 logger = logging.getLogger("app.trading.ingest")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,14 @@ class ClickHouseSignalFreshnessContext:
     query_clickhouse: ClickHouseQuery
     resolve_columns: ColumnResolver
     source_where_clause: SourceWhereClause
+    now: Callable[[], datetime] = _utc_now
+
+
+@dataclass(frozen=True)
+class _AcceptedSourceFreshnessGate:
+    state: str
+    blocking_reason: str | None
+    reason_codes: tuple[str, ...] = ()
 
 
 def build_accepted_source_freshness_contract(
@@ -43,12 +57,18 @@ def build_accepted_source_freshness_contract(
     time_column: str,
     latest_signal_at: datetime,
 ) -> dict[str, object]:
-    now = datetime.now(timezone.utc)
+    now = context.now().astimezone(timezone.utc)
     max_age_seconds = max(1, int(context.max_staleness_ms) // 1000)
     accepted_lag_seconds = max(0, int((now - latest_signal_at).total_seconds()))
     accepted_sources = accepted_signal_sources(context.allowed_sources_raw)
-    stale = accepted_lag_seconds > max_age_seconds and not context.simulation_mode
-    reason_codes: list[str] = []
+    market_session = regular_market_session_state(now)
+    freshness_gate = _accepted_source_freshness_gate(
+        lag_seconds=accepted_lag_seconds,
+        max_age_seconds=max_age_seconds,
+        regular_session_open=market_session["regular_session_open"] is True,
+        simulation_mode=context.simulation_mode,
+    )
+    reason_codes = list(freshness_gate.reason_codes)
     excluded_fresher_sources: list[dict[str, object]] = []
     per_symbol_coverage: list[dict[str, object]] = []
     try:
@@ -77,13 +97,54 @@ def build_accepted_source_freshness_contract(
         "latest_accepted_event_at": latest_signal_at,
         "accepted_lag_seconds": accepted_lag_seconds,
         "accepted_max_lag_seconds": max_age_seconds,
-        "accepted_source_state": "stale" if stale else "current",
-        "blocking_reason": "accepted_ta_signal_stale" if stale else None,
+        "accepted_source_state": freshness_gate.state,
+        "blocking_reason": freshness_gate.blocking_reason,
         "fresh_until": latest_signal_at + timedelta(seconds=max_age_seconds),
         "excluded_fresher_sources": excluded_fresher_sources,
         "per_symbol_coverage": per_symbol_coverage,
-        "market_session_state": "not_evaluated",
+        **market_session,
         "freshness_reason_codes": reason_codes,
+    }
+
+
+def _accepted_source_freshness_gate(
+    *,
+    lag_seconds: int,
+    max_age_seconds: int,
+    regular_session_open: bool,
+    simulation_mode: bool,
+) -> _AcceptedSourceFreshnessGate:
+    if lag_seconds <= max_age_seconds or simulation_mode:
+        return _AcceptedSourceFreshnessGate(state="current", blocking_reason=None)
+    if regular_session_open:
+        return _AcceptedSourceFreshnessGate(
+            state="stale",
+            blocking_reason="accepted_ta_signal_stale",
+        )
+    return _AcceptedSourceFreshnessGate(
+        state="outside_regular_session",
+        blocking_reason=None,
+        reason_codes=("accepted_ta_signal_outside_regular_session",),
+    )
+
+
+def regular_market_session_state(now: datetime) -> dict[str, object]:
+    current = now.astimezone(_EASTERN_TZ)
+    session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
+    session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
+    if current.weekday() >= 5:
+        state = "weekend_closed"
+    elif current < session_open:
+        state = "pre_market"
+    elif current < session_close:
+        state = "regular_open"
+    else:
+        state = "after_market_close"
+    return {
+        "market_session_state": state,
+        "regular_session_open": state == "regular_open",
+        "regular_session_open_at": session_open.astimezone(timezone.utc),
+        "regular_session_close_at": session_close.astimezone(timezone.utc),
     }
 
 
@@ -240,4 +301,5 @@ __all__ = [
     "ClickHouseSignalFreshnessContext",
     "excluded_fresher_sources_after_accepted_latest",
     "latest_signal_readiness_counts",
+    "regular_market_session_state",
 ]
