@@ -28,6 +28,9 @@ describe('getQuantHealthHandler', () => {
       computeIntervalMs: 1000,
       heavyComputeIntervalMs: 30000,
       streamHeartbeatMs: 15000,
+      lastErrorAt: null,
+      lastErrorStage: null,
+      lastErrorMessage: null,
     })
   })
 
@@ -99,6 +102,42 @@ describe('getQuantHealthHandler', () => {
     expect(body.runtimeEnabled).toBe(true)
     expect(body.stages).toHaveLength(1)
     expect(startTorghutQuantRuntime).toHaveBeenCalledTimes(1)
+  })
+
+  it('returns degraded status when the runtime reports a recent compute error', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-02-18T15:00:00.000Z'))
+    process.env.JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS = '15'
+
+    getTorghutQuantRuntimeStatus.mockReturnValueOnce({
+      started: true,
+      enabled: true,
+      alertsEnabled: true,
+      computeIntervalMs: 1000,
+      heavyComputeIntervalMs: 30000,
+      streamHeartbeatMs: 15000,
+      lastErrorAt: '2026-02-18T14:59:45.000Z',
+      lastErrorStage: 'light-cycle',
+      lastErrorMessage: 'Error: boom',
+    })
+
+    const { getQuantHealthHandler } = await import('./health')
+
+    getQuantLatestStoreStatus.mockResolvedValueOnce({
+      updatedAt: '2026-02-18T14:59:58.000Z',
+      count: 42,
+    })
+
+    const response = await getQuantHealthHandler(
+      new Request('http://localhost/api/torghut/trading/control-plane/quant/health'),
+    )
+
+    expect(response.status).toBe(200)
+    const body = await response.json()
+    expect(body.status).toBe('degraded')
+    expect(body.runtimeRecentErrorAlarm).toBe(true)
+    expect(body.runtimeLastErrorStage).toBe('light-cycle')
+    expect(body.runtimeLastErrorMessage).toBe('Error: boom')
   })
 
   it('suppresses missing-update alarm outside market hours and skips unscoped pipeline health', async () => {

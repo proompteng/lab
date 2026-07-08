@@ -383,12 +383,12 @@ data:
                   service="torghut-ws"
                 }[15m]
               ) >= 1
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 15m
             labels:
@@ -423,14 +423,14 @@ data:
                       service="torghut-ws"
                     }[5m]
                   )
-                ) == bool 0
+                ) == 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 8m
             labels:
@@ -737,6 +737,14 @@ data:
                   stage=~"stage2|stage3"
                 }
               ) >= 1
+              and
+              max by (job, namespace, service) (
+                torghut_llm_enabled{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
             for: 10m
             labels:
               severity: critical
@@ -935,20 +943,22 @@ data:
           - alert: TorghutSignalsStaleDuringMarketHours
             expr: |
               (
-                time()
-                - max(
-                  torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
-                    namespace="torghut",
-                    service="torghut-clickhouse-guardrails-exporter"
-                  }
-                )
-              ) > bool 600
-              * on() group_left()
+                (
+                  time()
+                  - max(
+                    torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
+                      namespace="torghut",
+                      service="torghut-clickhouse-guardrails-exporter"
+                    }
+                  )
+                ) > 600
+              )
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -965,20 +975,22 @@ data:
           - alert: TorghutMicrobarsStaleDuringMarketHours
             expr: |
               (
-                time()
-                - max(
-                  torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
-                    namespace="torghut",
-                    service="torghut-clickhouse-guardrails-exporter"
-                  }
-                )
-              ) > bool 240
-              * on() group_left()
+                (
+                  time()
+                  - max(
+                    torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
+                      namespace="torghut",
+                      service="torghut-clickhouse-guardrails-exporter"
+                    }
+                  )
+                ) > 240
+              )
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -1001,14 +1013,14 @@ data:
                       service="torghut"
                     }[5m]
                   )
-                ) == bool 0
+                ) == 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 15m
             labels:
@@ -1030,12 +1042,12 @@ data:
                   }[10m]
                 ) >= 2
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1058,12 +1070,12 @@ data:
                   }[10m]
                 ) >= 2
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1083,14 +1095,14 @@ data:
                     namespace="torghut",
                     service="torghut"
                   }[10m]
-                ) >= bool 1
+                ) >= 1
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1110,14 +1122,14 @@ data:
                     namespace="torghut",
                     service="torghut"
                   }[10m]
-                ) > bool 0
+                ) > 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -1139,12 +1151,12 @@ data:
                   }[15m]
                 ) >= 3
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1574,14 +1586,14 @@ data:
           - alert: JangarTorghutQuantFramesMissingDuringMarketHours
             expr: |
               (
-                sum(increase(jangar_torghut_quant_frames_total{window="1d"}[2m])) == bool 0
+                sum(increase(jangar_torghut_quant_frames_total{window="1d"}[2m])) == 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -1608,12 +1620,12 @@ data:
               (
                 sum(increase(jangar_torghut_quant_stale_frames_total{window="1d"}[5m])) > 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1701,12 +1713,12 @@ data:
               (
                 sum(increase(jangar_torghut_market_context_batch_runs_total{outcome="skipped_market_closed"}[30m])) > 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:

@@ -218,7 +218,7 @@ spec:
             - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS
               value: "1000"
             - name: TRADING_SIGNAL_ALLOWED_SOURCES
-              value: ta
+              value: ta,rest
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
               value: "15"
             - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS
@@ -400,6 +400,10 @@ spec:
               value: "false"
             - name: LLM_ENABLED
               value: "false"
+            - name: LLM_ROLLOUT_STAGE
+              value: stage1_shadow_pilot
+            - name: LLM_SHADOW_MODE
+              value: "true"
             - name: LLM_DSPY_RUNTIME_MODE
               value: disabled
             - name: TA_CLICKHOUSE_URL

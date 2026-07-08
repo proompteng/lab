@@ -67,6 +67,7 @@ class ForwarderEndpointsTest {
     val cfg = baseConfig(AlpacaMarketType.EQUITY)
     assertEquals("wss://stream.data.alpaca.markets/v2/iex", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v2/stocks/bars", alpacaBarsBackfillUrl(cfg))
+    assertEquals("https://data.alpaca.markets/v2/stocks/trades", alpacaTradesBackfillUrl(cfg))
     assertTrue(alpacaBarsBackfillNeedsFeed(cfg))
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), alpacaMarketDataChannels(cfg))
   }
@@ -95,6 +96,9 @@ class ForwarderEndpointsTest {
     assertFailsWith<IllegalStateException> {
       alpacaBarsBackfillUrl(cfg)
     }
+    assertFailsWith<IllegalStateException> {
+      alpacaTradesBackfillUrl(cfg)
+    }
   }
 
   @Test
@@ -109,6 +113,21 @@ class ForwarderEndpointsTest {
       )
     val bars = assertNotNull(parsed.bars)
     assertTrue(bars.jsonObject.isEmpty())
+    assertEquals(null, parsed.nextPageToken)
+  }
+
+  @Test
+  fun `trades backfill parser tolerates next page token`() {
+    val payload = """{"trades":{},"next_page_token":null}"""
+    val parsed =
+      decodeAlpacaTradesResponse(
+        payload,
+        kotlinx.serialization.json.Json {
+          ignoreUnknownKeys = true
+        },
+      )
+    val trades = assertNotNull(parsed.trades)
+    assertTrue(trades.jsonObject.isEmpty())
     assertEquals(null, parsed.nextPageToken)
   }
 
@@ -129,6 +148,23 @@ class ForwarderEndpointsTest {
     assertEquals("asc", query.sort)
     assertEquals("boats", query.feed)
     assertEquals("page-1", query.pageToken)
+  }
+
+  @Test
+  fun `equity trades backfill query fetches newest records with pagination`() {
+    val cfg =
+      baseConfig(AlpacaMarketType.EQUITY).copy(
+        tradesBackfillLookbackHours = 120,
+      )
+    val query = alpacaTradesBackfillQuery(cfg, listOf("NVDA", "AMD"), Instant.parse("2026-07-07T20:00:00Z"), "page-2")
+
+    assertEquals("NVDA,AMD", query.symbols)
+    assertEquals("2026-07-02T20:00:00Z", query.start)
+    assertEquals("2026-07-07T20:00:00Z", query.end)
+    assertEquals("10000", query.limit)
+    assertEquals("desc", query.sort)
+    assertEquals("iex", query.feed)
+    assertEquals("page-2", query.pageToken)
   }
 
   @Test
