@@ -138,7 +138,18 @@ fun main() {
 
   if (config.statusTopic != null) {
     val statusIntervalMs = config.checkpointIntervalMs.coerceAtLeast(1_000)
-    microBarsForSignals
+    val statusInputType = TypeInformation.of(object : TypeHint<StatusHeartbeatInput>() {})
+    val microbarStatusInputs =
+      microBarsForSignals
+        .map { envelope: Envelope<MicroBarPayload> -> StatusHeartbeatInput.MicroBar(envelope) as StatusHeartbeatInput }
+        .returns(statusInputType)
+    val startupStatusTick =
+      env.fromData(
+        listOf(StatusHeartbeatInput.StartupTick(Instant.now().toEpochMilli())),
+        statusInputType,
+      )
+    microbarStatusInputs
+      .union(startupStatusTick)
       .keyBy { STATUS_SYMBOL }
       .process(StatusHeartbeatProcessFunction(statusIntervalMs))
       .name("ta-status")
@@ -155,6 +166,16 @@ fun main() {
 }
 
 private const val STATUS_SYMBOL = "ta"
+
+internal sealed class StatusHeartbeatInput : Serializable {
+  data class MicroBar(
+    val envelope: Envelope<MicroBarPayload>,
+  ) : StatusHeartbeatInput()
+
+  data class StartupTick(
+    val createdAtEpochMs: Long,
+  ) : StatusHeartbeatInput()
+}
 
 private fun applyClickhouseSinks(
   config: FlinkTaConfig,
@@ -925,7 +946,7 @@ private class MicrobarProcessFunction : KeyedProcessFunction<String, TradeEnvelo
 
 private class StatusHeartbeatProcessFunction(
   private val intervalMs: Long,
-) : KeyedProcessFunction<String, Envelope<MicroBarPayload>, Envelope<TaStatusPayload>>() {
+) : KeyedProcessFunction<String, StatusHeartbeatInput, Envelope<TaStatusPayload>>() {
   private lateinit var lastEventMsState: ValueState<Long>
   private lateinit var eventCountState: ValueState<Long>
   private lateinit var lastHeartbeatEventCountState: ValueState<Long>
@@ -953,10 +974,27 @@ private class StatusHeartbeatProcessFunction(
   }
 
   override fun processElement(
-    value: Envelope<MicroBarPayload>,
+    value: StatusHeartbeatInput,
     ctx: Context,
     out: Collector<Envelope<TaStatusPayload>>,
   ) {
+    when (value) {
+      is StatusHeartbeatInput.MicroBar -> {
+        recordMicroBar(value.envelope)
+        scheduleTimerIfNeeded(ctx)
+      }
+      is StatusHeartbeatInput.StartupTick -> {
+        emitHeartbeat(
+          now = Instant.now(),
+          watermark = ctx.timerService().currentWatermark(),
+          out = out,
+        )
+        scheduleTimerIfNeeded(ctx)
+      }
+    }
+  }
+
+  private fun recordMicroBar(value: Envelope<MicroBarPayload>) {
     val eventMs = value.eventTs.toEpochMilli()
     val last = lastEventMsState.value()
     if (last == null || eventMs > last) {
@@ -967,7 +1005,6 @@ private class StatusHeartbeatProcessFunction(
       perSymbolLatestEventMsState.put(value.symbol, eventMs)
     }
     eventCountState.update((eventCountState.value() ?: 0L) + 1L)
-    scheduleTimerIfNeeded(ctx)
   }
 
   override fun onTimer(
@@ -975,41 +1012,38 @@ private class StatusHeartbeatProcessFunction(
     ctx: OnTimerContext,
     out: Collector<Envelope<TaStatusPayload>>,
   ) {
-    val now = Instant.now()
-    val watermark = ctx.timerService().currentWatermark()
-    val lagMs =
-      if (watermark == Long.MIN_VALUE) {
-        null
-      } else {
-        (now.toEpochMilli() - watermark).coerceAtLeast(0)
-      }
+    emitHeartbeat(
+      now = Instant.now(),
+      watermark = ctx.timerService().currentWatermark(),
+      out = out,
+    )
+    val next = timestamp + intervalMs
+    ctx.timerService().registerProcessingTimeTimer(next)
+    nextTimerState.update(next)
+  }
+
+  private fun emitHeartbeat(
+    now: Instant,
+    watermark: Long,
+    out: Collector<Envelope<TaStatusPayload>>,
+  ) {
     val lastEventMs = lastEventMsState.value()
     val eventCount = eventCountState.value() ?: 0L
     val lastHeartbeatCount = lastHeartbeatEventCountState.value() ?: eventCount
     val lastHeartbeatMs = lastHeartbeatMsState.value()
-    val inputRatePerSecond =
-      if (lastHeartbeatMs == null || now.toEpochMilli() <= lastHeartbeatMs) {
-        null
-      } else {
-        val elapsedSeconds = (now.toEpochMilli() - lastHeartbeatMs).toDouble() / 1_000.0
-        (eventCount - lastHeartbeatCount).coerceAtLeast(0).toDouble() / elapsedSeconds
-      }
     val perSymbolLatestEventTs =
       perSymbolLatestEventMsState
         .entries()
         .associate { (symbol, eventMs) -> symbol to Instant.ofEpochMilli(eventMs).toString() }
     val payload =
-      TaStatusPayload(
-        watermarkLagMs = lagMs,
-        lastEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
-        lastInputEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
-        lastOutputEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() },
-        inputEventCount = eventCount,
-        outputEventCount = eventCount,
-        inputRatePerSecond = inputRatePerSecond,
+      taStatusPayload(
+        now = now,
+        watermark = watermark,
+        lastEventMs = lastEventMs,
+        eventCount = eventCount,
+        lastHeartbeatCount = lastHeartbeatCount,
+        lastHeartbeatMs = lastHeartbeatMs,
         perSymbolLatestEventTs = perSymbolLatestEventTs,
-        status = "ok",
-        heartbeat = true,
       )
     lastHeartbeatEventCountState.update(eventCount)
     lastHeartbeatMsState.update(now.toEpochMilli())
@@ -1021,7 +1055,7 @@ private class StatusHeartbeatProcessFunction(
         eventTs = now,
         feed = "ta",
         channel = "status",
-        symbol = ctx.currentKey,
+        symbol = STATUS_SYMBOL,
         seq = seq,
         payload = payload,
         isFinal = true,
@@ -1030,9 +1064,6 @@ private class StatusHeartbeatProcessFunction(
         version = 1,
       )
     out.collect(envelope)
-    val next = timestamp + intervalMs
-    ctx.timerService().registerProcessingTimeTimer(next)
-    nextTimerState.update(next)
   }
 
   private fun scheduleTimerIfNeeded(ctx: Context) {
@@ -1044,6 +1075,47 @@ private class StatusHeartbeatProcessFunction(
       nextTimerState.update(next)
     }
   }
+}
+
+internal fun taStatusPayload(
+  now: Instant,
+  watermark: Long,
+  lastEventMs: Long?,
+  eventCount: Long,
+  lastHeartbeatCount: Long,
+  lastHeartbeatMs: Long?,
+  perSymbolLatestEventTs: Map<String, String>,
+): TaStatusPayload {
+  val nowMs = now.toEpochMilli()
+  val watermarkLagMs =
+    if (watermark == Long.MIN_VALUE) {
+      null
+    } else {
+      (nowMs - watermark).coerceAtLeast(0)
+    }
+  val inputRatePerSecond =
+    if (lastHeartbeatMs == null || nowMs <= lastHeartbeatMs) {
+      null
+    } else {
+      val elapsedSeconds = (nowMs - lastHeartbeatMs).toDouble() / 1_000.0
+      (eventCount - lastHeartbeatCount).coerceAtLeast(0).toDouble() / elapsedSeconds
+    }
+  val lastEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() }
+  val sourceLagMs = lastEventMs?.let { (nowMs - it).coerceAtLeast(0) }
+  return TaStatusPayload(
+    watermarkLagMs = watermarkLagMs,
+    sourceLagMs = sourceLagMs,
+    lastEventTs = lastEventTs,
+    lastInputEventTs = lastEventTs,
+    lastOutputEventTs = lastEventTs,
+    inputEventCount = eventCount,
+    outputEventCount = eventCount,
+    inputRatePerSecond = inputRatePerSecond,
+    outputRatePerSecond = inputRatePerSecond,
+    perSymbolLatestEventTs = perSymbolLatestEventTs,
+    status = "ok",
+    heartbeat = true,
+  )
 }
 
 private data class BucketState(

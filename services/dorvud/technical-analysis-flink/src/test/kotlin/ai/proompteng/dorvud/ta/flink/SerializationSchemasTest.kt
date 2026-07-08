@@ -59,12 +59,14 @@ class SerializationSchemasTest {
         payload =
           TaStatusPayload(
             watermarkLagMs = 250,
+            sourceLagMs = 1_000,
             lastEventTs = "2026-07-07T14:00:04Z",
             lastInputEventTs = "2026-07-07T14:00:04Z",
             lastOutputEventTs = "2026-07-07T14:00:04Z",
             inputEventCount = 42,
             outputEventCount = 42,
             inputRatePerSecond = 10.5,
+            outputRatePerSecond = 10.5,
             perSymbolLatestEventTs = mapOf("NVDA" to "2026-07-07T14:00:04Z"),
           ),
         isFinal = true,
@@ -75,8 +77,10 @@ class SerializationSchemasTest {
 
     val json = serde.statusJson(status)
 
+    assertTrue(json.contains("source_lag_ms"))
     assertTrue(json.contains("last_input_event_ts"))
     assertTrue(json.contains("input_event_count"))
+    assertTrue(json.contains("output_rate_per_second"))
     assertTrue(json.contains("per_symbol_latest_event_ts"))
     assertTrue(json.contains("NVDA"))
   }
