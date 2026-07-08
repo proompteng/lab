@@ -16,10 +16,12 @@ class TestTradingApiHealthContract(TradingApiTestCaseBase):
             response = self.client.get("/readyz")
 
         self.assertIn(response.status_code, {200, 503})
+        payload = response.json()
         self.assertEqual(
-            response.json()["readiness_surface"],
-            "core_dependencies_only",
+            payload["readiness_surface"],
+            "core_dependencies_and_live_submission_gate",
         )
+        self.assertIn("live_submission_gate", payload["dependencies"])
         proof_floor.assert_not_called()
 
     def test_trading_health_runtime_degradation_strips_live_gate_authority(
