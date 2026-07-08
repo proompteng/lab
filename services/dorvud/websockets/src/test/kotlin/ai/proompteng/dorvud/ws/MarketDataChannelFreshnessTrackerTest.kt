@@ -8,6 +8,88 @@ import kotlin.test.assertTrue
 
 class MarketDataChannelFreshnessTrackerTest {
   @Test
+  fun `conditional updated bars do not block readiness when no late-trade corrections arrive`() {
+    val nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("trades", "quotes", "bars", "updatedBars"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(
+      mapOf(
+        "trades" to listOf("NVDA", "AMD"),
+        "quotes" to listOf("NVDA", "AMD"),
+        "bars" to listOf("NVDA", "AMD"),
+        "updatedBars" to listOf("NVDA", "AMD"),
+      ),
+    )
+    listOf("trades", "quotes", "bars").forEach { channel ->
+      listOf("NVDA", "AMD").forEach { symbol ->
+        tracker.recordProviderEvent(channel, symbol)
+        tracker.recordSerializedEvent(channel, symbol)
+        tracker.recordKafkaSuccess(channel, symbol)
+      }
+    }
+
+    val byChannel = tracker.snapshot().associateBy { it.channel }
+    val updatedBars = byChannel.getValue("updatedBars")
+
+    assertTrue(tracker.ready())
+    assertTrue(updatedBars.ready)
+    assertFalse(updatedBars.freshnessRequired)
+    assertFalse(updatedBars.symbolCoverageRequired)
+    assertEquals("conditional", updatedBars.readinessMode)
+    assertEquals("market_data_channel_conditional_no_events", updatedBars.reason)
+    assertEquals(emptyList(), updatedBars.missingSymbols)
+  }
+
+  @Test
+  fun `conditional updated bars fail only when observed corrections do not reach kafka`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("updatedBars"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("updatedBars" to listOf("NVDA", "AMD")))
+    tracker.recordProviderEvent("updatedBars", "NVDA")
+    tracker.recordSerializedEvent("updatedBars", "NVDA")
+
+    assertTrue(tracker.ready())
+    assertEquals(
+      "market_data_channel_conditional_pending_kafka_success",
+      tracker.snapshot().single().reason,
+    )
+
+    nowMs += 61_000
+
+    val missingKafka = tracker.snapshot().single()
+    assertFalse(tracker.ready())
+    assertEquals("market_data_channel_conditional_missing_kafka_success", missingKafka.reason)
+    assertEquals(emptyList(), missingKafka.missingSymbols)
+
+    tracker.recordKafkaSuccess("updatedBars", "NVDA")
+
+    assertTrue(tracker.ready())
+
+    nowMs += 61_000
+
+    val staleButValid = tracker.snapshot().single()
+    assertTrue(tracker.ready())
+    assertEquals("market_data_channel_conditional_observed", staleButValid.reason)
+    assertEquals(listOf("NVDA"), staleButValid.observedSymbols)
+    assertEquals(emptyList(), staleButValid.staleSymbols)
+  }
+
+  @Test
   fun `required equity channels are not ready when only bars are producing`() {
     var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
     val tracker =
