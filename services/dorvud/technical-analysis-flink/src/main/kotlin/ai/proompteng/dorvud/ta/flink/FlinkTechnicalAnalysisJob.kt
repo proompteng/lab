@@ -177,6 +177,7 @@ fun main() {
           StatusHeartbeatProcessFunction(
             intervalMs = statusIntervalMs,
             clickhouseSinkEnabled = !config.clickhouseUrl.isNullOrBlank(),
+            sourceLagDegradedAfterMs = config.sourceLagDegradedAfterMs,
           ),
         )
     statusHeartbeats
@@ -197,6 +198,8 @@ private const val STATUS_SYMBOL = "ta"
 private const val MARKET_SESSION_REGULAR = "regular"
 private const val MARKET_SESSION_OUTSIDE_REGULAR = "outside_regular_session"
 private const val ZERO_CURRENT_RECORDS_REASON = "zero_current_records_during_regular_session"
+private const val SOURCE_LAG_MISSING_REASON = "source_lag_missing_during_regular_session"
+private const val SOURCE_LAG_STALE_REASON = "source_lag_stale_during_regular_session"
 private val EQUITY_MARKET_ZONE: ZoneId = ZoneId.of("America/New_York")
 private val REGULAR_SESSION_OPEN: LocalTime = LocalTime.of(9, 30)
 private val REGULAR_SESSION_CLOSE: LocalTime = LocalTime.of(16, 0)
@@ -1005,6 +1008,7 @@ private class MicrobarProcessFunction : KeyedProcessFunction<String, TradeEnvelo
 private class StatusHeartbeatProcessFunction(
   private val intervalMs: Long,
   private val clickhouseSinkEnabled: Boolean,
+  private val sourceLagDegradedAfterMs: Long,
 ) : KeyedProcessFunction<String, StatusHeartbeatInput, Envelope<TaStatusPayload>>() {
   private lateinit var lastInputEventMsState: ValueState<Long>
   private lateinit var lastOutputEventMsState: ValueState<Long>
@@ -1147,6 +1151,7 @@ private class StatusHeartbeatProcessFunction(
         lastHeartbeatMs = lastHeartbeatMs,
         perSymbolLatestEventTs = perSymbolLatestEventTs,
         clickhouseSinkEnabled = clickhouseSinkEnabled,
+        sourceLagDegradedAfterMs = sourceLagDegradedAfterMs,
       )
     lastHeartbeatInputCountState.update(inputEventCount)
     lastHeartbeatOutputCountState.update(outputEventCount)
@@ -1193,6 +1198,7 @@ internal fun taStatusPayload(
   lastHeartbeatMs: Long?,
   perSymbolLatestEventTs: Map<String, String>,
   clickhouseSinkEnabled: Boolean = false,
+  sourceLagDegradedAfterMs: Long = DEFAULT_TA_SOURCE_LAG_DEGRADED_AFTER_MS,
 ): TaStatusPayload {
   val nowMs = now.toEpochMilli()
   val watermarkLagMs =
@@ -1211,6 +1217,8 @@ internal fun taStatusPayload(
   val currentInputEventCount = deltaSinceLastHeartbeat(inputEventCount, lastHeartbeatInputCount)
   val currentOutputEventCount = deltaSinceLastHeartbeat(outputEventCount, lastHeartbeatOutputCount)
   val currentRecordCount = currentInputEventCount + currentOutputEventCount
+  val lastEventMs = maxOfNullable(lastInputEventMs, lastOutputEventMs)
+  val sourceLagMs = lastEventMs?.let { (nowMs - it).coerceAtLeast(0) }
   val outputRatePerSecond =
     ratePerSecond(
       nowMs = nowMs,
@@ -1220,17 +1228,21 @@ internal fun taStatusPayload(
     )
   val marketSessionState = marketSessionState(now)
   val statusReason =
-    if (marketSessionState == MARKET_SESSION_REGULAR && currentRecordCount == 0L) {
+    if (marketSessionState != MARKET_SESSION_REGULAR) {
+      null
+    } else if (sourceLagMs == null) {
+      SOURCE_LAG_MISSING_REASON
+    } else if (sourceLagMs > sourceLagDegradedAfterMs) {
+      SOURCE_LAG_STALE_REASON
+    } else if (currentRecordCount == 0L) {
       ZERO_CURRENT_RECORDS_REASON
     } else {
       null
     }
   val status = if (statusReason == null) "ok" else "degraded"
-  val lastEventMs = maxOfNullable(lastInputEventMs, lastOutputEventMs)
   val lastEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() }
   val lastInputEventTs = lastInputEventMs?.let { Instant.ofEpochMilli(it).toString() }
   val lastOutputEventTs = lastOutputEventMs?.let { Instant.ofEpochMilli(it).toString() }
-  val sourceLagMs = lastEventMs?.let { (nowMs - it).coerceAtLeast(0) }
   return TaStatusPayload(
     watermarkLagMs = watermarkLagMs,
     sourceLagMs = sourceLagMs,

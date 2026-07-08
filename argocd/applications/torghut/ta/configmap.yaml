@@ -28,6 +28,7 @@ data:
   # IEX quote cadence can be sparse for the capped chip universe; keep TA quotes
   # fresh enough for execution gates without admitting overnight/stale state.
   TA_QUOTE_STALE_AFTER_MS: "15000"
+  TA_SOURCE_LAG_DEGRADED_AFTER_MS: "300000"
   TA_PARALLELISM: "8"
   TA_VWAP_WINDOW_SECONDS: "300"
   TA_REALIZED_VOL_WINDOW: "60"
