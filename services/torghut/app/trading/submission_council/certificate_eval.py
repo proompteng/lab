@@ -112,13 +112,12 @@ def segment_summary(
             getattr(state, "signal_continuity_alert_active", False)
         ):
             ta_core_reasons.append("signal_lag_exceeded")
-    for item in runtime_items:
-        item_reasons = [
-            str(reason).strip()
-            for reason in cast(Sequence[object], item.get("reasons") or [])
-            if str(reason).strip() in _TA_CORE_REASON_CODES
-        ]
-        ta_core_reasons.extend(item_reasons)
+    ta_core_reasons.extend(
+        _runtime_ta_core_reasons(
+            runtime_items=runtime_items,
+            clickhouse_signal_current=clickhouse_signal_current,
+        )
+    )
 
     execution_reasons = (
         ["critical_toggle_parity_diverged"] if list(blocking_toggle_mismatches) else []
@@ -144,6 +143,28 @@ def segment_summary(
         }
         for segment, reasons in sorted(raw_segments.items())
     }
+
+
+def _runtime_ta_core_reasons(
+    *,
+    runtime_items: Sequence[Mapping[str, Any]],
+    clickhouse_signal_current: bool,
+) -> list[str]:
+    clickhouse_superseded_runtime_reasons: frozenset[str] = (
+        frozenset({"signal_continuity_alert_active", "signal_lag_exceeded"})
+        if clickhouse_signal_current
+        else frozenset()
+    )
+    ta_core_reasons: list[str] = []
+    for item in runtime_items:
+        item_reasons = [
+            str(reason).strip()
+            for reason in cast(Sequence[object], item.get("reasons") or [])
+            if str(reason).strip() in _TA_CORE_REASON_CODES
+            and str(reason).strip() not in clickhouse_superseded_runtime_reasons
+        ]
+        ta_core_reasons.extend(item_reasons)
+    return ta_core_reasons
 
 
 def evaluate_certificate_candidates(

@@ -415,6 +415,17 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
                     "reasons": [],
                     "message": "ready",
                 },
+                "items": [
+                    {
+                        "hypothesis_id": "H-CONT-01",
+                        "promotion_eligible": False,
+                        "capital_stage": "shadow",
+                        "reasons": [
+                            "signal_continuity_alert_active",
+                            "signal_lag_exceeded",
+                        ],
+                    }
+                ],
             },
             empirical_jobs_status={"ready": True, "status": "healthy"},
             quant_health_status=self._healthy_quant_status(),

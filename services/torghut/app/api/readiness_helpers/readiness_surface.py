@@ -835,55 +835,84 @@ def _health_surface_timeout_dependencies(
     )
 
 
+def _health_surface_timeout_core_dependencies(
+    *,
+    scheduler: TradingScheduler,
+    scheduler_ok: bool,
+    include_database_contract: bool,
+    reason_code: str,
+) -> tuple[dict[str, object], list[str]]:
+    try:
+        return _core_readiness_dependencies(
+            scheduler=scheduler,
+            scheduler_ok=scheduler_ok,
+            include_database_contract=include_database_contract,
+            allow_stale_dependency_cache=True,
+        )
+    except _READINESS_LIVE_GATE_EXCEPTIONS as exc:
+        logger.warning("Health timeout core readiness fallback failed: %s", exc)
+        dependencies = _health_surface_timeout_dependencies(
+            include_database_contract=include_database_contract,
+            reason_code=reason_code,
+        )
+        return dependencies, readiness_dependency_degradation_reason_codes(
+            dependencies,
+            scheduler_ok=scheduler_ok,
+        )
+
+
 def _minimal_health_surface_timeout_payload(
     *,
     include_database_contract: bool,
     reason_code: str,
     detail: str,
 ) -> dict[str, object]:
-    dependencies = _health_surface_timeout_dependencies(
-        include_database_contract=include_database_contract,
-        reason_code=reason_code,
-    )
-
-    dependencies["health_evaluation"] = {
-        "ok": False,
-        "detail": detail,
-        "reason_codes": [reason_code],
-    }
     scheduler = get_trading_scheduler()
     _scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
-    live_submission_gate = minimal_health_surface_timeout_live_submission_gate(
-        reason_code=reason_code,
-        detail=detail,
+    dependencies, readiness_dependency_reasons = (
+        _health_surface_timeout_core_dependencies(
+            scheduler=scheduler,
+            scheduler_ok=_scheduler_ok,
+            include_database_contract=include_database_contract,
+            reason_code=reason_code,
+        )
+    )
+    live_submission_gate = readiness_live_submission_gate(
+        scheduler,
+        readiness_dependency_reasons=readiness_dependency_reasons,
     )
     proof_floor = minimal_health_surface_timeout_proof_floor()
     live_mode = settings.trading_mode == "live"
-    dependencies["live_submission_gate"] = {
-        "ok": bool(live_submission_gate.get("allowed", False)),
-        "detail": str(live_submission_gate.get("reason") or reason_code),
-        "capital_stage": live_submission_gate.get("capital_stage"),
-    }
+    dependencies["live_submission_gate"] = readiness_live_submission_gate_dependency(
+        live_submission_gate
+    )
+    readiness_cache = dependencies.get("readiness_cache")
+    if isinstance(readiness_cache, Mapping):
+        readiness_cache_payload = deepcopy(
+            dict(cast(Mapping[str, object], readiness_cache))
+        )
+        readiness_cache_payload["health_surface_timeout_fallback"] = True
+        dependencies["readiness_cache"] = readiness_cache_payload
     dependencies["profitability_proof_floor"] = {
         "ok": False if live_mode else True,
         "detail": str(proof_floor.get("route_state") or "repair_only"),
         "capital_state": proof_floor.get("capital_state"),
         "required": live_mode,
     }
-    return cast(
-        dict[str, object],
-        strip_promotion_authority_claims_for_readiness(
-            {
-                "status": "degraded",
-                "reason": reason_code,
-                "reason_codes": [reason_code],
-                "scheduler": scheduler_payload,
-                "dependencies": dependencies,
-                "live_submission_gate": live_submission_gate,
-                "proof_floor": proof_floor,
-            }
-        ),
-    )
+    dependencies["health_evaluation"] = {
+        "ok": False,
+        "detail": detail,
+        "reason_codes": [reason_code],
+    }
+    return {
+        "status": "degraded",
+        "reason": reason_code,
+        "reason_codes": [reason_code],
+        "scheduler": scheduler_payload,
+        "dependencies": dependencies,
+        "live_submission_gate": live_submission_gate,
+        "proof_floor": proof_floor,
+    }
 
 
 def health_surface_timeout_fallback_payload(
@@ -926,19 +955,15 @@ def health_surface_timeout_fallback_payload(
     payload["dependencies"] = dependencies_payload
     live_submission_gate = payload.get("live_submission_gate")
     if isinstance(live_submission_gate, Mapping):
-        payload["live_submission_gate"] = guard_live_submission_gate_for_readiness(
-            cast(Mapping[str, object], live_submission_gate),
-            readiness_dependency_reasons=[reason_code],
+        payload["live_submission_gate"] = dict(
+            cast(Mapping[str, object], live_submission_gate)
         )
     else:
         payload["live_submission_gate"] = fail_closed_health_evaluation_gate(
             reason_code=reason_code,
             detail=detail,
         )
-    return cast(
-        dict[str, object],
-        strip_promotion_authority_claims_for_readiness(payload),
-    )
+    return payload
 
 
 evaluate_core_readiness_payload = _evaluate_core_readiness_payload
