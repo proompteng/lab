@@ -63,6 +63,7 @@ import org.ta4j.core.indicators.statistics.StandardDeviationIndicator
 import java.io.Serializable
 import java.net.URI
 import java.nio.charset.StandardCharsets
+import java.sql.Connection
 import java.sql.DriverManager
 import java.sql.PreparedStatement
 import java.sql.Timestamp
@@ -243,6 +244,7 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
   val logger = LoggerFactory.getLogger("ta-clickhouse")
   val url = requireNotNull(config.clickhouseUrl) { "TA_CLICKHOUSE_URL must be set when ClickHouse sinks are enabled." }
   val adminUrl = clickhouseAdminUrl(url)
+  val sinkDatabase = clickhouseDatabaseName(url)
   val schemaSql =
     object {}
       .javaClass
@@ -291,10 +293,77 @@ private fun ensureClickhouseSchema(config: FlinkTaConfig) {
       conn.createStatement().use { statement ->
         statements.forEach { statement.execute(it) }
       }
+      if (config.clickhouseRequireReplicatedTables) {
+        validateClickhouseTaTableEngines(loadClickhouseTaTableEngines(conn, sinkDatabase))
+      }
     }
   }
 
   logger.info("ClickHouse schema ensured.")
+}
+
+private val requiredClickhouseTaTableEngines =
+  mapOf(
+    "ta_microbars" to "ReplicatedReplacingMergeTree",
+    "ta_signals" to "ReplicatedReplacingMergeTree",
+  )
+
+private fun loadClickhouseTaTableEngines(
+  connection: Connection,
+  database: String,
+): Map<String, String> {
+  val tables = requiredClickhouseTaTableEngines.keys.joinToString(",") { "'$it'" }
+  val sql = "SELECT name, engine FROM system.tables WHERE database = '${clickhouseSqlString(database)}' AND name IN ($tables)"
+  val engines = mutableMapOf<String, String>()
+
+  connection.createStatement().use { statement ->
+    statement.executeQuery(sql).use { resultSet ->
+      while (resultSet.next()) {
+        engines[resultSet.getString("name")] = resultSet.getString("engine")
+      }
+    }
+  }
+
+  return engines
+}
+
+internal fun clickhouseDatabaseName(url: String): String {
+  val raw = if (url.startsWith("jdbc:")) url.removePrefix("jdbc:") else url
+  return try {
+    val uri = URI(raw)
+    val queryDatabase =
+      uri.rawQuery
+        ?.split('&')
+        ?.mapNotNull {
+          val parts = it.split('=', limit = 2)
+          if (parts.size == 2 && (parts[0] == "database" || parts[0] == "db")) parts[1] else null
+        }?.firstOrNull()
+        ?.takeIf { it.isNotBlank() }
+    val pathDatabase = uri.path.trim('/').takeIf { it.isNotBlank() }
+    queryDatabase ?: pathDatabase ?: "default"
+  } catch (_: Exception) {
+    "default"
+  }
+}
+
+private fun clickhouseSqlString(value: String): String = value.replace("'", "''")
+
+internal fun validateClickhouseTaTableEngines(engineByTable: Map<String, String>) {
+  val issues = mutableListOf<String>()
+  for ((table, expectedEngine) in requiredClickhouseTaTableEngines.toSortedMap()) {
+    val actualEngine = engineByTable[table]
+    if (actualEngine == null) {
+      issues += "$table=missing"
+    } else if (actualEngine != expectedEngine) {
+      issues += "$table=$actualEngine"
+    }
+  }
+
+  if (issues.isNotEmpty()) {
+    throw IllegalStateException(
+      "ClickHouse TA tables must use ReplicatedReplacingMergeTree before TA sinks start: ${issues.joinToString(", ")}",
+    )
+  }
 }
 
 internal fun executeWithRetry(

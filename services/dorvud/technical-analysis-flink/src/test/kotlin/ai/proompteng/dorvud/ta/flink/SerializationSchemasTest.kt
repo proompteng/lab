@@ -20,6 +20,7 @@ import java.io.ObjectOutputStream
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -193,6 +194,54 @@ class SerializationSchemasTest {
     assertTrue(schema.contains("microstructure_signal_v1 Nullable(String)"))
     assertTrue(schema.contains("ALTER TABLE torghut.ta_signals ON CLUSTER default"))
     assertTrue(schema.contains("MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY"))
+  }
+
+  @Test
+  fun `clickhouse ta table engine validation rejects local tables`() {
+    val failure =
+      assertFailsWith<IllegalStateException> {
+        validateClickhouseTaTableEngines(
+          mapOf(
+            "ta_microbars" to "ReplacingMergeTree",
+            "ta_signals" to "ReplicatedReplacingMergeTree",
+          ),
+        )
+      }
+
+    assertTrue(failure.message.orEmpty().contains("ta_microbars=ReplacingMergeTree"))
+  }
+
+  @Test
+  fun `clickhouse ta table engine validation requires every ta table`() {
+    val failure =
+      assertFailsWith<IllegalStateException> {
+        validateClickhouseTaTableEngines(mapOf("ta_signals" to "ReplicatedReplacingMergeTree"))
+      }
+
+    assertTrue(failure.message.orEmpty().contains("ta_microbars=missing"))
+  }
+
+  @Test
+  fun `clickhouse ta table engine validation accepts replicated tables`() {
+    validateClickhouseTaTableEngines(
+      mapOf(
+        "ta_microbars" to "ReplicatedReplacingMergeTree",
+        "ta_signals" to "ReplicatedReplacingMergeTree",
+      ),
+    )
+  }
+
+  @Test
+  fun `clickhouse database name is loaded from sink jdbc url`() {
+    assertEquals(
+      "torghut",
+      clickhouseDatabaseName("jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/torghut"),
+    )
+    assertEquals(
+      "torghut_sim_default",
+      clickhouseDatabaseName("jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/default?database=torghut_sim_default"),
+    )
+    assertEquals("default", clickhouseDatabaseName("not a url"))
   }
 
   @Test

@@ -9,3 +9,4 @@ resources:
   - clickhouse-guardrails-exporter.yaml
   - clickhouse-cluster.yaml
   - clickhouse-service.yaml
+  - ta-replicated-table-migration-job.yaml
