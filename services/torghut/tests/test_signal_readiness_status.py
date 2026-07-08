@@ -210,8 +210,60 @@ def test_latest_signal_status_blocks_stale_accepted_source_and_reports_excluded_
         {
             "symbol": "NVDA",
             "latest_signal_at": latest,
-            "lag_seconds": 0,
+            "lag_seconds": 600,
+            "lag_vs_latest_accepted_seconds": 0,
+            "max_lag_seconds": status["accepted_max_lag_seconds"],
+            "state": "stale",
             "signal_rows": 3,
+        }
+    ]
+    assert status["stale_symbol_coverage"] == status["per_symbol_coverage"]
+
+
+def test_latest_signal_status_blocks_regular_session_when_any_accepted_symbol_is_stale() -> (
+    None
+):
+    now = datetime(2026, 5, 13, 15, 30, tzinfo=timezone.utc)
+    latest = now - timedelta(seconds=30)
+    stale_symbol_latest = now - timedelta(minutes=10)
+    ingestor = SourceFreshnessIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://example",
+        latest_signal_ts=latest,
+        signal_rows=120,
+        symbol_count=10,
+        source_rows=[],
+        coverage_rows=[
+            {
+                "symbol": "CRDO",
+                "latest_signal_ts": stale_symbol_latest.isoformat(),
+                "signal_rows": "78",
+            },
+            {
+                "symbol": "NVDA",
+                "latest_signal_ts": latest.isoformat(),
+                "signal_rows": "127",
+            },
+        ],
+        now=now,
+    )
+
+    status = ingestor.latest_signal_status()
+
+    assert status["accepted_lag_seconds"] == 30
+    assert status["accepted_source_state"] == "stale"
+    assert status["blocking_reason"] == "accepted_ta_signal_stale"
+    assert status["freshness_reason_codes"] == ["accepted_ta_symbol_stale"]
+    assert status["stale_symbol_coverage"] == [
+        {
+            "symbol": "CRDO",
+            "latest_signal_at": stale_symbol_latest,
+            "lag_seconds": 600,
+            "lag_vs_latest_accepted_seconds": 570,
+            "max_lag_seconds": status["accepted_max_lag_seconds"],
+            "state": "stale",
+            "signal_rows": 78,
         }
     ]
 
@@ -262,5 +314,6 @@ def test_latest_signal_status_does_not_hard_block_stale_accepted_source_after_cl
     assert status["market_session_state"] == "after_market_close"
     assert status["regular_session_open"] is False
     assert status["freshness_reason_codes"] == [
-        "accepted_ta_signal_outside_regular_session"
+        "accepted_ta_signal_outside_regular_session",
+        "accepted_ta_symbol_outside_regular_session",
     ]

@@ -71,6 +71,7 @@ def build_accepted_source_freshness_contract(
     reason_codes = list(freshness_gate.reason_codes)
     excluded_fresher_sources: list[dict[str, object]] = []
     per_symbol_coverage: list[dict[str, object]] = []
+    stale_symbol_coverage: list[dict[str, object]] = []
     try:
         excluded_fresher_sources = excluded_fresher_sources_after_accepted_latest(
             context=context,
@@ -88,7 +89,20 @@ def build_accepted_source_freshness_contract(
             context=context,
             time_column=time_column,
             latest_signal_at=latest_signal_at,
+            now=now,
+            max_age_seconds=max_age_seconds,
         )
+        stale_symbol_coverage = [
+            row for row in per_symbol_coverage if row.get("state") == "stale"
+        ]
+        symbol_gate = _accepted_symbol_coverage_gate(
+            stale_symbol_coverage=stale_symbol_coverage,
+            regular_session_open=market_session["regular_session_open"] is True,
+            simulation_mode=context.simulation_mode,
+        )
+        reason_codes.extend(symbol_gate.reason_codes)
+        if freshness_gate.blocking_reason is None and symbol_gate.blocking_reason:
+            freshness_gate = symbol_gate
     except _DIAGNOSTIC_EXCEPTIONS as exc:
         logger.warning("Failed to load accepted ClickHouse TA symbol coverage: %s", exc)
         reason_codes.append("clickhouse_ta_symbol_coverage_query_failed")
@@ -102,8 +116,9 @@ def build_accepted_source_freshness_contract(
         "fresh_until": latest_signal_at + timedelta(seconds=max_age_seconds),
         "excluded_fresher_sources": excluded_fresher_sources,
         "per_symbol_coverage": per_symbol_coverage,
+        "stale_symbol_coverage": stale_symbol_coverage,
         **market_session,
-        "freshness_reason_codes": reason_codes,
+        "freshness_reason_codes": list(dict.fromkeys(reason_codes)),
     }
 
 
@@ -125,6 +140,27 @@ def _accepted_source_freshness_gate(
         state="outside_regular_session",
         blocking_reason=None,
         reason_codes=("accepted_ta_signal_outside_regular_session",),
+    )
+
+
+def _accepted_symbol_coverage_gate(
+    *,
+    stale_symbol_coverage: Sequence[Mapping[str, object]],
+    regular_session_open: bool,
+    simulation_mode: bool,
+) -> _AcceptedSourceFreshnessGate:
+    if not stale_symbol_coverage or simulation_mode:
+        return _AcceptedSourceFreshnessGate(state="current", blocking_reason=None)
+    if regular_session_open:
+        return _AcceptedSourceFreshnessGate(
+            state="stale",
+            blocking_reason="accepted_ta_signal_stale",
+            reason_codes=("accepted_ta_symbol_stale",),
+        )
+    return _AcceptedSourceFreshnessGate(
+        state="current",
+        blocking_reason=None,
+        reason_codes=("accepted_ta_symbol_outside_regular_session",),
     )
 
 
@@ -247,7 +283,35 @@ def accepted_per_symbol_coverage(
     context: ClickHouseSignalFreshnessContext,
     time_column: str,
     latest_signal_at: datetime,
+    now: datetime,
+    max_age_seconds: int,
 ) -> list[dict[str, object]]:
+    query = _accepted_per_symbol_coverage_query(
+        context=context,
+        time_column=time_column,
+        latest_signal_at=latest_signal_at,
+    )
+    return [
+        coverage_row
+        for row in context.query_clickhouse(query)
+        if (
+            coverage_row := _accepted_symbol_coverage_row(
+                row=row,
+                latest_signal_at=latest_signal_at,
+                now=now,
+                max_age_seconds=max_age_seconds,
+            )
+        )
+        is not None
+    ]
+
+
+def _accepted_per_symbol_coverage_query(
+    *,
+    context: ClickHouseSignalFreshnessContext,
+    time_column: str,
+    latest_signal_at: datetime,
+) -> str:
     safe_time_column = safe_identifier(time_column, kind="column")
     lookback_minutes = max(int(context.initial_lookback_minutes or 1), 1)
     window_start = latest_signal_at - timedelta(minutes=lookback_minutes)
@@ -258,7 +322,7 @@ def accepted_per_symbol_coverage(
     source_clause = context.source_where_clause()
     if source_clause is not None:
         where_parts.append(source_clause)
-    query = " ".join(
+    return " ".join(
         [
             "SELECT",
             "symbol,",
@@ -273,25 +337,32 @@ def accepted_per_symbol_coverage(
             "FORMAT JSONEachRow",
         ]
     )
-    rows = context.query_clickhouse(query)
-    coverage: list[dict[str, object]] = []
-    for row in rows:
-        symbol = str(row.get("symbol") or "").strip().upper()
-        latest = parse_ts(row.get("latest_signal_ts"))
-        if not symbol or latest is None:
-            continue
-        coverage.append(
-            {
-                "symbol": symbol,
-                "latest_signal_at": latest,
-                "lag_seconds": max(
-                    0,
-                    int((latest_signal_at - latest).total_seconds()),
-                ),
-                "signal_rows": coerce_count(row.get("signal_rows")),
-            }
-        )
-    return coverage
+
+
+def _accepted_symbol_coverage_row(
+    *,
+    row: Mapping[str, object],
+    latest_signal_at: datetime,
+    now: datetime,
+    max_age_seconds: int,
+) -> dict[str, object] | None:
+    symbol = str(row.get("symbol") or "").strip().upper()
+    latest = parse_ts(row.get("latest_signal_ts"))
+    if not symbol or latest is None:
+        return None
+    lag_seconds = max(0, int((now - latest).total_seconds()))
+    return {
+        "symbol": symbol,
+        "latest_signal_at": latest,
+        "lag_seconds": lag_seconds,
+        "lag_vs_latest_accepted_seconds": max(
+            0,
+            int((latest_signal_at - latest).total_seconds()),
+        ),
+        "max_lag_seconds": max_age_seconds,
+        "state": "stale" if lag_seconds > max_age_seconds else "current",
+        "signal_rows": coerce_count(row.get("signal_rows")),
+    }
 
 
 __all__ = [
