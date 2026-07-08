@@ -27,6 +27,15 @@ class ForwarderSubscriptionTest {
       setOf("NVDA", "AMZN"),
       ack.subscribedSymbolsForChannels(listOf("quotes")),
     )
+    assertEquals(
+      mapOf(
+        "trades" to setOf("NVDA", "AAPL"),
+        "quotes" to setOf("NVDA", "AMZN"),
+        "bars" to setOf("AVGO"),
+        "updatedBars" to setOf("AMD"),
+      ),
+      ack.subscribedSymbolsByChannel(listOf("trades", "quotes", "bars", "updatedBars")),
+    )
   }
 
   @Test
@@ -41,6 +50,24 @@ class ForwarderSubscriptionTest {
       ).subscribedSymbolsForChannels(listOf("trades", "quotes", "bars", "updatedBars"))
 
     assertEquals(listOf("AAPL", "AMZN", "GOOGL", "ORCL"), missingDesiredSymbols(desired, actual))
+  }
+
+  @Test
+  fun `missing desired symbols are evaluated for every requested channel`() {
+    val desired = listOf("NVDA", "AMD")
+    val actual =
+      AlpacaSubscription(
+        bars1m = listOf("NVDA", "AMD"),
+      ).subscribedSymbolsByChannel(listOf("trades", "quotes", "bars", "updatedBars"))
+
+    assertEquals(
+      mapOf(
+        "trades" to listOf("NVDA", "AMD"),
+        "quotes" to listOf("NVDA", "AMD"),
+        "updatedBars" to listOf("NVDA", "AMD"),
+      ),
+      missingDesiredSymbolsByChannel(desired, actual, listOf("trades", "quotes", "bars", "updatedBars")),
+    )
   }
 
   @Test
