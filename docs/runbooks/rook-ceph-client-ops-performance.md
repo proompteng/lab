@@ -559,7 +559,9 @@ too old. Ceph's read-primary balancer uses `pg-upmap-primary`, and current Ceph 
 not support those mappings. For this cluster, enabling `upmap-read` while the default `rook-ceph-block` class is
 used by production KRBD mounts can hang or break RBD IO. Do not force `set-require-min-compat-client reef`.
 
-Inventory commands:
+Inventory commands. Select RBD nodeplugin pods by their `app` label and verify the `csi-rbdplugin` container exists before
+running `rbd showmapped`; this avoids silently skipping KRBD inventory when pod names differ across Ceph-CSI/Rook
+deployments.
 
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph features
@@ -568,9 +570,21 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell mon.e sessions --f
   jq -r '.[] | select(.entity_name=="client.csi-rbd-node") |
     [.global_id, .con_features_release, .socket_addr.addr, (.remote_host // "-")] | @tsv'
 
-kubectl -n rook-ceph get pods -o wide | rg 'rook-ceph\.rbd\.csi\.ceph\.com-nodeplugin'
+RBD_NODEPLUGIN_SELECTOR='app in (rook-ceph.rbd.csi.ceph.com-nodeplugin,csi-rbdplugin)'
 
-for pod in $(kubectl -n rook-ceph get pods -o name | rg 'rook-ceph\.rbd\.csi\.ceph\.com-nodeplugin'); do
+kubectl -n rook-ceph get pods -l "${RBD_NODEPLUGIN_SELECTOR}" -o wide
+
+rbd_nodeplugins="$(kubectl -n rook-ceph get pods -l "${RBD_NODEPLUGIN_SELECTOR}" -o json | \
+  jq -r '.items[] |
+    select(any(.spec.containers[]?; .name=="csi-rbdplugin")) |
+    "pod/" + .metadata.name')"
+
+if [ -z "${rbd_nodeplugins}" ]; then
+  echo "No RBD CSI nodeplugin pods found with selector: ${RBD_NODEPLUGIN_SELECTOR}" >&2
+  exit 1
+fi
+
+for pod in ${rbd_nodeplugins}; do
   node="$(kubectl -n rook-ceph get "$pod" -o jsonpath='{.spec.nodeName}')"
   count="$(kubectl -n rook-ceph exec "${pod#pod/}" -c csi-rbdplugin -- rbd showmapped --format json | jq length)"
   printf '%s\t%s\t%s\n' "$node" "$pod" "$count"
