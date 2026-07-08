@@ -165,10 +165,9 @@ roleRef:
   name: agents-ci-runner-torghut-post-deploy-read
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: agents-ci-runner-torghut-market-data-secret-read
-  namespace: torghut
 rules:
   - apiGroups:
       - ''
@@ -180,24 +179,22 @@ rules:
       - get
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: agents-ci-runner-torghut-market-data-secret-read
-  namespace: torghut
 subjects:
   - kind: ServiceAccount
     name: arc-arm64-gha-rs-kube-mode
     namespace: arc
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: agents-ci-runner-torghut-market-data-secret-read
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: agents-ci-runner-kafka-tail
-  namespace: kafka
 rules:
   - apiGroups:
       - ''
@@ -215,15 +212,14 @@ rules:
       - create
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
   name: agents-ci-runner-kafka-tail
-  namespace: kafka
 subjects:
   - kind: ServiceAccount
     name: arc-arm64-gha-rs-kube-mode
     namespace: arc
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
+  kind: ClusterRole
   name: agents-ci-runner-kafka-tail
