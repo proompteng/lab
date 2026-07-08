@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any
+from decimal import Decimal
+from typing import cast
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -42,8 +43,8 @@ from .targets import (
 def build_proofs_payload(
     session: Session,
     *,
-    live_submission_gate: Mapping[str, Any],
-    route_reacquisition_book: Mapping[str, Any],
+    live_submission_gate: Mapping[str, object],
+    route_reacquisition_book: Mapping[str, object],
     generated_at: datetime | None = None,
     kind: ProofKind = "runtime_window",
     limit: int = DEFAULT_PROOFS_LIMIT,
@@ -81,6 +82,8 @@ def build_proofs_payload(
     blocker_counts: Counter[str] = Counter()
     for proof in proofs:
         blocker_counts.update(proof["blockers"])
+    gate_payload = _live_submission_gate_payload(live_submission_gate)
+    gate_freshness = _live_submission_gate_freshness(gate_payload)
     return {
         "schema_version": PROOFS_SCHEMA_VERSION,
         "generated_at": isoformat(resolved_generated_at),
@@ -90,6 +93,7 @@ def build_proofs_payload(
             generated_at=resolved_generated_at,
             proofs=proofs,
         ),
+        "live_submission_gate": gate_payload,
         "proofs": proofs,
         "summary": {
             "target_count": len(targets),
@@ -99,6 +103,14 @@ def build_proofs_payload(
             "ready_count": state_counts.get("proof_ready", 0),
             "import_due_count": state_counts.get("import_due", 0),
             "blocked_count": state_counts.get("blocked", 0),
+            "live_submission_allowed": bool(gate_payload.get("allowed")),
+            "live_submission_reason": _text_or_none(gate_payload.get("reason")),
+            "accepted_source_state": _text_or_none(
+                gate_freshness.get("accepted_source_state")
+            ),
+            "accepted_lag_seconds": _float_or_none(
+                gate_freshness.get("accepted_lag_seconds")
+            ),
         },
         "promotion_authority": {
             "allowed": False,
@@ -109,11 +121,52 @@ def build_proofs_payload(
     }
 
 
+def _live_submission_gate_payload(
+    live_submission_gate: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        str(key): value
+        for key, value in live_submission_gate.items()
+        if str(key).strip()
+    }
+
+
+def _live_submission_gate_freshness(
+    live_submission_gate: Mapping[str, object],
+) -> Mapping[str, object]:
+    freshness = live_submission_gate.get("clickhouse_ta_freshness")
+    if isinstance(freshness, Mapping):
+        return cast(Mapping[str, object], freshness)
+    return {}
+
+
+def _text_or_none(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _float_or_none(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        return float(value)
+    if not isinstance(value, str):
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
 def _load_strategy_universe_by_name(
     session: Session,
     *,
-    live_submission_gate: Mapping[str, Any],
-    route_reacquisition_book: Mapping[str, Any],
+    live_submission_gate: Mapping[str, object],
+    route_reacquisition_book: Mapping[str, object],
 ) -> dict[str, object]:
     names = proof_target_strategy_lookup_names_from_payloads(
         live_submission_gate=live_submission_gate,
@@ -138,7 +191,7 @@ def _build_proof(
     generated_at: datetime,
     full_audit: bool,
     target_account_audit_available: bool,
-    live_submission_gate: Mapping[str, Any],
+    live_submission_gate: Mapping[str, object],
 ) -> ProofPayload:
     window_closed = generated_at >= target.window_end
     source_counts = load_source_activity_counts(session, target)

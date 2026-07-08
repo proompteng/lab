@@ -14,6 +14,73 @@ from tests.api.trading_api_support import (
 )
 
 
+def _shared_blocked_live_gate() -> dict[str, object]:
+    return {
+        "allowed": False,
+        "reason": "promotion_certificate_missing",
+        "blocked_reasons": [
+            "promotion_certificate_missing",
+            "hypothesis_window_evidence_missing",
+        ],
+        "certificate_id": None,
+        "capital_stage": "shadow",
+        "capital_state": "observe",
+        "issued_at": None,
+        "expires_at": None,
+        "reason_codes": [
+            "promotion_certificate_missing",
+            "hypothesis_window_evidence_missing",
+        ],
+        "clickhouse_ta_freshness": {
+            "accepted_sources": ["ta"],
+            "latest_accepted_event_at": "2026-03-20T09:54:00Z",
+            "accepted_lag_seconds": 360,
+            "accepted_source_state": "stale",
+            "blocking_reason": "accepted_ta_signal_stale",
+        },
+        "segment_summary": {
+            "segments": {
+                "execution": {"state": "ok", "reason_codes": []},
+                "empirical": {"state": "ok", "reason_codes": []},
+                "llm-review": {"state": "ok", "reason_codes": []},
+                "market-context": {"state": "ok", "reason_codes": []},
+                "ta-core": {"state": "ok", "reason_codes": []},
+            },
+            "evaluated_hypotheses": [],
+        },
+        "quant_health_ref": {
+            "account": "paper",
+            "window": "15m",
+            "status": "healthy",
+            "source_url": "http://torghut.test/quant/health",
+            "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
+        },
+        "market_context_ref": {"last_freshness_seconds": 30},
+        "evidence_tuple": {
+            "hypothesis_id": None,
+            "candidate_id": None,
+            "strategy_id": None,
+            "account": "paper",
+            "window": "15m",
+            "capital_state": "observe",
+        },
+        "lineage_ref": {
+            "status": "unverified",
+            "candidate_id": None,
+            "hypothesis_id": None,
+            "dataset_snapshot_count": 0,
+            "dataset_snapshot_id": None,
+            "dataset_snapshot_ref": None,
+            "dataset_snapshot_run_id": None,
+            "strategy_hypothesis_count": 0,
+            "strategy_hypothesis_id": None,
+            "lane_id": None,
+            "strategy_family": None,
+        },
+        "evaluated_tuples": [],
+    }
+
+
 class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
     def test_trading_status_includes_llm_evaluation(self) -> None:
         with patch("app.api.trading_status.SessionLocal", self.session_local):
@@ -340,63 +407,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             _mark_static_universe_loaded(scheduler)
             app.state.trading_scheduler = scheduler
-            shared_gate = {
-                "allowed": False,
-                "reason": "promotion_certificate_missing",
-                "blocked_reasons": [
-                    "promotion_certificate_missing",
-                    "hypothesis_window_evidence_missing",
-                ],
-                "certificate_id": None,
-                "capital_stage": "shadow",
-                "capital_state": "observe",
-                "issued_at": None,
-                "expires_at": None,
-                "reason_codes": [
-                    "promotion_certificate_missing",
-                    "hypothesis_window_evidence_missing",
-                ],
-                "segment_summary": {
-                    "segments": {
-                        "execution": {"state": "ok", "reason_codes": []},
-                        "empirical": {"state": "ok", "reason_codes": []},
-                        "llm-review": {"state": "ok", "reason_codes": []},
-                        "market-context": {"state": "ok", "reason_codes": []},
-                        "ta-core": {"state": "ok", "reason_codes": []},
-                    },
-                    "evaluated_hypotheses": [],
-                },
-                "quant_health_ref": {
-                    "account": "paper",
-                    "window": "15m",
-                    "status": "healthy",
-                    "source_url": "http://torghut.test/quant/health",
-                    "latest_metrics_updated_at": "2026-03-20T10:00:00Z",
-                },
-                "market_context_ref": {"last_freshness_seconds": 30},
-                "evidence_tuple": {
-                    "hypothesis_id": None,
-                    "candidate_id": None,
-                    "strategy_id": None,
-                    "account": "paper",
-                    "window": "15m",
-                    "capital_state": "observe",
-                },
-                "lineage_ref": {
-                    "status": "unverified",
-                    "candidate_id": None,
-                    "hypothesis_id": None,
-                    "dataset_snapshot_count": 0,
-                    "dataset_snapshot_id": None,
-                    "dataset_snapshot_ref": None,
-                    "dataset_snapshot_run_id": None,
-                    "strategy_hypothesis_count": 0,
-                    "strategy_hypothesis_id": None,
-                    "lane_id": None,
-                    "strategy_family": None,
-                },
-                "evaluated_tuples": [],
-            }
+            shared_gate = _shared_blocked_live_gate()
 
             with (
                 patch(
@@ -471,16 +482,60 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     "app.api.runtime_profitability._build_live_submission_gate_payload",
                     return_value=shared_gate,
                 ),
+                patch(
+                    "app.api.proofs._empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.api.proofs.load_quant_evidence_status",
+                    return_value={
+                        "required": True,
+                        "ok": True,
+                        "status": "healthy",
+                        "reason": "ready",
+                        "blocking_reasons": [],
+                        "account": "paper",
+                        "window": "15m",
+                    },
+                ),
+                patch(
+                    "app.api.proofs._build_live_submission_gate_payload",
+                    return_value=shared_gate,
+                ),
+                patch(
+                    "app.api.proofs._merge_external_paper_route_target_plan",
+                    side_effect=lambda gate: gate,
+                ),
+                patch(
+                    "app.api.proofs._build_simple_lane_status_payload",
+                    return_value={},
+                ),
+                patch(
+                    "app.api.proofs._with_configured_paper_collection_targets",
+                    side_effect=(
+                        lambda live_submission_gate, *, simple_lane_status, session: (
+                            live_submission_gate
+                        )
+                    ),
+                ),
+                patch(
+                    "app.api.proofs._paper_route_probe_book_from_target_plan",
+                    return_value={},
+                ),
             ):
                 status_response = self.client.get("/trading/status")
                 health_response = self.client.get("/trading/health")
                 ready_response = self.client.get("/readyz")
                 runtime_response = self.client.get("/trading/profitability/runtime")
+                proofs_response = self.client.get(
+                    "/trading/proofs?kind=runtime_window&window=next&limit=1"
+                )
 
             self.assertEqual(status_response.status_code, 200)
             self.assertEqual(health_response.status_code, 503)
             self.assertEqual(ready_response.status_code, 503)
             self.assertEqual(runtime_response.status_code, 200)
+            self.assertEqual(proofs_response.status_code, 200)
             self.assertEqual(
                 status_response.json()["live_submission_gate"], shared_gate
             )
@@ -491,6 +546,17 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                 runtime_response.json()["live_submission_gate"],
                 shared_gate,
             )
+            proofs_payload = proofs_response.json()
+            self.assertEqual(proofs_payload["live_submission_gate"], shared_gate)
+            self.assertEqual(
+                proofs_payload["summary"]["live_submission_reason"],
+                "promotion_certificate_missing",
+            )
+            self.assertEqual(
+                proofs_payload["summary"]["accepted_source_state"],
+                "stale",
+            )
+            self.assertEqual(proofs_payload["summary"]["accepted_lag_seconds"], 360.0)
             ready_gate = ready_response.json()["live_submission_gate"]
             self.assertEqual(
                 ready_gate,

@@ -51,10 +51,21 @@ def _target(window_start: datetime, window_end: datetime) -> dict[str, object]:
 
 
 def _gate(
-    target: dict[str, object], blockers: list[str] | None = None
+    target: dict[str, object],
+    blockers: list[str] | None = None,
+    accepted_lag_seconds: object = 420.5,
 ) -> dict[str, object]:
     return {
+        "allowed": False,
+        "reason": "accepted_ta_signal_stale",
         "blocked_reasons": blockers or [],
+        "clickhouse_ta_freshness": {
+            "accepted_sources": ["ta"],
+            "latest_accepted_event_at": "2026-06-08T13:29:00+00:00",
+            "accepted_lag_seconds": accepted_lag_seconds,
+            "accepted_source_state": "stale",
+            "blocking_reason": "accepted_ta_signal_stale",
+        },
         "runtime_ledger_paper_probation_import_plan": {
             "target_count": 1,
             "targets": [target],
@@ -68,10 +79,13 @@ def _build(
     generated_at: datetime,
     target: dict[str, object] | None = None,
     blockers: list[str] | None = None,
+    accepted_lag_seconds: object = 420.5,
 ) -> dict[str, object]:
     return build_proofs_payload(
         session,
-        live_submission_gate=_gate(target, blockers) if target else {},
+        live_submission_gate=(
+            _gate(target, blockers, accepted_lag_seconds) if target else {}
+        ),
         route_reacquisition_book={},
         generated_at=generated_at,
         window="auto",
@@ -89,6 +103,56 @@ def test_build_proofs_payload_reports_no_target() -> None:
     assert payload["proofs"] == []
     assert payload["summary"]["target_count"] == 0
     assert payload["promotion_authority"]["allowed"] is False
+
+
+def test_build_proofs_payload_exposes_live_submission_gate_and_freshness_summary() -> (
+    None
+):
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)
+    target = _target(window_start, window_end)
+    with _session() as session:
+        payload = _build(
+            session,
+            target=target,
+            generated_at=window_start - timedelta(minutes=1),
+        )
+
+    assert payload["live_submission_gate"]["allowed"] is False
+    assert payload["live_submission_gate"]["reason"] == "accepted_ta_signal_stale"
+    assert payload["summary"]["live_submission_allowed"] is False
+    assert payload["summary"]["live_submission_reason"] == "accepted_ta_signal_stale"
+    assert payload["summary"]["accepted_source_state"] == "stale"
+    assert payload["summary"]["accepted_lag_seconds"] == 420.5
+    assert payload["promotion_authority"] == {
+        "allowed": False,
+        "final_promotion_allowed": False,
+        "reason": "proof_collection_only",
+        "blockers": ["live_runtime_ledger_authority_required"],
+    }
+
+
+def test_build_proofs_payload_normalizes_invalid_accepted_lag_summary() -> None:
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)
+    target = _target(window_start, window_end)
+    cases: list[tuple[object, float | None]] = [
+        ("421.75", 421.75),
+        (True, None),
+        ({"lag": 421}, None),
+        ("not-a-number", None),
+    ]
+
+    for raw_lag, expected_lag in cases:
+        with _session() as session:
+            payload = _build(
+                session,
+                target=target,
+                generated_at=window_start - timedelta(minutes=1),
+                accepted_lag_seconds=raw_lag,
+            )
+
+        assert payload["summary"]["accepted_lag_seconds"] == expected_lag
 
 
 def test_build_proofs_payload_fills_missing_symbols_from_strategy_universe() -> None:

@@ -121,6 +121,10 @@ class ProofSummaryPayload(TypedDict):
     ready_count: int
     import_due_count: int
     blocked_count: int
+    live_submission_allowed: bool
+    live_submission_reason: str | None
+    accepted_source_state: str | None
+    accepted_lag_seconds: float | None
 
 
 class ProofsPayload(TypedDict):
@@ -128,6 +132,7 @@ class ProofsPayload(TypedDict):
     generated_at: str
     kind: ProofKind
     window: dict[str, object]
+    live_submission_gate: dict[str, object]
     proofs: list[ProofPayload]
     summary: ProofSummaryPayload
     promotion_authority: PromotionAuthorityPayload
