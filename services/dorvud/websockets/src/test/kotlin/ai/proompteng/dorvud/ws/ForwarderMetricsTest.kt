@@ -82,6 +82,7 @@ class ForwarderMetricsTest {
     val metrics = ForwarderMetrics(registry)
 
     metrics.recordProviderMessage(AlpacaMarketType.OPTIONS, "quote")
+    metrics.recordMarketDataDrop(AlpacaMarketType.OPTIONS, "quote", "invalid_event_ts")
     metrics.setOptionsEventStarvation(true)
 
     assertEquals(
@@ -90,6 +91,16 @@ class ForwarderMetricsTest {
         .find("torghut_ws_provider_messages_total")
         .tag("market_type", "options")
         .tag("channel", "quote")
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_drops_total")
+        .tag("market_type", "options")
+        .tag("channel", "quote")
+        .tag("reason", "invalid_event_ts")
         .counter()
         ?.count(),
     )

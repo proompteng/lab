@@ -228,6 +228,7 @@ class ForwarderApp(
   private val kafkaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val reportedNotReadyClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaFailureCount = AtomicInteger(0)
+  private val envelopeDropLogged = AtomicBoolean(false)
   private val backfillDone = AtomicBoolean(false)
   private val tradesBackfillDone = AtomicBoolean(false)
   private val notReadyLivenessGate = NotReadyLivenessGate(config.healthNotReadyKillAfterMs, nowMs)
@@ -1396,7 +1397,12 @@ class ForwarderApp(
       else -> {}
     }
 
-    val env = AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) } ?: return null
+    val env =
+      AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) }
+        ?: run {
+          recordMarketDataEnvelopeDrop(msg)
+          return null
+        }
     recordLag(env)
 
     val topic =
@@ -1446,6 +1452,19 @@ class ForwarderApp(
   private fun recordLag(env: Envelope<*>) {
     val lagMs = Duration.between(env.eventTs, env.ingestTs).toMillis()
     metrics.recordLagMs(lagMs)
+  }
+
+  private fun recordMarketDataEnvelopeDrop(msg: AlpacaMessage) {
+    val observed = observedMarketDataMessage(msg) ?: return
+    val reason = marketDataEnvelopeDropReason(msg)
+    metrics.recordMarketDataDrop(config.alpacaMarketType, observed.channel, reason)
+    if (envelopeDropLogged.compareAndSet(false, true)) {
+      logger.warn {
+        "alpaca market-data frame dropped before envelope " +
+          "market_type=${config.alpacaMarketType.name.lowercase()} channel=${observed.channel} " +
+          "reason=$reason timestamp_shape=${timestampShape(alpacaEventTimestamp(msg))}"
+      }
+    }
   }
 
   private fun recordKafkaFailure(
@@ -1784,6 +1803,38 @@ internal fun observedMarketDataMessage(message: AlpacaMessage): ObservedMarketDa
     is AlpacaUpdatedBar -> ObservedMarketDataMessage("updatedBars", message.symbol)
     else -> null
   }
+
+internal fun marketDataEnvelopeDropReason(message: AlpacaMessage): String {
+  val timestamp = alpacaEventTimestamp(message) ?: return "unsupported_message"
+  return if (parseAlpacaEventInstant(timestamp) == null) {
+    "invalid_event_ts"
+  } else {
+    "envelope_mapping_failed"
+  }
+}
+
+internal fun alpacaEventTimestamp(message: AlpacaMessage): String? =
+  when (message) {
+    is AlpacaTrade -> message.timestamp
+    is AlpacaQuote -> message.timestamp
+    is AlpacaBar -> message.timestamp
+    is AlpacaUpdatedBar -> message.timestamp
+    is AlpacaStatus -> message.timestamp
+    else -> null
+  }
+
+private fun timestampShape(timestamp: String?): String {
+  val value = timestamp?.trim()?.takeIf { it.isNotEmpty() } ?: return "missing"
+  return listOf(
+    "len=${value.length}",
+    "has_t=${value.contains('T')}",
+    "has_space=${value.contains(' ')}",
+    "has_z=${value.endsWith('Z')}",
+    "has_dot=${value.contains('.')}",
+    "has_offset=${Regex("[+-]\\d{2}:?\\d{2}$").containsMatchIn(value)}",
+    "numeric=${value.all { it.isDigit() || it == '.' }}",
+  ).joinToString(",")
+}
 
 internal fun isRegularMarketSession(
   now: Instant,

@@ -21,6 +21,7 @@ internal class ForwarderMetrics(
   private val kafkaMetadataErrorCounters = ConcurrentHashMap<String, Counter>()
   private val desiredSymbolsFetchFailureCounters = ConcurrentHashMap<String, Counter>()
   private val providerMessageCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataDropCounters = ConcurrentHashMap<String, Counter>()
   private val marketDataChannelGaugeValues = ConcurrentHashMap<String, AtomicLong>()
 
   private val readinessStatus = AtomicInteger(0)
@@ -198,6 +199,23 @@ internal class ForwarderMetrics(
           .builder("torghut_ws_provider_messages_total")
           .tag("market_type", parts[0].lowercase())
           .tag("channel", parts[1])
+          .register(registry)
+      }.increment()
+  }
+
+  fun recordMarketDataDrop(
+    marketType: AlpacaMarketType,
+    channel: String,
+    reason: String,
+  ) {
+    marketDataDropCounters
+      .computeIfAbsent("${marketType.name}|$channel|$reason") { key ->
+        val parts = key.split("|", limit = 3)
+        Counter
+          .builder("torghut_ws_market_data_drops_total")
+          .tag("market_type", parts[0].lowercase())
+          .tag("channel", parts[1])
+          .tag("reason", parts[2])
           .register(registry)
       }.increment()
   }
