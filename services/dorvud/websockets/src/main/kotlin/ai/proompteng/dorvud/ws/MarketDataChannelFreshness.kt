@@ -125,9 +125,11 @@ internal class MarketDataChannelFreshnessTracker(
         marketSessionActive(Instant.ofEpochMilli(now))
     return requiredChannels.map { channel ->
       val channelSymbols = symbolsByChannel[channel].orEmpty()
-      val readinessMode = readinessModeFor(channel)
+      val readinessMode = readinessModeFor(channel, marketType)
       val freshnessRequired = readinessMode == MarketDataChannelReadinessMode.CONTINUOUS
-      val symbolCoverageRequired = readinessMode == MarketDataChannelReadinessMode.CONTINUOUS
+      val symbolCoverageRequired =
+        readinessMode == MarketDataChannelReadinessMode.CONTINUOUS &&
+          marketType != AlpacaMarketType.OPTIONS
       val state = latestByChannel[channel]
       val latestKafkaSuccessAt = state?.latestKafkaSuccessAtMs?.get()?.takeIf { it > 0 }
       val latestProviderAt = state?.latestProviderEventAtMs?.get()?.takeIf { it > 0 }
@@ -294,9 +296,14 @@ private enum class MarketDataChannelReadinessMode(
   CONDITIONAL("conditional"),
 }
 
-private fun readinessModeFor(channel: String): MarketDataChannelReadinessMode =
-  when (canonicalMarketDataChannel(channel)) {
-    "updatedBars" -> MarketDataChannelReadinessMode.CONDITIONAL
+private fun readinessModeFor(
+  channel: String,
+  marketType: AlpacaMarketType,
+): MarketDataChannelReadinessMode =
+  when {
+    canonicalMarketDataChannel(channel) == "updatedBars" -> MarketDataChannelReadinessMode.CONDITIONAL
+    marketType == AlpacaMarketType.OPTIONS && canonicalMarketDataChannel(channel) == "trades" ->
+      MarketDataChannelReadinessMode.CONDITIONAL
     else -> MarketDataChannelReadinessMode.CONTINUOUS
   }
 

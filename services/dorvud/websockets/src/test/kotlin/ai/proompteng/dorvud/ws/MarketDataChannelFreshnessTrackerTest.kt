@@ -229,4 +229,75 @@ class MarketDataChannelFreshnessTrackerTest {
     assertEquals(listOf("NVDA"), staleCoverage.staleSymbols)
     assertEquals(listOf("AMD"), staleCoverage.freshSymbols)
   }
+
+  @Test
+  fun `options readiness does not require full symbol coverage for quote liveness`() {
+    val nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("quotes"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.OPTIONS,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("quotes" to listOf("NVDA260717C00160000", "NVDA260717P00160000")))
+    tracker.recordProviderEvent("quotes", "NVDA260717C00160000")
+    tracker.recordSerializedEvent("quotes", "NVDA260717C00160000")
+    tracker.recordKafkaSuccess("quotes", "NVDA260717C00160000")
+
+    val readiness = tracker.snapshot().single()
+
+    assertTrue(tracker.ready())
+    assertTrue(readiness.ready)
+    assertTrue(readiness.freshnessRequired)
+    assertFalse(readiness.symbolCoverageRequired)
+    assertEquals("continuous", readiness.readinessMode)
+    assertEquals("market_data_channel_fresh", readiness.reason)
+    assertEquals(2, readiness.subscribedSymbolCount)
+    assertEquals(1, readiness.observedSymbolCount)
+    assertEquals(listOf("NVDA260717C00160000"), readiness.freshSymbols)
+    assertEquals(emptyList(), readiness.missingSymbols)
+    assertEquals(emptyList(), readiness.staleSymbols)
+  }
+
+  @Test
+  fun `options trades are conditional but fail when observed provider events do not reach kafka`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("trades"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.OPTIONS,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("trades" to listOf("NVDA260717C00160000", "NVDA260717P00160000")))
+
+    val quietTrades = tracker.snapshot().single()
+    assertTrue(tracker.ready())
+    assertEquals("conditional", quietTrades.readinessMode)
+    assertFalse(quietTrades.freshnessRequired)
+    assertFalse(quietTrades.symbolCoverageRequired)
+    assertEquals("market_data_channel_conditional_no_events", quietTrades.reason)
+
+    tracker.recordProviderEvent("trades", "NVDA260717C00160000")
+    tracker.recordSerializedEvent("trades", "NVDA260717C00160000")
+
+    nowMs += 61_000
+
+    val missingKafka = tracker.snapshot().single()
+    assertFalse(tracker.ready())
+    assertEquals("market_data_channel_conditional_missing_kafka_success", missingKafka.reason)
+
+    tracker.recordKafkaSuccess("trades", "NVDA260717C00160000")
+
+    val deliveredTrade = tracker.snapshot().single()
+    assertTrue(tracker.ready())
+    assertEquals("market_data_channel_conditional_observed", deliveredTrade.reason)
+    assertEquals(listOf("NVDA260717C00160000"), deliveredTrade.observedSymbols)
+    assertEquals(emptyList(), deliveredTrade.missingSymbols)
+  }
 }
