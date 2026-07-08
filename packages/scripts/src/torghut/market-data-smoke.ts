@@ -256,6 +256,9 @@ const sumOptionalRecords = (
   return matching.reduce((total, value) => total + value, 0)
 }
 
+const isFinishedBoundedCollectionSource = (vertex: TaFlinkVertexSnapshot): boolean =>
+  vertex.status === 'FINISHED' && vertex.name === 'Source: Collection Source'
+
 const summarizeKafkaRole = (
   now: Date,
   role: KafkaRole,
@@ -360,7 +363,9 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     (vertex) => vertex.name.includes('ta-status') || vertex.name.includes('sink-status'),
     'readRecordsPerSecond',
   )
-  const nonRunningVertices = taFlinkJob.vertices.filter((vertex) => vertex.status !== 'RUNNING')
+  const nonRunningVertices = taFlinkJob.vertices.filter(
+    (vertex) => vertex.status !== 'RUNNING' && !isFinishedBoundedCollectionSource(vertex),
+  )
   summaryLines.push(
     `- TA Flink: state=\`${taFlinkJob.state}\`, job_id=\`${taFlinkJob.jobId}\`, ` +
       `source_write_records=\`${sourceWriteRecords}\`, microbar_records=\`${microbarRecords}\`, ` +

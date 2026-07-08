@@ -377,6 +377,41 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.summaryLines.join('\n')).toContain('source_records_per_second=`0`')
   })
 
+  it('allows a finished bounded collection source inside a running Flink job after market close', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-08T02:47:00Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 120,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T20:54:01Z', symbol: 'SNDK' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T20:53:01Z', symbol: 'MU' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T20:13:00Z', symbol: 'SNDK' },
+      },
+      wsReadyz: staleWsReadyz,
+      tradingStatus: tradingStatusWithStaleAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: {
+        ...freshTaFlinkJob,
+        vertices: [
+          {
+            name: 'Source: Collection Source',
+            status: 'FINISHED',
+            metrics: { 'read-records': 1, 'write-records': 1 },
+          },
+          ...freshTaFlinkJob.vertices,
+        ],
+      },
+    })
+
+    expect(result.sessionState).toBe('closed')
+    expect(result.enforceFreshness).toBe(false)
+    expect(result.ok).toBe(true)
+    expect(result.failures.join('\n')).not.toContain('ta_flink_vertices_not_running')
+    expect(result.warnings.join('\n')).toContain('accepted_ta_signal_stale')
+  })
+
   it('fails regardless of market session when the Flink job is not running', () => {
     const result = evaluateMarketDataSmoke({
       now: new Date('2026-07-07T22:00:00Z'),
