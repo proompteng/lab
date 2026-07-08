@@ -94,6 +94,7 @@ def test_file_length_main_blocks_legacy_extracted_source_debt(
     def fake_run(command, *, check: bool, cwd=None):
         assert check is False
         assert cwd is None
+        assert "--max-module-lines=1000" in command
         return subprocess.CompletedProcess(
             command,
             0,

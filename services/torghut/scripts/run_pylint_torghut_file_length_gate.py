@@ -13,6 +13,7 @@ _PYLINT_MESSAGE_RE = re.compile(
     r"^(?P<path>[^:]+):(?P<line>\d+):(?P<column>\d+): "
     r"(?P<code>[A-Z]\d+): "
 )
+_MAX_MODULE_LINES = 1000
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,6 +34,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             *args.files,
             "--disable=all",
             "--enable=too-many-lines",
+            f"--max-module-lines={_MAX_MODULE_LINES}",
             "--score=n",
         ],
         check=False,
