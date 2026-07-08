@@ -122,6 +122,34 @@ def build_accepted_source_freshness_contract(
     }
 
 
+def build_unavailable_accepted_source_freshness_contract(
+    *,
+    context: ClickHouseSignalFreshnessContext,
+    state: str,
+    reason_code: str,
+    blocking_reason: str,
+) -> dict[str, object]:
+    now = context.now().astimezone(timezone.utc)
+    max_age_seconds = max(1, int(context.max_staleness_ms) // 1000)
+    market_session = regular_market_session_state(now)
+    accepted_sources = accepted_signal_sources(context.allowed_sources_raw)
+    resolved_blocking_reason = None if context.simulation_mode else blocking_reason
+    return {
+        "accepted_sources": list(accepted_sources) if accepted_sources else ["*"],
+        "latest_accepted_event_at": None,
+        "accepted_lag_seconds": None,
+        "accepted_max_lag_seconds": max_age_seconds,
+        "accepted_source_state": state,
+        "blocking_reason": resolved_blocking_reason,
+        "fresh_until": None,
+        "excluded_fresher_sources": [],
+        "per_symbol_coverage": [],
+        "stale_symbol_coverage": [],
+        **market_session,
+        "freshness_reason_codes": [reason_code],
+    }
+
+
 def _accepted_source_freshness_gate(
     *,
     lag_seconds: int,
@@ -369,6 +397,7 @@ __all__ = [
     "accepted_per_symbol_coverage",
     "accepted_signal_sources",
     "build_accepted_source_freshness_contract",
+    "build_unavailable_accepted_source_freshness_contract",
     "ClickHouseSignalFreshnessContext",
     "excluded_fresher_sources_after_accepted_latest",
     "latest_signal_readiness_counts",

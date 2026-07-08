@@ -31,6 +31,9 @@ from .clickhouse_signal_ingestor_core_methods import (
 from .clickhouse_signal_ingestor_market_methods import (
     ClickHouseSignalIngestorMarketMethods as _ClickHouseSignalIngestorMarketMethods,
 )
+from .clickhouse_signal_ingestor_status_methods import (
+    ClickHouseSignalIngestorStatusMethods as _ClickHouseSignalIngestorStatusMethods,
+)
 
 
 if TYPE_CHECKING:
@@ -146,6 +149,7 @@ class ClickHouseSignalIngestor(
     _ClickHouseSignalIngestorFields,
     _ClickHouseSignalIngestorCoreMethods,
     _ClickHouseSignalIngestorMarketMethods,
+    _ClickHouseSignalIngestorStatusMethods,
     _ClickHouseSignalIngestorPersistenceMethods,
 ):
     pass

@@ -84,6 +84,28 @@ class SourceFreshnessIngestor(SourceFilteredReadinessIngestor):
         return super()._query_clickhouse(query)
 
 
+class MissingLatestSignalIngestor(SourceFreshnessIngestor):
+    def _latest_signal_timestamp(
+        self,
+        time_column: str,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> datetime | None:
+        return None
+
+
+class FailingLatestSignalIngestor(SourceFreshnessIngestor):
+    def _latest_signal_timestamp(
+        self,
+        time_column: str,
+        *,
+        symbols: tuple[str, ...] = (),
+        timeframes: tuple[str, ...] = (),
+    ) -> datetime | None:
+        raise RuntimeError("latest accepted source query failed")
+
+
 def test_coerce_count_handles_clickhouse_json_values() -> None:
     assert coerce_count(True) == 1
     assert coerce_count(12) == 12
@@ -150,6 +172,80 @@ def test_latest_signal_readiness_counts_include_source_filter() -> None:
     ]
     assert readiness_queries
     assert "lower(source) IN ('ta')" in readiness_queries[0]
+
+
+def test_latest_signal_status_blocks_when_clickhouse_url_is_missing() -> None:
+    now = datetime(2026, 5, 13, 15, 30, tzinfo=timezone.utc)
+    ingestor = SourceFreshnessIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="",
+        latest_signal_ts=now,
+        signal_rows=0,
+        symbol_count=0,
+        source_rows=[],
+        coverage_rows=[],
+        now=now,
+    )
+
+    status = ingestor.latest_signal_status()
+
+    assert status["state"] == "missing"
+    assert status["reason_codes"] == ["clickhouse_url_missing"]
+    assert status["accepted_sources"] == ["ta"]
+    assert status["latest_accepted_event_at"] is None
+    assert status["accepted_lag_seconds"] is None
+    assert status["accepted_source_state"] == "unavailable"
+    assert status["blocking_reason"] == "accepted_ta_signal_unavailable"
+    assert status["market_session_state"] == "regular_open"
+    assert status["freshness_reason_codes"] == ["clickhouse_url_missing"]
+
+
+def test_latest_signal_status_blocks_when_freshness_query_fails() -> None:
+    now = datetime(2026, 5, 13, 15, 30, tzinfo=timezone.utc)
+    ingestor = FailingLatestSignalIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://example",
+        latest_signal_ts=now,
+        signal_rows=0,
+        symbol_count=0,
+        source_rows=[],
+        coverage_rows=[],
+        now=now,
+    )
+
+    status = ingestor.latest_signal_status()
+
+    assert status["state"] == "missing"
+    assert status["reason_codes"] == ["clickhouse_ta_status_query_failed"]
+    assert status["accepted_source_state"] == "unavailable"
+    assert status["blocking_reason"] == "accepted_ta_signal_unavailable"
+    assert status["freshness_reason_codes"] == ["clickhouse_ta_status_query_failed"]
+    assert "latest accepted source query failed" in status["detail"]
+
+
+def test_latest_signal_status_blocks_when_no_accepted_source_row_exists() -> None:
+    now = datetime(2026, 5, 13, 15, 30, tzinfo=timezone.utc)
+    ingestor = MissingLatestSignalIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://example",
+        latest_signal_ts=now,
+        signal_rows=0,
+        symbol_count=0,
+        source_rows=[],
+        coverage_rows=[],
+        now=now,
+    )
+
+    status = ingestor.latest_signal_status()
+
+    assert status["state"] == "missing"
+    assert status["reason_codes"] == ["clickhouse_ta_latest_signal_missing"]
+    assert status["accepted_source_state"] == "missing"
+    assert status["blocking_reason"] == "accepted_ta_signal_missing"
+    assert status["freshness_reason_codes"] == ["clickhouse_ta_latest_signal_missing"]
 
 
 def test_latest_signal_status_blocks_stale_accepted_source_and_reports_excluded_fresher_source() -> (

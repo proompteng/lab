@@ -118,9 +118,15 @@ def _clickhouse_ta_freshness_ref(
         "accepted_max_lag_seconds": status.get("accepted_max_lag_seconds"),
         "accepted_source_state": status.get("accepted_source_state"),
         "blocking_reason": status.get("blocking_reason"),
+        "fresh_until": status.get("fresh_until"),
+        "freshness_reason_codes": status.get("freshness_reason_codes") or [],
         "excluded_fresher_sources": status.get("excluded_fresher_sources") or [],
         "per_symbol_coverage": status.get("per_symbol_coverage") or [],
+        "stale_symbol_coverage": status.get("stale_symbol_coverage") or [],
         "market_session_state": status.get("market_session_state"),
+        "regular_session_open": status.get("regular_session_open"),
+        "regular_session_open_at": status.get("regular_session_open_at"),
+        "regular_session_close_at": status.get("regular_session_close_at"),
     }
 
 

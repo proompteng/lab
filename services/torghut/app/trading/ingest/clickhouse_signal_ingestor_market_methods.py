@@ -41,12 +41,6 @@ from .clickhouse_signal_ingestor_market_support import (
     signal_scope_key as _signal_scope_key,
     split_table as _split_table,
 )
-from .clickhouse_signal_source_freshness import (
-    ClickHouseSignalFreshnessContext as _ClickHouseSignalFreshnessContext,
-    accepted_signal_sources as _accepted_signal_sources,
-    build_accepted_source_freshness_contract as _build_accepted_source_freshness_contract,
-    latest_signal_readiness_counts as _latest_signal_readiness_counts,
-)
 
 logger = logging.getLogger("app.trading.ingest")
 
@@ -178,84 +172,6 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
             self._latest_signal_ts_cache = latest
             return
         self._latest_signal_ts_scoped_cache[scope_key] = latest
-
-    def latest_signal_status(self) -> dict[str, Any]:
-        if not self.url:
-            return {
-                "state": "missing",
-                "reason_codes": ["clickhouse_url_missing"],
-                "source_ref": self.table,
-            }
-        try:
-            time_column = self._resolve_time_column()
-            latest_signal_at = self._latest_signal_timestamp(time_column)
-        except Exception as exc:
-            logger.warning("Failed to load ClickHouse TA freshness status: %s", exc)
-            return {
-                "state": "missing",
-                "reason_codes": ["clickhouse_ta_status_query_failed"],
-                "source_ref": self.table,
-                "detail": str(exc)[:200],
-            }
-        if latest_signal_at is None:
-            return {
-                "state": "missing",
-                "reason_codes": ["clickhouse_ta_latest_signal_missing"],
-                "source_ref": self.table,
-                "time_column": time_column,
-            }
-        status: dict[str, Any] = {
-            "state": "current",
-            "latest_signal_at": latest_signal_at,
-            "source_ref": self.table,
-            "time_column": time_column,
-        }
-        status.update(
-            self._accepted_source_freshness_contract(
-                time_column=time_column,
-                latest_signal_at=latest_signal_at,
-            )
-        )
-        try:
-            status.update(
-                _latest_signal_readiness_counts(
-                    context=self._signal_freshness_context(),
-                    time_column=time_column,
-                    latest_signal_at=latest_signal_at,
-                )
-            )
-        except (RuntimeError, OSError, ValueError, TypeError) as exc:
-            logger.warning("Failed to load ClickHouse TA readiness counts: %s", exc)
-            status["readiness_reason_codes"] = ["clickhouse_ta_readiness_query_failed"]
-            status["readiness_detail"] = str(exc)[:200]
-        return status
-
-    def _accepted_source_freshness_contract(
-        self,
-        *,
-        time_column: str,
-        latest_signal_at: datetime,
-    ) -> dict[str, Any]:
-        return _build_accepted_source_freshness_contract(
-            context=self._signal_freshness_context(),
-            time_column=time_column,
-            latest_signal_at=latest_signal_at,
-        )
-
-    def _signal_freshness_context(self) -> _ClickHouseSignalFreshnessContext:
-        return _ClickHouseSignalFreshnessContext(
-            table=self.table,
-            simulation_mode=self.simulation_mode,
-            initial_lookback_minutes=self.initial_lookback_minutes,
-            max_staleness_ms=settings.trading_feature_max_staleness_ms,
-            allowed_sources_raw=",".join(self._accepted_signal_sources()),
-            query_clickhouse=self._query_clickhouse,
-            resolve_columns=self._resolve_columns,
-            source_where_clause=self._source_where_clause,
-        )
-
-    def _accepted_signal_sources(self) -> tuple[str, ...]:
-        return _accepted_signal_sources(settings.trading_signal_allowed_sources_raw)
 
     def _latest_signal_timestamp_queries(
         self,

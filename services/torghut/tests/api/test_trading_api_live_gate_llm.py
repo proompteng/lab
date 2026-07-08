@@ -333,6 +333,21 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     return_value={"ready": True, "status": "healthy"},
                 ),
                 patch(
+                    "app.api.trading_status._load_clickhouse_ta_status",
+                    return_value={
+                        "state": "current",
+                        "accepted_sources": ["ta"],
+                        "latest_accepted_event_at": "2026-03-20T09:59:00Z",
+                        "accepted_lag_seconds": 30,
+                        "accepted_max_lag_seconds": 300,
+                        "accepted_source_state": "current",
+                        "blocking_reason": None,
+                        "excluded_fresher_sources": [],
+                        "per_symbol_coverage": [],
+                        "market_session_state": "regular_open",
+                    },
+                ),
+                patch(
                     "app.api.trading_status.load_quant_evidence_status",
                     return_value={
                         "required": True,

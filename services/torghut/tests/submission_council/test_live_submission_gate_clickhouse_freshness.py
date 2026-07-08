@@ -13,6 +13,67 @@ from tests.submission_council.support import (
 
 
 class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
+    def test_build_live_submission_gate_payload_blocks_missing_accepted_clickhouse_ta_status(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=True,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=0,
+                    feature_null_rate={},
+                    feature_staleness_ms_p95=0,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            clickhouse_ta_status={
+                "state": "missing",
+                "reason_codes": ["clickhouse_ta_latest_signal_missing"],
+                "accepted_sources": ["ta"],
+                "latest_accepted_event_at": None,
+                "accepted_lag_seconds": None,
+                "accepted_max_lag_seconds": 300,
+                "accepted_source_state": "missing",
+                "blocking_reason": "accepted_ta_signal_missing",
+                "fresh_until": None,
+                "freshness_reason_codes": ["clickhouse_ta_latest_signal_missing"],
+                "excluded_fresher_sources": [],
+                "per_symbol_coverage": [],
+                "stale_symbol_coverage": [],
+                "market_session_state": "regular_open",
+                "regular_session_open": True,
+            },
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertIn("accepted_ta_signal_missing", result["blocked_reasons"])
+        self.assertEqual(result["continuity_source"], "clickhouse_ta_status")
+        self.assertEqual(result["continuity_reason"], "accepted_ta_signal_missing")
+        freshness = result["clickhouse_ta_freshness"]
+        self.assertEqual(freshness["accepted_source_state"], "missing")
+        self.assertEqual(freshness["blocking_reason"], "accepted_ta_signal_missing")
+        self.assertEqual(
+            freshness["freshness_reason_codes"],
+            ["clickhouse_ta_latest_signal_missing"],
+        )
+        self.assertEqual(freshness["market_session_state"], "regular_open")
+
     def test_build_live_submission_gate_payload_blocks_stale_accepted_clickhouse_ta_status(
         self,
     ) -> None:
