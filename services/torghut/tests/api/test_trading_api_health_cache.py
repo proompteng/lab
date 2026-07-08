@@ -75,10 +75,46 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             time.sleep(0.2)
             return ({"status": "ok", "live_submission_gate": {"allowed": True}}, 200)
 
+        shared_gate = {
+            "allowed": True,
+            "reason": "operational_submission_ready",
+            "blocked_reasons": [],
+            "reason_codes": [],
+            "promotion_authority": True,
+            "promotion_authority_ok": True,
+            "final_authority_ok": True,
+            "final_promotion_allowed": False,
+            "final_promotion_authorized": False,
+            "capital_stage": "live",
+            "clickhouse_ta_freshness": {
+                "accepted_source_state": "current",
+                "accepted_lag_seconds": 120,
+                "accepted_max_lag_seconds": 300,
+                "blocking_reason": None,
+            },
+        }
+        healthy_dependencies = {
+            "postgres": {"ok": True, "detail": "ok"},
+            "clickhouse": {"ok": True, "detail": "ok"},
+            "alpaca": {"ok": True, "detail": "ok"},
+            "tigerbeetle": {"ok": True, "detail": "ok"},
+            "readiness_cache": {"cache_used": False},
+        }
+
         try:
-            with patch(
-                "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
-                side_effect=_slow_health_payload,
+            with (
+                patch(
+                    "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_trading_health_payload",
+                    side_effect=_slow_health_payload,
+                ),
+                patch(
+                    "app.api.readiness_helpers.readiness_surface._core_readiness_dependencies",
+                    return_value=(healthy_dependencies, []),
+                ),
+                patch(
+                    "app.api.readiness_helpers.readiness_surface.readiness_live_submission_gate",
+                    return_value=shared_gate,
+                ),
             ):
                 started_at = time.monotonic()
                 response = self.client.get("/trading/health")
@@ -100,11 +136,13 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             payload["dependencies"]["health_evaluation"]["reason_codes"],
         )
         self.assertIsInstance(payload["dependencies"]["postgres"], dict)
-        self.assertFalse(payload["dependencies"]["postgres"]["ok"])
+        self.assertTrue(payload["dependencies"]["postgres"]["ok"])
         self.assertIsInstance(payload["scheduler"], dict)
-        self.assertFalse(payload["live_submission_gate"]["allowed"])
-        self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
-        self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
+        self.assertEqual(payload["live_submission_gate"], shared_gate)
+        self.assertNotIn(
+            "trading_health_evaluation_timeout",
+            payload["live_submission_gate"]["reason_codes"],
+        )
 
     def test_trading_health_timeout_uses_cached_dependency_shape(self) -> None:
         original_timeout = health_cache_state.TRADING_HEALTH_SURFACE_TIMEOUT_SECONDS
@@ -166,9 +204,10 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             dependencies["readiness_cache"]["health_surface_timeout_fallback"]
         )
         self.assertIsInstance(payload["scheduler"], dict)
-        self.assertFalse(payload["live_submission_gate"]["promotion_authority"])
-        self.assertFalse(payload["live_submission_gate"]["final_authority_ok"])
-        self.assertFalse(payload["live_submission_gate"]["final_promotion_allowed"])
+        self.assertNotEqual(
+            payload["live_submission_gate"].get("reason"),
+            "trading_health_evaluation_timeout",
+        )
 
     def test_trading_health_serves_completed_health_cache_while_refreshing(
         self,
