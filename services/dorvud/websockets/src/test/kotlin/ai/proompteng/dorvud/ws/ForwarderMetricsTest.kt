@@ -125,9 +125,12 @@ class ForwarderMetricsTest {
           latestProviderEventAtMs = 100,
           latestSerializedAtMs = 110,
           latestKafkaSuccessAtMs = null,
+          latestSubscriptionAckAtMs = 90,
           subscribedSymbolCount = 2,
+          subscribedSymbols = listOf("AMD", "NVDA"),
           observedSymbolCount = 1,
           observedSymbols = listOf("NVDA"),
+          subscriptionAckLagMs = 20,
           lagMs = null,
           maxLagMs = 60_000,
           reason = "market_data_channel_missing_kafka_success",
@@ -159,6 +162,24 @@ class ForwarderMetricsTest {
         .find("torghut_ws_market_data_channel")
         .tag("channel", "trades")
         .tag("field", "observed_symbol_count")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      90.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "latest_subscription_ack_at_ms")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      20.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "subscription_ack_lag_ms")
         .gauge()
         ?.value(),
     )

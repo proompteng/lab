@@ -235,6 +235,16 @@ internal class ForwarderMetrics(
       )
       setMarketDataChannelGauge(
         channel = channel.channel,
+        field = "latest_subscription_ack_at_ms",
+        value = channel.latestSubscriptionAckAtMs ?: 0,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "subscription_ack_lag_ms",
+        value = channel.subscriptionAckLagMs ?: -1,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
         field = "subscribed_symbol_count",
         value = channel.subscribedSymbolCount.toLong(),
       )

@@ -47,7 +47,22 @@ data class ReadinessInfo(
   val ready: Boolean,
   @SerialName("error_class") val errorClass: String? = null,
   val gates: ReadinessGates,
+  @SerialName("alpaca_market_data_ws") val alpacaMarketDataWs: AlpacaMarketDataWebsocketStatus = AlpacaMarketDataWebsocketStatus(),
   @SerialName("market_data_channels") val marketDataChannels: List<MarketDataChannelReadiness> = emptyList(),
+)
+
+@Serializable
+data class AlpacaMarketDataWebsocketStatus(
+  @SerialName("auth_ok") val authOk: Boolean = false,
+  @SerialName("subscription_ok") val subscriptionOk: Boolean = false,
+  @SerialName("latest_auth_success_at_ms") val latestAuthSuccessAtMs: Long? = null,
+  @SerialName("latest_subscription_ack_at_ms") val latestSubscriptionAckAtMs: Long? = null,
+  @SerialName("subscribed_symbol_count") val subscribedSymbolCount: Int = 0,
+  @SerialName("subscribed_symbols") val subscribedSymbols: List<String> = emptyList(),
+  @SerialName("subscribed_symbols_by_channel") val subscribedSymbolsByChannel: Map<String, List<String>> = emptyMap(),
+  @SerialName("missing_subscription_symbols_by_channel")
+  val missingSubscriptionSymbolsByChannel: Map<String, List<String>> = emptyMap(),
+  @SerialName("error_class") val errorClass: String? = null,
 )
 
 internal enum class KafkaFailureContext {
