@@ -581,7 +581,7 @@ class CoreSettingsFields(BaseSettings):
     )
 
     trading_feature_max_staleness_ms: int = Field(
-        default=120000,
+        default=300000,
         alias="TRADING_FEATURE_MAX_STALENESS_MS",
         description="Maximum allowed p95 feature staleness in milliseconds per batch.",
     )

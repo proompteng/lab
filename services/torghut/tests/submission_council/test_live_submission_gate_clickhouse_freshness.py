@@ -90,3 +90,31 @@ class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
             result,
             ("false", "clickhouse_ta_status", "accepted_ta_signal_stale"),
         )
+
+    def test_clickhouse_after_hours_accepted_lag_does_not_emit_stale_blocker(
+        self,
+    ) -> None:
+        result = runtime_window_import_continuity_signal(
+            SimpleNamespace(
+                last_signal_continuity_state="signals_present",
+                last_signal_continuity_reason="signals_present",
+                last_signal_continuity_actionable=False,
+                signal_continuity_alert_active=False,
+            ),
+            clickhouse_ta_status={
+                "state": "current",
+                "latest_signal_at": "2026-07-07T20:47:05+00:00",
+                "accepted_source_state": "outside_regular_session",
+                "blocking_reason": None,
+                "market_session_state": "after_market_close",
+            },
+        )
+
+        self.assertEqual(
+            result,
+            (
+                "true",
+                "clickhouse_ta_status",
+                "accepted_ta_signal_after_market_close",
+            ),
+        )

@@ -174,6 +174,12 @@ def fresh_clickhouse_signal_continuity(
     )
     if accepted_source_state == "stale":
         return "false", "clickhouse_ta_status", "accepted_ta_signal_stale"
+    if accepted_source_state == "outside_regular_session":
+        market_session_state = _safe_text(
+            clickhouse_ta_status.get("market_session_state")
+        )
+        reason = market_session_state or "outside_regular_session"
+        return "true", "clickhouse_ta_status", f"accepted_ta_signal_{reason}"
     state = _safe_text(clickhouse_ta_status.get("state"))
     latest_signal_at = _coerce_aware_datetime(
         clickhouse_ta_status.get("latest_signal_at")
