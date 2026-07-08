@@ -803,6 +803,17 @@ class ForwarderApp(
                 throw RuntimeException("alpaca error code=${msg.code} msg=${msg.msg}")
               }
               else -> {
+                val observed = observedMarketDataMessage(msg)
+                if (observed != null) {
+                  metrics.recordProviderMessage(config.alpacaMarketType, observed.channel)
+                  marketDataChannelFreshness.recordProviderEvent(observed.channel, observed.symbol)
+                  if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
+                    lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
+                    starvationStatusPublished.set(false)
+                    metrics.setOptionsEventStarvation(false)
+                    updateWsReady()
+                  }
+                }
                 val channel = handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
                 if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && channel in setOf("trade", "trades", "quote", "quotes")) {
                   lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
@@ -1387,8 +1398,6 @@ class ForwarderApp(
 
     val env = AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) } ?: return null
     recordLag(env)
-    metrics.recordProviderMessage(config.alpacaMarketType, env.channel)
-    marketDataChannelFreshness.recordProviderEvent(env.channel, env.symbol)
 
     val topic =
       when (env.channel) {
@@ -1758,6 +1767,23 @@ internal fun optionsEventStarved(
   val lastHealthyEvent = lastEventAt ?: subscribedSince ?: return false
   return Duration.between(lastHealthyEvent, now) >= grace
 }
+
+internal data class ObservedMarketDataMessage(
+  val channel: String,
+  val symbol: String,
+) {
+  val isQuoteOrTrade: Boolean
+    get() = channel == "trade" || channel == "trades" || channel == "quote" || channel == "quotes"
+}
+
+internal fun observedMarketDataMessage(message: AlpacaMessage): ObservedMarketDataMessage? =
+  when (message) {
+    is AlpacaTrade -> ObservedMarketDataMessage("trade", message.symbol)
+    is AlpacaQuote -> ObservedMarketDataMessage("quote", message.symbol)
+    is AlpacaBar -> ObservedMarketDataMessage("bars", message.symbol)
+    is AlpacaUpdatedBar -> ObservedMarketDataMessage("updatedBars", message.symbol)
+    else -> null
+  }
 
 internal fun isRegularMarketSession(
   now: Instant,
