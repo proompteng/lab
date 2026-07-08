@@ -150,6 +150,64 @@ describe('Torghut manifest scheduling', () => {
     expect(resources).not.toContain('whitepaper-autoresearch-replay-materialization-cronworkflow.yaml')
   })
 
+  it('protects the CNPG-managed Torghut CA secret from Argo prune without creating it', () => {
+    const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
+    const resources = kustomization.resources
+    expect(Array.isArray(resources)).toBe(true)
+    expect(resources).toContain('torghut-db-ca-reflector-rbac.yaml')
+    expect(resources).toContain('torghut-db-ca-prune-guard-job.yaml')
+    expect(resources).toContain('torghut-db-ca-reflector-job.yaml')
+    expect(resources).not.toContain('torghut-db-ca-reflector-source.yaml')
+
+    for (const path of collectYamlFiles('argocd/applications/torghut')) {
+      for (const manifest of parseManifestDocuments(path)) {
+        if (!manifest) {
+          continue
+        }
+        expect(manifest.kind === 'Secret' && getAtPath(manifest, ['metadata']).name === 'torghut-db-ca', path).toBe(
+          false,
+        )
+      }
+    }
+
+    const rbac = parseManifestDocuments('argocd/applications/torghut/torghut-db-ca-reflector-rbac.yaml')
+    for (const manifest of rbac) {
+      expect(getAtPath(manifest, ['metadata', 'annotations'])['argocd.argoproj.io/sync-wave']).toBe('-20')
+    }
+    const role = rbac.find((manifest) => manifest.kind === 'Role')
+    expect(role).toBeDefined()
+    expect(getAtPath(role, ['rules', 0])).toMatchObject({
+      apiGroups: [''],
+      resources: ['secrets'],
+      resourceNames: ['torghut-db-ca'],
+      verbs: ['get', 'patch'],
+    })
+
+    const pruneGuard = parseManifest('argocd/applications/torghut/torghut-db-ca-prune-guard-job.yaml')
+    expect(getAtPath(pruneGuard, ['metadata', 'annotations'])).toMatchObject({
+      'argocd.argoproj.io/hook': 'Sync',
+      'argocd.argoproj.io/hook-delete-policy': 'BeforeHookCreation,HookSucceeded',
+      'argocd.argoproj.io/sync-wave': '-10',
+    })
+    expect(getAtPath(pruneGuard, ['spec'])).toMatchObject({
+      backoffLimit: 2,
+      activeDeadlineSeconds: 120,
+      ttlSecondsAfterFinished: 300,
+    })
+    expect(getAtPath(pruneGuard, ['spec', 'template', 'spec']).serviceAccountName).toBe('torghut-db-ca-reflector')
+    const pruneCommand = String(getAtPath(pruneGuard, ['spec', 'template', 'spec', 'containers', 0]).command)
+    expect(pruneCommand).toContain('argocd.argoproj.io/sync-options=Prune=false')
+    expect(pruneCommand).toContain('argocd.argoproj.io/tracking-id-')
+    expect(pruneCommand).toContain('existing torghut-db-ca lacks CNPG CA data; leaving it pruneable')
+    expect(pruneCommand).toContain('protected existing CNPG-managed torghut-db-ca from Argo prune')
+
+    const reflector = parseManifest('argocd/applications/torghut/torghut-db-ca-reflector-job.yaml')
+    const reflectorCommand = String(getAtPath(reflector, ['spec', 'template', 'spec', 'containers', 0]).command)
+    expect(reflectorCommand).toContain('argocd.argoproj.io/sync-options=Prune=false')
+    expect(reflectorCommand).toContain('argocd.argoproj.io/tracking-id-')
+    expect(reflectorCommand).toContain('reflector.v1.k8s.emberstack.com/reflection-allowed=true')
+  })
+
   it('bounds Hyperliquid ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
     const job = parseManifest('argocd/applications/torghut-hyperliquid-feed/clickhouse-schema-job.yaml')
     const container = getAtPath(job, ['spec', 'template', 'spec', 'containers', 0])
