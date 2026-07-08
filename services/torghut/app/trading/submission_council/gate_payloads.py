@@ -61,6 +61,7 @@ class _SubmissionPayloadContext(Protocol):
 
 def common_submission_payload(context: object) -> dict[str, object]:
     payload_context = cast(_SubmissionPayloadContext, context)
+    clickhouse_ta_freshness = _clickhouse_ta_freshness_ref(payload_context)
     return {
         "configured_live_promotion": payload_context.toggles.configured_live_promotion,
         "autonomy_promotion_eligible": (
@@ -86,12 +87,48 @@ def common_submission_payload(context: object) -> dict[str, object]:
         "quant_evidence": payload_context.quant.evidence,
         "quant_health_ref": _quant_health_ref(payload_context),
         "market_context_ref": payload_context.market_context_ref,
-        "clickhouse_ta_freshness": _clickhouse_ta_freshness_ref(payload_context),
+        **_accepted_source_gate_fields(clickhouse_ta_freshness),
+        "clickhouse_ta_freshness": clickhouse_ta_freshness,
         "live_submit_activation": live_submit_activation_status(
             now=payload_context.now
         ),
         **_runtime_ledger_payload(payload_context.runtime_inputs.runtime_ledger),
         "profit_lease_projection": payload_context.profit_lease_projection,
+    }
+
+
+def _accepted_source_gate_fields(
+    clickhouse_ta_freshness: Mapping[str, object],
+) -> dict[str, object]:
+    return {
+        "accepted_sources": clickhouse_ta_freshness.get("accepted_sources"),
+        "latest_accepted_event_at": clickhouse_ta_freshness.get(
+            "latest_accepted_event_at"
+        ),
+        "accepted_lag_seconds": clickhouse_ta_freshness.get("accepted_lag_seconds"),
+        "accepted_max_lag_seconds": clickhouse_ta_freshness.get(
+            "accepted_max_lag_seconds"
+        ),
+        "accepted_source_state": clickhouse_ta_freshness.get("accepted_source_state"),
+        "blocking_reason": clickhouse_ta_freshness.get("blocking_reason"),
+        "fresh_until": clickhouse_ta_freshness.get("fresh_until"),
+        "freshness_reason_codes": clickhouse_ta_freshness.get("freshness_reason_codes")
+        or [],
+        "excluded_fresher_sources": clickhouse_ta_freshness.get(
+            "excluded_fresher_sources"
+        )
+        or [],
+        "per_symbol_coverage": clickhouse_ta_freshness.get("per_symbol_coverage") or [],
+        "stale_symbol_coverage": clickhouse_ta_freshness.get("stale_symbol_coverage")
+        or [],
+        "market_session_state": clickhouse_ta_freshness.get("market_session_state"),
+        "regular_session_open": clickhouse_ta_freshness.get("regular_session_open"),
+        "regular_session_open_at": clickhouse_ta_freshness.get(
+            "regular_session_open_at"
+        ),
+        "regular_session_close_at": clickhouse_ta_freshness.get(
+            "regular_session_close_at"
+        ),
     }
 
 
