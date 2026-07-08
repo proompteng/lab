@@ -11,6 +11,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.time.Instant
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
 
 /** Maps raw Alpaca JSON message into our envelope + channel name. */
 object AlpacaMapper {
@@ -139,7 +142,7 @@ object AlpacaMapper {
     isFinal: Boolean,
     source: String = "ws",
   ): Envelope<JsonElement>? {
-    val parsedEventTs = runCatching { Instant.parse(eventTs) }.getOrNull() ?: return null
+    val parsedEventTs = parseAlpacaEventInstant(eventTs) ?: return null
     return Envelope(
       ingestTs = Instant.now(),
       eventTs = parsedEventTs,
@@ -151,5 +154,23 @@ object AlpacaMapper {
       isFinal = isFinal,
       source = source,
     )
+  }
+}
+
+internal fun parseAlpacaEventInstant(eventTs: String): Instant? {
+  val normalized = eventTs.trim().takeIf { it.isNotEmpty() } ?: return null
+  return runCatching { Instant.parse(normalized) }.getOrNull()
+    ?: runCatching { OffsetDateTime.parse(normalized).toInstant() }.getOrNull()
+    ?: runCatching { LocalDateTime.parse(normalized).toInstant(ZoneOffset.UTC) }.getOrNull()
+    ?: parseEpochTimestamp(normalized)
+}
+
+private fun parseEpochTimestamp(value: String): Instant? {
+  val timestamp = value.toLongOrNull()?.takeIf { it >= 0 } ?: return null
+  return when (value.length) {
+    in 1..10 -> Instant.ofEpochSecond(timestamp)
+    in 11..13 -> Instant.ofEpochMilli(timestamp)
+    in 14..16 -> Instant.ofEpochSecond(timestamp / 1_000_000, (timestamp % 1_000_000) * 1_000)
+    else -> Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000)
   }
 }

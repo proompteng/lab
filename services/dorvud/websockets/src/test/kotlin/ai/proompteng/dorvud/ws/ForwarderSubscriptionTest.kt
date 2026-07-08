@@ -166,6 +166,35 @@ class ForwarderSubscriptionTest {
   }
 
   @Test
+  fun `observed market data messages expose raw provider quote and trade frames`() {
+    assertEquals(
+      ObservedMarketDataMessage("trade", "NVDA260717C00160000"),
+      observedMarketDataMessage(
+        AlpacaTrade(
+          symbol = "NVDA260717C00160000",
+          price = 1.15,
+          size = 1.0,
+          timestamp = "2026-07-08T14:52:03Z",
+        ),
+      ),
+    )
+    assertEquals(
+      ObservedMarketDataMessage("quote", "NVDA260717C00160000"),
+      observedMarketDataMessage(
+        AlpacaQuote(
+          symbol = "NVDA260717C00160000",
+          bidPrice = 1.1,
+          bidSize = 12.0,
+          askPrice = 1.2,
+          askSize = 10.0,
+          timestamp = "2026-07-08T14:52:03Z",
+        ),
+      ),
+    )
+    assertEquals(null, observedMarketDataMessage(AlpacaSuccess(msg = "authenticated")))
+  }
+
+  @Test
   fun `options event starvation requires options subscriptions during regular market hours`() {
     val now = Instant.parse("2026-06-18T15:00:00Z")
     val stale = now.minusSeconds(120)
