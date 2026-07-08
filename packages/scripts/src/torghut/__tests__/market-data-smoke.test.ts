@@ -404,6 +404,40 @@ describe('market data smoke freshness evaluation', () => {
     expect(marketSessionState(new Date('2026-07-07T22:00:00Z'))).toBe('post')
   })
 
+  it('does not enforce regular-session freshness on configured market holidays', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-03T17:00:00Z'),
+      mode: 'auto',
+      holidays: new Set(['2026-07-03']),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-02T20:54:58Z', symbol: 'SNDK' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-02T20:33:55Z', symbol: 'SNDK' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-02T20:59:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: staleWsReadyz,
+      tradingStatus: tradingStatusWithStaleAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: zeroCurrentTaFlinkJob,
+      taStatusHeartbeat: staleTaStatusHeartbeat,
+    })
+
+    expect(result.sessionState).toBe('holiday')
+    expect(result.enforceFreshness).toBe(false)
+    expect(result.ok).toBe(true)
+    expect(result.warnings.join('\n')).toContain('accepted_ta_signal_stale')
+    expect(result.warnings.join('\n')).toContain('ta_flink_zero_source_records')
+  })
+
+  it('ships 2026 US equity holidays as the smoke default calendar', () => {
+    expect(marketDataSmokeSource).toContain('DEFAULT_US_EQUITY_MARKET_HOLIDAYS')
+    expect(marketDataSmokeSource).toContain("'2026-07-03'")
+    expect(marketDataSmokeSource).toContain(
+      'holidays: new Set(parseList(process.env.MARKET_DATA_HOLIDAYS, DEFAULT_US_EQUITY_MARKET_HOLIDAYS))',
+    )
+  })
+
   it('fails in auto mode during regular market hours when accepted TA and source topics are stale', () => {
     const result = evaluateMarketDataSmoke({
       now: new Date('2026-07-07T17:00:00Z'),
