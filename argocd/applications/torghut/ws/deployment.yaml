@@ -31,7 +31,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-ws
-          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:3e66387e822b9ef0c59b823706d8bd2efe77ff5b7882f05e38822c0475b41a34
+          image: registry.ide-newton.ts.net/lab/torghut-ws@sha256:bf1c624bad4010f0567ad503d0ea36cb2e683d3504a520f947e6291808d1cc31
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -55,9 +55,9 @@ spec:
                   name: torghut-ws
                   key: password
             - name: TORGHUT_WS_VERSION
-              value: main-sha-e02367c041c43f4e1c64f8973c949b915baf7aff
+              value: main-sha-be5938ef9d6aa5b5951399f7def15e10e0a2dfd9
             - name: TORGHUT_WS_COMMIT
-              value: e02367c041c43f4e1c64f8973c949b915baf7aff
+              value: be5938ef9d6aa5b5951399f7def15e10e0a2dfd9
             - name: JAVA_TOOL_OPTIONS
               value: -XX:+UseContainerSupport -XX:InitialRAMPercentage=40.0 -XX:MaxRAMPercentage=70.0 -XX:+ExitOnOutOfMemoryError
           ports:
