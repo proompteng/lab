@@ -14,6 +14,9 @@ const freshWsReadyz = {
       ready: true,
       subscribed_symbol_count: 10,
       observed_symbol_count: 10,
+      fresh_symbol_count: 10,
+      missing_symbols: [],
+      stale_symbols: [],
       latest_kafka_success_at_ms: 1783447200000,
       reason: 'market_data_channel_fresh',
     },
@@ -22,6 +25,9 @@ const freshWsReadyz = {
       ready: true,
       subscribed_symbol_count: 10,
       observed_symbol_count: 10,
+      fresh_symbol_count: 10,
+      missing_symbols: [],
+      stale_symbols: [],
       latest_kafka_success_at_ms: 1783447200000,
       reason: 'market_data_channel_fresh',
     },
@@ -30,6 +36,9 @@ const freshWsReadyz = {
       ready: true,
       subscribed_symbol_count: 10,
       observed_symbol_count: 10,
+      fresh_symbol_count: 10,
+      missing_symbols: [],
+      stale_symbols: [],
       latest_kafka_success_at_ms: 1783447200000,
       reason: 'market_data_channel_fresh',
     },
@@ -38,6 +47,9 @@ const freshWsReadyz = {
       ready: true,
       subscribed_symbol_count: 10,
       observed_symbol_count: 10,
+      fresh_symbol_count: 10,
+      missing_symbols: [],
+      stale_symbols: [],
       latest_kafka_success_at_ms: 1783447200000,
       reason: 'market_data_channel_fresh',
     },
@@ -79,6 +91,19 @@ const staleWsReadyz = {
       reason: 'market_data_channel_gate_inactive',
     },
   ],
+}
+
+const partialCoverageWsReadyz = {
+  market_data_channels: freshWsReadyz.market_data_channels.map((channel) =>
+    channel.channel === 'trades'
+      ? {
+          ...channel,
+          fresh_symbol_count: 9,
+          missing_symbols: ['AMD'],
+          reason: 'market_data_channel_missing_symbol_coverage',
+        }
+      : channel,
+  ),
 }
 
 const tradingStatusWithFreshAcceptedTa = {
@@ -458,6 +483,30 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.enforceFreshness).toBe(true)
     expect(result.ok).toBe(true)
     expect(result.failures).toEqual([])
+  })
+
+  it('fails during regular market hours when WS symbol coverage is incomplete', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: partialCoverageWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: freshTaFlinkJob,
+      taStatusHeartbeat: freshTaStatusHeartbeat,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ws_trades_symbol_coverage_gap')
+    expect(result.summaryLines.join('\n')).toContain('missing=`AMD`')
   })
 
   it('fails during regular market hours when TA status heartbeat is missing', () => {

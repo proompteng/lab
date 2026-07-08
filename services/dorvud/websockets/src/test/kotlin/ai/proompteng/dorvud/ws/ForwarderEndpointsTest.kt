@@ -1,8 +1,10 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.KafkaAuth
 import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 import kotlin.test.Test
@@ -174,5 +176,25 @@ class ForwarderEndpointsTest {
 
     assertEquals(null, query.feed)
     assertEquals(null, query.pageToken)
+  }
+
+  @Test
+  fun `only websocket envelopes can satisfy live market-data freshness`() {
+    val wsEnvelope =
+      Envelope(
+        ingestTs = Instant.parse("2026-07-07T14:00:00Z"),
+        eventTs = Instant.parse("2026-07-07T14:00:00Z"),
+        feed = "iex",
+        channel = "trades",
+        symbol = "NVDA",
+        seq = 1,
+        payload = JsonPrimitive("payload"),
+        source = "ws",
+      )
+    val restEnvelope = wsEnvelope.copy(source = "rest")
+
+    assertEquals("trades", marketDataFreshnessChannelFor(wsEnvelope, "trades"))
+    assertEquals(null, marketDataFreshnessChannelFor(restEnvelope, "trades"))
+    assertEquals(null, marketDataFreshnessChannelFor(wsEnvelope, null))
   }
 }

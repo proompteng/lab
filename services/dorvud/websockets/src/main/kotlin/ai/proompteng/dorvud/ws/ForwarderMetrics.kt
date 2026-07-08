@@ -243,6 +243,21 @@ internal class ForwarderMetrics(
         field = "observed_symbol_count",
         value = channel.observedSymbolCount.toLong(),
       )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "fresh_symbol_count",
+        value = channel.freshSymbolCount.toLong(),
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "missing_symbol_count",
+        value = channel.missingSymbols.size.toLong(),
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "stale_symbol_count",
+        value = channel.staleSymbols.size.toLong(),
+      )
     }
   }
 
