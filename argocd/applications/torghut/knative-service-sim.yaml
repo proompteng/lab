@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-07-08T19:10:52Z"
+        client.knative.dev/updateTimestamp: "2026-07-08T20:39:12Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -31,7 +31,7 @@ spec:
           securityContext:
             seccompProfile:
               type: Unconfined
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:955648a316db2c17110f06a30dfd0ccc2bb235d3a7e5636ecdae7f71cab32972
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:adc762e15c661821c0fe81f6473e2d701556dcd916eeaa7f70c74f91c8652912
           ports:
             - name: http1
               containerPort: 8181
@@ -539,11 +539,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.596.0-1636-g6652ce083
+              value: v0.596.0-1641-gc0e8390a9
             - name: TORGHUT_COMMIT
-              value: 6652ce0838c223a5542b45631e210082d27ae8cc
+              value: c0e8390a98b600daea0907f3e924cfbfbdaf4ac6
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:955648a316db2c17110f06a30dfd0ccc2bb235d3a7e5636ecdae7f71cab32972
+              value: sha256:adc762e15c661821c0fe81f6473e2d701556dcd916eeaa7f70c74f91c8652912
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
               value: linux/amd64,linux/arm64
             - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
