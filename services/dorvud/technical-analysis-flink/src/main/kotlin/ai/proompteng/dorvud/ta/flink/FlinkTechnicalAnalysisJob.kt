@@ -1576,7 +1576,9 @@ private class TaSignalsFunction(
               .toString(),
           end = envelope.payload.t.toString(),
         )
-    return envelope.withPayload(payload, window = window, seqOverride = envelope.seq)
+    return envelope
+      .withPayload(payload, window = window, seqOverride = envelope.seq)
+      .copy(source = taSignalOutputSource(envelope.source))
   }
 
   private fun rollingVwap(
@@ -1614,6 +1616,12 @@ private class TaSignalsFunction(
     return kotlin.math.sqrt(variance)
   }
 }
+
+internal fun taSignalOutputSource(inputSource: String): String =
+  when (inputSource.lowercase()) {
+    "ta", "ws" -> "ta"
+    else -> inputSource
+  }
 
 data class TimedQuoteState(
   val eventTs: Instant,

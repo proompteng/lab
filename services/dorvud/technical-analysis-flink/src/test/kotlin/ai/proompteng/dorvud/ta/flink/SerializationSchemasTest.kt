@@ -114,6 +114,17 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `live websocket bar signals are emitted as accepted ta source`() {
+    assertEquals("ta", taSignalOutputSource("ws"))
+    assertEquals("ta", taSignalOutputSource("ta"))
+  }
+
+  @Test
+  fun `rest backfill bar signals remain excluded from accepted ta source`() {
+    assertEquals("rest", taSignalOutputSource("rest"))
+  }
+
+  @Test
   fun `flink ta config is serializable`() {
     assertSerializable(FlinkTaConfig.fromEnv())
   }

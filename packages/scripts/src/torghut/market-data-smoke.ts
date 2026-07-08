@@ -85,6 +85,8 @@ const DEFAULT_TA_STATUS_TOPIC = 'torghut.ta.status.v1'
 const REQUIRED_WS_CHANNELS = ['trades', 'quotes', 'bars', 'updatedBars']
 const REQUIRED_KAFKA_ROLES: KafkaRole[] = ['trades', 'quotes', 'bars']
 const ACCEPTED_SOURCE_STALE_REASON = 'accepted_ta_signal_stale'
+const CONDITIONAL_NO_EVENT_WS_CHANNEL = 'updatedBars'
+const CONDITIONAL_NO_EVENT_REASON = 'market_data_channel_conditional_no_events'
 const DEFAULT_US_EQUITY_MARKET_HOLIDAYS = [
   '2026-01-01',
   '2026-01-19',
@@ -190,6 +192,9 @@ export const marketSessionState = (now: Date, holidays: Set<string> = new Set())
 
 const shouldEnforceFreshness = (mode: SmokeMode, sessionState: MarketSessionState): boolean =>
   mode === 'enforce' || (mode === 'auto' && sessionState === 'regular')
+
+const isConditionalNoEventWsChannel = (channel: string, ready: boolean, observed: number, reason: string): boolean =>
+  channel === CONDITIONAL_NO_EVENT_WS_CHANNEL && ready && observed === 0 && reason === CONDITIONAL_NO_EVENT_REASON
 
 const getWsChannels = (readyz: unknown): Map<string, JsonObject> => {
   const root = isObject(readyz) ? readyz : {}
@@ -465,6 +470,7 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     const missingSymbols = asStringArray(status?.missing_symbols)
     const staleSymbols = asStringArray(status?.stale_symbols)
     const reason = asString(status?.reason) ?? 'missing'
+    const conditionalNoEventChannel = isConditionalNoEventWsChannel(channel, ready, observed, reason)
     summaryLines.push(
       `- WS ${channel}: ready=\`${ready}\`, subscribed=\`${subscribed}\`, observed=\`${observed}\`, ` +
         `fresh=\`${fresh ?? 'missing'}\`, ack_lag=\`${subscriptionAckLag ?? 'missing'}\`, ` +
@@ -483,7 +489,7 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     if (
       missingSymbols.length > 0 ||
       staleSymbols.length > 0 ||
-      (fresh !== undefined && subscribed > 0 && fresh < subscribed)
+      (!conditionalNoEventChannel && fresh !== undefined && subscribed > 0 && fresh < subscribed)
     ) {
       pushFinding(
         enforceFreshness,
@@ -494,7 +500,7 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
           `missing_symbols=${missingSymbols.join(',') || 'none'} stale_symbols=${staleSymbols.join(',') || 'none'}`,
       )
     }
-    if (enforceFreshness && status?.latest_kafka_success_at_ms === null) {
+    if (enforceFreshness && !conditionalNoEventChannel && status?.latest_kafka_success_at_ms === null) {
       failures.push(`ws_${channel}_missing_kafka_success: WS channel ${channel} has no Kafka success timestamp`)
     }
   }
