@@ -222,6 +222,7 @@ class ForwarderApp(
   private val tradeUpdatesReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val readinessErrorClass = AtomicReference<ReadinessErrorClass?>(null)
+  private val marketDataWsStatus = AtomicReference(AlpacaMarketDataWebsocketStatus())
   private val alpacaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val tradeUpdatesErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
@@ -359,6 +360,7 @@ class ForwarderApp(
       ready = readyNow,
       errorClass = errorClassId,
       gates = gates,
+      alpacaMarketDataWs = marketDataWsStatus.get(),
       marketDataChannels = channelSnapshot,
     )
   }
@@ -493,6 +495,7 @@ class ForwarderApp(
           put("secret", config.alpacaSecretKey)
         }
       sendSerialized(auth)
+      markMarketDataWsSessionStarting()
 
       val subscribedSymbols = mutableSetOf<String>()
       val subscribedLock = Mutex()
@@ -538,14 +541,16 @@ class ForwarderApp(
                   is AlpacaSuccess -> {
                     if (msg.msg.contains("auth", ignoreCase = true)) {
                       authOk = true
+                      recordMarketDataAuthSuccess()
                       updateWsReady()
                     }
                   }
                   is AlpacaError -> {
                     authOk = false
                     subscribedOk = false
-                    updateWsReady()
                     val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                    recordMarketDataWsDisconnected(errorClass)
+                    updateWsReady()
                     metrics.recordWsConnectError(errorClass)
                     recordAlpacaError(errorClass)
                     publishOptionsWsStatus(
@@ -713,6 +718,7 @@ class ForwarderApp(
               is AlpacaSuccess -> {
                 if (msg.msg.contains("auth", ignoreCase = true)) {
                   authOk = true
+                  recordMarketDataAuthSuccess()
                   updateWsReady()
                 }
                 return@forEach
@@ -723,6 +729,15 @@ class ForwarderApp(
                 val actualSubscribed = actualSubscribedByChannel.values.flatten().toSet()
                 val missingByChannel = missingDesiredSymbolsByChannel(symbolsTracker.current(), actualSubscribedByChannel, channels)
                 val missing = missingByChannel.values.flatten().distinct()
+                val wsStatus =
+                  msg.toMarketDataWebsocketStatus(
+                    previous = marketDataWsStatus.get(),
+                    channels = channels,
+                    desiredSymbols = symbolsTracker.current(),
+                    authOk = authOk,
+                    nowMs = nowMs(),
+                  )
+                marketDataWsStatus.set(wsStatus)
                 subscribedLock.withLock {
                   subscribedSymbols.clear()
                   subscribedSymbols.addAll(actualSubscribed)
@@ -735,7 +750,7 @@ class ForwarderApp(
                   lastOptionsMarketDataEventAt.set(null)
                   marketDataChannelFreshness.clearSubscription()
                 }
-                subscribedOk = actualSubscribed.isNotEmpty() && missingByChannel.isEmpty()
+                subscribedOk = wsStatus.subscriptionOk
                 updateWsReady()
                 if (missingByChannel.isNotEmpty()) {
                   logger.warn {
@@ -764,8 +779,9 @@ class ForwarderApp(
               is AlpacaError -> {
                 authOk = false
                 subscribedOk = false
-                updateWsReady()
                 val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                recordMarketDataWsDisconnected(errorClass)
+                updateWsReady()
                 metrics.recordWsConnectError(errorClass)
                 recordAlpacaError(errorClass)
                 publishOptionsWsStatus(
@@ -801,6 +817,7 @@ class ForwarderApp(
       } finally {
         poller?.cancel()
         starvationMonitor?.cancel()
+        recordMarketDataWsDisconnected()
         if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
           publishOptionsWsStatus(
             producer = producer,
@@ -1469,6 +1486,28 @@ class ForwarderApp(
     markReady(value && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
+  private fun markMarketDataWsSessionStarting() {
+    marketDataWsStatus.updateAndGet {
+      it.copy(authOk = false, subscriptionOk = false, errorClass = null)
+    }
+  }
+
+  private fun recordMarketDataAuthSuccess() {
+    marketDataWsStatus.updateAndGet {
+      it.copy(authOk = true, latestAuthSuccessAtMs = nowMs(), errorClass = null)
+    }
+  }
+
+  private fun recordMarketDataWsDisconnected(errorClass: ReadinessErrorClass? = null) {
+    marketDataWsStatus.updateAndGet {
+      it.copy(
+        authOk = false,
+        subscriptionOk = false,
+        errorClass = errorClass?.id ?: it.errorClass,
+      )
+    }
+  }
+
   private fun setTradeUpdatesReady(value: Boolean) {
     if (value) {
       tradeUpdatesErrorClass.set(null)
@@ -1701,74 +1740,6 @@ class ForwarderApp(
       minuteOfDay in (16 * 60) until (20 * 60) -> "post"
       else -> "closed"
     }
-  }
-}
-
-internal fun AlpacaSubscription.subscribedSymbolsForChannels(channels: Collection<String>): Set<String> =
-  subscribedSymbolsByChannel(channels).values.flatten().toSet()
-
-internal fun AlpacaSubscription.subscribedSymbolsByChannel(channels: Collection<String>): Map<String, Set<String>> {
-  val normalizedChannels = channels.mapNotNull(::canonicalMarketDataChannel).toSet()
-  return normalizedChannels.associateWith { channel ->
-    val subscribed =
-      when (channel) {
-        "trades" -> trades
-        "quotes" -> quotes
-        "bars" -> bars1m
-        "updatedBars" -> updatedBars
-        else -> emptyList()
-      }
-    subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
-  }
-}
-
-internal fun missingDesiredSymbols(
-  desired: Collection<String>,
-  subscribed: Set<String>,
-): List<String> {
-  val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
-  return desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() && it !in normalizedSubscribed }.distinct()
-}
-
-internal fun missingDesiredSymbolsByChannel(
-  desired: Collection<String>,
-  subscribedByChannel: Map<String, Set<String>>,
-  channels: Collection<String>,
-): Map<String, List<String>> {
-  val normalizedDesired = desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
-  return channels
-    .mapNotNull(::canonicalMarketDataChannel)
-    .distinct()
-    .mapNotNull { channel ->
-      val subscribed = subscribedByChannel[channel].orEmpty()
-      val missing = normalizedDesired.filter { it !in subscribed }
-      if (missing.isEmpty()) null else channel to missing
-    }.toMap()
-}
-
-internal enum class SubscriptionAction {
-  Unsubscribe,
-  Subscribe,
-}
-
-internal data class SubscriptionUpdate(
-  val action: SubscriptionAction,
-  val symbols: List<String>,
-)
-
-internal fun subscriptionUpdates(
-  desired: Collection<String>,
-  subscribed: Collection<String>,
-): List<SubscriptionUpdate> {
-  val normalizedDesired = desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
-  val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
-  val desiredSet = normalizedDesired.toSet()
-  val subscribedSet = normalizedSubscribed.toSet()
-  val toRemove = normalizedSubscribed.filter { it !in desiredSet }
-  val toAdd = normalizedDesired.filter { it !in subscribedSet }
-  return buildList {
-    if (toRemove.isNotEmpty()) add(SubscriptionUpdate(SubscriptionAction.Unsubscribe, toRemove))
-    if (toAdd.isNotEmpty()) add(SubscriptionUpdate(SubscriptionAction.Subscribe, toAdd))
   }
 }
 

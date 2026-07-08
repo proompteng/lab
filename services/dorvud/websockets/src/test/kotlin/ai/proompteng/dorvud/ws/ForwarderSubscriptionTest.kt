@@ -71,6 +71,67 @@ class ForwarderSubscriptionTest {
   }
 
   @Test
+  fun `market data websocket status exposes per-channel subscription acknowledgement gaps`() {
+    val nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val status =
+      AlpacaSubscription(
+        trades = listOf("NVDA"),
+        quotes = listOf("NVDA", "AMD"),
+        bars1m = listOf("NVDA"),
+      ).toMarketDataWebsocketStatus(
+        previous = AlpacaMarketDataWebsocketStatus(errorClass = "previous_error"),
+        channels = listOf("trades", "quotes", "bars", "updatedBars"),
+        desiredSymbols = listOf("NVDA", "AMD"),
+        authOk = true,
+        nowMs = nowMs,
+      )
+
+    assertTrue(status.authOk)
+    assertFalse(status.subscriptionOk)
+    assertEquals(nowMs, status.latestSubscriptionAckAtMs)
+    assertEquals(2, status.subscribedSymbolCount)
+    assertEquals(listOf("AMD", "NVDA"), status.subscribedSymbols)
+    assertEquals(
+      mapOf(
+        "trades" to listOf("AMD"),
+        "bars" to listOf("AMD"),
+        "updatedBars" to listOf("NVDA", "AMD"),
+      ),
+      status.missingSubscriptionSymbolsByChannel,
+    )
+  }
+
+  @Test
+  fun `market data websocket status clears prior error after full acknowledgement`() {
+    val nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val status =
+      AlpacaSubscription(
+        trades = listOf("NVDA", "AMD"),
+        quotes = listOf("NVDA", "AMD"),
+        bars1m = listOf("NVDA", "AMD"),
+        updatedBars = listOf("NVDA", "AMD"),
+      ).toMarketDataWebsocketStatus(
+        previous = AlpacaMarketDataWebsocketStatus(errorClass = "alpaca_auth"),
+        channels = listOf("trades", "quotes", "bars", "updatedBars"),
+        desiredSymbols = listOf("NVDA", "AMD"),
+        authOk = true,
+        nowMs = nowMs,
+      )
+
+    assertTrue(status.subscriptionOk)
+    assertEquals(null, status.errorClass)
+    assertEquals(
+      mapOf(
+        "trades" to listOf("AMD", "NVDA"),
+        "quotes" to listOf("AMD", "NVDA"),
+        "bars" to listOf("AMD", "NVDA"),
+        "updatedBars" to listOf("AMD", "NVDA"),
+      ),
+      status.subscribedSymbolsByChannel,
+    )
+  }
+
+  @Test
   fun `subscription updates unsubscribe before subscribing to avoid transient provider cap breaches`() {
     val updates =
       subscriptionUpdates(

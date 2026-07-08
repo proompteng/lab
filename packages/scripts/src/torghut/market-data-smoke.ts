@@ -449,12 +449,14 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     const subscribed = asNumber(status?.subscribed_symbol_count) ?? 0
     const observed = asNumber(status?.observed_symbol_count) ?? 0
     const fresh = asNumber(status?.fresh_symbol_count)
+    const subscriptionAckLag = asNumber(status?.subscription_ack_lag_ms)
     const missingSymbols = asStringArray(status?.missing_symbols)
     const staleSymbols = asStringArray(status?.stale_symbols)
     const reason = asString(status?.reason) ?? 'missing'
     summaryLines.push(
       `- WS ${channel}: ready=\`${ready}\`, subscribed=\`${subscribed}\`, observed=\`${observed}\`, ` +
-        `fresh=\`${fresh ?? 'missing'}\`, missing=\`${missingSymbols.join(',') || 'none'}\`, ` +
+        `fresh=\`${fresh ?? 'missing'}\`, ack_lag=\`${subscriptionAckLag ?? 'missing'}\`, ` +
+        `missing=\`${missingSymbols.join(',') || 'none'}\`, ` +
         `stale=\`${staleSymbols.join(',') || 'none'}\`, reason=\`${reason}\``,
     )
     if (!ready || subscribed <= 0) {
