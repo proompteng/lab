@@ -6,6 +6,9 @@ import com.fasterxml.jackson.databind.node.POJONode
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.msgpack.jackson.dataformat.MessagePackExtensionType
+import org.msgpack.jackson.dataformat.TimestampExtensionModule
+import org.msgpack.value.ValueFactory
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
@@ -232,7 +235,8 @@ class ForwarderSubscriptionTest {
   }
 
   @Test
-  fun `messagepack timestamp nodes are preserved as parseable option event timestamps`() {
+  fun `messagepack extension timestamp nodes are preserved as parseable option event timestamps`() {
+    val timestamp = Instant.parse("2026-07-08T14:52:03.192533568Z")
     val frame = JsonNodeFactory.instance.objectNode()
     frame.put("T", "q")
     frame.put("S", "NVDA260717C00160000")
@@ -240,11 +244,19 @@ class ForwarderSubscriptionTest {
     frame.put("bs", 12.0)
     frame.put("ap", 1.2)
     frame.put("as", 10.0)
-    frame.set<JsonNode>("t", POJONode(Instant.parse("2026-07-08T14:52:03.192533568Z")))
+    frame.set<JsonNode>(
+      "t",
+      POJONode(
+        MessagePackExtensionType(
+          TimestampExtensionModule.EXT_TYPE,
+          ValueFactory.newTimestamp(timestamp).data,
+        ),
+      ),
+    )
 
     val element = jsonElementFromJacksonNode(frame)
 
-    assertEquals("2026-07-08T14:52:03.192533568Z", element.jsonObject["t"]?.jsonPrimitive?.contentOrNull)
+    assertEquals(timestamp.toString(), element.jsonObject["t"]?.jsonPrimitive?.contentOrNull)
     val message = AlpacaMapper.decode(element.toString())
     val envelope =
       assertNotNull(
@@ -255,7 +267,7 @@ class ForwarderSubscriptionTest {
           seqProvider = { 1 },
         ),
       )
-    assertEquals("2026-07-08T14:52:03.192533568Z", envelope.eventTs.toString())
+    assertEquals(timestamp, envelope.eventTs)
   }
 
   @Test
