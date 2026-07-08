@@ -50,6 +50,7 @@ data class FlinkTaConfig(
   val clickhouseSchemaInitMaxRetries: Int,
   val clickhouseSchemaInitRetryDelayMs: Long,
   val clickhouseSchemaInitStrict: Boolean,
+  val clickhouseRequireReplicatedTables: Boolean,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -156,6 +157,7 @@ data class FlinkTaConfig(
         clickhouseSchemaInitMaxRetries = envInt("TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES", 180),
         clickhouseSchemaInitRetryDelayMs = envLong("TA_CLICKHOUSE_SCHEMA_INIT_RETRY_DELAY_MS", 2_000),
         clickhouseSchemaInitStrict = envBool("TA_CLICKHOUSE_SCHEMA_INIT_STRICT", true),
+        clickhouseRequireReplicatedTables = envBool("TA_CLICKHOUSE_REQUIRE_REPLICATED_TABLES", true),
       )
     }
   }
