@@ -77,6 +77,10 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('MARKET_DATA_FRESHNESS_MODE: auto')
     expect(workflow).toContain("MARKET_DATA_MAX_LAG_SECONDS: '300'")
     expect(workflow).toContain("MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'")
+    expect(workflow).toContain(
+      "MARKET_DATA_HOLIDAYS: '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25'",
+    )
+    expect(workflow).toContain("KAFKA_TOPIC_PARTITIONS: '0,1,2'")
     expect(workflow).toContain('bun run smoke:torghut-market-data')
   })
 
@@ -186,15 +190,26 @@ describe('torghut post-deploy verifier workflow', () => {
 
   it('grants the ARC runner only the extra Kubernetes access needed for market-data smoke', () => {
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-market-data-read')
-    expect(agentsCiClusterRbac).toContain('kind: ClusterRole')
-    expect(agentsCiClusterRbac).toContain('kind: ClusterRoleBinding')
+    expect(agentsCiClusterRbac).toContain('kind: Role')
+    expect(agentsCiClusterRbac).toContain('kind: RoleBinding')
+    expect(agentsCiClusterRbac).toContain('namespace: torghut')
     expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ws')
     expect(agentsCiClusterRbac).toContain('resources:\n      - configmaps')
     expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ta-config')
-    expect(agentsCiClusterRbac).toContain('agents-ci-runner-kafka-tail')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - pods')
     expect(agentsCiClusterRbac).toContain('resources:\n      - pods/exec')
-    expect(agentsCiClusterRbac).not.toContain('namespace: torghut')
-    expect(agentsCiClusterRbac).not.toContain('namespace: kafka')
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-kafka-tail')
+    expect(agentsCiClusterRbac).toContain('namespace: kafka')
+    expect(agentsCiClusterRbac).not.toContain('kind: ClusterRole\nmetadata:\n  name: agents-ci-runner-kafka-tail')
+    expect(agentsCiClusterRbac).not.toContain(
+      'kind: ClusterRoleBinding\nmetadata:\n  name: agents-ci-runner-kafka-tail',
+    )
+    expect(agentsCiClusterRbac).not.toContain(
+      'kind: ClusterRole\nmetadata:\n  name: agents-ci-runner-torghut-market-data-read',
+    )
+    expect(agentsCiClusterRbac).not.toContain(
+      'kind: ClusterRoleBinding\nmetadata:\n  name: agents-ci-runner-torghut-market-data-read',
+    )
   })
 
   it('runs arm64 workflows with the kube-mode service account that receives post-deploy RBAC', () => {

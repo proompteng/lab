@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.trading.submission_council.quant_health import (
+    runtime_window_import_continuity_signal,
+)
 from tests.submission_council.support import (
     SimpleNamespace,
     SubmissionCouncilTestCase,
@@ -65,4 +68,25 @@ class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
         self.assertEqual(
             result["clickhouse_ta_freshness"]["accepted_source_state"],
             "stale",
+        )
+
+    def test_clickhouse_stale_status_overrides_cached_runtime_ready_state(self) -> None:
+        result = runtime_window_import_continuity_signal(
+            SimpleNamespace(
+                last_signal_continuity_state="signals_present",
+                last_signal_continuity_reason="signals_present",
+                last_signal_continuity_actionable=False,
+                signal_continuity_alert_active=False,
+            ),
+            clickhouse_ta_status={
+                "state": "current",
+                "latest_signal_at": datetime.now(timezone.utc).isoformat(),
+                "accepted_source_state": "stale",
+                "blocking_reason": None,
+            },
+        )
+
+        self.assertEqual(
+            result,
+            ("false", "clickhouse_ta_status", "accepted_ta_signal_stale"),
         )

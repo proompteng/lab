@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - codex-auth-externalsecret.yaml
   - postgres-cluster.yaml
+  - torghut-db-ca-prune-tombstone.yaml
   - torghut-db-ca-reflector-rbac.yaml
   - torghut-db-ca-prune-guard-job.yaml
   - torghut-db-ca-reflector-job.yaml

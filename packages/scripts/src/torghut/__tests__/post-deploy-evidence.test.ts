@@ -165,6 +165,71 @@ const baseReadyz = {
   },
 }
 
+const acceptedSourceStaleDigest = {
+  ...baseDigest,
+  blockers: [{ reason: 'accepted_ta_signal_stale' }, { reason: 'hypothesis_not_promotion_eligible' }],
+  capital: {
+    ...baseDigest.capital,
+    capital_stage: 'operational_blocked',
+    live_submission_reason: 'accepted_ta_signal_stale',
+  },
+  health: {
+    ...baseDigest.health,
+    readyz_status: 'ok',
+    readyz_ok: true,
+    dependency_failures: [
+      { name: 'live_submission_gate', detail: 'accepted_ta_signal_stale' },
+      { name: 'profitability_proof_floor', detail: 'repair_only' },
+    ],
+  },
+  repair_queue: [{ code: 'repair_accepted_ta_signal_stale', reason: 'accepted_ta_signal_stale' }],
+}
+
+const acceptedSourceStaleTradingStatus = {
+  ...baseTradingStatus,
+  live_submission_gate: {
+    ...baseTradingStatus.live_submission_gate,
+    allowed: false,
+    reason: 'accepted_ta_signal_stale',
+    blocked_reasons: ['accepted_ta_signal_stale'],
+    capital_stage: 'operational_blocked',
+    capital_state: 'blocked',
+    clickhouse_ta_freshness: {
+      accepted_sources: ['ta'],
+      latest_accepted_event_at: '2026-06-30T20:54:52Z',
+      accepted_lag_seconds: 615152,
+      accepted_max_lag_seconds: 120,
+      accepted_source_state: 'stale',
+      blocking_reason: 'accepted_ta_signal_stale',
+      excluded_fresher_sources: [
+        {
+          source: 'rest',
+          excluded_reason: 'source_not_allowed_for_live_runtime',
+          latest_signal_at: '2026-07-02T20:32:00Z',
+        },
+      ],
+    },
+    live_submit_activation: baseLiveSubmitActivation,
+  },
+  operational_submission_gate: {
+    allowed: false,
+    blocked_reasons: ['accepted_ta_signal_stale'],
+    reason: 'accepted_ta_signal_stale',
+  },
+  submission_authority: {
+    schema_version: 'torghut.submission-authority.v1',
+    authority_scope: 'none',
+    effective_submit_mode: 'blocked',
+    can_submit_now: false,
+    reason: 'accepted_ta_signal_stale',
+    operational_submission_gate: {
+      allowed: false,
+      blocked_reasons: ['accepted_ta_signal_stale'],
+      reason: 'accepted_ta_signal_stale',
+    },
+  },
+}
+
 const coreDependenciesOnlyReadyz = {
   status: 'degraded',
   reason_codes: ['alpaca_degraded'],
@@ -275,74 +340,30 @@ describe('validatePostDeployEvidence', () => {
     const result = validatePostDeployEvidence({
       readyzHttpStatus: '200',
       readyz: { status: 'ok' },
-      revenueRepairDigest: {
-        ...baseDigest,
-        blockers: [{ reason: 'accepted_ta_signal_stale' }, { reason: 'hypothesis_not_promotion_eligible' }],
-        capital: {
-          ...baseDigest.capital,
-          capital_stage: 'operational_blocked',
-          live_submission_reason: 'accepted_ta_signal_stale',
-        },
-        health: {
-          ...baseDigest.health,
-          readyz_status: 'ok',
-          readyz_ok: true,
-          dependency_failures: [
-            { name: 'live_submission_gate', detail: 'accepted_ta_signal_stale' },
-            { name: 'profitability_proof_floor', detail: 'repair_only' },
-          ],
-        },
-        repair_queue: [{ code: 'repair_accepted_ta_signal_stale', reason: 'accepted_ta_signal_stale' }],
-      },
-      tradingStatus: {
-        ...baseTradingStatus,
-        live_submission_gate: {
-          ...baseTradingStatus.live_submission_gate,
-          allowed: false,
-          reason: 'accepted_ta_signal_stale',
-          blocked_reasons: ['accepted_ta_signal_stale'],
-          capital_stage: 'operational_blocked',
-          capital_state: 'blocked',
-          clickhouse_ta_freshness: {
-            accepted_sources: ['ta'],
-            latest_accepted_event_at: '2026-06-30T20:54:52Z',
-            accepted_lag_seconds: 615152,
-            accepted_max_lag_seconds: 120,
-            accepted_source_state: 'stale',
-            blocking_reason: 'accepted_ta_signal_stale',
-            excluded_fresher_sources: [
-              {
-                source: 'rest',
-                excluded_reason: 'source_not_allowed_for_live_runtime',
-                latest_signal_at: '2026-07-02T20:32:00Z',
-              },
-            ],
-          },
-          live_submit_activation: baseLiveSubmitActivation,
-        },
-        operational_submission_gate: {
-          allowed: false,
-          blocked_reasons: ['accepted_ta_signal_stale'],
-          reason: 'accepted_ta_signal_stale',
-        },
-        submission_authority: {
-          schema_version: 'torghut.submission-authority.v1',
-          authority_scope: 'none',
-          effective_submit_mode: 'blocked',
-          can_submit_now: false,
-          reason: 'accepted_ta_signal_stale',
-          operational_submission_gate: {
-            allowed: false,
-            blocked_reasons: ['accepted_ta_signal_stale'],
-            reason: 'accepted_ta_signal_stale',
-          },
-        },
-      },
+      revenueRepairDigest: acceptedSourceStaleDigest,
+      tradingStatus: acceptedSourceStaleTradingStatus,
     })
 
     expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
     expect(result.liveSubmitContract).toBe('accepted_source_stale_zero_notional')
     expect(result.summaryLines.join('\n')).toContain('Live submit contract: `accepted_source_stale_zero_notional`')
+  })
+
+  it('rejects accepted TA stale contract with malformed submission authority schema', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: acceptedSourceStaleDigest,
+        tradingStatus: {
+          ...acceptedSourceStaleTradingStatus,
+          submission_authority: {
+            ...acceptedSourceStaleTradingStatus.submission_authority,
+            schema_version: 'torghut.submission-authority.v0',
+          },
+        },
+      }),
+    ).toThrow('submission_authority.schema_version')
   })
 
   it('accepts 2xx readyz with operational submission ready but capital still zero-notional repair-only', () => {

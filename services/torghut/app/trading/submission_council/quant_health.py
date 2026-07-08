@@ -202,7 +202,7 @@ def runtime_window_import_continuity_signal(
     clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     persisted_signal = fresh_clickhouse_signal_continuity(clickhouse_ta_status)
-    if persisted_signal is not None and persisted_signal[0] == "true":
+    if persisted_signal is not None:
         return persisted_signal
 
     state_text = _safe_attr_text(state, "last_signal_continuity_state")
@@ -226,8 +226,6 @@ def runtime_window_import_continuity_signal(
         return "true", "signal_continuity", state_text
     if actionable is False and state_text:
         return "true", "signal_continuity", state_text
-    if persisted_signal is not None:
-        return persisted_signal
     return "false", "missing", "signal_continuity_missing"
 
 

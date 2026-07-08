@@ -12,6 +12,7 @@ type MarketSessionState = 'pre' | 'regular' | 'post' | 'closed' | 'weekend' | 'h
 
 type KafkaTopicRecord = {
   topic: string
+  partition?: number
   eventTs?: string
   channel?: string
   symbol?: string
@@ -91,6 +92,14 @@ const parsePositiveNumber = (raw: string | undefined, fallback: number, label: s
     fatal(`${label} must be a positive number`)
   }
   return parsed
+}
+
+const parsePartitions = (raw: string | undefined): number[] => {
+  const values = parseList(raw, ['0', '1', '2']).map((item) => Number(item))
+  if (values.length === 0 || values.some((value) => !Number.isInteger(value) || value < 0)) {
+    fatal('KAFKA_TOPIC_PARTITIONS must be a comma-separated list of non-negative integers')
+  }
+  return [...new Set(values)].sort((left, right) => left - right)
 }
 
 const parseMode = (raw: string | undefined): SmokeMode => {
@@ -265,10 +274,23 @@ const summarizeKafkaRole = (
   return {
     line:
       `- Kafka ${role}: latest=\`${latest}\`, lag_seconds=\`${lag}\`, ` +
-      `symbol=\`${record.symbol ?? 'unknown'}\`, topic=\`${record.topic}\``,
+      `symbol=\`${record.symbol ?? 'unknown'}\`, topic=\`${record.topic}\`, ` +
+      `partition=\`${record.partition ?? 'unknown'}\``,
     stale: lag > maxLagSeconds,
     detail: `${role} latest event lag ${lag}s exceeds ${maxLagSeconds}s`,
   }
+}
+
+export const selectLatestKafkaRecord = (records: KafkaTopicRecord[]): KafkaTopicRecord | undefined => {
+  let latest: KafkaTopicRecord | undefined
+  let latestTs = -1
+  for (const record of records) {
+    const ts = parseTimestampMs(record.eventTs)
+    if (ts === undefined || ts < latestTs) continue
+    latest = record
+    latestTs = ts
+  }
+  return latest
 }
 
 export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketDataSmokeResult => {
@@ -298,12 +320,12 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
   }
 
   const taFlinkJob = getTaFlinkJobSnapshot(input.taFlinkJob)
-  const sourceReadRecords = sumRecords(
+  const sourceWriteRecords = sumRecords(
     taFlinkJob.vertices,
     (vertex) => vertex.name.startsWith('Source: ta-'),
-    'readRecords',
+    'writeRecords',
   )
-  const sourceReadRate = sumOptionalRecords(
+  const sourceWriteRate = sumOptionalRecords(
     taFlinkJob.vertices,
     (vertex) => vertex.name.startsWith('Source: ta-'),
     'writeRecordsPerSecond',
@@ -341,9 +363,9 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
   const nonRunningVertices = taFlinkJob.vertices.filter((vertex) => vertex.status !== 'RUNNING')
   summaryLines.push(
     `- TA Flink: state=\`${taFlinkJob.state}\`, job_id=\`${taFlinkJob.jobId}\`, ` +
-      `source_read_records=\`${sourceReadRecords}\`, microbar_records=\`${microbarRecords}\`, ` +
+      `source_write_records=\`${sourceWriteRecords}\`, microbar_records=\`${microbarRecords}\`, ` +
       `signal_records=\`${signalRecords}\`, status_records=\`${statusRecords}\`, ` +
-      `source_records_per_second=\`${sourceReadRate ?? 'missing'}\`, ` +
+      `source_records_per_second=\`${sourceWriteRate ?? 'missing'}\`, ` +
       `signal_records_per_second=\`${signalRate ?? 'missing'}\``,
   )
   if (taFlinkJob.state !== 'RUNNING') {
@@ -357,13 +379,13 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
       `ta_flink_vertices_not_running: ${nonRunningVertices.map((vertex) => `${vertex.name}=${vertex.status}`).join(', ')}`,
     )
   }
-  if ((sourceReadRate ?? sourceReadRecords) <= 0) {
+  if ((sourceWriteRate ?? sourceWriteRecords) <= 0) {
     pushFinding(
       enforceFreshness,
       failures,
       warnings,
       'ta_flink_zero_source_records',
-      'TA Flink source vertices report zero current records',
+      'TA Flink source vertices report zero current output records',
     )
   }
   if ((microbarRate ?? microbarRecords) <= 0) {
@@ -524,11 +546,13 @@ const execCapture = async (
   return stdout
 }
 
-const tailArgs = (topic: string, format: 'summary' | 'json', settings: RuntimeSettings) => [
+const tailArgs = (topic: string, format: 'summary' | 'json', settings: RuntimeSettings, partition: number) => [
   'run',
   'packages/scripts/src/kafka/tail-topic.ts',
   '--topic',
   topic,
+  '--partition',
+  String(partition),
   '--tail',
   settings.tail,
   '--timeout-ms',
@@ -550,24 +574,26 @@ const captureLatestKafkaRecord = async (
   topic: string,
   settings: RuntimeSettings,
 ): Promise<KafkaTopicRecord | undefined> => {
-  const stdout = await execCapture('bun', tailArgs(topic, 'json', settings), { cwd: repoRoot })
-  const parsed = JSON.parse(stdout) as unknown
-  if (!Array.isArray(parsed)) {
-    fatal(`Kafka tail for ${topic} did not return a JSON array`)
-  }
-  const records = parsed.filter(isObject)
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    const record = records[index]
-    const eventTs = asString(record.eventTs)
-    if (!eventTs) continue
-    return {
-      topic,
-      eventTs,
-      channel: asString(record.channel) ?? role,
-      symbol: asString(record.symbol),
+  const records: KafkaTopicRecord[] = []
+  for (const partition of settings.kafkaPartitions) {
+    const stdout = await execCapture('bun', tailArgs(topic, 'json', settings, partition), { cwd: repoRoot })
+    const parsed = JSON.parse(stdout) as unknown
+    if (!Array.isArray(parsed)) {
+      fatal(`Kafka tail for ${topic} partition ${partition} did not return a JSON array`)
+    }
+    for (const record of parsed.filter(isObject)) {
+      const eventTs = asString(record.eventTs)
+      if (!eventTs) continue
+      records.push({
+        topic,
+        partition,
+        eventTs,
+        channel: asString(record.channel) ?? role,
+        symbol: asString(record.symbol),
+      })
     }
   }
-  return undefined
+  return selectLatestKafkaRecord(records)
 }
 
 const fetchJsonViaPod = async (target: string, url: string, settings: RuntimeSettings): Promise<unknown> => {
@@ -584,8 +610,13 @@ const fetchJsonViaPod = async (target: string, url: string, settings: RuntimeSet
   return JSON.parse(stdout) as unknown
 }
 
-const fetchJsonViaWsPod = async (url: string, settings: RuntimeSettings): Promise<unknown> =>
-  fetchJsonViaPod(settings.wsExecTarget, url, settings)
+const fetchJson = async (url: string): Promise<unknown> => {
+  const response = await fetch(url)
+  if (!response.ok) {
+    fatal(`GET ${url} failed with HTTP ${response.status}`)
+  }
+  return (await response.json()) as unknown
+}
 
 type RuntimeSettings = {
   topics: string[]
@@ -595,6 +626,7 @@ type RuntimeSettings = {
   passwordSecretName: string
   passwordSecretKey: string
   tail: string
+  kafkaPartitions: number[]
   timeoutMs: string
   mode: SmokeMode
   maxKafkaLagSeconds: number
@@ -603,7 +635,6 @@ type RuntimeSettings = {
   now: Date
   printSummaries: boolean
   torghutNamespace: string
-  wsExecTarget: string
   wsReadyzUrl: string
   tradingStatusUrl: string
   taConfigMapName: string
@@ -623,6 +654,7 @@ const runtimeSettings = (): RuntimeSettings => ({
   passwordSecretName: process.env.KAFKA_PASSWORD_SECRET_NAME ?? 'torghut-ws',
   passwordSecretKey: process.env.KAFKA_PASSWORD_SECRET_KEY ?? 'password',
   tail: process.env.TAIL ?? '1',
+  kafkaPartitions: parsePartitions(process.env.KAFKA_TOPIC_PARTITIONS),
   timeoutMs: process.env.TIMEOUT_MS ?? '8000',
   mode: parseMode(process.env.MARKET_DATA_FRESHNESS_MODE),
   maxKafkaLagSeconds: parsePositiveNumber(process.env.MARKET_DATA_MAX_LAG_SECONDS, 300, 'MARKET_DATA_MAX_LAG_SECONDS'),
@@ -635,8 +667,7 @@ const runtimeSettings = (): RuntimeSettings => ({
   now: process.env.MARKET_DATA_NOW ? new Date(process.env.MARKET_DATA_NOW) : new Date(),
   printSummaries: process.env.MARKET_DATA_PRINT_SUMMARIES !== 'false',
   torghutNamespace: process.env.TORGHUT_NAMESPACE ?? 'torghut',
-  wsExecTarget: process.env.TORGHUT_WS_EXEC_TARGET ?? 'deploy/torghut-ws',
-  wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://127.0.0.1:8080/readyz',
+  wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://torghut-ws.torghut.svc.cluster.local/readyz',
   tradingStatusUrl: process.env.TORGHUT_STATUS_URL ?? 'http://torghut.torghut.svc.cluster.local/trading/status',
   taConfigMapName: process.env.TORGHUT_TA_CONFIGMAP ?? 'torghut-ta-config',
   taFlinkExecTarget: process.env.TORGHUT_TA_FLINK_EXEC_TARGET ?? 'deploy/torghut-ta',
@@ -751,7 +782,7 @@ const main = async () => {
 
   if (settings.printSummaries) {
     for (const topic of settings.topics) {
-      await run('bun', tailArgs(topic, 'summary', settings), { cwd: repoRoot })
+      await run('bun', tailArgs(topic, 'summary', settings, 0), { cwd: repoRoot })
     }
   }
 
@@ -760,8 +791,8 @@ const main = async () => {
     latestKafkaByRole[role] = await captureLatestKafkaRecord(role, settings.topicByRole[role], settings)
   }
 
-  const wsReadyz = await fetchJsonViaWsPod(settings.wsReadyzUrl, settings)
-  const tradingStatus = await fetchJsonViaWsPod(settings.tradingStatusUrl, settings)
+  const wsReadyz = await fetchJson(settings.wsReadyzUrl)
+  const tradingStatus = await fetchJson(settings.tradingStatusUrl)
   const taRuntimeConfig = await fetchConfigMapData(settings.torghutNamespace, settings.taConfigMapName)
   const taFlinkJob = await fetchTaFlinkJob(settings)
   const result = evaluateMarketDataSmoke({
