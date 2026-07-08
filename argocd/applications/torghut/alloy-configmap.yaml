@@ -69,8 +69,8 @@ data:
       targets = discovery.kubernetes.torghut_endpoints.targets
 
       rule {
-        source_labels = ["__meta_kubernetes_endpoint_port_name"]
-        regex         = "(?i)metric(s)?"
+        source_labels = ["__meta_kubernetes_endpoint_port_name", "__meta_kubernetes_service_name"]
+        regex         = "metric(s)?;.*|http;torghut-[0-9]{5}-private"
         action        = "keep"
       }
 

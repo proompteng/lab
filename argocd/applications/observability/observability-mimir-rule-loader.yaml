@@ -122,10 +122,24 @@ spec:
         app.kubernetes.io/name: observability-mimir-rule-loader
     spec:
       restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 101
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: load-rules
           image: curlimages/curl:8.11.1
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 101
           command:
             - /bin/sh
             - /scripts/load-rules.sh

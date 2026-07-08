@@ -56,6 +56,7 @@ data class HyperliquidConfig(
   val reconnectBaseMs: Long,
   val reconnectMaxMs: Long,
   val heartbeatIntervalMs: Long,
+  val wsReadIdleTimeoutMs: Long,
   val dedupTtlSeconds: Long,
   val dedupMaxEntries: Int,
   val readyRequiredChannels: Set<String>,
@@ -200,6 +201,11 @@ data class HyperliquidConfig(
         error("CLICKHOUSE_READY_TABLES must be included in CLICKHOUSE_ENABLED_TABLES: ${disabledReadyTables.joinToString(",")}")
       }
 
+      val heartbeatIntervalMs = longEnv(mergedEnv, "HYPERLIQUID_HEARTBEAT_INTERVAL_MS", 30_000).coerceAtLeast(1_000)
+      val wsReadIdleTimeoutMs =
+        longEnv(mergedEnv, "HYPERLIQUID_WS_READ_IDLE_TIMEOUT_MS", maxOf(readyEventMaxAgeMs, heartbeatIntervalMs * 3))
+          .coerceAtLeast(heartbeatIntervalMs * 2)
+
       return HyperliquidConfig(
         network = network,
         infoUrl = mergedEnv["HYPERLIQUID_INFO_URL"] ?: defaultInfoUrl,
@@ -219,7 +225,8 @@ data class HyperliquidConfig(
         restMetadataRefreshMs = longEnv(mergedEnv, "HYPERLIQUID_REST_METADATA_REFRESH_MS", 300_000),
         reconnectBaseMs = longEnv(mergedEnv, "RECONNECT_BASE_MS", 500),
         reconnectMaxMs = longEnv(mergedEnv, "RECONNECT_MAX_MS", 30_000),
-        heartbeatIntervalMs = longEnv(mergedEnv, "HYPERLIQUID_HEARTBEAT_INTERVAL_MS", 30_000),
+        heartbeatIntervalMs = heartbeatIntervalMs,
+        wsReadIdleTimeoutMs = wsReadIdleTimeoutMs,
         dedupTtlSeconds = longEnv(mergedEnv, "DEDUP_TTL_SEC", 30),
         dedupMaxEntries = intEnv(mergedEnv, "DEDUP_MAX_ENTRIES", 100_000),
         readyRequiredChannels = readyRequiredChannels,

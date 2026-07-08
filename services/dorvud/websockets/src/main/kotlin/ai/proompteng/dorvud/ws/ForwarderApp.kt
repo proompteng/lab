@@ -33,7 +33,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -71,6 +71,7 @@ private val logger = KotlinLogging.logger {}
 private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
 private const val DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
 private const val ALPACA_BARS_BACKFILL_LIMIT = 10_000
+private const val ALPACA_TRADES_BACKFILL_LIMIT = 10_000
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
@@ -86,6 +87,13 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
     AlpacaMarketType.CRYPTO ->
       "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}/bars"
     AlpacaMarketType.OPTIONS -> error("options bars backfill is not supported on the websocket lane")
+  }
+
+internal fun alpacaTradesBackfillUrl(config: ForwarderConfig): String =
+  when (config.alpacaMarketType) {
+    AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/trades"
+    AlpacaMarketType.CRYPTO -> error("crypto trades backfill is not supported on the websocket lane")
+    AlpacaMarketType.OPTIONS -> error("options trades backfill is not supported on the websocket lane")
   }
 
 internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType != AlpacaMarketType.CRYPTO
@@ -141,6 +149,32 @@ internal fun alpacaBarsBackfillQuery(
   )
 }
 
+internal data class AlpacaTradesBackfillQuery(
+  val symbols: String,
+  val start: String,
+  val end: String,
+  val limit: String,
+  val sort: String,
+  val feed: String?,
+  val pageToken: String?,
+)
+
+internal fun alpacaTradesBackfillQuery(
+  config: ForwarderConfig,
+  symbols: List<String>,
+  now: Instant,
+  pageToken: String? = null,
+): AlpacaTradesBackfillQuery =
+  AlpacaTradesBackfillQuery(
+    symbols = symbols.joinToString(","),
+    start = now.minus(Duration.ofHours(config.tradesBackfillLookbackHours)).toString(),
+    end = now.toString(),
+    limit = ALPACA_TRADES_BACKFILL_LIMIT.toString(),
+    sort = "desc",
+    feed = config.alpacaFeed,
+    pageToken = pageToken,
+  )
+
 internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
 @Serializable
@@ -151,10 +185,23 @@ internal data class AlpacaBarsResponse(
   val nextPageToken: String? = null,
 )
 
+@Serializable
+internal data class AlpacaTradesResponse(
+  val trades: JsonElement? = null,
+  val symbol: String? = null,
+  @SerialName("next_page_token")
+  val nextPageToken: String? = null,
+)
+
 internal fun decodeAlpacaBarsResponse(
   payload: String,
   json: Json,
 ): AlpacaBarsResponse = json.decodeFromString(payload)
+
+internal fun decodeAlpacaTradesResponse(
+  payload: String,
+  json: Json,
+): AlpacaTradesResponse = json.decodeFromString(payload)
 
 class ForwarderApp(
   private val config: ForwarderConfig,
@@ -181,6 +228,7 @@ class ForwarderApp(
   private val reportedNotReadyClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaFailureCount = AtomicInteger(0)
   private val backfillDone = AtomicBoolean(false)
+  private val tradesBackfillDone = AtomicBoolean(false)
   private val notReadyLivenessGate = NotReadyLivenessGate(config.healthNotReadyKillAfterMs, nowMs)
   private val notReadyLivenessLogged = AtomicBoolean(false)
   private val tradeUpdatesEnabled =
@@ -419,7 +467,12 @@ class ForwarderApp(
       }
     }) {
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
-        val frame = incoming.receive()
+        val frame =
+          withTimeoutOrNull(config.marketDataReadIdleTimeoutMs) {
+            incoming.receive()
+          } ?: error(
+            "alpaca market-data websocket idle for ${config.marketDataReadIdleTimeoutMs}ms; reconnecting",
+          )
         val elements = decodeMarketDataFrame(frame) ?: return emptyList()
         val messages: List<JsonElement> =
           if (elements is JsonArray) elements.toList() else listOf(elements)
@@ -477,41 +530,46 @@ class ForwarderApp(
       suspend fun awaitAuthOrThrow() {
         // Alpaca rejects subscribe requests before a successful auth handshake; if we get an error,
         // restart the session so the outer loop can apply backoff.
-        withTimeout(10_000) {
-          while (isActive && !authOk) {
-            decodeNextMessages().forEach { msg ->
-              when (msg) {
-                is AlpacaSuccess -> {
-                  if (msg.msg.contains("auth", ignoreCase = true)) {
-                    authOk = true
-                    updateWsReady()
+        val authed =
+          withTimeoutOrNull(10_000) {
+            while (isActive && !authOk) {
+              decodeNextMessages().forEach { msg ->
+                when (msg) {
+                  is AlpacaSuccess -> {
+                    if (msg.msg.contains("auth", ignoreCase = true)) {
+                      authOk = true
+                      updateWsReady()
+                    }
                   }
+                  is AlpacaError -> {
+                    authOk = false
+                    subscribedOk = false
+                    updateWsReady()
+                    val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                    metrics.recordWsConnectError(errorClass)
+                    recordAlpacaError(errorClass)
+                    publishOptionsWsStatus(
+                      producer = producer,
+                      seq = seq,
+                      subscribedCount = 0,
+                      statusValue = optionsStatusForCode(msg.code),
+                      errorCode = msg.code?.toString(),
+                      errorDetail = msg.msg,
+                      authOk = false,
+                      subscriptionOk = false,
+                      eventStarved = false,
+                    )
+                    logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
+                    throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
+                  }
+                  else -> {}
                 }
-                is AlpacaError -> {
-                  authOk = false
-                  subscribedOk = false
-                  updateWsReady()
-                  val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
-                  metrics.recordWsConnectError(errorClass)
-                  recordAlpacaError(errorClass)
-                  publishOptionsWsStatus(
-                    producer = producer,
-                    seq = seq,
-                    subscribedCount = 0,
-                    statusValue = optionsStatusForCode(msg.code),
-                    errorCode = msg.code?.toString(),
-                    errorDetail = msg.msg,
-                    authOk = false,
-                    subscriptionOk = false,
-                    eventStarved = false,
-                  )
-                  logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
-                  throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
-                }
-                else -> {}
               }
             }
-          }
+            authOk
+          } ?: false
+        if (!authed) {
+          throw RuntimeException("alpaca auth timed out after 10000ms")
         }
       }
 
@@ -565,6 +623,7 @@ class ForwarderApp(
 
       awaitAuthOrThrow()
       applySubscribe(initial)
+      maybeBackfillTrades(producer, seq, initial)
       maybeBackfillBars(producer, seq, initial)
 
       val poller =
@@ -599,6 +658,7 @@ class ForwarderApp(
                   lastEventTs = lastOptionsMarketDataEventAt.get(),
                 )
               }
+              maybeBackfillTrades(producer, seq, desired)
               maybeBackfillBars(producer, seq, desired)
             }
           }
@@ -802,7 +862,13 @@ class ForwarderApp(
         }
       }
 
-      for (frame in incoming) {
+      while (isActive) {
+        val frame =
+          withTimeoutOrNull(config.tradeUpdatesReadIdleTimeoutMs) {
+            incoming.receive()
+          } ?: error(
+            "alpaca trade_updates websocket idle for ${config.tradeUpdatesReadIdleTimeoutMs}ms; reconnecting",
+          )
         val text =
           when (frame) {
             is Frame.Text -> frame.readText()
@@ -1010,6 +1076,113 @@ class ForwarderApp(
     }
   }
 
+  private suspend fun maybeBackfillTrades(
+    producer: KafkaProducer<String, String>,
+    seq: SeqTracker,
+    symbols: List<String>,
+  ) {
+    if (!config.enableTradesBackfill) return
+    if (symbols.isEmpty()) return
+    if (!tradesBackfillDone.compareAndSet(false, true)) return
+
+    try {
+      val requestNow = Instant.ofEpochMilli(nowMs())
+      val trades = fetchBackfillTrades(symbols)
+      if (trades.isEmpty()) {
+        logger.warn {
+          "trades backfill returned 0 records lookback_hours=${config.tradesBackfillLookbackHours} " +
+            "feed=${config.alpacaFeed} end=$requestNow"
+        }
+        return
+      }
+
+      logger.info {
+        "trades backfill sending ${trades.size} records lookback_hours=${config.tradesBackfillLookbackHours} " +
+          "feed=${config.alpacaFeed} end=$requestNow"
+      }
+      trades
+        .sortedBy { it.timestamp }
+        .forEach { trade ->
+          val env =
+            Envelope(
+              ingestTs = Instant.now(),
+              eventTs = Instant.parse(trade.timestamp),
+              feed = config.alpacaFeed,
+              channel = "trades",
+              symbol = trade.symbol,
+              seq = seq.next(trade.symbol),
+              payload = json.encodeToJsonElement(AlpacaTrade.serializer(), trade),
+              isFinal = true,
+              source = "rest",
+            )
+          recordLag(env)
+          sendKafka(producer, config.topics.trades, env, "trades")
+        }
+    } catch (e: Exception) {
+      tradesBackfillDone.set(false)
+      logger.warn(e) { "trades backfill failed; will retry when symbols refresh" }
+    }
+  }
+
+  private suspend fun fetchBackfillTrades(symbols: List<String>): List<AlpacaTrade> {
+    if (symbols.isEmpty()) return emptyList()
+    val trades = mutableListOf<AlpacaTrade>()
+    for (chunk in symbols.chunked(config.subscribeBatchSize)) {
+      if (trades.size >= config.tradesBackfillMaxRecords) break
+      val remaining = config.tradesBackfillMaxRecords - trades.size
+      trades += fetchBackfillTradesChunk(chunk, remaining)
+    }
+    return trades
+  }
+
+  private suspend fun fetchBackfillTradesChunk(
+    symbols: List<String>,
+    maxRecords: Int,
+  ): List<AlpacaTrade> {
+    if (symbols.isEmpty() || maxRecords <= 0) return emptyList()
+    val url = alpacaTradesBackfillUrl(config)
+    val requestNow = Instant.ofEpochMilli(nowMs())
+    val trades = mutableListOf<AlpacaTrade>()
+    var pageToken: String? = null
+
+    do {
+      val query = alpacaTradesBackfillQuery(config, symbols, requestNow, pageToken)
+      val response =
+        decodeAlpacaTradesResponse(
+          httpClient
+            .get(url) {
+              parameter("symbols", query.symbols)
+              parameter("start", query.start)
+              parameter("end", query.end)
+              parameter("limit", query.limit)
+              parameter("sort", query.sort)
+              query.feed?.let { parameter("feed", it) }
+              query.pageToken?.let { parameter("page_token", it) }
+              header("APCA-API-KEY-ID", config.alpacaKeyId)
+              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+            }.body(),
+          json,
+        )
+
+      val pageTrades =
+        when (val tradesElement = response.trades) {
+          null -> emptyList()
+          is JsonArray -> decodeTradesArray(tradesElement, response.symbol)
+          is JsonObject ->
+            tradesElement.entries.flatMap { (symbol, entry) ->
+              val arr = entry as? JsonArray ?: return@flatMap emptyList()
+              decodeTradesArray(arr, symbol)
+            }
+          else -> emptyList()
+        }
+      val remaining = maxRecords - trades.size
+      trades += pageTrades.take(remaining)
+      pageToken = response.nextPageToken
+    } while (pageToken != null && trades.size < maxRecords)
+
+    return trades
+  }
+
   private suspend fun fetchBackfillBars(symbols: List<String>): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
     return symbols.chunked(config.subscribeBatchSize).flatMap { chunk ->
@@ -1079,6 +1252,26 @@ class ForwarderApp(
         }
 
       runCatching { json.decodeFromJsonElement(AlpacaBar.serializer(), withSymbol) }.getOrNull()
+    }
+  }
+
+  private fun decodeTradesArray(
+    trades: JsonArray,
+    symbolFallback: String?,
+  ): List<AlpacaTrade> {
+    return trades.mapNotNull { tradeEl ->
+      val obj = tradeEl as? JsonObject ?: return@mapNotNull null
+      val symbol = obj["S"]?.jsonPrimitive?.contentOrNull ?: symbolFallback
+      if (symbol.isNullOrBlank()) return@mapNotNull null
+
+      val withSymbol =
+        if (obj.containsKey("S")) {
+          obj
+        } else {
+          JsonObject(obj + ("S" to JsonPrimitive(symbol)))
+        }
+
+      runCatching { json.decodeFromJsonElement(AlpacaTrade.serializer(), withSymbol) }.getOrNull()
     }
   }
 

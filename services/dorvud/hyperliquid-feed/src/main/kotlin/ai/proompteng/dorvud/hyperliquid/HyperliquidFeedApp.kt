@@ -23,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -217,7 +218,13 @@ class HyperliquidFeedApp(
           updateReady()
           val heartbeat = launch { heartbeatLoop() }
           try {
-            for (frame in incoming) {
+            while (scope.isActive) {
+              val frame =
+                withTimeoutOrNull(config.wsReadIdleTimeoutMs) {
+                  incoming.receive()
+                } ?: error(
+                  "hyperliquid websocket shard=${shard.index} idle for ${config.wsReadIdleTimeoutMs}ms; reconnecting",
+                )
               if (frame !is Frame.Text) continue
               val raw = frame.readText()
               val rawRecord = mapper.rawRecord(raw)
