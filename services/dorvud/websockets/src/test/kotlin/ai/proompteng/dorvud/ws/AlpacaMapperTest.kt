@@ -151,6 +151,30 @@ class AlpacaMapperTest {
   }
 
   @Test
+  fun `maps decimal epoch second timestamps`() {
+    val msg =
+      """{"T":"q","S":"NVDA260717C00160000","bp":1.1,"bs":12,"ap":1.2,"as":10,"t":"1783522323.192533568"}"""
+    val decoded = AlpacaMapper.decode(msg)
+
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.OPTIONS, "indicative") { 1 }
+
+    assertNotNull(env)
+    assertEquals("2026-07-08T14:52:03.192533568Z", env.eventTs.toString())
+  }
+
+  @Test
+  fun `maps timestamps with space separator and compact offset`() {
+    val msg =
+      """{"T":"q","S":"NVDA260717C00160000","bp":1.1,"bs":12,"ap":1.2,"as":10,"t":"2026-07-08 10:52:03.192533568-0400"}"""
+    val decoded = AlpacaMapper.decode(msg)
+
+    val env = AlpacaMapper.toEnvelope(decoded, AlpacaMarketType.OPTIONS, "indicative") { 1 }
+
+    assertNotNull(env)
+    assertEquals("2026-07-08T14:52:03.192533568Z", env.eventTs.toString())
+  }
+
+  @Test
   fun `drops malformed options status frame instead of throwing`() {
     val msg =
       """{"T":"s","S":"AAPL260618C00100000","statusCode":"error","statusMessage":"bad symbol","t":"[ERROR: (java.lang.IllegalStateException) 'gen' is expected to be a string]"}"""

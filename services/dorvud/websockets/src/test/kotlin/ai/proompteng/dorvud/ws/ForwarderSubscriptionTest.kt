@@ -195,6 +195,36 @@ class ForwarderSubscriptionTest {
   }
 
   @Test
+  fun `market data drop reason identifies invalid event timestamps`() {
+    assertEquals(
+      "invalid_event_ts",
+      marketDataEnvelopeDropReason(
+        AlpacaQuote(
+          symbol = "NVDA260717C00160000",
+          bidPrice = 1.1,
+          bidSize = 12.0,
+          askPrice = 1.2,
+          askSize = 10.0,
+          timestamp = "[ERROR: provider timestamp unavailable]",
+        ),
+      ),
+    )
+    assertEquals(
+      "envelope_mapping_failed",
+      marketDataEnvelopeDropReason(
+        AlpacaQuote(
+          symbol = "NVDA260717C00160000",
+          bidPrice = 1.1,
+          bidSize = 12.0,
+          askPrice = 1.2,
+          askSize = 10.0,
+          timestamp = "2026-07-08T14:52:03.192533568Z",
+        ),
+      ),
+    )
+  }
+
+  @Test
   fun `options event starvation requires options subscriptions during regular market hours`() {
     val now = Instant.parse("2026-06-18T15:00:00Z")
     val stale = now.minusSeconds(120)

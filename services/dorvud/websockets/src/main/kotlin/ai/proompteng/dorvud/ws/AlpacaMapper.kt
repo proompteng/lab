@@ -10,6 +10,8 @@ import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
+import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.Instant
 import java.time.LocalDateTime
 import java.time.OffsetDateTime
@@ -158,7 +160,7 @@ object AlpacaMapper {
 }
 
 internal fun parseAlpacaEventInstant(eventTs: String): Instant? {
-  val normalized = eventTs.trim().takeIf { it.isNotEmpty() } ?: return null
+  val normalized = normalizeTimestampText(eventTs) ?: return null
   return runCatching { Instant.parse(normalized) }.getOrNull()
     ?: runCatching { OffsetDateTime.parse(normalized).toInstant() }.getOrNull()
     ?: runCatching { LocalDateTime.parse(normalized).toInstant(ZoneOffset.UTC) }.getOrNull()
@@ -166,6 +168,7 @@ internal fun parseAlpacaEventInstant(eventTs: String): Instant? {
 }
 
 private fun parseEpochTimestamp(value: String): Instant? {
+  if ('.' in value) return parseDecimalEpochSeconds(value)
   val timestamp = value.toLongOrNull()?.takeIf { it >= 0 } ?: return null
   return when (value.length) {
     in 1..10 -> Instant.ofEpochSecond(timestamp)
@@ -173,4 +176,32 @@ private fun parseEpochTimestamp(value: String): Instant? {
     in 14..16 -> Instant.ofEpochSecond(timestamp / 1_000_000, (timestamp % 1_000_000) * 1_000)
     else -> Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000)
   }
+}
+
+private fun parseDecimalEpochSeconds(value: String): Instant? {
+  val timestamp = runCatching { BigDecimal(value) }.getOrNull()?.takeIf { it.signum() >= 0 } ?: return null
+  val seconds = timestamp.setScale(0, RoundingMode.DOWN)
+  val nanos =
+    timestamp
+      .subtract(seconds)
+      .movePointRight(9)
+      .setScale(0, RoundingMode.DOWN)
+      .toLong()
+  return Instant.ofEpochSecond(seconds.toLong(), nanos)
+}
+
+private fun normalizeTimestampText(raw: String): String? {
+  val trimmed =
+    raw
+      .trim()
+      .removeSurrounding("\"")
+      .takeIf { it.isNotEmpty() }
+      ?: return null
+  val withSeparator =
+    if (trimmed.length > 10 && trimmed[10] == ' ') {
+      trimmed.replaceRange(10, 11, "T")
+    } else {
+      trimmed
+    }
+  return withSeparator.replace(Regex("([+-]\\d{2})(\\d{2})$"), "$1:$2")
 }
