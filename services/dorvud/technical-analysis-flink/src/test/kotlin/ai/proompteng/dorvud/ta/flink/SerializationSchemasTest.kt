@@ -64,10 +64,20 @@ class SerializationSchemasTest {
             lastInputEventTs = "2026-07-07T14:00:04Z",
             lastOutputEventTs = "2026-07-07T14:00:04Z",
             inputEventCount = 42,
-            outputEventCount = 42,
+            outputEventCount = 40,
+            currentInputEventCount = 2,
+            currentOutputEventCount = 1,
+            currentRecordCount = 3,
             inputRatePerSecond = 10.5,
-            outputRatePerSecond = 10.5,
+            outputRatePerSecond = 9.5,
+            microbarEventCount = 42,
+            signalEventCount = 40,
+            microbarRatePerSecond = 10.5,
+            signalRatePerSecond = 9.5,
+            clickhouseSinkEnabled = true,
             perSymbolLatestEventTs = mapOf("NVDA" to "2026-07-07T14:00:04Z"),
+            marketSessionState = "regular",
+            statusReason = null,
           ),
         isFinal = true,
         source = "ta",
@@ -80,7 +90,12 @@ class SerializationSchemasTest {
     assertTrue(json.contains("source_lag_ms"))
     assertTrue(json.contains("last_input_event_ts"))
     assertTrue(json.contains("input_event_count"))
+    assertTrue(json.contains("current_record_count"))
     assertTrue(json.contains("output_rate_per_second"))
+    assertTrue(json.contains("microbar_event_count"))
+    assertTrue(json.contains("signal_event_count"))
+    assertTrue(json.contains("clickhouse_sink_enabled"))
+    assertTrue(json.contains("market_session_state"))
     assertTrue(json.contains("per_symbol_latest_event_ts"))
     assertTrue(json.contains("NVDA"))
   }

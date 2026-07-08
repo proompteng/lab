@@ -40,6 +40,7 @@ import org.apache.flink.connector.kafka.source.KafkaSource
 import org.apache.flink.connector.kafka.source.KafkaSourceBuilder
 import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsInitializer
 import org.apache.flink.connector.kafka.source.reader.deserializer.KafkaRecordDeserializationSchema
+import org.apache.flink.metrics.Counter
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction
 import org.apache.flink.streaming.api.functions.co.KeyedCoProcessFunction
@@ -68,6 +69,8 @@ import java.sql.Timestamp
 import java.sql.Types
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalTime
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.time.ZonedDateTime
 import java.time.temporal.ChronoUnit
@@ -81,24 +84,38 @@ fun main() {
 
   configureEnvironment(env, config)
 
-  val trades =
+  val parsedTrades =
     env
       .fromSource(
         kafkaSource(config, config.tradesTopic),
         WatermarkStrategy.noWatermarks(),
         "ta-trades-source",
-      ).flatMap(ParseEnvelopeFlatMap(SerializerFactory { TradePayload.serializer() }))
+      ).flatMap(
+        ParseEnvelopeFlatMap(
+          serializerFactory = SerializerFactory { TradePayload.serializer() },
+          failureMetricName = "trades_parse_failures",
+        ),
+      )
+  val trades =
+    parsedTrades
       .returns(object : TypeHint<Envelope<TradePayload>>() {})
       .assignTimestampsAndWatermarks(watermarkStrategy(config))
 
   val quotesStream =
     if (config.quotesTopic != null) {
-      env
-        .fromSource(
-          kafkaSource(config, config.quotesTopic),
-          WatermarkStrategy.noWatermarks(),
-          "ta-quotes-source",
-        ).flatMap(ParseEnvelopeFlatMap(SerializerFactory { QuotePayload.serializer() }))
+      val parsedQuotes =
+        env
+          .fromSource(
+            kafkaSource(config, config.quotesTopic),
+            WatermarkStrategy.noWatermarks(),
+            "ta-quotes-source",
+          ).flatMap(
+            ParseEnvelopeFlatMap(
+              serializerFactory = SerializerFactory { QuotePayload.serializer() },
+              failureMetricName = "quotes_parse_failures",
+            ),
+          )
+      parsedQuotes
         .returns(object : TypeHint<Envelope<QuotePayload>>() {})
         .assignTimestampsAndWatermarks(watermarkStrategy(config))
     } else {
@@ -143,15 +160,26 @@ fun main() {
       microBarsForSignals
         .map { envelope: Envelope<MicroBarPayload> -> StatusHeartbeatInput.MicroBar(envelope) as StatusHeartbeatInput }
         .returns(statusInputType)
+    val signalStatusInputs =
+      signals
+        .map { envelope: Envelope<TaSignalsPayload> -> StatusHeartbeatInput.Signal(envelope) as StatusHeartbeatInput }
+        .returns(statusInputType)
     val startupStatusTick =
       env.fromData(
         listOf(StatusHeartbeatInput.StartupTick(Instant.now().toEpochMilli())),
         statusInputType,
       )
-    microbarStatusInputs
-      .union(startupStatusTick)
-      .keyBy { STATUS_SYMBOL }
-      .process(StatusHeartbeatProcessFunction(statusIntervalMs))
+    val statusHeartbeats =
+      microbarStatusInputs
+        .union(signalStatusInputs, startupStatusTick)
+        .keyBy { STATUS_SYMBOL }
+        .process(
+          StatusHeartbeatProcessFunction(
+            intervalMs = statusIntervalMs,
+            clickhouseSinkEnabled = !config.clickhouseUrl.isNullOrBlank(),
+          ),
+        )
+    statusHeartbeats
       .name("ta-status")
       .uid("ta-status")
       .sinkTo(statusSink(config, serde))
@@ -166,10 +194,20 @@ fun main() {
 }
 
 private const val STATUS_SYMBOL = "ta"
+private const val MARKET_SESSION_REGULAR = "regular"
+private const val MARKET_SESSION_OUTSIDE_REGULAR = "outside_regular_session"
+private const val ZERO_CURRENT_RECORDS_REASON = "zero_current_records_during_regular_session"
+private val EQUITY_MARKET_ZONE: ZoneId = ZoneId.of("America/New_York")
+private val REGULAR_SESSION_OPEN: LocalTime = LocalTime.of(9, 30)
+private val REGULAR_SESSION_CLOSE: LocalTime = LocalTime.of(16, 0)
 
 internal sealed class StatusHeartbeatInput : Serializable {
   data class MicroBar(
     val envelope: Envelope<MicroBarPayload>,
+  ) : StatusHeartbeatInput()
+
+  data class Signal(
+    val envelope: Envelope<TaSignalsPayload>,
   ) : StatusHeartbeatInput()
 
   data class StartupTick(
@@ -753,6 +791,7 @@ internal fun interface SerializerFactory<T> : Serializable {
 
 internal class ParseEnvelopeFlatMap<T>(
   private val serializerFactory: SerializerFactory<T>,
+  private val failureMetricName: String = "parse_envelope_failures",
 ) : RichFlatMapFunction<String, Envelope<T>>(),
   Serializable {
   companion object {
@@ -765,9 +804,13 @@ internal class ParseEnvelopeFlatMap<T>(
   @Transient
   private lateinit var payloadSerializer: KSerializer<T>
 
+  @Transient
+  private lateinit var failureCounter: Counter
+
   override fun open(openContext: OpenContext) {
     json = Json { ignoreUnknownKeys = true }
     payloadSerializer = serializerFactory.serializer()
+    failureCounter = runtimeContext.metricGroup.counter(failureMetricName)
   }
 
   override fun flatMap(
@@ -776,7 +819,10 @@ internal class ParseEnvelopeFlatMap<T>(
   ) {
     runCatching { json.decodeFromString(Envelope.serializer(payloadSerializer), value) }
       .onSuccess { out.collect(it) }
-      .onFailure { LoggerFactory.getLogger("parse-envelope").warn("Failed to decode envelope", it) }
+      .onFailure {
+        failureCounter.inc()
+        LoggerFactory.getLogger("parse-envelope").warn("Failed to decode envelope", it)
+      }
   }
 }
 
@@ -796,10 +842,18 @@ internal class ParseMicroBarCompatFlatMap :
   @Transient
   private lateinit var alpacaSerializer: KSerializer<AlpacaBarPayload>
 
+  @Transient
+  private lateinit var decodeFailureCounter: Counter
+
+  @Transient
+  private lateinit var mappingFailureCounter: Counter
+
   override fun open(openContext: OpenContext) {
     json = Json { ignoreUnknownKeys = true }
     microSerializer = MicroBarPayload.serializer()
     alpacaSerializer = AlpacaBarPayload.serializer()
+    decodeFailureCounter = runtimeContext.metricGroup.counter("bars1m_parse_failures")
+    mappingFailureCounter = runtimeContext.metricGroup.counter("bars1m_mapping_failures")
   }
 
   override fun flatMap(
@@ -817,10 +871,14 @@ internal class ParseMicroBarCompatFlatMap :
       val alpacaEnv = alpacaResult.getOrThrow()
       runCatching { alpacaEnv.withPayload(alpacaEnv.payload.toMicroBarPayload()) }
         .onSuccess { out.collect(it) }
-        .onFailure { LoggerFactory.getLogger("parse-bars1m").warn("Failed to map Alpaca bar payload", it) }
+        .onFailure {
+          mappingFailureCounter.inc()
+          LoggerFactory.getLogger("parse-bars1m").warn("Failed to map Alpaca bar payload", it)
+        }
       return
     }
 
+    decodeFailureCounter.inc()
     val logger = LoggerFactory.getLogger("parse-bars1m")
     val microError = microResult.exceptionOrNull()
     val alpacaError = alpacaResult.exceptionOrNull()
@@ -946,21 +1004,34 @@ private class MicrobarProcessFunction : KeyedProcessFunction<String, TradeEnvelo
 
 private class StatusHeartbeatProcessFunction(
   private val intervalMs: Long,
+  private val clickhouseSinkEnabled: Boolean,
 ) : KeyedProcessFunction<String, StatusHeartbeatInput, Envelope<TaStatusPayload>>() {
-  private lateinit var lastEventMsState: ValueState<Long>
-  private lateinit var eventCountState: ValueState<Long>
-  private lateinit var lastHeartbeatEventCountState: ValueState<Long>
+  private lateinit var lastInputEventMsState: ValueState<Long>
+  private lateinit var lastOutputEventMsState: ValueState<Long>
+  private lateinit var inputEventCountState: ValueState<Long>
+  private lateinit var outputEventCountState: ValueState<Long>
+  private lateinit var lastHeartbeatInputCountState: ValueState<Long>
+  private lateinit var lastHeartbeatOutputCountState: ValueState<Long>
   private lateinit var lastHeartbeatMsState: ValueState<Long>
   private lateinit var perSymbolLatestEventMsState: MapState<String, Long>
   private lateinit var seqState: ValueState<Long>
   private lateinit var nextTimerState: ValueState<Long>
 
   override fun open(openContext: OpenContext) {
-    lastEventMsState = runtimeContext.getState(ValueStateDescriptor("status-last-event-ms", Long::class.javaObjectType))
-    eventCountState = runtimeContext.getState(ValueStateDescriptor("status-event-count", Long::class.javaObjectType))
-    lastHeartbeatEventCountState =
+    lastInputEventMsState =
+      runtimeContext.getState(ValueStateDescriptor("status-last-event-ms", Long::class.javaObjectType))
+    lastOutputEventMsState =
+      runtimeContext.getState(ValueStateDescriptor("status-last-output-event-ms", Long::class.javaObjectType))
+    inputEventCountState =
+      runtimeContext.getState(ValueStateDescriptor("status-event-count", Long::class.javaObjectType))
+    outputEventCountState =
+      runtimeContext.getState(ValueStateDescriptor("status-output-event-count", Long::class.javaObjectType))
+    lastHeartbeatInputCountState =
       runtimeContext.getState(ValueStateDescriptor("status-last-heartbeat-event-count", Long::class.javaObjectType))
-    lastHeartbeatMsState = runtimeContext.getState(ValueStateDescriptor("status-last-heartbeat-ms", Long::class.javaObjectType))
+    lastHeartbeatOutputCountState =
+      runtimeContext.getState(ValueStateDescriptor("status-last-heartbeat-output-count", Long::class.javaObjectType))
+    lastHeartbeatMsState =
+      runtimeContext.getState(ValueStateDescriptor("status-last-heartbeat-ms", Long::class.javaObjectType))
     perSymbolLatestEventMsState =
       runtimeContext.getMapState(
         MapStateDescriptor(
@@ -980,7 +1051,11 @@ private class StatusHeartbeatProcessFunction(
   ) {
     when (value) {
       is StatusHeartbeatInput.MicroBar -> {
-        recordMicroBar(value.envelope)
+        recordInputEvent(value.envelope.symbol, value.envelope.eventTs.toEpochMilli())
+        scheduleTimerIfNeeded(ctx)
+      }
+      is StatusHeartbeatInput.Signal -> {
+        recordOutputEvent(value.envelope.symbol, value.envelope.eventTs.toEpochMilli())
         scheduleTimerIfNeeded(ctx)
       }
       is StatusHeartbeatInput.StartupTick -> {
@@ -994,17 +1069,38 @@ private class StatusHeartbeatProcessFunction(
     }
   }
 
-  private fun recordMicroBar(value: Envelope<MicroBarPayload>) {
-    val eventMs = value.eventTs.toEpochMilli()
-    val last = lastEventMsState.value()
+  private fun recordInputEvent(
+    symbol: String,
+    eventMs: Long,
+  ) {
+    val last = lastInputEventMsState.value()
     if (last == null || eventMs > last) {
-      lastEventMsState.update(eventMs)
+      lastInputEventMsState.update(eventMs)
     }
-    val symbolLast = perSymbolLatestEventMsState.get(value.symbol)
+    recordPerSymbolLatest(symbol, eventMs)
+    inputEventCountState.update((inputEventCountState.value() ?: 0L) + 1L)
+  }
+
+  private fun recordOutputEvent(
+    symbol: String,
+    eventMs: Long,
+  ) {
+    val last = lastOutputEventMsState.value()
+    if (last == null || eventMs > last) {
+      lastOutputEventMsState.update(eventMs)
+    }
+    recordPerSymbolLatest(symbol, eventMs)
+    outputEventCountState.update((outputEventCountState.value() ?: 0L) + 1L)
+  }
+
+  private fun recordPerSymbolLatest(
+    symbol: String,
+    eventMs: Long,
+  ) {
+    val symbolLast = perSymbolLatestEventMsState.get(symbol)
     if (symbolLast == null || eventMs > symbolLast) {
-      perSymbolLatestEventMsState.put(value.symbol, eventMs)
+      perSymbolLatestEventMsState.put(symbol, eventMs)
     }
-    eventCountState.update((eventCountState.value() ?: 0L) + 1L)
   }
 
   override fun onTimer(
@@ -1027,9 +1123,12 @@ private class StatusHeartbeatProcessFunction(
     watermark: Long,
     out: Collector<Envelope<TaStatusPayload>>,
   ) {
-    val lastEventMs = lastEventMsState.value()
-    val eventCount = eventCountState.value() ?: 0L
-    val lastHeartbeatCount = lastHeartbeatEventCountState.value() ?: eventCount
+    val lastInputEventMs = lastInputEventMsState.value()
+    val lastOutputEventMs = lastOutputEventMsState.value()
+    val inputEventCount = inputEventCountState.value() ?: 0L
+    val outputEventCount = outputEventCountState.value() ?: 0L
+    val lastHeartbeatInputCount = lastHeartbeatInputCountState.value() ?: 0L
+    val lastHeartbeatOutputCount = lastHeartbeatOutputCountState.value() ?: 0L
     val lastHeartbeatMs = lastHeartbeatMsState.value()
     val perSymbolLatestEventTs =
       perSymbolLatestEventMsState
@@ -1039,13 +1138,18 @@ private class StatusHeartbeatProcessFunction(
       taStatusPayload(
         now = now,
         watermark = watermark,
-        lastEventMs = lastEventMs,
-        eventCount = eventCount,
-        lastHeartbeatCount = lastHeartbeatCount,
+        lastInputEventMs = lastInputEventMs,
+        lastOutputEventMs = lastOutputEventMs,
+        inputEventCount = inputEventCount,
+        outputEventCount = outputEventCount,
+        lastHeartbeatInputCount = lastHeartbeatInputCount,
+        lastHeartbeatOutputCount = lastHeartbeatOutputCount,
         lastHeartbeatMs = lastHeartbeatMs,
         perSymbolLatestEventTs = perSymbolLatestEventTs,
+        clickhouseSinkEnabled = clickhouseSinkEnabled,
       )
-    lastHeartbeatEventCountState.update(eventCount)
+    lastHeartbeatInputCountState.update(inputEventCount)
+    lastHeartbeatOutputCountState.update(outputEventCount)
     lastHeartbeatMsState.update(now.toEpochMilli())
     val seq = (seqState.value() ?: 0L) + 1
     seqState.update(seq)
@@ -1080,11 +1184,15 @@ private class StatusHeartbeatProcessFunction(
 internal fun taStatusPayload(
   now: Instant,
   watermark: Long,
-  lastEventMs: Long?,
-  eventCount: Long,
-  lastHeartbeatCount: Long,
+  lastInputEventMs: Long?,
+  lastOutputEventMs: Long?,
+  inputEventCount: Long,
+  outputEventCount: Long,
+  lastHeartbeatInputCount: Long,
+  lastHeartbeatOutputCount: Long,
   lastHeartbeatMs: Long?,
   perSymbolLatestEventTs: Map<String, String>,
+  clickhouseSinkEnabled: Boolean = false,
 ): TaStatusPayload {
   val nowMs = now.toEpochMilli()
   val watermarkLagMs =
@@ -1094,29 +1202,99 @@ internal fun taStatusPayload(
       (nowMs - watermark).coerceAtLeast(0)
     }
   val inputRatePerSecond =
-    if (lastHeartbeatMs == null || nowMs <= lastHeartbeatMs) {
-      null
+    ratePerSecond(
+      nowMs = nowMs,
+      lastHeartbeatMs = lastHeartbeatMs,
+      currentCount = inputEventCount,
+      previousCount = lastHeartbeatInputCount,
+    )
+  val currentInputEventCount = deltaSinceLastHeartbeat(inputEventCount, lastHeartbeatInputCount)
+  val currentOutputEventCount = deltaSinceLastHeartbeat(outputEventCount, lastHeartbeatOutputCount)
+  val currentRecordCount = currentInputEventCount + currentOutputEventCount
+  val outputRatePerSecond =
+    ratePerSecond(
+      nowMs = nowMs,
+      lastHeartbeatMs = lastHeartbeatMs,
+      currentCount = outputEventCount,
+      previousCount = lastHeartbeatOutputCount,
+    )
+  val marketSessionState = marketSessionState(now)
+  val statusReason =
+    if (marketSessionState == MARKET_SESSION_REGULAR && currentRecordCount == 0L) {
+      ZERO_CURRENT_RECORDS_REASON
     } else {
-      val elapsedSeconds = (nowMs - lastHeartbeatMs).toDouble() / 1_000.0
-      (eventCount - lastHeartbeatCount).coerceAtLeast(0).toDouble() / elapsedSeconds
+      null
     }
+  val status = if (statusReason == null) "ok" else "degraded"
+  val lastEventMs = maxOfNullable(lastInputEventMs, lastOutputEventMs)
   val lastEventTs = lastEventMs?.let { Instant.ofEpochMilli(it).toString() }
+  val lastInputEventTs = lastInputEventMs?.let { Instant.ofEpochMilli(it).toString() }
+  val lastOutputEventTs = lastOutputEventMs?.let { Instant.ofEpochMilli(it).toString() }
   val sourceLagMs = lastEventMs?.let { (nowMs - it).coerceAtLeast(0) }
   return TaStatusPayload(
     watermarkLagMs = watermarkLagMs,
     sourceLagMs = sourceLagMs,
     lastEventTs = lastEventTs,
-    lastInputEventTs = lastEventTs,
-    lastOutputEventTs = lastEventTs,
-    inputEventCount = eventCount,
-    outputEventCount = eventCount,
+    lastInputEventTs = lastInputEventTs,
+    lastOutputEventTs = lastOutputEventTs,
+    inputEventCount = inputEventCount,
+    outputEventCount = outputEventCount,
+    currentInputEventCount = currentInputEventCount,
+    currentOutputEventCount = currentOutputEventCount,
+    currentRecordCount = currentRecordCount,
     inputRatePerSecond = inputRatePerSecond,
-    outputRatePerSecond = inputRatePerSecond,
+    outputRatePerSecond = outputRatePerSecond,
+    microbarEventCount = inputEventCount,
+    signalEventCount = outputEventCount,
+    microbarRatePerSecond = inputRatePerSecond,
+    signalRatePerSecond = outputRatePerSecond,
+    clickhouseSinkEnabled = clickhouseSinkEnabled,
     perSymbolLatestEventTs = perSymbolLatestEventTs,
-    status = "ok",
+    marketSessionState = marketSessionState,
+    statusReason = statusReason,
+    status = status,
     heartbeat = true,
   )
 }
+
+private fun deltaSinceLastHeartbeat(
+  currentCount: Long,
+  previousCount: Long,
+): Long = (currentCount - previousCount).coerceAtLeast(0)
+
+private fun marketSessionState(now: Instant): String {
+  val local = now.atZone(EQUITY_MARKET_ZONE)
+  val day = local.dayOfWeek.value
+  val time = local.toLocalTime()
+  return if (day in 1..5 && !time.isBefore(REGULAR_SESSION_OPEN) && time.isBefore(REGULAR_SESSION_CLOSE)) {
+    MARKET_SESSION_REGULAR
+  } else {
+    MARKET_SESSION_OUTSIDE_REGULAR
+  }
+}
+
+private fun ratePerSecond(
+  nowMs: Long,
+  lastHeartbeatMs: Long?,
+  currentCount: Long,
+  previousCount: Long,
+): Double? =
+  if (lastHeartbeatMs == null || nowMs <= lastHeartbeatMs) {
+    null
+  } else {
+    val elapsedSeconds = (nowMs - lastHeartbeatMs).toDouble() / 1_000.0
+    (currentCount - previousCount).coerceAtLeast(0).toDouble() / elapsedSeconds
+  }
+
+private fun maxOfNullable(
+  first: Long?,
+  second: Long?,
+): Long? =
+  when {
+    first == null -> second
+    second == null -> first
+    else -> maxOf(first, second)
+  }
 
 private data class BucketState(
   val windowStartMillis: Long,
