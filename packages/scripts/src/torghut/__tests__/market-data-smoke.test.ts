@@ -354,6 +354,65 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.summaryLines.join('\n')).toContain('source_write_records=`15`')
   })
 
+  it('allows the bounded startup heartbeat source to finish after emitting', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: {
+        ...freshTaFlinkJob,
+        vertices: [
+          ...freshTaFlinkJob.vertices,
+          {
+            name: 'Source: Collection Source',
+            status: 'FINISHED',
+            metrics: { 'read-records': 0, 'write-records': 1 },
+          },
+        ],
+      },
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.failures.join('\n')).not.toContain('ta_flink_vertices_not_running')
+  })
+
+  it('still fails unexpected finished Flink vertices', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: {
+        ...freshTaFlinkJob,
+        vertices: freshTaFlinkJob.vertices.map((vertex) =>
+          vertex.name.startsWith('Source: ta-trades-source') ? { ...vertex, status: 'FINISHED' } : vertex,
+        ),
+      },
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ta_flink_vertices_not_running')
+  })
+
   it('uses Flink current-rate metrics over lifetime counters when detecting current stalls', () => {
     const result = evaluateMarketDataSmoke({
       now: new Date('2026-07-07T17:00:30Z'),
