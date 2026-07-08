@@ -27,10 +27,11 @@ class MarketDataChannelFreshnessTrackerTest {
     val byChannel = tracker.snapshot().associateBy { it.channel }
 
     assertFalse(tracker.ready())
-    assertTrue(byChannel.getValue("bars").ready)
+    assertFalse(byChannel.getValue("bars").ready)
     assertEquals(2, byChannel.getValue("bars").subscribedSymbolCount)
     assertEquals(1, byChannel.getValue("bars").observedSymbolCount)
     assertEquals(listOf("NVDA"), byChannel.getValue("bars").observedSymbols)
+    assertEquals(listOf("AMD"), byChannel.getValue("bars").missingSymbols)
     assertFalse(byChannel.getValue("trades").ready)
     assertEquals(
       "market_data_channel_missing_kafka_success",
@@ -43,13 +44,25 @@ class MarketDataChannelFreshnessTrackerTest {
       tracker.recordKafkaSuccess(channel, "NVDA")
     }
 
+    assertFalse(tracker.ready())
+    assertEquals(
+      "market_data_channel_missing_symbol_coverage",
+      tracker.snapshot().first { it.channel == "trades" }.reason,
+    )
+
+    listOf("trades", "quotes", "bars", "updatedBars").forEach { channel ->
+      tracker.recordProviderEvent(channel, "AMD")
+      tracker.recordSerializedEvent(channel, "AMD")
+      tracker.recordKafkaSuccess(channel, "AMD")
+    }
+
     assertTrue(tracker.ready())
 
     nowMs += 61_000
 
     assertFalse(tracker.ready())
     assertEquals(
-      "market_data_channel_stale",
+      "market_data_channel_stale_symbol_coverage",
       tracker.snapshot().first { it.channel == "trades" }.reason,
     )
   }
@@ -81,13 +94,52 @@ class MarketDataChannelFreshnessTrackerTest {
     val byChannel = tracker.snapshot().associateBy { it.channel }
 
     assertFalse(tracker.ready())
-    assertTrue(byChannel.getValue("bars").ready)
+    assertFalse(byChannel.getValue("bars").ready)
     assertEquals(2, byChannel.getValue("bars").subscribedSymbolCount)
+    assertEquals(listOf("AMD"), byChannel.getValue("bars").missingSymbols)
     assertFalse(byChannel.getValue("trades").ready)
     assertEquals(0, byChannel.getValue("trades").subscribedSymbolCount)
     assertEquals(
       "market_data_channel_not_subscribed",
       byChannel.getValue("trades").reason,
     )
+  }
+
+  @Test
+  fun `regular-session readiness requires fresh coverage for every subscribed symbol`() {
+    var nowMs = Instant.parse("2026-07-07T14:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("trades"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("trades" to listOf("NVDA", "AMD")))
+    tracker.recordProviderEvent("trades", "NVDA")
+    tracker.recordSerializedEvent("trades", "NVDA")
+    tracker.recordKafkaSuccess("trades", "NVDA")
+
+    val missingCoverage = tracker.snapshot().single()
+    assertFalse(tracker.ready())
+    assertEquals("market_data_channel_missing_symbol_coverage", missingCoverage.reason)
+    assertEquals(listOf("AMD"), missingCoverage.missingSymbols)
+    assertEquals(listOf("NVDA"), missingCoverage.freshSymbols)
+
+    nowMs += 10_000
+    tracker.recordProviderEvent("trades", "AMD")
+    tracker.recordSerializedEvent("trades", "AMD")
+    tracker.recordKafkaSuccess("trades", "AMD")
+
+    assertTrue(tracker.ready())
+
+    nowMs += 55_000
+    val staleCoverage = tracker.snapshot().single()
+    assertFalse(tracker.ready())
+    assertEquals("market_data_channel_stale_symbol_coverage", staleCoverage.reason)
+    assertEquals(listOf("NVDA"), staleCoverage.staleSymbols)
+    assertEquals(listOf("AMD"), staleCoverage.freshSymbols)
   }
 }

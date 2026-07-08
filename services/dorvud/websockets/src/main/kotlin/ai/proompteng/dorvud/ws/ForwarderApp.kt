@@ -1116,7 +1116,7 @@ class ForwarderApp(
               source = "rest",
             )
           recordLag(env)
-          sendKafka(producer, config.topics.trades, env, "trades")
+          sendKafka(producer, config.topics.trades, env)
         }
     } catch (e: Exception) {
       tradesBackfillDone.set(false)
@@ -1405,7 +1405,7 @@ class ForwarderApp(
           recordKafkaFailure(exception, topic)
         } else {
           metrics.recordKafkaProduceSuccess(topic)
-          marketDataChannelFreshness.recordKafkaSuccess(marketDataChannel, env.symbol)
+          marketDataChannelFreshness.recordKafkaSuccess(marketDataFreshnessChannelFor(env, marketDataChannel), env.symbol)
           recordKafkaSuccess()
         }
       }

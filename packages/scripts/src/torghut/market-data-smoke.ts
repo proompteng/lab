@@ -120,6 +120,9 @@ const isObject = (value: unknown): value is JsonObject =>
 
 const asString = (value: unknown): string | undefined => (typeof value === 'string' ? value : undefined)
 
+const asStringArray = (value: unknown): string[] =>
+  Array.isArray(value) ? value.map((item) => asString(item) ?? '').filter((item) => item.length > 0) : []
+
 const asNumber = (value: unknown): number | undefined => {
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string' && value.trim() !== '') {
@@ -445,9 +448,14 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     const ready = status?.ready === true
     const subscribed = asNumber(status?.subscribed_symbol_count) ?? 0
     const observed = asNumber(status?.observed_symbol_count) ?? 0
+    const fresh = asNumber(status?.fresh_symbol_count)
+    const missingSymbols = asStringArray(status?.missing_symbols)
+    const staleSymbols = asStringArray(status?.stale_symbols)
     const reason = asString(status?.reason) ?? 'missing'
     summaryLines.push(
-      `- WS ${channel}: ready=\`${ready}\`, subscribed=\`${subscribed}\`, observed=\`${observed}\`, reason=\`${reason}\``,
+      `- WS ${channel}: ready=\`${ready}\`, subscribed=\`${subscribed}\`, observed=\`${observed}\`, ` +
+        `fresh=\`${fresh ?? 'missing'}\`, missing=\`${missingSymbols.join(',') || 'none'}\`, ` +
+        `stale=\`${staleSymbols.join(',') || 'none'}\`, reason=\`${reason}\``,
     )
     if (!ready || subscribed <= 0) {
       pushFinding(
@@ -456,6 +464,20 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
         warnings,
         `ws_${channel}_not_ready`,
         `WS channel ${channel} ready=${ready} subscribed_symbol_count=${subscribed} reason=${reason}`,
+      )
+    }
+    if (
+      missingSymbols.length > 0 ||
+      staleSymbols.length > 0 ||
+      (fresh !== undefined && subscribed > 0 && fresh < subscribed)
+    ) {
+      pushFinding(
+        enforceFreshness,
+        failures,
+        warnings,
+        `ws_${channel}_symbol_coverage_gap`,
+        `WS channel ${channel} fresh_symbol_count=${fresh ?? 'missing'} subscribed_symbol_count=${subscribed} ` +
+          `missing_symbols=${missingSymbols.join(',') || 'none'} stale_symbols=${staleSymbols.join(',') || 'none'}`,
       )
     }
     if (enforceFreshness && status?.latest_kafka_success_at_ms === null) {

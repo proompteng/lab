@@ -1,5 +1,6 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.Envelope
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
@@ -20,6 +21,11 @@ data class MarketDataChannelReadiness(
   @SerialName("subscribed_symbol_count") val subscribedSymbolCount: Int = 0,
   @SerialName("observed_symbol_count") val observedSymbolCount: Int = 0,
   @SerialName("observed_symbols") val observedSymbols: List<String> = emptyList(),
+  @SerialName("fresh_symbol_count") val freshSymbolCount: Int = 0,
+  @SerialName("fresh_symbols") val freshSymbols: List<String> = emptyList(),
+  @SerialName("missing_symbols") val missingSymbols: List<String> = emptyList(),
+  @SerialName("stale_symbols") val staleSymbols: List<String> = emptyList(),
+  @SerialName("symbol_lag_ms") val symbolLagMs: Map<String, Long> = emptyMap(),
   @SerialName("lag_ms") val lagMs: Long? = null,
   @SerialName("max_lag_ms") val maxLagMs: Long,
   @SerialName("reason") val reason: String,
@@ -109,18 +115,38 @@ internal class MarketDataChannelFreshnessTracker(
       val latestKafkaSuccessAt = state?.latestKafkaSuccessAtMs?.get()?.takeIf { it > 0 }
       val latestProviderAt = state?.latestProviderEventAtMs?.get()?.takeIf { it > 0 }
       val latestSerializedAt = state?.latestSerializedAtMs?.get()?.takeIf { it > 0 }
+      val symbolLastSeen = state?.latestKafkaSuccessAtMsBySymbol?.mapValues { (_, seenAt) -> seenAt.get() }.orEmpty()
       val observedSymbols =
-        state
-          ?.kafkaSuccessSymbols
-          ?.toList()
-          ?.sorted()
-          .orEmpty()
+        symbolLastSeen
+          .keys
+          .filter { symbol -> symbol in channelSymbols }
+          .sorted()
       val lagMs = latestKafkaSuccessAt?.let { (now - it).coerceAtLeast(0) }
+      val symbolLagMs =
+        channelSymbols
+          .mapNotNull { symbol ->
+            val seenAt = symbolLastSeen[symbol]?.takeIf { it > 0 } ?: return@mapNotNull null
+            symbol to (now - seenAt).coerceAtLeast(0)
+          }.toMap()
+      val freshSymbols =
+        channelSymbols
+          .filter { symbol -> symbolLagMs[symbol]?.let { it <= maxLagMs } == true }
+          .sorted()
+      val missingSymbols =
+        channelSymbols
+          .filter { symbol -> symbol !in symbolLastSeen }
+          .sorted()
+      val staleSymbols =
+        channelSymbols
+          .filter { symbol -> symbolLastSeen.containsKey(symbol) && symbol !in freshSymbols }
+          .sorted()
       val ready =
         when {
           !gateActive -> true
           channelSymbols.isEmpty() -> false
           latestKafkaSuccessAt == null -> false
+          missingSymbols.isNotEmpty() -> false
+          staleSymbols.isNotEmpty() -> false
           lagMs == null -> false
           else -> lagMs <= maxLagMs
         }
@@ -135,6 +161,11 @@ internal class MarketDataChannelFreshnessTracker(
         subscribedSymbolCount = channelSymbols.size,
         observedSymbolCount = observedSymbols.size,
         observedSymbols = observedSymbols,
+        freshSymbolCount = freshSymbols.size,
+        freshSymbols = freshSymbols,
+        missingSymbols = missingSymbols,
+        staleSymbols = staleSymbols,
+        symbolLagMs = symbolLagMs,
         lagMs = lagMs,
         maxLagMs = maxLagMs,
         reason =
@@ -143,6 +174,8 @@ internal class MarketDataChannelFreshnessTracker(
             ready -> "market_data_channel_fresh"
             channelSymbols.isEmpty() -> "market_data_channel_not_subscribed"
             latestKafkaSuccessAt == null -> "market_data_channel_missing_kafka_success"
+            missingSymbols.isNotEmpty() -> "market_data_channel_missing_symbol_coverage"
+            staleSymbols.isNotEmpty() -> "market_data_channel_stale_symbol_coverage"
             else -> "market_data_channel_stale"
           },
       )
@@ -166,7 +199,7 @@ internal class MarketDataChannelFreshnessTracker(
     val latestSerializedAtMs = AtomicLong(0)
     val latestKafkaSuccessAtMs = AtomicLong(0)
     val latestSymbol = AtomicReference<String?>(null)
-    val kafkaSuccessSymbols: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    val latestKafkaSuccessAtMsBySymbol = ConcurrentHashMap<String, AtomicLong>()
 
     fun recordProviderEvent(
       atMs: Long,
@@ -191,7 +224,9 @@ internal class MarketDataChannelFreshnessTracker(
       latestKafkaSuccessAtMs.set(atMs)
       updateSymbol(symbol)
       val normalized = normalizeSymbol(symbol) ?: return
-      kafkaSuccessSymbols.add(normalized)
+      latestKafkaSuccessAtMsBySymbol
+        .computeIfAbsent(normalized) { AtomicLong(0) }
+        .set(atMs)
     }
 
     private fun updateSymbol(symbol: String?) {
@@ -209,6 +244,14 @@ internal fun canonicalMarketDataChannel(channel: String): String? =
     "updatedbars" -> "updatedBars"
     else -> null
   }
+
+internal fun marketDataFreshnessChannelFor(
+  env: Envelope<*>,
+  marketDataChannel: String?,
+): String? {
+  if (!env.source.equals("ws", ignoreCase = true)) return null
+  return marketDataChannel
+}
 
 private fun normalizeSymbol(symbol: String?): String? =
   symbol
