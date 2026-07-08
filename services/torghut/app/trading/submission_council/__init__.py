@@ -621,6 +621,12 @@ def _accepted_ta_submission_blocker(
     )
     if accepted_source_state == "stale":
         return "accepted_ta_signal_stale"
+    if accepted_source_state == "missing":
+        return "accepted_ta_signal_missing"
+    if accepted_source_state == "unavailable":
+        return "accepted_ta_signal_unavailable"
+    if _safe_text(clickhouse_ta_status.get("state")) == "missing":
+        return "accepted_ta_signal_unavailable"
     return None
 
 
