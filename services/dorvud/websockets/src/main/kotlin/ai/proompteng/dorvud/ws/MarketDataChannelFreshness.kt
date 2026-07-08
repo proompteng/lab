@@ -35,13 +35,29 @@ internal class MarketDataChannelFreshnessTracker(
 ) {
   private val requiredChannels = requiredChannels.mapNotNull(::canonicalMarketDataChannel).distinct()
   private val latestByChannel = ConcurrentHashMap<String, ChannelFreshnessState>()
-  private val subscribedSymbols = AtomicReference<Set<String>>(emptySet())
+  private val subscribedSymbolsByChannel = AtomicReference<Map<String, Set<String>>>(emptyMap())
   private val subscribedSinceMs = AtomicLong(0)
 
   fun recordSubscription(symbols: Collection<String>) {
-    val normalized = symbols.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
-    subscribedSymbols.set(normalized)
-    if (normalized.isEmpty()) {
+    recordSubscriptionByChannel(requiredChannels.associateWith { symbols })
+  }
+
+  fun recordSubscriptionByChannel(symbolsByChannel: Map<String, Collection<String>>) {
+    val inputByCanonical =
+      symbolsByChannel.entries.groupBy(
+        keySelector = { (channel, _) -> canonicalMarketDataChannel(channel) },
+        valueTransform = { (_, symbols) -> symbols },
+      )
+    val normalizedByChannel =
+      requiredChannels.associateWith { channel ->
+        inputByCanonical[channel]
+          ?.flatten()
+          ?.mapNotNull(::normalizeSymbol)
+          ?.toSet()
+          .orEmpty()
+      }
+    subscribedSymbolsByChannel.set(normalizedByChannel)
+    if (normalizedByChannel.values.all { it.isEmpty() }) {
       subscribedSinceMs.set(0)
       return
     }
@@ -49,7 +65,7 @@ internal class MarketDataChannelFreshnessTracker(
   }
 
   fun clearSubscription() {
-    subscribedSymbols.set(emptySet())
+    subscribedSymbolsByChannel.set(emptyMap())
     subscribedSinceMs.set(0)
   }
 
@@ -80,13 +96,15 @@ internal class MarketDataChannelFreshnessTracker(
   fun snapshot(): List<MarketDataChannelReadiness> {
     val now = nowMs()
     val subscribedAt = subscribedSinceMs.get()
-    val symbols = subscribedSymbols.get()
+    val symbolsByChannel = subscribedSymbolsByChannel.get()
+    val hasAnySubscribedSymbols = symbolsByChannel.values.any { it.isNotEmpty() }
     val gateActive =
-      symbols.isNotEmpty() &&
+      hasAnySubscribedSymbols &&
         subscribedAt > 0 &&
         now - subscribedAt >= warmupMs &&
         marketSessionActive(Instant.ofEpochMilli(now))
     return requiredChannels.map { channel ->
+      val channelSymbols = symbolsByChannel[channel].orEmpty()
       val state = latestByChannel[channel]
       val latestKafkaSuccessAt = state?.latestKafkaSuccessAtMs?.get()?.takeIf { it > 0 }
       val latestProviderAt = state?.latestProviderEventAtMs?.get()?.takeIf { it > 0 }
@@ -101,6 +119,7 @@ internal class MarketDataChannelFreshnessTracker(
       val ready =
         when {
           !gateActive -> true
+          channelSymbols.isEmpty() -> false
           latestKafkaSuccessAt == null -> false
           lagMs == null -> false
           else -> lagMs <= maxLagMs
@@ -113,7 +132,7 @@ internal class MarketDataChannelFreshnessTracker(
         latestSerializedAtMs = latestSerializedAt,
         latestKafkaSuccessAtMs = latestKafkaSuccessAt,
         latestSymbol = state?.latestSymbol?.get(),
-        subscribedSymbolCount = symbols.size,
+        subscribedSymbolCount = channelSymbols.size,
         observedSymbolCount = observedSymbols.size,
         observedSymbols = observedSymbols,
         lagMs = lagMs,
@@ -122,6 +141,7 @@ internal class MarketDataChannelFreshnessTracker(
           when {
             ready && !gateActive -> "market_data_channel_gate_inactive"
             ready -> "market_data_channel_fresh"
+            channelSymbols.isEmpty() -> "market_data_channel_not_subscribed"
             latestKafkaSuccessAt == null -> "market_data_channel_missing_kafka_success"
             else -> "market_data_channel_stale"
           },
