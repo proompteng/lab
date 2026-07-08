@@ -27,6 +27,7 @@ type MarketDataSmokeInput = {
   wsReadyz: unknown
   tradingStatus: unknown
   taRuntimeConfig?: TaRuntimeConfig
+  taFlinkJob?: unknown
 }
 
 export type MarketDataSmokeResult = {
@@ -41,6 +42,21 @@ export type MarketDataSmokeResult = {
 type TaRuntimeConfig = {
   groupId?: string
   autoOffsetReset?: string
+}
+
+type TaFlinkVertexSnapshot = {
+  name: string
+  status: string
+  readRecords: number
+  writeRecords: number
+  readRecordsPerSecond?: number
+  writeRecordsPerSecond?: number
+}
+
+type TaFlinkJobSnapshot = {
+  jobId: string
+  state: string
+  vertices: TaFlinkVertexSnapshot[]
 }
 
 const DEFAULT_SUMMARY_TOPICS = [
@@ -173,6 +189,36 @@ const getTaRuntimeConfig = (data: unknown): TaRuntimeConfig | undefined => {
   }
 }
 
+const metricValue = (metrics: unknown, key: string): number => {
+  if (!isObject(metrics)) return 0
+  return asNumber(metrics[key]) ?? 0
+}
+
+const metricOptionalValue = (metrics: unknown, key: string): number | undefined => {
+  if (!isObject(metrics)) return undefined
+  return asNumber(metrics[key])
+}
+
+const getTaFlinkJobSnapshot = (job: unknown): TaFlinkJobSnapshot => {
+  if (!isObject(job)) {
+    return { jobId: 'missing', state: 'missing', vertices: [] }
+  }
+
+  const vertices = Array.isArray(job.vertices) ? job.vertices : []
+  return {
+    jobId: asString(job.jid) ?? asString(job.id) ?? 'missing',
+    state: asString(job.state) ?? asString(job.status) ?? 'missing',
+    vertices: vertices.filter(isObject).map((vertex) => ({
+      name: asString(vertex.name) ?? 'unknown',
+      status: asString(vertex.status) ?? 'missing',
+      readRecords: metricValue(vertex.metrics, 'read-records'),
+      writeRecords: metricValue(vertex.metrics, 'write-records'),
+      readRecordsPerSecond: metricOptionalValue(vertex.metrics, 'records-in-per-second'),
+      writeRecordsPerSecond: metricOptionalValue(vertex.metrics, 'records-out-per-second'),
+    })),
+  }
+}
+
 const pushFinding = (enforce: boolean, failures: string[], warnings: string[], code: string, detail: string) => {
   const line = `${code}: ${detail}`
   if (enforce) {
@@ -180,6 +226,25 @@ const pushFinding = (enforce: boolean, failures: string[], warnings: string[], c
   } else {
     warnings.push(line)
   }
+}
+
+const sumRecords = (
+  vertices: TaFlinkVertexSnapshot[],
+  predicate: (vertex: TaFlinkVertexSnapshot) => boolean,
+  field: 'readRecords' | 'writeRecords',
+): number => vertices.filter(predicate).reduce((total, vertex) => total + vertex[field], 0)
+
+const sumOptionalRecords = (
+  vertices: TaFlinkVertexSnapshot[],
+  predicate: (vertex: TaFlinkVertexSnapshot) => boolean,
+  field: 'readRecordsPerSecond' | 'writeRecordsPerSecond',
+): number | undefined => {
+  const matching = vertices
+    .filter(predicate)
+    .map((vertex) => vertex[field])
+    .filter((value) => value !== undefined)
+  if (matching.length === 0) return undefined
+  return matching.reduce((total, value) => total + value, 0)
 }
 
 const summarizeKafkaRole = (
@@ -229,6 +294,103 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
   if ((taAutoOffsetReset ?? '').toLowerCase() !== 'latest') {
     failures.push(
       `ta_auto_offset_reset_not_latest: production TA_AUTO_OFFSET_RESET must be latest (${taAutoOffsetReset ?? 'missing'})`,
+    )
+  }
+
+  const taFlinkJob = getTaFlinkJobSnapshot(input.taFlinkJob)
+  const sourceReadRecords = sumRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.startsWith('Source: ta-'),
+    'readRecords',
+  )
+  const sourceReadRate = sumOptionalRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.startsWith('Source: ta-'),
+    'writeRecordsPerSecond',
+  )
+  const microbarRecords = sumRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.includes('ta-microbars') || vertex.name.includes('sink-microbars-clickhouse'),
+    'readRecords',
+  )
+  const microbarRate = sumOptionalRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.includes('ta-microbars') || vertex.name.includes('sink-microbars-clickhouse'),
+    'readRecordsPerSecond',
+  )
+  const signalRecords = sumRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.includes('ta-signals') || vertex.name.includes('sink-signals-clickhouse'),
+    'readRecords',
+  )
+  const signalRate = sumOptionalRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.includes('ta-signals') || vertex.name.includes('sink-signals-clickhouse'),
+    'readRecordsPerSecond',
+  )
+  const statusRecords = sumRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.includes('ta-status') || vertex.name.includes('sink-status'),
+    'readRecords',
+  )
+  const statusRate = sumOptionalRecords(
+    taFlinkJob.vertices,
+    (vertex) => vertex.name.includes('ta-status') || vertex.name.includes('sink-status'),
+    'readRecordsPerSecond',
+  )
+  const nonRunningVertices = taFlinkJob.vertices.filter((vertex) => vertex.status !== 'RUNNING')
+  summaryLines.push(
+    `- TA Flink: state=\`${taFlinkJob.state}\`, job_id=\`${taFlinkJob.jobId}\`, ` +
+      `source_read_records=\`${sourceReadRecords}\`, microbar_records=\`${microbarRecords}\`, ` +
+      `signal_records=\`${signalRecords}\`, status_records=\`${statusRecords}\`, ` +
+      `source_records_per_second=\`${sourceReadRate ?? 'missing'}\`, ` +
+      `signal_records_per_second=\`${signalRate ?? 'missing'}\``,
+  )
+  if (taFlinkJob.state !== 'RUNNING') {
+    failures.push(`ta_flink_not_running: job ${taFlinkJob.jobId} state=${taFlinkJob.state}`)
+  }
+  if (taFlinkJob.vertices.length === 0) {
+    failures.push(`ta_flink_vertices_missing: job ${taFlinkJob.jobId} has no vertex metrics`)
+  }
+  if (nonRunningVertices.length > 0) {
+    failures.push(
+      `ta_flink_vertices_not_running: ${nonRunningVertices.map((vertex) => `${vertex.name}=${vertex.status}`).join(', ')}`,
+    )
+  }
+  if ((sourceReadRate ?? sourceReadRecords) <= 0) {
+    pushFinding(
+      enforceFreshness,
+      failures,
+      warnings,
+      'ta_flink_zero_source_records',
+      'TA Flink source vertices report zero current records',
+    )
+  }
+  if ((microbarRate ?? microbarRecords) <= 0) {
+    pushFinding(
+      enforceFreshness,
+      failures,
+      warnings,
+      'ta_flink_zero_microbar_records',
+      'TA Flink microbar path reports zero current records',
+    )
+  }
+  if ((signalRate ?? signalRecords) <= 0) {
+    pushFinding(
+      enforceFreshness,
+      failures,
+      warnings,
+      'ta_flink_zero_signal_records',
+      'TA Flink signal path reports zero current records',
+    )
+  }
+  if ((statusRate ?? statusRecords) <= 0) {
+    pushFinding(
+      enforceFreshness,
+      failures,
+      warnings,
+      'ta_flink_zero_status_records',
+      'TA Flink status heartbeat path reports zero current records',
     )
   }
 
@@ -408,12 +570,12 @@ const captureLatestKafkaRecord = async (
   return undefined
 }
 
-const fetchJsonViaWsPod = async (url: string, settings: RuntimeSettings): Promise<unknown> => {
+const fetchJsonViaPod = async (target: string, url: string, settings: RuntimeSettings): Promise<unknown> => {
   const stdout = await execCapture('kubectl', [
     'exec',
     '-n',
     settings.torghutNamespace,
-    settings.wsExecTarget,
+    target,
     '--',
     'wget',
     '-qO-',
@@ -421,6 +583,9 @@ const fetchJsonViaWsPod = async (url: string, settings: RuntimeSettings): Promis
   ])
   return JSON.parse(stdout) as unknown
 }
+
+const fetchJsonViaWsPod = async (url: string, settings: RuntimeSettings): Promise<unknown> =>
+  fetchJsonViaPod(settings.wsExecTarget, url, settings)
 
 type RuntimeSettings = {
   topics: string[]
@@ -442,6 +607,8 @@ type RuntimeSettings = {
   wsReadyzUrl: string
   tradingStatusUrl: string
   taConfigMapName: string
+  taFlinkExecTarget: string
+  taFlinkJobsUrl: string
 }
 
 const runtimeSettings = (): RuntimeSettings => ({
@@ -472,6 +639,8 @@ const runtimeSettings = (): RuntimeSettings => ({
   wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://127.0.0.1:8080/readyz',
   tradingStatusUrl: process.env.TORGHUT_STATUS_URL ?? 'http://torghut.torghut.svc.cluster.local/trading/status',
   taConfigMapName: process.env.TORGHUT_TA_CONFIGMAP ?? 'torghut-ta-config',
+  taFlinkExecTarget: process.env.TORGHUT_TA_FLINK_EXEC_TARGET ?? 'deploy/torghut-ta',
+  taFlinkJobsUrl: process.env.TORGHUT_TA_FLINK_JOBS_URL ?? 'http://127.0.0.1:8081/jobs',
 })
 
 const fetchConfigMapData = async (namespace: string, name: string): Promise<TaRuntimeConfig | undefined> => {
@@ -479,6 +648,97 @@ const fetchConfigMapData = async (namespace: string, name: string): Promise<TaRu
   const parsed = JSON.parse(stdout) as unknown
   const data = isObject(parsed) ? parsed.data : undefined
   return getTaRuntimeConfig(data)
+}
+
+const flinkJobDetailUrl = (jobsUrl: string, jobId: string): string => {
+  const normalized = jobsUrl.replace(/\/+$/, '')
+  const base = normalized.endsWith('/jobs') ? normalized.slice(0, -'/jobs'.length) : normalized
+  return `${base}/jobs/${jobId}`
+}
+
+const flinkVertexMetricsUrl = (jobsUrl: string, jobId: string, vertexId: string, metricIds?: string[]): string => {
+  const base = flinkJobDetailUrl(jobsUrl, jobId)
+  const metricsUrl = `${base}/vertices/${vertexId}/metrics`
+  return metricIds && metricIds.length > 0 ? `${metricsUrl}?get=${metricIds.join(',')}` : metricsUrl
+}
+
+const sumFlinkMetricValues = (metrics: unknown, suffix: string): number | undefined => {
+  if (!Array.isArray(metrics)) return undefined
+  const values = metrics
+    .filter(isObject)
+    .filter((metric) => asString(metric.id)?.endsWith(suffix))
+    .map((metric) => asNumber(metric.value))
+    .filter((value) => value !== undefined)
+  if (values.length === 0) return undefined
+  return values.reduce((total, value) => total + value, 0)
+}
+
+const fetchFlinkVertexRates = async (
+  settings: RuntimeSettings,
+  jobId: string,
+  vertexId: string,
+): Promise<{ readRecordsPerSecond?: number; writeRecordsPerSecond?: number }> => {
+  const metricCatalog = await fetchJsonViaPod(
+    settings.taFlinkExecTarget,
+    flinkVertexMetricsUrl(settings.taFlinkJobsUrl, jobId, vertexId),
+    settings,
+  )
+  const metricIds = Array.isArray(metricCatalog)
+    ? metricCatalog
+        .filter(isObject)
+        .map((metric) => asString(metric.id))
+        .filter((id) => id?.endsWith('numRecordsInPerSecond') || id?.endsWith('numRecordsOutPerSecond'))
+    : []
+  if (metricIds.length === 0) return {}
+
+  const metricValues = await fetchJsonViaPod(
+    settings.taFlinkExecTarget,
+    flinkVertexMetricsUrl(settings.taFlinkJobsUrl, jobId, vertexId, metricIds),
+    settings,
+  )
+  return {
+    readRecordsPerSecond: sumFlinkMetricValues(metricValues, 'numRecordsInPerSecond'),
+    writeRecordsPerSecond: sumFlinkMetricValues(metricValues, 'numRecordsOutPerSecond'),
+  }
+}
+
+const enrichFlinkJobWithRates = async (settings: RuntimeSettings, job: unknown): Promise<unknown> => {
+  if (!isObject(job)) return job
+  const jobId = asString(job.jid) ?? asString(job.id)
+  const vertices = Array.isArray(job.vertices) ? job.vertices : []
+  if (!jobId || vertices.length === 0) return job
+
+  const enrichedVertices = await Promise.all(
+    vertices.map(async (vertex) => {
+      if (!isObject(vertex)) return vertex
+      const vertexId = asString(vertex.id)
+      if (!vertexId) return vertex
+      const rates = await fetchFlinkVertexRates(settings, jobId, vertexId)
+      return {
+        ...vertex,
+        metrics: {
+          ...(isObject(vertex.metrics) ? vertex.metrics : {}),
+          'records-in-per-second': rates.readRecordsPerSecond,
+          'records-out-per-second': rates.writeRecordsPerSecond,
+        },
+      }
+    }),
+  )
+  return { ...job, vertices: enrichedVertices }
+}
+
+const fetchTaFlinkJob = async (settings: RuntimeSettings): Promise<unknown> => {
+  const jobs = await fetchJsonViaPod(settings.taFlinkExecTarget, settings.taFlinkJobsUrl, settings)
+  const jobEntries = isObject(jobs) && Array.isArray(jobs.jobs) ? jobs.jobs.filter(isObject) : []
+  const runningJob = jobEntries.find((job) => asString(job.status) === 'RUNNING') ?? jobEntries[0]
+  const jobId = runningJob ? asString(runningJob.id) : undefined
+  if (!jobId) return jobs
+  const job = await fetchJsonViaPod(
+    settings.taFlinkExecTarget,
+    flinkJobDetailUrl(settings.taFlinkJobsUrl, jobId),
+    settings,
+  )
+  return enrichFlinkJobWithRates(settings, job)
 }
 
 const main = async () => {
@@ -503,6 +763,7 @@ const main = async () => {
   const wsReadyz = await fetchJsonViaWsPod(settings.wsReadyzUrl, settings)
   const tradingStatus = await fetchJsonViaWsPod(settings.tradingStatusUrl, settings)
   const taRuntimeConfig = await fetchConfigMapData(settings.torghutNamespace, settings.taConfigMapName)
+  const taFlinkJob = await fetchTaFlinkJob(settings)
   const result = evaluateMarketDataSmoke({
     now: settings.now,
     mode: settings.mode,
@@ -513,6 +774,7 @@ const main = async () => {
     wsReadyz,
     tradingStatus,
     taRuntimeConfig,
+    taFlinkJob,
   })
 
   console.log('Torghut market-data freshness evidence:')

@@ -117,6 +117,73 @@ const liveTaRuntimeConfig = {
   autoOffsetReset: 'latest',
 }
 
+const freshTaFlinkJob = {
+  jid: 'job-live',
+  state: 'RUNNING',
+  vertices: [
+    {
+      name: 'Source: ta-trades-source -> Flat Map -> Timestamps/Watermarks',
+      status: 'RUNNING',
+      metrics: { 'read-records': 120, 'write-records': 120 },
+    },
+    {
+      name: 'Source: ta-quotes-source -> Flat Map -> Timestamps/Watermarks',
+      status: 'RUNNING',
+      metrics: { 'read-records': 120, 'write-records': 120 },
+    },
+    {
+      name: 'Source: ta-bars1m-source -> Flat Map -> Timestamps/Watermarks',
+      status: 'RUNNING',
+      metrics: { 'read-records': 10, 'write-records': 10 },
+    },
+    {
+      name: 'ta-microbars -> sink-microbars: Writer -> sink-microbars: Committer',
+      status: 'RUNNING',
+      metrics: { 'read-records': 120, 'write-records': 120 },
+    },
+    {
+      name: 'ta-signals -> sink-signals: Writer -> sink-signals: Committer',
+      status: 'RUNNING',
+      metrics: { 'read-records': 120, 'write-records': 120 },
+    },
+    {
+      name: 'ta-status -> sink-status: Writer -> sink-status: Committer',
+      status: 'RUNNING',
+      metrics: { 'read-records': 4, 'write-records': 4 },
+    },
+    {
+      name: 'sink-signals-clickhouse: Writer -> sink-signals-clickhouse: Committer',
+      status: 'RUNNING',
+      metrics: { 'read-records': 120, 'write-records': 120 },
+    },
+    {
+      name: 'sink-microbars-clickhouse: Writer -> sink-microbars-clickhouse: Committer',
+      status: 'RUNNING',
+      metrics: { 'read-records': 120, 'write-records': 120 },
+    },
+  ],
+}
+
+const zeroCurrentTaFlinkJob = {
+  ...freshTaFlinkJob,
+  vertices: freshTaFlinkJob.vertices.map((vertex) => ({
+    ...vertex,
+    metrics: { 'read-records': 0, 'write-records': 0 },
+  })),
+}
+
+const stalledRateTaFlinkJob = {
+  ...freshTaFlinkJob,
+  vertices: freshTaFlinkJob.vertices.map((vertex) => ({
+    ...vertex,
+    metrics: {
+      ...vertex.metrics,
+      'records-in-per-second': 0,
+      'records-out-per-second': 0,
+    },
+  })),
+}
+
 describe('market data smoke freshness evaluation', () => {
   it('identifies regular US equity market session', () => {
     expect(marketSessionState(new Date('2026-07-07T17:00:00Z'))).toBe('regular')
@@ -138,6 +205,7 @@ describe('market data smoke freshness evaluation', () => {
       wsReadyz: staleWsReadyz,
       tradingStatus: tradingStatusWithStaleAcceptedTa,
       taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: zeroCurrentTaFlinkJob,
     })
 
     expect(result.enforceFreshness).toBe(true)
@@ -162,6 +230,7 @@ describe('market data smoke freshness evaluation', () => {
       wsReadyz: staleWsReadyz,
       tradingStatus: tradingStatusWithRestAcceptedBackfill,
       taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: zeroCurrentTaFlinkJob,
     })
 
     expect(result.sessionState).toBe('post')
@@ -169,6 +238,7 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.ok).toBe(true)
     expect(result.warnings.join('\n')).toContain('accepted_ta_signal_stale')
     expect(result.warnings.join('\n')).toContain('accepted_source_contains_backfill')
+    expect(result.warnings.join('\n')).toContain('ta_flink_zero_source_records')
   })
 
   it('passes during regular market hours when WS topics and accepted TA are fresh', () => {
@@ -186,6 +256,7 @@ describe('market data smoke freshness evaluation', () => {
       wsReadyz: freshWsReadyz,
       tradingStatus: tradingStatusWithFreshAcceptedTa,
       taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: freshTaFlinkJob,
     })
 
     expect(result.sessionState).toBe('regular')
@@ -212,11 +283,86 @@ describe('market data smoke freshness evaluation', () => {
         groupId: 'torghut-ta-replay-profit-proof-signal-gap-20260601T0437Z',
         autoOffsetReset: 'earliest',
       },
+      taFlinkJob: freshTaFlinkJob,
     })
 
     expect(result.enforceFreshness).toBe(false)
     expect(result.ok).toBe(false)
     expect(result.failures.join('\n')).toContain('ta_replay_group_enabled')
     expect(result.failures.join('\n')).toContain('ta_auto_offset_reset_not_latest')
+  })
+
+  it('fails during regular market hours when Flink is running but has zero current records', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: zeroCurrentTaFlinkJob,
+    })
+
+    expect(result.enforceFreshness).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ta_flink_zero_source_records')
+    expect(result.failures.join('\n')).toContain('ta_flink_zero_signal_records')
+    expect(result.summaryLines.join('\n')).toContain('source_read_records=`0`')
+  })
+
+  it('uses Flink current-rate metrics over lifetime counters when detecting current stalls', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: stalledRateTaFlinkJob,
+    })
+
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ta_flink_zero_source_records')
+    expect(result.summaryLines.join('\n')).toContain('source_records_per_second=`0`')
+  })
+
+  it('fails regardless of market session when the Flink job is not running', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T22:00:00Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T21:59:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T21:59:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T21:59:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: {
+        ...freshTaFlinkJob,
+        state: 'FAILED',
+      },
+    })
+
+    expect(result.enforceFreshness).toBe(false)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ta_flink_not_running')
   })
 })
