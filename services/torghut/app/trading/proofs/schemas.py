@@ -40,6 +40,27 @@ class PromotionAuthorityPayload(TypedDict):
     blockers: list[str]
 
 
+class TigerBeetleReconciliationPayload(TypedDict, total=False):
+    schema_version: str
+    status_available: bool
+    ok: bool
+    protocol_ok: bool
+    protocol_probe_skipped: bool
+    reconciliation_required: bool
+    reconciliation_ok: bool
+    reconciliation_stale: bool
+    reconciliation_age_seconds: int | None
+    reconciliation_max_age_seconds: int | None
+    cluster_id: int | None
+    claimed_by_runtime_evidence: bool
+    runtime_ledger_ref_count: int
+    runtime_ledger_signed_ref_count: int
+    runtime_ledger_missing_signed_ref_count: int
+    runtime_ledger_missing_account_ref_count: int
+    latest_reconciliation: dict[str, object] | None
+    blockers: list[str]
+
+
 class ProofIdentityPayload(TypedDict, total=False):
     hypothesis_id: str | None
     candidate_id: str | None
@@ -125,6 +146,10 @@ class ProofSummaryPayload(TypedDict):
     live_submission_reason: str | None
     accepted_source_state: str | None
     accepted_lag_seconds: float | None
+    tigerbeetle_reconciliation_ok: bool
+    tigerbeetle_reconciliation_stale: bool
+    tigerbeetle_reconciliation_age_seconds: int | None
+    tigerbeetle_reconciliation_required: bool
 
 
 class ProofsPayload(TypedDict):
@@ -133,6 +158,7 @@ class ProofsPayload(TypedDict):
     kind: ProofKind
     window: dict[str, object]
     live_submission_gate: dict[str, object]
+    tigerbeetle_reconciliation: TigerBeetleReconciliationPayload
     proofs: list[ProofPayload]
     summary: ProofSummaryPayload
     promotion_authority: PromotionAuthorityPayload

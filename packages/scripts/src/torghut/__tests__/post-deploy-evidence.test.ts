@@ -26,6 +26,46 @@ const baseLiveSubmitActivation = {
   reason: null,
 }
 
+const baseTigerBeetleLedger = {
+  schema_version: 'torghut.tigerbeetle-ledger-status.v1',
+  ok: true,
+  reconciliation_ok: true,
+  reconciliation_stale: false,
+  reconciliation_age_seconds: 30,
+  reconciliation_max_age_seconds: 300,
+  latest_reconciliation: {
+    status: 'ok',
+    ok: true,
+    finished_at: '2026-06-17T14:00:00+00:00',
+  },
+  blockers: [],
+}
+
+const baseProofTigerBeetleReconciliation = {
+  schema_version: 'torghut.proofs.tigerbeetle-reconciliation.v1',
+  status_available: true,
+  ok: true,
+  protocol_ok: true,
+  protocol_probe_skipped: false,
+  reconciliation_required: true,
+  reconciliation_ok: true,
+  reconciliation_stale: false,
+  reconciliation_age_seconds: 30,
+  reconciliation_max_age_seconds: 300,
+  cluster_id: 100,
+  claimed_by_runtime_evidence: true,
+  runtime_ledger_ref_count: 2,
+  runtime_ledger_signed_ref_count: 2,
+  runtime_ledger_missing_signed_ref_count: 0,
+  runtime_ledger_missing_account_ref_count: 0,
+  latest_reconciliation: {
+    status: 'ok',
+    ok: true,
+    finished_at: '2026-06-17T14:00:00+00:00',
+  },
+  blockers: [],
+}
+
 const baseTradingStatus = {
   autonomy_enabled: false,
   empirical_jobs: {
@@ -58,6 +98,7 @@ const baseTradingStatus = {
     },
   },
   route_reacquisition_board: baseRouteBoard,
+  tigerbeetle_ledger: baseTigerBeetleLedger,
 }
 
 const paperRouteTarget = {
@@ -106,9 +147,11 @@ const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
 
 const buildProofs = (targets: Array<Record<string, unknown>>) => ({
   schema_version: 'torghut.proofs.v1',
+  tigerbeetle_reconciliation: baseProofTigerBeetleReconciliation,
   promotion_authority: {
     allowed: false,
     final_promotion_allowed: false,
+    blockers: ['live_runtime_ledger_authority_required'],
   },
   proofs: targets.map((target) => ({
     identity: {
@@ -744,6 +787,66 @@ describe('validatePostDeployEvidence', () => {
     expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
     expect(result.summaryLines.join('\n')).toContain('Live target count: `1`')
     expect(result.summaryLines.join('\n')).toContain('Sim target count: `1`')
+  })
+
+  it('rejects canonical proofs that omit TigerBeetle reconciliation proof', () => {
+    const proofPayload = buildProofs([paperRouteTarget])
+    delete (proofPayload as Record<string, unknown>).tigerbeetle_reconciliation
+
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: proofPayload,
+        simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
+      }),
+    ).toThrow('tigerbeetle_reconciliation must be an object')
+  })
+
+  it('rejects canonical proofs with stale TigerBeetle reconciliation proof', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: {
+          ...buildProofs([paperRouteTarget]),
+          tigerbeetle_reconciliation: {
+            ...baseProofTigerBeetleReconciliation,
+            ok: false,
+            reconciliation_ok: false,
+            reconciliation_stale: true,
+            blockers: ['tigerbeetle_reconciliation_stale'],
+          },
+        },
+        simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
+      }),
+    ).toThrow('tigerbeetle_reconciliation.ok must be true')
+  })
+
+  it('rejects canonical proofs whose TigerBeetle reconciliation readback diverges from status', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+        tradingStatus: baseTradingStatus,
+        paperRouteEvidence: {
+          ...buildProofs([paperRouteTarget]),
+          tigerbeetle_reconciliation: {
+            ...baseProofTigerBeetleReconciliation,
+            latest_reconciliation: {
+              ...baseProofTigerBeetleReconciliation.latest_reconciliation,
+              finished_at: '2026-06-17T14:01:00+00:00',
+            },
+          },
+        },
+        simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
+      }),
+    ).toThrow('latest finished_at must mirror torghut status')
   })
 
   it('uses raw paper-route targets when source collection is the selected next plan', () => {
