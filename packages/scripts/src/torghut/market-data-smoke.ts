@@ -26,6 +26,7 @@ type MarketDataSmokeInput = {
   latestKafkaByRole: Partial<Record<KafkaRole, KafkaTopicRecord>>
   wsReadyz: unknown
   tradingStatus: unknown
+  taRuntimeConfig?: TaRuntimeConfig
 }
 
 export type MarketDataSmokeResult = {
@@ -35,6 +36,11 @@ export type MarketDataSmokeResult = {
   failures: string[]
   warnings: string[]
   summaryLines: string[]
+}
+
+type TaRuntimeConfig = {
+  groupId?: string
+  autoOffsetReset?: string
 }
 
 const DEFAULT_SUMMARY_TOPICS = [
@@ -159,6 +165,14 @@ const getAcceptedFreshness = (status: unknown): JsonObject | undefined => {
   return undefined
 }
 
+const getTaRuntimeConfig = (data: unknown): TaRuntimeConfig | undefined => {
+  if (!isObject(data)) return undefined
+  return {
+    groupId: asString(data.TA_GROUP_ID),
+    autoOffsetReset: asString(data.TA_AUTO_OFFSET_RESET),
+  }
+}
+
 const pushFinding = (enforce: boolean, failures: string[], warnings: string[], code: string, detail: string) => {
   const line = `${code}: ${detail}`
   if (enforce) {
@@ -201,6 +215,22 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     `- Market session: \`${sessionState}\``,
     `- Freshness mode: \`${input.mode}\`, enforced=\`${enforceFreshness}\``,
   ]
+
+  const taGroupId = input.taRuntimeConfig?.groupId
+  const taAutoOffsetReset = input.taRuntimeConfig?.autoOffsetReset
+  summaryLines.push(
+    `- TA runtime config: group_id=\`${taGroupId ?? 'missing'}\`, auto_offset_reset=\`${taAutoOffsetReset ?? 'missing'}\``,
+  )
+  if (!taGroupId) {
+    failures.push('ta_group_id_missing: torghut-ta-config is missing TA_GROUP_ID')
+  } else if (taGroupId.toLowerCase().includes('replay')) {
+    failures.push(`ta_replay_group_enabled: production TA_GROUP_ID must not be replay-scoped (${taGroupId})`)
+  }
+  if ((taAutoOffsetReset ?? '').toLowerCase() !== 'latest') {
+    failures.push(
+      `ta_auto_offset_reset_not_latest: production TA_AUTO_OFFSET_RESET must be latest (${taAutoOffsetReset ?? 'missing'})`,
+    )
+  }
 
   const wsChannels = getWsChannels(input.wsReadyz)
   for (const channel of REQUIRED_WS_CHANNELS) {
@@ -411,6 +441,7 @@ type RuntimeSettings = {
   wsExecTarget: string
   wsReadyzUrl: string
   tradingStatusUrl: string
+  taConfigMapName: string
 }
 
 const runtimeSettings = (): RuntimeSettings => ({
@@ -440,7 +471,15 @@ const runtimeSettings = (): RuntimeSettings => ({
   wsExecTarget: process.env.TORGHUT_WS_EXEC_TARGET ?? 'deploy/torghut-ws',
   wsReadyzUrl: process.env.TORGHUT_WS_READYZ_URL ?? 'http://127.0.0.1:8080/readyz',
   tradingStatusUrl: process.env.TORGHUT_STATUS_URL ?? 'http://torghut.torghut.svc.cluster.local/trading/status',
+  taConfigMapName: process.env.TORGHUT_TA_CONFIGMAP ?? 'torghut-ta-config',
 })
+
+const fetchConfigMapData = async (namespace: string, name: string): Promise<TaRuntimeConfig | undefined> => {
+  const stdout = await execCapture('kubectl', ['get', 'configmap', '-n', namespace, name, '-o', 'json'])
+  const parsed = JSON.parse(stdout) as unknown
+  const data = isObject(parsed) ? parsed.data : undefined
+  return getTaRuntimeConfig(data)
+}
 
 const main = async () => {
   ensureCli('kubectl')
@@ -463,6 +502,7 @@ const main = async () => {
 
   const wsReadyz = await fetchJsonViaWsPod(settings.wsReadyzUrl, settings)
   const tradingStatus = await fetchJsonViaWsPod(settings.tradingStatusUrl, settings)
+  const taRuntimeConfig = await fetchConfigMapData(settings.torghutNamespace, settings.taConfigMapName)
   const result = evaluateMarketDataSmoke({
     now: settings.now,
     mode: settings.mode,
@@ -472,6 +512,7 @@ const main = async () => {
     latestKafkaByRole,
     wsReadyz,
     tradingStatus,
+    taRuntimeConfig,
   })
 
   console.log('Torghut market-data freshness evidence:')

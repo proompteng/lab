@@ -112,6 +112,11 @@ const tradingStatusWithRestAcceptedBackfill = {
   },
 }
 
+const liveTaRuntimeConfig = {
+  groupId: 'torghut-ta-live',
+  autoOffsetReset: 'latest',
+}
+
 describe('market data smoke freshness evaluation', () => {
   it('identifies regular US equity market session', () => {
     expect(marketSessionState(new Date('2026-07-07T17:00:00Z'))).toBe('regular')
@@ -132,6 +137,7 @@ describe('market data smoke freshness evaluation', () => {
       },
       wsReadyz: staleWsReadyz,
       tradingStatus: tradingStatusWithStaleAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
     })
 
     expect(result.enforceFreshness).toBe(true)
@@ -155,6 +161,7 @@ describe('market data smoke freshness evaluation', () => {
       },
       wsReadyz: staleWsReadyz,
       tradingStatus: tradingStatusWithRestAcceptedBackfill,
+      taRuntimeConfig: liveTaRuntimeConfig,
     })
 
     expect(result.sessionState).toBe('post')
@@ -178,11 +185,38 @@ describe('market data smoke freshness evaluation', () => {
       },
       wsReadyz: freshWsReadyz,
       tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
     })
 
     expect(result.sessionState).toBe('regular')
     expect(result.enforceFreshness).toBe(true)
     expect(result.ok).toBe(true)
     expect(result.failures).toEqual([])
+  })
+
+  it('fails even after hours when production TA is left in replay mode', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T22:00:00Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T21:59:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T21:59:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T21:59:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: {
+        groupId: 'torghut-ta-replay-profit-proof-signal-gap-20260601T0437Z',
+        autoOffsetReset: 'earliest',
+      },
+    })
+
+    expect(result.enforceFreshness).toBe(false)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ta_replay_group_enabled')
+    expect(result.failures.join('\n')).toContain('ta_auto_offset_reset_not_latest')
   })
 })

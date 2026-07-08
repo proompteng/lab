@@ -8,7 +8,7 @@ metadata:
 spec:
   image: registry.ide-newton.ts.net/lab/torghut-ta@sha256:4612d9154bb42e2299997050267c70d2c8daea255a9ec534069d00d16ae99c87
   imagePullPolicy: IfNotPresent
-  restartNonce: 19
+  restartNonce: 20
   flinkVersion: v2_0
   serviceAccount: torghut-runtime
   logConfiguration:

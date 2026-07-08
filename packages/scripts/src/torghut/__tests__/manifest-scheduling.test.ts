@@ -497,4 +497,16 @@ describe('Torghut manifest scheduling', () => {
     expect(flinkConfiguration['restart-strategy.fixed-delay.attempts']).toBe('60')
     expect(flinkConfiguration['restart-strategy.fixed-delay.delay']).toBe('10 s')
   })
+
+  it('keeps production TA in live consumer mode', () => {
+    const config = parseManifest('argocd/applications/torghut/ta/configmap.yaml')
+    const data = getAtPath(config, ['data'])
+    expect(data.TA_GROUP_ID).toBe('torghut-ta-live')
+    expect(String(data.TA_GROUP_ID)).not.toContain('replay')
+    expect(data.TA_AUTO_OFFSET_RESET).toBe('latest')
+
+    const deployment = parseManifest('argocd/applications/torghut/ta/flinkdeployment.yaml')
+    const spec = getAtPath(deployment, ['spec'])
+    expect(spec.restartNonce).toBeGreaterThanOrEqual(20)
+  })
 })
