@@ -44,6 +44,7 @@ def build_proofs_payload(
     session: Session,
     *,
     live_submission_gate: Mapping[str, object],
+    target_selection_live_submission_gate: Mapping[str, object] | None = None,
     route_reacquisition_book: Mapping[str, object],
     generated_at: datetime | None = None,
     kind: ProofKind = "runtime_window",
@@ -54,13 +55,14 @@ def build_proofs_payload(
 ) -> ProofsPayload:
     resolved_generated_at = generated_at or datetime.now(timezone.utc)
     bounded_limit = max(1, min(int(limit or DEFAULT_PROOFS_LIMIT), MAX_PROOFS_LIMIT))
+    target_gate = target_selection_live_submission_gate or live_submission_gate
     strategy_universe_by_name = _load_strategy_universe_by_name(
         session,
-        live_submission_gate=live_submission_gate,
+        live_submission_gate=target_gate,
         route_reacquisition_book=route_reacquisition_book,
     )
     targets = select_proof_targets(
-        live_submission_gate=live_submission_gate,
+        live_submission_gate=target_gate,
         route_reacquisition_book=route_reacquisition_book,
         limit=bounded_limit,
         window=window,
@@ -74,7 +76,7 @@ def build_proofs_payload(
             generated_at=resolved_generated_at,
             full_audit=full_audit,
             target_account_audit_available=target_account_audit_available,
-            live_submission_gate=live_submission_gate,
+            live_submission_gate=target_gate,
         )
         for target in targets
     ]
@@ -124,10 +126,17 @@ def build_proofs_payload(
 def _live_submission_gate_payload(
     live_submission_gate: Mapping[str, object],
 ) -> dict[str, object]:
+    proof_only_keys = {
+        "runtime_ledger_paper_probation_import_plan",
+        "paper_route_target_plan",
+        "paper_route_target_plan_fallback",
+        "paper_route_target_plan_loaded_at",
+        "configured_paper_collection_target_plan",
+    }
     return {
         str(key): value
         for key, value in live_submission_gate.items()
-        if str(key).strip()
+        if str(key).strip() and str(key) not in proof_only_keys
     }
 
 

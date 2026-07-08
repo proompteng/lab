@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: torghut-options-catalog
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:607af89da76b14c984939adb5d9d6e11726fe7b82f14ab2d0072189012e96e72
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:beb47f1e13b52f40e9cf1703cba1de662cadc85efcc849cf0e02e4d886ce1370
           imagePullPolicy: IfNotPresent
           command:
             - uvicorn
@@ -74,7 +74,7 @@ spec:
             - name: TORGHUT_OPTIONS_VERSION
               value: v0.596.0-1343-gc78993192
             - name: TORGHUT_OPTIONS_COMMIT
-              value: c789931929fb3116093abb4a1e9d3a28efe562fb
+              value: 13438bdaae4008aef5a4012d6d10cc0ae9d2da6d
           ports:
             - name: http
               containerPort: 8080

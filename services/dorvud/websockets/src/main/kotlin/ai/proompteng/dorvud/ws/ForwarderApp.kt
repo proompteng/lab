@@ -1523,8 +1523,18 @@ class ForwarderApp(
   }
 
   private fun markMarketDataWsSessionStarting() {
+    marketDataChannelFreshness.clearSubscription()
     marketDataWsStatus.updateAndGet {
-      it.copy(authOk = false, subscriptionOk = false, errorClass = null)
+      it.copy(
+        authOk = false,
+        subscriptionOk = false,
+        latestSubscriptionAckAtMs = null,
+        subscribedSymbolCount = 0,
+        subscribedSymbols = emptyList(),
+        subscribedSymbolsByChannel = emptyMap(),
+        missingSubscriptionSymbolsByChannel = emptyMap(),
+        errorClass = null,
+      )
     }
   }
 
@@ -1535,10 +1545,16 @@ class ForwarderApp(
   }
 
   private fun recordMarketDataWsDisconnected(errorClass: ReadinessErrorClass? = null) {
+    marketDataChannelFreshness.clearSubscription()
     marketDataWsStatus.updateAndGet {
       it.copy(
         authOk = false,
         subscriptionOk = false,
+        latestSubscriptionAckAtMs = null,
+        subscribedSymbolCount = 0,
+        subscribedSymbols = emptyList(),
+        subscribedSymbolsByChannel = emptyMap(),
+        missingSubscriptionSymbolsByChannel = emptyMap(),
         errorClass = errorClass?.id ?: it.errorClass,
       )
     }

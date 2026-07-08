@@ -258,7 +258,7 @@ class MarketDataChannelFreshnessTrackerTest {
     assertEquals(2, readiness.subscribedSymbolCount)
     assertEquals(1, readiness.observedSymbolCount)
     assertEquals(listOf("NVDA260717C00160000"), readiness.freshSymbols)
-    assertEquals(emptyList(), readiness.missingSymbols)
+    assertEquals(listOf("NVDA260717P00160000"), readiness.missingSymbols)
     assertEquals(emptyList(), readiness.staleSymbols)
   }
 
@@ -298,6 +298,6 @@ class MarketDataChannelFreshnessTrackerTest {
     assertTrue(tracker.ready())
     assertEquals("market_data_channel_conditional_observed", deliveredTrade.reason)
     assertEquals(listOf("NVDA260717C00160000"), deliveredTrade.observedSymbols)
-    assertEquals(emptyList(), deliveredTrade.missingSymbols)
+    assertEquals(listOf("NVDA260717P00160000"), deliveredTrade.missingSymbols)
   }
 }

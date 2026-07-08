@@ -3,6 +3,7 @@ package ai.proompteng.dorvud.ta.flink
 import org.apache.flink.connector.base.DeliveryGuarantee
 import java.io.Serializable
 import java.time.Duration
+import java.time.LocalDate
 
 internal const val DEFAULT_TA_SOURCE_LAG_DEGRADED_AFTER_MS: Long = 300_000
 
@@ -29,6 +30,7 @@ data class FlinkTaConfig(
   val maxOutOfOrderMs: Long,
   val quoteStaleAfterMs: Long,
   val sourceLagDegradedAfterMs: Long,
+  val marketHolidays: Set<LocalDate>,
   val parallelism: Int,
   val vwapWindow: Duration,
   val realizedVolWindow: Int,
@@ -90,6 +92,16 @@ data class FlinkTaConfig(
           else -> default
         }
 
+      fun envDateSet(vararg keys: String): Set<LocalDate> =
+        keys
+          .asSequence()
+          .mapNotNull { env(it) }
+          .flatMap { it.split(',').asSequence() }
+          .map { it.trim() }
+          .filter { it.isNotEmpty() }
+          .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
+          .toSet()
+
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
       val clickhouseUrl = env("TA_CLICKHOUSE_URL")?.takeIf { it.isNotBlank() }
 
@@ -126,6 +138,13 @@ data class FlinkTaConfig(
         maxOutOfOrderMs = envLong("TA_MAX_OUT_OF_ORDER_MS", 2_000),
         quoteStaleAfterMs = quoteStaleAfterMs,
         sourceLagDegradedAfterMs = sourceLagDegradedAfterMs,
+        marketHolidays =
+          DEFAULT_US_EQUITY_MARKET_HOLIDAYS +
+            envDateSet(
+              "TA_MARKET_HOLIDAYS",
+              "MARKET_DATA_HOLIDAYS",
+              "OPTIONS_MARKET_HOLIDAYS",
+            ),
         parallelism = parallelism,
         vwapWindow = Duration.ofSeconds(envLong("TA_VWAP_WINDOW_SECONDS", 300)),
         realizedVolWindow = envInt("TA_REALIZED_VOL_WINDOW", 60),
@@ -162,3 +181,37 @@ data class FlinkTaConfig(
     }
   }
 }
+
+private val DEFAULT_US_EQUITY_MARKET_HOLIDAYS: Set<LocalDate> =
+  setOf(
+    LocalDate.parse("2026-01-01"),
+    LocalDate.parse("2026-01-19"),
+    LocalDate.parse("2026-02-16"),
+    LocalDate.parse("2026-04-03"),
+    LocalDate.parse("2026-05-25"),
+    LocalDate.parse("2026-06-19"),
+    LocalDate.parse("2026-07-03"),
+    LocalDate.parse("2026-09-07"),
+    LocalDate.parse("2026-11-26"),
+    LocalDate.parse("2026-12-25"),
+    LocalDate.parse("2027-01-01"),
+    LocalDate.parse("2027-01-18"),
+    LocalDate.parse("2027-02-15"),
+    LocalDate.parse("2027-03-26"),
+    LocalDate.parse("2027-05-31"),
+    LocalDate.parse("2027-06-18"),
+    LocalDate.parse("2027-07-05"),
+    LocalDate.parse("2027-09-06"),
+    LocalDate.parse("2027-11-25"),
+    LocalDate.parse("2027-12-24"),
+    LocalDate.parse("2027-12-31"),
+    LocalDate.parse("2028-01-17"),
+    LocalDate.parse("2028-02-21"),
+    LocalDate.parse("2028-04-14"),
+    LocalDate.parse("2028-05-29"),
+    LocalDate.parse("2028-06-19"),
+    LocalDate.parse("2028-07-04"),
+    LocalDate.parse("2028-09-04"),
+    LocalDate.parse("2028-11-23"),
+    LocalDate.parse("2028-12-25"),
+  )

@@ -128,6 +128,7 @@ spec:
 
               create_replicated_microbars_shadow() {
                 local table="$1"
+                local keeper_table="$2"
                 cluster_query "
                   CREATE TABLE ${DATABASE}.${table} ON CLUSTER ${CLUSTER}
                   (
@@ -150,7 +151,7 @@ spec:
                     vwap Nullable(Float64),
                     count UInt64
                   )
-                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${table}', '{replica}', ingest_ts)
+                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${keeper_table}', '{replica}', ingest_ts)
                   PARTITION BY toDate(event_ts)
                   ORDER BY (symbol, event_ts, seq)
                   TTL toDateTime(event_ts) + INTERVAL 35 DAY
@@ -159,6 +160,7 @@ spec:
 
               create_replicated_signals_shadow() {
                 local table="$1"
+                local keeper_table="$2"
                 cluster_query "
                   CREATE TABLE ${DATABASE}.${table} ON CLUSTER ${CLUSTER}
                   (
@@ -192,7 +194,7 @@ spec:
                     vol_realized_w60s Nullable(Float64),
                     microstructure_signal_v1 Nullable(String)
                   )
-                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${table}', '{replica}', ingest_ts)
+                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${keeper_table}', '{replica}', ingest_ts)
                   PARTITION BY toDate(event_ts)
                   ORDER BY (symbol, event_ts, seq)
                   TTL toDateTime(event_ts) + INTERVAL 35 DAY
@@ -202,8 +204,7 @@ spec:
               migrate_table() {
                 local table="$1"
                 local shadow="${table}__replicated_migration_v2"
-                local host cutoff cutoff_literal
-                declare -A cutoffs=()
+                local host
 
                 if table_is_replicated_on_all_hosts "${table}"; then
                   if table_exists_on_any_host "${shadow}"; then
@@ -224,15 +225,13 @@ spec:
                     echo "${DATABASE}.${table} on ${host} has unsupported engine ${engine:-missing}; refusing migration" >&2
                     exit 1
                   fi
-                  cutoffs["${host}"]="$(query "${host}" \
-                    "SELECT ifNull(toString(max(ingest_ts)), '1970-01-01 00:00:00.000') FROM ${DATABASE}.${table} FORMAT TSVRaw")"
                 done
 
                 cluster_query "DROP TABLE IF EXISTS ${DATABASE}.${shadow} ON CLUSTER ${CLUSTER} SYNC"
                 if [ "${table}" = "ta_microbars" ]; then
-                  create_replicated_microbars_shadow "${shadow}"
+                  create_replicated_microbars_shadow "${shadow}" "${table}"
                 elif [ "${table}" = "ta_signals" ]; then
-                  create_replicated_signals_shadow "${shadow}"
+                  create_replicated_signals_shadow "${shadow}" "${table}"
                 else
                   echo "unsupported table ${table}" >&2
                   exit 1
@@ -248,11 +247,9 @@ spec:
                 cluster_query "EXCHANGE TABLES ${DATABASE}.${table} AND ${DATABASE}.${shadow} ON CLUSTER ${CLUSTER}"
 
                 for host in "${HOSTS[@]}"; do
-                  cutoff="${cutoffs[${host}]}"
-                  cutoff_literal="$(sql_string "${cutoff}")"
-                  echo "Catching up ${DATABASE}.${table} from ${host} rows newer than ${cutoff}"
+                  echo "Catching up ${DATABASE}.${table} from ${host} missing or newer replacement rows"
                   query "${host}" \
-                    "INSERT INTO ${DATABASE}.${table} SELECT * FROM ${DATABASE}.${shadow} WHERE ingest_ts >= parseDateTime64BestEffort(${cutoff_literal}, 3, 'UTC')"
+                    "INSERT INTO ${DATABASE}.${table} SELECT src.* FROM ${DATABASE}.${shadow} AS src LEFT JOIN (SELECT symbol, event_ts, seq, max(ingest_ts) AS max_ingest_ts FROM ${DATABASE}.${table} GROUP BY symbol, event_ts, seq) AS target USING (symbol, event_ts, seq) WHERE target.max_ingest_ts IS NULL OR src.ingest_ts > target.max_ingest_ts"
                 done
                 sync_replicas "${table}"
                 require_replicated_on_all_hosts "${table}"

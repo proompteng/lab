@@ -40,7 +40,10 @@ class _ClickHouseSignalIngestorStatusMethods(_ClickHouseSignalIngestorStatusBase
             )
         try:
             time_column = self._resolve_time_column()
-            latest_signal_at = self._latest_signal_timestamp(time_column)
+            latest_signal_at = self._latest_signal_timestamp(
+                time_column,
+                fail_on_query_error=True,
+            )
         except _CLICKHOUSE_STATUS_EXCEPTIONS as exc:
             logger.warning("Failed to load ClickHouse TA freshness status: %s", exc)
             return self._unavailable_signal_status(

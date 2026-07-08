@@ -192,6 +192,7 @@ class _ClickHouseSignalIngestorContract(Protocol):
         *,
         symbols: tuple[str, ...] = (),
         timeframes: tuple[str, ...] = (),
+        fail_on_query_error: bool = False,
     ) -> Optional[datetime]: ...
 
     def parse_row(self, row: dict[str, Any]) -> Optional[SignalEnvelope]: ...

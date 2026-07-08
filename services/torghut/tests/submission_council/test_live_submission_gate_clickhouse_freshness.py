@@ -131,6 +131,95 @@ class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
             "stale",
         )
 
+    def test_deferred_clickhouse_ta_status_blocks_live_submission(self) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=True,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=9,
+                    feature_null_rate={"price": 0.0},
+                    feature_staleness_ms_p95=250,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            clickhouse_ta_status={
+                "state": "deferred",
+                "read_model_unavailable": True,
+                "accepted_sources": ["ta"],
+                "accepted_source_state": "current",
+                "blocking_reason": None,
+                "freshness_reason_codes": [],
+            },
+        )
+
+        self.assertFalse(result["allowed"])
+        self.assertIn("accepted_ta_signal_unavailable", result["blocked_reasons"])
+        self.assertEqual(result["continuity_source"], "clickhouse_ta_status")
+        self.assertEqual(result["continuity_reason"], "accepted_ta_signal_unavailable")
+
+    def test_simulation_ta_freshness_diagnostic_does_not_block_live_submission(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=True,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    feature_batch_rows_total=9,
+                    feature_null_rate={"price": 0.0},
+                    feature_staleness_ms_p95=250,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            clickhouse_ta_status={
+                "state": "current",
+                "accepted_sources": ["ta"],
+                "accepted_source_state": "missing",
+                "accepted_source_diagnostic_only": True,
+                "blocking_reason": None,
+                "freshness_reason_codes": ["clickhouse_ta_latest_signal_missing"],
+            },
+        )
+
+        self.assertNotIn("accepted_ta_signal_missing", result["blocked_reasons"])
+        self.assertNotIn("accepted_ta_signal_unavailable", result["blocked_reasons"])
+        self.assertEqual(result["continuity_source"], "clickhouse_ta_status")
+        self.assertEqual(
+            result["continuity_reason"],
+            "accepted_ta_signal_diagnostic_only",
+        )
+
     def test_clickhouse_stale_status_overrides_cached_runtime_ready_state(self) -> None:
         result = runtime_window_import_continuity_signal(
             SimpleNamespace(

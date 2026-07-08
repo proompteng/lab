@@ -33,6 +33,10 @@ from ...trading.live_submit_activation import (
 )
 from .. import health_checks as health_checks_api
 from ..trading_scheduler_state import get_trading_scheduler
+from .readiness_live_submission_gate_dependency import (
+    readiness_live_submission_gate_dependency,
+    startup_readiness_grace_suppresses_live_gate,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -492,26 +496,6 @@ def readiness_live_submission_gate(
     )
 
 
-def readiness_live_submission_gate_dependency(
-    live_submission_gate: Mapping[str, object],
-) -> dict[str, object]:
-    clickhouse_ta_freshness = live_submission_gate.get("clickhouse_ta_freshness")
-    freshness = (
-        cast(Mapping[str, object], clickhouse_ta_freshness)
-        if isinstance(clickhouse_ta_freshness, Mapping)
-        else cast(Mapping[str, object], {})
-    )
-    return {
-        "ok": bool(live_submission_gate.get("allowed", False)),
-        "detail": str(live_submission_gate.get("reason") or "unknown"),
-        "capital_stage": live_submission_gate.get("capital_stage"),
-        "accepted_source_state": freshness.get("accepted_source_state"),
-        "accepted_lag_seconds": freshness.get("accepted_lag_seconds"),
-        "accepted_max_lag_seconds": freshness.get("accepted_max_lag_seconds"),
-        "blocking_reason": freshness.get("blocking_reason"),
-    }
-
-
 def _readiness_cache_payload(
     *,
     now: datetime,
@@ -578,16 +562,23 @@ def _evaluate_core_readiness_payload(
         scheduler,
         readiness_dependency_reasons=readiness_dependency_reasons,
     )
+    startup_grace_active = bool(scheduler_payload.get("startup_readiness_grace_active"))
     dependencies["live_submission_gate"] = readiness_live_submission_gate_dependency(
-        live_submission_gate
+        live_submission_gate,
+        startup_readiness_grace_active=startup_grace_active,
+    )
+    live_submission_allowed = bool(live_submission_gate.get("allowed", False))
+    startup_grace_suppressed = startup_readiness_grace_suppresses_live_gate(
+        live_submission_gate,
+        startup_readiness_grace_active=startup_grace_active,
     )
     overall_ok = (
         scheduler_ok
         and not readiness_dependency_reasons
-        and bool(live_submission_gate.get("allowed", False))
+        and (live_submission_allowed or startup_grace_suppressed)
     )
     reason_codes: list[object] = list(readiness_dependency_reasons)
-    if not bool(live_submission_gate.get("allowed", False)):
+    if not live_submission_allowed and not startup_grace_suppressed:
         reason_codes = append_unique_reason(
             reason_codes,
             str(live_submission_gate.get("reason") or "live_submission_gate_blocked"),
@@ -837,28 +828,18 @@ def _health_surface_timeout_dependencies(
 
 def _health_surface_timeout_core_dependencies(
     *,
-    scheduler: TradingScheduler,
     scheduler_ok: bool,
     include_database_contract: bool,
     reason_code: str,
 ) -> tuple[dict[str, object], list[str]]:
-    try:
-        return _core_readiness_dependencies(
-            scheduler=scheduler,
-            scheduler_ok=scheduler_ok,
-            include_database_contract=include_database_contract,
-            allow_stale_dependency_cache=True,
-        )
-    except _READINESS_LIVE_GATE_EXCEPTIONS as exc:
-        logger.warning("Health timeout core readiness fallback failed: %s", exc)
-        dependencies = _health_surface_timeout_dependencies(
-            include_database_contract=include_database_contract,
-            reason_code=reason_code,
-        )
-        return dependencies, readiness_dependency_degradation_reason_codes(
-            dependencies,
-            scheduler_ok=scheduler_ok,
-        )
+    dependencies = _health_surface_timeout_dependencies(
+        include_database_contract=include_database_contract,
+        reason_code=reason_code,
+    )
+    return dependencies, readiness_dependency_degradation_reason_codes(
+        dependencies,
+        scheduler_ok=scheduler_ok,
+    )
 
 
 def _minimal_health_surface_timeout_payload(
@@ -871,7 +852,6 @@ def _minimal_health_surface_timeout_payload(
     _scheduler_ok, scheduler_payload = _evaluate_scheduler_status(scheduler)
     dependencies, readiness_dependency_reasons = (
         _health_surface_timeout_core_dependencies(
-            scheduler=scheduler,
             scheduler_ok=_scheduler_ok,
             include_database_contract=include_database_contract,
             reason_code=reason_code,

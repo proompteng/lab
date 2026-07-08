@@ -8,6 +8,7 @@ import org.apache.flink.api.common.typeinfo.TypeInformation
 import java.io.ByteArrayOutputStream
 import java.io.ObjectOutputStream
 import java.time.Instant
+import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -170,6 +171,30 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
         lastHeartbeatMs = Instant.parse("2026-07-07T02:00:00Z").toEpochMilli(),
         perSymbolLatestEventTs = emptyMap(),
         clickhouseSinkEnabled = true,
+      )
+
+    assertEquals(0, payload.currentRecordCount)
+    assertEquals("outside_regular_session", payload.marketSessionState)
+    assertNull(payload.statusReason)
+    assertEquals("ok", payload.status)
+  }
+
+  @Test
+  fun `regular-session heartbeat is not degraded on configured market holidays`() {
+    val payload =
+      taStatusPayload(
+        now = Instant.parse("2026-07-03T14:00:05Z"),
+        watermark = Long.MIN_VALUE,
+        lastInputEventMs = null,
+        lastOutputEventMs = null,
+        inputEventCount = 0,
+        outputEventCount = 0,
+        lastHeartbeatInputCount = 0,
+        lastHeartbeatOutputCount = 0,
+        lastHeartbeatMs = null,
+        perSymbolLatestEventTs = emptyMap(),
+        clickhouseSinkEnabled = true,
+        marketHolidays = setOf(LocalDate.parse("2026-07-03")),
       )
 
     assertEquals(0, payload.currentRecordCount)

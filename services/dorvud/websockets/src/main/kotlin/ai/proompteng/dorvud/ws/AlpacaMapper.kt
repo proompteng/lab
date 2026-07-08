@@ -170,12 +170,14 @@ internal fun parseAlpacaEventInstant(eventTs: String): Instant? {
 private fun parseEpochTimestamp(value: String): Instant? {
   if ('.' in value) return parseDecimalEpochSeconds(value)
   val timestamp = value.toLongOrNull()?.takeIf { it >= 0 } ?: return null
-  return when (value.length) {
-    in 1..10 -> Instant.ofEpochSecond(timestamp)
-    in 11..13 -> Instant.ofEpochMilli(timestamp)
-    in 14..16 -> Instant.ofEpochSecond(timestamp / 1_000_000, (timestamp % 1_000_000) * 1_000)
-    else -> Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000)
-  }
+  return runCatching {
+    when (value.length) {
+      in 1..10 -> Instant.ofEpochSecond(timestamp)
+      in 11..13 -> Instant.ofEpochMilli(timestamp)
+      in 14..16 -> Instant.ofEpochSecond(timestamp / 1_000_000, (timestamp % 1_000_000) * 1_000)
+      else -> Instant.ofEpochSecond(timestamp / 1_000_000_000, timestamp % 1_000_000_000)
+    }
+  }.getOrNull()
 }
 
 private fun parseDecimalEpochSeconds(value: String): Instant? {
@@ -187,7 +189,7 @@ private fun parseDecimalEpochSeconds(value: String): Instant? {
       .movePointRight(9)
       .setScale(0, RoundingMode.DOWN)
       .toLong()
-  return Instant.ofEpochSecond(seconds.toLong(), nanos)
+  return runCatching { Instant.ofEpochSecond(seconds.toLong(), nanos) }.getOrNull()
 }
 
 private fun normalizeTimestampText(raw: String): String? {

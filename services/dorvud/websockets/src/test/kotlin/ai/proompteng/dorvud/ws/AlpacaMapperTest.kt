@@ -163,6 +163,11 @@ class AlpacaMapperTest {
   }
 
   @Test
+  fun `out of range decimal epoch timestamps return null instead of throwing`() {
+    assertNull(parseAlpacaEventInstant("999999999999999999999999999999999999999.1"))
+  }
+
+  @Test
   fun `maps timestamps with space separator and compact offset`() {
     val msg =
       """{"T":"q","S":"NVDA260717C00160000","bp":1.1,"bs":12,"ap":1.2,"as":10,"t":"2026-07-08 10:52:03.192533568-0400"}"""

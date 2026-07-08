@@ -179,6 +179,7 @@ def _build_trading_proofs_payload(
         )
     if not bool(live_submission_gate.get("read_model_unavailable")):
         setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
+    shared_live_submission_gate = dict(live_submission_gate)
     live_submission_gate = _merge_external_paper_route_target_plan(
         cast(Mapping[str, Any], live_submission_gate)
     )
@@ -225,7 +226,14 @@ def _build_trading_proofs_payload(
         return dict(
             build_proofs_payload(
                 session,
-                live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
+                live_submission_gate=cast(
+                    Mapping[str, Any],
+                    shared_live_submission_gate,
+                ),
+                target_selection_live_submission_gate=cast(
+                    Mapping[str, Any],
+                    live_submission_gate,
+                ),
                 route_reacquisition_book=route_reacquisition_book,
                 kind=kind,
                 limit=limit,
@@ -946,9 +954,9 @@ def trading_tca(
     payload_rows = [
         {
             "execution_id": str(row.execution_id),
-            "trade_decision_id": str(row.trade_decision_id)
-            if row.trade_decision_id
-            else None,
+            "trade_decision_id": (
+                str(row.trade_decision_id) if row.trade_decision_id else None
+            ),
             "strategy_id": str(row.strategy_id) if row.strategy_id else None,
             "alpaca_account_label": row.alpaca_account_label,
             "symbol": row.symbol,

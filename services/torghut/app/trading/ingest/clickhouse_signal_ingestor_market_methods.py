@@ -58,6 +58,7 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
         *,
         symbols: tuple[str, ...] = (),
         timeframes: tuple[str, ...] = (),
+        fail_on_query_error: bool = False,
     ) -> Optional[datetime]:
         now = datetime.now(timezone.utc)
         scope_key = _signal_scope_key(symbols, timeframes)
@@ -71,6 +72,8 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
             timeframes=timeframes,
         )
         if last_error is not None:
+            if fail_on_query_error:
+                raise last_error
             return self._latest_signal_timestamp_query_failed(
                 scope_key,
                 now,

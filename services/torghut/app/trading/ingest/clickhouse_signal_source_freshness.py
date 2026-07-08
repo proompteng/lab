@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import TypeAlias
 from zoneinfo import ZoneInfo
 
@@ -23,6 +24,40 @@ SourceWhereClause: TypeAlias = Callable[[], str | None]
 
 _DIAGNOSTIC_EXCEPTIONS = (RuntimeError, OSError, ValueError, TypeError)
 _EASTERN_TZ = ZoneInfo("America/New_York")
+_DEFAULT_US_EQUITY_MARKET_HOLIDAYS: frozenset[date] = frozenset(
+    {
+        date(2026, 1, 1),
+        date(2026, 1, 19),
+        date(2026, 2, 16),
+        date(2026, 4, 3),
+        date(2026, 5, 25),
+        date(2026, 6, 19),
+        date(2026, 7, 3),
+        date(2026, 9, 7),
+        date(2026, 11, 26),
+        date(2026, 12, 25),
+        date(2027, 1, 1),
+        date(2027, 1, 18),
+        date(2027, 2, 15),
+        date(2027, 3, 26),
+        date(2027, 5, 31),
+        date(2027, 6, 18),
+        date(2027, 7, 5),
+        date(2027, 9, 6),
+        date(2027, 11, 25),
+        date(2027, 12, 24),
+        date(2027, 12, 31),
+        date(2028, 1, 17),
+        date(2028, 2, 21),
+        date(2028, 4, 14),
+        date(2028, 5, 29),
+        date(2028, 6, 19),
+        date(2028, 7, 4),
+        date(2028, 9, 4),
+        date(2028, 11, 23),
+        date(2028, 12, 25),
+    }
+)
 
 logger = logging.getLogger("app.trading.ingest")
 
@@ -113,6 +148,8 @@ def build_accepted_source_freshness_contract(
         "accepted_max_lag_seconds": max_age_seconds,
         "accepted_source_state": freshness_gate.state,
         "blocking_reason": freshness_gate.blocking_reason,
+        "simulation_mode": context.simulation_mode,
+        "accepted_source_diagnostic_only": context.simulation_mode,
         "fresh_until": latest_signal_at + timedelta(seconds=max_age_seconds),
         "excluded_fresher_sources": excluded_fresher_sources,
         "per_symbol_coverage": per_symbol_coverage,
@@ -141,6 +178,8 @@ def build_unavailable_accepted_source_freshness_contract(
         "accepted_max_lag_seconds": max_age_seconds,
         "accepted_source_state": state,
         "blocking_reason": resolved_blocking_reason,
+        "simulation_mode": context.simulation_mode,
+        "accepted_source_diagnostic_only": context.simulation_mode,
         "fresh_until": None,
         "excluded_fresher_sources": [],
         "per_symbol_coverage": [],
@@ -196,7 +235,11 @@ def regular_market_session_state(now: datetime) -> dict[str, object]:
     current = now.astimezone(_EASTERN_TZ)
     session_open = current.replace(hour=9, minute=30, second=0, microsecond=0)
     session_close = current.replace(hour=16, minute=0, second=0, microsecond=0)
-    if current.weekday() >= 5:
+    market_date = current.date()
+    holidays = configured_market_holidays()
+    if market_date in holidays:
+        state = "holiday_closed"
+    elif current.weekday() >= 5:
         state = "weekend_closed"
     elif current < session_open:
         state = "pre_market"
@@ -209,7 +252,30 @@ def regular_market_session_state(now: datetime) -> dict[str, object]:
         "regular_session_open": state == "regular_open",
         "regular_session_open_at": session_open.astimezone(timezone.utc),
         "regular_session_close_at": session_close.astimezone(timezone.utc),
+        "market_holiday": market_date in holidays,
+        "market_date": market_date.isoformat(),
     }
+
+
+def configured_market_holidays() -> frozenset[date]:
+    holidays = set(_DEFAULT_US_EQUITY_MARKET_HOLIDAYS)
+    for env_name in (
+        "TRADING_MARKET_HOLIDAYS",
+        "MARKET_DATA_HOLIDAYS",
+        "OPTIONS_MARKET_HOLIDAYS",
+    ):
+        raw = os.getenv(env_name, "")
+        if not raw.strip():
+            continue
+        for token in raw.split(","):
+            text = token.strip()
+            if not text:
+                continue
+            try:
+                holidays.add(date.fromisoformat(text))
+            except ValueError:
+                logger.warning("Ignoring invalid market holiday %s=%r", env_name, text)
+    return frozenset(holidays)
 
 
 def accepted_signal_sources(raw: str | None) -> tuple[str, ...]:
