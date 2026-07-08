@@ -57,7 +57,10 @@ import kotlinx.serialization.json.put
 import mu.KotlinLogging
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.msgpack.jackson.dataformat.MessagePackExtensionType
 import org.msgpack.jackson.dataformat.MessagePackFactory
+import org.msgpack.jackson.dataformat.TimestampExtensionModule
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
@@ -74,6 +77,9 @@ private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
 private const val DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
 private const val ALPACA_BARS_BACKFILL_LIMIT = 10_000
 private const val ALPACA_TRADES_BACKFILL_LIMIT = 10_000
+private const val MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK = 0xffffffffL
+private const val MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT = 34
+private const val MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK = 0x00000003ffffffffL
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
@@ -1830,10 +1836,41 @@ internal fun jsonElementFromJacksonNode(node: JsonNode): JsonElement =
     node.isNumber -> JsonPrimitive(node.numberValue())
     node.isBoolean -> JsonPrimitive(node.booleanValue())
     node.isNull || node.isMissingNode -> JsonNull
-    node is POJONode -> node.pojo?.toString()?.let(::JsonPrimitive) ?: JsonNull
+    node is POJONode -> jsonElementFromPojo(node.pojo)
     node.isBinary -> JsonPrimitive(node.asText())
     else -> JsonPrimitive(node.asText())
   }
+
+private fun jsonElementFromPojo(pojo: Any?): JsonElement =
+  when (pojo) {
+    null -> JsonNull
+    is Instant -> JsonPrimitive(pojo.toString())
+    is MessagePackExtensionType -> messagePackTimestampInstant(pojo)?.toString()?.let(::JsonPrimitive) ?: JsonPrimitive(pojo.toString())
+    else -> JsonPrimitive(pojo.toString())
+  }
+
+private fun messagePackTimestampInstant(extension: MessagePackExtensionType): Instant? {
+  if (extension.type != TimestampExtensionModule.EXT_TYPE) return null
+  val data = extension.data
+  return runCatching {
+    when (data.size) {
+      4 -> Instant.ofEpochSecond(ByteBuffer.wrap(data).int.toLong() and MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK)
+      8 -> {
+        val packed = ByteBuffer.wrap(data).long
+        val nanos = packed ushr MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT
+        val seconds = packed and MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK
+        Instant.ofEpochSecond(seconds, nanos)
+      }
+      12 -> {
+        val buffer = ByteBuffer.wrap(data)
+        val nanos = buffer.int.toLong() and MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK
+        val seconds = buffer.long
+        Instant.ofEpochSecond(seconds, nanos)
+      }
+      else -> null
+    }
+  }.getOrNull()
+}
 
 internal fun marketDataEnvelopeDropReason(message: AlpacaMessage): String {
   val timestamp = alpacaEventTimestamp(message) ?: return "unsupported_message"
