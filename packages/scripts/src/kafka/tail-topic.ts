@@ -17,7 +17,7 @@ type Args = {
   passwordSecretKey: string
   kafkaNamespace: string
   kafkaPod?: string
-  format: 'raw' | 'summary' | 'json'
+  format: 'raw' | 'summary' | 'json' | 'base64'
 }
 
 const usage = () =>
@@ -44,7 +44,7 @@ Options:
   --kafka-namespace <ns>              Namespace that contains the Kafka broker pod (default: kafka)
   --kafka-pod <pod>                   Kafka broker pod to exec into (default: auto-detect)
 
-  --format raw|summary|json           Output format (default: summary)
+  --format raw|summary|json|base64    Output format (default: summary)
 
 Examples:
   KAFKA_USERNAME=torghut-ws KAFKA_PASSWORD=$(kubectl -n torghut get secret torghut-ws -o jsonpath='{.data.password}' | base64 -d) \\
@@ -246,7 +246,7 @@ const main = async () => {
   }
 
   args.format = args.format ?? 'summary'
-  if (!['raw', 'summary', 'json'].includes(args.format)) {
+  if (!['raw', 'summary', 'json', 'base64'].includes(args.format)) {
     fatal(`Invalid --format: ${String(args.format)}`)
   }
 
@@ -284,7 +284,13 @@ const main = async () => {
     'if [ -z "$end_offset" ]; then end_offset=0; fi',
     'start_offset=$(( end_offset - TAIL ))',
     'if [ "$start_offset" -lt 0 ]; then start_offset=0; fi',
-    '/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server "$BOOTSTRAP" --consumer.config "$CLIENT" --topic "$TOPIC" --partition "$PARTITION" --offset "$start_offset" --max-messages "$TAIL" --timeout-ms "$TIMEOUT_MS"',
+    'consumer_args=(--bootstrap-server "$BOOTSTRAP" --command-config "$CLIENT" --topic "$TOPIC" --partition "$PARTITION" --offset "$start_offset" --max-messages "$TAIL" --timeout-ms "$TIMEOUT_MS")',
+    'if [ "$FORMAT" = "base64" ]; then',
+    '  /opt/kafka/bin/kafka-console-consumer.sh "${consumer_args[@]}" | base64 | tr -d "\\n"',
+    '  printf "\\n"',
+    'else',
+    '  /opt/kafka/bin/kafka-console-consumer.sh "${consumer_args[@]}"',
+    'fi',
   ].join('\n')
 
   const stdout = await execCapture(
@@ -305,12 +311,19 @@ const main = async () => {
       `SECURITY_PROTOCOL=${args.securityProtocol}`,
       `SASL_MECHANISM=${args.saslMechanism}`,
       `KAFKA_USERNAME=${args.username}`,
+      `FORMAT=${args.format}`,
       'bash',
       '-lc',
       remoteScript,
     ],
     { stdin: `${args.password}\n` },
   )
+
+  if (args.format === 'base64') {
+    const encoded = stdout.trim()
+    process.stdout.write(encoded.length > 0 ? `${encoded}\n` : '')
+    return
+  }
 
   const lines = stdout
     .split('\n')

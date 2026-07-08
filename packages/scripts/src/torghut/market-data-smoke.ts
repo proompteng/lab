@@ -1,6 +1,11 @@
 #!/usr/bin/env bun
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
+import {
+  decodeTaStatusHeartbeatAvro,
+  evaluateTaStatusHeartbeat,
+  type TaStatusHeartbeatRecord,
+} from './ta-status-heartbeat'
 
 type JsonObject = Record<string, unknown>
 
@@ -29,6 +34,7 @@ type MarketDataSmokeInput = {
   tradingStatus: unknown
   taRuntimeConfig?: TaRuntimeConfig
   taFlinkJob?: unknown
+  taStatusHeartbeat?: TaStatusHeartbeatRecord
 }
 
 export type MarketDataSmokeResult = {
@@ -75,6 +81,7 @@ const DEFAULT_TOPIC_BY_ROLE: Record<KafkaRole, string> = {
   bars: 'torghut.bars.1m.v1',
 }
 
+const DEFAULT_TA_STATUS_TOPIC = 'torghut.ta.status.v1'
 const REQUIRED_WS_CHANNELS = ['trades', 'quotes', 'bars', 'updatedBars']
 const REQUIRED_KAFKA_ROLES: KafkaRole[] = ['trades', 'quotes', 'bars']
 const ACCEPTED_SOURCE_STALE_REASON = 'accepted_ta_signal_stale'
@@ -421,6 +428,17 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     )
   }
 
+  const taStatusEvaluation = evaluateTaStatusHeartbeat({
+    now: input.now,
+    enforceFreshness,
+    maxLagSeconds: input.maxKafkaLagSeconds,
+    topic: input.taStatusHeartbeat?.topic ?? DEFAULT_TA_STATUS_TOPIC,
+    heartbeat: input.taStatusHeartbeat,
+  })
+  summaryLines.push(taStatusEvaluation.summaryLine)
+  failures.push(...taStatusEvaluation.failures)
+  warnings.push(...taStatusEvaluation.warnings)
+
   const wsChannels = getWsChannels(input.wsReadyz)
   for (const channel of REQUIRED_WS_CHANNELS) {
     const status = wsChannels.get(channel)
@@ -551,7 +569,13 @@ const execCapture = async (
   return stdout
 }
 
-const tailArgs = (topic: string, format: 'summary' | 'json', settings: RuntimeSettings, partition: number) => [
+const tailArgs = (
+  topic: string,
+  format: 'summary' | 'json' | 'base64',
+  settings: RuntimeSettings,
+  partition: number,
+  tail = settings.tail,
+) => [
   'run',
   'packages/scripts/src/kafka/tail-topic.ts',
   '--topic',
@@ -559,7 +583,7 @@ const tailArgs = (topic: string, format: 'summary' | 'json', settings: RuntimeSe
   '--partition',
   String(partition),
   '--tail',
-  settings.tail,
+  tail,
   '--timeout-ms',
   settings.timeoutMs,
   '--username',
@@ -601,6 +625,36 @@ const captureLatestKafkaRecord = async (
   return selectLatestKafkaRecord(records)
 }
 
+const selectLatestTaStatusHeartbeat = (heartbeats: TaStatusHeartbeatRecord[]): TaStatusHeartbeatRecord | undefined => {
+  let latest: TaStatusHeartbeatRecord | undefined
+  let latestTs = -1
+  for (const heartbeat of heartbeats) {
+    const ts = parseTimestampMs(heartbeat.eventTs)
+    if (ts === undefined || ts < latestTs) continue
+    latest = heartbeat
+    latestTs = ts
+  }
+  return latest
+}
+
+const captureLatestTaStatusHeartbeat = async (
+  topic: string,
+  settings: RuntimeSettings,
+): Promise<TaStatusHeartbeatRecord | undefined> => {
+  const heartbeats: TaStatusHeartbeatRecord[] = []
+  for (const partition of settings.kafkaPartitions) {
+    const stdout = await execCapture('bun', tailArgs(topic, 'base64', settings, partition, '1'), { cwd: repoRoot })
+    const encoded = stdout.trim()
+    if (!encoded) continue
+    try {
+      heartbeats.push(decodeTaStatusHeartbeatAvro(Buffer.from(encoded, 'base64'), { topic, partition }))
+    } catch (err) {
+      fatal(`Failed to decode TA status heartbeat from ${topic} partition ${partition}`, err)
+    }
+  }
+  return selectLatestTaStatusHeartbeat(heartbeats)
+}
+
 const fetchJsonViaPod = async (target: string, url: string, settings: RuntimeSettings): Promise<unknown> => {
   const stdout = await execCapture('kubectl', [
     'exec',
@@ -626,6 +680,7 @@ const fetchJson = async (url: string): Promise<unknown> => {
 type RuntimeSettings = {
   topics: string[]
   topicByRole: Record<KafkaRole, string>
+  taStatusTopic: string
   username: string
   passwordSecretNamespace: string
   passwordSecretName: string
@@ -654,6 +709,7 @@ const runtimeSettings = (): RuntimeSettings => ({
     quotes: process.env.TORGHUT_QUOTES_TOPIC ?? DEFAULT_TOPIC_BY_ROLE.quotes,
     bars: process.env.TORGHUT_BARS_TOPIC ?? DEFAULT_TOPIC_BY_ROLE.bars,
   },
+  taStatusTopic: process.env.TORGHUT_TA_STATUS_TOPIC ?? DEFAULT_TA_STATUS_TOPIC,
   username: process.env.KAFKA_USERNAME ?? 'torghut-ws',
   passwordSecretNamespace: process.env.KAFKA_PASSWORD_SECRET_NAMESPACE ?? 'torghut',
   passwordSecretName: process.env.KAFKA_PASSWORD_SECRET_NAME ?? 'torghut-ws',
@@ -795,6 +851,7 @@ const main = async () => {
   for (const role of REQUIRED_KAFKA_ROLES) {
     latestKafkaByRole[role] = await captureLatestKafkaRecord(role, settings.topicByRole[role], settings)
   }
+  const taStatusHeartbeat = await captureLatestTaStatusHeartbeat(settings.taStatusTopic, settings)
 
   const wsReadyz = await fetchJson(settings.wsReadyzUrl)
   const tradingStatus = await fetchJson(settings.tradingStatusUrl)
@@ -811,6 +868,7 @@ const main = async () => {
     tradingStatus,
     taRuntimeConfig,
     taFlinkJob,
+    taStatusHeartbeat,
   })
 
   console.log('Torghut market-data freshness evidence:')
