@@ -165,6 +165,28 @@ const baseReadyz = {
   },
 }
 
+const acceptedSourceStaleReadyz = {
+  status: 'degraded',
+  scheduler: { ok: true, running: true },
+  dependencies: {
+    postgres: { ok: true },
+    clickhouse: { ok: true },
+    database: { ok: true },
+    live_submission_gate: { ok: false, detail: 'accepted_ta_signal_stale' },
+    profitability_proof_floor: { ok: false, detail: 'repair_only', capital_state: 'zero_notional' },
+  },
+  live_submission_gate: {
+    allowed: false,
+    reason: 'accepted_ta_signal_stale',
+    blocked_reasons: ['accepted_ta_signal_stale'],
+    clickhouse_ta_freshness: {
+      accepted_sources: ['ta'],
+      accepted_source_state: 'stale',
+      blocking_reason: 'accepted_ta_signal_stale',
+    },
+  },
+}
+
 const acceptedSourceStaleDigest = {
   ...baseDigest,
   blockers: [{ reason: 'accepted_ta_signal_stale' }, { reason: 'hypothesis_not_promotion_eligible' }],
@@ -539,6 +561,20 @@ describe('validatePostDeployEvidence', () => {
 
     expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
     expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `repair_only_zero_notional`')
+  })
+
+  it('accepts accepted-source stale readyz 503 when submission is fail-closed at zero notional', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '503',
+      readyz: acceptedSourceStaleReadyz,
+      revenueRepairDigest: acceptedSourceStaleDigest,
+      tradingStatus: acceptedSourceStaleTradingStatus,
+    })
+
+    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
+    expect(result.liveSubmitContract).toBe('accepted_source_stale_zero_notional')
+    expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `repair_only_zero_notional`')
+    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `accepted_source_stale_zero_notional`')
   })
 
   it('accepts core-dependencies-only readyz 503 when the deploy surface is healthy and the gate is closed', () => {
