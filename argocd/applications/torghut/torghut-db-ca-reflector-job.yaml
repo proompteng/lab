@@ -45,11 +45,14 @@ spec:
                 if kubectl -n torghut get secret torghut-db-ca \
                   -o jsonpath='{.data.ca\.crt}{" "}{.data.ca\.key}' | grep -Eq '^[^[:space:]]+ [^[:space:]]+$'; then
                   kubectl -n torghut annotate secret torghut-db-ca \
+                    argocd.argoproj.io/sync-options=Prune=false \
                     reflector.v1.k8s.emberstack.com/reflection-allowed=true \
                     reflector.v1.k8s.emberstack.com/reflection-allowed-namespaces=pgadmin,jangar,argo-workflows \
                     reflector.v1.k8s.emberstack.com/reflection-auto-enabled=true \
                     reflector.v1.k8s.emberstack.com/reflection-auto-namespaces=pgadmin,jangar,argo-workflows \
                     --overwrite
+                  kubectl -n torghut annotate secret torghut-db-ca \
+                    argocd.argoproj.io/tracking-id- || true
                   echo "annotated existing CNPG-managed torghut-db-ca secret for reflection"
                   exit 0
                 fi
