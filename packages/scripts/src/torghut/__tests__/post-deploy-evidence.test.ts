@@ -179,8 +179,17 @@ const acceptedSourceStaleReadyz = {
     allowed: false,
     reason: 'accepted_ta_signal_stale',
     blocked_reasons: ['accepted_ta_signal_stale'],
+    accepted_sources: ['ta'],
+    latest_accepted_event_at: '2026-06-30T20:54:52Z',
+    accepted_lag_seconds: 615152,
+    accepted_max_lag_seconds: 120,
+    accepted_source_state: 'stale',
+    blocking_reason: 'accepted_ta_signal_stale',
     clickhouse_ta_freshness: {
       accepted_sources: ['ta'],
+      latest_accepted_event_at: '2026-06-30T20:54:52Z',
+      accepted_lag_seconds: 615152,
+      accepted_max_lag_seconds: 120,
       accepted_source_state: 'stale',
       blocking_reason: 'accepted_ta_signal_stale',
     },
@@ -216,6 +225,12 @@ const acceptedSourceStaleTradingStatus = {
     blocked_reasons: ['accepted_ta_signal_stale'],
     capital_stage: 'operational_blocked',
     capital_state: 'blocked',
+    accepted_sources: ['ta'],
+    latest_accepted_event_at: '2026-06-30T20:54:52Z',
+    accepted_lag_seconds: 615152,
+    accepted_max_lag_seconds: 120,
+    accepted_source_state: 'stale',
+    blocking_reason: 'accepted_ta_signal_stale',
     clickhouse_ta_freshness: {
       accepted_sources: ['ta'],
       latest_accepted_event_at: '2026-06-30T20:54:52Z',
@@ -369,6 +384,47 @@ describe('validatePostDeployEvidence', () => {
     expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
     expect(result.liveSubmitContract).toBe('accepted_source_stale_zero_notional')
     expect(result.summaryLines.join('\n')).toContain('Live submit contract: `accepted_source_stale_zero_notional`')
+  })
+
+  it('rejects accepted TA stale status when top-level accepted freshness is missing', () => {
+    const {
+      accepted_sources: _acceptedSources,
+      latest_accepted_event_at: _latestAcceptedEventAt,
+      accepted_lag_seconds: _acceptedLagSeconds,
+      accepted_max_lag_seconds: _acceptedMaxLagSeconds,
+      accepted_source_state: _acceptedSourceState,
+      blocking_reason: _blockingReason,
+      ...gateWithoutTopLevelFreshness
+    } = acceptedSourceStaleTradingStatus.live_submission_gate
+
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: acceptedSourceStaleDigest,
+        tradingStatus: {
+          ...acceptedSourceStaleTradingStatus,
+          live_submission_gate: gateWithoutTopLevelFreshness,
+        },
+      }),
+    ).toThrow('torghut live_submission_gate.accepted_sources')
+  })
+
+  it('rejects accepted TA stale status when top-level freshness diverges from nested freshness', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: { status: 'ok' },
+        revenueRepairDigest: acceptedSourceStaleDigest,
+        tradingStatus: {
+          ...acceptedSourceStaleTradingStatus,
+          live_submission_gate: {
+            ...acceptedSourceStaleTradingStatus.live_submission_gate,
+            accepted_lag_seconds: 1,
+          },
+        },
+      }),
+    ).toThrow('accepted_lag_seconds must mirror')
   })
 
   it('rejects accepted TA stale contract with malformed submission authority schema', () => {
@@ -575,6 +631,23 @@ describe('validatePostDeployEvidence', () => {
     expect(result.liveSubmitContract).toBe('accepted_source_stale_zero_notional')
     expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `repair_only_zero_notional`')
     expect(result.summaryLines.join('\n')).toContain('Live submit contract: `accepted_source_stale_zero_notional`')
+  })
+
+  it('rejects accepted-source stale readyz 503 when top-level freshness is not mirrored', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '503',
+        readyz: {
+          ...acceptedSourceStaleReadyz,
+          live_submission_gate: {
+            ...acceptedSourceStaleReadyz.live_submission_gate,
+            accepted_lag_seconds: 1,
+          },
+        },
+        revenueRepairDigest: acceptedSourceStaleDigest,
+        tradingStatus: acceptedSourceStaleTradingStatus,
+      }),
+    ).toThrow('mirrored accepted-source freshness fields')
   })
 
   it('accepts core-dependencies-only readyz 503 when the deploy surface is healthy and the gate is closed', () => {
