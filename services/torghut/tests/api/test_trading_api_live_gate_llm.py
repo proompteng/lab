@@ -492,14 +492,20 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                 shared_gate,
             )
             ready_gate = ready_response.json()["live_submission_gate"]
-            self.assertFalse(ready_gate["allowed"])
-            self.assertFalse(ready_gate["promotion_authority"])
-            self.assertFalse(ready_gate["final_authority_ok"])
-            self.assertFalse(ready_gate["final_promotion_allowed"])
-            self.assertFalse(ready_gate["read_model_evaluated"])
             self.assertEqual(
-                ready_gate["reason"],
-                "readyz_core_dependencies_only",
+                ready_gate,
+                {
+                    **shared_gate,
+                    "readiness_surface": ("core_dependencies_and_live_submission_gate"),
+                    "read_model_evaluated": False,
+                },
+            )
+            self.assertFalse(
+                ready_response.json()["dependencies"]["live_submission_gate"]["ok"]
+            )
+            self.assertEqual(
+                ready_response.json()["dependencies"]["live_submission_gate"]["detail"],
+                "promotion_certificate_missing",
             )
             self.assertNotIn("repair_receipt_frontier", ready_response.json())
             self.assertNotIn("repair_outcome_dividend_ledger", ready_response.json())

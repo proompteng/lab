@@ -20,6 +20,38 @@ from tests.api.trading_api_support import (
 )
 
 
+def _fresh_clickhouse_ta_status() -> dict[str, object]:
+    return {
+        "accepted_sources": ["ta"],
+        "latest_accepted_event_at": "2026-07-08T16:00:00Z",
+        "accepted_lag_seconds": 12,
+        "accepted_max_lag_seconds": 300,
+        "accepted_source_state": "fresh",
+        "blocking_reason": None,
+        "excluded_fresher_sources": [],
+        "per_symbol_coverage": [{"symbol": "NVDA", "state": "fresh"}],
+        "market_session_state": "regular",
+    }
+
+
+def _operational_ready_gate() -> dict[str, object]:
+    return {
+        "allowed": True,
+        "reason": "operational_submission_ready",
+        "promotion_authority": False,
+        "promotion_authority_ok": False,
+        "final_authority_ok": True,
+        "final_promotion_allowed": False,
+        "final_promotion_authorized": False,
+        "blocked_reasons": [],
+        "reason_codes": ["operational_submission_ready"],
+        "capital_stage": "live",
+        "capital_state": "live",
+        "read_model_evaluated": False,
+        "clickhouse_ta_freshness": _fresh_clickhouse_ta_status(),
+    }
+
+
 class TestTradingApiReadyzContract(TradingApiTestCaseBase):
     @patch(
         "app.api.health_checks.build_tigerbeetle_ledger_status",
@@ -70,7 +102,21 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             scheduler.state.universe_symbols_count = 2
             scheduler.state.universe_cache_age_seconds = 0
             app.state.trading_scheduler = scheduler
-            response = self.client.get("/readyz")
+            with (
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=_fresh_clickhouse_ta_status(),
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
+                    return_value=_operational_ready_gate(),
+                ),
+            ):
+                response = self.client.get("/readyz")
             self.assertEqual(response.status_code, 200)
             payload = response.json()
             self.assertEqual(payload["status"], "ok")
@@ -87,16 +133,26 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             self.assertIn("readiness_cache", payload["dependencies"])
             self.assertIn("cache_used", payload["dependencies"]["readiness_cache"])
             self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
-            self.assertEqual(payload["readiness_surface"], "core_dependencies_only")
+            self.assertEqual(
+                payload["readiness_surface"],
+                "core_dependencies_and_live_submission_gate",
+            )
             live_submission_gate = payload["live_submission_gate"]
-            self.assertFalse(live_submission_gate["allowed"])
+            self.assertTrue(live_submission_gate["allowed"])
             self.assertFalse(live_submission_gate["promotion_authority"])
             self.assertFalse(live_submission_gate["final_authority_ok"])
             self.assertFalse(live_submission_gate["final_promotion_allowed"])
             self.assertEqual(
                 live_submission_gate["reason"],
-                "readyz_core_dependencies_only",
+                "operational_submission_ready",
             )
+            self.assertEqual(
+                live_submission_gate["clickhouse_ta_freshness"][
+                    "accepted_source_state"
+                ],
+                "fresh",
+            )
+            self.assertTrue(payload["dependencies"]["live_submission_gate"]["ok"])
             self.assertFalse(live_submission_gate["read_model_evaluated"])
             self.assertNotIn("alpha_repair_closure_board", payload)
         finally:
@@ -162,6 +218,55 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertFalse(gate["read_model_evaluated"])
         self.assertEqual(gate["readiness_surface"], "core_dependencies_only")
 
+
+class TestTradingApiReadyzLiveGateContract(TradingApiTestCaseBase):
+    def test_readiness_dspy_runtime_status_fails_closed_when_llm_status_errors(
+        self,
+    ) -> None:
+        scheduler = TradingScheduler()
+
+        with patch.object(
+            scheduler,
+            "llm_status",
+            side_effect=RuntimeError("dspy status unavailable"),
+        ):
+            status = readiness_surface_helpers._readiness_dspy_runtime_status(scheduler)
+
+        self.assertEqual(status["mode"], "unavailable")
+        self.assertFalse(status["live_ready"])
+        self.assertEqual(status["reason"], "llm_status_unavailable:RuntimeError")
+
+    def test_readiness_live_submission_gate_fails_closed_when_builder_errors(
+        self,
+    ) -> None:
+        scheduler = TradingScheduler()
+
+        with (
+            patch(
+                "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                side_effect=RuntimeError("clickhouse ta status unavailable"),
+            ),
+            patch(
+                "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                return_value={"ready": True, "status": "healthy"},
+            ),
+        ):
+            gate = readiness_surface_helpers.readiness_live_submission_gate(
+                scheduler,
+                readiness_dependency_reasons=[],
+            )
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["reason"], "readiness_live_submission_gate_unavailable")
+        self.assertEqual(gate["capital_stage"], "shadow")
+        self.assertEqual(gate["capital_state"], "observe")
+        self.assertEqual(
+            gate["readiness_surface"],
+            "core_dependencies_and_live_submission_gate",
+        )
+        self.assertFalse(gate["read_model_evaluated"])
+        self.assertIn("live_submit_activation", gate)
+
     def test_core_readyz_creates_scheduler_when_app_state_is_empty(self) -> None:
         original = {
             "trading_mode": settings.trading_mode,
@@ -200,6 +305,18 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                     "app.api.readiness_helpers.evaluate_trading_health_payload.evaluate_universe_dependency",
                     return_value={"ok": True, "detail": "ok"},
                 ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=_fresh_clickhouse_ta_status(),
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
+                    return_value=_operational_ready_gate(),
+                ),
             ):
                 payload, status_code = (
                     readiness_surface_helpers.evaluate_core_readiness_payload(
@@ -220,11 +337,125 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertEqual(status_code, 200)
         self.assertEqual(payload["status"], "ok")
         self.assertIsInstance(app.state.trading_scheduler, TradingScheduler)
-        self.assertEqual(payload["readiness_surface"], "core_dependencies_only")
-        self.assertFalse(payload["live_submission_gate"]["allowed"])
+        self.assertEqual(
+            payload["readiness_surface"],
+            "core_dependencies_and_live_submission_gate",
+        )
+        self.assertTrue(payload["live_submission_gate"]["allowed"])
         self.assertFalse(payload["live_submission_gate"]["read_model_evaluated"])
         self.assertFalse(payload["dependencies"]["readiness_cache"]["cache_stale"])
 
+    @patch(
+        "app.api.health_checks.build_tigerbeetle_ledger_status",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_postgres_dependency",
+        new=lambda _session: {"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_alpaca_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.health_checks.check_clickhouse_dependency",
+        return_value={"ok": True, "detail": "ok"},
+    )
+    @patch(
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_account_scope_invariants_bounded",
+        return_value={"account_scope_ready": True, "account_scope_errors": []},
+    )
+    @patch(
+        "app.api.readiness_helpers.refresh_universe_state_for_readiness.check_schema_current",
+        return_value={
+            "schema_current": True,
+            "current_heads": ["0011_execution_tca_simulator_divergence"],
+            "expected_heads": ["0011_execution_tca_simulator_divergence"],
+            "schema_head_signature": "7f8e4d0",
+        },
+    )
+    def test_readyz_fails_closed_when_accepted_ta_is_stale(
+        self,
+        _mock_schema: object,
+        _mock_account_scope: object,
+        _mock_clickhouse: object,
+        _mock_alpaca: object,
+    ) -> None:
+        original = {
+            "trading_mode": settings.trading_mode,
+            "trading_enabled": settings.trading_enabled,
+            "trading_universe_source": settings.trading_universe_source,
+        }
+        stale_status = {
+            **_fresh_clickhouse_ta_status(),
+            "accepted_source_state": "stale",
+            "accepted_lag_seconds": 1200,
+            "blocking_reason": "accepted_ta_signal_stale",
+        }
+        stale_gate = {
+            **_operational_ready_gate(),
+            "allowed": False,
+            "reason": "accepted_ta_signal_stale",
+            "blocked_reasons": ["accepted_ta_signal_stale"],
+            "reason_codes": ["accepted_ta_signal_stale"],
+            "capital_stage": "operational_blocked",
+            "capital_state": "blocked",
+            "clickhouse_ta_freshness": stale_status,
+        }
+        try:
+            settings.trading_mode = "live"
+            settings.trading_enabled = True
+            settings.trading_universe_source = "jangar"
+            scheduler = TradingScheduler()
+            scheduler.state.running = True
+            scheduler.state.last_run_at = datetime.now(timezone.utc)
+            scheduler.state.universe_source_status = "ok"
+            scheduler.state.universe_source_reason = "jangar_fetch_ok"
+            scheduler.state.universe_symbols_count = 2
+            scheduler.state.universe_cache_age_seconds = 0
+            app.state.trading_scheduler = scheduler
+            with (
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=stale_status,
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
+                    return_value=stale_gate,
+                ) as mock_gate,
+            ):
+                response = self.client.get("/readyz")
+        finally:
+            settings.trading_mode = original["trading_mode"]
+            settings.trading_enabled = original["trading_enabled"]
+            settings.trading_universe_source = original["trading_universe_source"]
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.json()
+        self.assertEqual(payload["status"], "degraded")
+        self.assertIn("accepted_ta_signal_stale", payload["reason_codes"])
+        live_submission_gate = payload["live_submission_gate"]
+        self.assertFalse(live_submission_gate["allowed"])
+        self.assertEqual(live_submission_gate["reason"], "accepted_ta_signal_stale")
+        self.assertEqual(
+            live_submission_gate["clickhouse_ta_freshness"]["blocking_reason"],
+            "accepted_ta_signal_stale",
+        )
+        self.assertEqual(
+            payload["dependencies"]["live_submission_gate"]["blocking_reason"],
+            "accepted_ta_signal_stale",
+        )
+        self.assertEqual(
+            mock_gate.call_args.kwargs["clickhouse_ta_status"],
+            stale_status,
+        )
+
+
+class TestTradingApiReadyzDependencyCacheContract(TradingApiTestCaseBase):
     @patch(
         "app.api.health_checks.remember_alpaca_success._alpaca_probe_account",
         side_effect=[
@@ -370,6 +601,8 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             settings.trading_mode = original_mode
             settings.trading_universe_source = original_source
 
+
+class TestTradingApiReadyzCacheContract(TradingApiTestCaseBase):
     @patch(
         "app.api.readiness_helpers.refresh_universe_state_for_readiness.evaluate_database_contract",
         return_value={
@@ -424,13 +657,29 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
             scheduler.state.last_run_at = datetime.now(timezone.utc)
             _mark_static_universe_loaded(scheduler)
             app.state.trading_scheduler = scheduler
-            response = self.client.get("/readyz")
-            self.assertEqual(response.status_code, 200)
-            cache_key = _readiness_dependency_cache_key(include_database_contract=True)
-            _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = datetime.now(
-                timezone.utc
-            ) - timedelta(seconds=22)
-            response = self.client.get("/readyz")
+            with (
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=_fresh_clickhouse_ta_status(),
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.build_api_live_submission_gate_payload",
+                    return_value=_operational_ready_gate(),
+                ),
+            ):
+                response = self.client.get("/readyz")
+                self.assertEqual(response.status_code, 200)
+                cache_key = _readiness_dependency_cache_key(
+                    include_database_contract=True
+                )
+                _TRADING_DEPENDENCY_HEALTH_CACHE[cache_key]["checked_at"] = (
+                    datetime.now(timezone.utc) - timedelta(seconds=22)
+                )
+                response = self.client.get("/readyz")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(_mock_postgres.call_count, 1)
             self.assertEqual(_mock_clickhouse.call_count, 1)
@@ -516,6 +765,10 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
                     return_value=authoritative_gate,
                 ),
                 patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=_fresh_clickhouse_ta_status(),
+                ),
+                patch(
                     "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
                     return_value={"ready": True, "status": "healthy"},
                 ),
@@ -557,9 +810,10 @@ class TestTradingApiReadyzContract(TradingApiTestCaseBase):
         self.assertFalse(live_submission_gate["final_authority_ok"])
         self.assertFalse(live_submission_gate["final_promotion_allowed"])
         self.assertIn(
-            "readyz_core_dependencies_only",
+            "readiness_dependency_degraded",
             live_submission_gate["reason_codes"],
         )
+        self.assertTrue(live_submission_gate["readiness_dependency_guard_active"])
         self.assertFalse(live_submission_gate["read_model_evaluated"])
         self.assertEqual(
             _json_truthy_paths_for_keys(

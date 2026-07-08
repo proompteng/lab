@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import cast
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.api.build_metadata import BUILD_COMMIT, BUILD_IMAGE_DIGEST, BUILD_VERSION
@@ -34,6 +35,14 @@ from .. import health_checks as health_checks_api
 from ..trading_scheduler_state import get_trading_scheduler
 
 logger = logging.getLogger(__name__)
+
+_READINESS_LIVE_GATE_EXCEPTIONS = (
+    RuntimeError,
+    ValueError,
+    KeyError,
+    TypeError,
+    SQLAlchemyError,
+)
 
 
 def active_runtime_revision() -> str | None:
@@ -370,6 +379,118 @@ def core_readiness_live_submission_gate() -> dict[str, object]:
     }
 
 
+def _readiness_hypothesis_summary() -> dict[str, object]:
+    dependency_quorum = {
+        "decision": "unknown",
+        "reasons": ["readyz_bounded_read_model"],
+        "message": "readyz evaluates the shared live-submission gate without the full status read model",
+    }
+    return {
+        "registry_loaded": False,
+        "registry_path": None,
+        "registry_errors": [],
+        "dependency_quorum": dependency_quorum,
+        "summary": {
+            "promotion_eligible_total": 0,
+            "paper_probation_eligible_total": 0,
+            "capital_stage_totals": {},
+            "dependency_quorum": dependency_quorum,
+        },
+        "items": [],
+        "read_model_evaluated": False,
+        "readiness_surface": "core_dependencies_and_live_submission_gate",
+    }
+
+
+def _readiness_dspy_runtime_status(
+    scheduler: TradingScheduler,
+) -> Mapping[str, object]:
+    try:
+        raw_status = scheduler.llm_status()
+    except _READINESS_LIVE_GATE_EXCEPTIONS as exc:
+        return {
+            "mode": "unavailable",
+            "live_ready": False,
+            "reason": f"llm_status_unavailable:{type(exc).__name__}",
+        }
+    raw_runtime = raw_status.get("dspy_runtime")
+    return (
+        cast(Mapping[str, object], raw_runtime)
+        if isinstance(raw_runtime, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+
+
+def _readiness_live_submission_gate_unavailable(
+    *,
+    reason_code: str,
+    detail: str,
+) -> dict[str, object]:
+    gate = fail_closed_health_evaluation_gate(reason_code=reason_code, detail=detail)
+    gate["capital_stage"] = "shadow"
+    gate["capital_state"] = "observe"
+    gate["readiness_surface"] = "core_dependencies_and_live_submission_gate"
+    gate["read_model_evaluated"] = False
+    gate["live_submit_activation"] = live_submit_activation_status(
+        now=datetime.now(timezone.utc)
+    )
+    return gate
+
+
+def readiness_live_submission_gate(
+    scheduler: TradingScheduler,
+    *,
+    readiness_dependency_reasons: Sequence[str],
+) -> dict[str, object]:
+    from . import status_dependencies
+
+    try:
+        clickhouse_ta_status = status_dependencies.load_clickhouse_ta_status(scheduler)
+        gate = status_dependencies.build_api_live_submission_gate_payload(
+            scheduler.state,
+            session=None,
+            hypothesis_summary=_readiness_hypothesis_summary(),
+            empirical_jobs_status=status_dependencies.empirical_jobs_status(),
+            dspy_runtime_status=_readiness_dspy_runtime_status(scheduler),
+            quant_health_status=None,
+            clickhouse_ta_status=clickhouse_ta_status,
+        )
+    except _READINESS_LIVE_GATE_EXCEPTIONS as exc:
+        logger.warning("Readiness live-submission gate unavailable: %s", exc)
+        gate = _readiness_live_submission_gate_unavailable(
+            reason_code="readiness_live_submission_gate_unavailable",
+            detail=f"{type(exc).__name__}: {exc}",
+        )
+
+    gate = dict(gate)
+    gate["readiness_surface"] = "core_dependencies_and_live_submission_gate"
+    gate.setdefault("read_model_evaluated", False)
+    return guard_live_submission_gate_for_readiness(
+        gate,
+        readiness_dependency_reasons=readiness_dependency_reasons,
+    )
+
+
+def readiness_live_submission_gate_dependency(
+    live_submission_gate: Mapping[str, object],
+) -> dict[str, object]:
+    clickhouse_ta_freshness = live_submission_gate.get("clickhouse_ta_freshness")
+    freshness = (
+        cast(Mapping[str, object], clickhouse_ta_freshness)
+        if isinstance(clickhouse_ta_freshness, Mapping)
+        else cast(Mapping[str, object], {})
+    )
+    return {
+        "ok": bool(live_submission_gate.get("allowed", False)),
+        "detail": str(live_submission_gate.get("reason") or "unknown"),
+        "capital_stage": live_submission_gate.get("capital_stage"),
+        "accepted_source_state": freshness.get("accepted_source_state"),
+        "accepted_lag_seconds": freshness.get("accepted_lag_seconds"),
+        "accepted_max_lag_seconds": freshness.get("accepted_max_lag_seconds"),
+        "blocking_reason": freshness.get("blocking_reason"),
+    }
+
+
 def _readiness_cache_payload(
     *,
     now: datetime,
@@ -432,10 +553,27 @@ def _evaluate_core_readiness_payload(
         include_database_contract=include_database_contract,
         allow_stale_dependency_cache=allow_stale_dependency_cache,
     )
-    overall_ok = scheduler_ok and not readiness_dependency_reasons
+    live_submission_gate = readiness_live_submission_gate(
+        scheduler,
+        readiness_dependency_reasons=readiness_dependency_reasons,
+    )
+    dependencies["live_submission_gate"] = readiness_live_submission_gate_dependency(
+        live_submission_gate
+    )
+    overall_ok = (
+        scheduler_ok
+        and not readiness_dependency_reasons
+        and bool(live_submission_gate.get("allowed", False))
+    )
+    reason_codes: list[object] = list(readiness_dependency_reasons)
+    if not bool(live_submission_gate.get("allowed", False)):
+        reason_codes = append_unique_reason(
+            reason_codes,
+            str(live_submission_gate.get("reason") or "live_submission_gate_blocked"),
+        )
     payload: dict[str, object] = {
         "status": "ok" if overall_ok else "degraded",
-        "reason_codes": readiness_dependency_reasons,
+        "reason_codes": reason_codes,
         "scheduler": scheduler_payload,
         "dependencies": dependencies,
         "build": {
@@ -447,8 +585,8 @@ def _evaluate_core_readiness_payload(
         "mode": settings.trading_mode,
         "pipeline_mode": settings.trading_pipeline_mode,
         "trading_enabled": settings.trading_enabled,
-        "readiness_surface": "core_dependencies_only",
-        "live_submission_gate": core_readiness_live_submission_gate(),
+        "readiness_surface": "core_dependencies_and_live_submission_gate",
+        "live_submission_gate": live_submission_gate,
     }
     return cast(
         dict[str, object],
@@ -804,6 +942,8 @@ __all__ = (
     "readiness_dependency_checks",
     "readiness_dependency_degradation_reason_codes",
     "readiness_dependency_snapshot",
+    "readiness_live_submission_gate",
+    "readiness_live_submission_gate_dependency",
     "record_trading_health_surface_completion",
     "strip_promotion_authority_claims_for_readiness",
     "trading_health_surface_cache_key",
