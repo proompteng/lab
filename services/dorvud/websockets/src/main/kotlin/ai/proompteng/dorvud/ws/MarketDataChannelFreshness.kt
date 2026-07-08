@@ -14,6 +14,9 @@ data class MarketDataChannelReadiness(
   val channel: String,
   val ready: Boolean,
   @SerialName("required") val required: Boolean,
+  @SerialName("readiness_mode") val readinessMode: String = "continuous",
+  @SerialName("freshness_required") val freshnessRequired: Boolean = true,
+  @SerialName("symbol_coverage_required") val symbolCoverageRequired: Boolean = true,
   @SerialName("latest_provider_event_at_ms") val latestProviderEventAtMs: Long? = null,
   @SerialName("latest_serialized_at_ms") val latestSerializedAtMs: Long? = null,
   @SerialName("latest_kafka_success_at_ms") val latestKafkaSuccessAtMs: Long? = null,
@@ -122,10 +125,14 @@ internal class MarketDataChannelFreshnessTracker(
         marketSessionActive(Instant.ofEpochMilli(now))
     return requiredChannels.map { channel ->
       val channelSymbols = symbolsByChannel[channel].orEmpty()
+      val readinessMode = readinessModeFor(channel)
+      val freshnessRequired = readinessMode == MarketDataChannelReadinessMode.CONTINUOUS
+      val symbolCoverageRequired = readinessMode == MarketDataChannelReadinessMode.CONTINUOUS
       val state = latestByChannel[channel]
       val latestKafkaSuccessAt = state?.latestKafkaSuccessAtMs?.get()?.takeIf { it > 0 }
       val latestProviderAt = state?.latestProviderEventAtMs?.get()?.takeIf { it > 0 }
       val latestSerializedAt = state?.latestSerializedAtMs?.get()?.takeIf { it > 0 }
+      val latestObservedInputAt = listOfNotNull(latestProviderAt, latestSerializedAt).maxOrNull()
       val latestSubscriptionAckAt = latestSubscriptionAckAtMsByChannel[channel]?.get()?.takeIf { it > 0 }
       val symbolLastSeen = state?.latestKafkaSuccessAtMsBySymbol?.mapValues { (_, seenAt) -> seenAt.get() }.orEmpty()
       val subscribedSymbols = channelSymbols.sorted()
@@ -143,21 +150,41 @@ internal class MarketDataChannelFreshnessTracker(
           }.toMap()
       val subscriptionAckLagMs = latestSubscriptionAckAt?.let { (now - it).coerceAtLeast(0) }
       val freshSymbols =
-        channelSymbols
-          .filter { symbol -> symbolLagMs[symbol]?.let { it <= maxLagMs } == true }
-          .sorted()
+        if (symbolCoverageRequired) {
+          channelSymbols
+            .filter { symbol -> symbolLagMs[symbol]?.let { it <= maxLagMs } == true }
+            .sorted()
+        } else {
+          observedSymbols
+            .filter { symbol -> symbolLagMs[symbol]?.let { it <= maxLagMs } == true }
+            .sorted()
+        }
       val missingSymbols =
-        channelSymbols
-          .filter { symbol -> symbol !in symbolLastSeen }
-          .sorted()
+        if (symbolCoverageRequired) {
+          channelSymbols
+            .filter { symbol -> symbol !in symbolLastSeen }
+            .sorted()
+        } else {
+          emptyList()
+        }
       val staleSymbols =
-        channelSymbols
-          .filter { symbol -> symbolLastSeen.containsKey(symbol) && symbol !in freshSymbols }
-          .sorted()
+        if (symbolCoverageRequired) {
+          channelSymbols
+            .filter { symbol -> symbolLastSeen.containsKey(symbol) && symbol !in freshSymbols }
+            .sorted()
+        } else {
+          emptyList()
+        }
+      val conditionalKafkaSuccessMissing =
+        !freshnessRequired &&
+          latestObservedInputAt != null &&
+          (latestKafkaSuccessAt == null || latestKafkaSuccessAt < latestObservedInputAt) &&
+          now - latestObservedInputAt > maxLagMs
       val ready =
         when {
           !gateActive -> true
           channelSymbols.isEmpty() -> false
+          !freshnessRequired -> !conditionalKafkaSuccessMissing
           latestKafkaSuccessAt == null -> false
           missingSymbols.isNotEmpty() -> false
           staleSymbols.isNotEmpty() -> false
@@ -168,6 +195,9 @@ internal class MarketDataChannelFreshnessTracker(
         channel = channel,
         ready = ready,
         required = true,
+        readinessMode = readinessMode.id,
+        freshnessRequired = freshnessRequired,
+        symbolCoverageRequired = symbolCoverageRequired,
         latestProviderEventAtMs = latestProviderAt,
         latestSerializedAtMs = latestSerializedAt,
         latestKafkaSuccessAtMs = latestKafkaSuccessAt,
@@ -188,8 +218,12 @@ internal class MarketDataChannelFreshnessTracker(
         reason =
           when {
             ready && !gateActive -> "market_data_channel_gate_inactive"
+            ready && !freshnessRequired && latestObservedInputAt == null -> "market_data_channel_conditional_no_events"
+            ready && !freshnessRequired && latestKafkaSuccessAt == null -> "market_data_channel_conditional_pending_kafka_success"
+            ready && !freshnessRequired -> "market_data_channel_conditional_observed"
             ready -> "market_data_channel_fresh"
             channelSymbols.isEmpty() -> "market_data_channel_not_subscribed"
+            conditionalKafkaSuccessMissing -> "market_data_channel_conditional_missing_kafka_success"
             latestKafkaSuccessAt == null -> "market_data_channel_missing_kafka_success"
             missingSymbols.isNotEmpty() -> "market_data_channel_missing_symbol_coverage"
             staleSymbols.isNotEmpty() -> "market_data_channel_stale_symbol_coverage"
@@ -252,6 +286,19 @@ internal class MarketDataChannelFreshnessTracker(
     }
   }
 }
+
+private enum class MarketDataChannelReadinessMode(
+  val id: String,
+) {
+  CONTINUOUS("continuous"),
+  CONDITIONAL("conditional"),
+}
+
+private fun readinessModeFor(channel: String): MarketDataChannelReadinessMode =
+  when (canonicalMarketDataChannel(channel)) {
+    "updatedBars" -> MarketDataChannelReadinessMode.CONDITIONAL
+    else -> MarketDataChannelReadinessMode.CONTINUOUS
+  }
 
 internal fun canonicalMarketDataChannel(channel: String): String? =
   when (val normalized = channel.trim().lowercase()) {
