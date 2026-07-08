@@ -218,7 +218,7 @@ spec:
             - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS
               value: "1000"
             - name: TRADING_SIGNAL_ALLOWED_SOURCES
-              value: ta,rest
+              value: ta
             - name: TRADING_SIGNAL_LOOKBACK_MINUTES
               value: "15"
             - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS

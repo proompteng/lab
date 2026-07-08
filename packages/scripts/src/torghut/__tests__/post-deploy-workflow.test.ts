@@ -56,6 +56,14 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('Torghut /readyz returned HTTP')
   })
 
+  it('runs market-data freshness verification after deploy evidence is accepted', () => {
+    expect(workflow).toContain('Verify market-data freshness')
+    expect(workflow).toContain('MARKET_DATA_FRESHNESS_MODE: auto')
+    expect(workflow).toContain("MARKET_DATA_MAX_LAG_SECONDS: '300'")
+    expect(workflow).toContain("MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'")
+    expect(workflow).toContain('bun run smoke:torghut-market-data')
+  })
+
   it('retries database-timeout readyz 503 payloads until they match an accepted readyz contract', () => {
     expect(workflow).toContain('fetch_readyz_json()')
     expect(workflow).toContain('packages/scripts/src/torghut/readyz-contract.ts')
@@ -158,6 +166,15 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('serving.knative.dev')
     expect(agentsCiClusterRbac).toContain('resources:\n      - pods')
     expect(agentsCiClusterRbac).toContain('arc-arm64-gha-rs-kube-mode')
+  })
+
+  it('grants the ARC runner only the extra Kubernetes access needed for market-data Kafka smoke', () => {
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-market-data-secret-read')
+    expect(agentsCiClusterRbac).toContain('namespace: torghut')
+    expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ws')
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-kafka-tail')
+    expect(agentsCiClusterRbac).toContain('namespace: kafka')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - pods/exec')
   })
 
   it('runs arm64 workflows with the kube-mode service account that receives post-deploy RBAC', () => {
