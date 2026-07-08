@@ -53,6 +53,41 @@ def _operational_ready_gate() -> dict[str, object]:
     }
 
 
+def _live_submission_settings_snapshot() -> dict[str, object]:
+    return {
+        "trading_mode": settings.trading_mode,
+        "trading_enabled": settings.trading_enabled,
+        "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
+        "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
+        "trading_live_submit_enabled": settings.trading_live_submit_enabled,
+        "trading_testnet_after_hours_enabled": (
+            settings.trading_testnet_after_hours_enabled
+        ),
+    }
+
+
+def _enable_live_submission_settings() -> None:
+    settings.trading_mode = "live"
+    settings.trading_enabled = True
+    settings.trading_kill_switch_enabled = False
+    settings.trading_simple_submit_enabled = True
+    settings.trading_live_submit_enabled = True
+    settings.trading_testnet_after_hours_enabled = True
+
+
+def _restore_live_submission_settings(snapshot: dict[str, object]) -> None:
+    settings.trading_mode = str(snapshot["trading_mode"])
+    settings.trading_enabled = bool(snapshot["trading_enabled"])
+    settings.trading_kill_switch_enabled = bool(snapshot["trading_kill_switch_enabled"])
+    settings.trading_simple_submit_enabled = bool(
+        snapshot["trading_simple_submit_enabled"]
+    )
+    settings.trading_live_submit_enabled = bool(snapshot["trading_live_submit_enabled"])
+    settings.trading_testnet_after_hours_enabled = bool(
+        snapshot["trading_testnet_after_hours_enabled"]
+    )
+
+
 class TestTradingApiReadyzContract(TradingApiTestCaseBase):
     @patch(
         "app.api.health_checks.build_tigerbeetle_ledger_status",
@@ -271,6 +306,66 @@ class TestTradingApiReadyzLiveGateContract(TradingApiTestCaseBase):
         )
         self.assertFalse(gate["read_model_evaluated"])
         self.assertIn("live_submit_activation", gate)
+
+    def test_readiness_live_submission_gate_allows_healthy_core_dependency_quorum(
+        self,
+    ) -> None:
+        original = _live_submission_settings_snapshot()
+        scheduler = TradingScheduler()
+        try:
+            _enable_live_submission_settings()
+            with (
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=_fresh_clickhouse_ta_status(),
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+            ):
+                gate = readiness_surface_helpers.readiness_live_submission_gate(
+                    scheduler,
+                    readiness_dependency_reasons=[],
+                )
+        finally:
+            _restore_live_submission_settings(original)
+
+        self.assertEqual(gate["dependency_quorum_decision"], "allow")
+        self.assertEqual(
+            gate["readiness_surface"],
+            "core_dependencies_and_live_submission_gate",
+        )
+        self.assertFalse(gate["read_model_evaluated"])
+
+    def test_readiness_live_submission_gate_blocks_degraded_core_dependency_quorum(
+        self,
+    ) -> None:
+        original = _live_submission_settings_snapshot()
+        scheduler = TradingScheduler()
+        try:
+            _enable_live_submission_settings()
+            with (
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
+                    return_value=_fresh_clickhouse_ta_status(),
+                ),
+                patch(
+                    "app.api.readiness_helpers.status_dependencies.empirical_jobs_status",
+                    return_value={"ready": True, "status": "healthy"},
+                ),
+            ):
+                gate = readiness_surface_helpers.readiness_live_submission_gate(
+                    scheduler,
+                    readiness_dependency_reasons=["clickhouse_dependency_degraded"],
+                )
+        finally:
+            _restore_live_submission_settings(original)
+
+        self.assertFalse(gate["allowed"])
+        self.assertEqual(gate["dependency_quorum_decision"], "block")
+        self.assertIn("clickhouse_dependency_degraded", gate["reason_codes"])
+        self.assertTrue(gate["readiness_dependency_guard_active"])
 
     def test_core_readyz_creates_scheduler_when_app_state_is_empty(self) -> None:
         original = {

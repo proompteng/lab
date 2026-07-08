@@ -297,9 +297,14 @@ def guard_live_submission_gate_for_readiness(
     gate["reason"] = guard_reason
 
     blocked_reasons = list(cast(Sequence[object], gate.get("blocked_reasons") or []))
-    gate["blocked_reasons"] = append_unique_reason(blocked_reasons, guard_reason)
     reason_codes = list(cast(Sequence[object], gate.get("reason_codes") or []))
-    gate["reason_codes"] = append_unique_reason(reason_codes, guard_reason)
+    append_unique_reason(blocked_reasons, guard_reason)
+    append_unique_reason(reason_codes, guard_reason)
+    for dependency_reason in readiness_dependency_reasons:
+        append_unique_reason(blocked_reasons, dependency_reason)
+        append_unique_reason(reason_codes, dependency_reason)
+    gate["blocked_reasons"] = blocked_reasons
+    gate["reason_codes"] = reason_codes
 
     plan = gate.get("runtime_ledger_paper_probation_import_plan")
     if isinstance(plan, Mapping):
@@ -379,12 +384,26 @@ def core_readiness_live_submission_gate() -> dict[str, object]:
     }
 
 
-def _readiness_hypothesis_summary() -> dict[str, object]:
-    dependency_quorum = {
-        "decision": "unknown",
-        "reasons": ["readyz_bounded_read_model"],
-        "message": "readyz evaluates the shared live-submission gate without the full status read model",
-    }
+def _readiness_hypothesis_summary(
+    *,
+    readiness_dependency_reasons: Sequence[str],
+) -> dict[str, object]:
+    reason_codes = [str(reason) for reason in readiness_dependency_reasons]
+    if reason_codes:
+        dependency_quorum = {
+            "decision": "block",
+            "reasons": reason_codes,
+            "message": "readyz core dependencies are degraded",
+        }
+    else:
+        dependency_quorum = {
+            "decision": "allow",
+            "reasons": ["readyz_core_dependencies_healthy"],
+            "message": (
+                "readyz core dependencies are healthy; full status read model "
+                "is intentionally skipped"
+            ),
+        }
     return {
         "registry_loaded": False,
         "registry_path": None,
@@ -449,7 +468,9 @@ def readiness_live_submission_gate(
         gate = status_dependencies.build_api_live_submission_gate_payload(
             scheduler.state,
             session=None,
-            hypothesis_summary=_readiness_hypothesis_summary(),
+            hypothesis_summary=_readiness_hypothesis_summary(
+                readiness_dependency_reasons=readiness_dependency_reasons,
+            ),
             empirical_jobs_status=status_dependencies.empirical_jobs_status(),
             dspy_runtime_status=_readiness_dspy_runtime_status(scheduler),
             quant_health_status=None,
