@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'bun:test'
 
 import { evaluateMarketDataSmoke, marketSessionState, selectLatestKafkaRecord } from '../market-data-smoke'
+import { decodeTaStatusHeartbeatAvro } from '../ta-status-heartbeat'
 
 const marketDataSmokeSource = readFileSync(new URL('../market-data-smoke.ts', import.meta.url), 'utf8')
 
@@ -121,6 +122,61 @@ const liveTaRuntimeConfig = {
   autoOffsetReset: 'latest',
 }
 
+const freshTaStatusHeartbeat = {
+  topic: 'torghut.ta.status.v1',
+  partition: 0,
+  ingestTs: '2026-07-07T17:00:20Z',
+  eventTs: '2026-07-07T17:00:20Z',
+  symbol: 'ta',
+  seq: 10,
+  isFinal: true,
+  source: 'ta',
+  watermarkLagMs: 5_000,
+  sourceLagMs: 20_000,
+  lastEventTs: '2026-07-07T17:00:00Z',
+  lastInputEventTs: '2026-07-07T17:00:00Z',
+  lastOutputEventTs: '2026-07-07T17:00:00Z',
+  inputEventCount: 240,
+  outputEventCount: 120,
+  currentInputEventCount: 20,
+  currentOutputEventCount: 10,
+  currentRecordCount: 30,
+  inputRatePerSecond: 2,
+  outputRatePerSecond: 1,
+  microbarEventCount: 240,
+  signalEventCount: 120,
+  microbarRatePerSecond: 2,
+  signalRatePerSecond: 1,
+  clickhouseSinkEnabled: true,
+  perSymbolLatestEventTs: {
+    NVDA: '2026-07-07T17:00:00Z',
+    AMD: '2026-07-07T17:00:00Z',
+  },
+  marketSessionState: 'regular',
+  status: 'ok',
+  heartbeat: true,
+  version: 1,
+}
+
+const staleTaStatusHeartbeat = {
+  ...freshTaStatusHeartbeat,
+  ingestTs: '2026-07-07T17:00:20Z',
+  eventTs: '2026-07-07T17:00:20Z',
+  sourceLagMs: 610_000,
+  lastEventTs: '2026-07-07T16:50:00Z',
+  lastInputEventTs: '2026-07-07T16:50:00Z',
+  lastOutputEventTs: '2026-07-07T16:50:00Z',
+  currentInputEventCount: 0,
+  currentOutputEventCount: 0,
+  currentRecordCount: 0,
+  inputRatePerSecond: 0,
+  outputRatePerSecond: 0,
+  microbarRatePerSecond: 0,
+  signalRatePerSecond: 0,
+  statusReason: 'zero_current_records_during_regular_session',
+  status: 'degraded',
+}
+
 const freshTaFlinkJob = {
   jid: 'job-live',
   state: 'RUNNING',
@@ -188,7 +244,136 @@ const stalledRateTaFlinkJob = {
   })),
 }
 
+const testTextEncoder = new TextEncoder()
+
+const concatBytes = (chunks: Uint8Array[]): Buffer => Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)))
+
+const encodeLong = (value: number): Buffer => {
+  let raw = BigInt(value)
+  raw = (raw << 1n) ^ (raw >> 63n)
+  const out: number[] = []
+  while ((raw & ~0x7fn) !== 0n) {
+    out.push(Number((raw & 0x7fn) | 0x80n))
+    raw >>= 7n
+  }
+  out.push(Number(raw))
+  return Buffer.from(out)
+}
+
+const encodeString = (value: string): Buffer => {
+  const bytes = testTextEncoder.encode(value)
+  return concatBytes([encodeLong(bytes.length), bytes])
+}
+
+const encodeDouble = (value: number): Buffer => {
+  const buffer = Buffer.alloc(8)
+  buffer.writeDoubleLE(value)
+  return buffer
+}
+
+const encodeBoolean = (value: boolean): Buffer => Buffer.from([value ? 1 : 0])
+
+const encodeNullableLong = (value: number | undefined): Buffer =>
+  value === undefined ? encodeLong(0) : concatBytes([encodeLong(1), encodeLong(value)])
+
+const encodeNullableDouble = (value: number | undefined): Buffer =>
+  value === undefined ? encodeLong(0) : concatBytes([encodeLong(1), encodeDouble(value)])
+
+const encodeNullableString = (value: string | undefined): Buffer =>
+  value === undefined ? encodeLong(0) : concatBytes([encodeLong(1), encodeString(value)])
+
+const encodeNullableBoolean = (value: boolean | undefined): Buffer =>
+  value === undefined ? encodeLong(0) : concatBytes([encodeLong(1), encodeBoolean(value)])
+
+const encodeNullableStringMap = (value: Record<string, string> | undefined): Buffer => {
+  if (value === undefined) return encodeLong(0)
+  const entries = Object.entries(value)
+  return concatBytes([
+    encodeLong(1),
+    encodeLong(entries.length),
+    ...entries.flatMap(([key, item]) => [encodeString(key), encodeString(item)]),
+    encodeLong(0),
+  ])
+}
+
+const encodeNullableVersion = (value: number | undefined): Buffer =>
+  value === undefined ? encodeLong(1) : concatBytes([encodeLong(0), encodeLong(value)])
+
+const encodeTaStatusFixture = (heartbeat: typeof freshTaStatusHeartbeat & { statusReason?: string }): Buffer =>
+  concatBytes([
+    encodeString(heartbeat.ingestTs),
+    encodeString(heartbeat.eventTs),
+    encodeString(heartbeat.symbol),
+    encodeLong(heartbeat.seq),
+    encodeNullableBoolean(heartbeat.isFinal),
+    encodeNullableString(heartbeat.source),
+    encodeLong(0),
+    encodeNullableLong(heartbeat.watermarkLagMs),
+    encodeNullableLong(heartbeat.sourceLagMs),
+    encodeNullableString(heartbeat.lastEventTs),
+    encodeNullableString(heartbeat.lastInputEventTs),
+    encodeNullableString(heartbeat.lastOutputEventTs),
+    encodeNullableLong(heartbeat.inputEventCount),
+    encodeNullableLong(heartbeat.outputEventCount),
+    encodeNullableLong(heartbeat.currentInputEventCount),
+    encodeNullableLong(heartbeat.currentOutputEventCount),
+    encodeNullableLong(heartbeat.currentRecordCount),
+    encodeNullableDouble(heartbeat.inputRatePerSecond),
+    encodeNullableDouble(heartbeat.outputRatePerSecond),
+    encodeNullableLong(heartbeat.microbarEventCount),
+    encodeNullableLong(heartbeat.signalEventCount),
+    encodeNullableDouble(heartbeat.microbarRatePerSecond),
+    encodeNullableDouble(heartbeat.signalRatePerSecond),
+    encodeNullableBoolean(heartbeat.clickhouseSinkEnabled),
+    encodeNullableStringMap(heartbeat.perSymbolLatestEventTs),
+    encodeNullableString(heartbeat.marketSessionState),
+    encodeNullableString(heartbeat.statusReason),
+    encodeString(heartbeat.status),
+    encodeNullableBoolean(heartbeat.heartbeat),
+    encodeNullableVersion(heartbeat.version),
+  ])
+
 describe('market data smoke freshness evaluation', () => {
+  it('decodes TA status heartbeat Avro evidence from Kafka bytes', () => {
+    const encoded = encodeTaStatusFixture(freshTaStatusHeartbeat)
+    const decoded = decodeTaStatusHeartbeatAvro(encoded, {
+      topic: 'torghut.ta.status.v1',
+      partition: 2,
+    })
+    const prefixed = decodeTaStatusHeartbeatAvro(concatBytes([Buffer.from([0, 0, 0, 0, 7]), encoded]), {
+      topic: 'torghut.ta.status.v1',
+      partition: 2,
+    })
+
+    expect(decoded).toMatchObject({
+      topic: 'torghut.ta.status.v1',
+      partition: 2,
+      eventTs: '2026-07-07T17:00:20Z',
+      symbol: 'ta',
+      seq: 10,
+      sourceLagMs: 20_000,
+      currentRecordCount: 30,
+      currentInputEventCount: 20,
+      currentOutputEventCount: 10,
+      clickhouseSinkEnabled: true,
+      marketSessionState: 'regular',
+      status: 'ok',
+      heartbeat: true,
+      version: 1,
+    })
+    expect(prefixed).toMatchObject({
+      topic: 'torghut.ta.status.v1',
+      partition: 2,
+      eventTs: '2026-07-07T17:00:20Z',
+      status: 'ok',
+      version: 1,
+    })
+    expect(decoded.perSymbolLatestEventTs).toEqual({
+      NVDA: '2026-07-07T17:00:00Z',
+      AMD: '2026-07-07T17:00:00Z',
+    })
+  })
+
   it('identifies regular US equity market session', () => {
     expect(marketSessionState(new Date('2026-07-07T17:00:00Z'))).toBe('regular')
     expect(marketSessionState(new Date('2026-07-07T22:00:00Z'))).toBe('post')
@@ -210,6 +395,7 @@ describe('market data smoke freshness evaluation', () => {
       tradingStatus: tradingStatusWithStaleAcceptedTa,
       taRuntimeConfig: liveTaRuntimeConfig,
       taFlinkJob: zeroCurrentTaFlinkJob,
+      taStatusHeartbeat: staleTaStatusHeartbeat,
     })
 
     expect(result.enforceFreshness).toBe(true)
@@ -217,6 +403,8 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.failures.join('\n')).toContain('accepted_ta_signal_stale')
     expect(result.failures.join('\n')).toContain('kafka_trades_stale')
     expect(result.failures.join('\n')).toContain('ws_trades_missing_kafka_success')
+    expect(result.failures.join('\n')).toContain('ta_status_degraded')
+    expect(result.failures.join('\n')).toContain('ta_status_source_lag_stale')
   })
 
   it('observes the same stale data after hours without claiming market-session proof', () => {
@@ -235,6 +423,7 @@ describe('market data smoke freshness evaluation', () => {
       tradingStatus: tradingStatusWithRestAcceptedBackfill,
       taRuntimeConfig: liveTaRuntimeConfig,
       taFlinkJob: zeroCurrentTaFlinkJob,
+      taStatusHeartbeat: staleTaStatusHeartbeat,
     })
 
     expect(result.sessionState).toBe('post')
@@ -243,6 +432,7 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.warnings.join('\n')).toContain('accepted_ta_signal_stale')
     expect(result.warnings.join('\n')).toContain('accepted_source_contains_backfill')
     expect(result.warnings.join('\n')).toContain('ta_flink_zero_source_records')
+    expect(result.warnings.join('\n')).toContain('ta_status_degraded')
   })
 
   it('passes during regular market hours when WS topics and accepted TA are fresh', () => {
@@ -261,12 +451,36 @@ describe('market data smoke freshness evaluation', () => {
       tradingStatus: tradingStatusWithFreshAcceptedTa,
       taRuntimeConfig: liveTaRuntimeConfig,
       taFlinkJob: freshTaFlinkJob,
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.sessionState).toBe('regular')
     expect(result.enforceFreshness).toBe(true)
     expect(result.ok).toBe(true)
     expect(result.failures).toEqual([])
+  })
+
+  it('fails during regular market hours when TA status heartbeat is missing', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: freshWsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: freshTaFlinkJob,
+    })
+
+    expect(result.enforceFreshness).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ta_status_heartbeat_missing')
   })
 
   it('fails even after hours when production TA is left in replay mode', () => {
@@ -288,6 +502,7 @@ describe('market data smoke freshness evaluation', () => {
         autoOffsetReset: 'earliest',
       },
       taFlinkJob: freshTaFlinkJob,
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.enforceFreshness).toBe(false)
@@ -312,6 +527,7 @@ describe('market data smoke freshness evaluation', () => {
       tradingStatus: tradingStatusWithFreshAcceptedTa,
       taRuntimeConfig: liveTaRuntimeConfig,
       taFlinkJob: zeroCurrentTaFlinkJob,
+      taStatusHeartbeat: staleTaStatusHeartbeat,
     })
 
     expect(result.enforceFreshness).toBe(true)
@@ -347,6 +563,7 @@ describe('market data smoke freshness evaluation', () => {
             : vertex,
         ),
       },
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.ok).toBe(true)
@@ -380,6 +597,7 @@ describe('market data smoke freshness evaluation', () => {
           },
         ],
       },
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.ok).toBe(true)
@@ -407,6 +625,7 @@ describe('market data smoke freshness evaluation', () => {
           vertex.name.startsWith('Source: ta-trades-source') ? { ...vertex, status: 'FINISHED' } : vertex,
         ),
       },
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.ok).toBe(false)
@@ -429,6 +648,7 @@ describe('market data smoke freshness evaluation', () => {
       tradingStatus: tradingStatusWithFreshAcceptedTa,
       taRuntimeConfig: liveTaRuntimeConfig,
       taFlinkJob: stalledRateTaFlinkJob,
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.ok).toBe(false)
@@ -455,6 +675,7 @@ describe('market data smoke freshness evaluation', () => {
         ...freshTaFlinkJob,
         state: 'FAILED',
       },
+      taStatusHeartbeat: freshTaStatusHeartbeat,
     })
 
     expect(result.enforceFreshness).toBe(false)
