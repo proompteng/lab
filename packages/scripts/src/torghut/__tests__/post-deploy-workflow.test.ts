@@ -22,11 +22,27 @@ const arcKubeModeServiceAccount = readFileSync(
 describe('torghut post-deploy verifier workflow', () => {
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
     expect(workflow).not.toContain('Skipping Knative Service readiness check')
-    expect(workflow).toContain('Failed to read Knative Service torghut')
+    expect(workflow).toContain('Failed to read Knative Service ${service}')
+  })
+
+  it('polls Knative Service readiness after Argo applies a new revision', () => {
+    expect(workflow).toContain('wait_knative_service_ready()')
+    expect(workflow).toContain('KNSVC_READY_ATTEMPTS=60')
+    expect(workflow).toContain('KNSVC_READY_INTERVAL_SECONDS=2')
+    expect(workflow).toContain('wait_knative_service_ready torghut')
+    expect(workflow).toContain('wait_knative_service_ready torghut-sim')
+    expect(workflow).toContain(
+      'Attempt ${attempt}: Knative Service ${service} ready=${ready:-empty} latestReady=${latest_ready:-empty} latestCreated=${latest_created:-empty}',
+    )
+    expect(workflow).toContain('Knative Service ${service} did not become Ready after bounded retry window')
+    expect(workflow).not.toContain('KNSVC_READY_STATUS=$?')
+    expect(workflow).not.toContain('SIM_KNSVC_READY_STATUS=$?')
   })
 
   it('uses a shell-safe jsonpath for Knative Service readiness', () => {
-    expect(workflow).toContain(`jsonpath='{.status.conditions[?(@.type=="Ready")].status}'`)
+    expect(workflow).toContain(
+      `jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.latestReadyRevisionName} {.status.latestCreatedRevisionName}'`,
+    )
     expect(workflow).not.toContain(`jsonpath='{.status.conditions[?(@.type==\\"Ready\\")].status}'`)
   })
 
@@ -95,7 +111,7 @@ describe('torghut post-deploy verifier workflow', () => {
   })
 
   it('verifies torghut-sim paper-route target mirroring after deploy', () => {
-    expect(workflow).toContain('Knative Service torghut-sim is not Ready')
+    expect(workflow).toContain('wait_knative_service_ready torghut-sim')
     expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/proofs')
     expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/proofs')
     expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
