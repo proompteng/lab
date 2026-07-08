@@ -18,6 +18,16 @@ def _payload() -> dict[str, object]:
             "end": "2026-06-08T20:00:00+00:00",
             "closed": True,
         },
+        "live_submission_gate": {
+            "allowed": False,
+            "reason": "accepted_ta_signal_stale",
+            "clickhouse_ta_freshness": {
+                "accepted_sources": ["ta"],
+                "accepted_lag_seconds": 900,
+                "accepted_source_state": "stale",
+                "blocking_reason": "accepted_ta_signal_stale",
+            },
+        },
         "proofs": [],
         "summary": {
             "target_count": 0,
@@ -27,6 +37,10 @@ def _payload() -> dict[str, object]:
             "ready_count": 0,
             "import_due_count": 0,
             "blocked_count": 0,
+            "live_submission_allowed": False,
+            "live_submission_reason": "accepted_ta_signal_stale",
+            "accepted_source_state": "stale",
+            "accepted_lag_seconds": 900,
         },
         "promotion_authority": {
             "allowed": False,
@@ -47,7 +61,10 @@ def test_trading_proofs_endpoint_uses_canonical_contract() -> None:
         )
 
     assert response.status_code == 200
-    assert response.json()["schema_version"] == "torghut.proofs.v1"
+    payload = response.json()
+    assert payload["schema_version"] == "torghut.proofs.v1"
+    assert payload["live_submission_gate"]["reason"] == "accepted_ta_signal_stale"
+    assert payload["summary"]["accepted_source_state"] == "stale"
     build.assert_called_once_with(
         kind="runtime_window",
         limit=2,
