@@ -150,7 +150,7 @@ spec:
                     vwap Nullable(Float64),
                     count UInt64
                   )
-                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_microbars', '{replica}', ingest_ts)
+                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${table}', '{replica}', ingest_ts)
                   PARTITION BY toDate(event_ts)
                   ORDER BY (symbol, event_ts, seq)
                   TTL toDateTime(event_ts) + INTERVAL 35 DAY
@@ -192,7 +192,7 @@ spec:
                     vol_realized_w60s Nullable(Float64),
                     microstructure_signal_v1 Nullable(String)
                   )
-                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/ta_signals', '{replica}', ingest_ts)
+                  ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{cluster}/{shard}/${table}', '{replica}', ingest_ts)
                   PARTITION BY toDate(event_ts)
                   ORDER BY (symbol, event_ts, seq)
                   TTL toDateTime(event_ts) + INTERVAL 35 DAY
@@ -201,7 +201,7 @@ spec:
 
               migrate_table() {
                 local table="$1"
-                local shadow="${table}__replicated_migration_v1"
+                local shadow="${table}__replicated_migration_v2"
                 local host cutoff cutoff_literal
                 declare -A cutoffs=()
 
