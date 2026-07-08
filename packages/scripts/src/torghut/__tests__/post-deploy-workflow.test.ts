@@ -184,11 +184,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('arc-arm64-gha-rs-kube-mode')
   })
 
-  it('grants the ARC runner only the extra Kubernetes access needed for market-data Kafka smoke', () => {
-    expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-market-data-secret-read')
+  it('grants the ARC runner only the extra Kubernetes access needed for market-data smoke', () => {
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-market-data-read')
     expect(agentsCiClusterRbac).toContain('kind: ClusterRole')
     expect(agentsCiClusterRbac).toContain('kind: ClusterRoleBinding')
     expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ws')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - configmaps')
+    expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ta-config')
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-kafka-tail')
     expect(agentsCiClusterRbac).toContain('resources:\n      - pods/exec')
     expect(agentsCiClusterRbac).not.toContain('namespace: torghut')
