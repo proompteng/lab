@@ -28,7 +28,8 @@
   - schema-init retry path.
 - What changed from the design:
   - current `TA_CHECKPOINT_INTERVAL_MS` in GitOps is 60000, not the older 10000 default shown in config source defaults;
-  - `TA_GROUP_ID` is currently a replay/profit-proof-specific value, not a stable `torghut-ta-2025-12-23` value;
+  - `TA_GROUP_ID` is a stable live value (`torghut-ta-live`); replay/backfill runs must use a separate temporary group
+    and restore this value before production readiness can be claimed;
   - quote freshness is explicit via `TA_QUOTE_STALE_AFTER_MS=15000` and code paths that reject stale quotes for signal computation.
 - Remaining gaps / operator caveats:
   - Kafka sinks are still at-least-once; ClickHouse table keys and replacing semantics carry the dedup burden.
@@ -82,8 +83,8 @@ flowchart LR
 | `TA_TRADES_TOPIC`             | Input                | `torghut.trades.v1`                                             |
 | `TA_MICROBARS_TOPIC`          | Output               | `torghut.ta.bars.1s.v1`                                         |
 | `TA_SIGNALS_TOPIC`            | Output               | `torghut.ta.signals.v1`                                         |
-| `TA_GROUP_ID`                 | Consumer group       | `torghut-ta-2025-12-23`                                         |
-| `TA_AUTO_OFFSET_RESET`        | Replay behavior      | `earliest`                                                      |
+| `TA_GROUP_ID`                 | Consumer group       | `torghut-ta-live`                                               |
+| `TA_AUTO_OFFSET_RESET`        | Replay behavior      | `latest`                                                        |
 | `TA_CHECKPOINT_DIR`           | Checkpoints          | `s3a://flink-checkpoints/torghut/technical-analysis`            |
 | `TA_SAVEPOINT_DIR`            | Savepoints           | `s3a://flink-checkpoints/torghut/technical-analysis/savepoints` |
 | `TA_KAFKA_DELIVERY_GUARANTEE` | Kafka sink semantics | `AT_LEAST_ONCE`                                                 |
