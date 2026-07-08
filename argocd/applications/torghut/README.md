@@ -129,6 +129,18 @@ kubectl get analysisrun -n torghut
 Kafka topics (v1):
 - Inputs: `torghut.trades.v1`, `torghut.quotes.v1`, `torghut.bars.1m.v1`
 - Outputs (derived): `torghut.ta.bars.1s.v1`, `torghut.ta.signals.v1`
+- Status: `torghut.ta.status.v1`
+
+Market-data freshness smoke:
+
+```bash
+MARKET_DATA_PRINT_SUMMARIES=false bun run smoke:torghut-market-data
+```
+
+The smoke tails Kafka through the Strimzi broker using Kubernetes Secret refs, fetches in-cluster WS/Torghut/Flink
+surfaces through the TA pod by default, and fails during regular market hours when WS channels, Kafka source topics, TA
+heartbeat, or accepted-source freshness are stale. Use `MARKET_DATA_FRESHNESS_MODE=observe` for after-hours diagnostics
+without claiming regular-session proof.
 
 ### Replay window constraints (what can be replayed)
 Replay is constrained by **both** Kafka retention (inputs) and ClickHouse TTL (outputs):
