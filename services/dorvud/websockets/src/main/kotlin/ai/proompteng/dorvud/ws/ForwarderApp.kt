@@ -5,7 +5,9 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.Metrics
 import ai.proompteng.dorvud.platform.SeqTracker
 import ai.proompteng.dorvud.platform.buildProducer
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.POJONode
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -1660,30 +1662,31 @@ class ForwarderApp(
   }
 
   private fun decodeMarketDataFrame(frame: Frame): JsonElement? {
-    val text =
-      try {
-        when (frame) {
-          is Frame.Text -> frame.readText()
-          is Frame.Binary ->
-            if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
-              msgPackMapper.readTree(frame.readBytes()).toString()
-            } else {
-              frame.readBytes().decodeToString()
-            }
-          else -> return null
+    try {
+      when (frame) {
+        is Frame.Text -> return parseMarketDataJson(frame.readText())
+        is Frame.Binary -> {
+          val bytes = frame.readBytes()
+          if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+            return jsonElementFromJacksonNode(msgPackMapper.readTree(bytes))
+          }
+          return parseMarketDataJson(bytes.decodeToString())
         }
-      } catch (e: Exception) {
-        logger.warn(e) { "failed to decode alpaca frame; dropping" }
-        return null
+        else -> return null
       }
+    } catch (e: Exception) {
+      logger.warn(e) { "failed to decode alpaca frame; dropping" }
+      return null
+    }
+  }
 
-    return try {
+  private fun parseMarketDataJson(text: String): JsonElement? =
+    try {
       json.parseToJsonElement(text)
     } catch (e: SerializationException) {
       logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
       null
     }
-  }
 
   private fun extractSymbols(element: JsonElement?): List<String> =
     when (element) {
@@ -1802,6 +1805,34 @@ internal fun observedMarketDataMessage(message: AlpacaMessage): ObservedMarketDa
     is AlpacaBar -> ObservedMarketDataMessage("bars", message.symbol)
     is AlpacaUpdatedBar -> ObservedMarketDataMessage("updatedBars", message.symbol)
     else -> null
+  }
+
+internal fun jsonElementFromJacksonNode(node: JsonNode): JsonElement =
+  when {
+    node.isObject -> {
+      buildJsonObject {
+        val fields = node.fields()
+        while (fields.hasNext()) {
+          val entry = fields.next()
+          put(entry.key, jsonElementFromJacksonNode(entry.value))
+        }
+      }
+    }
+    node.isArray -> {
+      buildJsonArray {
+        val elements = node.elements()
+        while (elements.hasNext()) {
+          add(jsonElementFromJacksonNode(elements.next()))
+        }
+      }
+    }
+    node.isTextual -> JsonPrimitive(node.textValue())
+    node.isNumber -> JsonPrimitive(node.numberValue())
+    node.isBoolean -> JsonPrimitive(node.booleanValue())
+    node.isNull || node.isMissingNode -> JsonNull
+    node is POJONode -> node.pojo?.toString()?.let(::JsonPrimitive) ?: JsonNull
+    node.isBinary -> JsonPrimitive(node.asText())
+    else -> JsonPrimitive(node.asText())
   }
 
 internal fun marketDataEnvelopeDropReason(message: AlpacaMessage): String {

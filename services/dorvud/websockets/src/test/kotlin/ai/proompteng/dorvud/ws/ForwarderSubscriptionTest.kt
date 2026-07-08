@@ -1,11 +1,18 @@
 package ai.proompteng.dorvud.ws
 
+import com.fasterxml.jackson.databind.JsonNode
+import com.fasterxml.jackson.databind.node.JsonNodeFactory
+import com.fasterxml.jackson.databind.node.POJONode
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.time.Duration
 import java.time.Instant
 import java.time.LocalDate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class ForwarderSubscriptionTest {
@@ -222,6 +229,33 @@ class ForwarderSubscriptionTest {
         ),
       ),
     )
+  }
+
+  @Test
+  fun `messagepack timestamp nodes are preserved as parseable option event timestamps`() {
+    val frame = JsonNodeFactory.instance.objectNode()
+    frame.put("T", "q")
+    frame.put("S", "NVDA260717C00160000")
+    frame.put("bp", 1.1)
+    frame.put("bs", 12.0)
+    frame.put("ap", 1.2)
+    frame.put("as", 10.0)
+    frame.set<JsonNode>("t", POJONode(Instant.parse("2026-07-08T14:52:03.192533568Z")))
+
+    val element = jsonElementFromJacksonNode(frame)
+
+    assertEquals("2026-07-08T14:52:03.192533568Z", element.jsonObject["t"]?.jsonPrimitive?.contentOrNull)
+    val message = AlpacaMapper.decode(element.toString())
+    val envelope =
+      assertNotNull(
+        AlpacaMapper.toEnvelope(
+          message = message,
+          marketType = AlpacaMarketType.OPTIONS,
+          feed = "indicative",
+          seqProvider = { 1 },
+        ),
+      )
+    assertEquals("2026-07-08T14:52:03.192533568Z", envelope.eventTs.toString())
   }
 
   @Test
