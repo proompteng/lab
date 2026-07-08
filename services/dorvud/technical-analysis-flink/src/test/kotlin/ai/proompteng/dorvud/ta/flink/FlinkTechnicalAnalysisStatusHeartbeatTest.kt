@@ -47,7 +47,7 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
     assertEquals(false, payload.clickhouseSinkEnabled)
     assertEquals(emptyMap(), payload.perSymbolLatestEventTs)
     assertEquals("regular", payload.marketSessionState)
-    assertEquals("zero_current_records_during_regular_session", payload.statusReason)
+    assertEquals("source_lag_missing_during_regular_session", payload.statusReason)
     assertEquals("degraded", payload.status)
   }
 
@@ -93,6 +93,35 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
     assertNull(payload.statusReason)
     assertEquals("ok", payload.status)
     assertEquals(mapOf("NVDA" to lastOutputEvent.toString()), payload.perSymbolLatestEventTs)
+  }
+
+  @Test
+  fun `regular session heartbeat degrades on stale source lag even when counters moved`() {
+    val now = Instant.parse("2026-07-07T14:10:05Z")
+    val lastInputEvent = Instant.parse("2026-07-07T14:00:00Z")
+    val lastOutputEvent = Instant.parse("2026-07-07T14:00:05Z")
+
+    val payload =
+      taStatusPayload(
+        now = now,
+        watermark = lastOutputEvent.toEpochMilli(),
+        lastInputEventMs = lastInputEvent.toEpochMilli(),
+        lastOutputEventMs = lastOutputEvent.toEpochMilli(),
+        inputEventCount = 25,
+        outputEventCount = 15,
+        lastHeartbeatInputCount = 5,
+        lastHeartbeatOutputCount = 10,
+        lastHeartbeatMs = now.minusSeconds(10).toEpochMilli(),
+        perSymbolLatestEventTs = mapOf("NVDA" to lastOutputEvent.toString()),
+        clickhouseSinkEnabled = true,
+        sourceLagDegradedAfterMs = 300_000,
+      )
+
+    assertEquals(600_000, payload.sourceLagMs)
+    assertEquals(25, payload.currentRecordCount)
+    assertEquals("regular", payload.marketSessionState)
+    assertEquals("source_lag_stale_during_regular_session", payload.statusReason)
+    assertEquals("degraded", payload.status)
   }
 
   @Test
