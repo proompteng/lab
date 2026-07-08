@@ -42,6 +42,13 @@ const arrayIncludes = (value: unknown, expected: string): boolean => {
   return value.some((item) => stringAt({ item }, 'item') === expected)
 }
 
+const numberAt = (value: unknown, key: string): number | undefined => {
+  if (!isObject(value)) return undefined
+  const nested = value[key]
+  const parsed = typeof nested === 'number' ? nested : Number(nested)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 const parseHttpStatus = (value: string): number | undefined => {
   if (!/^[0-9]{3}$/.test(value)) return undefined
   return Number(value)
@@ -122,8 +129,26 @@ const hasAcceptedSourceStaleReadyzContract = (readyz: JsonObject): boolean => {
   if (!arrayIncludes(liveSubmissionGate.blocked_reasons, 'accepted_ta_signal_stale')) return false
   const freshness = objectAt(liveSubmissionGate, 'clickhouse_ta_freshness')
   if (!freshness) return false
+  if (stringAt(liveSubmissionGate, 'accepted_source_state') !== 'stale') return false
   if (stringAt(freshness, 'accepted_source_state') !== 'stale') return false
+  if (stringAt(liveSubmissionGate, 'blocking_reason') !== 'accepted_ta_signal_stale') return false
   if (stringAt(freshness, 'blocking_reason') !== 'accepted_ta_signal_stale') return false
+  if (!arrayIncludes(liveSubmissionGate.accepted_sources, 'ta')) return false
+  if (!arrayIncludes(freshness.accepted_sources, 'ta')) return false
+  if (!stringAt(liveSubmissionGate, 'latest_accepted_event_at')) return false
+  if (stringAt(liveSubmissionGate, 'latest_accepted_event_at') !== stringAt(freshness, 'latest_accepted_event_at')) {
+    return false
+  }
+  const topLevelLagSeconds = numberAt(liveSubmissionGate, 'accepted_lag_seconds')
+  const nestedLagSeconds = numberAt(freshness, 'accepted_lag_seconds')
+  if (topLevelLagSeconds === undefined || topLevelLagSeconds !== nestedLagSeconds) {
+    return false
+  }
+  const topLevelMaxLagSeconds = numberAt(liveSubmissionGate, 'accepted_max_lag_seconds')
+  const nestedMaxLagSeconds = numberAt(freshness, 'accepted_max_lag_seconds')
+  if (topLevelMaxLagSeconds === undefined || topLevelMaxLagSeconds !== nestedMaxLagSeconds) {
+    return false
+  }
 
   return true
 }

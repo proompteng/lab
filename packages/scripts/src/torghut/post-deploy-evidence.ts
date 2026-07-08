@@ -57,6 +57,11 @@ const requireNonNegativeInteger = (value: unknown, label: string): number => {
   return normalized
 }
 
+const optionalNonNegativeInteger = (value: unknown): number | undefined => {
+  const normalized = typeof value === 'number' ? value : Number(value)
+  return Number.isInteger(normalized) && normalized >= 0 ? normalized : undefined
+}
+
 const formatScalar = (value: unknown, fallback = 'unknown'): string => {
   if (typeof value === 'string') return value
   if (typeof value === 'number' || typeof value === 'boolean') return String(value)
@@ -94,6 +99,103 @@ const requireArrayIncludes = (value: unknown, expected: string, label: string) =
 
 const arrayIncludesScalar = (value: unknown, expected: string): boolean =>
   Array.isArray(value) && value.map((item) => formatScalar(item, '')).includes(expected)
+
+const acceptedSourceFreshnessMirrorIsPresent = (liveSubmissionGate: JsonObject): boolean => {
+  const freshness =
+    liveSubmissionGate.clickhouse_ta_freshness &&
+    typeof liveSubmissionGate.clickhouse_ta_freshness === 'object' &&
+    !Array.isArray(liveSubmissionGate.clickhouse_ta_freshness)
+      ? (liveSubmissionGate.clickhouse_ta_freshness as JsonObject)
+      : {}
+  const liveLag = optionalNonNegativeInteger(liveSubmissionGate.accepted_lag_seconds)
+  const nestedLag = optionalNonNegativeInteger(freshness.accepted_lag_seconds)
+  const liveMaxLag = optionalNonNegativeInteger(liveSubmissionGate.accepted_max_lag_seconds)
+  const nestedMaxLag = optionalNonNegativeInteger(freshness.accepted_max_lag_seconds)
+
+  return (
+    arrayIncludesScalar(liveSubmissionGate.accepted_sources, 'ta') &&
+    arrayIncludesScalar(freshness.accepted_sources, 'ta') &&
+    liveSubmissionGate.accepted_source_state === 'stale' &&
+    freshness.accepted_source_state === 'stale' &&
+    liveSubmissionGate.blocking_reason === ACCEPTED_SOURCE_STALE_REASON &&
+    freshness.blocking_reason === ACCEPTED_SOURCE_STALE_REASON &&
+    formatScalar(liveSubmissionGate.latest_accepted_event_at, '') !== '' &&
+    formatScalar(liveSubmissionGate.latest_accepted_event_at, '') ===
+      formatScalar(freshness.latest_accepted_event_at, '') &&
+    liveLag !== undefined &&
+    liveLag === nestedLag &&
+    liveMaxLag !== undefined &&
+    liveMaxLag === nestedMaxLag
+  )
+}
+
+const requireAcceptedSourceFreshnessMirror = (liveSubmissionGate: JsonObject, freshness: JsonObject) => {
+  requireArrayIncludes(liveSubmissionGate.accepted_sources, 'ta', 'torghut live_submission_gate.accepted_sources')
+  requireArrayIncludes(
+    freshness.accepted_sources,
+    'ta',
+    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_sources',
+  )
+  requireScalarValue(
+    liveSubmissionGate.accepted_source_state,
+    'stale',
+    'torghut live_submission_gate.accepted_source_state',
+  )
+  requireScalarValue(
+    freshness.accepted_source_state,
+    'stale',
+    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_source_state',
+  )
+  requireScalarValue(
+    liveSubmissionGate.blocking_reason,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut live_submission_gate.blocking_reason',
+  )
+  requireScalarValue(
+    freshness.blocking_reason,
+    ACCEPTED_SOURCE_STALE_REASON,
+    'torghut live_submission_gate.clickhouse_ta_freshness.blocking_reason',
+  )
+  const latestAccepted = requireTimestamp(
+    liveSubmissionGate.latest_accepted_event_at,
+    'torghut live_submission_gate.latest_accepted_event_at',
+  )
+  const nestedLatestAccepted = requireTimestamp(
+    freshness.latest_accepted_event_at,
+    'torghut live_submission_gate.clickhouse_ta_freshness.latest_accepted_event_at',
+  )
+  if (Date.parse(latestAccepted) !== Date.parse(nestedLatestAccepted)) {
+    throw new Error(
+      'torghut live_submission_gate.latest_accepted_event_at must mirror clickhouse_ta_freshness.latest_accepted_event_at',
+    )
+  }
+  const acceptedLag = requireNonNegativeInteger(
+    liveSubmissionGate.accepted_lag_seconds,
+    'torghut live_submission_gate.accepted_lag_seconds',
+  )
+  const nestedAcceptedLag = requireNonNegativeInteger(
+    freshness.accepted_lag_seconds,
+    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_lag_seconds',
+  )
+  if (acceptedLag !== nestedAcceptedLag) {
+    throw new Error(
+      'torghut live_submission_gate.accepted_lag_seconds must mirror clickhouse_ta_freshness.accepted_lag_seconds',
+    )
+  }
+  const acceptedMaxLag = requireNonNegativeInteger(
+    liveSubmissionGate.accepted_max_lag_seconds,
+    'torghut live_submission_gate.accepted_max_lag_seconds',
+  )
+  const nestedAcceptedMaxLag = requireNonNegativeInteger(
+    freshness.accepted_max_lag_seconds,
+    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_max_lag_seconds',
+  )
+  if (acceptedMaxLag !== nestedAcceptedMaxLag) {
+    throw new Error(
+      'torghut live_submission_gate.accepted_max_lag_seconds must mirror clickhouse_ta_freshness.accepted_max_lag_seconds',
+    )
+  }
+}
 
 const parseHttpStatus = (value: string): number => {
   if (!/^[0-9]{3}$/.test(value)) {
@@ -229,7 +331,8 @@ const isAcceptedSourceStaleReadyz = (readyz: JsonObject): boolean => {
     readyz.status === 'degraded' &&
     dependencyGate.detail === ACCEPTED_SOURCE_STALE_REASON &&
     liveSubmissionGate.allowed === false &&
-    liveSubmissionGate.reason === ACCEPTED_SOURCE_STALE_REASON
+    liveSubmissionGate.reason === ACCEPTED_SOURCE_STALE_REASON &&
+    acceptedSourceFreshnessMirrorIsPresent(liveSubmissionGate)
   )
 }
 
@@ -637,21 +740,7 @@ const assertAcceptedSourceStaleZeroNotionalContract = (status: JsonObject, diges
   if (requireBoolean(submissionAuthority.can_submit_now, 'torghut submission_authority.can_submit_now') !== false) {
     throw new Error('accepted-source stale repair rollout requires submission_authority.can_submit_now=false')
   }
-  requireScalarValue(
-    freshness.accepted_source_state,
-    'stale',
-    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_source_state',
-  )
-  requireScalarValue(
-    freshness.blocking_reason,
-    ACCEPTED_SOURCE_STALE_REASON,
-    'torghut live_submission_gate.clickhouse_ta_freshness.blocking_reason',
-  )
-  requireArrayIncludes(
-    freshness.accepted_sources,
-    'ta',
-    'torghut live_submission_gate.clickhouse_ta_freshness.accepted_sources',
-  )
+  requireAcceptedSourceFreshnessMirror(liveSubmissionGate, freshness)
   assertLiveSubmitActivationContract(
     requireObject(
       liveSubmissionGate.live_submit_activation,
@@ -1026,9 +1115,19 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     }
     const dependencies = requireObject(readyz.dependencies, 'readyz dependencies')
     if (dependencies.live_submission_gate !== undefined || dependencies.profitability_proof_floor !== undefined) {
+      const dependencyLiveSubmissionGate =
+        dependencies.live_submission_gate &&
+        typeof dependencies.live_submission_gate === 'object' &&
+        !Array.isArray(dependencies.live_submission_gate)
+          ? (dependencies.live_submission_gate as JsonObject)
+          : {}
       if (isAcceptedSourceStaleReadyz(readyz)) {
         assertAcceptedSourceStaleZeroNotionalReadyz(readyz, status, digest)
         liveSubmitContract = 'accepted_source_stale_zero_notional'
+      } else if (dependencyLiveSubmissionGate.detail === ACCEPTED_SOURCE_STALE_REASON) {
+        throw new Error(
+          'accepted-source stale readyz requires mirrored accepted-source freshness fields on live_submission_gate',
+        )
       } else {
         assertRepairOnlyZeroNotionalReadyz(readyz, digest)
       }

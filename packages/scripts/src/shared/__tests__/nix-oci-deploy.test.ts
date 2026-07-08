@@ -2,12 +2,22 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 
-import { buildAndPushNixImage } from '../nix-oci-deploy'
+import { __private, buildAndPushNixImage } from '../nix-oci-deploy'
 
 describe('buildAndPushNixImage', () => {
+  afterEach(() => {
+    __private.setCollectToolVersions()
+  })
+
   it('writes an honest manual dry-run contract without claiming pushed platforms', async () => {
+    __private.setCollectToolVersions(() => ({
+      nix: 'nix (test)',
+      skopeo: 'skopeo (test)',
+      crane: 'crane (test)',
+    }))
+
     const dir = mkdtempSync(join(tmpdir(), 'nix-oci-deploy-contract-'))
     const contractPath = join(dir, 'manual-release-contract.json')
 
@@ -50,7 +60,11 @@ describe('buildAndPushNixImage', () => {
         'flake.lock': expect.stringMatching(/^[0-9a-f]{64}$/),
         'bun.lock': expect.stringMatching(/^[0-9a-f]{64}$/),
       },
-      toolVersions: expect.any(Object),
+      toolVersions: {
+        nix: 'nix (test)',
+        skopeo: 'skopeo (test)',
+        crane: 'crane (test)',
+      },
       cacheProvenance: {
         source: 'manual-script-not-collected',
       },

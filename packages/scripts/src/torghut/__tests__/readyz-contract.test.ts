@@ -59,8 +59,17 @@ const acceptedSourceStaleReadyz = {
     allowed: false,
     reason: 'accepted_ta_signal_stale',
     blocked_reasons: ['accepted_ta_signal_stale'],
+    accepted_sources: ['ta'],
+    latest_accepted_event_at: '2026-06-30T20:54:52Z',
+    accepted_lag_seconds: 615152,
+    accepted_max_lag_seconds: 300,
+    accepted_source_state: 'stale',
+    blocking_reason: 'accepted_ta_signal_stale',
     clickhouse_ta_freshness: {
       accepted_sources: ['ta'],
+      latest_accepted_event_at: '2026-06-30T20:54:52Z',
+      accepted_lag_seconds: 615152,
+      accepted_max_lag_seconds: 300,
       accepted_source_state: 'stale',
       blocking_reason: 'accepted_ta_signal_stale',
     },
@@ -113,6 +122,43 @@ describe('classifyReadyzForPostDeployRetry', () => {
           live_submission_gate: {
             ...acceptedSourceStaleReadyz.live_submission_gate,
             allowed: true,
+          },
+        },
+      }),
+    ).toBe('unacceptable')
+  })
+
+  it('rejects accepted-source stale 503 when accepted freshness is only nested', () => {
+    const {
+      accepted_sources: _acceptedSources,
+      latest_accepted_event_at: _latestAcceptedEventAt,
+      accepted_lag_seconds: _acceptedLagSeconds,
+      accepted_max_lag_seconds: _acceptedMaxLagSeconds,
+      accepted_source_state: _acceptedSourceState,
+      blocking_reason: _blockingReason,
+      ...gateWithoutTopLevelFreshness
+    } = acceptedSourceStaleReadyz.live_submission_gate
+
+    expect(
+      classifyReadyzForPostDeployRetry({
+        httpStatus: '503',
+        readyz: {
+          ...acceptedSourceStaleReadyz,
+          live_submission_gate: gateWithoutTopLevelFreshness,
+        },
+      }),
+    ).toBe('unacceptable')
+  })
+
+  it('rejects accepted-source stale 503 when top-level lag diverges from nested freshness', () => {
+    expect(
+      classifyReadyzForPostDeployRetry({
+        httpStatus: '503',
+        readyz: {
+          ...acceptedSourceStaleReadyz,
+          live_submission_gate: {
+            ...acceptedSourceStaleReadyz.live_submission_gate,
+            accepted_lag_seconds: 1,
           },
         },
       }),

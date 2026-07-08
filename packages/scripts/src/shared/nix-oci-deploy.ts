@@ -90,6 +90,8 @@ const collectToolVersions = (): Record<string, string> =>
     }).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
   )
 
+let collectToolVersionsImpl = collectToolVersions
+
 const manualScriptCacheProvenance: NixOciCacheProvenance = {
   source: 'manual-script-not-collected',
 }
@@ -148,7 +150,7 @@ export const buildAndPushNixImage = async (
     options.contractPath ?? `.artifacts/${options.service}/manual-release-contract.json`,
   )
   const lockfileHashes = collectLockfileHashes()
-  const toolVersions = collectToolVersions()
+  const toolVersions = collectToolVersionsImpl()
 
   if (options.dryRun) {
     const dryRunDigest = 'sha256:dry-run'
@@ -211,4 +213,10 @@ export const buildAndPushNixImage = async (
   }
   writeReleaseContract(result, 'manual-script')
   return result
+}
+
+export const __private = {
+  setCollectToolVersions: (impl: (() => Record<string, string>) | undefined = collectToolVersions) => {
+    collectToolVersionsImpl = impl ?? collectToolVersions
+  },
 }
