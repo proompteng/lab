@@ -208,6 +208,69 @@ const assertRepairOnlyZeroNotionalReadyz = (readyz: JsonObject, digest: JsonObje
   }
 }
 
+const isAcceptedSourceStaleReadyz = (readyz: JsonObject): boolean => {
+  const dependencies =
+    readyz.dependencies && typeof readyz.dependencies === 'object' && !Array.isArray(readyz.dependencies)
+      ? (readyz.dependencies as JsonObject)
+      : {}
+  const dependencyGate =
+    dependencies.live_submission_gate &&
+    typeof dependencies.live_submission_gate === 'object' &&
+    !Array.isArray(dependencies.live_submission_gate)
+      ? (dependencies.live_submission_gate as JsonObject)
+      : {}
+  const liveSubmissionGate =
+    readyz.live_submission_gate &&
+    typeof readyz.live_submission_gate === 'object' &&
+    !Array.isArray(readyz.live_submission_gate)
+      ? (readyz.live_submission_gate as JsonObject)
+      : {}
+  return (
+    readyz.status === 'degraded' &&
+    dependencyGate.detail === ACCEPTED_SOURCE_STALE_REASON &&
+    liveSubmissionGate.allowed === false &&
+    liveSubmissionGate.reason === ACCEPTED_SOURCE_STALE_REASON
+  )
+}
+
+const assertAcceptedSourceStaleZeroNotionalReadyz = (readyz: JsonObject, status: JsonObject, digest: JsonObject) => {
+  if (readyz.status !== 'degraded') {
+    throw new Error('accepted-source stale /readyz is only accepted when payload.status is degraded')
+  }
+
+  const dependencies = requireObject(readyz.dependencies, 'readyz dependencies')
+  requireDependencyOk(dependencies, 'postgres')
+  requireDependencyOk(dependencies, 'clickhouse')
+  requireDependencyOk(dependencies, 'database')
+
+  const scheduler = requireObject(readyz.scheduler, 'readyz scheduler')
+  if (scheduler.ok !== true || scheduler.running !== true) {
+    throw new Error('readyz scheduler must be ok and running for accepted-source stale rollout acceptance')
+  }
+
+  const liveSubmissionGate = requireObject(
+    dependencies.live_submission_gate,
+    'readyz dependencies.live_submission_gate',
+  )
+  if (liveSubmissionGate.detail !== ACCEPTED_SOURCE_STALE_REASON) {
+    throw new Error(
+      'accepted-source stale rollout acceptance requires live_submission_gate.detail=accepted_ta_signal_stale',
+    )
+  }
+
+  const proofFloor = requireObject(
+    dependencies.profitability_proof_floor,
+    'readyz dependencies.profitability_proof_floor',
+  )
+  if (proofFloor.detail !== 'repair_only' || proofFloor.capital_state !== 'zero_notional') {
+    throw new Error(
+      'accepted-source stale rollout acceptance requires profitability_proof_floor repair_only zero_notional',
+    )
+  }
+
+  assertAcceptedSourceStaleZeroNotionalContract(status, digest)
+}
+
 const assertLiveSubmitActivationContract = (activation: JsonObject): LiveSubmitContract => {
   if (requireBoolean(activation.configured, 'torghut live_submit_activation.configured') !== true) {
     throw new Error('torghut live_submit_activation.configured must be true')
@@ -963,7 +1026,12 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     }
     const dependencies = requireObject(readyz.dependencies, 'readyz dependencies')
     if (dependencies.live_submission_gate !== undefined || dependencies.profitability_proof_floor !== undefined) {
-      assertRepairOnlyZeroNotionalReadyz(readyz, digest)
+      if (isAcceptedSourceStaleReadyz(readyz)) {
+        assertAcceptedSourceStaleZeroNotionalReadyz(readyz, status, digest)
+        liveSubmitContract = 'accepted_source_stale_zero_notional'
+      } else {
+        assertRepairOnlyZeroNotionalReadyz(readyz, digest)
+      }
       readyzAcceptedReason = 'repair_only_zero_notional'
     } else {
       assertCoreDependenciesOnlyReadyz(readyz)

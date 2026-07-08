@@ -45,6 +45,28 @@ const coreDependenciesOnlyReadyz = {
   },
 }
 
+const acceptedSourceStaleReadyz = {
+  status: 'degraded',
+  scheduler: { ok: true, running: true },
+  dependencies: {
+    postgres: { ok: true, detail: 'ok' },
+    clickhouse: { ok: true, detail: 'ok' },
+    database: { ok: true, detail: 'ok' },
+    live_submission_gate: { ok: false, detail: 'accepted_ta_signal_stale' },
+    profitability_proof_floor: { ok: false, detail: 'repair_only', capital_state: 'zero_notional' },
+  },
+  live_submission_gate: {
+    allowed: false,
+    reason: 'accepted_ta_signal_stale',
+    blocked_reasons: ['accepted_ta_signal_stale'],
+    clickhouse_ta_freshness: {
+      accepted_sources: ['ta'],
+      accepted_source_state: 'stale',
+      blocking_reason: 'accepted_ta_signal_stale',
+    },
+  },
+}
+
 describe('classifyReadyzForPostDeployRetry', () => {
   it('accepts healthy 2xx readyz payloads immediately', () => {
     expect(
@@ -71,6 +93,30 @@ describe('classifyReadyzForPostDeployRetry', () => {
         readyz: coreDependenciesOnlyReadyz,
       }),
     ).toBe('acceptable')
+  })
+
+  it('accepts accepted-source stale 503 when runtime dependencies are healthy and TA is fail-closed', () => {
+    expect(
+      classifyReadyzForPostDeployRetry({
+        httpStatus: '503',
+        readyz: acceptedSourceStaleReadyz,
+      }),
+    ).toBe('acceptable')
+  })
+
+  it('rejects accepted-source stale 503 when the top-level gate still allows submission', () => {
+    expect(
+      classifyReadyzForPostDeployRetry({
+        httpStatus: '503',
+        readyz: {
+          ...acceptedSourceStaleReadyz,
+          live_submission_gate: {
+            ...acceptedSourceStaleReadyz.live_submission_gate,
+            allowed: true,
+          },
+        },
+      }),
+    ).toBe('unacceptable')
   })
 
   it('rejects core-dependencies-only 503 when the readiness gate carries authority', () => {

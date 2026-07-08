@@ -257,6 +257,7 @@ def _build_submission_gate_context(
         empirical_ready=dependencies.empirical_ready,
         dspy_mode=dependencies.dspy_mode,
         dspy_live_ready=dependencies.dspy_live_ready,
+        clickhouse_ta_status=inputs.clickhouse_ta_status,
     )
     return _SubmissionGateContext(
         state=inputs.state,

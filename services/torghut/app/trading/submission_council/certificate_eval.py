@@ -34,6 +34,9 @@ from .common import (
 from .repair_candidates import (
     build_submission_gate_market_context_status,
 )
+from .quant_health import (
+    fresh_clickhouse_signal_continuity as _fresh_clickhouse_signal_continuity,
+)
 from .runtime_certificates import (
     certificate_runtime_ledger_reason_codes as _certificate_runtime_ledger_reason_codes,
 )
@@ -52,6 +55,7 @@ def segment_summary(
     empirical_ready: bool | None,
     dspy_mode: str,
     dspy_live_ready: bool | None,
+    clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, dict[str, object]]:
     market_context_ref = build_submission_gate_market_context_status(state)
     domain_states = {
@@ -85,11 +89,21 @@ def segment_summary(
     )
 
     ta_core_reasons: list[str] = []
-    if bool(getattr(state, "signal_continuity_alert_active", False)):
+    clickhouse_signal = _fresh_clickhouse_signal_continuity(clickhouse_ta_status)
+    clickhouse_signal_current = (
+        clickhouse_signal is not None
+        and clickhouse_signal[0] == "true"
+        and clickhouse_signal[1] == "clickhouse_ta_status"
+    )
+    if (
+        bool(getattr(state, "signal_continuity_alert_active", False))
+        and not clickhouse_signal_current
+    ):
         ta_core_reasons.append("signal_continuity_alert_active")
     if (
         _safe_int(getattr(getattr(state, "metrics", None), "signal_lag_seconds", None))
         > 0
+        and not clickhouse_signal_current
     ):
         signal_lag = _safe_int(
             getattr(getattr(state, "metrics", None), "signal_lag_seconds", None)

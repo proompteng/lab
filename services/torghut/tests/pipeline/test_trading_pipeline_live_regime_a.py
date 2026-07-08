@@ -793,6 +793,7 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 account_label="live",
                 session_factory=self.session_local,
             )
+            pipeline._is_market_session_open = lambda _now=None: False
 
             with (
                 patch(

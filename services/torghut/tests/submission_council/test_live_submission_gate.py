@@ -387,6 +387,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
     def test_build_live_submission_gate_payload_clears_signal_lag_with_fresh_clickhouse_status(
         self,
     ) -> None:
+        latest_signal_at = datetime.now(timezone.utc).isoformat()
         result = build_live_submission_gate_payload(
             SimpleNamespace(
                 last_autonomy_promotion_eligible=False,
@@ -419,7 +420,10 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             quant_health_status=self._healthy_quant_status(),
             clickhouse_ta_status={
                 "state": "current",
-                "latest_signal_at": datetime.now(timezone.utc).isoformat(),
+                "latest_signal_at": latest_signal_at,
+                "latest_accepted_event_at": latest_signal_at,
+                "accepted_source_state": "current",
+                "accepted_sources": ["ta"],
                 "equity_ta_rows": 12,
                 "equity_ta_symbols": 2,
                 "source_ref": "clickhouse:ta_signals",
@@ -430,6 +434,62 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertEqual(result["continuity_source"], "clickhouse_ta_status")
         self.assertEqual(result["continuity_reason"], "signals_present")
         self.assertEqual(result["runtime_window_import_health_gate"]["blockers"], [])
+        ta_core = result["segment_summary"]["segments"]["ta-core"]
+        self.assertEqual(ta_core["state"], "ok")
+        self.assertNotIn("signal_continuity_alert_active", ta_core["reason_codes"])
+        self.assertNotIn("signal_lag_exceeded", ta_core["reason_codes"])
+
+    def test_build_live_submission_gate_payload_keeps_ta_core_blocked_when_clickhouse_accepted_source_stale(
+        self,
+    ) -> None:
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=True,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=True,
+                last_signal_continuity_state="signal_lag_exceeded",
+                last_signal_continuity_reason="signal_lag_exceeded",
+                last_signal_continuity_actionable=True,
+                signal_continuity_alert_active=True,
+                signal_continuity_alert_reason="signal_lag_exceeded",
+                last_market_context_freshness_seconds=45,
+                metrics=SimpleNamespace(
+                    signal_lag_seconds=900,
+                    feature_batch_rows_total=9,
+                    feature_null_rate={"price": 0.0},
+                    feature_staleness_ms_p95=250,
+                    feature_duplicate_ratio=0.0,
+                    decision_state_total={},
+                ),
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+            clickhouse_ta_status={
+                "state": "current",
+                "latest_signal_at": "2026-06-30T20:54:52+00:00",
+                "latest_accepted_event_at": "2026-06-30T20:54:52+00:00",
+                "accepted_sources": ["ta"],
+                "accepted_source_state": "stale",
+                "blocking_reason": "accepted_ta_signal_stale",
+            },
+        )
+
+        ta_core = result["segment_summary"]["segments"]["ta-core"]
+        self.assertFalse(result["allowed"])
+        self.assertIn("accepted_ta_signal_stale", result["blocked_reasons"])
+        self.assertEqual(ta_core["state"], "blocked")
+        self.assertIn("signal_continuity_alert_active", ta_core["reason_codes"])
+        self.assertIn("signal_lag_exceeded", ta_core["reason_codes"])
 
     def test_build_live_submission_gate_payload_keeps_empty_quant_evidence_diagnostic_only(
         self,
