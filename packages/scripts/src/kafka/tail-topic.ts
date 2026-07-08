@@ -20,6 +20,20 @@ type Args = {
   format: 'raw' | 'summary' | 'json' | 'base64' | 'partitions'
 }
 
+type KafkaPodListItem = {
+  metadata: {
+    name: string
+    labels?: Record<string, string>
+  }
+  status?: {
+    phase?: string
+    conditions?: Array<{
+      type?: string
+      status?: string
+    }>
+  }
+}
+
 const usage = () =>
   `
 Usage:
@@ -151,15 +165,31 @@ const kubectlJson = async <T>(args: string[]): Promise<T> => {
   return JSON.parse(stdout) as T
 }
 
-const pickKafkaPod = async (namespace: string) => {
-  const data = await kubectlJson<{ items: Array<{ metadata: { name: string } }> }>(['-n', namespace, 'get', 'pods'])
-  const candidates = data.items
-    .map((item) => item.metadata.name)
-    .filter((name) => name.startsWith('kafka-pool-'))
-    .sort()
+const podIsReady = (pod: KafkaPodListItem) =>
+  pod.status?.phase === 'Running' &&
+  pod.status.conditions?.some((condition) => condition.type === 'Ready' && condition.status === 'True')
+
+export const selectKafkaPodName = (items: KafkaPodListItem[]) => {
+  const candidates = items
+    .filter((item) => item.metadata.name.startsWith('kafka-pool-'))
+    .sort((left, right) => left.metadata.name.localeCompare(right.metadata.name))
+
+  const brokerCandidates = candidates.filter((item) => item.metadata.labels?.['strimzi.io/broker-role'] === 'true')
+  const brokerReadyCandidates = brokerCandidates.filter(podIsReady)
+  const readyCandidates = candidates.filter(podIsReady)
+
   return (
-    candidates[0] ?? fatal(`No Kafka broker pod found in namespace '${namespace}' (expected name like kafka-pool-*)`)
+    brokerReadyCandidates[0]?.metadata.name ??
+    brokerCandidates[0]?.metadata.name ??
+    readyCandidates[0]?.metadata.name ??
+    candidates[0]?.metadata.name
   )
+}
+
+const pickKafkaPod = async (namespace: string) => {
+  const data = await kubectlJson<{ items: KafkaPodListItem[] }>(['-n', namespace, 'get', 'pods'])
+  const selected = selectKafkaPodName(data.items)
+  return selected ?? fatal(`No Kafka broker pod found in namespace '${namespace}' (expected name like kafka-pool-*)`)
 }
 
 const toSummary = (line: string) => {
