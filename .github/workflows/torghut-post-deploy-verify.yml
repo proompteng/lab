@@ -233,42 +233,60 @@ jobs:
             done
           done
 
-          set +e
-          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-ksvc-ready.err)"
-          KNSVC_READY_STATUS=$?
-          set -e
-          if [ "${KNSVC_READY_STATUS}" -ne 0 ]; then
-            if grep -qi 'not found' /tmp/torghut-ksvc-ready.err; then
-              echo "Knative Service torghut was not found"
-              cat /tmp/torghut-ksvc-ready.err
-              exit 1
-            else
-              echo "Failed to read Knative Service torghut"
-              cat /tmp/torghut-ksvc-ready.err
-              exit 1
-            fi
-          elif [ "${KNSVC_READY}" != 'True' ]; then
-            echo "Knative Service torghut is not Ready"
-            exit 1
-          fi
-          set +e
-          SIM_KNSVC_READY="$(kubectl get ksvc torghut-sim -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-sim-ksvc-ready.err)"
-          SIM_KNSVC_READY_STATUS=$?
-          set -e
-          if [ "${SIM_KNSVC_READY_STATUS}" -ne 0 ]; then
-            if grep -qi 'not found' /tmp/torghut-sim-ksvc-ready.err; then
-              echo "Knative Service torghut-sim was not found"
-              cat /tmp/torghut-sim-ksvc-ready.err
-              exit 1
-            else
-              echo "Failed to read Knative Service torghut-sim"
-              cat /tmp/torghut-sim-ksvc-ready.err
-              exit 1
-            fi
-          elif [ "${SIM_KNSVC_READY}" != 'True' ]; then
-            echo "Knative Service torghut-sim is not Ready"
-            exit 1
-          fi
+          KNSVC_READY_ATTEMPTS=60
+          KNSVC_READY_INTERVAL_SECONDS=2
+
+          wait_knative_service_ready() {
+            local service="$1"
+            local attempt
+            local status
+            local ready
+            local latest_ready
+            local latest_created
+            local output
+            local error_path="/tmp/${service}-ksvc-ready.err"
+
+            for attempt in $(seq 1 "${KNSVC_READY_ATTEMPTS}"); do
+              set +e
+              output="$(
+                kubectl get ksvc "${service}" -n torghut \
+                  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.latestReadyRevisionName} {.status.latestCreatedRevisionName}' \
+                  2> "${error_path}"
+              )"
+              status=$?
+              set -e
+
+              if [ "${status}" -ne 0 ]; then
+                if grep -qi 'not found' "${error_path}"; then
+                  echo "Knative Service ${service} was not found"
+                  cat "${error_path}"
+                  exit 1
+                fi
+                echo "Failed to read Knative Service ${service}"
+                cat "${error_path}"
+                exit 1
+              fi
+
+              ready="$(echo "${output}" | awk '{print $1}')"
+              latest_ready="$(echo "${output}" | awk '{print $2}')"
+              latest_created="$(echo "${output}" | awk '{print $3}')"
+              if [ "${ready}" = 'True' ]; then
+                return 0
+              fi
+
+              if [ "${attempt}" -eq "${KNSVC_READY_ATTEMPTS}" ]; then
+                echo "Knative Service ${service} did not become Ready after bounded retry window"
+                kubectl get ksvc "${service}" -n torghut -o yaml || true
+                exit 1
+              fi
+
+              echo "Attempt ${attempt}: Knative Service ${service} ready=${ready:-empty} latestReady=${latest_ready:-empty} latestCreated=${latest_created:-empty}"
+              sleep "${KNSVC_READY_INTERVAL_SECONDS}"
+            done
+          }
+
+          wait_knative_service_ready torghut
+          wait_knative_service_ready torghut-sim
 
           for deployment in \
             torghut-options-catalog \
