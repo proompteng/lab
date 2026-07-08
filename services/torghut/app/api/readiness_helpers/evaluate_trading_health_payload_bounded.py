@@ -53,6 +53,7 @@ def _cached_result_from_entry(
         return None
     payload = deepcopy(cast(dict[str, object], cache_entry["payload"]))
     dependencies = payload.get("dependencies")
+    readiness_dependency_reasons: list[str] = []
     if isinstance(dependencies, Mapping):
         from .evaluate_trading_health_payload import (
             runtime_dependencies_for_health_surface,
@@ -89,15 +90,14 @@ def _cached_result_from_entry(
                     "readiness_dependency_guard_reasons": readiness_dependency_reasons,
                 }
                 payload["dependencies"] = dependencies_payload
-    status_value = cache_entry.get("status_code")
-    status_code = status_value if isinstance(status_value, int) else 503
-    return (
-        cast(
+    if readiness_dependency_reasons:
+        payload = cast(
             dict[str, object],
             _strip_promotion_authority_claims_for_readiness(payload),
-        ),
-        status_code,
-    )
+        )
+    status_value = cache_entry.get("status_code")
+    status_code = status_value if isinstance(status_value, int) else 503
+    return payload, status_code
 
 
 def _start_refresh_locked(

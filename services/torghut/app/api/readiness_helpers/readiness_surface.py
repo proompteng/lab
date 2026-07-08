@@ -588,10 +588,12 @@ def _evaluate_core_readiness_payload(
         "readiness_surface": "core_dependencies_and_live_submission_gate",
         "live_submission_gate": live_submission_gate,
     }
-    return cast(
-        dict[str, object],
-        strip_promotion_authority_claims_for_readiness(payload),
-    ), 200 if overall_ok else 503
+    if readiness_dependency_reasons:
+        payload = cast(
+            dict[str, object],
+            strip_promotion_authority_claims_for_readiness(payload),
+        )
+    return payload, 200 if overall_ok else 503
 
 
 def trading_health_surface_cache_key(
