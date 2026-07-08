@@ -93,6 +93,35 @@ const staleWsReadyz = {
   ],
 }
 
+const conditionalUpdatedBarsNoEventsReadyz = {
+  market_data_channels: freshWsReadyz.market_data_channels.map((channel) =>
+    channel.channel === 'updatedBars'
+      ? {
+          ...channel,
+          observed_symbol_count: 0,
+          fresh_symbol_count: 0,
+          latest_kafka_success_at_ms: null,
+          reason: 'market_data_channel_conditional_no_events',
+        }
+      : channel,
+  ),
+}
+
+const updatedBarsObservedWithoutKafkaReadyz = {
+  market_data_channels: freshWsReadyz.market_data_channels.map((channel) =>
+    channel.channel === 'updatedBars'
+      ? {
+          ...channel,
+          ready: false,
+          observed_symbol_count: 1,
+          fresh_symbol_count: 0,
+          latest_kafka_success_at_ms: null,
+          reason: 'market_data_channel_conditional_missing_kafka_success',
+        }
+      : channel,
+  ),
+}
+
 const partialCoverageWsReadyz = {
   market_data_channels: freshWsReadyz.market_data_channels.map((channel) =>
     channel.channel === 'trades'
@@ -517,6 +546,57 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.enforceFreshness).toBe(true)
     expect(result.ok).toBe(true)
     expect(result.failures).toEqual([])
+  })
+
+  it('passes during regular market hours when updatedBars has conditional no-events readiness', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: conditionalUpdatedBarsNoEventsReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: freshTaFlinkJob,
+      taStatusHeartbeat: freshTaStatusHeartbeat,
+    })
+
+    expect(result.enforceFreshness).toBe(true)
+    expect(result.ok).toBe(true)
+    expect(result.failures.join('\n')).not.toContain('ws_updatedBars_symbol_coverage_gap')
+    expect(result.failures.join('\n')).not.toContain('ws_updatedBars_missing_kafka_success')
+  })
+
+  it('fails during regular market hours when observed updatedBars corrections do not reach Kafka', () => {
+    const result = evaluateMarketDataSmoke({
+      now: new Date('2026-07-07T17:00:30Z'),
+      mode: 'auto',
+      holidays: new Set(),
+      maxKafkaLagSeconds: 300,
+      acceptedMaxLagSeconds: 300,
+      latestKafkaByRole: {
+        trades: { topic: 'torghut.trades.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        quotes: { topic: 'torghut.quotes.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+        bars: { topic: 'torghut.bars.1m.v1', eventTs: '2026-07-07T17:00:00Z', symbol: 'NVDA' },
+      },
+      wsReadyz: updatedBarsObservedWithoutKafkaReadyz,
+      tradingStatus: tradingStatusWithFreshAcceptedTa,
+      taRuntimeConfig: liveTaRuntimeConfig,
+      taFlinkJob: freshTaFlinkJob,
+      taStatusHeartbeat: freshTaStatusHeartbeat,
+    })
+
+    expect(result.enforceFreshness).toBe(true)
+    expect(result.ok).toBe(false)
+    expect(result.failures.join('\n')).toContain('ws_updatedBars_not_ready')
+    expect(result.failures.join('\n')).toContain('ws_updatedBars_symbol_coverage_gap')
+    expect(result.failures.join('\n')).toContain('ws_updatedBars_missing_kafka_success')
   })
 
   it('fails during regular market hours when WS symbol coverage is incomplete', () => {
