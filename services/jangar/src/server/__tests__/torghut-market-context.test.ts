@@ -5,6 +5,7 @@ import {
   getTorghutMarketContext,
   getTorghutMarketContextHealth,
 } from '../torghut-market-context'
+import { resolveMarketContextRuntimeConfig } from '../torghut-market-context-config'
 
 const restoreEnv = () => {
   delete process.env.JANGAR_MARKET_CONTEXT_ENABLED
@@ -28,6 +29,16 @@ afterEach(() => {
 })
 
 describe('torghut market context', () => {
+  it('defaults active domain freshness budgets to the accepted-source staleness budget', () => {
+    const config = resolveMarketContextRuntimeConfig({
+      JANGAR_MARKET_CONTEXT_MAX_STALENESS_SECONDS: '300',
+    })
+
+    expect(config.maxStalenessSeconds).toBe(300)
+    expect(config.technicalsMaxFreshnessSeconds).toBe(300)
+    expect(config.regimeMaxFreshnessSeconds).toBe(300)
+  })
+
   it('builds v1 bundle with freshness and domain contracts', async () => {
     const now = new Date('2026-02-19T12:00:00.000Z')
     const context = await getTorghutMarketContext('nvda', {
@@ -114,6 +125,37 @@ describe('torghut market context', () => {
 
     expect(context.freshnessSeconds).toBe(30)
     expect(context.riskFlags).toContain('market_context_stale')
+  })
+
+  it('keeps accepted-source-fresh TA technicals healthy inside the configured budget', async () => {
+    process.env.JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS = '300'
+    process.env.JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS = '300'
+
+    const now = new Date('2026-02-19T12:00:00.000Z')
+    const client = {
+      queryJson: async <T>() =>
+        [
+          {
+            event_ts: '2026-02-19 11:57:30.000',
+            vwap: '142.51',
+            rsi14: '57.2',
+            macd: '1.2',
+            macd_signal: '0.8',
+            volatility: '0.14',
+            trend_strength: '0.9',
+          },
+        ] as T[],
+    }
+
+    const context = await getTorghutMarketContext('nvda', { asOf: now, client })
+    const health = await getTorghutMarketContextHealth('nvda', { asOf: now, client })
+
+    expect(context.freshnessSeconds).toBe(150)
+    expect(context.domains.technicals.state).toBe('ok')
+    expect(context.domains.regime.state).toBe('ok')
+    expect(context.riskFlags).not.toContain('technicals_stale')
+    expect(context.riskFlags).not.toContain('regime_stale')
+    expect(health.overallState).toBe('ok')
   })
 
   it('returns disabled state and health down when feature flag is off', async () => {
