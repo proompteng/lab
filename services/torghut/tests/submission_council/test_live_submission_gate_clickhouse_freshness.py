@@ -12,7 +12,36 @@ from tests.submission_council.support import (
 )
 
 
+_ACCEPTED_SOURCE_GATE_FIELDS = (
+    "accepted_sources",
+    "latest_accepted_event_at",
+    "accepted_lag_seconds",
+    "accepted_max_lag_seconds",
+    "accepted_source_state",
+    "blocking_reason",
+    "fresh_until",
+    "freshness_reason_codes",
+    "excluded_fresher_sources",
+    "per_symbol_coverage",
+    "stale_symbol_coverage",
+    "market_session_state",
+    "regular_session_open",
+    "regular_session_open_at",
+    "regular_session_close_at",
+)
+
+
 class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
+    def _assert_accepted_source_freshness_mirrored(
+        self,
+        result: dict[str, object],
+    ) -> None:
+        freshness = result["clickhouse_ta_freshness"]
+        self.assertIsInstance(freshness, dict)
+        for field in _ACCEPTED_SOURCE_GATE_FIELDS:
+            self.assertIn(field, result)
+            self.assertEqual(result[field], freshness[field])
+
     def test_build_live_submission_gate_payload_blocks_missing_accepted_clickhouse_ta_status(
         self,
     ) -> None:
@@ -73,6 +102,7 @@ class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
             ["clickhouse_ta_latest_signal_missing"],
         )
         self.assertEqual(freshness["market_session_state"], "regular_open")
+        self._assert_accepted_source_freshness_mirrored(result)
 
     def test_build_live_submission_gate_payload_blocks_stale_accepted_clickhouse_ta_status(
         self,
@@ -130,6 +160,7 @@ class TestLiveSubmissionGateClickHouseFreshness(SubmissionCouncilTestCase):
             result["clickhouse_ta_freshness"]["accepted_source_state"],
             "stale",
         )
+        self._assert_accepted_source_freshness_mirrored(result)
 
     def test_clickhouse_stale_status_overrides_cached_runtime_ready_state(self) -> None:
         result = runtime_window_import_continuity_signal(
