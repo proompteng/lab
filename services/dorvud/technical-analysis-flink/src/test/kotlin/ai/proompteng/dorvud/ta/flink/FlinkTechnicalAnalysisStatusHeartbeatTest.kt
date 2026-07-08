@@ -2,6 +2,7 @@ package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.ta.stream.MicroBarPayload
+import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
 import org.apache.flink.api.common.typeinfo.TypeHint
 import org.apache.flink.api.common.typeinfo.TypeInformation
 import java.io.ByteArrayOutputStream
@@ -19,11 +20,15 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
       taStatusPayload(
         now = Instant.parse("2026-07-07T14:00:05Z"),
         watermark = Long.MIN_VALUE,
-        lastEventMs = null,
-        eventCount = 0,
-        lastHeartbeatCount = 0,
+        lastInputEventMs = null,
+        lastOutputEventMs = null,
+        inputEventCount = 0,
+        outputEventCount = 0,
+        lastHeartbeatInputCount = 0,
+        lastHeartbeatOutputCount = 0,
         lastHeartbeatMs = null,
         perSymbolLatestEventTs = emptyMap(),
+        clickhouseSinkEnabled = false,
       )
 
     assertNull(payload.lastInputEventTs)
@@ -32,35 +37,116 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
     assertNull(payload.watermarkLagMs)
     assertEquals(0, payload.inputEventCount)
     assertEquals(0, payload.outputEventCount)
+    assertEquals(0, payload.microbarEventCount)
+    assertEquals(0, payload.signalEventCount)
+    assertEquals(0, payload.currentInputEventCount)
+    assertEquals(0, payload.currentOutputEventCount)
+    assertEquals(0, payload.currentRecordCount)
+    assertNull(payload.microbarRatePerSecond)
+    assertNull(payload.signalRatePerSecond)
+    assertEquals(false, payload.clickhouseSinkEnabled)
     assertEquals(emptyMap(), payload.perSymbolLatestEventTs)
-    assertEquals("ok", payload.status)
+    assertEquals("regular", payload.marketSessionState)
+    assertEquals("zero_current_records_during_regular_session", payload.statusReason)
+    assertEquals("degraded", payload.status)
   }
 
   @Test
-  fun `heartbeat payload reports source lag and current input rate`() {
+  fun `heartbeat payload reports source lag and current processing rates`() {
     val now = Instant.parse("2026-07-07T14:00:05Z")
-    val lastEvent = Instant.parse("2026-07-07T14:00:02Z")
+    val lastInputEvent = Instant.parse("2026-07-07T14:00:02Z")
+    val lastOutputEvent = Instant.parse("2026-07-07T14:00:03Z")
 
     val payload =
       taStatusPayload(
         now = now,
-        watermark = lastEvent.toEpochMilli(),
-        lastEventMs = lastEvent.toEpochMilli(),
-        eventCount = 25,
-        lastHeartbeatCount = 5,
+        watermark = lastInputEvent.toEpochMilli(),
+        lastInputEventMs = lastInputEvent.toEpochMilli(),
+        lastOutputEventMs = lastOutputEvent.toEpochMilli(),
+        inputEventCount = 25,
+        outputEventCount = 15,
+        lastHeartbeatInputCount = 5,
+        lastHeartbeatOutputCount = 10,
         lastHeartbeatMs = now.minusSeconds(10).toEpochMilli(),
-        perSymbolLatestEventTs = mapOf("NVDA" to lastEvent.toString()),
+        perSymbolLatestEventTs = mapOf("NVDA" to lastOutputEvent.toString()),
+        clickhouseSinkEnabled = true,
       )
 
-    assertEquals(lastEvent.toString(), payload.lastInputEventTs)
-    assertEquals(lastEvent.toString(), payload.lastOutputEventTs)
-    assertEquals(3_000, payload.sourceLagMs)
+    assertEquals(lastOutputEvent.toString(), payload.lastEventTs)
+    assertEquals(lastInputEvent.toString(), payload.lastInputEventTs)
+    assertEquals(lastOutputEvent.toString(), payload.lastOutputEventTs)
+    assertEquals(2_000, payload.sourceLagMs)
     assertEquals(3_000, payload.watermarkLagMs)
     assertEquals(25, payload.inputEventCount)
-    assertEquals(25, payload.outputEventCount)
+    assertEquals(15, payload.outputEventCount)
+    assertEquals(25, payload.microbarEventCount)
+    assertEquals(15, payload.signalEventCount)
+    assertEquals(20, payload.currentInputEventCount)
+    assertEquals(5, payload.currentOutputEventCount)
+    assertEquals(25, payload.currentRecordCount)
     assertEquals(2.0, payload.inputRatePerSecond)
-    assertEquals(2.0, payload.outputRatePerSecond)
-    assertEquals(mapOf("NVDA" to lastEvent.toString()), payload.perSymbolLatestEventTs)
+    assertEquals(0.5, payload.outputRatePerSecond)
+    assertEquals(2.0, payload.microbarRatePerSecond)
+    assertEquals(0.5, payload.signalRatePerSecond)
+    assertEquals(true, payload.clickhouseSinkEnabled)
+    assertEquals("regular", payload.marketSessionState)
+    assertNull(payload.statusReason)
+    assertEquals("ok", payload.status)
+    assertEquals(mapOf("NVDA" to lastOutputEvent.toString()), payload.perSymbolLatestEventTs)
+  }
+
+  @Test
+  fun `first regular session heartbeat counts records as current when there is no prior heartbeat`() {
+    val now = Instant.parse("2026-07-07T14:00:05Z")
+    val lastInputEvent = Instant.parse("2026-07-07T14:00:02Z")
+    val lastOutputEvent = Instant.parse("2026-07-07T14:00:03Z")
+
+    val payload =
+      taStatusPayload(
+        now = now,
+        watermark = lastOutputEvent.toEpochMilli(),
+        lastInputEventMs = lastInputEvent.toEpochMilli(),
+        lastOutputEventMs = lastOutputEvent.toEpochMilli(),
+        inputEventCount = 2,
+        outputEventCount = 1,
+        lastHeartbeatInputCount = 0,
+        lastHeartbeatOutputCount = 0,
+        lastHeartbeatMs = null,
+        perSymbolLatestEventTs = mapOf("NVDA" to lastOutputEvent.toString()),
+        clickhouseSinkEnabled = true,
+      )
+
+    assertEquals(2, payload.currentInputEventCount)
+    assertEquals(1, payload.currentOutputEventCount)
+    assertEquals(3, payload.currentRecordCount)
+    assertNull(payload.inputRatePerSecond)
+    assertNull(payload.outputRatePerSecond)
+    assertEquals("regular", payload.marketSessionState)
+    assertNull(payload.statusReason)
+    assertEquals("ok", payload.status)
+  }
+
+  @Test
+  fun `zero current records are not degraded outside regular market session`() {
+    val payload =
+      taStatusPayload(
+        now = Instant.parse("2026-07-07T02:00:05Z"),
+        watermark = Long.MIN_VALUE,
+        lastInputEventMs = null,
+        lastOutputEventMs = null,
+        inputEventCount = 10,
+        outputEventCount = 10,
+        lastHeartbeatInputCount = 10,
+        lastHeartbeatOutputCount = 10,
+        lastHeartbeatMs = Instant.parse("2026-07-07T02:00:00Z").toEpochMilli(),
+        perSymbolLatestEventTs = emptyMap(),
+        clickhouseSinkEnabled = true,
+      )
+
+    assertEquals(0, payload.currentRecordCount)
+    assertEquals("outside_regular_session", payload.marketSessionState)
+    assertNull(payload.statusReason)
+    assertEquals("ok", payload.status)
   }
 
   @Test
@@ -73,12 +159,14 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
   }
 
   @Test
-  fun `status heartbeat stream type covers startup ticks and microbars`() {
+  fun `status heartbeat stream type covers startup ticks microbars and signals`() {
     val typeInformation = TypeInformation.of(object : TypeHint<StatusHeartbeatInput>() {})
     val microbar = StatusHeartbeatInput.MicroBar(microbarEnvelope())
+    val signal = StatusHeartbeatInput.Signal(signalEnvelope())
 
     assertNotNull(typeInformation)
     assertEquals("NVDA", microbar.envelope.symbol)
+    assertEquals("NVDA", signal.envelope.symbol)
   }
 
   private fun microbarEnvelope(): Envelope<MicroBarPayload> =
@@ -100,6 +188,21 @@ class FlinkTechnicalAnalysisStatusHeartbeatTest {
           count = 3,
           t = Instant.parse("2026-07-07T14:00:00Z"),
         ),
+      isFinal = true,
+      source = "ta",
+      window = null,
+      version = 1,
+    )
+
+  private fun signalEnvelope(): Envelope<TaSignalsPayload> =
+    Envelope(
+      ingestTs = Instant.parse("2026-07-07T14:00:02Z"),
+      eventTs = Instant.parse("2026-07-07T14:00:01Z"),
+      feed = "ta",
+      channel = "signals",
+      symbol = "NVDA",
+      seq = 2,
+      payload = TaSignalsPayload(),
       isFinal = true,
       source = "ta",
       window = null,

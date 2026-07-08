@@ -87,12 +87,32 @@ data class TaStatusPayload(
   val inputEventCount: Long? = null,
   @SerialName("output_event_count")
   val outputEventCount: Long? = null,
+  @SerialName("current_input_event_count")
+  val currentInputEventCount: Long? = null,
+  @SerialName("current_output_event_count")
+  val currentOutputEventCount: Long? = null,
+  @SerialName("current_record_count")
+  val currentRecordCount: Long? = null,
   @SerialName("input_rate_per_second")
   val inputRatePerSecond: Double? = null,
   @SerialName("output_rate_per_second")
   val outputRatePerSecond: Double? = null,
+  @SerialName("microbar_event_count")
+  val microbarEventCount: Long? = null,
+  @SerialName("signal_event_count")
+  val signalEventCount: Long? = null,
+  @SerialName("microbar_rate_per_second")
+  val microbarRatePerSecond: Double? = null,
+  @SerialName("signal_rate_per_second")
+  val signalRatePerSecond: Double? = null,
+  @SerialName("clickhouse_sink_enabled")
+  val clickhouseSinkEnabled: Boolean? = null,
   @SerialName("per_symbol_latest_event_ts")
   val perSymbolLatestEventTs: Map<String, String>? = null,
+  @SerialName("market_session_state")
+  val marketSessionState: String? = null,
+  @SerialName("status_reason")
+  val statusReason: String? = null,
   val status: String = "ok",
   val heartbeat: Boolean = true,
 )
