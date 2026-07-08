@@ -24,7 +24,7 @@ if [[ ${#filtered[@]} -eq 0 ]]; then
   exit 0
 fi
 
-SCHEMA_ARGS=("--schema-location" "default")
+SCHEMA_ARGS=()
 if [[ -d "$SCHEMA_DIR" ]]; then
   SCHEMA_ARGS+=(
     "--schema-location" "${SCHEMA_DIR}/{{.ResourceKind}}{{.KindSuffix}}.json"
@@ -35,6 +35,7 @@ if [[ -d "$SCHEMA_DIR" ]]; then
     "--schema-location" "${SCHEMA_DIR}/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
   )
 fi
+SCHEMA_ARGS+=("--schema-location" "default")
 
 KUBECONFORM_ARGS=(
   --strict

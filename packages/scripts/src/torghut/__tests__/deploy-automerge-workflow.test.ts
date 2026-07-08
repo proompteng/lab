@@ -50,6 +50,21 @@ describe('torghut-deploy-automerge workflow', () => {
     }
   })
 
+  test('allowlists every Torghut maintenance manifest promoted by torghut-release', () => {
+    const promotedMaintenanceManifests = [
+      'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
+      'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
+      'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml',
+      'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
+      'argocd/applications/torghut/tigerbeetle-smoke-job.yaml',
+    ]
+
+    for (const manifestPath of promotedMaintenanceManifests) {
+      expect(releaseWorkflow).toContain(manifestPath)
+      expect(countOccurrences(deployAutomergeWorkflow, `'${manifestPath}'`)).toBeGreaterThanOrEqual(2)
+    }
+  })
+
   test('allowlists TA and WS promotion manifests for automatic release PR merges', () => {
     const promotedTaManifests = [
       'argocd/applications/torghut/ta/flinkdeployment.yaml',
