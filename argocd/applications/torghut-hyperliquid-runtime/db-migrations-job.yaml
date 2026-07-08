@@ -22,7 +22,7 @@ spec:
         kubernetes.io/arch: arm64
       containers:
         - name: migrate
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:adc762e15c661821c0fe81f6473e2d701556dcd916eeaa7f70c74f91c8652912
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:beb47f1e13b52f40e9cf1703cba1de662cadc85efcc849cf0e02e4d886ce1370
           imagePullPolicy: Always
           workingDir: /app
           command:
@@ -52,9 +52,9 @@ spec:
               alembic -c /app/alembic.ini upgrade heads
           env:
             - name: TORGHUT_COMMIT
-              value: a7afa88811facffa5b5ae1082d432a2821a32f5b
+              value: 13438bdaae4008aef5a4012d6d10cc0ae9d2da6d
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:adc762e15c661821c0fe81f6473e2d701556dcd916eeaa7f70c74f91c8652912
+              value: sha256:beb47f1e13b52f40e9cf1703cba1de662cadc85efcc849cf0e02e4d886ce1370
             - name: PYTHONPATH
               value: /app
             - name: DB_DSN
