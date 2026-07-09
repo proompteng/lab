@@ -668,6 +668,10 @@ def test_url_payload_accepts_trading_proofs_materialization_plan(
                 },
                 "symbols": ["AAPL", "AMZN"],
                 "state": "waiting_for_session",
+                "account_state": {
+                    "blockers": [],
+                    "clean_baseline": True,
+                },
             }
         ],
         "summary": {"target_count": 1},
