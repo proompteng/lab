@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional, cast
 
@@ -75,6 +76,16 @@ if TYPE_CHECKING:
     _OrderExecutorCoreBase = _OrderExecutorContract
 else:
     _OrderExecutorCoreBase = object
+
+
+@dataclass(frozen=True, slots=True)
+class _OrderPreparationInputs:
+    session: Session
+    execution_client: Any
+    decision: StrategyDecision
+    decision_row: TradeDecision
+    account_label: str
+    execution_policy_context: dict[str, Any]
 
 
 class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
@@ -211,10 +222,14 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             return None
 
         prepared = self._prepare_order_submission(
-            execution_client=execution_client,
-            decision=decision,
-            decision_row=decision_row,
-            execution_policy_context=execution_policy_context,
+            _OrderPreparationInputs(
+                session=session,
+                execution_client=execution_client,
+                decision=decision,
+                decision_row=decision_row,
+                account_label=account_label,
+                execution_policy_context=execution_policy_context,
+            )
         )
         if retry_delays is None:
             retry_delays = []
@@ -225,6 +240,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             decision=decision,
             decision_row=decision_row,
             request=prepared.request,
+            position_qty=prepared.quantity_resolution.position_qty,
             fractional_equities_enabled=bool(
                 prepared.quantity_resolution.fractional_allowed
             ),
@@ -249,19 +265,21 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
 
     def _prepare_order_submission(
         self,
-        *,
-        execution_client: Any,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        execution_policy_context: dict[str, Any],
+        inputs: _OrderPreparationInputs,
     ) -> _PreparedOrderSubmission:
-        request = _execution_request_from_decision(decision, decision_row)
+        request = _execution_request_from_decision(inputs.decision, inputs.decision_row)
+        durable_position_qty = self._durable_position_qty_for_symbol(
+            session=inputs.session,
+            symbol=request.symbol,
+            account_label=inputs.account_label,
+        )
         quantity_resolution = self._quantity_resolution_for_request(
-            execution_client,
+            inputs.execution_client,
             request,
+            durable_position_qty=durable_position_qty,
         )
         self._raise_order_submission_precheck_errors(
-            execution_client=execution_client,
+            execution_client=inputs.execution_client,
             request=request,
             quantity_resolution=quantity_resolution,
         )
@@ -269,10 +287,10 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request=request,
             quantity_resolution=quantity_resolution,
             extra_params=_submission_extra_params(
-                execution_client=execution_client,
-                decision=decision,
-                decision_row=decision_row,
-                execution_policy_context=execution_policy_context,
+                execution_client=inputs.execution_client,
+                decision=inputs.decision,
+                decision_row=inputs.decision_row,
+                execution_policy_context=inputs.execution_policy_context,
                 request=request,
             ),
         )
@@ -293,9 +311,40 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         short_precheck_error = self._validate_short_sell_constraints(
             execution_client,
             request,
+            quantity_resolution=quantity_resolution,
         )
         if short_precheck_error is not None:
             raise RuntimeError(json.dumps(short_precheck_error))
+
+    @staticmethod
+    def _durable_position_qty_for_symbol(
+        *,
+        session: Session,
+        symbol: str,
+        account_label: str,
+    ) -> Decimal | None:
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            return None
+        stmt = select(Execution.side, Execution.filled_qty).where(
+            Execution.alpaca_account_label == account_label,
+            Execution.symbol == normalized_symbol,
+            Execution.filled_qty > 0,
+        )
+        total = Decimal("0")
+        observed = False
+        for side, filled_qty in session.execute(stmt):
+            qty = _optional_decimal(filled_qty)
+            if qty is None or qty <= 0:
+                continue
+            normalized_side = str(side or "").strip().lower()
+            if normalized_side == "buy":
+                total += qty
+                observed = True
+            elif normalized_side == "sell":
+                total -= qty
+                observed = True
+        return total if observed else None
 
     def _resolve_sell_inventory_before_submission(
         self,
@@ -305,12 +354,14 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         decision: StrategyDecision,
         decision_row: TradeDecision,
         request: ExecutionRequest,
+        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> _ResolvedSellInventory:
         conflict = self._find_sell_inventory_conflict(
             execution_client,
             request,
             self._list_open_orders(execution_client),
+            position_qty=position_qty,
         )
         if conflict is None:
             return _ResolvedSellInventory(request=request, decision=decision)
@@ -321,6 +372,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             decision_row=decision_row,
             request=request,
             conflict=conflict,
+            position_qty=position_qty,
             fractional_equities_enabled=fractional_equities_enabled,
         )
 
@@ -333,6 +385,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         decision_row: TradeDecision,
         request: ExecutionRequest,
         conflict: Mapping[str, Any],
+        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> _ResolvedSellInventory:
         request, adjustment, unresolved = self._resolve_sell_inventory_conflict(
@@ -770,6 +823,8 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         execution_client: Any,
         request: ExecutionRequest,
         open_orders: list[dict[str, Any]],
+        *,
+        position_qty: Decimal | None = None,
     ) -> dict[str, Any] | None:
         request_symbol = _sell_inventory_request_symbol(request)
         if request_symbol is None:
@@ -779,17 +834,21 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         if reservations.held_qty <= 0:
             return None
 
-        position_qty = cls._position_qty_for_symbol(execution_client, request_symbol)
-        if position_qty is None:
+        resolved_position_qty = position_qty
+        if resolved_position_qty is None:
+            resolved_position_qty = cls._position_qty_for_symbol(
+                execution_client, request_symbol
+            )
+        if resolved_position_qty is None:
             return _unknown_position_sell_inventory_conflict(
                 request,
                 request_symbol=request_symbol,
                 reservations=reservations,
             )
-        if position_qty <= 0:
+        if resolved_position_qty <= 0:
             return None
 
-        available_qty = position_qty - reservations.held_qty
+        available_qty = resolved_position_qty - reservations.held_qty
         if available_qty < 0:
             available_qty = Decimal("0")
         if request.qty <= available_qty:
@@ -799,7 +858,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request,
             request_symbol=request_symbol,
             reservations=reservations,
-            position_qty=position_qty,
+            position_qty=resolved_position_qty,
             available_qty=available_qty,
         )
 

@@ -105,6 +105,38 @@ def test_submission_authority_blocks_testnet_route_even_if_raw_gate_allows() -> 
     ]
 
 
+def test_submission_authority_uses_top_level_route_when_nested_gate_omits_route() -> (
+    None
+):
+    status = build_submission_authority_status(
+        {
+            "allowed": True,
+            "reason": "operational_submission_ready",
+            "blocked_reasons": [],
+            "execution_route": {
+                "route": "testnet",
+                "alpaca_regular_session_open": False,
+            },
+            "operational_submission_gate": {
+                "allowed": True,
+                "reason": "operational_submission_ready",
+                "blocked_reasons": [],
+            },
+        },
+    )
+
+    assert status["effective_submit_mode"] == "blocked"
+    assert status["can_submit_now"] is False
+    assert status["reason"] == "mainnet_route_unavailable"
+    assert status["operational_submission_gate"]["execution_route"] == {
+        "route": "testnet",
+        "alpaca_regular_session_open": False,
+    }
+    assert status["operational_submission_gate"]["blocked_reasons"] == [
+        "mainnet_route_unavailable"
+    ]
+
+
 def test_submission_authority_keeps_unknown_false_gate_closed() -> None:
     status = build_submission_authority_status(
         {
