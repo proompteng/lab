@@ -237,12 +237,16 @@ class _OrderExecutorContract(Protocol):
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        durable_position_qty: Decimal | None = None,
     ) -> QuantityResolution: ...
 
     def _validate_short_sell_constraints(
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        quantity_resolution: QuantityResolution,
     ) -> dict[str, Any] | None: ...
 
     @classmethod

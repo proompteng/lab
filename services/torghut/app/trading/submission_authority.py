@@ -75,7 +75,9 @@ def operational_submission_gate_status(
     raw_blocked_reasons = _strings(gate.get("blocked_reasons"))
     raw_reason = _text(gate.get("reason"), "")
     raw_allowed = _bool(gate.get("allowed"))
-    execution_route = _mapping(gate.get("execution_route"))
+    execution_route = _mapping(gate.get("execution_route")) or _mapping(
+        live_submission_gate.get("execution_route")
+    )
     blocked_reasons = _active_submission_blockers(
         raw_blocked_reasons,
         raw_reason=raw_reason,

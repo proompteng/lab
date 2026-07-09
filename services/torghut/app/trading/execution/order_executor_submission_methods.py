@@ -143,10 +143,17 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        durable_position_qty: Decimal | None = None,
     ) -> QuantityResolution:
         position_qty = self._position_qty_for_symbol(
             execution_client,
             request.symbol.strip().upper(),
+        )
+        position_qty = self._submission_position_qty(
+            request=request,
+            broker_position_qty=position_qty,
+            durable_position_qty=durable_position_qty,
         )
         return resolve_quantity_resolution(
             request.symbol,
@@ -161,6 +168,8 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        quantity_resolution: QuantityResolution,
     ) -> dict[str, Any] | None:
         if request.side.strip().lower() != "sell":
             return None
@@ -168,8 +177,11 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         if not symbol:
             return None
 
-        position_qty = self._position_qty_for_symbol(execution_client, symbol)
-        if not self._is_short_increasing_sell(position_qty, request.qty):
+        position_qty = quantity_resolution.position_qty
+        if not (
+            quantity_resolution.short_increasing
+            or self._is_short_increasing_sell(position_qty, request.qty)
+        ):
             return None
 
         if not settings.trading_allow_shorts:
@@ -296,6 +308,21 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         if position_qty <= 0:
             return True
         return request_qty > position_qty
+
+    @staticmethod
+    def _submission_position_qty(
+        *,
+        request: ExecutionRequest,
+        broker_position_qty: Decimal | None,
+        durable_position_qty: Decimal | None,
+    ) -> Decimal | None:
+        if request.side.strip().lower() != "sell":
+            return broker_position_qty
+        if durable_position_qty is None or durable_position_qty <= 0:
+            return broker_position_qty
+        if broker_position_qty is None or broker_position_qty <= 0:
+            return durable_position_qty
+        return broker_position_qty
 
     @classmethod
     def _position_qty_for_symbol(

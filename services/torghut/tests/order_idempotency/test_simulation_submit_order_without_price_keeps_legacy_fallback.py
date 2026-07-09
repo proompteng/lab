@@ -669,6 +669,73 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             )
             self.assertIsNotNone(execution)
 
+    def test_submit_order_precheck_uses_durable_inventory_for_lagging_fractional_exit(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            executor = OrderExecutor()
+            buy_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, 14, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            buy_decision_row = executor.ensure_decision(
+                session, buy_decision, strategy, "paper"
+            )
+            buy_execution = executor.submit_order(
+                session,
+                FilledAlpacaClient(),
+                buy_decision,
+                buy_decision_row,
+                "paper",
+            )
+            self.assertIsNotNone(buy_execution)
+
+            sell_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, 20, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("101")},
+            )
+            sell_decision_row = executor.ensure_decision(
+                session, sell_decision, strategy, "paper"
+            )
+            lagging_client = FakeAlpacaClient()
+
+            sell_execution = executor.submit_order(
+                session,
+                lagging_client,
+                sell_decision,
+                sell_decision_row,
+                "paper",
+            )
+
+            self.assertIsNotNone(sell_execution)
+            self.assertEqual(len(lagging_client.submitted), 1)
+            self.assertEqual(lagging_client.submitted[0]["side"], "sell")
+            self.assertEqual(lagging_client.submitted[0]["qty"], "0.5")
+
     def test_submit_order_precheck_blocks_fractional_short_increasing_sell_when_enabled(
         self,
     ) -> None:

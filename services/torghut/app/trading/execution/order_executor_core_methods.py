@@ -211,9 +211,11 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             return None
 
         prepared = self._prepare_order_submission(
+            session=session,
             execution_client=execution_client,
             decision=decision,
             decision_row=decision_row,
+            account_label=account_label,
             execution_policy_context=execution_policy_context,
         )
         if retry_delays is None:
@@ -250,15 +252,23 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
     def _prepare_order_submission(
         self,
         *,
+        session: Session,
         execution_client: Any,
         decision: StrategyDecision,
         decision_row: TradeDecision,
+        account_label: str,
         execution_policy_context: dict[str, Any],
     ) -> _PreparedOrderSubmission:
         request = _execution_request_from_decision(decision, decision_row)
+        durable_position_qty = self._durable_position_qty_for_symbol(
+            session=session,
+            symbol=request.symbol,
+            account_label=account_label,
+        )
         quantity_resolution = self._quantity_resolution_for_request(
             execution_client,
             request,
+            durable_position_qty=durable_position_qty,
         )
         self._raise_order_submission_precheck_errors(
             execution_client=execution_client,
@@ -293,9 +303,40 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         short_precheck_error = self._validate_short_sell_constraints(
             execution_client,
             request,
+            quantity_resolution=quantity_resolution,
         )
         if short_precheck_error is not None:
             raise RuntimeError(json.dumps(short_precheck_error))
+
+    @staticmethod
+    def _durable_position_qty_for_symbol(
+        *,
+        session: Session,
+        symbol: str,
+        account_label: str,
+    ) -> Decimal | None:
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            return None
+        stmt = select(Execution.side, Execution.filled_qty).where(
+            Execution.alpaca_account_label == account_label,
+            Execution.symbol == normalized_symbol,
+            Execution.filled_qty > 0,
+        )
+        total = Decimal("0")
+        observed = False
+        for side, filled_qty in session.execute(stmt):
+            qty = _optional_decimal(filled_qty)
+            if qty is None or qty <= 0:
+                continue
+            normalized_side = str(side or "").strip().lower()
+            if normalized_side == "buy":
+                total += qty
+                observed = True
+            elif normalized_side == "sell":
+                total -= qty
+                observed = True
+        return total if observed else None
 
     def _resolve_sell_inventory_before_submission(
         self,
