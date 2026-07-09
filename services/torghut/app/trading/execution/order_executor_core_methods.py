@@ -339,7 +339,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         ).where(
             Execution.alpaca_account_label == account_label,
             Execution.symbol == normalized_symbol,
-            Execution.filled_qty > 0,
         )
         total = Decimal("0")
         observed = False
@@ -350,6 +349,8 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             ):
                 continue
             qty = _optional_decimal(filled_qty) or Decimal("0")
+            if qty <= 0:
+                continue
             normalized_side = str(side or "").strip().lower()
             if normalized_side == "buy":
                 total += qty
