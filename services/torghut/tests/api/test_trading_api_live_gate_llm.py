@@ -584,14 +584,14 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     "allowed": shared_gate["allowed"],
                     "reason": shared_gate["reason"],
                     "blocked_reasons": shared_gate["blocked_reasons"],
-                    "reason_codes": shared_gate["reason_codes"],
-                    "capital_state": shared_gate["capital_state"],
-                    "capital_stage": shared_gate["capital_stage"],
-                    "issued_at": shared_gate["issued_at"],
-                    "expires_at": shared_gate["expires_at"],
                     "clickhouse_ta_freshness": shared_gate["clickhouse_ta_freshness"],
                 },
             )
+            self.assertNotIn("capital_state", proofs_payload["live_submission_gate"])
+            self.assertNotIn("capital_stage", proofs_payload["live_submission_gate"])
+            self.assertNotIn("expires_at", proofs_payload["live_submission_gate"])
+            self.assertNotIn("issued_at", proofs_payload["live_submission_gate"])
+            self.assertNotIn("reason_codes", proofs_payload["live_submission_gate"])
             self.assertNotIn("segment_summary", proofs_payload["live_submission_gate"])
             self.assertNotIn("quant_health_ref", proofs_payload["live_submission_gate"])
             self.assertEqual(
