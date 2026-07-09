@@ -706,6 +706,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 buy_decision,
                 buy_decision_row,
                 "paper",
+                execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
 
@@ -792,6 +793,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                     buy_decision,
                     buy_decision_row,
                     "paper",
+                    execution_expected_adapter="alpaca",
                 )
             )
 
