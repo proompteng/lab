@@ -23,6 +23,26 @@ from tests.order_idempotency.support import (
 )
 
 
+def _add_lagging_broker_fill(session: object, suffix: str) -> None:
+    session.add(
+        Execution(
+            alpaca_account_label="paper",
+            alpaca_order_id=f"lagging-setup-buy-{suffix}",
+            client_order_id=f"lagging-setup-client-{suffix}",
+            symbol="AAPL",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            submitted_qty=Decimal("0.5"),
+            filled_qty=Decimal("0.5"),
+            status="filled",
+            execution_expected_adapter="alpaca",
+            execution_actual_adapter="alpaca",
+            raw_order={},
+        )
+    )
+
+
 class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
     _TestOrderIdempotencyBase
 ):
@@ -711,23 +731,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
-            session.add(
-                Execution(
-                    alpaca_account_label="paper",
-                    alpaca_order_id="lagging-setup-buy-1",
-                    client_order_id="lagging-setup-client-1",
-                    symbol="AAPL",
-                    side="buy",
-                    order_type="market",
-                    time_in_force="day",
-                    submitted_qty=Decimal("0.5"),
-                    filled_qty=Decimal("0.5"),
-                    status="filled",
-                    execution_expected_adapter="alpaca",
-                    execution_actual_adapter="alpaca",
-                    raw_order={},
-                )
-            )
+            _add_lagging_broker_fill(session, "1")
             session.commit()
 
             sell_decision = StrategyDecision(
@@ -815,23 +819,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
-            session.add(
-                Execution(
-                    alpaca_account_label="paper",
-                    alpaca_order_id="lagging-setup-buy-2",
-                    client_order_id="lagging-setup-client-2",
-                    symbol="AAPL",
-                    side="buy",
-                    order_type="market",
-                    time_in_force="day",
-                    submitted_qty=Decimal("0.5"),
-                    filled_qty=Decimal("0.5"),
-                    status="filled",
-                    execution_expected_adapter="alpaca",
-                    execution_actual_adapter="alpaca",
-                    raw_order={},
-                )
-            )
+            _add_lagging_broker_fill(session, "2")
             session.commit()
 
             sell_decision = StrategyDecision(
