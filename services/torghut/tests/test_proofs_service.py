@@ -299,6 +299,34 @@ def test_build_proofs_payload_blocks_promotion_authority_on_stale_reconciliation
     )
 
 
+def test_build_proofs_payload_blocks_optional_reconciliation_degradation() -> None:
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    status = _tigerbeetle_status(
+        ok=True,
+        reconciliation_ok=False,
+        reconciliation_stale=True,
+        blockers=[],
+    )
+    status["reconciliation_required"] = False
+
+    with _session() as session:
+        payload = _build(
+            session,
+            generated_at=window_start - timedelta(minutes=1),
+            tigerbeetle_ledger_status=status,
+        )
+
+    assert payload["tigerbeetle_reconciliation"]["ok"] is True
+    assert payload["tigerbeetle_reconciliation"]["reconciliation_required"] is False
+    assert (
+        "tigerbeetle_reconciliation_not_ok"
+        in payload["promotion_authority"]["blockers"]
+    )
+    assert (
+        "tigerbeetle_reconciliation_stale" in payload["promotion_authority"]["blockers"]
+    )
+
+
 def test_build_proofs_payload_blocks_promotion_authority_on_unavailable_reconciliation() -> (
     None
 ):

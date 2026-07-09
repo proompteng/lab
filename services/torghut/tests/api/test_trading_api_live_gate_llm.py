@@ -584,11 +584,6 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     "allowed": shared_gate["allowed"],
                     "reason": shared_gate["reason"],
                     "blocked_reasons": shared_gate["blocked_reasons"],
-                    "reason_codes": shared_gate["reason_codes"],
-                    "capital_state": shared_gate["capital_state"],
-                    "capital_stage": shared_gate["capital_stage"],
-                    "issued_at": shared_gate["issued_at"],
-                    "expires_at": shared_gate["expires_at"],
                     "clickhouse_ta_freshness": shared_gate["clickhouse_ta_freshness"],
                 },
             )

@@ -470,6 +470,29 @@ describe('validatePostDeployEvidence', () => {
     ).toThrow('accepted_lag_seconds must mirror')
   })
 
+  it('rejects accepted TA stale status when required freshness lag is null', () => {
+    expect(() =>
+      validatePostDeployEvidence({
+        readyzHttpStatus: '200',
+        readyz: {
+          ...acceptedSourceStaleReadyz,
+          live_submission_gate: {
+            ...acceptedSourceStaleReadyz.live_submission_gate,
+            accepted_lag_seconds: null,
+          },
+        },
+        revenueRepairDigest: acceptedSourceStaleDigest,
+        tradingStatus: {
+          ...acceptedSourceStaleTradingStatus,
+          live_submission_gate: {
+            ...acceptedSourceStaleTradingStatus.live_submission_gate,
+            accepted_lag_seconds: null,
+          },
+        },
+      }),
+    ).toThrow('torghut live_submission_gate.accepted_lag_seconds must be a non-negative integer')
+  })
+
   it('rejects accepted TA stale contract with malformed submission authority schema', () => {
     expect(() =>
       validatePostDeployEvidence({
@@ -827,7 +850,29 @@ describe('validatePostDeployEvidence', () => {
     ).toThrow('tigerbeetle_reconciliation.ok must be true')
   })
 
-  it('rejects canonical proofs whose TigerBeetle reconciliation readback diverges from status', () => {
+  it('accepts canonical proofs whose TigerBeetle reconciliation readback is newer than status but still fresh', () => {
+    const result = validatePostDeployEvidence({
+      readyzHttpStatus: '200',
+      readyz: { status: 'ok' },
+      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
+      tradingStatus: baseTradingStatus,
+      paperRouteEvidence: {
+        ...buildProofs([paperRouteTarget]),
+        tigerbeetle_reconciliation: {
+          ...baseProofTigerBeetleReconciliation,
+          latest_reconciliation: {
+            ...baseProofTigerBeetleReconciliation.latest_reconciliation,
+            finished_at: '2026-06-17T14:01:00+00:00',
+          },
+        },
+      },
+      simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
+    })
+
+    expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
+  })
+
+  it('rejects canonical proofs whose TigerBeetle reconciliation readback is outside status freshness age', () => {
     expect(() =>
       validatePostDeployEvidence({
         readyzHttpStatus: '200',
@@ -840,13 +885,13 @@ describe('validatePostDeployEvidence', () => {
             ...baseProofTigerBeetleReconciliation,
             latest_reconciliation: {
               ...baseProofTigerBeetleReconciliation.latest_reconciliation,
-              finished_at: '2026-06-17T14:01:00+00:00',
+              finished_at: '2026-06-17T14:10:01+00:00',
             },
           },
         },
         simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
       }),
-    ).toThrow('latest finished_at must mirror torghut status')
+    ).toThrow('latest finished_at must be within max age of torghut status')
   })
 
   it('uses raw paper-route targets when source collection is the selected next plan', () => {

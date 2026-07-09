@@ -13,11 +13,13 @@ if ! command -v kubeconform >/dev/null 2>&1; then
   exit 1
 fi
 
+kustomizations=()
 filtered=()
 add_manifest_file() {
   local file="$1"
   case "$(basename "$file")" in
     kustomization.yaml | kustomization.yml)
+      kustomizations+=("$file")
       return
       ;;
   esac
@@ -27,6 +29,20 @@ add_manifest_file() {
   if grep -Eq '^[[:space:]]*kind:' "$file"; then
     filtered+=("$file")
   fi
+}
+
+validate_kustomizations() {
+  if [[ ${#kustomizations[@]} -eq 0 ]]; then
+    return 0
+  fi
+  if ! command -v yq >/dev/null 2>&1; then
+    echo "yq is required to parse changed kustomization files" >&2
+    return 1
+  fi
+  local file
+  for file in "${kustomizations[@]}"; do
+    yq eval '.' "$file" >/dev/null
+  done
 }
 
 for path in "${PATHS[@]}"; do
@@ -47,9 +63,12 @@ for path in "${PATHS[@]}"; do
 done
 
 if [[ ${#filtered[@]} -eq 0 ]]; then
+  validate_kustomizations
   echo "No Kubernetes manifests with a kind key found in kubeconform inputs" >&2
   exit 0
 fi
+
+validate_kustomizations
 
 SCHEMA_ARGS=()
 if [[ -d "$SCHEMA_DIR" ]]; then
