@@ -19,7 +19,6 @@ data:
     prometheus.relabel "arc_resource_metrics" {
       forward_to     = [prometheus.remote_write.mimir.receiver]
       max_cache_size = 0
-      cache_ttl      = "10m"
 
       rule {
         action        = "keep"
@@ -111,4 +110,3 @@ data:
       scrape_timeout  = "10s"
       forward_to      = [prometheus.relabel.arc_resource_metrics.receiver]
     }
-
