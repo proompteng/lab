@@ -8,9 +8,17 @@ import subprocess
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Literal, Sequence
+from zoneinfo import ZoneInfo
+
+from app.trading.ingest.clickhouse_signal_source_freshness import (
+    configured_market_holidays,
+)
 
 
 SCHEMA_VERSION = "torghut.market-data-chain-smoke.v1"
+MARKET_TIMEZONE = ZoneInfo("America/New_York")
+REGULAR_SESSION_OPEN_MINUTE = 9 * 60 + 30
+REGULAR_SESSION_CLOSE_MINUTE = 16 * 60
 DEFAULT_TOPICS = (
     "torghut.trades.v1",
     "torghut.quotes.v1",
@@ -19,6 +27,10 @@ DEFAULT_TOPICS = (
     "torghut.ta.signals.v1",
     "torghut.ta.status.v1",
 )
+FreshnessMarketSessionSelection = Literal[
+    "auto", "regular_open", "outside_regular_session"
+]
+FreshnessMarketSessionState = Literal["regular_open", "outside_regular_session"]
 DEFAULT_CLICKHOUSE_QUERY = """
 SELECT 'ta_signals' AS table, source, count(), max(event_ts), max(ingest_ts)
 FROM torghut.ta_signals
@@ -81,6 +93,8 @@ class MarketDataChainProbe:
 class FreshnessThresholds:
     kafka_age_seconds: int | None = None
     clickhouse_age_seconds: int | None = None
+    market_session_state: FreshnessMarketSessionState = "regular_open"
+    market_session_source: FreshnessMarketSessionSelection = "regular_open"
 
 
 @dataclass(frozen=True)
@@ -213,6 +227,11 @@ def build_summary(
 
     clickhouse_payloads = _clickhouse_payloads(probe)
     issues.extend(_clickhouse_issues(clickhouse_payloads, active_thresholds))
+    suppressed_age_issues = _suppressed_age_issues(
+        latest_message_payloads,
+        clickhouse_payloads,
+        active_thresholds,
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -223,6 +242,10 @@ def build_summary(
             "kafka_consumer_group_max_lag": max_group_lag,
             "latest_kafka_message_count": len(probe.latest_messages),
             "clickhouse_row_count": len(probe.clickhouse_rows),
+            "freshness_market_session_state": active_thresholds.market_session_state,
+            "freshness_market_session_source": active_thresholds.market_session_source,
+            "freshness_age_enforced": _freshness_age_enforced(active_thresholds),
+            "suppressed_freshness_age_issues": suppressed_age_issues,
         },
         "kafka": {
             "consumer_group_lag": [asdict(row) for row in probe.consumer_group_lag],
@@ -278,6 +301,19 @@ def _kafka_message_issues(
             issues.append(
                 f"kafka_topic_evidence_missing:{offset.topic}:{offset.partition}"
             )
+    if not _freshness_age_enforced(thresholds):
+        return issues
+    issues.extend(_kafka_age_issues(latest_message_payloads, thresholds))
+    return issues
+
+
+def _kafka_age_issues(
+    latest_message_payloads: Sequence[dict[str, object]],
+    thresholds: FreshnessThresholds,
+) -> list[str]:
+    if thresholds.kafka_age_seconds is None:
+        return []
+    issues: list[str] = []
     for row in latest_message_payloads:
         age = row["age_seconds"]
         if isinstance(age, int) and age > thresholds.kafka_age_seconds:
@@ -317,6 +353,19 @@ def _clickhouse_issues(
         row = accepted_by_table.get(table)
         if _clickhouse_accepted_row_missing(row):
             issues.append(f"clickhouse_accepted_source_missing:{table}")
+    if not _freshness_age_enforced(thresholds):
+        return issues
+    issues.extend(_clickhouse_age_issues(accepted_rows, thresholds))
+    return issues
+
+
+def _clickhouse_age_issues(
+    accepted_rows: Sequence[dict[str, object]],
+    thresholds: FreshnessThresholds,
+) -> list[str]:
+    if thresholds.clickhouse_age_seconds is None:
+        return []
+    issues: list[str] = []
     for row in accepted_rows:
         age = row["latest_event_age_seconds"]
         if isinstance(age, int) and age > thresholds.clickhouse_age_seconds:
@@ -330,6 +379,47 @@ def _clickhouse_accepted_row_missing(row: dict[str, object] | None) -> bool:
     return int(row.get("row_count", 0)) <= 0 or not isinstance(
         row.get("latest_event_age_seconds"), int
     )
+
+
+def _suppressed_age_issues(
+    latest_message_payloads: Sequence[dict[str, object]],
+    clickhouse_payloads: Sequence[dict[str, object]],
+    thresholds: FreshnessThresholds,
+) -> list[str]:
+    if _freshness_age_enforced(thresholds):
+        return []
+    accepted_rows = [
+        row
+        for row in clickhouse_payloads
+        if row["source"] == "ta" and row["table"] in {"ta_signals", "ta_microbars"}
+    ]
+    issues = [
+        *_kafka_age_issues(latest_message_payloads, thresholds),
+        *_clickhouse_age_issues(accepted_rows, thresholds),
+    ]
+    return sorted(set(issues))
+
+
+def _freshness_age_enforced(thresholds: FreshnessThresholds) -> bool:
+    return thresholds.market_session_state == "regular_open"
+
+
+def resolve_freshness_market_session_state(
+    now: datetime,
+    selection: FreshnessMarketSessionSelection,
+) -> FreshnessMarketSessionState:
+    if selection != "auto":
+        return selection
+    local_now = now.astimezone(MARKET_TIMEZONE)
+    minute_of_day = local_now.hour * 60 + local_now.minute
+    if local_now.date() in configured_market_holidays():
+        return "outside_regular_session"
+    if (
+        local_now.weekday() < 5
+        and REGULAR_SESSION_OPEN_MINUTE <= minute_of_day < REGULAR_SESSION_CLOSE_MINUTE
+    ):
+        return "regular_open"
+    return "outside_regular_session"
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -376,6 +466,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         thresholds=FreshnessThresholds(
             kafka_age_seconds=args.require_max_kafka_age_seconds,
             clickhouse_age_seconds=args.require_max_clickhouse_age_seconds,
+            market_session_state=resolve_freshness_market_session_state(
+                generated_at,
+                args.freshness_market_session,
+            ),
+            market_session_source=args.freshness_market_session,
         ),
     )
     print(format_summary(summary, args.format))
@@ -408,6 +503,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--clickhouse-query", default=DEFAULT_CLICKHOUSE_QUERY)
     parser.add_argument("--require-max-kafka-age-seconds", type=int)
     parser.add_argument("--require-max-clickhouse-age-seconds", type=int)
+    parser.add_argument(
+        "--freshness-market-session",
+        choices=("auto", "regular_open", "outside_regular_session"),
+        default="auto",
+        help=(
+            "Session used for age freshness enforcement. Auto enforces during "
+            "regular NYSE hours and suppresses age-only staleness outside them."
+        ),
+    )
     parser.add_argument("--format", choices=("json", "markdown"), default="json")
     return parser.parse_args(argv)
 
@@ -525,6 +629,8 @@ def format_summary(
                 f"- Kafka consumer group max lag: `{nested_summary.get('kafka_consumer_group_max_lag')}`",
                 f"- Latest Kafka messages checked: `{nested_summary.get('latest_kafka_message_count')}`",
                 f"- ClickHouse freshness rows checked: `{nested_summary.get('clickhouse_row_count')}`",
+                f"- Freshness market session: `{nested_summary.get('freshness_market_session_state')}`",
+                f"- Freshness age enforced: `{nested_summary.get('freshness_age_enforced')}`",
             ]
         )
     return "\n".join(lines)
