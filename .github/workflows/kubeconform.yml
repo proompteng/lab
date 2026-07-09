@@ -5,6 +5,7 @@ on:
     paths:
       - 'argocd/**/*.yaml'
       - 'scripts/kubeconform.sh'
+      - 'schemas/custom/**'
       - 'flake.nix'
       - 'flake.lock'
       - 'nix/**'
@@ -15,9 +16,11 @@ on:
     paths:
       - 'argocd/**/*.yaml'
       - 'scripts/kubeconform.sh'
+      - 'schemas/custom/**'
       - 'flake.nix'
       - 'flake.lock'
       - 'nix/**'
+      - '.github/workflows/kubeconform.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -43,22 +46,30 @@ jobs:
           set -euo pipefail
 
           if [ "${{ github.event_name }}" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
-            mapfile -d '' changed_manifests < <(
-              git diff \
-                --name-only \
-                -z \
-                --diff-filter=ACMR \
-                "${{ github.event.pull_request.base.sha }}" \
-                -- 'argocd/**/*.yaml'
-            )
-            if [ "${#changed_manifests[@]}" -eq 0 ]; then
-              echo "No changed Argo CD manifests to validate."
-              exit 0
-            fi
-
-            printf 'Validating changed manifest: %s\n' "${changed_manifests[@]}"
-            nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+            base_sha="${{ github.event.pull_request.base.sha }}"
+            git fetch --no-tags --depth=1 origin "${base_sha}"
           else
-            nix develop -c scripts/kubeconform.sh argocd
+            base_sha="${{ github.event.before }}"
+            if [ -z "${base_sha}" ] || [ "${base_sha}" = "0000000000000000000000000000000000000000" ]; then
+              git fetch --no-tags --depth=2 origin "${{ github.sha }}"
+              base_sha="$(git rev-parse "${{ github.sha }}^")"
+            else
+              git fetch --no-tags --depth=1 origin "${base_sha}"
+            fi
           fi
+
+          mapfile -d '' changed_manifests < <(
+            git diff \
+              --name-only \
+              -z \
+              --diff-filter=ACMR \
+              "${base_sha}" \
+              -- 'argocd/**/*.yaml'
+          )
+          if [ "${#changed_manifests[@]}" -eq 0 ]; then
+            echo "No changed Argo CD manifests to validate."
+            exit 0
+          fi
+
+          printf 'Validating changed manifest: %s\n' "${changed_manifests[@]}"
+          nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"

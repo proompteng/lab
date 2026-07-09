@@ -129,6 +129,8 @@ jobs:
           kubeconform -v
 
       - name: Validate Agents chart and CRDs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/agents/validate-agents.sh
 
   integration:
