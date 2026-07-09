@@ -80,7 +80,7 @@ from .order_executor_core_support import (
 
 
 _BROKER_DURABLE_POSITION_ADAPTERS = frozenset(
-    {"alpaca", "alpaca_fallback", "alpaca_paper"}
+    {"alpaca", "alpaca_fallback", "alpaca_paper", "unknown"}
 )
 
 
