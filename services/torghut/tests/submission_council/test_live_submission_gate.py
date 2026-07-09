@@ -42,6 +42,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         settings.trading_live_submit_activation_expires_at = "2000-01-01T00:00:00Z"
         result = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
                 drift_live_promotion_eligible=False,
@@ -91,6 +92,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
     def test_stale_empirical_status_no_longer_blocks_live_gate(self) -> None:
         result = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=False,
                 last_autonomy_promotion_action=None,
                 drift_live_promotion_eligible=False,
@@ -149,6 +151,41 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         self.assertIn("submit_disabled", result["blocked_reasons"])
         self.assertIn("submit_disabled", operational_gate["blocked_reasons"])
 
+    def test_live_gate_blocks_testnet_route_as_not_mainnet(self) -> None:
+        from app.config import settings
+
+        settings.trading_simple_submit_enabled = True
+        settings.trading_live_submit_enabled = True
+        settings.trading_testnet_after_hours_enabled = True
+        result = build_live_submission_gate_payload(
+            SimpleNamespace(
+                market_session_open=False,
+                last_autonomy_promotion_eligible=False,
+                last_autonomy_promotion_action=None,
+                drift_live_promotion_eligible=False,
+                last_market_context_freshness_seconds=45,
+            ),
+            hypothesis_summary={
+                "promotion_eligible_total": 0,
+                "capital_stage_totals": {"shadow": 1},
+                "dependency_quorum": {
+                    "decision": "allow",
+                    "reasons": [],
+                    "message": "ready",
+                },
+            },
+            empirical_jobs_status={"ready": True, "status": "healthy"},
+            quant_health_status=self._healthy_quant_status(),
+        )
+
+        operational_gate = result["operational_submission_gate"]
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "mainnet_route_unavailable")
+        self.assertIn("mainnet_route_unavailable", result["blocked_reasons"])
+        self.assertFalse(operational_gate["allowed"])
+        self.assertEqual(operational_gate["reason"], "mainnet_route_unavailable")
+        self.assertEqual(operational_gate["execution_route"]["route"], "testnet")
+
     def test_live_submit_activation_is_diagnostic_for_operational_gate(
         self,
     ) -> None:
@@ -182,7 +219,8 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
         )
 
         self.assertNotIn("bounded_live_paper_collection_gate", result)
-        self.assertTrue(result["operational_submission_gate"]["allowed"])
+        self.assertFalse(result["operational_submission_gate"]["allowed"])
+        self.assertIn("mainnet_route_unavailable", result["blocked_reasons"])
         self.assertNotIn(
             "live_submit_activation_expiry_invalid",
             result["blocked_reasons"],
@@ -263,7 +301,8 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             settings.trading_account_label = account_label_before
             settings.trading_static_symbols_raw = static_symbols_before
 
-        self.assertTrue(result["allowed"])
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "mainnet_route_unavailable")
         self.assertNotIn(
             "runtime_window_import_required",
             result["blocked_reasons"],
@@ -281,7 +320,8 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
             )
         )
         self.assertNotIn("bounded_live_paper_collection_gate", result)
-        self.assertTrue(result["operational_submission_gate"]["allowed"])
+        self.assertFalse(result["operational_submission_gate"]["allowed"])
+        self.assertIn("mainnet_route_unavailable", result["blocked_reasons"])
 
     def test_build_live_submission_gate_payload_exports_runtime_window_health_inputs(
         self,
@@ -507,6 +547,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
     ) -> None:
         result = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
                 drift_live_promotion_eligible=False,
@@ -563,6 +604,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
     ) -> None:
         result = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
                 drift_live_promotion_eligible=False,
@@ -612,6 +654,7 @@ class TestSubmissionCouncilLiveSubmissionGate(SubmissionCouncilTestCase):
     ) -> None:
         result = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
                 drift_live_promotion_eligible=False,

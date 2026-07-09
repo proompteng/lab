@@ -172,6 +172,11 @@ class SubmissionCouncilTestCase(TestCase):
             "trading_drift_live_promotion_max_evidence_age_seconds": settings.trading_drift_live_promotion_max_evidence_age_seconds,
         }
         _QUANT_HEALTH_CACHE.clear()
+        self._alpaca_broker_available_patcher = patch(
+            "app.trading.submission_council._alpaca_broker_available",
+            return_value=True,
+        )
+        self._alpaca_broker_available_patcher.start()
         settings.trading_enabled = True
         settings.trading_mode = "live"
         settings.trading_autonomy_enabled = False
@@ -183,6 +188,7 @@ class SubmissionCouncilTestCase(TestCase):
         settings.trading_simple_submit_enabled = True
 
     def tearDown(self) -> None:
+        self._alpaca_broker_available_patcher.stop()
         settings.trading_enabled = self._settings_snapshot["trading_enabled"]
         settings.trading_mode = self._settings_snapshot["trading_mode"]
         settings.trading_autonomy_enabled = self._settings_snapshot[

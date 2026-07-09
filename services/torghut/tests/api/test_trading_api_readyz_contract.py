@@ -312,6 +312,7 @@ class TestTradingApiReadyzLiveGateContract(TradingApiTestCaseBase):
     ) -> None:
         original = _live_submission_settings_snapshot()
         scheduler = TradingScheduler()
+        scheduler.state.market_session_open = True
         try:
             _enable_live_submission_settings()
             with (
@@ -343,9 +344,14 @@ class TestTradingApiReadyzLiveGateContract(TradingApiTestCaseBase):
     ) -> None:
         original = _live_submission_settings_snapshot()
         scheduler = TradingScheduler()
+        scheduler.state.market_session_open = True
         try:
             _enable_live_submission_settings()
             with (
+                patch(
+                    "app.trading.submission_council._alpaca_broker_available",
+                    return_value=True,
+                ),
                 patch(
                     "app.api.readiness_helpers.status_dependencies.load_clickhouse_ta_status",
                     return_value=_fresh_clickhouse_ta_status(),

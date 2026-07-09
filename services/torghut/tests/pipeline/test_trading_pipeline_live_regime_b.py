@@ -111,9 +111,13 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: False
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with (
+                patch(
+                    "app.trading.submission_council._alpaca_broker_available",
+                    return_value=True,
+                ),
                 patch(
                     "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
                     return_value=allowed_summary,

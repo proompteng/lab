@@ -598,6 +598,8 @@ def _operational_submission_blocked_reasons(
     execution_route = _execution_route_payload(context)
     if execution_route["route"] == "alpaca" and not _alpaca_broker_available():
         blocked_reasons.append("broker_unavailable")
+    if execution_route["route"] != "alpaca":
+        blocked_reasons.append("mainnet_route_unavailable")
     if (
         execution_route["route"] == "testnet"
         and not settings.trading_testnet_after_hours_enabled

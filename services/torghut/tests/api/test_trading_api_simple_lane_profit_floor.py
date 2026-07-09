@@ -76,6 +76,7 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
         settings.trading_kill_switch_enabled = False
         try:
             scheduler = TradingScheduler()
+            scheduler.state.market_session_open = True
             scheduler.state.metrics.orders_submitted_total = 7
             scheduler.state.metrics.decision_reject_reason_total = {
                 "broker_submit_failed": 2,
@@ -99,20 +100,26 @@ class TestTradingApiSimpleLaneProfitFloor(TradingApiTestCaseBase):
             }
             app.state.trading_scheduler = scheduler
 
-            with patch(
-                "app.api.trading_status._load_clickhouse_ta_status",
-                return_value={
-                    "state": "current",
-                    "accepted_sources": ["ta"],
-                    "latest_accepted_event_at": "2026-03-20T09:59:00Z",
-                    "accepted_lag_seconds": 30,
-                    "accepted_max_lag_seconds": 300,
-                    "accepted_source_state": "current",
-                    "blocking_reason": None,
-                    "excluded_fresher_sources": [],
-                    "per_symbol_coverage": [],
-                    "market_session_state": "regular_open",
-                },
+            with (
+                patch(
+                    "app.trading.submission_council._alpaca_broker_available",
+                    return_value=True,
+                ),
+                patch(
+                    "app.api.trading_status._load_clickhouse_ta_status",
+                    return_value={
+                        "state": "current",
+                        "accepted_sources": ["ta"],
+                        "latest_accepted_event_at": "2026-03-20T09:59:00Z",
+                        "accepted_lag_seconds": 30,
+                        "accepted_max_lag_seconds": 300,
+                        "accepted_source_state": "current",
+                        "blocking_reason": None,
+                        "excluded_fresher_sources": [],
+                        "per_symbol_coverage": [],
+                        "market_session_state": "regular_open",
+                    },
+                ),
             ):
                 response = self.client.get("/trading/status")
             self.assertEqual(response.status_code, 200)

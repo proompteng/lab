@@ -64,13 +64,13 @@ def test_simple_live_submission_gate_drops_retired_source_collection_blockers(
 
         gate = pipeline._live_submission_gate()
 
-        assert gate["allowed"] is True
-        assert gate["reason"] == "operational_submission_ready"
-        assert gate["blocked_reasons"] == []
+        assert gate["allowed"] is False
+        assert gate["reason"] == "mainnet_route_unavailable"
+        assert gate["blocked_reasons"] == ["mainnet_route_unavailable"]
         assert gate["operational_submission_gate"] == {
-            "allowed": True,
-            "reason": "operational_submission_ready",
-            "blocked_reasons": [],
+            "allowed": False,
+            "reason": "mainnet_route_unavailable",
+            "blocked_reasons": ["mainnet_route_unavailable"],
             "execution_route": {
                 "route": "testnet",
                 "alpaca_regular_session_open": False,

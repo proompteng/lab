@@ -849,7 +849,7 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
             ):
                 gate = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=False,
+                        market_session_open=True,
                         last_autonomy_promotion_eligible=False,
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
@@ -882,7 +882,7 @@ class TestSubmissionCouncilSourceCollectionCandidates(SubmissionCouncilTestCase)
                 )
                 waiting_gate = build_live_submission_gate_payload(
                     SimpleNamespace(
-                        market_session_open=False,
+                        market_session_open=True,
                         last_autonomy_promotion_eligible=False,
                         last_autonomy_promotion_action=None,
                         drift_live_promotion_eligible=False,
