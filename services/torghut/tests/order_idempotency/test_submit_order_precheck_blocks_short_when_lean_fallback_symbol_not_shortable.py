@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.trading.models import ExecutionRequest
+
 from tests.order_idempotency.support import (
     AccountMetadataUnavailableClient,
     AccountMetadataUnavailableClientWithLongPosition,
@@ -8,8 +10,8 @@ from tests.order_idempotency.support import (
     AssetShortabilityUnknownClient,
     Decimal,
     Execution,
-    ExecutionRequest,
     FakeAlpacaClient,
+    PartiallyHeldInventoryClient,
     HeldInventoryClient,
     LeanExecutionAdapter,
     OrderExecutor,

@@ -25,7 +25,7 @@ from app.trading.execution_adapters import (
     SimulationExecutionAdapter,
 )
 from app.trading.execution import OrderExecutor
-from app.trading.models import ExecutionRequest, StrategyDecision, decision_hash
+from app.trading.models import StrategyDecision, decision_hash
 from app.trading.reconcile import Reconciler
 from app.trading.scheduler.pipeline_helpers import _format_order_submit_rejection
 
