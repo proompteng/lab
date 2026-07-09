@@ -216,6 +216,12 @@ class HyperliquidFeedApp(
           metrics.setWsConnected(true)
           subscribeAll(shard)
           updateReady()
+          val marketDataStallGuard =
+            MarketDataStallGuard(
+              connectedAtMs = nowMs(),
+              startupGraceMs = config.readyEventMaxAgeMs,
+              checkIntervalMs = config.heartbeatIntervalMs,
+            )
           val heartbeat = launch { heartbeatLoop() }
           try {
             while (scope.isActive) {
@@ -225,12 +231,26 @@ class HyperliquidFeedApp(
                 } ?: error(
                   "hyperliquid websocket shard=${shard.index} idle for ${config.wsReadIdleTimeoutMs}ms; reconnecting",
                 )
-              if (frame !is Frame.Text) continue
-              val raw = frame.readText()
-              val rawRecord = mapper.rawRecord(raw)
-              publishRecords(producer, clickHouseSink, listOf(rawRecord))
-              val normalized = mapper.websocketRecords(raw)
-              publishRecords(producer, clickHouseSink, normalized)
+              if (frame is Frame.Text) {
+                val raw = frame.readText()
+                val rawRecord = mapper.rawRecord(raw)
+                publishRecords(producer, clickHouseSink, listOf(rawRecord))
+                val normalized = mapper.websocketRecords(raw)
+                publishRecords(producer, clickHouseSink, normalized)
+              }
+
+              val staleMarketData =
+                marketDataStallGuard.staleSnapshotIfDue(
+                  observedAtMs = nowMs(),
+                  freshness = ::eventFreshnessSnapshot,
+                )
+              if (staleMarketData != null) {
+                error(
+                  "hyperliquid websocket shard=${shard.index} market data stale " +
+                    "last_seen_lag_ms=${staleMarketData.lastSeenLagMs} " +
+                    "ready_event_max_age_ms=${config.readyEventMaxAgeMs}; reconnecting",
+                )
+              }
             }
           } finally {
             heartbeat.cancel()
