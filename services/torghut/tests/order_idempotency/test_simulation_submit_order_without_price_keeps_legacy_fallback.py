@@ -4,6 +4,7 @@ from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
     Decimal,
+    Execution,
     ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
@@ -714,6 +715,23 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             buy_execution.execution_actual_adapter = "alpaca"
             buy_execution.filled_qty = Decimal("0.5")
             session.add(buy_execution)
+            session.add(
+                Execution(
+                    alpaca_account_label="paper",
+                    alpaca_order_id="lagging-setup-buy-1",
+                    client_order_id="lagging-setup-client-1",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("0.5"),
+                    filled_qty=Decimal("0.5"),
+                    status="filled",
+                    execution_expected_adapter="alpaca",
+                    execution_actual_adapter="alpaca",
+                    raw_order={},
+                )
+            )
             session.commit()
 
             sell_decision = StrategyDecision(
@@ -806,6 +824,23 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             buy_execution.execution_actual_adapter = "alpaca"
             buy_execution.filled_qty = Decimal("0.5")
             session.add(buy_execution)
+            session.add(
+                Execution(
+                    alpaca_account_label="paper",
+                    alpaca_order_id="lagging-setup-buy-2",
+                    client_order_id="lagging-setup-client-2",
+                    symbol="AAPL",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("0.5"),
+                    filled_qty=Decimal("0.5"),
+                    status="filled",
+                    execution_expected_adapter="alpaca",
+                    execution_actual_adapter="alpaca",
+                    raw_order={},
+                )
+            )
             session.commit()
 
             sell_decision = StrategyDecision(
