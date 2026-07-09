@@ -1,4 +1,4 @@
 machine:
   kubelet:
     extraConfig:
-      maxPods: 200
+      maxPods: 500

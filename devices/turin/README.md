@@ -41,7 +41,7 @@ Manifests:
 - `devices/turin/manifests/hostname.patch.yaml` (Talos hostname patch)
 - `devices/turin/manifests/etcd-lan-subnet.patch.yaml` (pin etcd peer/client addressing to the Turin LAN subnet)
 - `devices/turin/manifests/kubelet-node-ip-lan-subnet.patch.yaml` (pin kubelet node IP selection to the Turin LAN subnet)
-- `devices/turin/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 200)
+- `devices/turin/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 500)
 - `devices/turin/manifests/nvidia-kernel-modules.patch.yaml` (load the NVIDIA kernel modules from the Talos system extension)
 - `devices/turin/manifests/time-servers.patch.yaml` (match the working control-plane nodes' explicit NTP servers)
 - `devices/turin/manifests/tailscale-dns.patch.yaml` (Talos DNS settings for node-level Tailscale)
@@ -49,6 +49,9 @@ Manifests:
 - `devices/turin/manifests/turin-talos-nvidia-lts-schematic.yaml` (Image Factory schematic source)
 - `devices/turin/manifests/local-path-scratch-intel.patch.yaml` (gated local-only scratch user volume on the Intel 256GB NVMe)
 - `devices/turin/manifests/local-path-scratch-transcend.patch.yaml` (gated local-only scratch user volume on the Transcend 256GB NVMe)
+
+The 500-pod kubelet cap is a deliberate high-density exception; validate `/23`
+PodCIDR allocation and node pressure before increasing ARC runner concurrency.
 
 Related:
 
