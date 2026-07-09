@@ -133,6 +133,57 @@ data:
                 AgentRun step pods are active while agents-alloy has no available replicas.
                 Logs can be lost once Job pods terminate.
               runbook_url: docs/runbooks/agents-log-observability.md
+      - name: arc-runner-capacity.rules
+        rules:
+          - alert: ArcRunnerResourceMetricsMissing
+            expr: |
+              absent(container_cpu_usage_seconds_total{namespace="arc"}) or
+              absent(kube_pod_container_resource_requests{namespace="arc"})
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: ARC runner resource metrics are missing
+              description: |
+                Mimir is not receiving ARC container CPU metrics or Kubernetes resource request metrics.
+                Check observability-cluster-metrics-alloy and observability-kube-state-metrics in the observability app.
+          - alert: ArcRunnerPodsPending
+            expr: |
+              sum(
+                kube_pod_status_phase{
+                  namespace="arc",
+                  pod=~"arc-(amd64|arm64).*runner.*",
+                  phase="Pending"
+                }
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: ARC runner pods are pending
+              description: |
+                One or more lab ARC runner pods have been Pending for 10 minutes.
+                Compare requested CPU and memory against node allocatable capacity in the ARC Runner Capacity dashboard.
+          - alert: ArcArm64RequestedCpuSaturated
+            expr: |
+              max by (node) (
+                sum by (node) (kube_pod_container_resource_requests{resource="cpu",node!="",node="talos-192-168-1-85"}) /
+                sum by (node) (kube_node_status_allocatable{resource="cpu",node="talos-192-168-1-85"})
+              ) > 0.9
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: Altra requested CPU is saturated
+              description: |
+                Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
+                ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
       - name: torghut-clickhouse.guardrails.rules
         rules:
           - alert: TorghutClickHouseDiskFreeLowWarning

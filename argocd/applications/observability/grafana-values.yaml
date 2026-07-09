@@ -51,6 +51,7 @@ dashboardsConfigMaps:
   graf-bumba-dashboard: graf-bumba-dashboard
   codex-pipeline-dashboard: codex-pipeline-dashboard
   torghut-execution-recovery-dashboard: torghut-execution-recovery-dashboard
+  arc-runner-capacity-dashboard: arc-runner-capacity-dashboard
 
 dashboardProviders:
   dashboardproviders.yaml:
@@ -88,3 +89,11 @@ dashboardProviders:
         editable: true
         options:
           path: /var/lib/grafana/dashboards/torghut-execution-recovery-dashboard
+      - name: arc-runner-capacity-dashboard
+        orgId: 1
+        folder: ''
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards/arc-runner-capacity-dashboard
