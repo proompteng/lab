@@ -61,6 +61,7 @@ from .health_checks import (
     build_simple_lane_status_payload,
     build_tigerbeetle_ledger_status,
     empirical_jobs_status,
+    load_clickhouse_ta_status,
     load_tca_summary,
 )
 from .health_checks import (
@@ -83,6 +84,7 @@ _deferred_hypothesis_payload_for_live_submission_gate = (
     deferred_hypothesis_payload_for_live_submission_gate
 )
 _empirical_jobs_status = empirical_jobs_status
+_load_clickhouse_ta_status = load_clickhouse_ta_status
 _configured_paper_collection_target_plan = (
     _proofs_configured_collection.configured_paper_collection_target_plan
 )
@@ -166,6 +168,7 @@ def _build_trading_proofs_payload(
     quant_evidence = load_quant_evidence_status(
         account_label=settings.trading_account_label,
     )
+    clickhouse_ta_status = _load_clickhouse_ta_status(scheduler)
     gate_hypothesis_payload = _deferred_hypothesis_payload_for_live_submission_gate()
     with SessionLocal() as session:
         live_submission_gate = _build_live_submission_gate_payload(
@@ -178,6 +181,7 @@ def _build_trading_proofs_payload(
                 scheduler.llm_status().get("dspy_runtime", {}),
             ),
             quant_health_status=quant_evidence,
+            clickhouse_ta_status=clickhouse_ta_status,
         )
     if not bool(live_submission_gate.get("read_model_unavailable")):
         setattr(scheduler, "_last_live_submission_gate", dict(live_submission_gate))
@@ -206,6 +210,7 @@ def _build_trading_proofs_payload(
                 scheduler,
                 tca_summary=tca_summary,
                 market_context_status=market_context_status,
+                feature_readiness=clickhouse_ta_status,
             )
         )
         proof_floor = _build_profitability_proof_floor_payload(

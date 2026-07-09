@@ -5,6 +5,8 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -14,6 +16,8 @@ data class MarketDataChannelReadiness(
   val channel: String,
   val ready: Boolean,
   @SerialName("required") val required: Boolean,
+  @SerialName("gate_active") val gateActive: Boolean,
+  @SerialName("market_session_state") val marketSessionState: String,
   @SerialName("readiness_mode") val readinessMode: String = "continuous",
   @SerialName("freshness_required") val freshnessRequired: Boolean = true,
   @SerialName("symbol_coverage_required") val symbolCoverageRequired: Boolean = true,
@@ -118,11 +122,12 @@ internal class MarketDataChannelFreshnessTracker(
     val subscribedAt = subscribedSinceMs.get()
     val symbolsByChannel = subscribedSymbolsByChannel.get()
     val hasAnySubscribedSymbols = symbolsByChannel.values.any { it.isNotEmpty() }
+    val sessionState = marketSessionState(Instant.ofEpochMilli(now), marketType, marketHolidays)
     val gateActive =
       hasAnySubscribedSymbols &&
         subscribedAt > 0 &&
         now - subscribedAt >= warmupMs &&
-        marketSessionActive(Instant.ofEpochMilli(now))
+        marketDataFreshnessGateActive(sessionState)
     return requiredChannels.map { channel ->
       val channelSymbols = symbolsByChannel[channel].orEmpty()
       val readinessMode = readinessModeFor(channel, marketType)
@@ -197,6 +202,8 @@ internal class MarketDataChannelFreshnessTracker(
         channel = channel,
         ready = ready,
         required = true,
+        gateActive = gateActive,
+        marketSessionState = sessionState,
         readinessMode = readinessMode.id,
         freshnessRequired = freshnessRequired,
         symbolCoverageRequired = symbolCoverageRequired,
@@ -241,12 +248,6 @@ internal class MarketDataChannelFreshnessTracker(
     return latestByChannel.computeIfAbsent(canonical) { ChannelFreshnessState() }
   }
 
-  private fun marketSessionActive(now: Instant): Boolean =
-    when (marketType) {
-      AlpacaMarketType.CRYPTO -> true
-      AlpacaMarketType.EQUITY, AlpacaMarketType.OPTIONS -> isRegularMarketSession(now, marketHolidays)
-    }
-
   private class ChannelFreshnessState {
     val latestProviderEventAtMs = AtomicLong(0)
     val latestSerializedAtMs = AtomicLong(0)
@@ -286,6 +287,31 @@ internal class MarketDataChannelFreshnessTracker(
       val normalized = normalizeSymbol(symbol) ?: return
       latestSymbol.set(normalized)
     }
+  }
+}
+
+private val marketDataFreshnessZoneId: ZoneId = ZoneId.of("America/New_York")
+private val regularSessionOpen: LocalTime = LocalTime.of(9, 30)
+private val regularSessionClose: LocalTime = LocalTime.of(16, 0)
+private val extendedSessionClose: LocalTime = LocalTime.of(20, 0)
+
+internal fun marketDataFreshnessGateActive(sessionState: String): Boolean = sessionState == "continuous" || sessionState == "regular"
+
+internal fun marketSessionState(
+  now: Instant,
+  marketType: AlpacaMarketType,
+  marketHolidays: Set<LocalDate> = emptySet(),
+): String {
+  if (marketType == AlpacaMarketType.CRYPTO) return "continuous"
+  val marketNow = now.atZone(marketDataFreshnessZoneId)
+  if (marketNow.toLocalDate() in marketHolidays) return "holiday"
+  if (marketNow.dayOfWeek.value >= 6) return "weekend"
+  val localTime = marketNow.toLocalTime()
+  return when {
+    localTime < regularSessionOpen -> "pre"
+    localTime < regularSessionClose -> "regular"
+    localTime < extendedSessionClose -> "post"
+    else -> "closed"
   }
 }
 
