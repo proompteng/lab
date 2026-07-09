@@ -4,6 +4,7 @@ from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
     Decimal,
+    Execution,
     ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
@@ -709,6 +710,12 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
+            assert buy_execution is not None
+            buy_execution.execution_expected_adapter = "alpaca"
+            buy_execution.execution_actual_adapter = "alpaca"
+            buy_execution.filled_qty = Decimal("0.5")
+            session.add(buy_execution)
+            session.commit()
 
             sell_decision = StrategyDecision(
                 strategy_id=str(strategy.id),
@@ -786,16 +793,21 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             buy_decision_row = executor.ensure_decision(
                 session, buy_decision, strategy, "paper"
             )
-            self.assertIsNotNone(
-                executor.submit_order(
-                    session,
-                    FilledAlpacaClient(),
-                    buy_decision,
-                    buy_decision_row,
-                    "paper",
-                    execution_expected_adapter="alpaca",
-                )
+            buy_execution = executor.submit_order(
+                session,
+                FilledAlpacaClient(),
+                buy_decision,
+                buy_decision_row,
+                "paper",
+                execution_expected_adapter="alpaca",
             )
+            self.assertIsNotNone(buy_execution)
+            assert buy_execution is not None
+            buy_execution.execution_expected_adapter = "alpaca"
+            buy_execution.execution_actual_adapter = "alpaca"
+            buy_execution.filled_qty = Decimal("0.5")
+            session.add(buy_execution)
+            session.commit()
 
             sell_decision = StrategyDecision(
                 strategy_id=str(strategy.id),
