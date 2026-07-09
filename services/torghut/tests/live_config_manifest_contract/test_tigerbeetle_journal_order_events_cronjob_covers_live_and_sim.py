@@ -543,3 +543,35 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         )
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
+
+
+class TestTigerBeetleJournalRuntimeReconcileFreshnessHeadroom(
+    _TestLiveConfigManifestContractBase
+):
+    def test_live_runtime_command_preserves_reconciliation_headroom(self) -> None:
+        [command] = [
+            item
+            for item in tigerbeetle_journal_runner._live_commands(
+                execution_batch_size=5
+            )
+            if item.source
+            == tigerbeetle_journal_runner.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+        ]
+
+        self.assertEqual(
+            command.reconcile_empty_selection_freshness_headroom_seconds,
+            tigerbeetle_journal_runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS,
+        )
+
+    def test_sim_runtime_command_preserves_reconciliation_headroom(self) -> None:
+        [command] = [
+            item
+            for item in tigerbeetle_journal_runner._sim_commands()
+            if item.source
+            == tigerbeetle_journal_runner.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+        ]
+
+        self.assertEqual(
+            command.reconcile_empty_selection_freshness_headroom_seconds,
+            tigerbeetle_journal_runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS,
+        )

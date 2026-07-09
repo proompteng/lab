@@ -248,6 +248,11 @@ def main() -> int:
                     session,
                     settings_obj=settings_obj,
                     account_label=args.account_label,
+                    freshness_headroom_seconds=getattr(
+                        args,
+                        "reconcile_empty_selection_freshness_headroom_seconds",
+                        0,
+                    ),
                 )
             if reconciliation is None:
                 reconciliation = reconcile_tigerbeetle_transfers(

@@ -234,6 +234,10 @@ class RunTigerBeetleJournalCronTest(TestCase):
         self.assertEqual(commands[3].batch_size, 40)
         self.assertFalse(commands[3].skip_reconcile)
         self.assertTrue(commands[3].reconcile_empty_selection)
+        self.assertEqual(
+            commands[3].reconcile_empty_selection_freshness_headroom_seconds,
+            runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS,
+        )
         self.assertEqual(commands[3].reconcile_limit, runner.LIVE_RECONCILE_LIMIT)
 
     def test_live_runtime_ledger_command_refreshes_empty_selection_reconciliation(
@@ -248,6 +252,16 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
 
         self.assertIn("--reconcile-empty-selection", argv)
+        self.assertIn(
+            "--reconcile-empty-selection-freshness-headroom-seconds",
+            argv,
+        )
+        self.assertEqual(
+            argv[
+                argv.index("--reconcile-empty-selection-freshness-headroom-seconds") + 1
+            ],
+            str(runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS),
+        )
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
@@ -278,6 +292,16 @@ class RunTigerBeetleJournalCronTest(TestCase):
         )
 
         self.assertIn("--reconcile-empty-selection", argv)
+        self.assertIn(
+            "--reconcile-empty-selection-freshness-headroom-seconds",
+            argv,
+        )
+        self.assertEqual(
+            argv[
+                argv.index("--reconcile-empty-selection-freshness-headroom-seconds") + 1
+            ],
+            str(runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS),
+        )
         self.assertNotIn("--skip-reconcile", argv)
         self.assertEqual(
             argv[argv.index("--supervise-timeout-seconds") + 1],
