@@ -227,6 +227,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             decision=decision,
             decision_row=decision_row,
             request=prepared.request,
+            position_qty=prepared.quantity_resolution.position_qty,
             fractional_equities_enabled=bool(
                 prepared.quantity_resolution.fractional_allowed
             ),
@@ -346,12 +347,14 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         decision: StrategyDecision,
         decision_row: TradeDecision,
         request: ExecutionRequest,
+        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> _ResolvedSellInventory:
         conflict = self._find_sell_inventory_conflict(
             execution_client,
             request,
             self._list_open_orders(execution_client),
+            position_qty=position_qty,
         )
         if conflict is None:
             return _ResolvedSellInventory(request=request, decision=decision)
@@ -362,6 +365,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             decision_row=decision_row,
             request=request,
             conflict=conflict,
+            position_qty=position_qty,
             fractional_equities_enabled=fractional_equities_enabled,
         )
 
@@ -374,6 +378,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         decision_row: TradeDecision,
         request: ExecutionRequest,
         conflict: Mapping[str, Any],
+        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> _ResolvedSellInventory:
         request, adjustment, unresolved = self._resolve_sell_inventory_conflict(
@@ -388,6 +393,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                     execution_client=execution_client,
                     request=request,
                     conflict=unresolved,
+                    position_qty=position_qty,
                     fractional_equities_enabled=fractional_equities_enabled,
                 )
             )
@@ -811,6 +817,8 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         execution_client: Any,
         request: ExecutionRequest,
         open_orders: list[dict[str, Any]],
+        *,
+        position_qty: Decimal | None = None,
     ) -> dict[str, Any] | None:
         request_symbol = _sell_inventory_request_symbol(request)
         if request_symbol is None:
@@ -820,17 +828,21 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         if reservations.held_qty <= 0:
             return None
 
-        position_qty = cls._position_qty_for_symbol(execution_client, request_symbol)
-        if position_qty is None:
+        resolved_position_qty = position_qty
+        if resolved_position_qty is None:
+            resolved_position_qty = cls._position_qty_for_symbol(
+                execution_client, request_symbol
+            )
+        if resolved_position_qty is None:
             return _unknown_position_sell_inventory_conflict(
                 request,
                 request_symbol=request_symbol,
                 reservations=reservations,
             )
-        if position_qty <= 0:
+        if resolved_position_qty <= 0:
             return None
 
-        available_qty = position_qty - reservations.held_qty
+        available_qty = resolved_position_qty - reservations.held_qty
         if available_qty < 0:
             available_qty = Decimal("0")
         if request.qty <= available_qty:
@@ -840,7 +852,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request,
             request_symbol=request_symbol,
             reservations=reservations,
-            position_qty=position_qty,
+            position_qty=resolved_position_qty,
             available_qty=available_qty,
         )
 
