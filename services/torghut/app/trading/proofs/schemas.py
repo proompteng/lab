@@ -123,6 +123,7 @@ class ProofPayload(TypedDict):
     identity: ProofIdentityPayload
     window: ProofWindowPayload
     symbols: list[str]
+    account_state: AccountStatePayload
     state: ProofState
     blockers: list[str]
     next_action: str
@@ -131,7 +132,6 @@ class ProofPayload(TypedDict):
 class FullAuditProofPayload(ProofPayload):
     source_counts: SourceCountsPayload
     runtime_ledger: RuntimeLedgerPayload
-    account_state: AccountStatePayload
     health: HealthPayload
     post_cost_pnl_basis: str | None
     post_cost_pnl_value: str | None

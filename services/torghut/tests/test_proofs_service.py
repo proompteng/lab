@@ -239,15 +239,17 @@ def test_build_proofs_payload_defaults_to_slim_machine_contract() -> None:
         "identity",
         "window",
         "symbols",
+        "account_state",
         "state",
         "blockers",
         "next_action",
     }
     assert proof["state"] == "waiting_for_session"
     assert "runtime_ledger" not in proof
-    assert "account_state" not in proof
     assert "source_counts" not in proof
     assert "health" not in proof
+    assert proof["account_state"]["clean_baseline"] is None
+    assert proof["account_state"]["blockers"] == ["clean_baseline_snapshot_missing"]
 
 
 def test_build_proofs_payload_full_audit_keeps_diagnostics() -> None:

@@ -566,6 +566,7 @@ def _proof_response_payload(
         "identity": proof["identity"],
         "window": proof["window"],
         "symbols": proof["symbols"],
+        "account_state": proof["account_state"],
         "state": proof["state"],
         "blockers": proof["blockers"],
         "next_action": proof["next_action"],
