@@ -26,7 +26,7 @@ spec:
             kubernetes.io/arch: arm64
           containers:
             - name: run-tigerbeetle-journal
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:2d9a2103d03be625422c0678b75f9a3d28f78c39e04a084f4083ca3b433d0771
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:ae1bf58bece9c427d859c98ea29a8b83812c3ec06a369762429bcc88fd856d20
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
@@ -48,9 +48,9 @@ spec:
                 - name: PYTHONUNBUFFERED
                   value: "1"
                 - name: TORGHUT_COMMIT
-                  value: 9c5095bb7590833309b1c9dd439b637cc31f3482
+                  value: b563c2503d600fb65011ad2dbcea405eed896a5b
                 - name: TORGHUT_IMAGE_DIGEST
-                  value: sha256:2d9a2103d03be625422c0678b75f9a3d28f78c39e04a084f4083ca3b433d0771
+                  value: sha256:ae1bf58bece9c427d859c98ea29a8b83812c3ec06a369762429bcc88fd856d20
                 - name: DB_DSN
                   valueFrom:
                     secretKeyRef:
