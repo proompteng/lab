@@ -253,8 +253,8 @@ class TestDurableInventoryBrokerReadback(_TestOrderIdempotencyBase):
                 ),
                 Execution(
                     alpaca_account_label="paper",
-                    alpaca_order_id="testnet-order",
-                    client_order_id="testnet-client",
+                    alpaca_order_id="lean-order",
+                    client_order_id="lean-client",
                     symbol="AAPL",
                     side="buy",
                     order_type="market",
@@ -262,8 +262,8 @@ class TestDurableInventoryBrokerReadback(_TestOrderIdempotencyBase):
                     submitted_qty=Decimal("1"),
                     filled_qty=Decimal("1"),
                     status="filled",
-                    execution_expected_adapter="testnet",
-                    execution_actual_adapter="testnet",
+                    execution_expected_adapter="lean",
+                    execution_actual_adapter="lean",
                     raw_order={},
                 ),
                 Execution(

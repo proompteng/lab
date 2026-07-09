@@ -79,7 +79,9 @@ from .order_executor_core_support import (
 )
 
 
-_NON_BROKER_DURABLE_POSITION_ADAPTERS = frozenset({"simulation", "testnet"})
+_BROKER_DURABLE_POSITION_ADAPTERS = frozenset(
+    {"alpaca", "alpaca_fallback", "alpaca_paper"}
+)
 
 
 if TYPE_CHECKING:
@@ -356,7 +358,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         for side, filled_qty, actual_adapter in session.execute(stmt):
             if (
                 str(actual_adapter or "").strip().lower()
-                in _NON_BROKER_DURABLE_POSITION_ADAPTERS
+                not in _BROKER_DURABLE_POSITION_ADAPTERS
             ):
                 continue
             qty = _optional_decimal(filled_qty) or Decimal("0")

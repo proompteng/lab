@@ -4,6 +4,7 @@ from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
     Decimal,
+    Execution,
     ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
@@ -20,6 +21,26 @@ from tests.order_idempotency.support import (
     settings,
     timezone,
 )
+
+
+def _add_lagging_broker_fill(session: object, suffix: str) -> None:
+    session.add(
+        Execution(
+            alpaca_account_label="paper",
+            alpaca_order_id=f"lagging-setup-buy-{suffix}",
+            client_order_id=f"lagging-setup-client-{suffix}",
+            symbol="AAPL",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            submitted_qty=Decimal("0.5"),
+            filled_qty=Decimal("0.5"),
+            status="filled",
+            execution_expected_adapter="alpaca",
+            execution_actual_adapter="alpaca",
+            raw_order={},
+        )
+    )
 
 
 class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
@@ -710,6 +731,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
+            _add_lagging_broker_fill(session, "1")
             session.commit()
 
             sell_decision = StrategyDecision(
@@ -797,6 +819,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
+            _add_lagging_broker_fill(session, "2")
             session.commit()
 
             sell_decision = StrategyDecision(

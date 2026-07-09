@@ -25,6 +25,8 @@ DEFAULT_MARKET_EARLY_CLOSES: frozenset[date] = frozenset(
         date(2026, 11, 27),
         date(2026, 12, 24),
         date(2027, 11, 26),
+        date(2028, 7, 3),
+        date(2028, 11, 24),
     }
 )
 DEFAULT_TOPICS = (
