@@ -38,4 +38,27 @@ jobs:
             experimental-features = nix-command flakes
 
       - name: Validate manifests
-        run: nix develop -c scripts/kubeconform.sh argocd
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.event.pull_request.base.sha }}"
+            mapfile -d '' changed_manifests < <(
+              git diff \
+                --name-only \
+                -z \
+                --diff-filter=ACMR \
+                "${{ github.event.pull_request.base.sha }}" \
+                -- 'argocd/**/*.yaml'
+            )
+            if [ "${#changed_manifests[@]}" -eq 0 ]; then
+              echo "No changed Argo CD manifests to validate."
+              exit 0
+            fi
+
+            printf 'Validating changed manifest: %s\n' "${changed_manifests[@]}"
+            nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+          else
+            nix develop -c scripts/kubeconform.sh argocd
+          fi
