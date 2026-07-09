@@ -107,8 +107,29 @@ Decision:
 - [x] Run server dry-run validation for the new observability Alloy and dashboard manifests.
 - [x] Parse the ARC dashboard JSON from `argocd/applications/observability/arc-runner-capacity-dashboard-configmap.yaml`.
 - [x] Run `bunx oxfmt --check argocd/applications/arc/application.yaml argocd/applications/observability docs/superpowers/plans/2026-07-09-arc-runner-observability-metrics.md`.
-- [ ] Open PR using `.github/PULL_REQUEST_TEMPLATE.md`.
-- [ ] Merge with squash after checks pass.
-- [ ] Refresh/sync `arc` and `observability` Argo CD apps.
-- [ ] Verify `arc-amd64` and `arc-arm64` live runner templates have `runner=2`, `dind=2` CPU requests.
-- [ ] Verify Mimir has these series in tenant `anonymous`: `container_cpu_usage_seconds_total`, `container_memory_working_set_bytes`, `kube_pod_container_resource_requests`, `kube_node_status_allocatable`.
+- [x] Open PR using `.github/PULL_REQUEST_TEMPLATE.md`.
+- [x] Merge with squash after checks pass.
+- [x] Refresh/sync `arc` and `observability` Argo CD apps.
+- [x] Verify `arc-amd64` and `arc-arm64` live runner templates have `runner=2`, `dind=2` CPU requests.
+- [x] Verify Mimir has these series in tenant `anonymous`: `container_cpu_usage_seconds_total`, `container_memory_working_set_bytes`, `kube_pod_container_resource_requests`, `kube_node_status_allocatable`.
+
+## Rollout Evidence
+
+- Merged rollout PR: `#12199` at `54fcd3c0c9b781cd6eb518ae35a5f0c6f4814a03`.
+- Merged Alloy compatibility hotfix PRs: `#12200` at `53c8ba781bc5b6b64468a7afbfa767dc7824c24f`, `#12201` at `38daf34bc96118a0b90486b41d8857d0aaf06f31`.
+- Argo CD readback after final sync: `arc` and `observability` both `Synced/Healthy` at `38daf34bc96118a0b90486b41d8857d0aaf06f31`.
+- ARC live template readback:
+  - `arc-amd64 runner`: request `2`, limit `8`.
+  - `arc-amd64 dind`: request `2`, limit `12`.
+  - `arc-arm64 runner`: request `2`, limit `8`.
+  - `arc-arm64 dind`: request `2`, limit `12`.
+- Observability rollout readback:
+  - `observability-cluster-metrics-alloy`: `1/1` available, pod `Running`, `0` restarts after final replacement.
+  - `observability-kube-state-metrics`: `1/1` available.
+  - `observability-grafana`: `1/1` available with the ARC runner dashboard ConfigMap present.
+- Mimir tenant `anonymous` query counts after rollout:
+  - `container_cpu_usage_seconds_total{namespace="arc"}`: `123`.
+  - `container_memory_working_set_bytes{namespace="arc"}`: `123`.
+  - `kube_pod_container_resource_requests{namespace="arc"}`: `180`.
+  - `kube_node_status_allocatable{resource="cpu"}`: `3`.
+  - `up{job="kube-state-metrics"}`: `1`.
