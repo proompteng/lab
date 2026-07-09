@@ -423,6 +423,17 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             _mark_static_universe_loaded(scheduler)
             app.state.trading_scheduler = scheduler
             shared_gate = _shared_blocked_live_gate()
+            shared_clickhouse_ta_status = shared_gate["clickhouse_ta_freshness"]
+
+            def _proofs_live_submission_gate(
+                *_args: object,
+                **kwargs: object,
+            ) -> dict[str, object]:
+                self.assertEqual(
+                    kwargs["clickhouse_ta_status"],
+                    shared_clickhouse_ta_status,
+                )
+                return shared_gate
 
             with (
                 patch(
@@ -514,8 +525,12 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                     },
                 ),
                 patch(
+                    "app.api.proofs._load_clickhouse_ta_status",
+                    return_value=shared_clickhouse_ta_status,
+                ) as load_proofs_clickhouse_ta_status,
+                patch(
                     "app.api.proofs._build_live_submission_gate_payload",
-                    return_value=shared_gate,
+                    side_effect=_proofs_live_submission_gate,
                 ),
                 patch(
                     "app.api.proofs._merge_external_paper_route_target_plan",
@@ -551,6 +566,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             self.assertEqual(ready_response.status_code, 503)
             self.assertEqual(runtime_response.status_code, 200)
             self.assertEqual(proofs_response.status_code, 200)
+            load_proofs_clickhouse_ta_status.assert_called_once_with(scheduler)
             self.assertEqual(
                 status_response.json()["live_submission_gate"], shared_gate
             )
