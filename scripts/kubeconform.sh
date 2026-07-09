@@ -16,6 +16,11 @@ fi
 filtered=()
 add_manifest_file() {
   local file="$1"
+  case "$(basename "$file")" in
+    kustomization.yaml | kustomization.yml)
+      return
+      ;;
+  esac
   if [[ "$file" == *"/charts/"* ]] || [[ "$file" == *".patch.yaml" ]]; then
     return
   fi
@@ -65,6 +70,9 @@ KUBECONFORM_ARGS=(
   --ignore-missing-schemas
   --cache "${KUBECONFORM_CACHE_DIR}"
   -n "${KUBECONFORM_CONCURRENCY:-2}"
+  # kubeconform v0.7.0 resolves Knative Service CRDs like native Service resources;
+  # skipping the exact GVK avoids shadowing core Service validation with a CRD schema.
+  --skip 'serving.knative.dev/v1/Service'
   --ignore-filename-pattern 'overlays/'
   --ignore-filename-pattern 'charts/'
   --ignore-filename-pattern 'Chart.yaml'

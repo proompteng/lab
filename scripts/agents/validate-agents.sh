@@ -362,7 +362,17 @@ CRD_SCHEMA_VERSION="${KUBECONFORM_K8S_VERSION:-1.27.0}"
 crd_schema_dir="$(mktemp -d)"
 trap 'rm -rf "${crd_schema_dir}"' EXIT
 crd_schema_base="https://raw.githubusercontent.com/yannh/kubernetes-json-schema/master/v${CRD_SCHEMA_VERSION}-standalone-strict"
-curl_with_retry -o "${crd_schema_dir}/_definitions.json" "${crd_schema_base}/_definitions.json"
+schema_definitions_path="v${CRD_SCHEMA_VERSION}-standalone-strict/_definitions.json"
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  curl_with_retry \
+    -H "Accept: application/vnd.github.raw" \
+    -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    -o "${crd_schema_dir}/_definitions.json" \
+    "https://api.github.com/repos/yannh/kubernetes-json-schema/contents/${schema_definitions_path}?ref=master"
+else
+  curl_with_retry -o "${crd_schema_dir}/_definitions.json" "${crd_schema_base}/_definitions.json"
+fi
 python3 - "${crd_schema_dir}" <<'PY'
 import json
 import pathlib
