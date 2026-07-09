@@ -3,6 +3,8 @@ kind: FlinkDeployment
 metadata:
   name: torghut-ta
   namespace: torghut
+  annotations:
+    argocd.argoproj.io/sync-wave: "4"
   labels:
     app: torghut-ta
 spec:

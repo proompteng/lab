@@ -114,9 +114,10 @@ def _evidence_clock_payloads(
 ) -> tuple[dict[str, object], dict[str, object]]:
     payloads = proof_lane.payloads
     payloads["build_payload"] = _build_payload(proof_lane)
-    payloads["clickhouse_ta_status"] = proof_lane.deps.load_clickhouse_ta_status(
-        proof_lane.context.scheduler
-    )
+    if "clickhouse_ta_status" not in payloads:
+        payloads["clickhouse_ta_status"] = proof_lane.deps.load_clickhouse_ta_status(
+            proof_lane.context.scheduler
+        )
     return proof_lane.deps.build_evidence_clock_payloads(
         torghut_revision=BUILD_COMMIT,
         dependency_quorum=proof_lane.dependency_quorum.as_payload(),

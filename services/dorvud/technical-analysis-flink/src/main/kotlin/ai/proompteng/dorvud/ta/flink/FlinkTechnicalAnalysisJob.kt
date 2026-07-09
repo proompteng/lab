@@ -70,6 +70,7 @@ import java.sql.Timestamp
 import java.sql.Types
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -179,6 +180,7 @@ fun main() {
             intervalMs = statusIntervalMs,
             clickhouseSinkEnabled = !config.clickhouseUrl.isNullOrBlank(),
             sourceLagDegradedAfterMs = config.sourceLagDegradedAfterMs,
+            marketHolidays = config.marketHolidays,
           ),
         )
     statusHeartbeats
@@ -1078,6 +1080,7 @@ private class StatusHeartbeatProcessFunction(
   private val intervalMs: Long,
   private val clickhouseSinkEnabled: Boolean,
   private val sourceLagDegradedAfterMs: Long,
+  private val marketHolidays: Set<LocalDate>,
 ) : KeyedProcessFunction<String, StatusHeartbeatInput, Envelope<TaStatusPayload>>() {
   private lateinit var lastInputEventMsState: ValueState<Long>
   private lateinit var lastOutputEventMsState: ValueState<Long>
@@ -1221,6 +1224,7 @@ private class StatusHeartbeatProcessFunction(
         perSymbolLatestEventTs = perSymbolLatestEventTs,
         clickhouseSinkEnabled = clickhouseSinkEnabled,
         sourceLagDegradedAfterMs = sourceLagDegradedAfterMs,
+        marketHolidays = marketHolidays,
       )
     lastHeartbeatInputCountState.update(inputEventCount)
     lastHeartbeatOutputCountState.update(outputEventCount)
@@ -1268,6 +1272,7 @@ internal fun taStatusPayload(
   perSymbolLatestEventTs: Map<String, String>,
   clickhouseSinkEnabled: Boolean = false,
   sourceLagDegradedAfterMs: Long = DEFAULT_TA_SOURCE_LAG_DEGRADED_AFTER_MS,
+  marketHolidays: Set<LocalDate> = emptySet(),
 ): TaStatusPayload {
   val nowMs = now.toEpochMilli()
   val watermarkLagMs =
@@ -1295,7 +1300,7 @@ internal fun taStatusPayload(
       currentCount = outputEventCount,
       previousCount = lastHeartbeatOutputCount,
     )
-  val marketSessionState = marketSessionState(now)
+  val marketSessionState = marketSessionState(now, marketHolidays)
   val statusReason =
     if (marketSessionState != MARKET_SESSION_REGULAR) {
       null
@@ -1343,11 +1348,19 @@ private fun deltaSinceLastHeartbeat(
   previousCount: Long,
 ): Long = (currentCount - previousCount).coerceAtLeast(0)
 
-private fun marketSessionState(now: Instant): String {
+private fun marketSessionState(
+  now: Instant,
+  marketHolidays: Set<LocalDate> = emptySet(),
+): String {
   val local = now.atZone(EQUITY_MARKET_ZONE)
   val day = local.dayOfWeek.value
   val time = local.toLocalTime()
-  return if (day in 1..5 && !time.isBefore(REGULAR_SESSION_OPEN) && time.isBefore(REGULAR_SESSION_CLOSE)) {
+  val isRegularSession =
+    local.toLocalDate() !in marketHolidays &&
+      day in 1..5 &&
+      !time.isBefore(REGULAR_SESSION_OPEN) &&
+      time.isBefore(REGULAR_SESSION_CLOSE)
+  return if (isRegularSession) {
     MARKET_SESSION_REGULAR
   } else {
     MARKET_SESSION_OUTSIDE_REGULAR

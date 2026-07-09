@@ -100,6 +100,26 @@ const DEFAULT_US_EQUITY_MARKET_HOLIDAYS = [
   '2026-09-07',
   '2026-11-26',
   '2026-12-25',
+  '2027-01-01',
+  '2027-01-18',
+  '2027-02-15',
+  '2027-03-26',
+  '2027-05-31',
+  '2027-06-18',
+  '2027-07-05',
+  '2027-09-06',
+  '2027-11-25',
+  '2027-12-24',
+  '2027-12-31',
+  '2028-01-17',
+  '2028-02-21',
+  '2028-04-14',
+  '2028-05-29',
+  '2028-06-19',
+  '2028-07-04',
+  '2028-09-04',
+  '2028-11-23',
+  '2028-12-25',
 ]
 
 const parseList = (raw: string | undefined, fallback: string[]) =>
@@ -204,6 +224,14 @@ const shouldEnforceFreshness = (mode: SmokeMode, sessionState: MarketSessionStat
 
 const isConditionalNoEventWsChannel = (channel: string, ready: boolean, observed: number, reason: string): boolean =>
   channel === CONDITIONAL_NO_EVENT_WS_CHANNEL && ready && observed === 0 && reason === CONDITIONAL_NO_EVENT_REASON
+
+const wsChannelFreshnessRequired = (status: JsonObject | undefined): boolean => status?.freshness_required !== false
+
+const wsChannelSymbolCoverageRequired = (status: JsonObject | undefined): boolean =>
+  status?.symbol_coverage_required !== false
+
+const wsChannelReadinessMode = (status: JsonObject | undefined): string =>
+  asString(status?.readiness_mode)?.trim().toLowerCase() ?? 'continuous'
 
 const getWsChannels = (readyz: unknown): Map<string, JsonObject> => {
   const root = isObject(readyz) ? readyz : {}
@@ -479,10 +507,19 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
     const missingSymbols = asStringArray(status?.missing_symbols)
     const staleSymbols = asStringArray(status?.stale_symbols)
     const reason = asString(status?.reason) ?? 'missing'
+    const readinessMode = wsChannelReadinessMode(status)
+    const freshnessRequired = wsChannelFreshnessRequired(status)
+    const symbolCoverageRequired = wsChannelSymbolCoverageRequired(status)
     const conditionalNoEventChannel = isConditionalNoEventWsChannel(channel, ready, observed, reason)
+    const conditionalHealthyChannel =
+      conditionalNoEventChannel || (ready && (readinessMode === 'conditional' || !freshnessRequired))
+    const enforceChannelSymbolCoverage = symbolCoverageRequired && !conditionalHealthyChannel
+    const enforceChannelKafkaSuccess = freshnessRequired && !conditionalHealthyChannel
     summaryLines.push(
       `- WS ${channel}: ready=\`${ready}\`, subscribed=\`${subscribed}\`, observed=\`${observed}\`, ` +
         `fresh=\`${fresh ?? 'missing'}\`, ack_lag=\`${subscriptionAckLag ?? 'missing'}\`, ` +
+        `mode=\`${readinessMode}\`, freshness_required=\`${freshnessRequired}\`, ` +
+        `symbol_coverage_required=\`${symbolCoverageRequired}\`, ` +
         `missing=\`${missingSymbols.join(',') || 'none'}\`, ` +
         `stale=\`${staleSymbols.join(',') || 'none'}\`, reason=\`${reason}\``,
     )
@@ -496,9 +533,10 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
       )
     }
     if (
-      missingSymbols.length > 0 ||
-      staleSymbols.length > 0 ||
-      (!conditionalNoEventChannel && fresh !== undefined && subscribed > 0 && fresh < subscribed)
+      enforceChannelSymbolCoverage &&
+      (missingSymbols.length > 0 ||
+        staleSymbols.length > 0 ||
+        (fresh !== undefined && subscribed > 0 && fresh < subscribed))
     ) {
       pushFinding(
         enforceFreshness,
@@ -509,7 +547,7 @@ export const evaluateMarketDataSmoke = (input: MarketDataSmokeInput): MarketData
           `missing_symbols=${missingSymbols.join(',') || 'none'} stale_symbols=${staleSymbols.join(',') || 'none'}`,
       )
     }
-    if (enforceFreshness && !conditionalNoEventChannel && status?.latest_kafka_success_at_ms === null) {
+    if (enforceFreshness && enforceChannelKafkaSuccess && status?.latest_kafka_success_at_ms === null) {
       failures.push(`ws_${channel}_missing_kafka_success: WS channel ${channel} has no Kafka success timestamp`)
     }
   }
@@ -651,7 +689,12 @@ const tailArgs = (
   format,
 ]
 
-const kafkaPartitionsForTopic = async (topic: string, settings: RuntimeSettings): Promise<number[]> => {
+const kafkaPartitionsForTopic = async (
+  topic: string,
+  settings: RuntimeSettings,
+  partitionsOverride?: number[],
+): Promise<number[]> => {
+  if (partitionsOverride) return partitionsOverride
   if (settings.kafkaPartitions) return settings.kafkaPartitions
   const cached = settings.kafkaPartitionCache.get(topic)
   if (cached) return cached
@@ -719,7 +762,7 @@ const captureLatestTaStatusHeartbeat = async (
   settings: RuntimeSettings,
 ): Promise<TaStatusHeartbeatRecord | undefined> => {
   const heartbeats: TaStatusHeartbeatRecord[] = []
-  for (const partition of await kafkaPartitionsForTopic(topic, settings)) {
+  for (const partition of await kafkaPartitionsForTopic(topic, settings, settings.taStatusKafkaPartitions)) {
     const stdout = await execCapture('bun', tailArgs(topic, 'base64', settings, partition, '1'), { cwd: repoRoot })
     const encoded = stdout.trim()
     if (!encoded) continue
@@ -781,6 +824,7 @@ type RuntimeSettings = {
   passwordSecretKey: string
   tail: string
   kafkaPartitions?: number[]
+  taStatusKafkaPartitions?: number[]
   kafkaPartitionCache: Map<string, number[]>
   timeoutMs: string
   mode: SmokeMode
@@ -813,6 +857,7 @@ const runtimeSettings = (): RuntimeSettings => ({
   passwordSecretKey: process.env.KAFKA_PASSWORD_SECRET_KEY ?? 'password',
   tail: process.env.TAIL ?? '1',
   kafkaPartitions: parsePartitions(process.env.KAFKA_TOPIC_PARTITIONS),
+  taStatusKafkaPartitions: parsePartitions(process.env.TORGHUT_TA_STATUS_KAFKA_TOPIC_PARTITIONS),
   kafkaPartitionCache: new Map(),
   timeoutMs: process.env.TIMEOUT_MS ?? '8000',
   mode: parseMode(process.env.MARKET_DATA_FRESHNESS_MODE),

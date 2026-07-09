@@ -136,7 +136,11 @@ class TestTradingApiHealthCache(TradingApiTestCaseBase):
             payload["dependencies"]["health_evaluation"]["reason_codes"],
         )
         self.assertIsInstance(payload["dependencies"]["postgres"], dict)
-        self.assertTrue(payload["dependencies"]["postgres"]["ok"])
+        self.assertFalse(payload["dependencies"]["postgres"]["ok"])
+        self.assertEqual(
+            payload["dependencies"]["postgres"]["reason"],
+            "trading_health_evaluation_timeout",
+        )
         self.assertIsInstance(payload["scheduler"], dict)
         self.assertEqual(payload["live_submission_gate"], shared_gate)
         self.assertNotIn(

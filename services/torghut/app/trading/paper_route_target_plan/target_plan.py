@@ -129,6 +129,7 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
     ):
         actions = {symbol: "buy" for symbol in symbols}
     quantities = _to_str_map(identity.get("target_symbol_quantities"))
+    source_plan_ref = identity.get("source_plan_ref") or identity.get("target_plan_ref")
     return {
         "hypothesis_id": identity.get("hypothesis_id"),
         "candidate_id": identity.get("candidate_id"),
@@ -137,11 +138,16 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
         or identity.get("runtime_strategy_name"),
         "runtime_strategy_name": identity.get("runtime_strategy_name")
         or identity.get("strategy_name"),
+        "strategy_id": identity.get("strategy_id")
+        or identity.get("runtime_strategy_name")
+        or identity.get("strategy_name"),
         "account_label": identity.get("account_label"),
         "source_account_label": identity.get("source_account_label"),
         "observed_stage": identity.get("observed_stage") or "paper",
         "source_kind": identity.get("source_kind"),
-        "source_plan_ref": identity.get("source_plan_ref"),
+        "source_plan_ref": source_plan_ref,
+        "target_plan_ref": source_plan_ref,
+        "source_manifest_ref": identity.get("source_manifest_ref") or source_plan_ref,
         "target_notional": identity.get("target_notional"),
         "source_decision_mode": identity.get("source_decision_mode"),
         "target_symbol_actions": actions,
@@ -150,7 +156,13 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
         "bounded_collection_stage": "paper",
         "evidence_collection_stage": "paper",
         "bounded_evidence_collection_authorized": True,
+        "bounded_live_paper_collection_authorized": True,
         "evidence_collection_ok": True,
+        "live_capital_routing_enabled": False,
+        "paper_route_execution_capacity_contract": {
+            "state": "capacity_ready",
+            "blockers": [],
+        },
         "source_decision_readiness": {
             "schema_version": "torghut.proofs-source-decision-readiness.v1",
             "ready": True,
@@ -164,9 +176,9 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
                 if _safe_text(item)
             ],
         },
-        "paper_route_clean_window_state": "clean_window_collection_ready"
-        if baseline_clean
-        else "blocked",
+        "paper_route_clean_window_state": (
+            "clean_window_collection_ready" if baseline_clean else "blocked"
+        ),
         "paper_route_clean_window_baseline_state": {
             "state": "clean" if baseline_clean else "blocked",
             "blockers": account_blockers,
@@ -323,12 +335,14 @@ def _target_plan_selection_score(
     ready_count = sum(1 for target in targets if _target_source_decision_ready(target))
     return (
         0 if _target_plan_is_source_collection_only(plan) else 1,
-        1
-        if _target_plan_selected_identity_match(
-            plan,
-            selected_identity_keys=selected_identity_keys,
-        )
-        else 0,
+        (
+            1
+            if _target_plan_selected_identity_match(
+                plan,
+                selected_identity_keys=selected_identity_keys,
+            )
+            else 0
+        ),
         1 if probe_symbol_count else 0,
         ready_count,
         probe_symbol_count,

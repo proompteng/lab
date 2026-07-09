@@ -142,6 +142,7 @@ internal class MarketDataChannelFreshnessTracker(
       val latestObservedInputAt = listOfNotNull(latestProviderAt, latestSerializedAt).maxOrNull()
       val latestSubscriptionAckAt = latestSubscriptionAckAtMsByChannel[channel]?.get()?.takeIf { it > 0 }
       val symbolLastSeen = state?.latestKafkaSuccessAtMsBySymbol?.mapValues { (_, seenAt) -> seenAt.get() }.orEmpty()
+      val symbolObservedInput = state?.latestObservedInputAtMsBySymbol?.mapValues { (_, seenAt) -> seenAt.get() }.orEmpty()
       val subscribedSymbols = channelSymbols.sorted()
       val observedSymbols =
         symbolLastSeen
@@ -149,6 +150,7 @@ internal class MarketDataChannelFreshnessTracker(
           .filter { symbol -> symbol in channelSymbols }
           .sorted()
       val lagMs = latestKafkaSuccessAt?.let { (now - it).coerceAtLeast(0) }
+      val symbolCoverageDiagnostic = symbolCoverageRequired || marketType == AlpacaMarketType.OPTIONS
       val symbolLagMs =
         channelSymbols
           .mapNotNull { symbol ->
@@ -157,7 +159,7 @@ internal class MarketDataChannelFreshnessTracker(
           }.toMap()
       val subscriptionAckLagMs = latestSubscriptionAckAt?.let { (now - it).coerceAtLeast(0) }
       val freshSymbols =
-        if (symbolCoverageRequired) {
+        if (symbolCoverageDiagnostic) {
           channelSymbols
             .filter { symbol -> symbolLagMs[symbol]?.let { it <= maxLagMs } == true }
             .sorted()
@@ -167,7 +169,7 @@ internal class MarketDataChannelFreshnessTracker(
             .sorted()
         }
       val missingSymbols =
-        if (symbolCoverageRequired) {
+        if (symbolCoverageDiagnostic) {
           channelSymbols
             .filter { symbol -> symbol !in symbolLastSeen }
             .sorted()
@@ -175,26 +177,44 @@ internal class MarketDataChannelFreshnessTracker(
           emptyList()
         }
       val staleSymbols =
-        if (symbolCoverageRequired) {
+        if (symbolCoverageDiagnostic) {
           channelSymbols
             .filter { symbol -> symbolLastSeen.containsKey(symbol) && symbol !in freshSymbols }
             .sorted()
         } else {
           emptyList()
         }
+      val gatedMissingSymbols = if (symbolCoverageRequired) missingSymbols else emptyList()
+      val gatedStaleSymbols = if (symbolCoverageRequired) staleSymbols else emptyList()
+      val subscribedSymbolObservedInput = symbolObservedInput.filterKeys { symbol -> symbol in channelSymbols }
+      val latestObservedSymbolInput =
+        subscribedSymbolObservedInput
+          .filterValues { it > 0 }
+          .maxByOrNull { (_, seenAt) -> seenAt }
+      val latestObservedInputForReadiness =
+        latestObservedSymbolInput?.value
+          ?: latestObservedInputAt?.takeIf { symbolObservedInput.isEmpty() || channelSymbols.isEmpty() }
+      val latestObservedSymbolKafkaSuccessAt =
+        latestObservedSymbolInput?.let { (symbol, _) -> symbolLastSeen[symbol] }
+      val kafkaSuccessCoversLatestObservedInput =
+        latestObservedSymbolInput?.let { (_, observedAt) ->
+          latestObservedSymbolKafkaSuccessAt?.let { it >= observedAt } == true
+        } ?: latestObservedInputAt?.let { observedAt ->
+          latestKafkaSuccessAt?.let { it >= observedAt } == true
+        } ?: true
       val conditionalKafkaSuccessMissing =
         !freshnessRequired &&
-          latestObservedInputAt != null &&
-          (latestKafkaSuccessAt == null || latestKafkaSuccessAt < latestObservedInputAt) &&
-          now - latestObservedInputAt > maxLagMs
+          latestObservedInputForReadiness != null &&
+          !kafkaSuccessCoversLatestObservedInput &&
+          now - latestObservedInputForReadiness > maxLagMs
       val ready =
         when {
           !gateActive -> true
           channelSymbols.isEmpty() -> false
           !freshnessRequired -> !conditionalKafkaSuccessMissing
           latestKafkaSuccessAt == null -> false
-          missingSymbols.isNotEmpty() -> false
-          staleSymbols.isNotEmpty() -> false
+          gatedMissingSymbols.isNotEmpty() -> false
+          gatedStaleSymbols.isNotEmpty() -> false
           lagMs == null -> false
           else -> lagMs <= maxLagMs
         }
@@ -233,9 +253,9 @@ internal class MarketDataChannelFreshnessTracker(
             ready -> "market_data_channel_fresh"
             channelSymbols.isEmpty() -> "market_data_channel_not_subscribed"
             conditionalKafkaSuccessMissing -> "market_data_channel_conditional_missing_kafka_success"
-            latestKafkaSuccessAt == null -> "market_data_channel_missing_kafka_success"
-            missingSymbols.isNotEmpty() -> "market_data_channel_missing_symbol_coverage"
-            staleSymbols.isNotEmpty() -> "market_data_channel_stale_symbol_coverage"
+            freshnessRequired && latestKafkaSuccessAt == null -> "market_data_channel_missing_kafka_success"
+            gatedMissingSymbols.isNotEmpty() -> "market_data_channel_missing_symbol_coverage"
+            gatedStaleSymbols.isNotEmpty() -> "market_data_channel_stale_symbol_coverage"
             else -> "market_data_channel_stale"
           },
       )
@@ -253,6 +273,7 @@ internal class MarketDataChannelFreshnessTracker(
     val latestSerializedAtMs = AtomicLong(0)
     val latestKafkaSuccessAtMs = AtomicLong(0)
     val latestSymbol = AtomicReference<String?>(null)
+    val latestObservedInputAtMsBySymbol = ConcurrentHashMap<String, AtomicLong>()
     val latestKafkaSuccessAtMsBySymbol = ConcurrentHashMap<String, AtomicLong>()
 
     fun recordProviderEvent(
@@ -260,6 +281,7 @@ internal class MarketDataChannelFreshnessTracker(
       symbol: String?,
     ) {
       latestProviderEventAtMs.set(atMs)
+      recordObservedInputSymbol(atMs, symbol)
       updateSymbol(symbol)
     }
 
@@ -268,6 +290,7 @@ internal class MarketDataChannelFreshnessTracker(
       symbol: String?,
     ) {
       latestSerializedAtMs.set(atMs)
+      recordObservedInputSymbol(atMs, symbol)
       updateSymbol(symbol)
     }
 
@@ -286,6 +309,16 @@ internal class MarketDataChannelFreshnessTracker(
     private fun updateSymbol(symbol: String?) {
       val normalized = normalizeSymbol(symbol) ?: return
       latestSymbol.set(normalized)
+    }
+
+    private fun recordObservedInputSymbol(
+      atMs: Long,
+      symbol: String?,
+    ) {
+      val normalized = normalizeSymbol(symbol) ?: return
+      latestObservedInputAtMsBySymbol
+        .computeIfAbsent(normalized) { AtomicLong(0) }
+        .set(atMs)
     }
   }
 }

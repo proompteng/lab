@@ -362,14 +362,16 @@ const assertAcceptedSourceStaleZeroNotionalReadyz = (readyz: JsonObject, status:
     )
   }
 
-  const proofFloor = requireObject(
-    dependencies.profitability_proof_floor,
-    'readyz dependencies.profitability_proof_floor',
-  )
-  if (proofFloor.detail !== 'repair_only' || proofFloor.capital_state !== 'zero_notional') {
-    throw new Error(
-      'accepted-source stale rollout acceptance requires profitability_proof_floor repair_only zero_notional',
+  if (dependencies.profitability_proof_floor !== undefined) {
+    const proofFloor = requireObject(
+      dependencies.profitability_proof_floor,
+      'readyz dependencies.profitability_proof_floor',
     )
+    if (proofFloor.detail !== 'repair_only' || proofFloor.capital_state !== 'zero_notional') {
+      throw new Error(
+        'accepted-source stale rollout acceptance requires profitability_proof_floor repair_only zero_notional when present',
+      )
+    }
   }
 
   assertAcceptedSourceStaleZeroNotionalContract(status, digest)

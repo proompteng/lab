@@ -5,7 +5,6 @@ from app.api.readiness_helpers import readiness_surface as readiness_surface_hel
 
 from tests.api.trading_api_support import (
     TradingApiTestCaseBase,
-    TradingScheduler,
     datetime,
     patch,
     timezone,
@@ -16,15 +15,12 @@ class TestTradingApiHealthTimeoutFallback(TradingApiTestCaseBase):
     def test_health_timeout_core_readiness_falls_back_to_dependency_placeholders(
         self,
     ) -> None:
-        scheduler = TradingScheduler()
-
         with patch(
             "app.api.readiness_helpers.readiness_surface._core_readiness_dependencies",
             side_effect=RuntimeError("core readiness unavailable"),
         ):
             dependencies, reasons = (
                 readiness_surface_helpers._health_surface_timeout_core_dependencies(
-                    scheduler=scheduler,
                     scheduler_ok=True,
                     include_database_contract=False,
                     reason_code="trading_health_evaluation_timeout",

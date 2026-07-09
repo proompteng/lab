@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from app.trading.ingest import ClickHouseSignalIngestor
 from app.trading.ingest.clickhouse_signal_source_freshness import (
     ClickHouseSignalFreshnessContext,
+    configured_market_holidays,
+    regular_market_session_state,
 )
 from app.trading.ingest.shared_context import coerce_count
 
@@ -91,7 +93,9 @@ class MissingLatestSignalIngestor(SourceFreshnessIngestor):
         *,
         symbols: tuple[str, ...] = (),
         timeframes: tuple[str, ...] = (),
+        fail_on_query_error: bool = False,
     ) -> datetime | None:
+        del fail_on_query_error
         return None
 
 
@@ -102,7 +106,9 @@ class FailingLatestSignalIngestor(SourceFreshnessIngestor):
         *,
         symbols: tuple[str, ...] = (),
         timeframes: tuple[str, ...] = (),
+        fail_on_query_error: bool = False,
     ) -> datetime | None:
+        del fail_on_query_error
         raise RuntimeError("latest accepted source query failed")
 
 
@@ -223,6 +229,30 @@ def test_latest_signal_status_blocks_when_freshness_query_fails() -> None:
     assert status["blocking_reason"] == "accepted_ta_signal_unavailable"
     assert status["freshness_reason_codes"] == ["clickhouse_ta_status_query_failed"]
     assert "latest accepted source query failed" in status["detail"]
+
+
+def test_configured_market_holidays_parses_env_and_ignores_bad_tokens(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv(
+        "TRADING_MARKET_HOLIDAYS",
+        "2029-01-02, ,not-a-date",
+    )
+
+    holidays = configured_market_holidays()
+
+    assert date(2029, 1, 2) in holidays
+
+
+def test_regular_market_session_state_marks_configured_holiday(monkeypatch) -> None:
+    monkeypatch.setenv("TRADING_MARKET_HOLIDAYS", "2026-05-13")
+
+    state = regular_market_session_state(
+        datetime(2026, 5, 13, 14, 0, tzinfo=timezone.utc)
+    )
+
+    assert state["market_session_state"] == "holiday_closed"
+    assert state["market_holiday"] is True
 
 
 def test_latest_signal_status_blocks_when_no_accepted_source_row_exists() -> None:

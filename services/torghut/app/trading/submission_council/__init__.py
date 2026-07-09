@@ -616,6 +616,10 @@ def _accepted_ta_submission_blocker(
     blocking_reason = _safe_text(clickhouse_ta_status.get("blocking_reason"))
     if blocking_reason:
         return blocking_reason
+    if bool(clickhouse_ta_status.get("read_model_unavailable")):
+        return "accepted_ta_signal_unavailable"
+    if bool(clickhouse_ta_status.get("accepted_source_diagnostic_only")):
+        return None
     accepted_source_state = _safe_text(
         clickhouse_ta_status.get("accepted_source_state")
     )
@@ -625,7 +629,11 @@ def _accepted_ta_submission_blocker(
         return "accepted_ta_signal_missing"
     if accepted_source_state == "unavailable":
         return "accepted_ta_signal_unavailable"
-    if _safe_text(clickhouse_ta_status.get("state")) == "missing":
+    if _safe_text(clickhouse_ta_status.get("state")) in {
+        "missing",
+        "unavailable",
+        "deferred",
+    }:
         return "accepted_ta_signal_unavailable"
     return None
 

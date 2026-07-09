@@ -13,7 +13,7 @@ from app.trading.evidence_clock_arbiter import build_evidence_clock_arbiter_and_
 NOW = datetime(2026, 5, 12, 16, 45, tzinfo=timezone.utc)
 
 
-def _base_inputs() -> dict[str, Any]:
+def _base_inputs_core() -> dict[str, Any]:
     return {
         "account_label": "PA3SX7FYNUTF",
         "window": "15m",
@@ -107,13 +107,28 @@ def _base_inputs() -> dict[str, Any]:
             "source_ref": "torghut.ta_signals",
             "symbol_count": 8,
         },
-        "rollout_status": {
-            "state": "current",
-            "route_workloads_ok": True,
-            "verified_at": NOW.isoformat(),
-        },
+        "rollout_status": _rollout_status(),
         "now": NOW,
     }
+
+
+def _rollout_status() -> dict[str, object]:
+    return {
+        "state": "current",
+        "route_workloads_ok": True,
+        "verified_at": NOW.isoformat(),
+    }
+
+
+def _base_inputs() -> dict[str, Any]:
+    payload = _base_inputs_core()
+    payload.update(
+        {
+            "rollout_status": _rollout_status(),
+            "now": NOW,
+        }
+    )
+    return payload
 
 
 def _arbiter(
@@ -215,3 +230,47 @@ def test_settled_clickhouse_clock_has_no_clock_wiring_packet() -> None:
     )
     assert receipt["routeable_candidate_count"] == 1
     assert receipt["max_notional"] == "0"
+
+
+def test_after_hours_clickhouse_ta_witness_matches_published_clock_staleness_gate() -> (
+    None
+):
+    arbiter, exchange, payload = _arbiter(include_clickhouse_clock=True)
+    stale_after_hours = NOW - timedelta(hours=8)
+    payload["clickhouse_ta_status"] = {
+        **payload["clickhouse_ta_status"],
+        "latest_signal_at": stale_after_hours.isoformat(),
+        "accepted_source_state": "outside_regular_session",
+        "regular_session_open": False,
+        "market_session_state": "after_hours",
+    }
+    arbiter, exchange = build_evidence_clock_arbiter_and_exchange(
+        account_label=payload["account_label"],
+        window=payload["window"],
+        trading_mode=payload["trading_mode"],
+        torghut_revision=payload["torghut_revision"],
+        build=payload["build"],
+        hypothesis_payload=payload["hypothesis_payload"],
+        quant_evidence=payload["quant_evidence"],
+        market_context_status=payload["market_context_status"],
+        tca_summary=payload["tca_summary"],
+        empirical_jobs_status=payload["empirical_jobs_status"],
+        proof_floor_receipt=payload["proof_floor_receipt"],
+        routeability_repair_acceptance_ledger=payload[
+            "routeability_repair_acceptance_ledger"
+        ],
+        profit_signal_quorum=payload["profit_signal_quorum"],
+        live_submission_gate=payload["live_submission_gate"],
+        torghut_custody_ref=payload["torghut_custody_ref"],
+        clickhouse_ta_status=payload["clickhouse_ta_status"],
+        rollout_status=payload["rollout_status"],
+        now=NOW,
+    )
+
+    receipt = _receipt(arbiter, exchange, payload)
+
+    clickhouse_witness = _witness(receipt, "clickhouse_ta")
+    assert clickhouse_witness["direct_freshness_state"] == "current"
+    assert clickhouse_witness["matching_published_clock_state"] == "current"
+    assert "clickhouse_ta_stale" not in clickhouse_witness["reason_codes"]
+    assert clickhouse_witness["split_reason_codes"] == []
