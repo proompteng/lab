@@ -79,6 +79,11 @@ from .order_executor_core_support import (
 )
 
 
+_BROKER_DURABLE_POSITION_ADAPTERS = frozenset(
+    {"alpaca", "alpaca_fallback", "alpaca_paper"}
+)
+
+
 if TYPE_CHECKING:
     _OrderExecutorCoreBase = _OrderExecutorContract
 else:
@@ -341,13 +346,12 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             Execution.alpaca_account_label == account_label,
             Execution.symbol == normalized_symbol,
             Execution.filled_qty > 0,
+            Execution.execution_actual_adapter.in_(_BROKER_DURABLE_POSITION_ADAPTERS),
         )
         total = Decimal("0")
         observed = False
         for side, filled_qty in session.execute(stmt):
-            qty = _optional_decimal(filled_qty)
-            if qty is None or qty <= 0:
-                continue
+            qty = _optional_decimal(filled_qty) or Decimal("0")
             normalized_side = str(side or "").strip().lower()
             if normalized_side == "buy":
                 total += qty
@@ -411,6 +415,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                     execution_client=execution_client,
                     request=request,
                     conflict=unresolved,
+                    position_qty=position_qty,
                     fractional_equities_enabled=fractional_equities_enabled,
                 )
             )
