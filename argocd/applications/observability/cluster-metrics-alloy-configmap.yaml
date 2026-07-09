@@ -17,8 +17,7 @@ data:
     }
 
     prometheus.relabel "arc_resource_metrics" {
-      forward_to     = [prometheus.remote_write.mimir.receiver]
-      max_cache_size = 0
+      forward_to = [prometheus.remote_write.mimir.receiver]
 
       rule {
         action        = "keep"
