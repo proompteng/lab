@@ -104,6 +104,7 @@ type GithubEventConsumerConfig = {
   enabled: boolean
   pollIntervalMs: number
   batchSize: number
+  maxDispatchEventsPerTick: number
   maxEventFileTargets: number
   maxDispatchFailures: number
   nonterminalIngestionStaleMs: number
@@ -123,7 +124,20 @@ type ProcessEventResult = {
   processed: boolean
   waitingOnIngestion: boolean
   dispatchStarted: number
+  dispatchAlreadyStarted: number
   dispatchFailed: number
+}
+
+type EventConsumerTickDependencies = {
+  db: SqlClient
+  client: TemporalClient
+  config: GithubEventConsumerConfig
+  inFlightDeliveries: Set<string>
+  dispatchFailureCounts: Map<string, number>
+  ensureRoutingAlignment: () => Promise<boolean>
+  listPendingEvents?: typeof listPendingGithubEvents
+  processPendingEvent?: typeof processEvent
+  markProcessed?: typeof markEventProcessed
 }
 
 export type GithubEventConsumer = {
@@ -155,33 +169,37 @@ const parseBoolean = (value: string | undefined, fallback: boolean) => {
   return fallback
 }
 
-const resolveConsumerConfig = (): GithubEventConsumerConfig => ({
-  enabled: parseBoolean(process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED, true),
-  pollIntervalMs: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS),
-  batchSize: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE, DEFAULT_BATCH_SIZE),
-  maxEventFileTargets: parsePositiveInt(
-    process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS,
-    DEFAULT_MAX_EVENT_FILE_TARGETS,
-  ),
-  maxDispatchFailures: parsePositiveInt(
-    process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES,
-    DEFAULT_MAX_DISPATCH_FAILURES,
-  ),
-  nonterminalIngestionStaleMs: parsePositiveInt(
-    process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS,
-    DEFAULT_NONTERMINAL_INGESTION_STALE_MS,
-  ),
-  routingAlignmentEnabled: parseBoolean(
-    process.env.BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED,
-    DEFAULT_ROUTING_ALIGNMENT_ENABLED,
-  ),
-  taskQueue: normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE,
-  repoRoot: resolve(
-    normalizeOptionalText(process.env.BUMBA_WORKSPACE_ROOT) ??
-      normalizeOptionalText(process.env.CODEX_CWD) ??
-      process.cwd(),
-  ),
-})
+const resolveConsumerConfig = (): GithubEventConsumerConfig => {
+  const batchSize = parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE, DEFAULT_BATCH_SIZE)
+  return {
+    enabled: parseBoolean(process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED, true),
+    pollIntervalMs: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS, DEFAULT_POLL_INTERVAL_MS),
+    batchSize,
+    maxDispatchEventsPerTick: parsePositiveInt(process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK, batchSize),
+    maxEventFileTargets: parsePositiveInt(
+      process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS,
+      DEFAULT_MAX_EVENT_FILE_TARGETS,
+    ),
+    maxDispatchFailures: parsePositiveInt(
+      process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES,
+      DEFAULT_MAX_DISPATCH_FAILURES,
+    ),
+    nonterminalIngestionStaleMs: parsePositiveInt(
+      process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS,
+      DEFAULT_NONTERMINAL_INGESTION_STALE_MS,
+    ),
+    routingAlignmentEnabled: parseBoolean(
+      process.env.BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED,
+      DEFAULT_ROUTING_ALIGNMENT_ENABLED,
+    ),
+    taskQueue: normalizeOptionalText(process.env.TEMPORAL_TASK_QUEUE) ?? DEFAULT_TASK_QUEUE,
+    repoRoot: resolve(
+      normalizeOptionalText(process.env.BUMBA_WORKSPACE_ROOT) ??
+        normalizeOptionalText(process.env.CODEX_CWD) ??
+        process.cwd(),
+    ),
+  }
+}
 
 const withDefaultSslMode = (rawUrl: string) => {
   let url: URL
@@ -483,6 +501,7 @@ const processEvent = async (
       processed: true,
       waitingOnIngestion: false,
       dispatchStarted: 0,
+      dispatchAlreadyStarted: 0,
       dispatchFailed: 0,
     }
   }
@@ -499,6 +518,7 @@ const processEvent = async (
       processed: true,
       waitingOnIngestion: false,
       dispatchStarted: 0,
+      dispatchAlreadyStarted: 0,
       dispatchFailed: 0,
     }
   }
@@ -514,6 +534,7 @@ const processEvent = async (
       processed: true,
       waitingOnIngestion: false,
       dispatchStarted: 0,
+      dispatchAlreadyStarted: 0,
       dispatchFailed: 0,
     }
   }
@@ -526,6 +547,7 @@ const processEvent = async (
         processed: true,
         waitingOnIngestion: false,
         dispatchStarted: 0,
+        dispatchAlreadyStarted: 0,
         dispatchFailed: 0,
       }
     }
@@ -552,6 +574,7 @@ const processEvent = async (
             processed: true,
             waitingOnIngestion: false,
             dispatchStarted: 0,
+            dispatchAlreadyStarted: 0,
             dispatchFailed: 0,
           }
         }
@@ -562,6 +585,7 @@ const processEvent = async (
       processed: false,
       waitingOnIngestion: true,
       dispatchStarted: 0,
+      dispatchAlreadyStarted: 0,
       dispatchFailed: 0,
     }
   }
@@ -569,6 +593,7 @@ const processEvent = async (
   const ref = resolveEventRef(payload)
 
   let started = 0
+  let alreadyStarted = 0
   let failed = 0
 
   for (const filePath of files) {
@@ -577,7 +602,7 @@ const processEvent = async (
       started += 1
     } catch (error) {
       if (isWorkflowAlreadyStartedError(error)) {
-        started += 1
+        alreadyStarted += 1
         continue
       }
 
@@ -591,11 +616,12 @@ const processEvent = async (
     }
   }
 
-  if (started > 0) {
+  if (started > 0 || alreadyStarted > 0) {
     console.info('[bumba][event-consumer] dispatched event workflows', {
       deliveryId: event.delivery_id,
       repository: event.repository,
       started,
+      alreadyStarted,
       failed,
       files: files.length,
     })
@@ -603,6 +629,7 @@ const processEvent = async (
       processed: false,
       waitingOnIngestion: false,
       dispatchStarted: started,
+      dispatchAlreadyStarted: alreadyStarted,
       dispatchFailed: failed,
     }
   }
@@ -617,7 +644,74 @@ const processEvent = async (
     processed: false,
     waitingOnIngestion: false,
     dispatchStarted: 0,
+    dispatchAlreadyStarted: 0,
     dispatchFailed: failed,
+  }
+}
+
+const runEventConsumerTick = async ({
+  db,
+  client,
+  config,
+  inFlightDeliveries,
+  dispatchFailureCounts,
+  ensureRoutingAlignment,
+  listPendingEvents = listPendingGithubEvents,
+  processPendingEvent = processEvent,
+  markProcessed = markEventProcessed,
+}: EventConsumerTickDependencies) => {
+  if (!(await ensureRoutingAlignment())) return
+
+  const events = await listPendingEvents(db, config.batchSize)
+  if (events.length === 0) return
+
+  let dispatchedEvents = 0
+  for (const event of events) {
+    if (dispatchedEvents >= config.maxDispatchEventsPerTick) break
+    if (inFlightDeliveries.has(event.delivery_id)) continue
+
+    inFlightDeliveries.add(event.delivery_id)
+    try {
+      const result = await processPendingEvent(db, client, config, event)
+      if (result.dispatchStarted > 0) {
+        dispatchedEvents += 1
+      }
+
+      if (
+        result.processed ||
+        result.waitingOnIngestion ||
+        result.dispatchStarted > 0 ||
+        result.dispatchAlreadyStarted > 0
+      ) {
+        dispatchFailureCounts.delete(event.delivery_id)
+        continue
+      }
+
+      if (result.dispatchFailed > 0) {
+        const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
+        if (failures >= config.maxDispatchFailures) {
+          console.error('[bumba][event-consumer] giving up on event after repeated dispatch failures', {
+            deliveryId: event.delivery_id,
+            repository: event.repository,
+            dispatchFailed: result.dispatchFailed,
+            attempts: failures,
+          })
+          await markProcessed(db, event.delivery_id)
+          dispatchFailureCounts.delete(event.delivery_id)
+        } else {
+          dispatchFailureCounts.set(event.delivery_id, failures)
+          console.warn('[bumba][event-consumer] retaining event for retry after dispatch failures', {
+            deliveryId: event.delivery_id,
+            repository: event.repository,
+            dispatchFailed: result.dispatchFailed,
+            attempts: failures,
+            maxAttempts: config.maxDispatchFailures,
+          })
+        }
+      }
+    } finally {
+      inFlightDeliveries.delete(event.delivery_id)
+    }
   }
 }
 
@@ -716,49 +810,14 @@ export const createGithubEventConsumer = (
 
   const runTick = async () => {
     if (!started || !db || !client) return
-    if (!(await ensureRoutingAlignment())) return
-
-    const events = await listPendingGithubEvents(db, config.batchSize)
-    if (events.length === 0) return
-
-    for (const event of events) {
-      if (inFlightDeliveries.has(event.delivery_id)) continue
-
-      inFlightDeliveries.add(event.delivery_id)
-      try {
-        const result = await processEvent(db, client, config, event)
-
-        if (result.processed || result.waitingOnIngestion || result.dispatchStarted > 0) {
-          dispatchFailureCounts.delete(event.delivery_id)
-          continue
-        }
-
-        if (result.dispatchFailed > 0) {
-          const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
-          if (failures >= config.maxDispatchFailures) {
-            console.error('[bumba][event-consumer] giving up on event after repeated dispatch failures', {
-              deliveryId: event.delivery_id,
-              repository: event.repository,
-              dispatchFailed: result.dispatchFailed,
-              attempts: failures,
-            })
-            await markEventProcessed(db, event.delivery_id)
-            dispatchFailureCounts.delete(event.delivery_id)
-          } else {
-            dispatchFailureCounts.set(event.delivery_id, failures)
-            console.warn('[bumba][event-consumer] retaining event for retry after dispatch failures', {
-              deliveryId: event.delivery_id,
-              repository: event.repository,
-              dispatchFailed: result.dispatchFailed,
-              attempts: failures,
-              maxAttempts: config.maxDispatchFailures,
-            })
-          }
-        }
-      } finally {
-        inFlightDeliveries.delete(event.delivery_id)
-      }
-    }
+    await runEventConsumerTick({
+      db,
+      client,
+      config,
+      inFlightDeliveries,
+      dispatchFailureCounts,
+      ensureRoutingAlignment,
+    })
   }
 
   const queueTick = () => {
@@ -794,6 +853,7 @@ export const createGithubEventConsumer = (
         pollIntervalMs: config.pollIntervalMs,
         batchSize: config.batchSize,
         maxDispatchFailures: config.maxDispatchFailures,
+        maxDispatchEventsPerTick: config.maxDispatchEventsPerTick,
         nonterminalIngestionStaleMs: config.nonterminalIngestionStaleMs,
         routingAlignmentEnabled: config.routingAlignmentEnabled,
         workerDeploymentName,
@@ -851,5 +911,6 @@ export const __test__ = {
   extractCurrentDeploymentBuildId,
   isTransientRoutingAlignmentError,
   isDeploymentApiUnavailableError,
+  runEventConsumerTick,
   TERMINAL_INGESTION_STATUSES,
 }

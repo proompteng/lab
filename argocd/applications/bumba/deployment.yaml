@@ -71,13 +71,13 @@ spec:
             - name: TEMPORAL_TASK_QUEUE
               value: bumba
             - name: TEMPORAL_WORKER_BUILD_ID
-              value: bumba@50c26221def75ebe05c4788dc2b5e1601e15988e
+              value: bumba@extended-db-activity-timeout-v1
             - name: TEMPORAL_WORKFLOW_CONCURRENCY
-              value: "64"
+              value: "12"
             - name: TEMPORAL_ACTIVITY_CONCURRENCY
-              value: "32"
+              value: "4"
             - name: TEMPORAL_STICKY_CACHE_SIZE
-              value: "1024"
+              value: "128"
             - name: TEMPORAL_DETERMINISM_MARKER_MODE
               value: delta
             - name: TEMPORAL_DETERMINISM_MARKER_INTERVAL_TASKS
@@ -126,6 +126,12 @@ spec:
               value: /workspace/.bun-install-cache
             - name: BUMBA_HEALTH_PORT
               value: "3001"
+            - name: BUMBA_GITHUB_EVENT_BATCH_SIZE
+              value: "20"
+            - name: BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK
+              value: "2"
+            - name: BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS
+              value: "30000"
             - name: REPOSITORY
               value: proompteng/lab
             - name: GITHUB_TOKEN
@@ -197,10 +203,10 @@ spec:
           resources:
             requests:
               cpu: 200m
-              memory: 256Mi
+              memory: 512Mi
             limits:
               cpu: "1"
-              memory: 1Gi
+              memory: 2Gi
           volumeMounts:
             - name: workspace
               mountPath: /workspace
