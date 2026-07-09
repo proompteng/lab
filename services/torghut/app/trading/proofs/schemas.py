@@ -123,15 +123,18 @@ class ProofPayload(TypedDict):
     identity: ProofIdentityPayload
     window: ProofWindowPayload
     symbols: list[str]
+    state: ProofState
+    blockers: list[str]
+    next_action: str
+
+
+class FullAuditProofPayload(ProofPayload):
     source_counts: SourceCountsPayload
     runtime_ledger: RuntimeLedgerPayload
     account_state: AccountStatePayload
     health: HealthPayload
     post_cost_pnl_basis: str | None
     post_cost_pnl_value: str | None
-    state: ProofState
-    blockers: list[str]
-    next_action: str
 
 
 class ProofSummaryPayload(TypedDict):
@@ -159,6 +162,6 @@ class ProofsPayload(TypedDict):
     window: dict[str, object]
     live_submission_gate: dict[str, object]
     tigerbeetle_reconciliation: TigerBeetleReconciliationPayload
-    proofs: list[ProofPayload]
+    proofs: list[ProofPayload | FullAuditProofPayload]
     summary: ProofSummaryPayload
     promotion_authority: PromotionAuthorityPayload
