@@ -66,8 +66,22 @@ jobs:
               "${base_sha}" \
               -- 'argocd/**/*.yaml'
           )
+          mapfile -d '' changed_validator_inputs < <(
+            git diff \
+              --name-only \
+              -z \
+              --diff-filter=ACMR \
+              "${base_sha}" \
+              -- 'scripts/kubeconform.sh' 'schemas/custom/**' 'flake.nix' 'flake.lock' 'nix/**' '.github/workflows/kubeconform.yml'
+          )
           if [ "${#changed_manifests[@]}" -eq 0 ]; then
-            echo "No changed Argo CD manifests to validate."
+            if [ "${#changed_validator_inputs[@]}" -eq 0 ]; then
+              echo "No changed Argo CD manifests to validate."
+              exit 0
+            fi
+            printf 'Validator input changed without manifest changes: %s\n' "${changed_validator_inputs[@]}"
+            echo "Validating full Argo CD tree because kubeconform inputs changed."
+            nix develop -c scripts/kubeconform.sh argocd
             exit 0
           fi
 

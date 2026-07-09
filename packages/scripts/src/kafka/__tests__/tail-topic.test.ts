@@ -56,4 +56,31 @@ describe('Kafka tail topic helper', () => {
       ]),
     ).toBe('kafka-pool-a-1')
   })
+
+  it('falls back to ready pool pods before unready broker pods', () => {
+    expect(
+      selectKafkaPodName([
+        {
+          metadata: {
+            name: 'kafka-pool-a-0',
+            labels: { 'strimzi.io/broker-role': 'true' },
+          },
+          status: {
+            phase: 'Pending',
+            conditions: [{ type: 'Ready', status: 'False' }],
+          },
+        },
+        {
+          metadata: {
+            name: 'kafka-pool-a-1',
+            labels: { 'strimzi.io/controller-role': 'true' },
+          },
+          status: {
+            phase: 'Running',
+            conditions: [{ type: 'Ready', status: 'True' }],
+          },
+        },
+      ]),
+    ).toBe('kafka-pool-a-1')
+  })
 })

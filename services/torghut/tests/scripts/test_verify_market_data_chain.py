@@ -284,6 +284,7 @@ def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness()
 
     assert summary["status"] == "degraded"
     assert summary["issues"] == [
+        "clickhouse_accepted_source_missing:ta_microbars",
         "clickhouse_accepted_source_stale:ta_signals",
         "kafka_consumer_group_lag",
         "kafka_topic_stale:torghut.trades.v1:0",
@@ -291,6 +292,51 @@ def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness()
     assert format_summary(summary, "markdown").startswith(
         "# Torghut Market Data Chain Smoke"
     )
+
+
+def test_build_summary_degrades_when_required_kafka_evidence_is_missing() -> None:
+    summary = build_summary(
+        MarketDataChainProbe(
+            generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
+            consumer_group_lag=[],
+            topic_offsets=[
+                TopicOffset(topic="torghut.trades.v1", partition=0, offset=10)
+            ],
+            latest_messages=[],
+            clickhouse_rows=[],
+        ),
+        thresholds=FreshnessThresholds(kafka_age_seconds=300),
+    )
+
+    assert summary["status"] == "degraded"
+    assert summary["issues"] == [
+        "kafka_consumer_group_lag_missing",
+        "kafka_topic_evidence_missing:torghut.trades.v1:0",
+    ]
+
+
+def test_build_summary_degrades_when_required_clickhouse_rows_are_missing() -> None:
+    summary = build_summary(
+        MarketDataChainProbe(
+            generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
+            consumer_group_lag=[],
+            topic_offsets=[],
+            latest_messages=[],
+            clickhouse_rows=[
+                ClickHouseFreshnessRow(
+                    table="ta_signals",
+                    source="ta",
+                    row_count=10,
+                    latest_event_ts="2026-07-08 21:09:00.000",
+                    latest_ingest_ts="2026-07-08 21:09:05.000",
+                )
+            ],
+        ),
+        thresholds=FreshnessThresholds(clickhouse_age_seconds=300),
+    )
+
+    assert summary["status"] == "degraded"
+    assert summary["issues"] == ["clickhouse_accepted_source_missing:ta_microbars"]
 
 
 def test_build_summary_handles_missing_and_zulu_clickhouse_timestamps() -> None:

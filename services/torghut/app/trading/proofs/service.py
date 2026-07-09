@@ -225,6 +225,21 @@ def _tigerbeetle_reconciliation_payload(
         blockers.append(_TIGERBEETLE_LEDGER_STATUS_UNAVAILABLE)
     if status_available and not bool(status.get("ok")) and not blockers:
         blockers.append(_TIGERBEETLE_LEDGER_NOT_OK)
+    if status_available and not bool(status.get("reconciliation_ok")):
+        blockers.append("tigerbeetle_reconciliation_not_ok")
+    if status_available and bool(status.get("reconciliation_stale")):
+        blockers.append("tigerbeetle_reconciliation_stale")
+    reconciliation_age_seconds = _int_or_none(status.get("reconciliation_age_seconds"))
+    reconciliation_max_age_seconds = _int_or_none(
+        status.get("reconciliation_max_age_seconds")
+    )
+    if (
+        status_available
+        and reconciliation_age_seconds is not None
+        and reconciliation_max_age_seconds is not None
+        and reconciliation_age_seconds > reconciliation_max_age_seconds
+    ):
+        blockers.append("tigerbeetle_reconciliation_stale")
 
     return {
         "schema_version": TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION,
@@ -235,12 +250,8 @@ def _tigerbeetle_reconciliation_payload(
         "reconciliation_required": bool(status.get("reconciliation_required")),
         "reconciliation_ok": bool(status.get("reconciliation_ok")),
         "reconciliation_stale": bool(status.get("reconciliation_stale")),
-        "reconciliation_age_seconds": _int_or_none(
-            status.get("reconciliation_age_seconds")
-        ),
-        "reconciliation_max_age_seconds": _int_or_none(
-            status.get("reconciliation_max_age_seconds")
-        ),
+        "reconciliation_age_seconds": reconciliation_age_seconds,
+        "reconciliation_max_age_seconds": reconciliation_max_age_seconds,
         "cluster_id": _int_or_none(status.get("cluster_id")),
         "claimed_by_runtime_evidence": bool(status.get("claimed_by_runtime_evidence")),
         "runtime_ledger_ref_count": _int_or_zero(
@@ -292,12 +303,12 @@ def _promotion_authority_blockers(
     tigerbeetle_reconciliation: Mapping[str, object],
 ) -> list[str]:
     blockers = ["live_runtime_ledger_authority_required"]
-    if not bool(tigerbeetle_reconciliation.get("status_available")) or not bool(
-        tigerbeetle_reconciliation.get("ok")
+    reconciliation_blockers = _text_items(tigerbeetle_reconciliation.get("blockers"))
+    if (
+        reconciliation_blockers
+        or not bool(tigerbeetle_reconciliation.get("status_available"))
+        or not bool(tigerbeetle_reconciliation.get("ok"))
     ):
-        reconciliation_blockers = _text_items(
-            tigerbeetle_reconciliation.get("blockers")
-        )
         blockers.extend(reconciliation_blockers or [_TIGERBEETLE_LEDGER_NOT_OK])
     return list(dict.fromkeys(blockers))
 

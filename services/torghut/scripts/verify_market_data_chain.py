@@ -202,46 +202,17 @@ def build_summary(
     active_thresholds = thresholds or FreshnessThresholds()
     issues: list[str] = []
     max_group_lag = max((row.lag for row in probe.consumer_group_lag), default=0)
-    if max_group_lag > 0:
-        issues.append("kafka_consumer_group_lag")
+    issues.extend(_consumer_group_issues(probe.consumer_group_lag, active_thresholds))
 
-    latest_message_payloads = [
-        {
-            **asdict(row),
-            "age_seconds": _age_seconds_from_epoch_ms(
-                probe.generated_at, row.timestamp_ms
-            ),
-        }
-        for row in probe.latest_messages
-    ]
-    if active_thresholds.kafka_age_seconds is not None:
-        for row in latest_message_payloads:
-            age = row["age_seconds"]
-            if isinstance(age, int) and age > active_thresholds.kafka_age_seconds:
-                issues.append(f"kafka_topic_stale:{row['topic']}:{row['partition']}")
+    latest_message_payloads = _latest_message_payloads(probe)
+    issues.extend(
+        _kafka_message_issues(
+            probe.topic_offsets, latest_message_payloads, active_thresholds
+        )
+    )
 
-    clickhouse_payloads = [
-        {
-            **asdict(row),
-            "latest_event_age_seconds": _age_seconds_from_clickhouse_ts(
-                probe.generated_at, row.latest_event_ts
-            ),
-            "latest_ingest_age_seconds": _age_seconds_from_clickhouse_ts(
-                probe.generated_at, row.latest_ingest_ts
-            ),
-        }
-        for row in probe.clickhouse_rows
-    ]
-    if active_thresholds.clickhouse_age_seconds is not None:
-        accepted_rows = [
-            row
-            for row in clickhouse_payloads
-            if row["source"] == "ta" and row["table"] in {"ta_signals", "ta_microbars"}
-        ]
-        for row in accepted_rows:
-            age = row["latest_event_age_seconds"]
-            if isinstance(age, int) and age > active_thresholds.clickhouse_age_seconds:
-                issues.append(f"clickhouse_accepted_source_stale:{row['table']}")
+    clickhouse_payloads = _clickhouse_payloads(probe)
+    issues.extend(_clickhouse_issues(clickhouse_payloads, active_thresholds))
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -262,6 +233,103 @@ def build_summary(
             "freshness": clickhouse_payloads,
         },
     }
+
+
+def _consumer_group_issues(
+    consumer_group_lag: Sequence[ConsumerGroupLag],
+    thresholds: FreshnessThresholds,
+) -> list[str]:
+    issues: list[str] = []
+    max_group_lag = max((row.lag for row in consumer_group_lag), default=0)
+    if thresholds.kafka_age_seconds is not None and not consumer_group_lag:
+        issues.append("kafka_consumer_group_lag_missing")
+    if max_group_lag > 0:
+        issues.append("kafka_consumer_group_lag")
+    return issues
+
+
+def _latest_message_payloads(probe: MarketDataChainProbe) -> list[dict[str, object]]:
+    return [
+        {
+            **asdict(row),
+            "age_seconds": _age_seconds_from_epoch_ms(
+                probe.generated_at, row.timestamp_ms
+            ),
+        }
+        for row in probe.latest_messages
+    ]
+
+
+def _kafka_message_issues(
+    topic_offsets: Sequence[TopicOffset],
+    latest_message_payloads: Sequence[dict[str, object]],
+    thresholds: FreshnessThresholds,
+) -> list[str]:
+    if thresholds.kafka_age_seconds is None:
+        return []
+    issues: list[str] = []
+    latest_message_keys = {
+        (str(row["topic"]), int(row["partition"]))
+        for row in latest_message_payloads
+        if isinstance(row.get("topic"), str) and isinstance(row.get("partition"), int)
+    }
+    for offset in topic_offsets:
+        if (offset.topic, offset.partition) not in latest_message_keys:
+            issues.append(
+                f"kafka_topic_evidence_missing:{offset.topic}:{offset.partition}"
+            )
+    for row in latest_message_payloads:
+        age = row["age_seconds"]
+        if isinstance(age, int) and age > thresholds.kafka_age_seconds:
+            issues.append(f"kafka_topic_stale:{row['topic']}:{row['partition']}")
+    return issues
+
+
+def _clickhouse_payloads(probe: MarketDataChainProbe) -> list[dict[str, object]]:
+    return [
+        {
+            **asdict(row),
+            "latest_event_age_seconds": _age_seconds_from_clickhouse_ts(
+                probe.generated_at, row.latest_event_ts
+            ),
+            "latest_ingest_age_seconds": _age_seconds_from_clickhouse_ts(
+                probe.generated_at, row.latest_ingest_ts
+            ),
+        }
+        for row in probe.clickhouse_rows
+    ]
+
+
+def _clickhouse_issues(
+    clickhouse_payloads: Sequence[dict[str, object]],
+    thresholds: FreshnessThresholds,
+) -> list[str]:
+    if thresholds.clickhouse_age_seconds is None:
+        return []
+    issues: list[str] = []
+    accepted_rows = [
+        row
+        for row in clickhouse_payloads
+        if row["source"] == "ta" and row["table"] in {"ta_signals", "ta_microbars"}
+    ]
+    accepted_by_table = {str(row["table"]): row for row in accepted_rows}
+    for table in ("ta_signals", "ta_microbars"):
+        row = accepted_by_table.get(table)
+        if _clickhouse_accepted_row_missing(row):
+            issues.append(f"clickhouse_accepted_source_missing:{table}")
+    for row in accepted_rows:
+        age = row["latest_event_age_seconds"]
+        if isinstance(age, int) and age > thresholds.clickhouse_age_seconds:
+            issues.append(f"clickhouse_accepted_source_stale:{row['table']}")
+    return issues
+
+
+def _clickhouse_accepted_row_missing(row: dict[str, object] | None) -> bool:
+    if row is None:
+        return True
+    return int(row.get("row_count", 0)) <= 0 or not isinstance(
+        row.get("latest_event_age_seconds"), int
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -51,6 +51,9 @@ const requireObject = (value: unknown, label: string): JsonObject => {
 }
 
 const requireNonNegativeInteger = (value: unknown, label: string): number => {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) {
+    throw new Error(`${label} must be a non-negative integer`)
+  }
   const normalized = typeof value === 'number' ? value : Number(value)
   if (!Number.isInteger(normalized) || normalized < 0) {
     throw new Error(`${label} must be a non-negative integer`)
@@ -1117,8 +1120,9 @@ const assertProofsTigerBeetleReconciliation = (evidence: unknown, status: JsonOb
     statusLatestReconciliation.finished_at,
     'torghut status tigerbeetle_ledger.latest_reconciliation.finished_at',
   )
-  if (Date.parse(statusFinishedAt) !== Date.parse(latestFinishedAt)) {
-    throw new Error(`${label} tigerbeetle_reconciliation latest finished_at must mirror torghut status`)
+  const reconciliationSkewMs = Math.abs(Date.parse(statusFinishedAt) - Date.parse(latestFinishedAt))
+  if (reconciliationSkewMs > maxAgeSeconds * 1000) {
+    throw new Error(`${label} tigerbeetle_reconciliation latest finished_at must be within max age of torghut status`)
   }
 }
 

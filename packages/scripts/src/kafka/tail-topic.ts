@@ -180,8 +180,8 @@ export const selectKafkaPodName = (items: KafkaPodListItem[]) => {
 
   return (
     brokerReadyCandidates[0]?.metadata.name ??
-    brokerCandidates[0]?.metadata.name ??
     readyCandidates[0]?.metadata.name ??
+    brokerCandidates[0]?.metadata.name ??
     candidates[0]?.metadata.name
   )
 }
