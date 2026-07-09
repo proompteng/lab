@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import cast
@@ -24,6 +24,7 @@ from .schemas import (
     ProofState,
     ProofWindowSelector,
     ProofsPayload,
+    TigerBeetleReconciliationPayload,
 )
 from .source_activity import (
     load_source_activity_counts,
@@ -39,12 +40,20 @@ from .targets import (
     select_proof_targets,
 )
 
+TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION = (
+    "torghut.proofs.tigerbeetle-reconciliation.v1"
+)
+_TIGERBEETLE_LEDGER_STATUS_MISSING = "tigerbeetle_ledger_status_missing"
+_TIGERBEETLE_LEDGER_STATUS_UNAVAILABLE = "tigerbeetle_ledger_status_unavailable"
+_TIGERBEETLE_LEDGER_NOT_OK = "tigerbeetle_ledger_not_ok"
+
 
 def build_proofs_payload(
     session: Session,
     *,
     live_submission_gate: Mapping[str, object],
     route_reacquisition_book: Mapping[str, object],
+    tigerbeetle_ledger_status: Mapping[str, object] | None = None,
     generated_at: datetime | None = None,
     kind: ProofKind = "runtime_window",
     limit: int = DEFAULT_PROOFS_LIMIT,
@@ -84,6 +93,10 @@ def build_proofs_payload(
         blocker_counts.update(proof["blockers"])
     gate_payload = _live_submission_gate_payload(live_submission_gate)
     gate_freshness = _live_submission_gate_freshness(gate_payload)
+    tigerbeetle_reconciliation = _tigerbeetle_reconciliation_payload(
+        tigerbeetle_ledger_status
+    )
+    promotion_blockers = _promotion_authority_blockers(tigerbeetle_reconciliation)
     return {
         "schema_version": PROOFS_SCHEMA_VERSION,
         "generated_at": isoformat(resolved_generated_at),
@@ -94,6 +107,7 @@ def build_proofs_payload(
             proofs=proofs,
         ),
         "live_submission_gate": gate_payload,
+        "tigerbeetle_reconciliation": tigerbeetle_reconciliation,
         "proofs": proofs,
         "summary": {
             "target_count": len(targets),
@@ -111,14 +125,135 @@ def build_proofs_payload(
             "accepted_lag_seconds": _float_or_none(
                 gate_freshness.get("accepted_lag_seconds")
             ),
+            "tigerbeetle_reconciliation_ok": bool(
+                tigerbeetle_reconciliation.get("reconciliation_ok")
+            ),
+            "tigerbeetle_reconciliation_stale": bool(
+                tigerbeetle_reconciliation.get("reconciliation_stale")
+            ),
+            "tigerbeetle_reconciliation_age_seconds": _int_or_none(
+                tigerbeetle_reconciliation.get("reconciliation_age_seconds")
+            ),
+            "tigerbeetle_reconciliation_required": bool(
+                tigerbeetle_reconciliation.get("reconciliation_required")
+            ),
         },
         "promotion_authority": {
             "allowed": False,
             "final_promotion_allowed": False,
             "reason": "proof_collection_only",
-            "blockers": ["live_runtime_ledger_authority_required"],
+            "blockers": promotion_blockers,
         },
     }
+
+
+def _tigerbeetle_reconciliation_payload(
+    tigerbeetle_ledger_status: Mapping[str, object] | None,
+) -> TigerBeetleReconciliationPayload:
+    if tigerbeetle_ledger_status is None:
+        return {
+            "schema_version": TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION,
+            "status_available": False,
+            "ok": False,
+            "protocol_ok": False,
+            "protocol_probe_skipped": False,
+            "reconciliation_required": False,
+            "reconciliation_ok": False,
+            "reconciliation_stale": False,
+            "reconciliation_age_seconds": None,
+            "reconciliation_max_age_seconds": None,
+            "cluster_id": None,
+            "claimed_by_runtime_evidence": False,
+            "runtime_ledger_ref_count": 0,
+            "runtime_ledger_signed_ref_count": 0,
+            "runtime_ledger_missing_signed_ref_count": 0,
+            "runtime_ledger_missing_account_ref_count": 0,
+            "latest_reconciliation": None,
+            "blockers": [_TIGERBEETLE_LEDGER_STATUS_MISSING],
+        }
+
+    status = tigerbeetle_ledger_status
+    status_available = not bool(status.get("read_model_unavailable"))
+    blockers = _text_items(status.get("blockers"))
+    if not status_available:
+        blockers.append(_TIGERBEETLE_LEDGER_STATUS_UNAVAILABLE)
+    if status_available and not bool(status.get("ok")) and not blockers:
+        blockers.append(_TIGERBEETLE_LEDGER_NOT_OK)
+
+    return {
+        "schema_version": TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION,
+        "status_available": status_available,
+        "ok": bool(status.get("ok")),
+        "protocol_ok": bool(status.get("protocol_ok")),
+        "protocol_probe_skipped": bool(status.get("protocol_probe_skipped")),
+        "reconciliation_required": bool(status.get("reconciliation_required")),
+        "reconciliation_ok": bool(status.get("reconciliation_ok")),
+        "reconciliation_stale": bool(status.get("reconciliation_stale")),
+        "reconciliation_age_seconds": _int_or_none(
+            status.get("reconciliation_age_seconds")
+        ),
+        "reconciliation_max_age_seconds": _int_or_none(
+            status.get("reconciliation_max_age_seconds")
+        ),
+        "cluster_id": _int_or_none(status.get("cluster_id")),
+        "claimed_by_runtime_evidence": bool(status.get("claimed_by_runtime_evidence")),
+        "runtime_ledger_ref_count": _int_or_zero(
+            status.get("runtime_ledger_ref_count")
+        ),
+        "runtime_ledger_signed_ref_count": _int_or_zero(
+            status.get("runtime_ledger_signed_ref_count")
+        ),
+        "runtime_ledger_missing_signed_ref_count": _int_or_zero(
+            status.get("runtime_ledger_missing_signed_ref_count")
+        ),
+        "runtime_ledger_missing_account_ref_count": _int_or_zero(
+            status.get("runtime_ledger_missing_account_ref_count")
+        ),
+        "latest_reconciliation": _latest_reconciliation_summary(
+            status.get("latest_reconciliation")
+        ),
+        "blockers": list(dict.fromkeys(blockers)),
+    }
+
+
+def _latest_reconciliation_summary(value: object) -> dict[str, object] | None:
+    if not isinstance(value, Mapping):
+        return None
+    payload = cast(Mapping[str, object], value)
+    keys = (
+        "id",
+        "cluster_id",
+        "status",
+        "ok",
+        "started_at",
+        "finished_at",
+        "age_seconds",
+        "reconciliation_stale",
+        "checked_transfer_count",
+        "missing_transfer_count",
+        "mismatched_transfer_count",
+        "source_missing_count",
+        "runtime_ledger_ref_count",
+        "runtime_ledger_signed_ref_count",
+        "runtime_ledger_missing_signed_ref_count",
+        "runtime_ledger_missing_account_ref_count",
+        "blockers",
+    )
+    return {key: payload.get(key) for key in keys if key in payload}
+
+
+def _promotion_authority_blockers(
+    tigerbeetle_reconciliation: Mapping[str, object],
+) -> list[str]:
+    blockers = ["live_runtime_ledger_authority_required"]
+    if not bool(tigerbeetle_reconciliation.get("status_available")) or not bool(
+        tigerbeetle_reconciliation.get("ok")
+    ):
+        reconciliation_blockers = _text_items(
+            tigerbeetle_reconciliation.get("blockers")
+        )
+        blockers.extend(reconciliation_blockers or [_TIGERBEETLE_LEDGER_NOT_OK])
+    return list(dict.fromkeys(blockers))
 
 
 def _live_submission_gate_payload(
@@ -160,6 +295,43 @@ def _float_or_none(value: object) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def _int_or_zero(value: object) -> int:
+    return _int_or_none(value) or 0
+
+
+def _int_or_none(value: object) -> int | None:
+    normalized: int | None = None
+    if value is None or isinstance(value, bool):
+        return normalized
+    if isinstance(value, int):
+        normalized = value
+    elif isinstance(value, Decimal):
+        if value == value.to_integral_value():
+            normalized = int(value)
+    elif isinstance(value, float):
+        if value.is_integer():
+            normalized = int(value)
+    elif isinstance(value, str):
+        try:
+            normalized = int(value)
+        except ValueError:
+            normalized = None
+    return normalized
+
+
+def _text_items(value: object) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray, str)):
+        return [
+            text
+            for item in cast(Sequence[object], value)
+            if (text := str(item).strip())
+        ]
+    return []
 
 
 def _load_strategy_universe_by_name(

@@ -5,6 +5,7 @@ import process from 'node:process'
 
 const ROUTE_BOARD_SCHEMA_VERSION = 'torghut.route-reacquisition-board.v1'
 const PROOFS_SCHEMA_VERSION = 'torghut.proofs.v1'
+const PROOFS_TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION = 'torghut.proofs.tigerbeetle-reconciliation.v1'
 const PAPER_ROUTE_EVIDENCE_SCHEMA_VERSION = 'torghut.paper-route-evidence.v1'
 const PAPER_ROUTE_TARGETS_SCHEMA_VERSION = 'torghut.next-paper-route-runtime-window-targets.v1'
 const RUNTIME_WINDOW_IMPORT_HEALTH_GATE_SCHEMA_VERSION = 'torghut.runtime-window-import-health-gate.v1'
@@ -1019,6 +1020,106 @@ const parseProofTargets = (
   }
 }
 
+const assertProofsTigerBeetleReconciliation = (evidence: unknown, status: JsonObject | undefined, label: string) => {
+  const payload = requireObject(evidence, `${label} payload`)
+  if (formatScalar(payload.schema_version, 'missing') !== PROOFS_SCHEMA_VERSION) {
+    return
+  }
+
+  const reconciliation = requireObject(payload.tigerbeetle_reconciliation, `${label} tigerbeetle_reconciliation`)
+  requireScalarValue(
+    reconciliation.schema_version,
+    PROOFS_TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION,
+    `${label} tigerbeetle_reconciliation.schema_version`,
+  )
+  if (
+    requireBoolean(reconciliation.status_available, `${label} tigerbeetle_reconciliation.status_available`) !== true
+  ) {
+    throw new Error(`${label} tigerbeetle_reconciliation.status_available must be true`)
+  }
+  if (requireBoolean(reconciliation.ok, `${label} tigerbeetle_reconciliation.ok`) !== true) {
+    throw new Error(`${label} tigerbeetle_reconciliation.ok must be true`)
+  }
+  if (
+    requireBoolean(reconciliation.reconciliation_ok, `${label} tigerbeetle_reconciliation.reconciliation_ok`) !== true
+  ) {
+    throw new Error(`${label} tigerbeetle_reconciliation.reconciliation_ok must be true`)
+  }
+  if (
+    requireBoolean(reconciliation.reconciliation_stale, `${label} tigerbeetle_reconciliation.reconciliation_stale`) !==
+    false
+  ) {
+    throw new Error(`${label} tigerbeetle_reconciliation.reconciliation_stale must be false`)
+  }
+
+  const ageSeconds = requireNonNegativeInteger(
+    reconciliation.reconciliation_age_seconds,
+    `${label} tigerbeetle_reconciliation.reconciliation_age_seconds`,
+  )
+  const maxAgeSeconds = requireNonNegativeInteger(
+    reconciliation.reconciliation_max_age_seconds,
+    `${label} tigerbeetle_reconciliation.reconciliation_max_age_seconds`,
+  )
+  if (ageSeconds > maxAgeSeconds) {
+    throw new Error(`${label} tigerbeetle_reconciliation age exceeds max age`)
+  }
+  if (requireArray(reconciliation.blockers, `${label} tigerbeetle_reconciliation.blockers`).length > 0) {
+    throw new Error(`${label} tigerbeetle_reconciliation.blockers must be empty for rollout acceptance`)
+  }
+
+  const latestReconciliation = requireObject(
+    reconciliation.latest_reconciliation,
+    `${label} tigerbeetle_reconciliation.latest_reconciliation`,
+  )
+  const latestFinishedAt = requireTimestamp(
+    latestReconciliation.finished_at,
+    `${label} tigerbeetle_reconciliation.latest_reconciliation.finished_at`,
+  )
+
+  const promotionAuthority = requireObject(payload.promotion_authority, `${label} promotion_authority`)
+  requireArrayIncludes(
+    promotionAuthority.blockers,
+    'live_runtime_ledger_authority_required',
+    `${label} promotion_authority.blockers`,
+  )
+
+  if (!status) {
+    return
+  }
+
+  const statusTigerBeetle = requireObject(status.tigerbeetle_ledger, 'torghut status tigerbeetle_ledger')
+  if (
+    requireBoolean(statusTigerBeetle.reconciliation_ok, 'torghut status tigerbeetle_ledger.reconciliation_ok') !== true
+  ) {
+    throw new Error('torghut status tigerbeetle_ledger.reconciliation_ok must be true')
+  }
+  if (
+    requireBoolean(statusTigerBeetle.reconciliation_stale, 'torghut status tigerbeetle_ledger.reconciliation_stale') !==
+    false
+  ) {
+    throw new Error('torghut status tigerbeetle_ledger.reconciliation_stale must be false')
+  }
+  const statusMaxAgeSeconds = requireNonNegativeInteger(
+    statusTigerBeetle.reconciliation_max_age_seconds,
+    'torghut status tigerbeetle_ledger.reconciliation_max_age_seconds',
+  )
+  if (statusMaxAgeSeconds !== maxAgeSeconds) {
+    throw new Error(`${label} tigerbeetle_reconciliation max age must mirror torghut status`)
+  }
+
+  const statusLatestReconciliation = requireObject(
+    statusTigerBeetle.latest_reconciliation,
+    'torghut status tigerbeetle_ledger.latest_reconciliation',
+  )
+  const statusFinishedAt = requireTimestamp(
+    statusLatestReconciliation.finished_at,
+    'torghut status tigerbeetle_ledger.latest_reconciliation.finished_at',
+  )
+  if (Date.parse(statusFinishedAt) !== Date.parse(latestFinishedAt)) {
+    throw new Error(`${label} tigerbeetle_reconciliation latest finished_at must mirror torghut status`)
+  }
+}
+
 const requireSameList = (left: string[], right: string[], label: string) => {
   if (left.length !== right.length || left.some((value, index) => value !== right[index])) {
     throw new Error(`${label}: expected ${left.join(',') || 'none'}, got ${right.join(',') || 'none'}`)
@@ -1255,6 +1356,8 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
     if (input.paperRouteEvidence === undefined || input.simPaperRouteEvidence === undefined) {
       throw new Error('both torghut and torghut-sim paper-route evidence payloads are required for mirror validation')
     }
+    assertProofsTigerBeetleReconciliation(input.paperRouteEvidence, status, 'torghut proof evidence')
+    assertProofsTigerBeetleReconciliation(input.simPaperRouteEvidence, undefined, 'torghut-sim proof evidence')
     const mirror = validatePaperRouteMirror(input.paperRouteEvidence, input.simPaperRouteEvidence)
     lines.push(
       '',

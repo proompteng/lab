@@ -73,6 +73,49 @@ def _gate(
     }
 
 
+def _tigerbeetle_status(
+    *,
+    ok: bool = True,
+    reconciliation_ok: bool = True,
+    reconciliation_stale: bool = False,
+    blockers: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "schema_version": "torghut.tigerbeetle-ledger-status.v1",
+        "ok": ok,
+        "protocol_ok": True,
+        "protocol_probe_skipped": False,
+        "reconciliation_required": True,
+        "reconciliation_ok": reconciliation_ok,
+        "reconciliation_stale": reconciliation_stale,
+        "reconciliation_age_seconds": 30,
+        "reconciliation_max_age_seconds": 300,
+        "cluster_id": 100,
+        "claimed_by_runtime_evidence": True,
+        "runtime_ledger_ref_count": 2,
+        "runtime_ledger_signed_ref_count": 2,
+        "runtime_ledger_missing_signed_ref_count": 0,
+        "runtime_ledger_missing_account_ref_count": 0,
+        "latest_reconciliation": {
+            "id": "recon-1",
+            "cluster_id": 100,
+            "status": "ok" if reconciliation_ok else "blocked",
+            "ok": reconciliation_ok,
+            "started_at": "2026-06-08T20:05:00+00:00",
+            "finished_at": "2026-06-08T20:05:02+00:00",
+            "age_seconds": 30,
+            "reconciliation_stale": reconciliation_stale,
+            "checked_transfer_count": 12,
+            "runtime_ledger_ref_count": 2,
+            "runtime_ledger_signed_ref_count": 2,
+            "runtime_ledger_missing_signed_ref_count": 0,
+            "runtime_ledger_missing_account_ref_count": 0,
+            "blockers": blockers or [],
+        },
+        "blockers": blockers or [],
+    }
+
+
 def _build(
     session: Session,
     *,
@@ -80,6 +123,7 @@ def _build(
     target: dict[str, object] | None = None,
     blockers: list[str] | None = None,
     accepted_lag_seconds: object = 420.5,
+    tigerbeetle_ledger_status: dict[str, object] | None = None,
 ) -> dict[str, object]:
     return build_proofs_payload(
         session,
@@ -87,6 +131,7 @@ def _build(
             _gate(target, blockers, accepted_lag_seconds) if target else {}
         ),
         route_reacquisition_book={},
+        tigerbeetle_ledger_status=tigerbeetle_ledger_status,
         generated_at=generated_at,
         window="auto",
         full_audit=True,
@@ -103,6 +148,11 @@ def test_build_proofs_payload_reports_no_target() -> None:
     assert payload["proofs"] == []
     assert payload["summary"]["target_count"] == 0
     assert payload["promotion_authority"]["allowed"] is False
+    assert payload["tigerbeetle_reconciliation"]["status_available"] is False
+    assert (
+        "tigerbeetle_ledger_status_missing"
+        in payload["promotion_authority"]["blockers"]
+    )
 
 
 def test_build_proofs_payload_exposes_live_submission_gate_and_freshness_summary() -> (
@@ -116,6 +166,7 @@ def test_build_proofs_payload_exposes_live_submission_gate_and_freshness_summary
             session,
             target=target,
             generated_at=window_start - timedelta(minutes=1),
+            tigerbeetle_ledger_status=_tigerbeetle_status(),
         )
 
     assert payload["live_submission_gate"]["allowed"] is False
@@ -124,12 +175,145 @@ def test_build_proofs_payload_exposes_live_submission_gate_and_freshness_summary
     assert payload["summary"]["live_submission_reason"] == "accepted_ta_signal_stale"
     assert payload["summary"]["accepted_source_state"] == "stale"
     assert payload["summary"]["accepted_lag_seconds"] == 420.5
+    assert payload["summary"]["tigerbeetle_reconciliation_ok"] is True
+    assert payload["summary"]["tigerbeetle_reconciliation_stale"] is False
+    assert payload["summary"]["tigerbeetle_reconciliation_age_seconds"] == 30
+    assert payload["summary"]["tigerbeetle_reconciliation_required"] is True
+    assert payload["tigerbeetle_reconciliation"]["latest_reconciliation"] == {
+        "id": "recon-1",
+        "cluster_id": 100,
+        "status": "ok",
+        "ok": True,
+        "started_at": "2026-06-08T20:05:00+00:00",
+        "finished_at": "2026-06-08T20:05:02+00:00",
+        "age_seconds": 30,
+        "reconciliation_stale": False,
+        "checked_transfer_count": 12,
+        "runtime_ledger_ref_count": 2,
+        "runtime_ledger_signed_ref_count": 2,
+        "runtime_ledger_missing_signed_ref_count": 0,
+        "runtime_ledger_missing_account_ref_count": 0,
+        "blockers": [],
+    }
     assert payload["promotion_authority"] == {
         "allowed": False,
         "final_promotion_allowed": False,
         "reason": "proof_collection_only",
         "blockers": ["live_runtime_ledger_authority_required"],
     }
+
+
+def test_build_proofs_payload_blocks_promotion_authority_on_stale_reconciliation() -> (
+    None
+):
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)
+    target = _target(window_start, window_end)
+    with _session() as session:
+        payload = _build(
+            session,
+            target=target,
+            generated_at=window_start - timedelta(minutes=1),
+            tigerbeetle_ledger_status=_tigerbeetle_status(
+                ok=False,
+                reconciliation_ok=False,
+                reconciliation_stale=True,
+                blockers=["tigerbeetle_reconciliation_stale"],
+            ),
+        )
+
+    assert payload["summary"]["tigerbeetle_reconciliation_ok"] is False
+    assert payload["summary"]["tigerbeetle_reconciliation_stale"] is True
+    assert (
+        "tigerbeetle_reconciliation_stale" in payload["promotion_authority"]["blockers"]
+    )
+
+
+def test_build_proofs_payload_blocks_promotion_authority_on_unavailable_reconciliation() -> (
+    None
+):
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    status = _tigerbeetle_status()
+    status["read_model_unavailable"] = True
+    status["blockers"] = "tigerbeetle_read_model_unavailable"
+
+    with _session() as session:
+        payload = _build(
+            session,
+            generated_at=window_start - timedelta(minutes=1),
+            tigerbeetle_ledger_status=status,
+        )
+
+    assert payload["tigerbeetle_reconciliation"]["status_available"] is False
+    assert payload["tigerbeetle_reconciliation"]["blockers"] == [
+        "tigerbeetle_read_model_unavailable",
+        "tigerbeetle_ledger_status_unavailable",
+    ]
+    assert (
+        "tigerbeetle_read_model_unavailable"
+        in payload["promotion_authority"]["blockers"]
+    )
+    assert (
+        "tigerbeetle_ledger_status_unavailable"
+        in payload["promotion_authority"]["blockers"]
+    )
+
+
+def test_build_proofs_payload_adds_default_tigerbeetle_blocker_when_status_not_ok() -> (
+    None
+):
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    status = _tigerbeetle_status(ok=False)
+    status["blockers"] = 123
+
+    with _session() as session:
+        payload = _build(
+            session,
+            generated_at=window_start - timedelta(minutes=1),
+            tigerbeetle_ledger_status=status,
+        )
+
+    assert payload["tigerbeetle_reconciliation"]["blockers"] == [
+        "tigerbeetle_ledger_not_ok"
+    ]
+    assert "tigerbeetle_ledger_not_ok" in payload["promotion_authority"]["blockers"]
+
+
+def test_build_proofs_payload_normalizes_tigerbeetle_numeric_fields() -> None:
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    status = _tigerbeetle_status()
+    status["reconciliation_age_seconds"] = Decimal("42")
+    status["reconciliation_max_age_seconds"] = 300.0
+    status["cluster_id"] = "100"
+    status["runtime_ledger_ref_count"] = "2"
+    status["runtime_ledger_signed_ref_count"] = 3.0
+    status["runtime_ledger_missing_signed_ref_count"] = "not-an-int"
+    status["runtime_ledger_missing_account_ref_count"] = Decimal("1")
+
+    with _session() as session:
+        payload = _build(
+            session,
+            generated_at=window_start - timedelta(minutes=1),
+            tigerbeetle_ledger_status=status,
+        )
+
+    assert payload["tigerbeetle_reconciliation"]["reconciliation_age_seconds"] == 42
+    assert (
+        payload["tigerbeetle_reconciliation"]["reconciliation_max_age_seconds"] == 300
+    )
+    assert payload["tigerbeetle_reconciliation"]["cluster_id"] == 100
+    assert payload["tigerbeetle_reconciliation"]["runtime_ledger_ref_count"] == 2
+    assert payload["tigerbeetle_reconciliation"]["runtime_ledger_signed_ref_count"] == 3
+    assert (
+        payload["tigerbeetle_reconciliation"]["runtime_ledger_missing_signed_ref_count"]
+        == 0
+    )
+    assert (
+        payload["tigerbeetle_reconciliation"][
+            "runtime_ledger_missing_account_ref_count"
+        ]
+        == 1
+    )
 
 
 def test_build_proofs_payload_normalizes_invalid_accepted_lag_summary() -> None:

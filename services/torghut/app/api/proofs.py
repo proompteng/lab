@@ -59,6 +59,7 @@ from .health_checks import (
     build_api_live_submission_gate_payload,
     build_hypothesis_runtime_payload,
     build_simple_lane_status_payload,
+    build_tigerbeetle_ledger_status,
     empirical_jobs_status,
     load_tca_summary,
 )
@@ -77,6 +78,7 @@ from .vnext_helpers import to_str_map as _to_str_map
 _build_hypothesis_runtime_payload = build_hypothesis_runtime_payload
 _build_live_submission_gate_payload = build_api_live_submission_gate_payload
 _build_simple_lane_status_payload = build_simple_lane_status_payload
+_build_tigerbeetle_ledger_status = build_tigerbeetle_ledger_status
 _deferred_hypothesis_payload_for_live_submission_gate = (
     deferred_hypothesis_payload_for_live_submission_gate
 )
@@ -222,11 +224,14 @@ def _build_trading_proofs_payload(
             proof_floor.get("route_reacquisition_book") or {},
         )
     with SessionLocal() as session:
+        tigerbeetle_ledger_status = _build_tigerbeetle_ledger_status(session)
+    with SessionLocal() as session:
         return dict(
             build_proofs_payload(
                 session,
                 live_submission_gate=cast(Mapping[str, Any], live_submission_gate),
                 route_reacquisition_book=route_reacquisition_book,
+                tigerbeetle_ledger_status=tigerbeetle_ledger_status,
                 kind=kind,
                 limit=limit,
                 window=window,
