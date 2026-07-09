@@ -306,5 +306,3 @@ class TestDurableInventoryFallback(_TestOrderIdempotencyBase):
                 ),
                 Decimal("0.25"),
             )
-
-
