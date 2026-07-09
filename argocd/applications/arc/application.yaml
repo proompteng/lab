@@ -78,7 +78,7 @@ spec:
                       docker version
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
                       ephemeral-storage: "4Gi"
                     limits:
@@ -110,7 +110,7 @@ spec:
                     - --max-concurrent-uploads=8
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
                       ephemeral-storage: "6Gi"
                     limits:
@@ -199,7 +199,7 @@ spec:
                       docker version
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
                       ephemeral-storage: "4Gi"
                     limits:
@@ -231,7 +231,7 @@ spec:
                     - --max-concurrent-uploads=8
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
                       ephemeral-storage: "6Gi"
                     limits:

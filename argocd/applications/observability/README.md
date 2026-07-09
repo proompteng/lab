@@ -77,3 +77,23 @@ kubectl -n observability get secret rook-ceph-rgw-loki
 kubectl -n observability get pods
 kubectl -n argocd get app observability
 ```
+
+## Cluster metrics
+
+The observability app owns the cluster metrics pipeline used for ARC runner sizing:
+
+- `observability-kube-state-metrics`: Kubernetes object state and request/limit/allocatable metrics.
+- `observability-cluster-metrics-alloy`: scrapes kube-state-metrics plus kubelet `/metrics` and `/metrics/cadvisor`, filters to runner-sizing metrics, and remote-writes to Mimir.
+- `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
+
+Validate the Mimir tenant after sync:
+
+```bash
+kubectl -n observability port-forward svc/observability-mimir-gateway 19090:80
+curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
+  --data-urlencode 'query=count(container_cpu_usage_seconds_total{namespace="arc"})' \
+  http://127.0.0.1:19090/prometheus/api/v1/query
+curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
+  --data-urlencode 'query=count(kube_pod_container_resource_requests{namespace="arc"})' \
+  http://127.0.0.1:19090/prometheus/api/v1/query
+```
