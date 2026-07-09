@@ -39,6 +39,7 @@ PAPER_ROUTE_TARGET_NOTIONAL_SOURCE_DECISION_SEED_QTY = Decimal("1")
 CONFIGURED_SIMPLE_LANE_PAPER_COLLECTION_SOURCE_KIND = (
     "configured_simple_lane_paper_data_collection"
 )
+PROOF_ACCOUNT_STATE_MISSING_BLOCKER = "proof_account_state_missing"
 
 
 @dataclass(frozen=True)
@@ -103,10 +104,13 @@ def _target_from_proof_identity(proof: Mapping[str, Any]) -> dict[str, Any]:
     window = _to_str_map(proof.get("window"))
     if not identity:
         return {}
+    account_state_missing = not isinstance(proof.get("account_state"), Mapping)
     account_state = _to_str_map(proof.get("account_state"))
     account_blockers = _text_items(account_state.get("blockers"))
+    if account_state_missing:
+        account_blockers = [PROOF_ACCOUNT_STATE_MISSING_BLOCKER, *account_blockers]
     clean_baseline = account_state.get("clean_baseline")
-    baseline_clean = clean_baseline is not False and not account_blockers
+    baseline_clean = clean_baseline is True and not account_blockers
     raw_symbols = proof.get("symbols")
     if isinstance(raw_symbols, str):
         symbol_values: Sequence[object] = raw_symbols.split(",")

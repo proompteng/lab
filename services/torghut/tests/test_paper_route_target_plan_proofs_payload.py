@@ -89,6 +89,10 @@ def test_slim_proofs_payload_still_materializes_target_plan() -> None:
                         "start": "2026-06-18T13:30:00+00:00",
                         "end": "2026-06-18T20:00:00+00:00",
                     },
+                    "account_state": {
+                        "blockers": [],
+                        "clean_baseline": True,
+                    },
                     "state": "waiting_for_session",
                     "blockers": [],
                     "next_action": "wait_for_session_open",
@@ -104,3 +108,46 @@ def test_slim_proofs_payload_still_materializes_target_plan() -> None:
     assert target["window_start"] == "2026-06-18T13:30:00+00:00"
     assert target["window_end"] == "2026-06-18T20:00:00+00:00"
     assert target["paper_route_probe_symbols"] == ["AAPL", "AMZN"]
+
+
+def test_proofs_payload_missing_account_state_fails_closed() -> None:
+    plan = paper_route_target_plan_from_payload(
+        {
+            "schema_version": "torghut.proofs.v1",
+            "proofs": [
+                {
+                    "proof_id": "H-PAIRS-01|candidate-1|pairs-v1",
+                    "identity": {
+                        "account_label": "TORGHUT_SIM",
+                        "candidate_id": "candidate-1",
+                        "hypothesis_id": "H-PAIRS-01",
+                        "runtime_strategy_name": "pairs-v1",
+                        "source_account_label": "TORGHUT_SIM",
+                        "source_kind": "runtime_window",
+                        "source_plan_ref": "proof-plan:candidate-1",
+                        "strategy_family": "pairs",
+                        "strategy_name": "pairs-v1",
+                        "target_notional": "1000000",
+                    },
+                    "symbols": ["AAPL"],
+                    "window": {
+                        "start": "2026-06-18T13:30:00+00:00",
+                        "end": "2026-06-18T20:00:00+00:00",
+                    },
+                    "state": "waiting_for_session",
+                    "blockers": [],
+                    "next_action": "wait_for_session_open",
+                }
+            ],
+        }
+    )
+
+    target = plan["targets"][0]
+    assert target["paper_route_clean_window_state"] == "blocked"
+    assert target["paper_route_clean_window_baseline_state"] == {
+        "state": "blocked",
+        "blockers": ["proof_account_state_missing"],
+    }
+    assert target["paper_route_clean_window_baseline_blockers"] == [
+        "proof_account_state_missing"
+    ]
