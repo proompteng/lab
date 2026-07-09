@@ -59,6 +59,15 @@ def _gate(
         "allowed": False,
         "reason": "accepted_ta_signal_stale",
         "blocked_reasons": blockers or [],
+        "schema_version": "torghut.live-submission-gate.v1",
+        "reason_codes": ["accepted_ta_signal_stale"],
+        "accepted_lag_seconds": accepted_lag_seconds,
+        "accepted_max_lag_seconds": 300,
+        "accepted_source_state": "stale",
+        "capital_stage": "shadow",
+        "configured_live_promotion": False,
+        "execution_route": "paper",
+        "regular_session_open": True,
         "clickhouse_ta_freshness": {
             "accepted_sources": ["ta"],
             "latest_accepted_event_at": "2026-06-08T13:29:00+00:00",
@@ -224,6 +233,12 @@ def test_build_proofs_payload_defaults_to_slim_machine_contract() -> None:
         "blocked_reasons",
         "clickhouse_ta_freshness",
     }
+    assert "accepted_source_state" not in payload["live_submission_gate"]
+    assert "capital_stage" not in payload["live_submission_gate"]
+    assert "configured_live_promotion" not in payload["live_submission_gate"]
+    assert "execution_route" not in payload["live_submission_gate"]
+    assert "reason_codes" not in payload["live_submission_gate"]
+    assert "regular_session_open" not in payload["live_submission_gate"]
     assert "runtime_ledger_repair_candidates" not in payload["live_submission_gate"]
     assert "segment_summary" not in payload["live_submission_gate"]
     assert payload["live_submission_gate"]["clickhouse_ta_freshness"] == {
