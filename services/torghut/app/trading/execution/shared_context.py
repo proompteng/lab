@@ -222,7 +222,6 @@ class _OrderExecutorContract(Protocol):
         execution_client: Any,
         request: ExecutionRequest,
         conflict: Mapping[str, Any],
-        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> tuple[
         ExecutionRequest,

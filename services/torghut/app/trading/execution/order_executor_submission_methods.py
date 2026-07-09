@@ -54,7 +54,6 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         execution_client: Any,
         request: ExecutionRequest,
         conflict: Mapping[str, Any],
-        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> tuple[
         ExecutionRequest,
@@ -88,7 +87,7 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
             execution_client,
             request,
             self._list_open_orders(execution_client),
-            position_qty=position_qty,
+            position_qty=_optional_decimal(conflict.get("position_qty")),
         )
         recovery: dict[str, Any] = {
             "source": "broker_precheck",

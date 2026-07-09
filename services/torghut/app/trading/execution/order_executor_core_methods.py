@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional, cast
 
@@ -75,6 +76,16 @@ if TYPE_CHECKING:
     _OrderExecutorCoreBase = _OrderExecutorContract
 else:
     _OrderExecutorCoreBase = object
+
+
+@dataclass(frozen=True, slots=True)
+class _OrderPreparationInputs:
+    session: Session
+    execution_client: Any
+    decision: StrategyDecision
+    decision_row: TradeDecision
+    account_label: str
+    execution_policy_context: dict[str, Any]
 
 
 class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
@@ -211,12 +222,14 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             return None
 
         prepared = self._prepare_order_submission(
-            session=session,
-            execution_client=execution_client,
-            decision=decision,
-            decision_row=decision_row,
-            account_label=account_label,
-            execution_policy_context=execution_policy_context,
+            _OrderPreparationInputs(
+                session=session,
+                execution_client=execution_client,
+                decision=decision,
+                decision_row=decision_row,
+                account_label=account_label,
+                execution_policy_context=execution_policy_context,
+            )
         )
         if retry_delays is None:
             retry_delays = []
@@ -252,27 +265,21 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
 
     def _prepare_order_submission(
         self,
-        *,
-        session: Session,
-        execution_client: Any,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        account_label: str,
-        execution_policy_context: dict[str, Any],
+        inputs: _OrderPreparationInputs,
     ) -> _PreparedOrderSubmission:
-        request = _execution_request_from_decision(decision, decision_row)
+        request = _execution_request_from_decision(inputs.decision, inputs.decision_row)
         durable_position_qty = self._durable_position_qty_for_symbol(
-            session=session,
+            session=inputs.session,
             symbol=request.symbol,
-            account_label=account_label,
+            account_label=inputs.account_label,
         )
         quantity_resolution = self._quantity_resolution_for_request(
-            execution_client,
+            inputs.execution_client,
             request,
             durable_position_qty=durable_position_qty,
         )
         self._raise_order_submission_precheck_errors(
-            execution_client=execution_client,
+            execution_client=inputs.execution_client,
             request=request,
             quantity_resolution=quantity_resolution,
         )
@@ -280,10 +287,10 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request=request,
             quantity_resolution=quantity_resolution,
             extra_params=_submission_extra_params(
-                execution_client=execution_client,
-                decision=decision,
-                decision_row=decision_row,
-                execution_policy_context=execution_policy_context,
+                execution_client=inputs.execution_client,
+                decision=inputs.decision,
+                decision_row=inputs.decision_row,
+                execution_policy_context=inputs.execution_policy_context,
                 request=request,
             ),
         )
@@ -393,7 +400,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                     execution_client=execution_client,
                     request=request,
                     conflict=unresolved,
-                    position_qty=position_qty,
                     fractional_equities_enabled=fractional_equities_enabled,
                 )
             )
