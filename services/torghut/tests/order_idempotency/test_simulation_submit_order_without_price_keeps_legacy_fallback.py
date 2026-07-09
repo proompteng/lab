@@ -4,7 +4,6 @@ from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
     Decimal,
-    Execution,
     ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
