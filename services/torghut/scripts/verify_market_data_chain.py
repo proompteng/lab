@@ -80,7 +80,9 @@ def parse_topic_offsets(output: str) -> list[TopicOffset]:
         topic, partition, offset = parts
         if not partition.isdigit() or not offset.isdigit():
             continue
-        rows.append(TopicOffset(topic=topic, partition=int(partition), offset=int(offset)))
+        rows.append(
+            TopicOffset(topic=topic, partition=int(partition), offset=int(offset))
+        )
     return rows
 
 
@@ -198,8 +200,12 @@ def build_summary(
     clickhouse_payloads = [
         {
             **asdict(row),
-            "latest_event_age_seconds": _age_seconds_from_clickhouse_ts(generated_at, row.latest_event_ts),
-            "latest_ingest_age_seconds": _age_seconds_from_clickhouse_ts(generated_at, row.latest_ingest_ts),
+            "latest_event_age_seconds": _age_seconds_from_clickhouse_ts(
+                generated_at, row.latest_event_ts
+            ),
+            "latest_ingest_age_seconds": _age_seconds_from_clickhouse_ts(
+                generated_at, row.latest_ingest_ts
+            ),
         }
         for row in clickhouse_rows
     ]
@@ -296,7 +302,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Kafka topic to probe. Repeat to replace the default topic set.",
     )
     parser.add_argument("--clickhouse-namespace", default="torghut")
-    parser.add_argument("--clickhouse-pod", default="chi-torghut-clickhouse-default-0-0-0")
+    parser.add_argument(
+        "--clickhouse-pod", default="chi-torghut-clickhouse-default-0-0-0"
+    )
     parser.add_argument("--clickhouse-secret", default="torghut-clickhouse-auth")
     parser.add_argument("--clickhouse-password-key", default="torghut_password")
     parser.add_argument("--clickhouse-user", default="torghut")
@@ -364,7 +372,10 @@ done
             "",
         )
     )
-    return _run(["kubectl", "exec", "-i", "-n", namespace, pod, "--", "bash", "-lc", script], input_text=properties)
+    return _run(
+        ["kubectl", "exec", "-i", "-n", namespace, pod, "--", "bash", "-lc", script],
+        input_text=properties,
+    )
 
 
 def run_clickhouse_query(
@@ -385,7 +396,10 @@ cat >"$SQL_FILE" <<'SQL'
 SQL
 clickhouse-client --user {shlex.quote(user)} --password "$CLICKHOUSE_PASSWORD" < "$SQL_FILE"
 """.strip()
-    return _run(["kubectl", "exec", "-i", "-n", namespace, pod, "--", "bash", "-lc", script], input_text=f"{password}\n")
+    return _run(
+        ["kubectl", "exec", "-i", "-n", namespace, pod, "--", "bash", "-lc", script],
+        input_text=f"{password}\n",
+    )
 
 
 def format_summary(

@@ -124,7 +124,9 @@ def test_parse_args_replaces_default_topics_when_topic_is_provided() -> None:
     assert custom.topic == ["custom.one", "custom.two"]
 
 
-def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness() -> None:
+def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness() -> (
+    None
+):
     summary = build_summary(
         generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
         consumer_group_lag=[
