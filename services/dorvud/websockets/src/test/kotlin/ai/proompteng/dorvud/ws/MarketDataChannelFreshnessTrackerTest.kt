@@ -211,6 +211,8 @@ class MarketDataChannelFreshnessTrackerTest {
 
     val missingCoverage = tracker.snapshot().single()
     assertFalse(tracker.ready())
+    assertTrue(missingCoverage.gateActive)
+    assertEquals("regular", missingCoverage.marketSessionState)
     assertEquals("market_data_channel_missing_symbol_coverage", missingCoverage.reason)
     assertEquals(listOf("AMD"), missingCoverage.missingSymbols)
     assertEquals(listOf("NVDA"), missingCoverage.freshSymbols)
@@ -228,6 +230,30 @@ class MarketDataChannelFreshnessTrackerTest {
     assertEquals("market_data_channel_stale_symbol_coverage", staleCoverage.reason)
     assertEquals(listOf("NVDA"), staleCoverage.staleSymbols)
     assertEquals(listOf("AMD"), staleCoverage.freshSymbols)
+  }
+
+  @Test
+  fun `post-session readiness exposes inactive gate and stale channel diagnostics`() {
+    val nowMs = Instant.parse("2026-07-07T22:00:00Z").toEpochMilli()
+    val tracker =
+      MarketDataChannelFreshnessTracker(
+        requiredChannels = listOf("trades"),
+        maxLagMs = 60_000,
+        warmupMs = 0,
+        nowMs = { nowMs },
+        marketType = AlpacaMarketType.EQUITY,
+      )
+
+    tracker.recordSubscriptionByChannel(mapOf("trades" to listOf("NVDA", "AMD")))
+
+    val readiness = tracker.snapshot().single()
+
+    assertTrue(tracker.ready())
+    assertTrue(readiness.ready)
+    assertFalse(readiness.gateActive)
+    assertEquals("post", readiness.marketSessionState)
+    assertEquals("market_data_channel_gate_inactive", readiness.reason)
+    assertEquals(listOf("AMD", "NVDA"), readiness.subscribedSymbols)
   }
 
   @Test

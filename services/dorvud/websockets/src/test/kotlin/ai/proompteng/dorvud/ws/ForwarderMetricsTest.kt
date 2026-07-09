@@ -133,6 +133,8 @@ class ForwarderMetricsTest {
           channel = "trades",
           ready = false,
           required = true,
+          gateActive = true,
+          marketSessionState = "regular",
           latestProviderEventAtMs = 100,
           latestSerializedAtMs = 110,
           latestKafkaSuccessAtMs = null,
