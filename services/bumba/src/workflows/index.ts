@@ -56,19 +56,24 @@ const createEmbeddingTimeouts = {
   scheduleToCloseTimeoutMs: 900_000,
 }
 
+const LEGACY_PERSIST_SCHEDULE_TO_CLOSE_MS = 300_000
+const LEGACY_UPSERT_SCHEDULE_TO_CLOSE_MS = 120_000
+const EXTENDED_DB_SCHEDULE_TO_CLOSE_MS = 900_000
+const EXTENDED_DB_ACTIVITY_TIMEOUT_PATCH = 'bumba.extendedDbActivityScheduleToClose.v1'
+
 const persistFileVersionTimeouts = {
   startToCloseTimeoutMs: 60_000,
-  scheduleToCloseTimeoutMs: 300_000,
+  scheduleToCloseTimeoutMs: EXTENDED_DB_SCHEDULE_TO_CLOSE_MS,
 }
 
 const persistEnrichmentRecordTimeouts = {
   startToCloseTimeoutMs: 60_000,
-  scheduleToCloseTimeoutMs: 300_000,
+  scheduleToCloseTimeoutMs: EXTENDED_DB_SCHEDULE_TO_CLOSE_MS,
 }
 
 const persistEmbeddingTimeouts = {
   startToCloseTimeoutMs: 60_000,
-  scheduleToCloseTimeoutMs: 300_000,
+  scheduleToCloseTimeoutMs: EXTENDED_DB_SCHEDULE_TO_CLOSE_MS,
 }
 
 const persistFactsTimeouts = {
@@ -83,23 +88,62 @@ const indexFileChunksTimeouts = {
 
 const upsertIngestionTimeouts = {
   startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: EXTENDED_DB_SCHEDULE_TO_CLOSE_MS,
 }
 
 const upsertEventFileTimeouts = {
   startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: EXTENDED_DB_SCHEDULE_TO_CLOSE_MS,
 }
 
 const upsertIngestionTargetTimeouts = {
   startToCloseTimeoutMs: 30_000,
-  scheduleToCloseTimeoutMs: 120_000,
+  scheduleToCloseTimeoutMs: EXTENDED_DB_SCHEDULE_TO_CLOSE_MS,
 }
 
 const cleanupEnrichmentTimeouts = {
   startToCloseTimeoutMs: 120_000,
   scheduleToCloseTimeoutMs: 600_000,
 }
+
+const legacyDbActivityTimeouts = {
+  persistFileVersion: {
+    ...persistFileVersionTimeouts,
+    scheduleToCloseTimeoutMs: LEGACY_PERSIST_SCHEDULE_TO_CLOSE_MS,
+  },
+  persistEnrichmentRecord: {
+    ...persistEnrichmentRecordTimeouts,
+    scheduleToCloseTimeoutMs: LEGACY_PERSIST_SCHEDULE_TO_CLOSE_MS,
+  },
+  persistEmbedding: {
+    ...persistEmbeddingTimeouts,
+    scheduleToCloseTimeoutMs: LEGACY_PERSIST_SCHEDULE_TO_CLOSE_MS,
+  },
+  upsertIngestion: {
+    ...upsertIngestionTimeouts,
+    scheduleToCloseTimeoutMs: LEGACY_UPSERT_SCHEDULE_TO_CLOSE_MS,
+  },
+  upsertEventFile: {
+    ...upsertEventFileTimeouts,
+    scheduleToCloseTimeoutMs: LEGACY_UPSERT_SCHEDULE_TO_CLOSE_MS,
+  },
+  upsertIngestionTarget: {
+    ...upsertIngestionTargetTimeouts,
+    scheduleToCloseTimeoutMs: LEGACY_UPSERT_SCHEDULE_TO_CLOSE_MS,
+  },
+}
+
+const extendedDbActivityTimeouts = {
+  persistFileVersion: persistFileVersionTimeouts,
+  persistEnrichmentRecord: persistEnrichmentRecordTimeouts,
+  persistEmbedding: persistEmbeddingTimeouts,
+  upsertIngestion: upsertIngestionTimeouts,
+  upsertEventFile: upsertEventFileTimeouts,
+  upsertIngestionTarget: upsertIngestionTargetTimeouts,
+}
+
+const resolveDbActivityTimeouts = (useExtendedTimeouts: boolean) =>
+  useExtendedTimeouts ? extendedDbActivityTimeouts : legacyDbActivityTimeouts
 
 const PARENT_CLOSE_POLICY_ABANDON = 2
 const DEFAULT_CHILD_WORKFLOW_BATCH_SIZE = 24
@@ -224,6 +268,14 @@ export const workflows = [
     const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
 
     return Effect.gen(function* () {
+      let dbActivityTimeouts: ReturnType<typeof resolveDbActivityTimeouts> | null = null
+      const getDbActivityTimeouts = () => {
+        if (!dbActivityTimeouts) {
+          dbActivityTimeouts = resolveDbActivityTimeouts(determinism.patched(EXTENDED_DB_ACTIVITY_TIMEOUT_PATCH))
+        }
+        return dbActivityTimeouts
+      }
+
       logWorkflow('enrichFile.started', {
         workflowId: info.workflowId,
         runId: info.runId,
@@ -257,7 +309,7 @@ export const workflows = [
             },
           ],
           {
-            ...upsertIngestionTimeouts,
+            ...getDbActivityTimeouts().upsertIngestion,
             retry: activityRetry,
           },
         )
@@ -275,7 +327,7 @@ export const workflows = [
               },
             ],
             {
-              ...upsertIngestionTimeouts,
+              ...getDbActivityTimeouts().upsertIngestion,
               retry: activityRetry,
             },
           )) as UpsertIngestionOutput
@@ -423,7 +475,7 @@ export const workflows = [
               },
             ],
             {
-              ...persistFileVersionTimeouts,
+              ...getDbActivityTimeouts().persistFileVersion,
               retry: activityRetry,
             },
           ) as Effect.Effect<PersistFileVersionOutput, unknown, never>
@@ -441,7 +493,7 @@ export const workflows = [
                   },
                 ],
                 {
-                  ...upsertEventFileTimeouts,
+                  ...getDbActivityTimeouts().upsertEventFile,
                   retry: activityRetry,
                 },
               )
@@ -458,7 +510,7 @@ export const workflows = [
                   },
                 ],
                 {
-                  ...upsertIngestionTargetTimeouts,
+                  ...getDbActivityTimeouts().upsertIngestionTarget,
                   retry: activityRetry,
                 },
               )
@@ -533,7 +585,7 @@ export const workflows = [
             },
           ],
           {
-            ...persistEnrichmentRecordTimeouts,
+            ...getDbActivityTimeouts().persistEnrichmentRecord,
             retry: activityRetry,
           },
         )) as PersistEnrichmentRecordOutput
@@ -547,7 +599,7 @@ export const workflows = [
             },
           ],
           {
-            ...persistEmbeddingTimeouts,
+            ...getDbActivityTimeouts().persistEmbedding,
             retry: activityRetry,
           },
         )
@@ -618,8 +670,16 @@ export const workflows = [
     name: 'enrichRepository',
     schema: EnrichRepositoryInput,
     signals: enrichRepositorySignals,
-    handler: ({ input, activities, childWorkflows, signals, info }) =>
+    handler: ({ input, activities, childWorkflows, signals, info, determinism }) =>
       Effect.gen(function* () {
+        let dbActivityTimeouts: ReturnType<typeof resolveDbActivityTimeouts> | null = null
+        const getDbActivityTimeouts = () => {
+          if (!dbActivityTimeouts) {
+            dbActivityTimeouts = resolveDbActivityTimeouts(determinism.patched(EXTENDED_DB_ACTIVITY_TIMEOUT_PATCH))
+          }
+          return dbActivityTimeouts
+        }
+
         const { repoRoot, repository, ref, commit, context, pathPrefix, maxFiles, eventDeliveryId } = input
 
         const childWorkflowBatchSize = resolveChildWorkflowConcurrency(input)
@@ -651,7 +711,7 @@ export const workflows = [
                   },
                 ],
                 {
-                  ...upsertIngestionTimeouts,
+                  ...getDbActivityTimeouts().upsertIngestion,
                   retry: activityRetry,
                 },
               )) as UpsertIngestionOutput)
@@ -787,7 +847,7 @@ export const workflows = [
                 },
               ],
               {
-                ...upsertIngestionTimeouts,
+                ...getDbActivityTimeouts().upsertIngestion,
                 retry: activityRetry,
               },
             )
@@ -834,7 +894,7 @@ export const workflows = [
                   },
                 ],
                 {
-                  ...upsertIngestionTimeouts,
+                  ...getDbActivityTimeouts().upsertIngestion,
                   retry: activityRetry,
                 },
               )

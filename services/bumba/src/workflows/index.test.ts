@@ -47,6 +47,54 @@ const execute = async (executor: WorkflowExecutor, overrides: ExecuteOverrides):
     mode: overrides.mode,
   })
 
+const shiftActivityResults = (entries: Array<[string, ActivityResolution]>, offset: number) =>
+  new Map<string, ActivityResolution>(
+    entries.map(([activityId, resolution]) => {
+      const sequence = Number.parseInt(activityId.slice('activity-'.length), 10)
+      return [`activity-${sequence + offset}`, resolution]
+    }),
+  )
+
+const legacyRepositoryIngestionState = (
+  deliveryId: string,
+  workflowId = 'test-workflow-id',
+): WorkflowDeterminismState => ({
+  commandHistory: [
+    {
+      intent: {
+        id: 'schedule-activity-0',
+        kind: 'schedule-activity',
+        sequence: 0,
+        activityType: 'upsertIngestion',
+        activityId: 'activity-0',
+        taskQueue: 'bumba',
+        input: [
+          {
+            deliveryId,
+            workflowId,
+            status: 'running',
+          },
+        ],
+        timeouts: {
+          scheduleToCloseTimeoutMs: 120_000,
+          startToCloseTimeoutMs: 30_000,
+        },
+        retry: {
+          initialIntervalMs: 2_000,
+          backoffCoefficient: 2,
+          maximumIntervalMs: 30_000,
+          maximumAttempts: 4,
+        },
+        requestEagerExecution: undefined,
+      },
+    },
+  ],
+  randomValues: [],
+  timeValues: [],
+  signals: [],
+  queries: [],
+})
+
 test('enrichFile schedules the first activity and blocks', async () => {
   const { executor, dataConverter } = makeExecutor()
   const input = {
@@ -89,14 +137,16 @@ test('enrichFile schedules ingestion when event delivery is provided', async () 
   const output = await execute(executor, { workflowType: 'enrichFile', arguments: input })
 
   expect(output.completion).toBe('pending')
-  expect(output.commands).toHaveLength(1)
-  const schedule = output.commands[0]
+  expect(output.commands).toHaveLength(2)
+  expect(output.commands[0].commandType).toBe(CommandType.RECORD_MARKER)
+  const schedule = output.commands[1]
   expect(schedule.commandType).toBe(CommandType.SCHEDULE_ACTIVITY_TASK)
   if (schedule.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
-    throw new Error('Expected schedule activity attributes on first command.')
+    throw new Error('Expected schedule activity attributes on ingestion command.')
   }
   const attrs = schedule.attributes.value
   expect(attrs?.activityType?.name).toBe('upsertIngestion')
+  expect(Number(attrs?.scheduleToCloseTimeout?.seconds ?? 0n)).toBe(900)
 
   const decoded = await decodePayloadsToValues(dataConverter, attrs?.input?.payloads ?? [])
   expect(decoded).toEqual([
@@ -192,25 +242,28 @@ test('enrichFile marks ingestion failed when initial upsertIngestion fails', asy
     eventDeliveryId: 'delivery-1',
   }
 
-  const activityResults = new Map<string, ActivityResolution>([
+  const activityResults = shiftActivityResults(
     [
-      'activity-0',
-      {
-        status: 'failed',
-        error: new Error('upsert timeout'),
-      },
-    ],
-    [
-      'activity-1',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
+      [
+        'activity-0',
+        {
+          status: 'failed',
+          error: new Error('upsert timeout'),
         },
-      },
+      ],
+      [
+        'activity-1',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
+        },
+      ],
     ],
-  ])
+    1,
+  )
 
   const output = await execute(executor, {
     workflowType: 'enrichFile',
@@ -244,134 +297,137 @@ test('enrichFile completes when all activities are resolved', async () => {
     eventDeliveryId: 'delivery-1',
   }
 
-  const activityResults = new Map<string, ActivityResolution>([
+  const activityResults = shiftActivityResults(
     [
-      'activity-0',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
+      [
+        'activity-0',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-1',
-      {
-        status: 'completed',
-        value: {
-          content: 'console.log("hi")',
-          metadata: {
-            repoName: 'lab',
-            repoRef: 'main',
-            repoCommit: 'deadbeef',
-            path: input.filePath,
-            contentHash: 'hash',
-            language: 'ts',
-            byteSize: 17,
-            lineCount: 1,
-            sourceTimestamp: null,
+      ],
+      [
+        'activity-1',
+        {
+          status: 'completed',
+          value: {
+            content: 'console.log("hi")',
+            metadata: {
+              repoName: 'lab',
+              repoRef: 'main',
+              repoCommit: 'deadbeef',
+              path: input.filePath,
+              contentHash: 'hash',
+              language: 'ts',
+              byteSize: 17,
+              lineCount: 1,
+              sourceTimestamp: null,
+              metadata: {},
+            },
+          },
+        },
+      ],
+      [
+        'activity-2',
+        {
+          status: 'completed',
+          value: {
+            astSummary: 'summary',
+            facts: [],
             metadata: {},
           },
         },
-      },
-    ],
-    [
-      'activity-2',
-      {
-        status: 'completed',
-        value: {
-          astSummary: 'summary',
-          facts: [],
-          metadata: {},
+      ],
+      [
+        'activity-4',
+        {
+          status: 'completed',
+          value: {
+            repositoryId: 'repo-id',
+            fileKeyId: 'file-key-id',
+            fileVersionId: 'file-version-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-4',
-      {
-        status: 'completed',
-        value: {
-          repositoryId: 'repo-id',
-          fileKeyId: 'file-key-id',
-          fileVersionId: 'file-version-id',
+      ],
+      [
+        'activity-5',
+        {
+          status: 'completed',
+          value: {
+            eventFileId: 'event-file-id',
+            eventId: 'event-id',
+            fileKeyId: 'file-key-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-5',
-      {
-        status: 'completed',
-        value: {
-          eventFileId: 'event-file-id',
-          eventId: 'event-id',
-          fileKeyId: 'file-key-id',
+      ],
+      [
+        'activity-6',
+        {
+          status: 'completed',
+          value: {},
         },
-      },
-    ],
-    [
-      'activity-6',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-7',
-      {
-        status: 'completed',
-        value: {
-          skipped: true,
-          reason: 'disabled',
-          chunks: 0,
-          embedded: 0,
+      ],
+      [
+        'activity-7',
+        {
+          status: 'completed',
+          value: {
+            skipped: true,
+            reason: 'disabled',
+            chunks: 0,
+            embedded: 0,
+          },
         },
-      },
-    ],
-    [
-      'activity-8',
-      {
-        status: 'completed',
-        value: {
-          summary: 'short summary',
-          enriched: '- bullet',
-          metadata: {},
+      ],
+      [
+        'activity-8',
+        {
+          status: 'completed',
+          value: {
+            summary: 'short summary',
+            enriched: '- bullet',
+            metadata: {},
+          },
         },
-      },
-    ],
-    [
-      'activity-9',
-      {
-        status: 'completed',
-        value: {
-          embedding: [0.1, 0.2, 0.3],
+      ],
+      [
+        'activity-9',
+        {
+          status: 'completed',
+          value: {
+            embedding: [0.1, 0.2, 0.3],
+          },
         },
-      },
-    ],
-    [
-      'activity-10',
-      {
-        status: 'completed',
-        value: {
-          enrichmentId: 'enrichment-id',
+      ],
+      [
+        'activity-10',
+        {
+          status: 'completed',
+          value: {
+            enrichmentId: 'enrichment-id',
+          },
         },
-      },
+      ],
+      [
+        'activity-11',
+        {
+          status: 'completed',
+          value: {},
+        },
+      ],
+      [
+        'activity-12',
+        {
+          status: 'completed',
+          value: {},
+        },
+      ],
     ],
-    [
-      'activity-11',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-12',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-  ])
+    1,
+  )
 
   const output = await execute(executor, {
     workflowType: 'enrichFile',
@@ -413,103 +469,106 @@ test('enrichFile fails when enrichWithModel times out', async () => {
     eventDeliveryId: 'delivery-1',
   }
 
-  const activityResults = new Map<string, ActivityResolution>([
+  const activityResults = shiftActivityResults(
     [
-      'activity-0',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
+      [
+        'activity-0',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-1',
-      {
-        status: 'completed',
-        value: {
-          content: 'console.log("hi")',
-          metadata: {
-            repoName: 'lab',
-            repoRef: 'main',
-            repoCommit: 'deadbeef',
-            path: input.filePath,
-            contentHash: 'hash',
-            language: 'ts',
-            byteSize: 17,
-            lineCount: 1,
-            sourceTimestamp: null,
+      ],
+      [
+        'activity-1',
+        {
+          status: 'completed',
+          value: {
+            content: 'console.log("hi")',
+            metadata: {
+              repoName: 'lab',
+              repoRef: 'main',
+              repoCommit: 'deadbeef',
+              path: input.filePath,
+              contentHash: 'hash',
+              language: 'ts',
+              byteSize: 17,
+              lineCount: 1,
+              sourceTimestamp: null,
+              metadata: {},
+            },
+          },
+        },
+      ],
+      [
+        'activity-2',
+        {
+          status: 'completed',
+          value: {
+            astSummary: 'summary',
+            facts: [],
             metadata: {},
           },
         },
-      },
-    ],
-    [
-      'activity-2',
-      {
-        status: 'completed',
-        value: {
-          astSummary: 'summary',
-          facts: [],
-          metadata: {},
+      ],
+      [
+        'activity-3',
+        {
+          status: 'completed',
+          value: {
+            repositoryId: 'repo-id',
+            fileKeyId: 'file-key-id',
+            fileVersionId: 'file-version-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-3',
-      {
-        status: 'completed',
-        value: {
-          repositoryId: 'repo-id',
-          fileKeyId: 'file-key-id',
-          fileVersionId: 'file-version-id',
+      ],
+      [
+        'activity-4',
+        {
+          status: 'completed',
+          value: {
+            eventFileId: 'event-file-id',
+            eventId: 'event-id',
+            fileKeyId: 'file-key-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-4',
-      {
-        status: 'completed',
-        value: {
-          eventFileId: 'event-file-id',
-          eventId: 'event-id',
-          fileKeyId: 'file-key-id',
+      ],
+      [
+        'activity-5',
+        {
+          status: 'completed',
+          value: {},
         },
-      },
-    ],
-    [
-      'activity-5',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-6',
-      {
-        status: 'completed',
-        value: { skipped: true, reason: 'disabled', chunks: 0, embedded: 0 },
-      },
-    ],
-    [
-      'activity-7',
-      {
-        status: 'failed',
-        error: new Error('completion request timed out after 60000ms'),
-      },
-    ],
-    [
-      'activity-8',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
+      ],
+      [
+        'activity-6',
+        {
+          status: 'completed',
+          value: { skipped: true, reason: 'disabled', chunks: 0, embedded: 0 },
         },
-      },
+      ],
+      [
+        'activity-7',
+        {
+          status: 'failed',
+          error: new Error('completion request timed out after 60000ms'),
+        },
+      ],
+      [
+        'activity-8',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
+        },
+      ],
     ],
-  ])
+    1,
+  )
 
   const output = await execute(executor, {
     workflowType: 'enrichFile',
@@ -532,146 +591,149 @@ test('enrichFile schedules cleanup when force is enabled', async () => {
     force: true,
   }
 
-  const activityResults = new Map<string, ActivityResolution>([
+  const activityResults = shiftActivityResults(
     [
-      'activity-0',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
+      [
+        'activity-0',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-1',
-      {
-        status: 'completed',
-        value: {
-          content: 'console.log("hi")',
-          metadata: {
-            repoName: 'lab',
-            repoRef: 'main',
-            repoCommit: 'deadbeef',
-            path: input.filePath,
-            contentHash: 'hash',
-            language: 'ts',
-            byteSize: 17,
-            lineCount: 1,
-            sourceTimestamp: null,
+      ],
+      [
+        'activity-1',
+        {
+          status: 'completed',
+          value: {
+            content: 'console.log("hi")',
+            metadata: {
+              repoName: 'lab',
+              repoRef: 'main',
+              repoCommit: 'deadbeef',
+              path: input.filePath,
+              contentHash: 'hash',
+              language: 'ts',
+              byteSize: 17,
+              lineCount: 1,
+              sourceTimestamp: null,
+              metadata: {},
+            },
+          },
+        },
+      ],
+      [
+        'activity-2',
+        {
+          status: 'completed',
+          value: {
+            fileVersions: 1,
+            enrichments: 1,
+            embeddings: 1,
+            facts: 0,
+          },
+        },
+      ],
+      [
+        'activity-3',
+        {
+          status: 'completed',
+          value: {
+            astSummary: 'summary',
+            facts: [],
             metadata: {},
           },
         },
-      },
-    ],
-    [
-      'activity-2',
-      {
-        status: 'completed',
-        value: {
-          fileVersions: 1,
-          enrichments: 1,
-          embeddings: 1,
-          facts: 0,
+      ],
+      [
+        'activity-5',
+        {
+          status: 'completed',
+          value: {
+            repositoryId: 'repo-id',
+            fileKeyId: 'file-key-id',
+            fileVersionId: 'file-version-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-3',
-      {
-        status: 'completed',
-        value: {
-          astSummary: 'summary',
-          facts: [],
-          metadata: {},
+      ],
+      [
+        'activity-6',
+        {
+          status: 'completed',
+          value: {
+            eventFileId: 'event-file-id',
+            eventId: 'event-id',
+            fileKeyId: 'file-key-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-5',
-      {
-        status: 'completed',
-        value: {
-          repositoryId: 'repo-id',
-          fileKeyId: 'file-key-id',
-          fileVersionId: 'file-version-id',
+      ],
+      [
+        'activity-7',
+        {
+          status: 'completed',
+          value: {},
         },
-      },
-    ],
-    [
-      'activity-6',
-      {
-        status: 'completed',
-        value: {
-          eventFileId: 'event-file-id',
-          eventId: 'event-id',
-          fileKeyId: 'file-key-id',
+      ],
+      [
+        'activity-8',
+        {
+          status: 'completed',
+          value: {
+            skipped: true,
+            reason: 'disabled',
+            chunks: 0,
+            embedded: 0,
+          },
         },
-      },
-    ],
-    [
-      'activity-7',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-8',
-      {
-        status: 'completed',
-        value: {
-          skipped: true,
-          reason: 'disabled',
-          chunks: 0,
-          embedded: 0,
+      ],
+      [
+        'activity-9',
+        {
+          status: 'completed',
+          value: {
+            summary: 'short summary',
+            enriched: '- bullet',
+            metadata: {},
+          },
         },
-      },
-    ],
-    [
-      'activity-9',
-      {
-        status: 'completed',
-        value: {
-          summary: 'short summary',
-          enriched: '- bullet',
-          metadata: {},
+      ],
+      [
+        'activity-10',
+        {
+          status: 'completed',
+          value: {
+            embedding: [0.1, 0.2, 0.3],
+          },
         },
-      },
-    ],
-    [
-      'activity-10',
-      {
-        status: 'completed',
-        value: {
-          embedding: [0.1, 0.2, 0.3],
+      ],
+      [
+        'activity-11',
+        {
+          status: 'completed',
+          value: {
+            enrichmentId: 'enrichment-id',
+          },
         },
-      },
-    ],
-    [
-      'activity-11',
-      {
-        status: 'completed',
-        value: {
-          enrichmentId: 'enrichment-id',
+      ],
+      [
+        'activity-12',
+        {
+          status: 'completed',
+          value: {},
         },
-      },
+      ],
+      [
+        'activity-13',
+        {
+          status: 'completed',
+          value: {},
+        },
+      ],
     ],
-    [
-      'activity-12',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-    [
-      'activity-13',
-      {
-        status: 'completed',
-        value: {},
-      },
-    ],
-  ])
+    1,
+  )
 
   const output = await execute(executor, {
     workflowType: 'enrichFile',
@@ -949,6 +1011,95 @@ test('enrichRepository completes when child workflows signal completion', async 
   })
 })
 
+test('enrichRepository keeps legacy upsert timeout when completing old event histories', async () => {
+  const { executor, dataConverter } = makeExecutor()
+  const files = ['path/to/file-0.ts', 'path/to/file-1.ts']
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    eventDeliveryId: 'delivery-legacy-complete',
+    files,
+  }
+  const workflowId = 'repo-workflow-legacy-complete'
+  const runId = 'run-legacy-complete'
+
+  const initial = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+    determinismState: legacyRepositoryIngestionState(input.eventDeliveryId, workflowId),
+    activityResults: new Map<string, ActivityResolution>([
+      [
+        'activity-0',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
+        },
+      ],
+    ]),
+  })
+
+  expect(initial.completion).toBe('pending')
+
+  const signalDeliveries = files.map((_filePath, index) => ({
+    name: '__childWorkflowCompleted',
+    args: [
+      {
+        workflowId: `${workflowId}-child-${runId}-${index}`,
+        status: 'completed',
+      },
+    ],
+  }))
+
+  const completion = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    runId,
+    determinismState: initial.determinismState,
+    activityResults: new Map<string, ActivityResolution>([
+      [
+        'activity-0',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
+        },
+      ],
+    ]),
+    signalDeliveries,
+    pendingChildWorkflows: new Set(),
+  })
+
+  expect(completion.completion).toBe('pending')
+
+  const upsertSchedule = completion.commands.find((command) => {
+    const attrs =
+      command.attributes?.case === 'scheduleActivityTaskCommandAttributes' ? command.attributes.value : undefined
+    return attrs?.activityType?.name === 'upsertIngestion'
+  })
+  if (upsertSchedule?.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected final upsertIngestion schedule command.')
+  }
+  const attrs = upsertSchedule.attributes.value
+  expect(Number(attrs.scheduleToCloseTimeout?.seconds ?? 0n)).toBe(120)
+
+  const decoded = await decodePayloadsToValues(dataConverter, attrs.input?.payloads ?? [])
+  expect(decoded).toEqual([
+    {
+      deliveryId: input.eventDeliveryId,
+      workflowId,
+      status: 'completed',
+    },
+  ])
+})
+
 test('enrichRepository fails when child workflows report failures', async () => {
   const { executor } = makeExecutor()
   const files = ['path/to/file-0.ts', 'path/to/file-1.ts']
@@ -1005,6 +1156,67 @@ test('enrichRepository fails when child workflows report failures', async () => 
   expect((completion.failure as Error).message).toContain('1 child workflows failed')
 })
 
+test('enrichRepository keeps legacy upsert timeout on old event catch-path failures', async () => {
+  const { executor, dataConverter } = makeExecutor()
+  const input = {
+    repoRoot: '/workspace/lab/.worktrees/bumba',
+    repository: 'proompteng/lab',
+    commit: 'deadbeef',
+    pathPrefix: 'services',
+    eventDeliveryId: 'delivery-legacy-failure',
+  }
+  const workflowId = 'repo-workflow-legacy-failure'
+
+  const output = await execute(executor, {
+    workflowType: 'enrichRepository',
+    arguments: input,
+    workflowId,
+    determinismState: legacyRepositoryIngestionState(input.eventDeliveryId, workflowId),
+    activityResults: new Map<string, ActivityResolution>([
+      [
+        'activity-0',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
+        },
+      ],
+      [
+        'activity-1',
+        {
+          status: 'failed',
+          error: new Error('list timeout'),
+        },
+      ],
+    ]),
+  })
+
+  expect(output.completion).toBe('pending')
+
+  const upsertSchedule = output.commands.find((command) => {
+    const attrs =
+      command.attributes?.case === 'scheduleActivityTaskCommandAttributes' ? command.attributes.value : undefined
+    return attrs?.activityType?.name === 'upsertIngestion'
+  })
+  if (upsertSchedule?.attributes?.case !== 'scheduleActivityTaskCommandAttributes') {
+    throw new Error('Expected catch-path upsertIngestion schedule command.')
+  }
+  const attrs = upsertSchedule.attributes.value
+  expect(Number(attrs.scheduleToCloseTimeout?.seconds ?? 0n)).toBe(120)
+
+  const decoded = await decodePayloadsToValues(dataConverter, attrs.input?.payloads ?? [])
+  expect(decoded).toEqual([
+    {
+      deliveryId: input.eventDeliveryId,
+      workflowId,
+      status: 'failed',
+      error: 'list timeout',
+    },
+  ])
+})
+
 test('enrichRepository marks ingestion failed when initial upsertIngestion fails', async () => {
   const { executor } = makeExecutor()
   const input = {
@@ -1014,25 +1226,28 @@ test('enrichRepository marks ingestion failed when initial upsertIngestion fails
     files: ['path/to/file.ts'],
   }
 
-  const activityResults = new Map<string, ActivityResolution>([
+  const activityResults = shiftActivityResults(
     [
-      'activity-0',
-      {
-        status: 'failed',
-        error: new Error('upsert timeout'),
-      },
-    ],
-    [
-      'activity-1',
-      {
-        status: 'completed',
-        value: {
-          ingestionId: 'ingestion-id',
-          eventId: 'event-id',
+      [
+        'activity-0',
+        {
+          status: 'failed',
+          error: new Error('upsert timeout'),
         },
-      },
+      ],
+      [
+        'activity-1',
+        {
+          status: 'completed',
+          value: {
+            ingestionId: 'ingestion-id',
+            eventId: 'event-id',
+          },
+        },
+      ],
     ],
-  ])
+    1,
+  )
 
   const output = await execute(executor, {
     workflowType: 'enrichRepository',
