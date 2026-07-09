@@ -9,6 +9,7 @@ from tests.order_idempotency.support import (
     FakeAlpacaClient,
     FilledAlpacaClient,
     OrderExecutor,
+    PositionLookupNoneClient,
     SimulationExecutionAdapter,
     Strategy,
     StrategyDecision,
@@ -741,7 +742,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             sell_decision_row = executor.ensure_decision(
                 session, sell_decision, strategy, "paper"
             )
-            lagging_client = FakeAlpacaClient()
+            lagging_client = PositionLookupNoneClient()
 
             sell_execution = executor.submit_order(
                 session,
@@ -759,7 +760,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
     def test_submit_order_precheck_blocks_second_lagging_fractional_exit_when_reserved(
         self,
     ) -> None:
-        class LaggingReservedSellClient(FakeAlpacaClient):
+        class LaggingReservedSellClient(PositionLookupNoneClient):
             def list_orders(self, status: str = "all") -> list[dict[str, str]]:
                 if status != "open":
                     return []
