@@ -11,8 +11,8 @@ def test_submission_authority_allows_operational_submission() -> None:
                 "reason": "operational_submission_ready",
                 "blocked_reasons": [],
                 "execution_route": {
-                    "route": "testnet",
-                    "alpaca_regular_session_open": False,
+                    "route": "alpaca",
+                    "alpaca_regular_session_open": True,
                 },
             },
         },
@@ -27,8 +27,8 @@ def test_submission_authority_allows_operational_submission() -> None:
         "reason": "operational_submission_ready",
         "blocked_reasons": [],
         "execution_route": {
-            "route": "testnet",
-            "alpaca_regular_session_open": False,
+            "route": "alpaca",
+            "alpaca_regular_session_open": True,
         },
     }
     assert "simple_lane_contract" not in status
@@ -77,7 +77,31 @@ def test_submission_authority_blocks_disabled_testnet_after_hours_gate() -> None
     assert status["can_submit_now"] is False
     assert status["reason"] == "testnet_after_hours_disabled"
     assert status["operational_submission_gate"]["blocked_reasons"] == [
-        "testnet_after_hours_disabled"
+        "testnet_after_hours_disabled",
+        "mainnet_route_unavailable",
+    ]
+
+
+def test_submission_authority_blocks_testnet_route_even_if_raw_gate_allows() -> None:
+    status = build_submission_authority_status(
+        {
+            "operational_submission_gate": {
+                "allowed": True,
+                "reason": "operational_submission_ready",
+                "blocked_reasons": [],
+                "execution_route": {
+                    "route": "testnet",
+                    "alpaca_regular_session_open": False,
+                },
+            },
+        },
+    )
+
+    assert status["effective_submit_mode"] == "blocked"
+    assert status["can_submit_now"] is False
+    assert status["reason"] == "mainnet_route_unavailable"
+    assert status["operational_submission_gate"]["blocked_reasons"] == [
+        "mainnet_route_unavailable"
     ]
 
 
@@ -131,8 +155,8 @@ def test_submission_authority_diagnostic_reasons_do_not_block() -> None:
                 "research_evidence_missing",
             ],
             "execution_route": {
-                "route": "testnet",
-                "alpaca_regular_session_open": False,
+                "route": "alpaca",
+                "alpaca_regular_session_open": True,
             },
         },
     )

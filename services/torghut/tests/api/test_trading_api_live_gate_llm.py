@@ -194,6 +194,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             settings.trading_kill_switch_enabled = True
 
             scheduler = TradingScheduler()
+            scheduler.state.market_session_open = True
             app.state.trading_scheduler = scheduler
 
             hypothesis_summary = {
@@ -290,6 +291,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             settings.trading_testnet_after_hours_enabled = True
 
             scheduler = TradingScheduler()
+            scheduler.state.market_session_open = True
             app.state.trading_scheduler = scheduler
 
             hypothesis_summary = {
@@ -311,6 +313,10 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             )
 
             with (
+                patch(
+                    "app.trading.submission_council._alpaca_broker_available",
+                    return_value=True,
+                ),
                 patch(
                     "app.api.status_helpers._build_hypothesis_runtime_payload",
                     return_value=(
@@ -381,7 +387,7 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
             self.assertEqual(gate["reason"], "operational_submission_ready")
             self.assertEqual(gate["capital_state"], "live")
             self.assertNotIn("quant_latest_store_alarm", gate["blocked_reasons"])
-            self.assertEqual(payload["execution_route"], "testnet")
+            self.assertEqual(payload["execution_route"], "alpaca")
             self.assertTrue(payload["operational_submission_gate"]["allowed"])
             self.assertEqual(payload["quant_evidence"]["window"], "15m")
             self.assertFalse(payload["quant_evidence"]["ok"])

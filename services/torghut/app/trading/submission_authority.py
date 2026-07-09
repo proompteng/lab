@@ -14,6 +14,7 @@ _OPERATIONAL_SUBMISSION_REASONS = frozenset(
         "invalid_order",
         "kill_switch_enabled",
         "live_submit_disabled",
+        "mainnet_route_unavailable",
         "risk_breach",
         "submit_disabled",
         "testnet_after_hours_disabled",
@@ -74,10 +75,19 @@ def operational_submission_gate_status(
     raw_blocked_reasons = _strings(gate.get("blocked_reasons"))
     raw_reason = _text(gate.get("reason"), "")
     raw_allowed = _bool(gate.get("allowed"))
+    execution_route = _mapping(gate.get("execution_route"))
     blocked_reasons = _active_submission_blockers(
         raw_blocked_reasons,
         raw_reason=raw_reason,
         raw_allowed=raw_allowed,
+    )
+    blocked_reasons = list(
+        dict.fromkeys(
+            [
+                *blocked_reasons,
+                *_execution_route_submission_blockers(execution_route),
+            ]
+        )
     )
     reason = _active_submission_reason(
         raw_reason,
@@ -97,7 +107,7 @@ def operational_submission_gate_status(
         "allowed": allowed,
         "reason": reason,
         "blocked_reasons": blocked_reasons,
-        "execution_route": _mapping(gate.get("execution_route")),
+        "execution_route": execution_route,
     }
 
 
@@ -159,6 +169,15 @@ def _is_operational_submission_reason(reason: str) -> bool:
         or reason.endswith(_OPERATIONAL_SUBMISSION_SUFFIXES)
         or reason.startswith(_OPERATIONAL_SUBMISSION_PREFIXES)
     )
+
+
+def _execution_route_submission_blockers(
+    execution_route: Mapping[str, Any],
+) -> list[str]:
+    route = _text(execution_route.get("route"), "")
+    if route and route != "alpaca":
+        return ["mainnet_route_unavailable"]
+    return []
 
 
 def _has_only_diagnostic_submission_reasons(

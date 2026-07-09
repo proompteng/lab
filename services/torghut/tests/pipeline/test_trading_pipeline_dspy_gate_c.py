@@ -31,6 +31,18 @@ from tests.pipeline.trading_pipeline_base import (
 
 
 class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
+    def setUp(self) -> None:
+        super().setUp()
+        self._broker_available_patcher = patch(
+            "app.trading.submission_council._alpaca_broker_available",
+            return_value=True,
+        )
+        self._broker_available_patcher.start()
+
+    def tearDown(self) -> None:
+        self._broker_available_patcher.stop()
+        super().tearDown()
+
     def test_pipeline_llm_dspy_live_runtime_gate_can_pass_through_with_degraded_qty(
         self,
     ) -> None:
@@ -133,7 +145,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
-            pipeline._is_market_session_open = lambda _now=None: False
+            pipeline._is_market_session_open = lambda _now=None: True
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -329,7 +341,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 account_label="live",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: False
+            pipeline._is_market_session_open = lambda _now=None: True
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -536,7 +548,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 session_factory=self.session_local,
                 llm_review_engine=CountingLLMReviewEngine(),
             )
-            pipeline._is_market_session_open = lambda _now=None: False
+            pipeline._is_market_session_open = lambda _now=None: True
 
             eligible_summary = {
                 "promotion_eligible_total": 1,
@@ -884,7 +896,7 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                 account_label="live",
                 session_factory=self.session_local,
             )
-            pipeline._is_market_session_open = lambda _now=None: False
+            pipeline._is_market_session_open = lambda _now=None: True
 
             eligible_summary = {
                 "promotion_eligible_total": 1,

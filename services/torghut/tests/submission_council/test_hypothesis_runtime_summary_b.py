@@ -123,6 +123,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
 
             gate = build_live_submission_gate_payload(
                 SimpleNamespace(
+                    market_session_open=True,
                     last_autonomy_promotion_eligible=True,
                     last_autonomy_promotion_action="promote",
                     drift_live_promotion_eligible=False,
@@ -190,6 +191,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
         )
         stale_gate = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
                 drift_live_promotion_eligible=False,
@@ -221,6 +223,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
 
         non_shadow_paper_gate = build_live_submission_gate_payload(
             SimpleNamespace(
+                market_session_open=True,
                 last_autonomy_promotion_eligible=True,
                 last_autonomy_promotion_action="promote",
                 drift_live_promotion_eligible=False,
@@ -372,7 +375,7 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
             forced_summary["promotion_eligible_total"] = 1
             forced_summary["items"] = [forced_item]
             gate = build_live_submission_gate_payload(
-                SimpleNamespace(market_session_open=False),
+                SimpleNamespace(market_session_open=True),
                 hypothesis_summary=forced_summary,
                 empirical_jobs_status={"ready": True},
                 dspy_runtime_status={"mode": "inactive"},

@@ -90,9 +90,9 @@ def test_execution_status_filters_diagnostic_reject_reasons() -> None:
                 "research_evidence_missing",
             ],
             "execution_route": {
-                "route": "testnet",
-                "reason": "alpaca_regular_session_closed",
-                "alpaca_regular_session_open": False,
+                "route": "alpaca",
+                "reason": "alpaca_regular_session_open",
+                "alpaca_regular_session_open": True,
             },
         },
     )
@@ -101,6 +101,33 @@ def test_execution_status_filters_diagnostic_reject_reasons() -> None:
     assert payload["gate"]["reason"] == "operational_submission_ready"
     assert payload["gate"]["blocked_reasons"] == []
     assert payload["reject_reason_totals"] == {"broker_submit_failed": 2}
+
+
+def test_execution_status_blocks_testnet_route_as_not_mainnet() -> None:
+    metrics = SimpleNamespace(
+        orders_submitted_total=0,
+        orders_rejected_total=0,
+        decision_reject_reason_total={},
+    )
+    state = SimpleNamespace(metrics=metrics, last_execution_order=None)
+
+    payload = build_execution_status_payload(
+        state=state,
+        live_submission_gate={
+            "allowed": True,
+            "reason": "operational_submission_ready",
+            "blocked_reasons": [],
+            "execution_route": {
+                "route": "testnet",
+                "reason": "alpaca_regular_session_closed",
+                "alpaca_regular_session_open": False,
+            },
+        },
+    )
+
+    assert payload["gate"]["allowed"] is False
+    assert payload["gate"]["reason"] == "mainnet_route_unavailable"
+    assert payload["gate"]["blocked_reasons"] == ["mainnet_route_unavailable"]
 
 
 def test_execution_gate_payload_preserves_operational_blockers() -> None:
