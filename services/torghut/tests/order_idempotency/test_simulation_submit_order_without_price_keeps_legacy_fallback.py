@@ -710,11 +710,6 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
-            assert buy_execution is not None
-            buy_execution.execution_expected_adapter = "alpaca"
-            buy_execution.execution_actual_adapter = "alpaca"
-            buy_execution.filled_qty = Decimal("0.5")
-            session.add(buy_execution)
             session.add(
                 Execution(
                     alpaca_account_label="paper",
@@ -819,11 +814,6 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
-            assert buy_execution is not None
-            buy_execution.execution_expected_adapter = "alpaca"
-            buy_execution.execution_actual_adapter = "alpaca"
-            buy_execution.filled_qty = Decimal("0.5")
-            session.add(buy_execution)
             session.add(
                 Execution(
                     alpaca_account_label="paper",
