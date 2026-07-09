@@ -209,6 +209,20 @@ def test_resolve_freshness_market_session_state_handles_early_closes() -> None:
         )
         == "outside_regular_session"
     )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2028, 7, 3, 17, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2028, 11, 24, 18, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
 
 
 def test_read_kubernetes_secret_decodes_without_exposing_encoded_value(
