@@ -17,11 +17,13 @@ from .health import build_health_payload
 from .ledger import load_runtime_ledger
 from .schemas import (
     DEFAULT_PROOFS_LIMIT,
+    FullAuditProofPayload,
     MAX_PROOFS_LIMIT,
     PROOFS_SCHEMA_VERSION,
     ProofKind,
     ProofPayload,
     ProofState,
+    ProofSummaryPayload,
     ProofWindowSelector,
     ProofsPayload,
     TigerBeetleReconciliationPayload,
@@ -46,6 +48,53 @@ TIGERBEETLE_RECONCILIATION_SCHEMA_VERSION = (
 _TIGERBEETLE_LEDGER_STATUS_MISSING = "tigerbeetle_ledger_status_missing"
 _TIGERBEETLE_LEDGER_STATUS_UNAVAILABLE = "tigerbeetle_ledger_status_unavailable"
 _TIGERBEETLE_LEDGER_NOT_OK = "tigerbeetle_ledger_not_ok"
+_LIVE_SUBMISSION_GATE_CONTRACT_KEYS = (
+    "schema_version",
+    "allowed",
+    "reason",
+    "blocked_reasons",
+    "reason_codes",
+    "blocking_reason",
+    "accepted_sources",
+    "latest_accepted_event_at",
+    "accepted_lag_seconds",
+    "accepted_max_lag_seconds",
+    "accepted_source_state",
+    "excluded_fresher_sources",
+    "per_symbol_coverage",
+    "stale_symbol_coverage",
+    "market_session_state",
+    "regular_session_open",
+    "regular_session_open_at",
+    "regular_session_close_at",
+    "fresh_until",
+    "expires_at",
+    "issued_at",
+    "execution_route",
+    "pipeline_mode",
+    "authority_scope",
+    "configured_live_submit",
+    "configured_live_promotion",
+    "capital_state",
+    "capital_stage",
+    "active_capital_stage",
+    "simple_submit_enabled",
+    "testnet_after_hours_enabled",
+    "read_model_unavailable",
+)
+_CLICKHOUSE_TA_FRESHNESS_CONTRACT_KEYS = (
+    "accepted_sources",
+    "latest_accepted_event_at",
+    "accepted_lag_seconds",
+    "accepted_max_lag_seconds",
+    "accepted_source_state",
+    "excluded_fresher_sources",
+    "per_symbol_coverage",
+    "stale_symbol_coverage",
+    "market_session_state",
+    "blocking_reason",
+    "freshness_reason_codes",
+)
 
 
 def build_proofs_payload(
@@ -76,7 +125,7 @@ def build_proofs_payload(
         generated_at=resolved_generated_at,
         strategy_universe_by_name=strategy_universe_by_name,
     )
-    proofs = [
+    full_audit_proofs = [
         _build_proof(
             session,
             target,
@@ -87,12 +136,12 @@ def build_proofs_payload(
         )
         for target in targets
     ]
-    state_counts = Counter(proof["state"] for proof in proofs)
-    blocker_counts: Counter[str] = Counter()
-    for proof in proofs:
-        blocker_counts.update(proof["blockers"])
-    gate_payload = _live_submission_gate_payload(live_submission_gate)
-    gate_freshness = _live_submission_gate_freshness(gate_payload)
+    full_gate_payload = _live_submission_gate_payload(live_submission_gate)
+    gate_payload = _proofs_live_submission_gate_payload(
+        full_gate_payload,
+        full_audit=full_audit,
+    )
+    gate_freshness = _live_submission_gate_freshness(full_gate_payload)
     tigerbeetle_reconciliation = _tigerbeetle_reconciliation_payload(
         tigerbeetle_ledger_status
     )
@@ -104,46 +153,70 @@ def build_proofs_payload(
         "window": _window_summary(
             window=window,
             generated_at=resolved_generated_at,
-            proofs=proofs,
+            proofs=full_audit_proofs,
         ),
         "live_submission_gate": gate_payload,
         "tigerbeetle_reconciliation": tigerbeetle_reconciliation,
-        "proofs": proofs,
-        "summary": {
-            "target_count": len(targets),
-            "proof_count": len(proofs),
-            "state_counts": dict(sorted(state_counts.items())),
-            "blocker_counts": dict(sorted(blocker_counts.items())),
-            "ready_count": state_counts.get("proof_ready", 0),
-            "import_due_count": state_counts.get("import_due", 0),
-            "blocked_count": state_counts.get("blocked", 0),
-            "live_submission_allowed": bool(gate_payload.get("allowed")),
-            "live_submission_reason": _text_or_none(gate_payload.get("reason")),
-            "accepted_source_state": _text_or_none(
-                gate_freshness.get("accepted_source_state")
-            ),
-            "accepted_lag_seconds": _float_or_none(
-                gate_freshness.get("accepted_lag_seconds")
-            ),
-            "tigerbeetle_reconciliation_ok": bool(
-                tigerbeetle_reconciliation.get("reconciliation_ok")
-            ),
-            "tigerbeetle_reconciliation_stale": bool(
-                tigerbeetle_reconciliation.get("reconciliation_stale")
-            ),
-            "tigerbeetle_reconciliation_age_seconds": _int_or_none(
-                tigerbeetle_reconciliation.get("reconciliation_age_seconds")
-            ),
-            "tigerbeetle_reconciliation_required": bool(
-                tigerbeetle_reconciliation.get("reconciliation_required")
-            ),
-        },
+        "proofs": [
+            _proof_response_payload(proof, full_audit=full_audit)
+            for proof in full_audit_proofs
+        ],
+        "summary": _proofs_summary_payload(
+            target_count=len(targets),
+            full_audit_proofs=full_audit_proofs,
+            gate_payload=gate_payload,
+            gate_freshness=gate_freshness,
+            tigerbeetle_reconciliation=tigerbeetle_reconciliation,
+        ),
         "promotion_authority": {
             "allowed": False,
             "final_promotion_allowed": False,
             "reason": "proof_collection_only",
             "blockers": promotion_blockers,
         },
+    }
+
+
+def _proofs_summary_payload(
+    *,
+    target_count: int,
+    full_audit_proofs: Sequence[FullAuditProofPayload],
+    gate_payload: Mapping[str, object],
+    gate_freshness: Mapping[str, object],
+    tigerbeetle_reconciliation: Mapping[str, object],
+) -> ProofSummaryPayload:
+    state_counts = Counter(proof["state"] for proof in full_audit_proofs)
+    blocker_counts: Counter[str] = Counter()
+    for proof in full_audit_proofs:
+        blocker_counts.update(proof["blockers"])
+    return {
+        "target_count": target_count,
+        "proof_count": len(full_audit_proofs),
+        "state_counts": dict(sorted(state_counts.items())),
+        "blocker_counts": dict(sorted(blocker_counts.items())),
+        "ready_count": state_counts.get("proof_ready", 0),
+        "import_due_count": state_counts.get("import_due", 0),
+        "blocked_count": state_counts.get("blocked", 0),
+        "live_submission_allowed": bool(gate_payload.get("allowed")),
+        "live_submission_reason": _text_or_none(gate_payload.get("reason")),
+        "accepted_source_state": _text_or_none(
+            gate_freshness.get("accepted_source_state")
+        ),
+        "accepted_lag_seconds": _float_or_none(
+            gate_freshness.get("accepted_lag_seconds")
+        ),
+        "tigerbeetle_reconciliation_ok": bool(
+            tigerbeetle_reconciliation.get("reconciliation_ok")
+        ),
+        "tigerbeetle_reconciliation_stale": bool(
+            tigerbeetle_reconciliation.get("reconciliation_stale")
+        ),
+        "tigerbeetle_reconciliation_age_seconds": _int_or_none(
+            tigerbeetle_reconciliation.get("reconciliation_age_seconds")
+        ),
+        "tigerbeetle_reconciliation_required": bool(
+            tigerbeetle_reconciliation.get("reconciliation_required")
+        ),
     }
 
 
@@ -266,6 +339,30 @@ def _live_submission_gate_payload(
     }
 
 
+def _proofs_live_submission_gate_payload(
+    live_submission_gate: Mapping[str, object],
+    *,
+    full_audit: bool,
+) -> dict[str, object]:
+    if full_audit:
+        return dict(live_submission_gate)
+
+    payload = {
+        key: live_submission_gate[key]
+        for key in _LIVE_SUBMISSION_GATE_CONTRACT_KEYS
+        if key in live_submission_gate
+    }
+    freshness = live_submission_gate.get("clickhouse_ta_freshness")
+    if isinstance(freshness, Mapping):
+        typed_freshness = cast(Mapping[str, object], freshness)
+        payload["clickhouse_ta_freshness"] = {
+            key: typed_freshness[key]
+            for key in _CLICKHOUSE_TA_FRESHNESS_CONTRACT_KEYS
+            if key in typed_freshness
+        }
+    return payload
+
+
 def _live_submission_gate_freshness(
     live_submission_gate: Mapping[str, object],
 ) -> Mapping[str, object]:
@@ -364,7 +461,7 @@ def _build_proof(
     full_audit: bool,
     target_account_audit_available: bool,
     live_submission_gate: Mapping[str, object],
-) -> ProofPayload:
+) -> FullAuditProofPayload:
     window_closed = generated_at >= target.window_end
     source_counts = load_source_activity_counts(session, target)
     ledger = load_runtime_ledger(session, target)
@@ -457,6 +554,24 @@ def _proof_state(
     return "proof_ready"
 
 
+def _proof_response_payload(
+    proof: FullAuditProofPayload,
+    *,
+    full_audit: bool,
+) -> ProofPayload | FullAuditProofPayload:
+    if full_audit:
+        return proof
+    return {
+        "proof_id": proof["proof_id"],
+        "identity": proof["identity"],
+        "window": proof["window"],
+        "symbols": proof["symbols"],
+        "state": proof["state"],
+        "blockers": proof["blockers"],
+        "next_action": proof["next_action"],
+    }
+
+
 def _next_action(state: ProofState, blockers: list[str]) -> str:
     if state == "waiting_for_session":
         return "wait_for_session_open"
@@ -492,7 +607,7 @@ def _window_summary(
     *,
     window: ProofWindowSelector,
     generated_at: datetime,
-    proofs: list[ProofPayload],
+    proofs: list[FullAuditProofPayload],
 ) -> dict[str, object]:
     if proofs:
         starts = sorted(str(proof["window"]["start"]) for proof in proofs)

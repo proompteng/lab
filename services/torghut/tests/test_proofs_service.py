@@ -70,6 +70,8 @@ def _gate(
             "target_count": 1,
             "targets": [target],
         },
+        "runtime_ledger_repair_candidates": [{"candidate_id": "audit-only"}],
+        "segment_summary": {"proof_diagnostics": "audit-only"},
     }
 
 
@@ -124,6 +126,7 @@ def _build(
     blockers: list[str] | None = None,
     accepted_lag_seconds: object = 420.5,
     tigerbeetle_ledger_status: dict[str, object] | None = None,
+    full_audit: bool = True,
 ) -> dict[str, object]:
     return build_proofs_payload(
         session,
@@ -134,7 +137,7 @@ def _build(
         tigerbeetle_ledger_status=tigerbeetle_ledger_status,
         generated_at=generated_at,
         window="auto",
-        full_audit=True,
+        full_audit=full_audit,
     )
 
 
@@ -201,6 +204,71 @@ def test_build_proofs_payload_exposes_live_submission_gate_and_freshness_summary
         "reason": "proof_collection_only",
         "blockers": ["live_runtime_ledger_authority_required"],
     }
+
+
+def test_build_proofs_payload_defaults_to_slim_machine_contract() -> None:
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)
+    target = _target(window_start, window_end)
+    with _session() as session:
+        payload = _build(
+            session,
+            target=target,
+            generated_at=window_start - timedelta(minutes=1),
+            full_audit=False,
+        )
+
+    assert set(payload["live_submission_gate"]) == {
+        "allowed",
+        "reason",
+        "blocked_reasons",
+        "clickhouse_ta_freshness",
+    }
+    assert "runtime_ledger_repair_candidates" not in payload["live_submission_gate"]
+    assert "segment_summary" not in payload["live_submission_gate"]
+    assert payload["live_submission_gate"]["clickhouse_ta_freshness"] == {
+        "accepted_sources": ["ta"],
+        "latest_accepted_event_at": "2026-06-08T13:29:00+00:00",
+        "accepted_lag_seconds": 420.5,
+        "accepted_source_state": "stale",
+        "blocking_reason": "accepted_ta_signal_stale",
+    }
+    proof = payload["proofs"][0]
+    assert set(proof) == {
+        "proof_id",
+        "identity",
+        "window",
+        "symbols",
+        "state",
+        "blockers",
+        "next_action",
+    }
+    assert proof["state"] == "waiting_for_session"
+    assert "runtime_ledger" not in proof
+    assert "account_state" not in proof
+    assert "source_counts" not in proof
+    assert "health" not in proof
+
+
+def test_build_proofs_payload_full_audit_keeps_diagnostics() -> None:
+    window_start = datetime(2026, 6, 8, 13, 30, tzinfo=timezone.utc)
+    window_end = datetime(2026, 6, 8, 20, 0, tzinfo=timezone.utc)
+    target = _target(window_start, window_end)
+    with _session() as session:
+        payload = _build(
+            session,
+            target=target,
+            generated_at=window_start - timedelta(minutes=1),
+            full_audit=True,
+        )
+
+    assert "runtime_ledger_repair_candidates" in payload["live_submission_gate"]
+    assert "segment_summary" in payload["live_submission_gate"]
+    proof = payload["proofs"][0]
+    assert "runtime_ledger" in proof
+    assert "account_state" in proof
+    assert "source_counts" in proof
+    assert "health" in proof
 
 
 def test_build_proofs_payload_blocks_promotion_authority_on_stale_reconciliation() -> (

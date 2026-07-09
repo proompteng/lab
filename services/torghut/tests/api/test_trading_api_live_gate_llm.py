@@ -578,7 +578,22 @@ class TestTradingApiLiveGateLlm(TradingApiTestCaseBase):
                 shared_gate,
             )
             proofs_payload = proofs_response.json()
-            self.assertEqual(proofs_payload["live_submission_gate"], shared_gate)
+            self.assertEqual(
+                proofs_payload["live_submission_gate"],
+                {
+                    "allowed": shared_gate["allowed"],
+                    "reason": shared_gate["reason"],
+                    "blocked_reasons": shared_gate["blocked_reasons"],
+                    "reason_codes": shared_gate["reason_codes"],
+                    "capital_state": shared_gate["capital_state"],
+                    "capital_stage": shared_gate["capital_stage"],
+                    "issued_at": shared_gate["issued_at"],
+                    "expires_at": shared_gate["expires_at"],
+                    "clickhouse_ta_freshness": shared_gate["clickhouse_ta_freshness"],
+                },
+            )
+            self.assertNotIn("segment_summary", proofs_payload["live_submission_gate"])
+            self.assertNotIn("quant_health_ref", proofs_payload["live_submission_gate"])
             self.assertEqual(
                 proofs_payload["summary"]["live_submission_reason"],
                 "promotion_certificate_missing",
