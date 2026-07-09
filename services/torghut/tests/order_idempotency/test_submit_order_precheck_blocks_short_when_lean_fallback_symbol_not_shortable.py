@@ -35,7 +35,6 @@ from tests.order_idempotency.support import (
 class TestSubmitOrderPrecheckBlocksShortWhenLeanFallbackSymbolNotShortable(
     _TestOrderIdempotencyBase
 ):
-
     def test_quantity_resolution_uses_durable_inventory_when_broker_readback_is_stale_positive(
         self,
     ) -> None:
