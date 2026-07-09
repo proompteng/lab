@@ -8,11 +8,11 @@ from tests.order_idempotency.support import (
     AssetShortabilityUnknownClient,
     Decimal,
     Execution,
+    ExecutionRequest,
     FakeAlpacaClient,
     HeldInventoryClient,
     LeanExecutionAdapter,
     OrderExecutor,
-    PartiallyHeldInventoryClient,
     PositionLookupNoneClient,
     PositionLookupUnavailableClient,
     PositionLookupUnavailableHeldInventoryClient,
@@ -35,6 +35,65 @@ from tests.order_idempotency.support import (
 class TestSubmitOrderPrecheckBlocksShortWhenLeanFallbackSymbolNotShortable(
     _TestOrderIdempotencyBase
 ):
+
+    def test_quantity_resolution_uses_durable_inventory_when_broker_readback_is_stale_positive(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = False
+        executor = OrderExecutor()
+        request = ExecutionRequest(
+            decision_id="decision-1",
+            symbol="AAPL",
+            side="sell",
+            qty=Decimal("0.5"),
+            order_type="market",
+            time_in_force="day",
+        )
+
+        class StalePositivePositionClient(FakeAlpacaClient):
+            def list_positions(self) -> list[dict[str, str]]:
+                return [{"symbol": "AAPL", "qty": "0.25", "side": "long"}]
+
+        resolution = executor._quantity_resolution_for_request(
+            execution_client=StalePositivePositionClient(),
+            request=request,
+            durable_position_qty=Decimal("0.5"),
+        )
+
+        self.assertTrue(resolution.fractional_allowed)
+        self.assertFalse(resolution.short_increasing)
+        self.assertEqual(resolution.position_qty, Decimal("0.5"))
+        self.assertEqual(resolution.reason, "sell_reducing_long_fractional_allowed")
+
+    def test_quantity_resolution_keeps_broker_inventory_when_it_covers_request(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = False
+        executor = OrderExecutor()
+        request = ExecutionRequest(
+            decision_id="decision-1",
+            symbol="AAPL",
+            side="sell",
+            qty=Decimal("0.25"),
+            order_type="market",
+            time_in_force="day",
+        )
+
+        class CoveringPositionClient(FakeAlpacaClient):
+            def list_positions(self) -> list[dict[str, str]]:
+                return [{"symbol": "AAPL", "qty": "0.25", "side": "long"}]
+
+        resolution = executor._quantity_resolution_for_request(
+            execution_client=CoveringPositionClient(),
+            request=request,
+            durable_position_qty=Decimal("0.5"),
+        )
+
+        self.assertEqual(resolution.position_qty, Decimal("0.25"))
+        self.assertEqual(resolution.reason, "sell_reducing_long_fractional_allowed")
+
     def test_submit_order_precheck_blocks_short_when_lean_fallback_symbol_not_shortable(
         self,
     ) -> None:

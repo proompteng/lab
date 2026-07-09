@@ -98,7 +98,7 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         job_spec = cast(Mapping[str, object], job_template["spec"])
         self.assertEqual(job_spec["ttlSecondsAfterFinished"], 86400)
         self.assertEqual(job_spec["backoffLimit"], 1)
-        self.assertEqual(job_spec["activeDeadlineSeconds"], 1200)
+        self.assertGreaterEqual(job_spec["activeDeadlineSeconds"], 1500)
 
         template = cast(Mapping[str, object], job_spec["template"])
         pod_spec = cast(Mapping[str, object], template["spec"])

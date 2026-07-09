@@ -70,10 +70,10 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerReleaseWorkflow).not.toContain('PersistentVolumeClaim')
   })
 
-  it('allows twenty-five concurrent lab ARC runners per architecture and keeps runners warm', () => {
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 25')
+  it('keeps lab ARC runners capped until pod CIDR capacity soak completes', () => {
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 10')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 25')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 10')
     expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 5')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
