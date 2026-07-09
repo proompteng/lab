@@ -6,7 +6,9 @@ from scripts.verify_market_data_chain import (
     ClickHouseFreshnessRow,
     ConsumerGroupLag,
     DEFAULT_TOPICS,
+    FreshnessThresholds,
     LatestKafkaMessage,
+    MarketDataChainProbe,
     TopicOffset,
     build_summary,
     format_summary,
@@ -128,39 +130,45 @@ def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness()
     None
 ):
     summary = build_summary(
-        generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
-        consumer_group_lag=[
-            ConsumerGroupLag(
-                group="torghut-ta-live",
-                topic="torghut.trades.v1",
-                partition=0,
-                current_offset=9,
-                log_end_offset=10,
-                lag=1,
-            )
-        ],
-        topic_offsets=[TopicOffset(topic="torghut.trades.v1", partition=0, offset=10)],
-        latest_messages=[
-            LatestKafkaMessage(
-                topic="torghut.trades.v1",
-                partition=0,
-                offset=9,
-                timestamp_type="CreateTime",
-                timestamp_ms=1783544335000,
-                key="AMD",
-            )
-        ],
-        clickhouse_rows=[
-            ClickHouseFreshnessRow(
-                table="ta_signals",
-                source="ta",
-                row_count=10,
-                latest_event_ts="2026-07-08 20:57:00.000",
-                latest_ingest_ts="2026-07-08 20:58:55.269",
-            )
-        ],
-        require_max_kafka_age_seconds=300,
-        require_max_clickhouse_age_seconds=300,
+        MarketDataChainProbe(
+            generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
+            consumer_group_lag=[
+                ConsumerGroupLag(
+                    group="torghut-ta-live",
+                    topic="torghut.trades.v1",
+                    partition=0,
+                    current_offset=9,
+                    log_end_offset=10,
+                    lag=1,
+                )
+            ],
+            topic_offsets=[
+                TopicOffset(topic="torghut.trades.v1", partition=0, offset=10)
+            ],
+            latest_messages=[
+                LatestKafkaMessage(
+                    topic="torghut.trades.v1",
+                    partition=0,
+                    offset=9,
+                    timestamp_type="CreateTime",
+                    timestamp_ms=1783544335000,
+                    key="AMD",
+                )
+            ],
+            clickhouse_rows=[
+                ClickHouseFreshnessRow(
+                    table="ta_signals",
+                    source="ta",
+                    row_count=10,
+                    latest_event_ts="2026-07-08 20:57:00.000",
+                    latest_ingest_ts="2026-07-08 20:58:55.269",
+                )
+            ],
+        ),
+        thresholds=FreshnessThresholds(
+            kafka_age_seconds=300,
+            clickhouse_age_seconds=300,
+        ),
     )
 
     assert summary["status"] == "degraded"

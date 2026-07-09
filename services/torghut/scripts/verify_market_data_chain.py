@@ -68,6 +68,31 @@ class ClickHouseFreshnessRow:
     latest_ingest_ts: str | None
 
 
+@dataclass(frozen=True)
+class MarketDataChainProbe:
+    generated_at: datetime
+    consumer_group_lag: Sequence[ConsumerGroupLag]
+    topic_offsets: Sequence[TopicOffset]
+    latest_messages: Sequence[LatestKafkaMessage]
+    clickhouse_rows: Sequence[ClickHouseFreshnessRow]
+
+
+@dataclass(frozen=True)
+class FreshnessThresholds:
+    kafka_age_seconds: int | None = None
+    clickhouse_age_seconds: int | None = None
+
+
+@dataclass(frozen=True)
+class KafkaProbeConfig:
+    namespace: str
+    pod: str
+    bootstrap: str
+    username: str
+    group: str
+    topics: Sequence[str]
+
+
 def parse_topic_offsets(output: str) -> list[TopicOffset]:
     rows: list[TopicOffset] = []
     for raw_line in output.splitlines():
@@ -170,46 +195,44 @@ def parse_clickhouse_freshness(output: str) -> list[ClickHouseFreshnessRow]:
 
 
 def build_summary(
+    probe: MarketDataChainProbe,
     *,
-    generated_at: datetime,
-    consumer_group_lag: Sequence[ConsumerGroupLag],
-    topic_offsets: Sequence[TopicOffset],
-    latest_messages: Sequence[LatestKafkaMessage],
-    clickhouse_rows: Sequence[ClickHouseFreshnessRow],
-    require_max_kafka_age_seconds: int | None = None,
-    require_max_clickhouse_age_seconds: int | None = None,
+    thresholds: FreshnessThresholds | None = None,
 ) -> dict[str, object]:
+    active_thresholds = thresholds or FreshnessThresholds()
     issues: list[str] = []
-    max_group_lag = max((row.lag for row in consumer_group_lag), default=0)
+    max_group_lag = max((row.lag for row in probe.consumer_group_lag), default=0)
     if max_group_lag > 0:
         issues.append("kafka_consumer_group_lag")
 
     latest_message_payloads = [
         {
             **asdict(row),
-            "age_seconds": _age_seconds_from_epoch_ms(generated_at, row.timestamp_ms),
+            "age_seconds": _age_seconds_from_epoch_ms(
+                probe.generated_at, row.timestamp_ms
+            ),
         }
-        for row in latest_messages
+        for row in probe.latest_messages
     ]
-    if require_max_kafka_age_seconds is not None:
+    if active_thresholds.kafka_age_seconds is not None:
         for row in latest_message_payloads:
             age = row["age_seconds"]
-            if isinstance(age, int) and age > require_max_kafka_age_seconds:
+            if isinstance(age, int) and age > active_thresholds.kafka_age_seconds:
                 issues.append(f"kafka_topic_stale:{row['topic']}:{row['partition']}")
 
     clickhouse_payloads = [
         {
             **asdict(row),
             "latest_event_age_seconds": _age_seconds_from_clickhouse_ts(
-                generated_at, row.latest_event_ts
+                probe.generated_at, row.latest_event_ts
             ),
             "latest_ingest_age_seconds": _age_seconds_from_clickhouse_ts(
-                generated_at, row.latest_ingest_ts
+                probe.generated_at, row.latest_ingest_ts
             ),
         }
-        for row in clickhouse_rows
+        for row in probe.clickhouse_rows
     ]
-    if require_max_clickhouse_age_seconds is not None:
+    if active_thresholds.clickhouse_age_seconds is not None:
         accepted_rows = [
             row
             for row in clickhouse_payloads
@@ -217,22 +240,22 @@ def build_summary(
         ]
         for row in accepted_rows:
             age = row["latest_event_age_seconds"]
-            if isinstance(age, int) and age > require_max_clickhouse_age_seconds:
+            if isinstance(age, int) and age > active_thresholds.clickhouse_age_seconds:
                 issues.append(f"clickhouse_accepted_source_stale:{row['table']}")
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "generated_at": generated_at.isoformat(),
+        "generated_at": probe.generated_at.isoformat(),
         "status": "ok" if not issues else "degraded",
         "issues": sorted(set(issues)),
         "summary": {
             "kafka_consumer_group_max_lag": max_group_lag,
-            "latest_kafka_message_count": len(latest_messages),
-            "clickhouse_row_count": len(clickhouse_rows),
+            "latest_kafka_message_count": len(probe.latest_messages),
+            "clickhouse_row_count": len(probe.clickhouse_rows),
         },
         "kafka": {
-            "consumer_group_lag": [asdict(row) for row in consumer_group_lag],
-            "topic_offsets": [asdict(row) for row in topic_offsets],
+            "consumer_group_lag": [asdict(row) for row in probe.consumer_group_lag],
+            "topic_offsets": [asdict(row) for row in probe.topic_offsets],
             "latest_messages": latest_message_payloads,
         },
         "clickhouse": {
@@ -252,13 +275,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         key=args.kafka_password_key,
     )
     kafka_output = run_kafka_probe(
-        namespace=args.kafka_namespace,
-        pod=args.kafka_pod,
-        bootstrap=args.kafka_bootstrap,
-        username=args.kafka_username,
+        KafkaProbeConfig(
+            namespace=args.kafka_namespace,
+            pod=args.kafka_pod,
+            bootstrap=args.kafka_bootstrap,
+            username=args.kafka_username,
+            group=args.ta_group,
+            topics=topics,
+        ),
         password=kafka_password,
-        group=args.ta_group,
-        topics=topics,
     )
     clickhouse_password = read_kubernetes_secret(
         namespace=args.clickhouse_namespace,
@@ -273,13 +298,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         query=args.clickhouse_query,
     )
     summary = build_summary(
-        generated_at=generated_at,
-        consumer_group_lag=parse_consumer_group_lag(kafka_output),
-        topic_offsets=parse_topic_offsets(kafka_output),
-        latest_messages=parse_latest_kafka_messages(kafka_output),
-        clickhouse_rows=parse_clickhouse_freshness(clickhouse_output),
-        require_max_kafka_age_seconds=args.require_max_kafka_age_seconds,
-        require_max_clickhouse_age_seconds=args.require_max_clickhouse_age_seconds,
+        MarketDataChainProbe(
+            generated_at=generated_at,
+            consumer_group_lag=parse_consumer_group_lag(kafka_output),
+            topic_offsets=parse_topic_offsets(kafka_output),
+            latest_messages=parse_latest_kafka_messages(kafka_output),
+            clickhouse_rows=parse_clickhouse_freshness(clickhouse_output),
+        ),
+        thresholds=FreshnessThresholds(
+            kafka_age_seconds=args.require_max_kafka_age_seconds,
+            clickhouse_age_seconds=args.require_max_clickhouse_age_seconds,
+        ),
     )
     print(format_summary(summary, args.format))
     return 0 if summary["status"] == "ok" else 2
@@ -331,35 +360,26 @@ def read_kubernetes_secret(*, namespace: str, name: str, key: str) -> str:
     return base64.b64decode(encoded).decode("utf-8")
 
 
-def run_kafka_probe(
-    *,
-    namespace: str,
-    pod: str,
-    bootstrap: str,
-    username: str,
-    password: str,
-    group: str,
-    topics: Sequence[str],
-) -> str:
-    topic_args = " ".join(shlex.quote(topic) for topic in topics)
+def run_kafka_probe(config: KafkaProbeConfig, *, password: str) -> str:
+    topic_args = " ".join(shlex.quote(topic) for topic in config.topics)
     script = f"""
 set -euo pipefail
 CONFIG=/tmp/torghut-market-data-smoke.properties
 trap 'rm -f "$CONFIG"' EXIT
 cat > "$CONFIG"
 echo "=== consumer_group ==="
-bin/kafka-consumer-groups.sh --bootstrap-server {shlex.quote(bootstrap)} --command-config "$CONFIG" --describe --group {shlex.quote(group)} || true
+bin/kafka-consumer-groups.sh --bootstrap-server {shlex.quote(config.bootstrap)} --command-config "$CONFIG" --describe --group {shlex.quote(config.group)} || true
 echo "=== topic_offsets ==="
 for topic in {topic_args}; do
-  bin/kafka-get-offsets.sh --bootstrap-server {shlex.quote(bootstrap)} --command-config "$CONFIG" --topic "$topic" --time latest
+  bin/kafka-get-offsets.sh --bootstrap-server {shlex.quote(config.bootstrap)} --command-config "$CONFIG" --topic "$topic" --time latest
 done
 echo "=== latest_messages ==="
 for topic in {topic_args}; do
   echo "=== $topic ==="
-  bin/kafka-get-offsets.sh --bootstrap-server {shlex.quote(bootstrap)} --command-config "$CONFIG" --topic "$topic" --time latest | while IFS=: read -r row_topic partition offset; do
+  bin/kafka-get-offsets.sh --bootstrap-server {shlex.quote(config.bootstrap)} --command-config "$CONFIG" --topic "$topic" --time latest | while IFS=: read -r row_topic partition offset; do
     if [ "$offset" -gt 0 ]; then
       start=$((offset - 1))
-      timeout 8 bin/kafka-console-consumer.sh --bootstrap-server {shlex.quote(bootstrap)} --command-config "$CONFIG" --topic "$row_topic" --partition "$partition" --offset "$start" --max-messages 1 --formatter org.apache.kafka.tools.consumer.DefaultMessageFormatter --formatter-property print.timestamp=true --formatter-property print.offset=true --formatter-property print.partition=true --formatter-property print.key=true --formatter-property print.value=false --timeout-ms 5000 || true
+      timeout 8 bin/kafka-console-consumer.sh --bootstrap-server {shlex.quote(config.bootstrap)} --command-config "$CONFIG" --topic "$row_topic" --partition "$partition" --offset "$start" --max-messages 1 --formatter org.apache.kafka.tools.consumer.DefaultMessageFormatter --formatter-property print.timestamp=true --formatter-property print.offset=true --formatter-property print.partition=true --formatter-property print.key=true --formatter-property print.value=false --timeout-ms 5000 || true
     fi
   done
 done
@@ -368,12 +388,23 @@ done
         (
             "security.protocol=SASL_PLAINTEXT",
             "sasl.mechanism=SCRAM-SHA-512",
-            f'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="{username}" password="{password}";',
+            f'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="{config.username}" password="{password}";',
             "",
         )
     )
     return _run(
-        ["kubectl", "exec", "-i", "-n", namespace, pod, "--", "bash", "-lc", script],
+        [
+            "kubectl",
+            "exec",
+            "-i",
+            "-n",
+            config.namespace,
+            config.pod,
+            "--",
+            "bash",
+            "-lc",
+            script,
+        ],
         input_text=properties,
     )
 
