@@ -7,6 +7,7 @@ from tests.order_idempotency.support import (
     AssetMetadataUnavailableClient,
     AssetShortabilityUnknownClient,
     Decimal,
+    Execution,
     FakeAlpacaClient,
     PartiallyHeldInventoryClient,
     HeldInventoryClient,
