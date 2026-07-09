@@ -1,22 +1,32 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import json
+from datetime import UTC, datetime, tzinfo
+from typing import Sequence, cast
+
+import pytest
 
 from scripts.verify_market_data_chain import (
     ClickHouseFreshnessRow,
     ConsumerGroupLag,
     DEFAULT_TOPICS,
     FreshnessThresholds,
+    KafkaProbeConfig,
     LatestKafkaMessage,
     MarketDataChainProbe,
     TopicOffset,
+    _run,
     build_summary,
     format_summary,
+    main,
     parse_clickhouse_freshness,
     parse_args,
     parse_consumer_group_lag,
     parse_latest_kafka_messages,
     parse_topic_offsets,
+    read_kubernetes_secret,
+    run_clickhouse_query,
+    run_kafka_probe,
 )
 
 
@@ -117,6 +127,21 @@ ta_microbars\tta\t1412773\t2026-07-08 20:56:30.000\t2026-07-08 20:58:55.269
     ]
 
 
+def test_parsers_skip_malformed_rows() -> None:
+    assert parse_topic_offsets("topic:not-int:10\ntopic:0:not-int\n") == []
+    assert parse_consumer_group_lag("group topic\nbad topic x y z n\n") == []
+    assert (
+        parse_latest_kafka_messages(
+            "CreateTime:1783544335234\tPartition:1\tOffset:9\n"
+            "=== torghut.trades.v1 ===\n"
+            "CreateTime:bad\tPartition:1\tOffset:9\n"
+            "CreateTime:1783544335234\tPartition:x\tOffset:9\n"
+        )
+        == []
+    )
+    assert parse_clickhouse_freshness("ta_signals\tta\tbad\t\t\nshort\trow\n") == []
+
+
 def test_parse_args_replaces_default_topics_when_topic_is_provided() -> None:
     defaults = parse_args([])
     custom = parse_args(["--topic", "custom.one", "--topic", "custom.two"])
@@ -124,6 +149,92 @@ def test_parse_args_replaces_default_topics_when_topic_is_provided() -> None:
     assert defaults.topic is None
     assert tuple(defaults.topic or DEFAULT_TOPICS) == DEFAULT_TOPICS
     assert custom.topic == ["custom.one", "custom.two"]
+
+
+def test_read_kubernetes_secret_decodes_without_exposing_encoded_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[Sequence[str]] = []
+
+    def fake_run(cmd: Sequence[str], *, input_text: str | None = None) -> str:
+        calls.append(cmd)
+        assert input_text is None
+        return "c2VjcmV0Cg=="
+
+    monkeypatch.setattr("scripts.verify_market_data_chain._run", fake_run)
+
+    assert read_kubernetes_secret(
+        namespace="ns", name="secret-name", key="password"
+    ) == ("secret\n")
+    assert calls == [
+        [
+            "kubectl",
+            "get",
+            "secret",
+            "-n",
+            "ns",
+            "secret-name",
+            "-o",
+            "jsonpath={.data.password}",
+        ]
+    ]
+
+
+def test_run_kafka_probe_passes_secret_on_stdin_and_quotes_shell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Sequence[str], str | None]] = []
+
+    def fake_run(cmd: Sequence[str], *, input_text: str | None = None) -> str:
+        calls.append((cmd, input_text))
+        return "kafka-output"
+
+    monkeypatch.setattr("scripts.verify_market_data_chain._run", fake_run)
+
+    output = run_kafka_probe(
+        KafkaProbeConfig(
+            namespace="kafka",
+            pod="kafka-0",
+            bootstrap="kafka:9092",
+            username="torghut-ws",
+            group="torghut-ta-live",
+            topics=("torghut.trades.v1", "topic with space"),
+        ),
+        password="kafka-password",
+    )
+
+    assert output == "kafka-output"
+    cmd, input_text = calls[0]
+    assert cmd[:6] == ["kubectl", "exec", "-i", "-n", "kafka", "kafka-0"]
+    assert "topic with space" in cmd[-1]
+    assert 'password="kafka-password"' in str(input_text)
+    assert "security.protocol=SASL_PLAINTEXT" in str(input_text)
+
+
+def test_run_clickhouse_query_passes_password_and_query_via_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[Sequence[str], str | None]] = []
+
+    def fake_run(cmd: Sequence[str], *, input_text: str | None = None) -> str:
+        calls.append((cmd, input_text))
+        return "table\tsource\tcount()\tmax(event_ts)\tmax(ingest_ts)\n"
+
+    monkeypatch.setattr("scripts.verify_market_data_chain._run", fake_run)
+
+    output = run_clickhouse_query(
+        namespace="torghut",
+        pod="clickhouse-0",
+        user="torghut",
+        password="clickhouse-password",
+        query="SELECT 1",
+    )
+
+    assert output.startswith("table\t")
+    cmd, input_text = calls[0]
+    assert cmd[:6] == ["kubectl", "exec", "-i", "-n", "torghut", "clickhouse-0"]
+    assert "SELECT 1" in cmd[-1]
+    assert input_text == "clickhouse-password\n"
 
 
 def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness() -> (
@@ -180,3 +291,130 @@ def test_build_summary_degrades_on_group_lag_and_accepted_clickhouse_staleness()
     assert format_summary(summary, "markdown").startswith(
         "# Torghut Market Data Chain Smoke"
     )
+
+
+def test_build_summary_handles_missing_and_zulu_clickhouse_timestamps() -> None:
+    summary = build_summary(
+        MarketDataChainProbe(
+            generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
+            consumer_group_lag=[],
+            topic_offsets=[],
+            latest_messages=[],
+            clickhouse_rows=[
+                ClickHouseFreshnessRow(
+                    table="ta_signals",
+                    source="ta",
+                    row_count=1,
+                    latest_event_ts=None,
+                    latest_ingest_ts="2026-07-08T21:09:00Z",
+                )
+            ],
+        ),
+        thresholds=FreshnessThresholds(clickhouse_age_seconds=300),
+    )
+
+    clickhouse = cast(dict[str, object], summary["clickhouse"])
+    freshness_rows = cast(list[dict[str, object]], clickhouse["freshness"])
+    freshness = freshness_rows[0]
+    assert freshness["latest_event_age_seconds"] is None
+    assert freshness["latest_ingest_age_seconds"] == 60
+
+
+def test_format_summary_json_is_stable() -> None:
+    summary = build_summary(
+        MarketDataChainProbe(
+            generated_at=datetime(2026, 7, 8, 21, 10, tzinfo=UTC),
+            consumer_group_lag=[],
+            topic_offsets=[],
+            latest_messages=[],
+            clickhouse_rows=[],
+        )
+    )
+
+    encoded = format_summary(summary, "json")
+
+    assert json.loads(encoded)["schema_version"] == "torghut.market-data-chain-smoke.v1"
+
+
+def test_run_returns_stdout_and_raises_on_failure() -> None:
+    assert _run(["python", "-c", "print('ok')"]) == "ok\n"
+
+    with pytest.raises(RuntimeError, match="bad"):
+        _run(["python", "-c", "import sys; print('bad'); sys.exit(2)"])
+
+
+def test_main_orchestrates_kafka_clickhouse_and_returns_status(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret_calls: list[tuple[str, str, str]] = []
+    kafka_configs: list[KafkaProbeConfig] = []
+
+    def fake_secret(*, namespace: str, name: str, key: str) -> str:
+        secret_calls.append((namespace, name, key))
+        return f"{name}-password"
+
+    def fake_kafka_probe(config: KafkaProbeConfig, *, password: str) -> str:
+        kafka_configs.append(config)
+        assert password == "torghut-ws-password"
+        return """
+GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG
+torghut-ta-live torghut.trades.v1 0 10 10 0
+=== topic_offsets ===
+torghut.trades.v1:0:10
+=== latest_messages ===
+=== torghut.trades.v1 ===
+CreateTime:1783545000000\tPartition:0\tOffset:9\tAMD
+"""
+
+    def fake_clickhouse_query(
+        *,
+        namespace: str,
+        pod: str,
+        user: str,
+        password: str,
+        query: str,
+    ) -> str:
+        assert (namespace, pod, user, password) == (
+            "torghut",
+            "chi-torghut-clickhouse-default-0-0-0",
+            "torghut",
+            "torghut-clickhouse-auth-password",
+        )
+        assert "ta_signals" in query
+        return """table\tsource\tcount()\tmax(event_ts)\tmax(ingest_ts)
+ta_signals\tta\t1\t2026-07-08 21:09:00.000\t2026-07-08 21:09:30.000
+"""
+
+    monkeypatch.setattr(
+        "scripts.verify_market_data_chain.datetime",
+        _FixedDatetime,
+    )
+    monkeypatch.setattr(
+        "scripts.verify_market_data_chain.read_kubernetes_secret",
+        fake_secret,
+    )
+    monkeypatch.setattr(
+        "scripts.verify_market_data_chain.run_kafka_probe", fake_kafka_probe
+    )
+    monkeypatch.setattr(
+        "scripts.verify_market_data_chain.run_clickhouse_query",
+        fake_clickhouse_query,
+    )
+
+    exit_code = main(["--topic", "torghut.trades.v1", "--format", "json"])
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["status"] == "ok"
+    assert secret_calls == [
+        ("kafka", "torghut-ws", "password"),
+        ("torghut", "torghut-clickhouse-auth", "torghut_password"),
+    ]
+    assert kafka_configs[0].topics == ("torghut.trades.v1",)
+
+
+class _FixedDatetime(datetime):
+    @classmethod
+    def now(cls, tz: tzinfo | None = None) -> datetime:
+        return datetime(2026, 7, 8, 21, 10, tzinfo=tz or UTC)
