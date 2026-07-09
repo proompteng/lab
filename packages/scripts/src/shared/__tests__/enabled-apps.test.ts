@@ -18,15 +18,16 @@ const entry = (name: string) => {
 
 describe('enabled app inventory', () => {
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
-    expect(inventory.applicationSetEntryCount).toBe(70)
+    expect(inventory.applicationSetEntryCount).toBe(69)
     expect(inventory.directApplicationCount).toBe(1)
-    expect(inventory.entries).toHaveLength(71)
+    expect(inventory.entries).toHaveLength(70)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)
+    expect(inventory.entries.some((candidate) => candidate.name === 'olden')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'sag')).toBe(false)
   })
 
-  it('preserves generated app resources when a product app is disabled', () => {
+  it('records preservation intent when a product app is disabled', () => {
     expect(productApplicationSet.spec?.syncPolicy?.preserveResourcesOnDeletion).toBe(true)
   })
 
@@ -81,7 +82,6 @@ describe('enabled app inventory', () => {
       'docs',
       'app',
       'proompteng',
-      'olden',
       'synthesis',
       'attic',
       'symphony',
@@ -106,7 +106,6 @@ describe('enabled app inventory', () => {
     expect(entry('docs').nixImageAttr).toBe('docs-image')
     expect(entry('app').nixImageAttr).toBe('app-image')
     expect(entry('proompteng').nixImageAttr).toBe('proompteng-image')
-    expect(entry('olden').nixImageAttr).toBe('olden-image')
     expect(entry('synthesis').nixImageAttr).toBe('synthesis-image')
     expect(entry('agents').nixImageAttr).toBe('agents-codex-runner-image')
     expect(entry('arc').nixImageAttr).toBe('arc-runner-image')

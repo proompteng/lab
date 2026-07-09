@@ -8,17 +8,17 @@ This is the final report for the enabled-app Nix build performance rollout as of
 - No Helm-only, vendor-manifest, or external-source app was counted as an image-build migration target.
 - GitHub Actions and manual build/deploy script paths are present for migrated build-owning apps.
 - No Ceph, Rook, ObjectBucketClaim, PVC, Talos, node, power, or storage resources were changed for this report.
-- Remaining caveats are limited to older release-contract schema gaps, disabled Sag historical proof, and future
+- Remaining caveats are limited to older release-contract schema gaps, disabled Olden/Sag historical proof, and future
   warm-cache proof on real source-triggered builds; no enabled live app remains blocked on Nix rollout proof.
 
 ## Scope
 
 - Enabled apps with full live runtime proof: `oirat`, `bumba`, `froussard`, `arc`, `attic`, `headlamp`, `app`, `docs`,
-  `proompteng`, `olden`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`, `agents`,
+  `proompteng`, `synthesis`, `symphony`, `symphony-jangar`, `symphony-torghut`, `jangar`, `agents`,
   `torghut`, `torghut-hyperliquid-feed`, `torghut-hyperliquid-runtime`, `torghut-options`.
-- Disabled apps with retained build/release proof: `sag` (`enabled: "false"` in the product ApplicationSet).
-- Product ApplicationSet deletion preserves generated app resources, so disabling `sag` removes it from enabled rollout
-  inventory without intentionally pruning historical Sag resources.
+- Disabled apps with retained build/release proof: `olden` and `sag` (`enabled: "false"` in the product ApplicationSet).
+- The product ApplicationSet records preservation intent, but live Sag disablement still removed its generated Application
+  and managed workloads. Olden disablement therefore expects the same workload removal while retaining its namespace.
 - Build paths: `.github/workflows/oirat-ci.yml`, `.github/workflows/bumba-ci.yml`,
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
@@ -571,8 +571,8 @@ job wall times above and does not claim Headlamp cache-hit counts.
 
 ## Product Apps Rollout Proof
 
-This section covers the enabled product apps built by `.github/workflows/product-nix-images.yml`: `app`, `docs`,
-`proompteng`, `olden`, and `synthesis`.
+This section preserves rollout proof for product apps built by `.github/workflows/product-nix-images.yml`: the enabled
+`app`, `docs`, `proompteng`, and `synthesis` apps plus the now-disabled `olden` app.
 
 ### Product Main Build Proof
 
@@ -621,13 +621,13 @@ promoted image.
 
 ### Product Live Rollout Smoke
 
-Current readback:
+Current enabled-app readback plus Olden's final pre-disable evidence:
 
 | Service     | Argo state       | Live image digest                                                      | Pod state             | Smoke |
 | ----------- | ---------------- | ---------------------------------------------------------------------- | --------------------- | ----- |
 | `app`       | `Synced/Healthy` | `sha256:c410d4f09aa4290dfb12da53982dd950a7c8d5a2630a06912d166fad2abbb9c3` | `1/1 Running`, `0` restarts | `/` returned `307`; following redirect returned `200` |
 | `docs`      | `Synced/Healthy` | `sha256:e9d7ebbff45c66bbf77c8b73a05ed8ec6801297a737ae2e7cdbda410ae1fe58d` | `1/1 Running`, `0` restarts | `/` returned `200` |
-| `olden`     | `Synced/Healthy` | `sha256:84b359d4418e036be781cc56ce2c910fbcc9c2a3c7c52732098d89c9bb22d3b5` | `1/1 Running`, `0` restarts | `/` returned `200` |
+| `olden`     | `Disabled`       | `sha256:84b359d4418e036be781cc56ce2c910fbcc9c2a3c7c52732098d89c9bb22d3b5` | no live workload expected | historical `/` returned `200` |
 | `proompteng` | `Synced/Healthy` | `sha256:aeb92626912fb5c5f48a37b1ec67531fae4d5e1e4cb57c541bdacc9996074ee2` | `1/1 Running`, `0` restarts | `/` returned `200` |
 | `synthesis` | `Synced/Healthy` | `sha256:62486474c8875e2ed3341abeb5d06a45d385a25e8f53a8a8f7efb3dd6b3cee32` | `1/1 Running`, `0` restarts | `/` returned `200` |
 
@@ -1103,10 +1103,10 @@ bun run packages/scripts/src/shared/nix-rollout-report.ts --json
 
 Readback:
 
-- enabled entries: `71`
-- ApplicationSet entries: `70`
+- enabled entries: `70`
+- ApplicationSet entries: `69`
 - direct Applications: `1`
-- class counts: `nix-image=20`, `vendor-manifest=25`, `helm-chart=24`, `external-source=2`
+- class counts: `nix-image=19`, `vendor-manifest=25`, `helm-chart=24`, `external-source=2`
 - missing build contracts: none
 - deferred apps: none
 - manifest-only repo image apps: `3`
@@ -1117,7 +1117,8 @@ No enabled root-managed, repo-owned image app remains without build/release/live
 
 The remaining caveats are explicit:
 
-- Sag is disabled in the product ApplicationSet; if it is re-enabled and replicas are raised above `0`, the runtime
+- Olden and Sag are disabled in the product ApplicationSet. Olden retains its historical build/release proof, and if Sag
+  is re-enabled and replicas are raised above `0`, the runtime
   smoke gate applies again.
 - Some older release contracts, including Froussard, ARC, Attic, Jangar, Sag, and Torghut TA/WS/feed, do not include the
   normalized `cacheProvenance`, `timings`, `lockfileHashes`, and `toolVersions` fields. They are still real Nix OCI

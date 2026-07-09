@@ -76,7 +76,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: analysis
                 path: argocd/applications/analysis
                 namespace: analysis
