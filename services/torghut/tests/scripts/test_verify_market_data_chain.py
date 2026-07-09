@@ -25,6 +25,7 @@ from scripts.verify_market_data_chain import (
     parse_latest_kafka_messages,
     parse_topic_offsets,
     read_kubernetes_secret,
+    resolve_freshness_market_session_state,
     run_clickhouse_query,
     run_kafka_probe,
 )
@@ -148,7 +149,42 @@ def test_parse_args_replaces_default_topics_when_topic_is_provided() -> None:
 
     assert defaults.topic is None
     assert tuple(defaults.topic or DEFAULT_TOPICS) == DEFAULT_TOPICS
+    assert defaults.freshness_market_session == "auto"
     assert custom.topic == ["custom.one", "custom.two"]
+
+
+def test_resolve_freshness_market_session_state_uses_regular_nyse_hours() -> None:
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 7, 8, 15, 0, tzinfo=UTC),
+            "auto",
+        )
+        == "regular_open"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 7, 9, 6, 0, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 7, 8, 15, 0, tzinfo=UTC),
+            "outside_regular_session",
+        )
+        == "outside_regular_session"
+    )
+
+
+def test_resolve_freshness_market_session_state_uses_market_holidays() -> None:
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 7, 3, 15, 0, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
 
 
 def test_read_kubernetes_secret_decodes_without_exposing_encoded_value(
@@ -337,6 +373,69 @@ def test_build_summary_degrades_when_required_clickhouse_rows_are_missing() -> N
 
     assert summary["status"] == "degraded"
     assert summary["issues"] == ["clickhouse_accepted_source_missing:ta_microbars"]
+
+
+def test_build_summary_suppresses_age_only_staleness_outside_regular_session() -> None:
+    summary = build_summary(
+        MarketDataChainProbe(
+            generated_at=datetime(2026, 7, 9, 6, 10, tzinfo=UTC),
+            consumer_group_lag=[
+                ConsumerGroupLag(
+                    group="torghut-ta-live",
+                    topic="torghut.trades.v1",
+                    partition=0,
+                    current_offset=10,
+                    log_end_offset=10,
+                    lag=0,
+                )
+            ],
+            topic_offsets=[
+                TopicOffset(topic="torghut.trades.v1", partition=0, offset=10)
+            ],
+            latest_messages=[
+                LatestKafkaMessage(
+                    topic="torghut.trades.v1",
+                    partition=0,
+                    offset=9,
+                    timestamp_type="CreateTime",
+                    timestamp_ms=1783544335000,
+                    key="AMD",
+                )
+            ],
+            clickhouse_rows=[
+                ClickHouseFreshnessRow(
+                    table="ta_signals",
+                    source="ta",
+                    row_count=10,
+                    latest_event_ts="2026-07-08 20:57:00.000",
+                    latest_ingest_ts="2026-07-09 05:54:57.345",
+                ),
+                ClickHouseFreshnessRow(
+                    table="ta_microbars",
+                    source="ta",
+                    row_count=10,
+                    latest_event_ts="2026-07-08 20:57:00.000",
+                    latest_ingest_ts="2026-07-09 05:54:57.345",
+                ),
+            ],
+        ),
+        thresholds=FreshnessThresholds(
+            kafka_age_seconds=300,
+            clickhouse_age_seconds=300,
+            market_session_state="outside_regular_session",
+            market_session_source="auto",
+        ),
+    )
+
+    nested_summary = cast(dict[str, object], summary["summary"])
+    assert summary["status"] == "ok"
+    assert summary["issues"] == []
+    assert nested_summary["freshness_age_enforced"] is False
+    assert nested_summary["suppressed_freshness_age_issues"] == [
+        "clickhouse_accepted_source_stale:ta_microbars",
+        "clickhouse_accepted_source_stale:ta_signals",
+        "kafka_topic_stale:torghut.trades.v1:0",
+    ]
 
 
 def test_build_summary_handles_missing_and_zulu_clickhouse_timestamps() -> None:
