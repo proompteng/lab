@@ -166,6 +166,9 @@ class TestDurableInventoryFallback(_TestOrderIdempotencyBase):
         self.assertEqual(resolution.position_qty, Decimal("0.25"))
         self.assertEqual(resolution.reason, "sell_reducing_long_fractional_allowed")
 
+
+
+class TestDurableInventoryBrokerReadback(_TestOrderIdempotencyBase):
     def test_quantity_resolution_preserves_explicit_flat_broker_readback(
         self,
     ) -> None:
