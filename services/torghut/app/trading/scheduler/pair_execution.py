@@ -31,12 +31,10 @@ def reserve_pair_allocations(
     account: dict[str, str],
     positions: list[dict[str, object]],
 ) -> list[list[AllocationResult]]:
-    grouped: dict[tuple[str, str], list[AllocationResult]] = {}
+    grouped: dict[tuple[str, str, str, str], list[AllocationResult]] = {}
     for allocation in allocations:
         decision = allocation.decision
-        grouped.setdefault((decision.strategy_id, decision.timeframe), []).append(
-            allocation
-        )
+        grouped.setdefault(_pair_signal_epoch(decision), []).append(allocation)
     return [
         _reserve_group(group, account=account, positions=positions)
         for _, group in sorted(grouped.items())
@@ -166,11 +164,25 @@ def _reserved_leg_notional(
 
 def _pair_group_id(group: list[AllocationResult]) -> str:
     parts = [
-        f"{item.decision.strategy_id}:{item.decision.symbol}:{item.decision.event_ts.isoformat()}"
+        ":".join((*_pair_signal_epoch(item.decision), item.decision.symbol))
         for item in sorted(group, key=lambda item: item.decision.symbol)
     ]
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:20]
     return f"pair-{digest}"
+
+
+def _pair_signal_epoch(decision: StrategyDecision) -> tuple[str, str, str, str]:
+    raw_signal_seq = decision.params.get("signal_seq")
+    try:
+        signal_seq = str(int(str(raw_signal_seq)))
+    except (TypeError, ValueError):
+        signal_seq = ""
+    return (
+        decision.strategy_id,
+        decision.timeframe,
+        decision.event_ts.isoformat(),
+        signal_seq,
+    )
 
 
 def _reject_pair_allocation(
@@ -196,7 +208,9 @@ def _reject_pair_allocation(
     )
     if reason not in reason_codes:
         reason_codes.append(reason)
-    allocator_payload.update({"approved": False, "reason_codes": reason_codes})
+    allocator_payload.update(
+        {"status": "rejected", "approved": False, "reason_codes": reason_codes}
+    )
     params["allocator"] = allocator_payload
     return replace(
         allocation,

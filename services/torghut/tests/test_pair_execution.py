@@ -11,6 +11,7 @@ from app.trading.portfolio import (
     PortfolioSizingConfig,
 )
 from app.trading.scheduler.pair_execution import reserve_pair_allocations
+from app.trading.scheduler.pipeline.support import allocator_rejection_reasons
 
 
 def _allocation(
@@ -19,12 +20,14 @@ def _allocation(
     action: str,
     pair_side: str,
     notional: Decimal,
+    event_ts: datetime | None = None,
+    signal_seq: int = 1,
 ) -> AllocationResult:
     price = Decimal("100")
     decision = StrategyDecision(
         strategy_id="pairs-v1",
         symbol=symbol,
-        event_ts=datetime(2026, 7, 10, 14, 0, tzinfo=timezone.utc),
+        event_ts=event_ts or datetime(2026, 7, 10, 14, 0, tzinfo=timezone.utc),
         timeframe="1Min",
         action=action,
         qty=notional / price,
@@ -34,7 +37,11 @@ def _allocation(
             "microbar_cross_sectional_pair_entry,"
             f"pair_side:{pair_side},selection_mode:continuation"
         ),
-        params={"price": str(price), "allocator": {"approved": True}},
+        params={
+            "price": str(price),
+            "signal_seq": signal_seq,
+            "allocator": {"approved": True},
+        },
     )
     return AllocationResult(
         decision=decision,
@@ -115,6 +122,113 @@ def test_pair_reservation_rejects_a_single_unhedged_leg() -> None:
     assert not allocation.approved
     assert "pair_opposite_leg_missing" in allocation.reason_codes
     assert allocation.decision.params["allocator"]["approved"] is False
+    assert allocation.decision.params["allocator"]["status"] == "rejected"
+    assert allocator_rejection_reasons(allocation.decision) == [
+        "pair_opposite_leg_missing"
+    ]
+
+
+def test_pair_reservation_scopes_groups_by_signal_timestamp() -> None:
+    first_event = datetime(2026, 7, 10, 14, 0, tzinfo=timezone.utc)
+    second_event = datetime(2026, 7, 10, 14, 1, tzinfo=timezone.utc)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="NVDA",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol="AMD",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol="NVDA",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=second_event,
+            ),
+            _allocation(
+                symbol="AMD",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=second_event,
+            ),
+        ],
+        account={"equity": "40000", "buying_power": "100000"},
+        positions=[],
+    )
+
+    assert len(groups) == 2
+    assert all(len(group) == 2 for group in groups)
+    assert all(item.approved for group in groups for item in group)
+    group_ids = {
+        item.decision.params["pair_execution"]["group_id"]
+        for group in groups
+        for item in group
+    }
+    assert len(group_ids) == 2
+
+
+def test_pair_reservation_scopes_same_timestamp_by_signal_sequence() -> None:
+    event_ts = datetime(2026, 7, 10, 14, 0, tzinfo=timezone.utc)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="NVDA",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=event_ts,
+                signal_seq=1,
+            ),
+            _allocation(
+                symbol="AMD",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=event_ts,
+                signal_seq=1,
+            ),
+            _allocation(
+                symbol="NVDA",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=event_ts,
+                signal_seq=2,
+            ),
+            _allocation(
+                symbol="AMD",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=event_ts,
+                signal_seq=2,
+            ),
+        ],
+        account={"equity": "40000", "buying_power": "100000"},
+        positions=[],
+    )
+
+    assert len(groups) == 2
+    assert all(len(group) == 2 for group in groups)
+    assert all(item.approved for group in groups for item in group)
+    group_ids = {
+        item.decision.params["pair_execution"]["group_id"]
+        for group in groups
+        for item in group
+    }
+    assert len(group_ids) == 2
 
 
 def test_pair_reservation_submits_the_net_reducing_leg_first() -> None:
