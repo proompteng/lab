@@ -31,7 +31,7 @@ def reserve_pair_allocations(
     account: dict[str, str],
     positions: list[dict[str, object]],
 ) -> list[list[AllocationResult]]:
-    grouped: dict[tuple[str, str, str, str], list[AllocationResult]] = {}
+    grouped: dict[tuple[str, str, str], list[AllocationResult]] = {}
     for allocation in allocations:
         decision = allocation.decision
         grouped.setdefault(_pair_signal_epoch(decision), []).append(allocation)
@@ -171,17 +171,11 @@ def _pair_group_id(group: list[AllocationResult]) -> str:
     return f"pair-{digest}"
 
 
-def _pair_signal_epoch(decision: StrategyDecision) -> tuple[str, str, str, str]:
-    raw_signal_seq = decision.params.get("signal_seq")
-    try:
-        signal_seq = str(int(str(raw_signal_seq)))
-    except (TypeError, ValueError):
-        signal_seq = ""
+def _pair_signal_epoch(decision: StrategyDecision) -> tuple[str, str, str]:
     return (
         decision.strategy_id,
         decision.timeframe,
         decision.event_ts.isoformat(),
-        signal_seq,
     )
 
 
