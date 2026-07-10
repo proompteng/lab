@@ -133,6 +133,10 @@ class TestCapitalSafetyController(TestCase):
                     "blockers": [],
                 },
             ),
+            patch(
+                "app.trading.scheduler.capital_controls.reconcile_tigerbeetle_transfers",
+                side_effect=RuntimeError("reconciliation unavailable"),
+            ),
         ):
             controller.evaluate(
                 SimpleNamespace(),
@@ -140,12 +144,84 @@ class TestCapitalSafetyController(TestCase):
             )
 
         self.assertTrue(controller.state.emergency_stop_active)
-        self.assertIn(
-            "tigerbeetle_reconciliation_stale",
-            controller.state.emergency_stop_reason,
-        )
+        self.assertIn("RuntimeError", controller.state.emergency_stop_reason)
         self.assertEqual(controller.state.capital_ledger_state, "blocked")
         self.assertEqual(adapter.cancel_calls, 1)
+
+    def test_required_stale_ledger_refreshes_before_allowing_exposure(self) -> None:
+        adapter = _ExecutionAdapter([])
+        controller = self._controller(adapter)
+        now = datetime(2026, 7, 10, 14, 0, tzinfo=ZoneInfo("America/New_York"))
+        risk = CapitalRiskSnapshot(
+            current_equity=Decimal("10000"),
+            daily_start_equity=Decimal("10000"),
+            high_water_equity=Decimal("10000"),
+            daily_loss_ratio=Decimal("0"),
+            drawdown_ratio=Decimal("0"),
+        )
+
+        with (
+            patch.object(settings, "trading_mode", "live"),
+            patch.object(settings, "tigerbeetle_required", True),
+            patch.object(settings, "tigerbeetle_reconcile_required", True),
+            patch.object(controller, "_load_risk_snapshot", return_value=risk),
+            patch(
+                "app.trading.scheduler.capital_controls.latest_tigerbeetle_reconciliation_status_payload",
+                return_value={
+                    "ok": True,
+                    "reconciliation_stale": True,
+                    "blockers": [],
+                },
+            ),
+            patch(
+                "app.trading.scheduler.capital_controls.reconcile_tigerbeetle_transfers",
+                return_value={
+                    "ok": True,
+                    "reconciliation_stale": False,
+                    "blockers": [],
+                },
+            ) as refresh,
+        ):
+            controller.evaluate(SimpleNamespace(), SimpleNamespace(as_of=now))
+
+        refresh.assert_called_once()
+        self.assertFalse(controller.state.emergency_stop_active)
+        self.assertEqual(controller.state.capital_ledger_state, "current")
+        self.assertEqual(adapter.cancel_calls, 0)
+
+    def test_required_current_ledger_does_not_refresh(self) -> None:
+        controller = self._controller()
+        now = datetime(2026, 7, 10, 14, 0, tzinfo=ZoneInfo("America/New_York"))
+        risk = CapitalRiskSnapshot(
+            current_equity=Decimal("10000"),
+            daily_start_equity=Decimal("10000"),
+            high_water_equity=Decimal("10000"),
+            daily_loss_ratio=Decimal("0"),
+            drawdown_ratio=Decimal("0"),
+        )
+
+        with (
+            patch.object(settings, "trading_mode", "live"),
+            patch.object(settings, "tigerbeetle_required", True),
+            patch.object(settings, "tigerbeetle_reconcile_required", True),
+            patch.object(controller, "_load_risk_snapshot", return_value=risk),
+            patch(
+                "app.trading.scheduler.capital_controls.latest_tigerbeetle_reconciliation_status_payload",
+                return_value={
+                    "ok": True,
+                    "reconciliation_stale": False,
+                    "blockers": [],
+                },
+            ),
+            patch(
+                "app.trading.scheduler.capital_controls.reconcile_tigerbeetle_transfers"
+            ) as refresh,
+        ):
+            controller.evaluate(SimpleNamespace(), SimpleNamespace(as_of=now))
+
+        refresh.assert_not_called()
+        self.assertFalse(controller.state.emergency_stop_active)
+        self.assertEqual(controller.state.capital_ledger_state, "current")
 
     def test_new_exposure_is_blocked_at_1530_et(self) -> None:
         controller = self._controller()

@@ -6,9 +6,9 @@ from unittest.mock import MagicMock, Mock
 from app.trading.scheduler.pipeline import TradingPipeline
 
 
-def _pipeline() -> tuple[TradingPipeline, object]:
+def _pipeline() -> tuple[TradingPipeline, MagicMock]:
     pipeline = TradingPipeline.__new__(TradingPipeline)
-    session = object()
+    session = MagicMock()
     session_scope = MagicMock()
     session_scope.__enter__.return_value = session
     pipeline.session_factory = Mock(return_value=session_scope)
@@ -32,14 +32,16 @@ def test_capital_safety_runs_when_no_strategy_is_enabled() -> None:
     pipeline.capital_safety.evaluate.assert_called_once_with(
         session, pipeline._get_account_snapshot.return_value
     )
+    session.commit.assert_called_once_with()
 
 
 def test_capital_safety_runs_before_empty_signal_exit() -> None:
-    pipeline, _ = _pipeline()
+    pipeline, session = _pipeline()
     events: list[str] = []
     pipeline.capital_safety.evaluate.side_effect = lambda *_args: events.append(
         "capital_safety"
     )
+    session.commit.side_effect = lambda: events.append("capital_safety_commit")
     pipeline._load_strategies = Mock(return_value=[object()])
     pipeline._warm_session_context_from_open = Mock()
     pipeline.ingestor = Mock()
@@ -51,4 +53,4 @@ def test_capital_safety_runs_before_empty_signal_exit() -> None:
 
     pipeline.run_once()
 
-    assert events == ["capital_safety", "fetch_signals"]
+    assert events == ["capital_safety", "capital_safety_commit", "fetch_signals"]

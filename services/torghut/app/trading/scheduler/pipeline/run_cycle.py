@@ -169,6 +169,7 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
             self._prepare_run_once(session)
             account_snapshot = self._get_account_snapshot(session)
             self.capital_safety.evaluate(session, account_snapshot)
+            session.commit()
             if self.state.emergency_stop_active:
                 return
             strategies = self._load_strategies(session)

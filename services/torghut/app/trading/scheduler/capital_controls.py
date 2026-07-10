@@ -24,6 +24,7 @@ from ..prices import PriceFetcher
 from ..session_context import regular_session_open_utc_for
 from ..tigerbeetle_reconcile.latest_tigerbeetle_reconciliation_status_p import (
     latest_tigerbeetle_reconciliation_status_payload,
+    reconcile_tigerbeetle_transfers,
 )
 from ..time_source import trading_now
 from .state import TradingState
@@ -236,6 +237,20 @@ class CapitalSafetyController:
             return reason
 
         reason = self._tigerbeetle_reconciliation_reason(payload)
+        if reason is not None:
+            try:
+                payload = reconcile_tigerbeetle_transfers(session)
+            except (
+                OSError,
+                SQLAlchemyError,
+                RuntimeError,
+                TypeError,
+                ValueError,
+            ) as exc:
+                logger.exception("TigerBeetle reconciliation safety refresh failed")
+                reason = f"tigerbeetle_reconciliation_unavailable:{type(exc).__name__}"
+            else:
+                reason = self._tigerbeetle_reconciliation_reason(payload)
         self._record_ledger_state(reason=reason, now=now)
         return reason
 
