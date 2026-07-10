@@ -65,8 +65,6 @@ from .support import (
 
 logger = logging.getLogger(__name__)
 
-_EMPIRICAL_JOBS_STATUS_PATCH_TARGET = build_empirical_jobs_status
-
 
 class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
     def _position_qty_for_symbol(

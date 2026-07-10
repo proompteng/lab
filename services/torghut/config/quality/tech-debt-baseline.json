@@ -15,11 +15,11 @@
     },
     "broad_exception": {
       "by_root": {
-        "app": 262,
+        "app": 257,
         "scripts": 105,
         "tests": 6
       },
-      "total": 373
+      "total": 368
     },
     "noqa_comment": {
       "by_root": {
@@ -51,11 +51,11 @@
     },
     "typing_any_import": {
       "by_root": {
-        "app": 434,
+        "app": 431,
         "scripts": 163,
         "tests": 84
       },
-      "total": 681
+      "total": 678
     }
   },
   "parse_errors": [],
@@ -67,53 +67,53 @@
   "pylint_design": {
     "by_code": {
       "R0911": 80,
-      "R0912": 128,
-      "R0913": 521,
-      "R0914": 453,
-      "R0915": 117,
+      "R0912": 126,
+      "R0913": 519,
+      "R0914": 451,
+      "R0915": 116,
       "R0917": 20,
       "R1702": 29
     },
     "examples": {
       "R0911": [
-        "app/snapshots.py:543:0: R0911: Too many return statements (7/6) (too-many-return-statements)",
         "app/alpaca_client.py:294:4: R0911: Too many return statements (9/6) (too-many-return-statements)",
-        "app/whitepapers/workflow/whitepaper_workflow_persistence_methods.py:49:4: R0911: Too many return statements (7/6) (too-many-return-statements)",
-        "app/whitepapers/workflow/whitepaper_workflow_ingestion_methods.py:74:4: R0911: Too many return statements (8/6) (too-many-return-statements)",
-        "app/whitepapers/workflow/whitepaper_workflow_agent_methods.py:295:4: R0911: Too many return statements (7/6) (too-many-return-statements)"
+        "app/snapshots.py:543:0: R0911: Too many return statements (7/6) (too-many-return-statements)",
+        "app/api/health_checks/shared_context.py:195:0: R0911: Too many return statements (7/6) (too-many-return-statements)",
+        "app/hyperliquid_execution/profitability.py:165:0: R0911: Too many return statements (9/6) (too-many-return-statements)",
+        "app/trading/evaluation_trace.py:32:0: R0911: Too many return statements (7/6) (too-many-return-statements)"
       ],
       "R0912": [
-        "app/whitepapers/workflow/whitepaper_workflow_rollout_methods.py:328:4: R0912: Too many branches (15/12) (too-many-branches)",
-        "app/hyperliquid_execution/config.py:159:4: R0912: Too many branches (17/12) (too-many-branches)",
         "app/api/health_checks/tigerbeetle_health.py:245:0: R0912: Too many branches (18/12) (too-many-branches)",
-        "app/trading/tigerbeetle_runtime_ledger_parity.py:427:0: R0912: Too many branches (25/12) (too-many-branches)",
-        "app/trading/empirical_jobs.py:435:0: R0912: Too many branches (18/12) (too-many-branches)"
+        "app/trading/alpha_readiness_settlement_conveyor.py:520:0: R0912: Too many branches (14/12) (too-many-branches)",
+        "app/trading/empirical_jobs.py:435:0: R0912: Too many branches (18/12) (too-many-branches)",
+        "app/trading/empirical_manifest.py:50:0: R0912: Too many branches (13/12) (too-many-branches)",
+        "app/trading/jangar_controller_ingestion_carry.py:355:0: R0912: Too many branches (13/12) (too-many-branches)"
       ],
       "R0913": [
+        "app/alpaca_client.py:94:4: R0913: Too many arguments (7/5) (too-many-arguments)",
+        "app/alpaca_client.py:182:4: R0913: Too many arguments (10/5) (too-many-arguments)",
         "app/db.py:364:0: R0913: Too many arguments (6/5) (too-many-arguments)",
         "app/snapshots.py:88:0: R0913: Too many arguments (8/5) (too-many-arguments)",
-        "app/snapshots.py:275:0: R0913: Too many arguments (9/5) (too-many-arguments)",
-        "app/alpaca_client.py:94:4: R0913: Too many arguments (7/5) (too-many-arguments)",
-        "app/alpaca_client.py:182:4: R0913: Too many arguments (10/5) (too-many-arguments)"
+        "app/snapshots.py:275:0: R0913: Too many arguments (9/5) (too-many-arguments)"
       ],
       "R0914": [
+        "app/alpaca_client.py:182:4: R0914: Too many local variables (16/15) (too-many-locals)",
         "app/db.py:384:0: R0914: Too many local variables (21/15) (too-many-locals)",
         "app/snapshots.py:88:0: R0914: Too many local variables (19/15) (too-many-locals)",
-        "app/alpaca_client.py:182:4: R0914: Too many local variables (16/15) (too-many-locals)",
-        "app/whitepapers/workflow/whitepaper_workflow_api_methods.py:169:4: R0914: Too many local variables (26/15) (too-many-locals)",
-        "app/whitepapers/workflow/whitepaper_workflow_persistence_methods.py:193:4: R0914: Too many local variables (42/15) (too-many-locals)"
+        "app/api/maintenance.py:215:4: R0914: Too many local variables (21/15) (too-many-locals)",
+        "app/api/maintenance.py:336:4: R0914: Too many local variables (20/15) (too-many-locals)"
       ],
       "R0915": [
-        "app/whitepapers/workflow/whitepaper_workflow_persistence_methods.py:193:4: R0915: Too many statements (61/50) (too-many-statements)",
-        "app/whitepapers/workflow/whitepaper_workflow_agent_methods.py:50:4: R0915: Too many statements (51/50) (too-many-statements)",
         "app/api/maintenance.py:111:0: R0915: Too many statements (109/50) (too-many-statements)",
         "app/api/health_checks/tigerbeetle_health.py:245:0: R0915: Too many statements (79/50) (too-many-statements)",
-        "app/trading/alpha_repair_dividend_ledger.py:208:0: R0915: Too many statements (52/50) (too-many-statements)"
+        "app/trading/alpha_readiness_settlement_conveyor.py:520:0: R0915: Too many statements (56/50) (too-many-statements)",
+        "app/trading/alpha_repair_dividend_ledger.py:208:0: R0915: Too many statements (52/50) (too-many-statements)",
+        "app/trading/empirical_jobs.py:435:0: R0915: Too many statements (69/50) (too-many-statements)"
       ],
       "R0917": [
-        "app/db.py:364:0: R0917: Too many positional arguments (6/5) (too-many-positional-arguments)",
         "app/alpaca_client.py:94:4: R0917: Too many positional arguments (7/5) (too-many-positional-arguments)",
         "app/alpaca_client.py:182:4: R0917: Too many positional arguments (9/5) (too-many-positional-arguments)",
+        "app/db.py:364:0: R0917: Too many positional arguments (6/5) (too-many-positional-arguments)",
         "app/api/maintenance.py:111:0: R0917: Too many positional arguments (6/5) (too-many-positional-arguments)",
         "app/api/whitepaper.py:400:0: R0917: Too many positional arguments (7/5) (too-many-positional-arguments)"
       ],
@@ -122,7 +122,7 @@
         "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
         "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
         "app/trading/tigerbeetle_runtime_ledger_parity.py:546:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)",
-        "app/trading/hypotheses/compile_hypothesis_runtime_statuses.py:126:4: R1702: Too many nested blocks (5/4) (too-many-nested-blocks)"
+        "app/trading/autonomy/policy_check/profitability_manifest.py:135:4: R1702: Too many nested blocks (6/4) (too-many-nested-blocks)"
       ]
     },
     "top_files": [
@@ -180,10 +180,6 @@
       },
       {
         "count": 8,
-        "path": "app/trading/scheduler/paper_route_materialization.py"
-      },
-      {
-        "count": 8,
         "path": "app/trading/tigerbeetle_runtime_ledger_parity.py"
       },
       {
@@ -216,7 +212,7 @@
       },
       {
         "count": 7,
-        "path": "app/trading/submission_council/certificate_eval.py"
+        "path": "app/trading/scheduler/paper_route_materialization.py"
       },
       {
         "count": 7,
@@ -225,22 +221,26 @@
       {
         "count": 7,
         "path": "scripts/paper_account_position_flattening/lineage_execution.py"
+      },
+      {
+        "count": 7,
+        "path": "scripts/simple_lane_replay/shared_context.py"
       }
     ],
-    "total": 1346
+    "total": 1341
   },
   "roots": {
     "app": {
-      "files": 661,
-      "lines": 282674
+      "files": 676,
+      "lines": 285661
     },
     "scripts": {
-      "files": 242,
-      "lines": 99762
+      "files": 243,
+      "lines": 100502
     },
     "tests": {
-      "files": 707,
-      "lines": 310533
+      "files": 728,
+      "lines": 316564
     }
   },
   "schema_version": "torghut.tech-debt-measurement.v1",
@@ -249,13 +249,13 @@
     "classes_ge_500": 300,
     "classes_ge_750": 155,
     "files_ge_1000": 1,
-    "functions_ge_100": 940,
+    "functions_ge_100": 939,
     "functions_ge_250": 115,
     "functions_ge_500": 27,
     "functions_ge_750": 7
   },
   "total": {
-    "files": 1610,
-    "lines": 692969
+    "files": 1647,
+    "lines": 702727
   }
 }

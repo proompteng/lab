@@ -702,45 +702,17 @@ runtime_ledger_lineage_handoff_manifest = _runtime_ledger_lineage_handoff_manife
 selected_candidate_ids_by_bucket = _selected_candidate_ids_by_bucket
 square_root_impact_capacity_penalty_bps = _square_root_impact_capacity_penalty_bps
 
-bootstrap_lower_percentile_post_cost_utility_bps_split_export = (
-    _bootstrap_lower_percentile_post_cost_utility_bps
-)
 candidate_direction_split_export = _candidate_direction
-candidate_frontier_hash_split_export = _candidate_frontier_hash
-candidate_lineage_split_export = _candidate_lineage
-candidate_notional_split_export = _candidate_notional
 candidate_symbols_split_export = _candidate_symbols
-cluster_lob_activity_score_split_export = _cluster_lob_activity_score
-combined_ofi_decay_score_split_export = _combined_ofi_decay_score
-conformal_tail_risk_penalty_bps_split_export = _conformal_tail_risk_penalty_bps
-discovery_stage_metadata_split_export = _discovery_stage_metadata
-discovery_stage_semantics_split_export = _discovery_stage_semantics
 event_label = _event_label
 ewma_last = _ewma_last
-exact_replay_frontier_key_split_export = _exact_replay_frontier_key
 exact_replay_selection_blockers_for_row_split_export = (
     _exact_replay_selection_blockers_for_row
 )
 extract_macro_stress = _extract_macro_stress
-frontier_selection_blockers_for_row_split_export = _frontier_selection_blockers_for_row
-liquidity_regime_score_split_export = _liquidity_regime_score
-lower_percentile_post_cost_utility_bps_split_export = (
-    _lower_percentile_post_cost_utility_bps
-)
-macro_stress_veto_score_split_export = _macro_stress_veto_score
 normalized_entropy = _normalized_entropy
 ofi_decay_score = _ofi_decay_score
-post_cost_utility_distribution_bps_split_export = _post_cost_utility_distribution_bps
-row_exact_replay_selection_blocked_split_export = _row_exact_replay_selection_blocked
-row_runtime_ledger_lineage_handoff_split_export = _row_runtime_ledger_lineage_handoff
-runtime_ledger_lineage_handoff_manifest_split_export = (
-    _runtime_ledger_lineage_handoff_manifest
-)
 runtime_ledger_required_artifacts = _runtime_ledger_required_artifacts
-selected_candidate_ids_by_bucket_split_export = _selected_candidate_ids_by_bucket
-square_root_impact_capacity_penalty_bps_split_export = (
-    _square_root_impact_capacity_penalty_bps
-)
 __all__ = (
     "bootstrap_lower_percentile_post_cost_utility_bps",
     "candidate_direction",
@@ -766,33 +738,13 @@ __all__ = (
     "runtime_ledger_lineage_handoff_manifest",
     "selected_candidate_ids_by_bucket",
     "square_root_impact_capacity_penalty_bps",
-    "bootstrap_lower_percentile_post_cost_utility_bps_split_export",
     "candidate_direction_split_export",
-    "candidate_frontier_hash_split_export",
-    "candidate_lineage_split_export",
-    "candidate_notional_split_export",
     "candidate_symbols_split_export",
-    "cluster_lob_activity_score_split_export",
-    "combined_ofi_decay_score_split_export",
-    "conformal_tail_risk_penalty_bps_split_export",
-    "discovery_stage_metadata_split_export",
-    "discovery_stage_semantics_split_export",
     "event_label",
     "ewma_last",
-    "exact_replay_frontier_key_split_export",
     "exact_replay_selection_blockers_for_row_split_export",
     "extract_macro_stress",
-    "frontier_selection_blockers_for_row_split_export",
-    "liquidity_regime_score_split_export",
-    "lower_percentile_post_cost_utility_bps_split_export",
-    "macro_stress_veto_score_split_export",
     "normalized_entropy",
     "ofi_decay_score",
-    "post_cost_utility_distribution_bps_split_export",
-    "row_exact_replay_selection_blocked_split_export",
-    "row_runtime_ledger_lineage_handoff_split_export",
-    "runtime_ledger_lineage_handoff_manifest_split_export",
     "runtime_ledger_required_artifacts",
-    "selected_candidate_ids_by_bucket_split_export",
-    "square_root_impact_capacity_penalty_bps_split_export",
 )

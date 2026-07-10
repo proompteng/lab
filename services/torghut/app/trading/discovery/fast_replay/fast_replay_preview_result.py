@@ -585,18 +585,10 @@ SymbolTapeStats = _SymbolTapeStats
 build_clusterlob_feature_lane_by_symbol = _build_clusterlob_feature_lane_by_symbol
 build_symbol_stats = _build_symbol_stats
 
-SymbolTapeStats_split_export = _SymbolTapeStats
-build_clusterlob_feature_lane_by_symbol_split_export = (
-    _build_clusterlob_feature_lane_by_symbol
-)
-build_symbol_stats_split_export = _build_symbol_stats
 __all__ = (
     "FastReplayPreviewResult",
     "build_fast_replay_preview",
     "SymbolTapeStats",
     "build_clusterlob_feature_lane_by_symbol",
     "build_symbol_stats",
-    "SymbolTapeStats_split_export",
-    "build_clusterlob_feature_lane_by_symbol_split_export",
-    "build_symbol_stats_split_export",
 )

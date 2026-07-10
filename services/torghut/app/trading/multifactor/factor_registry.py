@@ -32,9 +32,3 @@ DEFAULT_FACTOR_DEFINITIONS = (
     FactorDefinition("spread_bps", "negative", Decimal("0")),
     FactorDefinition("volatility_bps", "negative", Decimal("0")),
 )
-
-
-def factor_names() -> tuple[str, ...]:
-    """Return the default factor names in scoring order."""
-
-    return tuple(definition.name for definition in DEFAULT_FACTOR_DEFINITIONS)

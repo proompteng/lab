@@ -748,6 +748,4 @@ __all__ = (
     "sanitize_idempotency_key",
 )
 
-# Public aliases used by split-module consumers.
-http_json_request = _http_json_request
 normalize_string_parameter = _normalize_string_parameter

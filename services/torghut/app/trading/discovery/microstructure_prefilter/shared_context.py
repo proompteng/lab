@@ -758,14 +758,7 @@ source_field_diagnostics = _source_field_diagnostics
 source_input_blockers = _source_input_blockers
 with_rank_and_bucket = _with_rank_and_bucket
 
-SymbolMicrostructureStats_split_export = _SymbolMicrostructureStats
-build_symbol_microstructure_stats_split_export = _build_symbol_microstructure_stats
-rank_key_split_export = _rank_key
-score_spec_split_export = _score_spec
 select_frontier_buckets_split_export = _select_frontier_buckets
-source_field_diagnostics_split_export = _source_field_diagnostics
-source_input_blockers_split_export = _source_input_blockers
-with_rank_and_bucket_split_export = _with_rank_and_bucket
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
@@ -789,7 +782,6 @@ __all__: tuple[str, ...] = (
     "Sequence",
     "SignalEnvelope",
     "SymbolMicrostructureStats",
-    "SymbolMicrostructureStats_split_export",
     "_SymbolMicrostructureStats",
     "_build_symbol_microstructure_stats",
     "_rank_key",
@@ -801,7 +793,6 @@ __all__: tuple[str, ...] = (
     "annotations",
     "build_hpairs_microstructure_prefilter",
     "build_symbol_microstructure_stats",
-    "build_symbol_microstructure_stats_split_export",
     "cast",
     "dataclass",
     "exp",
@@ -810,17 +801,12 @@ __all__: tuple[str, ...] = (
     "log",
     "np",
     "rank_key",
-    "rank_key_split_export",
     "score_spec",
-    "score_spec_split_export",
     "select_frontier_buckets",
     "select_frontier_buckets_split_export",
     "source_field_diagnostics",
-    "source_field_diagnostics_split_export",
     "source_input_blockers",
-    "source_input_blockers_split_export",
     "sqrt",
     "timezone",
     "with_rank_and_bucket",
-    "with_rank_and_bucket_split_export",
 )

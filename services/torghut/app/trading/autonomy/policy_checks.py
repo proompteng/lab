@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from .policy_check.common import (
     Any,
     Path,
@@ -56,8 +54,6 @@ from .policy_check.promotion_evidence import (
     evaluate_alpha_readiness_summary,
     evaluate_promotion_evidence as _evaluate_promotion_evidence,
 )
-
-_PATCHABLE_OS_MODULE = os
 
 
 def evaluate_promotion_prerequisites(

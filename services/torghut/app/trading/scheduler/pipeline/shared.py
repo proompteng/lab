@@ -9,16 +9,11 @@ from decimal import Decimal
 from typing import Any
 
 
-from ...autonomy.phase_manifest_contract import AUTONOMY_PHASE_ORDER
-
-
 logger = logging.getLogger(__name__)
 
 REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON = timedelta(minutes=5)
 
 REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT = 25
-
-AUTONOMY_PHASE_ORDER_VALUES: tuple[str, ...] = AUTONOMY_PHASE_ORDER
 
 RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER = Decimal("0.50")
 

@@ -9,12 +9,9 @@ from .common import (
     SQLAlchemyError,
     Sequence,
     StrategyHypothesis,
-    StrategyHypothesisMetricWindow,
-    StrategyPromotionDecision,
     VNextDatasetSnapshot,
     STALE_SEGMENT_STATES as _STALE_SEGMENT_STATES,
     TA_CORE_REASON_CODES as _TA_CORE_REASON_CODES,
-    certificate_evidence_reason_codes as _certificate_evidence_reason_codes,
     normalize_reason_codes as _normalize_reason_codes,
     rollback_runtime_ledger_status_session as _rollback_runtime_ledger_status_session,
     safe_int as _safe_int,
@@ -23,11 +20,8 @@ from .common import (
     active_market_context_mapping,
     active_market_context_reasons,
     cast,
-    datetime,
     logger,
     select,
-    timedelta,
-    timezone,
 )
 
 
@@ -36,14 +30,6 @@ from .repair_candidates import (
 )
 from .quant_health import (
     fresh_clickhouse_signal_continuity as _fresh_clickhouse_signal_continuity,
-)
-from .runtime_certificates import (
-    certificate_runtime_ledger_reason_codes as _certificate_runtime_ledger_reason_codes,
-)
-
-from .certificate_loading import (
-    metric_window_activity_reason_codes as _metric_window_activity_reason_codes,
-    promotion_decision_blocking_reason_codes as _promotion_decision_blocking_reason_codes,
 )
 
 
@@ -165,201 +151,6 @@ def _runtime_ta_core_reasons(
         ]
         ta_core_reasons.extend(item_reasons)
     return ta_core_reasons
-
-
-def evaluate_certificate_candidates(
-    *,
-    evidence: Sequence[Mapping[str, object]],
-    segment_summary: Mapping[str, Mapping[str, object]],
-    runtime_items: Sequence[Mapping[str, Any]],
-    registry_items: Sequence[Mapping[str, object]],
-    max_age_seconds: int,
-    now: datetime,
-    window: str | None,
-    account: str | None,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
-    manifests = {
-        str(item.get("hypothesis_id") or ""): item
-        for item in registry_items
-        if str(item.get("hypothesis_id") or "").strip()
-    }
-    runtime_by_hypothesis = {
-        str(item.get("hypothesis_id") or ""): item
-        for item in runtime_items
-        if str(item.get("hypothesis_id") or "").strip()
-    }
-    evaluated: list[dict[str, object]] = []
-    valid: list[dict[str, object]] = []
-    for row in evidence:
-        hypothesis_id = str(row.get("hypothesis_id") or "").strip()
-        if not hypothesis_id:
-            continue
-        manifest = cast(Mapping[str, Any], manifests.get(hypothesis_id) or {})
-        runtime_item = cast(
-            Mapping[str, object], runtime_by_hypothesis.get(hypothesis_id) or {}
-        )
-        metric_window = cast(
-            StrategyHypothesisMetricWindow | None, row.get("metric_window")
-        )
-        promotion_decision = cast(
-            StrategyPromotionDecision | None, row.get("promotion_decision")
-        )
-        reasons: list[str] = _certificate_evidence_reason_codes(row)
-        metric_window_id: str | None = None
-        promotion_decision_id: str | None = None
-        candidate_id = None
-        capital_stage = None
-        issued_at = None
-
-        if metric_window is None:
-            reasons.append("hypothesis_window_evidence_missing")
-        else:
-            metric_window_id = str(metric_window.id)
-            candidate_id = metric_window.candidate_id
-            capital_stage = metric_window.capital_stage
-            if _safe_text(getattr(metric_window, "observed_stage", None)) != "live":
-                reasons.append("promotion_certificate_not_live_runtime")
-            issued_at = metric_window.window_ended_at or metric_window.created_at
-            if issued_at.tzinfo is None:
-                issued_at = issued_at.replace(tzinfo=timezone.utc)
-            if max_age_seconds > 0 and issued_at < now - timedelta(
-                seconds=max_age_seconds
-            ):
-                reasons.append("hypothesis_window_evidence_stale")
-            if not bool(metric_window.continuity_ok):
-                reasons.append("hypothesis_window_continuity_failed")
-            if not bool(metric_window.drift_ok):
-                reasons.append("hypothesis_window_drift_failed")
-            if _safe_text(metric_window.dependency_quorum_decision) != "allow":
-                reasons.append("hypothesis_window_dependency_quorum_not_allow")
-            reasons.extend(_metric_window_activity_reason_codes(metric_window))
-            if (
-                _safe_text(getattr(metric_window, "observed_stage", None)) == "live"
-                and promotion_decision is not None
-            ):
-                reasons.extend(
-                    _certificate_runtime_ledger_reason_codes(
-                        evidence_row=row,
-                        runtime_item=runtime_item,
-                        metric_window=metric_window,
-                        promotion_decision=promotion_decision,
-                    )
-                )
-
-        if promotion_decision is None:
-            reasons.append("promotion_decision_evidence_missing")
-        else:
-            promotion_decision_id = str(promotion_decision.id)
-            if candidate_id is None:
-                candidate_id = promotion_decision.candidate_id
-            if capital_stage is None:
-                capital_stage = promotion_decision.state
-            reasons.extend(
-                _promotion_decision_blocking_reason_codes(promotion_decision)
-            )
-        if candidate_id is None:
-            candidate_id = _safe_text(manifest.get("candidate_id"))
-        if _safe_text(capital_stage) in {None, "shadow"}:
-            reasons.append("promotion_certificate_shadow_only")
-
-        segment_dependencies = [
-            str(segment).strip()
-            for segment in cast(
-                Sequence[object], manifest.get("segment_dependencies") or []
-            )
-            if str(segment).strip()
-        ]
-        blocked_segments: list[str] = []
-        if runtime_item:
-            if not bool(runtime_item.get("promotion_eligible")):
-                reasons.append("hypothesis_not_promotion_eligible")
-            runtime_stage = _safe_text(runtime_item.get("capital_stage"))
-            if runtime_stage in {None, "shadow"}:
-                reasons.append("alpha_hypothesis_shadow_only")
-        elif runtime_items:
-            reasons.append("alpha_hypothesis_runtime_missing")
-        for segment in segment_dependencies:
-            segment_payload = cast(
-                Mapping[str, Any], segment_summary.get(segment) or {}
-            )
-            if str(segment_payload.get("state") or "").strip() != "ok":
-                blocked_segments.append(segment)
-                reasons.extend(
-                    [
-                        f"segment_{segment}_blocked",
-                        *cast(Sequence[str], segment_payload.get("reason_codes") or []),
-                    ]
-                )
-
-        evaluated_row: dict[str, object] = {
-            "hypothesis_id": hypothesis_id,
-            "candidate_id": candidate_id,
-            "strategy_id": manifest.get("strategy_id")
-            or manifest.get("strategy_family"),
-            "dataset_snapshot_ref": manifest.get("dataset_snapshot_ref"),
-            "account": account,
-            "window": window,
-            "capital_state": capital_stage or "observe",
-            "capital_stage": capital_stage or "shadow",
-            "segment_dependencies": segment_dependencies,
-            "blocked_segments": sorted(set(blocked_segments)),
-            "reason_codes": _normalize_reason_codes(reasons),
-            "metric_window_id": metric_window_id,
-            "promotion_decision_id": promotion_decision_id,
-            "issued_at": issued_at,
-            "expires_at": (
-                issued_at + timedelta(seconds=max_age_seconds)
-                if issued_at is not None and max_age_seconds > 0
-                else None
-            ),
-        }
-        evaluated.append(evaluated_row)
-        if not evaluated_row["reason_codes"]:
-            valid.append(evaluated_row)
-    return evaluated, valid
-
-
-def runtime_hypothesis_ids_for_gate_scope(
-    runtime_items: Sequence[Mapping[str, Any]],
-    *,
-    eligibility_key: str,
-) -> set[str]:
-    return {
-        hypothesis_id
-        for item in runtime_items
-        if bool(item.get(eligibility_key))
-        for hypothesis_id in [str(item.get("hypothesis_id") or "").strip()]
-        if hypothesis_id
-    }
-
-
-def runtime_ledger_hypothesis_ids_for_gate_scope(
-    runtime_ledger_candidates: Sequence[Mapping[str, object]],
-) -> set[str]:
-    return {
-        hypothesis_id
-        for candidate in runtime_ledger_candidates
-        for hypothesis_id in [str(candidate.get("hypothesis_id") or "").strip()]
-        if hypothesis_id
-    }
-
-
-def candidate_reason_codes_for_gate_scope(
-    evaluated_tuples: Sequence[Mapping[str, object]],
-    *,
-    hypothesis_ids: set[str],
-) -> list[str]:
-    scoped_tuples = [
-        item
-        for item in evaluated_tuples
-        if str(item.get("hypothesis_id") or "").strip() in hypothesis_ids
-    ]
-    source_tuples = scoped_tuples if scoped_tuples else list(evaluated_tuples)
-    return [
-        reason
-        for item in source_tuples
-        for reason in cast(Sequence[str], item.get("reason_codes") or [])
-    ]
 
 
 def default_lineage_ref(

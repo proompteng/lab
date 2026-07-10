@@ -906,7 +906,7 @@ class TestPolicyChecksRuntimeEvidence(PolicyChecksTestCaseBase):
             )
 
             with patch(
-                "app.trading.autonomy.policy_checks.os.path.getmtime",
+                "app.trading.autonomy.policy_check.evidence_artifacts.os.path.getmtime",
                 side_effect=OSError("metadata unavailable"),
             ):
                 promotion = evaluate_promotion_prerequisites(

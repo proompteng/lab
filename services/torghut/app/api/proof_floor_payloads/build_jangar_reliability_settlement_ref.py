@@ -25,6 +25,9 @@ from app.api.proof_floor_payloads.proof_floor_receipts import (
     build_profitability_proof_floor_payload,
     build_route_reacquisition_board_payload,
 )
+from app.api.proof_floor_payloads.status_refs import (
+    build_torghut_routeability_admission_ref,
+)
 from app.config import settings
 from app.db import SessionLocal
 from app.models import Execution, RejectedSignalOutcomeEvent
@@ -117,65 +120,6 @@ def build_jangar_reliability_settlement_ref(
         "fresh_until": settlement.get("fresh_until")
         or dependency_quorum.get("fresh_until"),
         "action_classes": ["torghut_observe", "paper_canary"],
-    }
-
-
-def build_torghut_routeability_admission_ref(
-    dependency_quorum: Mapping[str, Any],
-) -> dict[str, object]:
-    raw_admission = dependency_quorum.get("routeability_admission")
-    empty_admission: Mapping[str, Any] = {}
-    admission: Mapping[str, Any] = (
-        cast(Mapping[str, Any], raw_admission)
-        if isinstance(raw_admission, Mapping)
-        else empty_admission
-    )
-    decision = (
-        str(
-            admission.get("decision")
-            or admission.get("state")
-            or dependency_quorum.get("decision")
-            or "missing"
-        )
-        .strip()
-        .lower()
-    )
-    state = (
-        str(
-            admission.get("state")
-            or admission.get("status")
-            or ("current" if decision == "allow" else "missing")
-        )
-        .strip()
-        .lower()
-    )
-    raw_reasons: object = (
-        admission.get("reason_codes")
-        or admission.get("blocking_reasons")
-        or dependency_quorum.get("reasons")
-        or []
-    )
-    reason_items: Sequence[object] = (
-        cast(Sequence[object], raw_reasons)
-        if isinstance(raw_reasons, Sequence)
-        and not isinstance(raw_reasons, (str, bytes, bytearray))
-        else ()
-    )
-    reasons = [str(item).strip() for item in reason_items if str(item).strip()]
-    ref_suffix = decision if not reasons else f"{decision}:{','.join(sorted(reasons))}"
-    return {
-        "admission_ref": f"jangar-routeability-admission:dependency-quorum:{ref_suffix}",
-        "decision": decision,
-        "state": state,
-        "reason_codes": reasons,
-        "source": "routeability_admission"
-        if admission.get("admission_ref") or admission.get("id")
-        else "dependency_quorum_proxy",
-        "action_classes": ["torghut_observe", "paper_canary"],
-        "generated_at": admission.get("generated_at")
-        or dependency_quorum.get("generated_at"),
-        "fresh_until": admission.get("fresh_until")
-        or dependency_quorum.get("fresh_until"),
     }
 
 

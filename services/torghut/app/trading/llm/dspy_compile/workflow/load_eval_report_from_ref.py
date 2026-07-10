@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import Any, Literal, Mapping, cast
-from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -336,37 +334,7 @@ def _load_compile_result_from_artifact_root(
         return None
 
 
-def _http_json_request(
-    url: str,
-    *,
-    method: str,
-    headers: Mapping[str, str],
-    body: bytes,
-    timeout_seconds: int,
-) -> tuple[int, str]:
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise RuntimeError("invalid_http_scheme")
-    if not parsed.hostname:
-        raise RuntimeError("invalid_http_host")
-    path = parsed.path or "/"
-    if parsed.query:
-        path = f"{path}?{parsed.query}"
-    connection_class = HTTPSConnection if parsed.scheme == "https" else HTTPConnection
-    connection = connection_class(
-        parsed.hostname, parsed.port, timeout=max(timeout_seconds, 1)
-    )
-    try:
-        connection.request(method, path, body=body, headers=dict(headers))
-        response = connection.getresponse()
-        payload = response.read().decode("utf-8", errors="replace")
-        return int(response.status), payload
-    finally:
-        connection.close()
-
-
 execute_local_dspy_lane = _execute_local_dspy_lane
-http_json_request = _http_json_request
 
 __all__ = [
     "DSPyWorkflowLane",
@@ -378,7 +346,6 @@ __all__ = [
     "bundle_artifacts",
     "execute_local_dspy_lane",
     "get_agents_agentrun",
-    "http_json_request",
     "wait_for_agents_agentrun_terminal_status",
     "submit_agents_agentrun",
     "upsert_workflow_artifact_record",

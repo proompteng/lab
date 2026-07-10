@@ -34,7 +34,6 @@ from ..state import (
 logger = logging.getLogger(__name__)
 
 RUNTIME_UNCERTAINTY_GATE_MAX_STALENESS_SECONDS = 15 * 60
-PROJECTED_ORDER_ACTIONS = {"buy", "sell"}
 PROJECTED_ORDER_TYPES = {"market", "limit", "stop", "stop_limit"}
 PROJECTED_ORDER_TIME_IN_FORCE = {"day", "gtc", "ioc", "fok"}
 

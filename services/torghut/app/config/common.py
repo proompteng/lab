@@ -2,7 +2,6 @@
 
 import json
 import logging
-from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from http.client import HTTPConnection, HTTPSConnection
@@ -162,9 +161,6 @@ class _HttpResponseHandle:
     def __exit__(self, _exc_type: Any, _exc: Any, _tb: Any) -> bool:
         self.close()
         return False
-
-
-FeatureFlagUrlopen = Callable[[_HttpRequest, float], _HttpResponseHandle]
 
 
 def urlopen(request: _HttpRequest, timeout: float) -> _HttpResponseHandle:

@@ -351,9 +351,7 @@ def create_app() -> FastAPI:
 assert_dspy_cutover_migration_guard = _assert_dspy_cutover_migration_guard
 env_csv = _env_csv
 env_json_string_list = _env_json_string_list
-env_or_none = _env_or_none
 evaluate_scheduler_status = _evaluate_scheduler_status
-extract_bearer_token = _extract_bearer_token
 register_whitepaper_inngest_routes = _register_whitepaper_inngest_routes
 require_whitepaper_control_token = _require_whitepaper_control_token
 
@@ -371,9 +369,7 @@ __all__ = [
     "create_app",
     "env_csv",
     "env_json_string_list",
-    "env_or_none",
     "evaluate_scheduler_status",
-    "extract_bearer_token",
     "healthz",
     "lifespan",
     "register_whitepaper_inngest_routes",

@@ -88,9 +88,6 @@ _load_clickhouse_ta_status = load_clickhouse_ta_status
 _configured_paper_collection_target_plan = (
     _proofs_configured_collection.configured_paper_collection_target_plan
 )
-_configured_static_symbol_allowlist = (
-    _proofs_configured_collection.configured_static_symbol_allowlist
-)
 _configured_strategy_paper_collection_symbols = (
     _proofs_configured_collection.configured_strategy_paper_collection_symbols
 )

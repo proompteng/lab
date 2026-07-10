@@ -788,8 +788,4 @@ def _score_candidate_spec(
 # Public aliases used by split-module consumers.
 score_candidate_spec = _score_candidate_spec
 
-score_candidate_spec_split_export = _score_candidate_spec
-__all__ = (
-    "score_candidate_spec",
-    "score_candidate_spec_split_export",
-)
+__all__ = ("score_candidate_spec",)

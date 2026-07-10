@@ -686,9 +686,7 @@ cost_aware_forecast_filter_rank_penalty_bps_split_export = (
 counterfactual_regime_rank_penalty_bps_split_export = (
     _counterfactual_regime_rank_penalty_bps
 )
-execution_schedule_rank_penalty_bps_split_export = _execution_schedule_rank_penalty_bps
 feed_lag_liquidity_rank_penalty_bps_split_export = _feed_lag_liquidity_rank_penalty_bps
-frontier_dedupe_key_split_export = _frontier_dedupe_key
 hawkes_transient_impact_rank_penalty_bps_split_export = (
     _hawkes_transient_impact_rank_penalty_bps
 )
@@ -705,7 +703,6 @@ lead_lag_cross_asset_rank_penalty_bps_split_export = (
     _lead_lag_cross_asset_rank_penalty_bps
 )
 lob_reality_gap_rank_penalty_bps_split_export = _lob_reality_gap_rank_penalty_bps
-mark_frontier_duplicates_split_export = _mark_frontier_duplicates
 metaorder_adverse_selection_rank_penalty_bps_split_export = (
     _metaorder_adverse_selection_rank_penalty_bps
 )
@@ -726,19 +723,12 @@ order_flow_entropy_regime_rank_penalty_bps_split_export = (
     _order_flow_entropy_regime_rank_penalty_bps
 )
 order_transition_rank_penalty_bps_split_export = _order_transition_rank_penalty_bps
-preview_rank_key_split_export = _preview_rank_key
 queue_survival_fill_rank_penalty_bps_split_export = (
     _queue_survival_fill_rank_penalty_bps
 )
-risk_adjusted_robust_rank_score_split_export = _risk_adjusted_robust_rank_score
 rough_flow_volatility_rank_penalty_bps_split_export = (
     _rough_flow_volatility_rank_penalty_bps
 )
-row_explicitly_non_hpairs_split_export = _row_explicitly_non_hpairs
-row_exploration_diversity_key_split_export = _row_exploration_diversity_key
-row_frontier_duplicate_filtered_split_export = _row_frontier_duplicate_filtered
-row_with_frontier_dedupe_split_export = _row_with_frontier_dedupe
-row_with_rank_and_selection_split_export = _row_with_rank_and_selection
 select_frontier_buckets_split_export = _select_frontier_buckets
 signal_adaptive_execution_resilience_rank_penalty_bps_split_export = (
     _signal_adaptive_execution_resilience_rank_penalty_bps
@@ -787,16 +777,13 @@ __all__ = (
     "bootstrap_robust_optimization_rank_penalty_bps_split_export",
     "cost_aware_forecast_filter_rank_penalty_bps_split_export",
     "counterfactual_regime_rank_penalty_bps_split_export",
-    "execution_schedule_rank_penalty_bps_split_export",
     "feed_lag_liquidity_rank_penalty_bps_split_export",
-    "frontier_dedupe_key_split_export",
     "hawkes_transient_impact_rank_penalty_bps_split_export",
     "institutional_mechanism_fidelity_rank_penalty_bps_split_export",
     "intraday_jump_burst_rank_penalty_bps_split_export",
     "intraday_price_path_asymmetry_rank_penalty_bps_split_export",
     "lead_lag_cross_asset_rank_penalty_bps_split_export",
     "lob_reality_gap_rank_penalty_bps_split_export",
-    "mark_frontier_duplicates_split_export",
     "metaorder_adverse_selection_rank_penalty_bps_split_export",
     "microstructure_regime_tokenization_rank_penalty_bps_split_export",
     "nonlinear_impact_execution_rank_penalty_bps_split_export",
@@ -805,15 +792,8 @@ __all__ = (
     "order_book_observability_rank_penalty_bps_split_export",
     "order_flow_entropy_regime_rank_penalty_bps_split_export",
     "order_transition_rank_penalty_bps_split_export",
-    "preview_rank_key_split_export",
     "queue_survival_fill_rank_penalty_bps_split_export",
-    "risk_adjusted_robust_rank_score_split_export",
     "rough_flow_volatility_rank_penalty_bps_split_export",
-    "row_explicitly_non_hpairs_split_export",
-    "row_exploration_diversity_key_split_export",
-    "row_frontier_duplicate_filtered_split_export",
-    "row_with_frontier_dedupe_split_export",
-    "row_with_rank_and_selection_split_export",
     "select_frontier_buckets_split_export",
     "signal_adaptive_execution_resilience_rank_penalty_bps_split_export",
     "stochastic_liquidity_resilience_rank_penalty_bps_split_export",

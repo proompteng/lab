@@ -4,32 +4,23 @@ from __future__ import annotations
 
 from .common import (
     Any,
-    Decimal,
     Mapping,
     RuntimeLedgerReadSession,
     SQLAlchemyError,
     Sequence,
-    StrategyHypothesisMetricWindow,
-    StrategyPromotionDecision,
     StrategyRuntimeLedgerBucket,
     RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT as _RUNTIME_LEDGER_REPAIR_CANDIDATE_LIMIT,
     RUNTIME_LEDGER_REPAIR_SCAN_LIMIT as _RUNTIME_LEDGER_REPAIR_SCAN_LIMIT,
-    coerce_aware_datetime as _coerce_aware_datetime,
     maybe_set_runtime_ledger_status_statement_timeout as _maybe_set_runtime_ledger_status_statement_timeout,
     rollback_runtime_ledger_status_session as _rollback_runtime_ledger_status_session,
-    safe_decimal as _safe_decimal,
-    safe_bool as _safe_bool,
     safe_int as _safe_int,
     safe_text as _safe_text,
     settings,
-    stage_rank as _stage_rank,
     active_market_context_mapping,
     active_market_context_reasons,
     cast,
-    datetime,
     logger,
     select,
-    timedelta,
 )
 
 from .runtime_summary import (
@@ -39,18 +30,12 @@ from .runtime_summary import (
     runtime_ledger_source_evidence_payload as _runtime_ledger_source_evidence_payload,
 )
 
-from .certificate_loading import (
-    metric_window_activity_reason_codes as _metric_window_activity_reason_codes,
-    promotion_decision_blocking_reason_codes as _promotion_decision_blocking_reason_codes,
-)
 from .paper_probation import (
     hypothesis_manifest_ref as _hypothesis_manifest_ref,
 )
 
 
 from .runtime_certificates import (
-    certificate_evidence_authority_score,
-    runtime_ledger_selection_score,
     runtime_ledger_repair_reason_codes,
     runtime_ledger_repair_score,
 )
@@ -160,74 +145,6 @@ def load_runtime_ledger_repair_candidates(
         )
 
     return sorted(candidates, key=runtime_ledger_repair_score, reverse=True)[:limit]
-
-
-def certificate_evidence_selection_key(
-    row: Mapping[str, object],
-    *,
-    now: datetime | None,
-    max_age_seconds: int | None,
-) -> tuple[int, int, int, int, int, int, int, int, Decimal, float]:
-    metric_window = cast(
-        StrategyHypothesisMetricWindow | None, row.get("metric_window")
-    )
-    promotion_decision = cast(
-        StrategyPromotionDecision | None, row.get("promotion_decision")
-    )
-    runtime_ledger_bucket = cast(
-        Mapping[str, object] | None, row.get("runtime_ledger_bucket")
-    )
-    if metric_window is None:
-        return (0, 0, 0, 0, 0, 0, 0, 0, Decimal("0"), 0.0)
-
-    issued_at = _coerce_aware_datetime(
-        getattr(metric_window, "window_ended_at", None)
-        or getattr(metric_window, "created_at", None)
-    )
-    fresh_score = 1
-    if now is not None and max_age_seconds is not None and max_age_seconds > 0:
-        fresh_score = int(
-            issued_at is not None
-            and issued_at >= now - timedelta(seconds=max_age_seconds)
-        )
-    observed_stage = _safe_text(getattr(metric_window, "observed_stage", None))
-    stage_score = {"live": 2, "paper": 1}.get(observed_stage or "", 0)
-    runtime_ledger_score = runtime_ledger_selection_score(runtime_ledger_bucket)
-    authority_score = certificate_evidence_authority_score(
-        observed_stage=observed_stage,
-        runtime_ledger_bucket=runtime_ledger_bucket,
-    )
-    decision_score = 0
-    if promotion_decision is not None:
-        decision_score = int(
-            _safe_bool(getattr(promotion_decision, "allowed", False)) is True
-            and not _promotion_decision_blocking_reason_codes(promotion_decision)
-        )
-    activity_score = int(not _metric_window_activity_reason_codes(metric_window))
-    continuity_score = int(
-        bool(getattr(metric_window, "continuity_ok", False))
-        and bool(getattr(metric_window, "drift_ok", False))
-        and _safe_text(getattr(metric_window, "dependency_quorum_decision", None))
-        == "allow"
-    )
-    capital_rank = max(0, _stage_rank(getattr(metric_window, "capital_stage", None)))
-    sample_count = _safe_int(getattr(metric_window, "order_count", None))
-    expectancy_bps = _safe_decimal(
-        getattr(metric_window, "post_cost_expectancy_bps", None)
-    ) or Decimal("0")
-    issued_ts = issued_at.timestamp() if issued_at is not None else 0.0
-    return (
-        fresh_score,
-        decision_score,
-        activity_score,
-        continuity_score,
-        authority_score,
-        stage_score,
-        runtime_ledger_score,
-        capital_rank + sample_count,
-        expectancy_bps,
-        issued_ts,
-    )
 
 
 def extract_runtime_summary(

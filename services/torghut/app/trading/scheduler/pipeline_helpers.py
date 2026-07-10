@@ -126,54 +126,6 @@ def _is_market_session_open(
     return market_session_is_open(trading_client, now=now)
 
 
-def _latch_signal_continuity_alert_state(state: Any, reason: str) -> None:
-    now = datetime.now(timezone.utc)
-    if not state.signal_continuity_alert_active:
-        state.signal_continuity_alert_started_at = now
-    state.signal_continuity_alert_active = True
-    state.signal_continuity_alert_reason = reason
-    state.signal_continuity_alert_last_seen_at = now
-    state.signal_continuity_recovery_streak = 0
-    state.metrics.record_signal_continuity_alert_state(
-        active=True,
-        recovery_streak=0,
-    )
-
-
-def _record_signal_continuity_recovery_cycle(
-    state: Any, *, required_recovery_cycles: int
-) -> None:
-    if not state.signal_continuity_alert_active:
-        state.metrics.record_signal_continuity_alert_state(
-            active=False,
-            recovery_streak=0,
-        )
-        return
-
-    state.signal_continuity_recovery_streak += 1
-    state.metrics.record_signal_continuity_alert_state(
-        active=True,
-        recovery_streak=state.signal_continuity_recovery_streak,
-    )
-    if state.signal_continuity_recovery_streak < required_recovery_cycles:
-        return
-
-    logger.info(
-        "Signal continuity alert cleared after healthy cycles=%s reason=%s",
-        state.signal_continuity_recovery_streak,
-        state.signal_continuity_alert_reason,
-    )
-    state.signal_continuity_alert_active = False
-    state.signal_continuity_alert_reason = None
-    state.signal_continuity_alert_started_at = None
-    state.signal_continuity_alert_last_seen_at = None
-    state.signal_continuity_recovery_streak = 0
-    state.metrics.record_signal_continuity_alert_state(
-        active=False,
-        recovery_streak=0,
-    )
-
-
 def extract_json_error_payload(error: Exception) -> Optional[dict[str, Any]]:
     raw = str(error).strip()
     if not raw.startswith("{"):
@@ -952,7 +904,6 @@ __all__ = [
     "_is_market_session_open",
     "_is_llm_stage_policy_violation",
     "_is_runtime_risk_increasing_entry",
-    "_latch_signal_continuity_alert_state",
     "_llm_guardrail_controls_snapshot",
     "_load_recent_decisions",
     "_normalize_optional_text",
@@ -963,7 +914,6 @@ __all__ = [
     "_position_qty",
     "price_snapshot_payload",
     "_project_open_orders_onto_positions",
-    "_record_signal_continuity_recovery_cycle",
     "resolve_decision_regime_label",
     "resolve_decision_regime_label_with_source",
     "_resolve_llm_review_error_reject_reason",

@@ -6,7 +6,7 @@ from decimal import Decimal
 
 from app.hyperliquid_execution.models import FeatureSnapshot
 
-from ..contracts import AssetKey, ExecutionIntent, FactorVector, PortfolioTarget
+from ..contracts import AssetKey, FactorVector
 from ..normalization import (
     bounded_score,
     negative_quality_score,
@@ -67,26 +67,6 @@ def factor_vector_from_feature(
         source_lag_seconds=feature.source_lag_seconds,
         quote_lag_seconds=feature.quote_lag_seconds,
         freshness_blocker=freshness_blocker,
-    )
-
-
-def execution_intent_from_target(
-    *,
-    target: PortfolioTarget,
-    idempotency_key: str,
-) -> ExecutionIntent:
-    """Create a generic execution intent for an executable Hyperliquid target."""
-
-    side = "buy" if target.direction == "buy" else "sell"
-    return ExecutionIntent(
-        run_id=target.run_id,
-        asset=target.asset,
-        venue="hyperliquid",
-        side=side,
-        notional_usd=target.delta_notional_usd,
-        idempotency_key=idempotency_key,
-        status="planned" if target.executable else "blocked",
-        blocker=target.clip_reason,
     )
 
 

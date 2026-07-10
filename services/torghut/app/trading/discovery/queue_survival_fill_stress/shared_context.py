@@ -480,23 +480,14 @@ STATUS_FIELDS = _STATUS_FIELDS
 VOLUME_FIELDS = _VOLUME_FIELDS
 
 ADD_TOKENS_split_export = _ADD_TOKENS
-ASK_SIZE_FIELDS_split_export = _ASK_SIZE_FIELDS
-BID_SIZE_FIELDS_split_export = _BID_SIZE_FIELDS
 CANCEL_TOKENS_split_export = _CANCEL_TOKENS
 EVENT_FIELDS_split_export = _EVENT_FIELDS
-FILL_FIELDS_split_export = _FILL_FIELDS
 FILL_TOKENS_split_export = _FILL_TOKENS
-FillBeforeMoveStats_split_export = _FillBeforeMoveStats
-ORDER_BOOK_IMBALANCE_FIELDS_split_export = _ORDER_BOOK_IMBALANCE_FIELDS
 PRICE_FIELDS_split_export = _PRICE_FIELDS
-QUEUE_POSITION_FIELDS_split_export = _QUEUE_POSITION_FIELDS
-QUEUE_RATIO_FIELDS_split_export = _QUEUE_RATIO_FIELDS
-QUEUE_REACTIVE_EVENT_KINDS_split_export = _QUEUE_REACTIVE_EVENT_KINDS
 REJECT_TOKENS_split_export = _REJECT_TOKENS
 SIDE_FIELDS_split_export = _SIDE_FIELDS
 SPREAD_FIELDS_split_export = _SPREAD_FIELDS
 STATUS_FIELDS_split_export = _STATUS_FIELDS
-VOLUME_FIELDS_split_export = _VOLUME_FIELDS
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
@@ -504,31 +495,23 @@ __all__: tuple[str, ...] = (
     "ADD_TOKENS",
     "ADD_TOKENS_split_export",
     "ASK_SIZE_FIELDS",
-    "ASK_SIZE_FIELDS_split_export",
     "Any",
     "BID_SIZE_FIELDS",
-    "BID_SIZE_FIELDS_split_export",
     "CANCEL_TOKENS",
     "CANCEL_TOKENS_split_export",
     "EVENT_FIELDS",
     "EVENT_FIELDS_split_export",
     "FILL_FIELDS",
-    "FILL_FIELDS_split_export",
     "FILL_TOKENS",
     "FILL_TOKENS_split_export",
     "FillBeforeMoveStats",
-    "FillBeforeMoveStats_split_export",
     "Mapping",
     "ORDER_BOOK_IMBALANCE_FIELDS",
-    "ORDER_BOOK_IMBALANCE_FIELDS_split_export",
     "PRICE_FIELDS",
     "PRICE_FIELDS_split_export",
     "QUEUE_POSITION_FIELDS",
-    "QUEUE_POSITION_FIELDS_split_export",
     "QUEUE_RATIO_FIELDS",
-    "QUEUE_RATIO_FIELDS_split_export",
     "QUEUE_REACTIVE_EVENT_KINDS",
-    "QUEUE_REACTIVE_EVENT_KINDS_split_export",
     "QUEUE_SURVIVAL_FILL_STRESS_CONTRACT_SCHEMA_VERSION",
     "QUEUE_SURVIVAL_FILL_STRESS_PRIMARY_SOURCES",
     "QUEUE_SURVIVAL_FILL_STRESS_PROOF_SEMANTICS_LABEL",
@@ -545,7 +528,6 @@ __all__: tuple[str, ...] = (
     "Sequence",
     "SignalEnvelope",
     "VOLUME_FIELDS",
-    "VOLUME_FIELDS_split_export",
     "_ADD_TOKENS",
     "_ASK_SIZE_FIELDS",
     "_BID_SIZE_FIELDS",

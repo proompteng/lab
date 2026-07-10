@@ -34,11 +34,3 @@ def session_state(now: datetime | None = None, holidays: set[str] | None = None)
     if 16 * 60 <= minute_of_day < 20 * 60:
         return "post"
     return "closed"
-
-
-def is_regular_session(
-    now: datetime | None = None, holidays: set[str] | None = None
-) -> bool:
-    """Return true when the current market session is the regular trading session."""
-
-    return session_state(now=now, holidays=holidays) == "regular"
