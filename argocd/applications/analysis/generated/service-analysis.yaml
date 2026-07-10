@@ -4,9 +4,9 @@ metadata:
   name: analysis
   namespace: analysis
 spec:
-  selector:
-    app: analysis
   ports:
     - name: http
       port: 80
       targetPort: http
+  selector:
+    app: analysis

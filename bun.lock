@@ -529,6 +529,20 @@
         "vitest": "^4.1.5",
       },
     },
+    "packages/k8s": {
+      "name": "@proompteng/k8s",
+      "version": "0.1.0",
+      "dependencies": {
+        "cdk8s": "2.70.61",
+        "constructs": "10.6.0",
+        "yaml": "2.8.3",
+      },
+      "devDependencies": {
+        "@types/node": "25.6.0",
+        "cdk8s-cli": "2.206.10",
+        "typescript": "6.0.3",
+      },
+    },
     "packages/otel": {
       "name": "@proompteng/otel",
       "version": "0.1.0",
@@ -2187,6 +2201,8 @@
     "@proompteng/golink": ["@proompteng/golink@workspace:services/golink"],
 
     "@proompteng/jangar": ["@proompteng/jangar@workspace:services/jangar"],
+
+    "@proompteng/k8s": ["@proompteng/k8s@workspace:packages/k8s"],
 
     "@proompteng/khoshut": ["@proompteng/khoshut@workspace:services/khoshut"],
 
@@ -6141,6 +6157,8 @@
     "@proompteng/jangar/tailwindcss": ["tailwindcss@4.2.4", "", {}, "sha512-HhKppgO81FQof5m6TEnuBWCZGgfRAWbaeOaGT00KOy/Pf/j6oUihdvBpA7ltCeAvZpFhW3j0PTclkxsd4IXYDA=="],
 
     "@proompteng/jangar/vite": ["vite@8.0.10", "", { "dependencies": { "lightningcss": "^1.32.0", "picomatch": "^4.0.4", "postcss": "^8.5.10", "rolldown": "1.0.0-rc.17", "tinyglobby": "^0.2.16" }, "optionalDependencies": { "fsevents": "~2.3.3" }, "peerDependencies": { "@types/node": "^20.19.0 || >=22.12.0", "@vitejs/devtools": "^0.1.0", "esbuild": "^0.27.0 || ^0.28.0", "jiti": ">=1.21.0", "less": "^4.0.0", "sass": "^1.70.0", "sass-embedded": "^1.70.0", "stylus": ">=0.54.8", "sugarss": "^5.0.0", "terser": "^5.16.0", "tsx": "^4.8.1", "yaml": "^2.4.2" }, "optionalPeers": ["@types/node", "@vitejs/devtools", "esbuild", "jiti", "less", "sass", "sass-embedded", "stylus", "sugarss", "terser", "tsx", "yaml"], "bin": { "vite": "bin/vite.js" } }, "sha512-rZuUu9j6J5uotLDs+cAA4O5H4K1SfPliUlQwqa6YEwSrWDZzP4rhm00oJR5snMewjxF5V/K3D4kctsUTsIU9Mw=="],
+
+    "@proompteng/k8s/yaml": ["yaml@2.8.3", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-AvbaCLOO2Otw/lW5bmh9d/WEdcDFdQp2Z2ZUH3pX9U2ihyUY0nvLv7J6TrWowklRGPYbB/IuIMfYgxaCPg5Bpg=="],
 
     "@proompteng/sag/@fontsource-variable/geist": ["@fontsource-variable/geist@5.2.8", "", {}, "sha512-cJ6m9e+8MQ5dCYJsLylfZrgBh6KkG4bOLckB35Tr9J/EqdkEM6QllH5PxqP1dhTvFup+HtMRPuz9xOjxXJggxw=="],
 

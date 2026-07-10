@@ -30,6 +30,8 @@
     "packages/temporal-bun-sdk/vendor",
     "packages/temporal-bun-sdk/src/proto",
     "packages/backend/convex/_generated",
+    "packages/k8s/crds",
+    "packages/k8s/src/imports",
     "services/jangar/convex/_generated",
     "packages/codex/src/app-server",
     "packages/temporal-bun-sdk/tests",

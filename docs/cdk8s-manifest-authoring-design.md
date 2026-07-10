@@ -2,11 +2,13 @@
 
 ## Status
 
-- Decision: Proposed
+- Decision: Accepted
+- Adoption: Implementation in progress
 - Last verified: 2026-07-09
 - Pilot: `docs`
-- Runtime source of truth: `argocd/applications/docs/**`
-- Application source: `apps/docs/**`
+- Second live adopter: `analysis`
+- Runtime sources of truth: `argocd/applications/docs/**`, `argocd/applications/analysis/**`
+- Application sources: `apps/docs/**`, `apps/analysis/**`
 - Cluster: `galactic-tailscale`, Kubernetes `v1.35.0`
 
 This document defines the intended manifest-authoring model. Until an application is migrated, its existing files under
@@ -37,7 +39,7 @@ behavior.
 | Candidate    | Current state        | Manifest surface                                 | Operational concern                                      | Decision    |
 | ------------ | -------------------- | ------------------------------------------------ | -------------------------------------------------------- | ----------- |
 | `docs`       | Synced, Healthy, 200 | Deployment, Service, IngressRoute                | Public route; single replica                             | Selected    |
-| `analysis`   | Synced, Healthy      | Deployment, ClusterIP Service, Tailscale Service | LoadBalancer allocation and private-only validation      | Later wave  |
+| `analysis`   | Synced, Healthy, 200 | Deployment, ClusterIP Service, Tailscale Service | LoadBalancer allocation and private-only validation      | Second app  |
 | `proompteng` | Synced, Healthy, 200 | Deployment, Service, IngressRoute                | Primary landing site and runtime environment variables   | Later wave  |
 | `bumba`      | Synced, Healthy      | Deployment, persistent volume                    | Stateful workspace, secrets, Temporal and model services | Not a pilot |
 | `olden`      | Disabled             | No live Application or workload                  | Cannot prove a live, no-diff migration                   | Excluded    |
@@ -54,15 +56,15 @@ behavior.
 The Traefik IngressRoute is useful rather than disqualifying: it proves the CRD import path on one small, pinned custom
 resource before broader CRD-heavy applications are considered.
 
-## Current Repository Baseline
+## Pre-adoption Repository Baseline
 
-The repository already contains two cdk8s experiments, but neither is the target operating model:
+Before adoption, the repository contained two cdk8s experiments, but neither was the target operating model:
 
 - `services/bonjour/infra/**` synthesizes a Deployment, Service, and HPA. Bonjour is disabled and is useful only as a
   compiler canary.
 - `packages/cloutt/**` is an older cdk8s-plus experiment whose output is not current GitOps authority.
-- `argocd/applicationsets/cdk8s.yaml` has no enabled consumer.
-- the Argo repo-server cdk8s plugin installs dependencies and executes synthesis during reconciliation. That adds package
+- `argocd/applicationsets/cdk8s.yaml` had no enabled consumer.
+- the Argo repo-server cdk8s plugin installed dependencies and executed synthesis during reconciliation. That added package
   registry and JavaScript runtime availability to Argo's critical path.
 
 The new path reuses the useful TypeScript experience but removes runtime synthesis from Argo.
@@ -97,6 +99,10 @@ packages/k8s/
     cli.ts
     synth.ts
     apps/
+      analysis/
+        application.ts
+        chart.ts
+        chart.test.ts
       docs/
         application.ts
         chart.ts
@@ -111,7 +117,7 @@ argocd/applications/docs/
   generated/
     kustomization.yaml
     deployment-docs.yaml
-    ingressroute-docs.yaml
+    ingress-route-docs.yaml
     service-docs.yaml
   kustomization.yaml
 ```
@@ -162,9 +168,10 @@ export const docsApplication = defineApplication({
 
 ```ts
 import { defineApplicationRegistry } from './application'
+import { analysisApplication } from './apps/analysis/application'
 import { docsApplication } from './apps/docs/application'
 
-export const applicationRegistry = defineApplicationRegistry([docsApplication])
+export const applicationRegistry = defineApplicationRegistry([docsApplication, analysisApplication])
 ```
 
 `defineApplicationRegistry` fails on duplicate application names, namespaces/output directories that violate policy,
@@ -224,7 +231,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - deployment-docs.yaml
-  - ingressroute-docs.yaml
+  - ingress-route-docs.yaml
   - service-docs.yaml
 ```
 
@@ -285,6 +292,7 @@ allowed differences. Any spec, metadata, or object-set difference blocks the mig
 | `test`                                            | Run registry, chart structure, and policy tests                        |
 | `imports:check`                                   | Regenerate pinned L1 imports and fail on schema drift                  |
 | `parity -- --app <name> --baseline <path-or-ref>` | Compare normalized handwritten and generated resources during cutover  |
+| `list`                                            | Print registered application names for generic CI validation           |
 
 The package scripts are thin aliases over the single CLI:
 
@@ -298,7 +306,8 @@ The package scripts are thin aliases over the single CLI:
     "synth:check": "bun run src/cli.ts check",
     "test": "bun test",
     "imports:check": "bun run src/cli.ts imports-check",
-    "parity": "bun run src/cli.ts parity"
+    "parity": "bun run src/cli.ts parity",
+    "list": "bun run src/cli.ts list"
   }
 }
 ```
@@ -360,7 +369,7 @@ state.
 ### Phase 2: synthesize `docs` without changing Argo input
 
 - Implement the `docs` chart and structural tests.
-- Generate `deployment-docs.yaml`, `ingressroute-docs.yaml`, `service-docs.yaml`, and the generated Kustomization under
+- Generate `deployment-docs.yaml`, `ingress-route-docs.yaml`, `service-docs.yaml`, and the generated Kustomization under
   `argocd/applications/docs/generated/` alongside the handwritten files.
 - Run full normalized parity against the current Deployment, Service, and IngressRoute.
 - Review the generated YAML as the intended live object set.
@@ -389,6 +398,15 @@ The pilot succeeds only when all of the following are true at the implementation
 - the final live image equals the digest in Kustomization;
 - a clean synthesis produces no Git diff.
 
+### Phase 4: prove reuse with `analysis`
+
+- Implement the `analysis` chart with the same explicit registry, policy, transactional synthesis, and per-resource
+  output contract.
+- Preserve the Deployment, ClusterIP Service, Tailscale LoadBalancer Service, image-tag write-back target, and private
+  endpoint.
+- Prove normalized parity before cutover and require the same no-rollout identity checks after Argo reconciliation.
+- Record both applications' baseline, rollout, image, endpoint, and rollback evidence in the adoption proof.
+
 ## Rollback
 
 Do not disable `docs` to roll back the authoring change.
@@ -407,8 +425,8 @@ Expansion is based on manifest complexity and runtime blast radius, not director
 
 | Wave | Applications                    | New capability proved                                       |
 | ---- | ------------------------------- | ----------------------------------------------------------- |
-| 1    | `docs`                          | Live no-diff cutover; core resources; one pinned CRD        |
-| 2    | `analysis`, `proompteng`        | Tailscale Service annotations; environment values           |
+| 1    | `docs`, `analysis`              | Live no-diff cutover; pinned CRD; Tailscale Service metadata |
+| 2    | `proompteng`                    | Runtime environment values                                  |
 | 3    | `app`, `synthesis`, `oirat`     | Broader routing, configuration, RBAC, and sealed references |
 | 4    | `bumba`, `froussard`, `forgejo` | Persistence, secrets, workers, and third-party composition  |
 | 5    | `agents`, `jangar`, `torghut`   | Large CRD-heavy control planes and stateful dependencies    |

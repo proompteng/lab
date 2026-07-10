@@ -46,6 +46,7 @@ if (import.meta.main) {
 
 export const __private = {
   execGit,
+  updateKustomizationContent,
 }
 
 type ManifestUpdateOptions = {
@@ -53,24 +54,23 @@ type ManifestUpdateOptions = {
 }
 
 function updateManifests(options: ManifestUpdateOptions) {
-  const digest = options.imageDigest.split('@')[1]
-  if (!digest?.startsWith('sha256:')) {
-    throw new Error(`Expected docs image digest reference, got ${options.imageDigest}`)
-  }
-
   const kustomizationPath = resolve(repoRoot, 'argocd/applications/docs/kustomization.yaml')
   const kustomization = readFileSync(kustomizationPath, 'utf8')
-  const updatedKustomization = kustomization.replace(
-    /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/docs\s*\n\s*)(?:newTag|digest):\s*.*/,
-    (_, prefix) => `${prefix}digest: ${digest}`,
-  )
+  const updatedKustomization = updateKustomizationContent(kustomization, options.imageDigest)
 
-  if (kustomization === updatedKustomization) {
-    console.warn('Warning: docs kustomization was not updated; pattern may have changed.')
-  } else {
-    writeFileSync(kustomizationPath, updatedKustomization)
-    console.log(`Updated ${kustomizationPath} with digest ${digest}`)
+  writeFileSync(kustomizationPath, updatedKustomization)
+  console.log(`Updated ${kustomizationPath} with digest ${options.imageDigest.split('@')[1]}`)
+}
+
+function updateKustomizationContent(kustomization: string, imageDigest: string) {
+  const digest = imageDigest.split('@')[1]
+  if (!digest || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
+    throw new Error(`Expected docs image digest reference, got ${imageDigest}`)
   }
+
+  const imageEntryPattern = /(-\s*name:\s+registry\.ide-newton\.ts\.net\/lab\/docs\s*\n\s*)(?:newTag|digest):\s*.*/
+  if (!imageEntryPattern.test(kustomization)) throw new Error('Docs Kustomization image entry was not found')
+  return kustomization.replace(imageEntryPattern, (_, prefix) => `${prefix}digest: ${digest}`)
 }
 
 function resolveDeploymentNamespace(kustomizePath: string) {

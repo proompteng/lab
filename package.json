@@ -72,7 +72,6 @@
     "headlamp:deploy": "bun run packages/scripts/src/headlamp/deploy-service.ts",
     "build:oirat": "bun run packages/scripts/src/oirat/build-image.ts",
     "agents:deploy": "bun run packages/scripts/src/agents/deploy-service.ts",
-    "bonjour:deploy": "bun run packages/scripts/src/bonjour/deploy-service.ts",
     "app:deploy": "bun run packages/scripts/src/app/deploy-service.ts",
     "synthesis:deploy": "bun run packages/scripts/src/synthesis/deploy-service.ts",
     "cms:deploy": "bun run packages/scripts/src/cms/deploy-service.ts",

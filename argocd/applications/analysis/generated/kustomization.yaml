@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment-analysis.yaml
+  - service-analysis-tailscale.yaml
+  - service-analysis.yaml

@@ -67,6 +67,7 @@ smcrakp.properties
 **/charts/*.tgz
 **/generated/*
 **/_generated/
+!argocd/applications/*/generated/**
 !packages/backend/convex/_generated/
 !services/jangar/convex/_generated/
 argocd/applications/*/charts/

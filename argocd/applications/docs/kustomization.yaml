@@ -1,9 +1,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - deployment.yaml
-  - service.yaml
-  - ingressroute.yaml
+  - generated
 images:
   - name: registry.ide-newton.ts.net/lab/docs
     digest: sha256:e9d7ebbff45c66bbf77c8b73a05ed8ec6801297a737ae2e7cdbda410ae1fe58d

@@ -106,12 +106,11 @@ argocd app sync sealed-secrets
 
 ## Stage-based ApplicationSets
 
-The repo now provides four staged ApplicationSets:
+The repo provides three staged ApplicationSets:
 
 - `bootstrap.yaml` (core prerequisites)
 - `platform.yaml` (shared infrastructure & tooling)
 - `product.yaml` (product-facing workloads)
-- `cdk8s.yaml` (TypeScript-driven CMP workloads powered by the cdk8s plugin)
 
 Sync the `root` Application to register the staged sets:
 
@@ -132,7 +131,6 @@ Sync individual stages when you are ready:
 argocd appset create --upsert argocd/applicationsets/bootstrap.yaml
 argocd appset create --upsert argocd/applicationsets/platform.yaml
 argocd appset create --upsert argocd/applicationsets/product.yaml
-argocd appset create --upsert argocd/applicationsets/cdk8s.yaml
 ```
 
 Need only the core bootstrap stack? Stop after the first command—leave the other stages for later.
