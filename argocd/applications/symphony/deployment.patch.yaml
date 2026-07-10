@@ -6,7 +6,7 @@ spec:
   template:
     metadata:
       annotations:
-        kubectl.kubernetes.io/restartedAt: "2026-07-04T11:12:35Z"
+        kubectl.kubernetes.io/restartedAt: "2026-07-10T06:34:25Z"
     spec:
       volumes:
         - name: codex-auth
