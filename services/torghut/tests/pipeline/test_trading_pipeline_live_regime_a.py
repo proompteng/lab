@@ -359,7 +359,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -371,20 +370,10 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             with self.session_local() as session:
                 strategy = Strategy(
                     name="shadow-stage",
@@ -430,18 +419,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                 patch(
                     "app.trading.submission_council._alpaca_broker_available",
                     return_value=True,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_quant_status(account_label="paper"),
                 ),
             ):
                 pipeline.run_once()
@@ -498,9 +475,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
             ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
-            ]
 
     def test_live_submission_allows_autonomy_eligible_canary_without_static_flag(
         self,
@@ -515,7 +489,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -527,20 +500,10 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             with self.session_local() as session:
                 evidence_at = datetime.now(timezone.utc)
                 strategy = Strategy(
@@ -653,18 +616,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     "app.trading.submission_council._alpaca_broker_available",
                     return_value=True,
                 ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
             ):
                 pipeline.run_once()
 
@@ -709,9 +660,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
             ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
-            ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
             ]
@@ -732,7 +680,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -744,20 +691,10 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
-            blocked_summary = {
-                "promotion_eligible_total": 0,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             with self.session_local() as session:
                 strategy = Strategy(
                     name="live-canary-missing-proof",
@@ -808,14 +745,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
                     "app.trading.submission_council._alpaca_broker_available",
                     return_value=True,
                 ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=blocked_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
             ):
                 pipeline.run_once()
 
@@ -860,9 +789,6 @@ class TestTradingPipelineLiveRegimeA(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
-            ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

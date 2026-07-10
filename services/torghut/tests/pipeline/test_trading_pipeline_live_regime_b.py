@@ -42,7 +42,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -54,20 +53,10 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
         config.settings.trading_kill_switch_enabled = False
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
-            allowed_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             with self.session_local() as session:
                 strategy = Strategy(
                     name="live-canary-empty-quant",
@@ -118,38 +107,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                     "app.trading.submission_council._alpaca_broker_available",
                     return_value=True,
                 ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=allowed_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value={
-                        "required": True,
-                        "ok": False,
-                        "status": "degraded",
-                        "reason": "quant_latest_metrics_empty",
-                        "blocking_reasons": [
-                            "quant_latest_metrics_empty",
-                            "quant_latest_store_alarm",
-                        ],
-                        "account": "paper",
-                        "window": "15m",
-                        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
-                        "latest_metrics_count": 0,
-                        "latest_metrics_updated_at": None,
-                        "empty_latest_store_alarm": True,
-                        "missing_update_alarm": False,
-                        "metrics_pipeline_lag_seconds": None,
-                        "stage_count": 0,
-                        "max_stage_lag_seconds": 0,
-                        "stages": [],
-                    },
-                ),
             ):
                 pipeline.run_once()
 
@@ -175,12 +132,7 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                     "quant_latest_store_alarm",
                     live_submission_gate.get("blocked_reasons", []),
                 )
-                self.assertIn(
-                    "quant_latest_store_alarm",
-                    live_submission_gate.get("quant_evidence", {}).get(
-                        "blocking_reasons", []
-                    ),
-                )
+                self.assertNotIn("quant_evidence", live_submission_gate)
 
             self.assertNotEqual(alpaca_client.submitted, [])
         finally:
@@ -201,9 +153,6 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
-            ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

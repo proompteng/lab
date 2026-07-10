@@ -7,15 +7,11 @@ from collections.abc import Mapping
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional, Sequence, cast
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ....config import settings
 from ....db import SessionLocal
-from ....models import (
-    PositionSnapshot,
-    Strategy,
-)
+from ....models import Strategy
 from ...execution_policy import ExecutionPolicy
 from ...feature_quality import (
     REASON_STALENESS,
@@ -29,10 +25,6 @@ from ...market_context import (
 )
 from ...models import SignalEnvelope
 from ...order_feed import OrderFeedIngestor
-from ...proofs.schemas import (
-    PROOFS_ACCOUNT_PRE_SESSION_READINESS_SECONDS as PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS,
-    PROOFS_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS as PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS,
-)
 from ...prices import ClickHousePriceFetcher
 from ...quote_quality import (
     QuoteQualityPolicy,
@@ -44,6 +36,7 @@ from ..safety import (
     latch_signal_continuity_alert_state,
     record_signal_continuity_recovery_cycle,
 )
+from ..capital_controls import CapitalSafetyController
 
 
 from .contexts import (
@@ -139,6 +132,12 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
         self.price_fetcher = dependencies.price_fetcher or ClickHousePriceFetcher()
         if self.decision_engine.price_fetcher is None:
             self.decision_engine.price_fetcher = self.price_fetcher
+        self.capital_safety = CapitalSafetyController(
+            execution_adapter=self.execution_adapter,
+            price_fetcher=self.price_fetcher,
+            state=self.state,
+            account_label=self.account_label,
+        )
         self._snapshot_cache = None
         self._snapshot_cached_at: Optional[datetime] = None
         self.strategy_catalog = dependencies.strategy_catalog
@@ -158,7 +157,6 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
             )
         )
         self._session_context_warmup_day: date | None = None
-        self._runtime_window_account_snapshot_day: date | None = None
 
     def _commit_signal_cursor(self, batch: SignalBatch) -> None:
         with self.session_factory() as cursor_session:
@@ -168,10 +166,15 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
         self._label_mature_rejected_signal_outcome_events()
         with self.session_factory() as session:
             self.state.metrics.planned_decision_age_seconds = 0
-            strategies = self._prepare_run_once(session)
-            if not strategies:
+            self._prepare_run_once(session)
+            account_snapshot = self._get_account_snapshot(session)
+            self.capital_safety.evaluate(session, account_snapshot)
+            if self.state.emergency_stop_active:
                 return
-            self._capture_runtime_window_account_snapshot_if_due(session)
+            strategies = self._load_strategies(session)
+            if not strategies:
+                logger.info("No enabled strategies found; skipping trading cycle")
+                return
             self._warm_session_context_from_open(session, strategies=strategies)
 
             batch = self.ingestor.fetch_signals(session)
@@ -181,7 +184,7 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
                     session, batch, quality_signals=batch.signals
                 ):
                     return
-            context = self._build_run_context(session)
+            context = self._build_run_context(session, account_snapshot)
             if context is None:
                 self._commit_signal_cursor(batch)
                 return
@@ -210,15 +213,11 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
             )
             self._commit_signal_cursor(batch)
 
-    def _prepare_run_once(self, session: Session) -> list[Strategy]:
+    def _prepare_run_once(self, session: Session) -> None:
         self._ingest_order_feed(session)
         self.order_firewall.cancel_open_orders_if_kill_switch()
         if self.strategy_catalog is not None:
             self.strategy_catalog.refresh(session)
-        strategies = self._load_strategies(session)
-        if not strategies:
-            logger.info("No enabled strategies found; skipping trading cycle")
-        return strategies
 
     def _warm_session_context_from_open(
         self,
@@ -367,61 +366,6 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
                     exc_info=True,
                 )
         return warmed
-
-    def _capture_runtime_window_account_snapshot_if_due(self, session: Session) -> None:
-        if not (
-            settings.trading_simple_paper_route_probe_enabled
-            or str(settings.trading_paper_route_target_plan_url or "").strip()
-        ):
-            return
-
-        now = trading_now(account_label=self.account_label).astimezone(timezone.utc)
-        session_open = regular_session_open_utc_for(now)
-        session_day = session_open.date()
-        if self._runtime_window_account_snapshot_day == session_day:
-            return
-
-        capture_start = session_open - timedelta(
-            seconds=PAPER_ROUTE_ACCOUNT_PRE_SESSION_READINESS_SECONDS
-        )
-        capture_end = session_open + timedelta(
-            seconds=PAPER_ROUTE_ACCOUNT_START_SNAPSHOT_AFTER_START_GRACE_SECONDS
-        )
-        if now < capture_start or now > capture_end:
-            return
-
-        existing_snapshot = session.execute(
-            select(PositionSnapshot.id)
-            .where(PositionSnapshot.alpaca_account_label == self.account_label)
-            .where(PositionSnapshot.as_of >= capture_start)
-            .where(PositionSnapshot.as_of <= capture_end)
-            .limit(1)
-        ).first()
-        if existing_snapshot is not None:
-            self._runtime_window_account_snapshot_day = session_day
-            return
-
-        try:
-            snapshot = self._get_account_snapshot(session)
-        except Exception:
-            session.rollback()
-            logger.exception(
-                "Failed to capture runtime-window account snapshot account=%s window_start=%s window_end=%s",
-                self.account_label,
-                capture_start.isoformat(),
-                capture_end.isoformat(),
-            )
-            return
-
-        self._runtime_window_account_snapshot_day = session_day
-        logger.info(
-            "Captured runtime-window account snapshot account=%s snapshot_id=%s as_of=%s window_start=%s window_end=%s",
-            self.account_label,
-            getattr(snapshot, "id", None),
-            getattr(snapshot, "as_of", None),
-            capture_start.isoformat(),
-            capture_end.isoformat(),
-        )
 
     def _record_ingest_window(self, batch: SignalBatch) -> None:
         self.state.last_ingest_signals_total = len(batch.signals)
@@ -600,9 +544,8 @@ class TradingPipelineRunCycleMixin(TradingPipelinePositionExposureMixin):
         return relevant_symbols
 
     def _build_run_context(
-        self, session: Session
+        self, session: Session, account_snapshot: Any
     ) -> tuple[Any, dict[str, str], list[dict[str, Any]], set[str]] | None:
-        account_snapshot = self._get_account_snapshot(session)
         account = {
             "equity": str(account_snapshot.equity),
             "cash": str(account_snapshot.cash),

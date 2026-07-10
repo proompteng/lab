@@ -64,9 +64,11 @@ class RiskEngine:
             short_increasing=short_increasing,
         )
 
-        max_notional = _resolve_decimal(
-            strategy.max_notional_per_trade
-        ) or _resolve_decimal(settings.trading_max_notional_per_trade)
+        max_notional = None
+        if settings.trading_mode != "live":
+            max_notional = _resolve_decimal(
+                strategy.max_notional_per_trade
+            ) or _resolve_decimal(settings.trading_max_notional_per_trade)
         enforce_notional = decision.action == "buy" or short_increasing
         _append_max_notional_reason(
             reasons,

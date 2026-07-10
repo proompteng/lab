@@ -43,7 +43,7 @@ from .contexts import (
     LLMUnavailableRequest,
     MarketContextBlockRequest,
 )
-from .shared import TradingPipelineBase
+from .shared import TradingPipelineRuntime
 from .support import (
     attach_dspy_lineage,
     build_committee_veto_alignment_payload,
@@ -65,7 +65,7 @@ from .support import (
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
+class TradingPipelineReviewOutcomeMixin(TradingPipelineRuntime):
     def _maybe_handle_market_context_block(
         self,
         request: MarketContextBlockRequest,
@@ -647,6 +647,7 @@ class TradingPipelineReviewOutcomeMixin(TradingPipelineBase):
         snapshot = snapshot_account_and_positions(
             session, self.alpaca_client, self.account_label
         )
+        session.expunge(snapshot)
         self._snapshot_cache = snapshot
         self._snapshot_cached_at = now
         return snapshot

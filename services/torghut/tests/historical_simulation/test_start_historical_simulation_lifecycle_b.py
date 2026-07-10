@@ -11,9 +11,11 @@ from tests.historical_simulation.start_historical_simulation_base import (
     RolloutsAnalysisConfig,
     SimpleNamespace,
     StartHistoricalSimulationTestCaseBase,
+    TemporaryDirectory,
     _build_resources,
     _run_full_lifecycle,
     patch,
+    replace,
     historical_simulation_startup,
 )
 
@@ -26,6 +28,9 @@ class TestStartHistoricalSimulationLifecycleB(StartHistoricalSimulationTestCaseB
                 "dataset_id": "dataset-a",
             },
         )
+        output_dir = TemporaryDirectory()
+        self.addCleanup(output_dir.cleanup)
+        resources = replace(resources, output_root=Path(output_dir.name))
         manifest = {
             "dataset_id": "dataset-a",
             "window": {

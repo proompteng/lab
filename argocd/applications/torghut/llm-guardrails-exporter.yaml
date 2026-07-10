@@ -30,8 +30,6 @@ spec:
           env:
             - name: TORGHUT_BASE_URL
               value: http://torghut.torghut.svc.cluster.local
-            - name: TORGHUT_METRICS_PATH
-              value: /trading/metrics
             - name: TORGHUT_STATUS_PATH
               value: /trading/status
             - name: LLM_VETO_RATE_BASELINE

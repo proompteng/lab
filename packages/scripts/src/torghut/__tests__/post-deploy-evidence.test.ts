@@ -2,1123 +2,154 @@ import { describe, expect, it } from 'bun:test'
 
 import { validatePostDeployEvidence } from '../post-deploy-evidence'
 
-const baseRouteBoard = {
-  schema_version: 'torghut.route-reacquisition-board.v1',
-  state: 'repair_only',
-  capital_state: 'zero_notional',
-  rows: [{ symbol: 'AAPL' }],
-  summary: {
-    row_count: 1,
-    zero_notional_row_count: 1,
-    capital_eligible_symbol_count: 0,
-    expected_unblock_value: 2,
-    state_counts: { probing: 1 },
-    top_repair_symbols: ['AAPL'],
-  },
+const build = {
+  active_revision: 'torghut-00123',
+  commit: '1234567890abcdef1234567890abcdef12345678',
+  image_digest: `sha256:${'1'.repeat(64)}`,
 }
 
-const baseLiveSubmitActivation = {
-  configured: true,
-  valid: true,
-  expired: false,
-  expires_at: '2030-06-17T20:05:00+00:00',
-  observed_at: '2026-06-17T14:00:00+00:00',
-  reason: null,
+const activeGate = {
+  allowed: true,
+  blocked_reasons: [],
+  execution_route: {
+    alpaca_regular_session_open: true,
+    reason: 'alpaca_regular_session_open',
+    route: 'alpaca',
+  },
+  reason: 'operational_submission_ready',
+  schema_version: 'torghut.operational-submission-gate.v2',
 }
 
-const baseTigerBeetleLedger = {
-  schema_version: 'torghut.tigerbeetle-ledger-status.v1',
-  ok: true,
-  reconciliation_ok: true,
-  reconciliation_stale: false,
-  reconciliation_age_seconds: 30,
-  reconciliation_max_age_seconds: 300,
-  latest_reconciliation: {
-    status: 'ok',
-    ok: true,
-    finished_at: '2026-06-17T14:00:00+00:00',
+const marketClosedGate = {
+  ...activeGate,
+  allowed: false,
+  blocked_reasons: ['mainnet_route_unavailable'],
+  execution_route: {
+    alpaca_regular_session_open: false,
+    reason: 'alpaca_regular_session_closed',
+    route: 'closed',
   },
-  blockers: [],
+  reason: 'mainnet_route_unavailable',
 }
 
-const baseProofTigerBeetleReconciliation = {
-  schema_version: 'torghut.proofs.tigerbeetle-reconciliation.v1',
-  status_available: true,
-  ok: true,
-  protocol_ok: true,
-  protocol_probe_skipped: false,
-  reconciliation_required: true,
-  reconciliation_ok: true,
-  reconciliation_stale: false,
-  reconciliation_age_seconds: 30,
-  reconciliation_max_age_seconds: 300,
-  cluster_id: 100,
-  claimed_by_runtime_evidence: true,
-  runtime_ledger_ref_count: 2,
-  runtime_ledger_signed_ref_count: 2,
-  runtime_ledger_missing_signed_ref_count: 0,
-  runtime_ledger_missing_account_ref_count: 0,
-  latest_reconciliation: {
-    status: 'ok',
-    ok: true,
-    finished_at: '2026-06-17T14:00:00+00:00',
+const readyz = (gate: typeof activeGate | typeof marketClosedGate = activeGate) => ({
+  build,
+  dependencies: {
+    alpaca: { ok: true },
+    clickhouse: { ok: true },
+    database: { ok: true },
+    live_submission_gate: { ok: gate.allowed },
+    postgres: { ok: true },
+    readiness_cache: { cache_used: false },
+    tigerbeetle: { ok: true },
+    universe: { ok: true },
   },
-  blockers: [],
-}
+  live_submission_gate: gate,
+  status: gate.allowed ? 'ok' : 'degraded',
+})
 
-const baseTradingStatus = {
-  autonomy_enabled: false,
-  empirical_jobs: {
-    ready: true,
-    status: 'healthy',
-    authority: 'empirical',
-    blocked_reasons: [],
+const tradingStatus = (gate: typeof activeGate | typeof marketClosedGate = activeGate) => ({
+  build,
+  capital_controls: {
+    buying_power_reserve_bps: 1_000,
+    daily_loss_limit: 0.01,
+    drawdown_limit: 0.05,
+    gross_limit: 4,
+    net_limit: 0.5,
+    symbol_limit: 0.5,
   },
-  live_submission_gate: {
-    allowed: true,
-    reason: null,
-    blocked_reasons: [],
-    live_submit_activation: baseLiveSubmitActivation,
-  },
-  submission_authority: {
-    schema_version: 'torghut.submission-authority.v1',
-    authority_scope: 'operational_submission',
-    effective_submit_mode: 'operational_submission',
-    can_submit_now: true,
-    reason: 'operational_submission_ready',
-    operational_submission_gate: {
-      allowed: true,
-      blocked_reasons: [],
-      reason: 'operational_submission_ready',
-      execution_route: {
-        route: 'testnet',
-        reason: 'alpaca_regular_session_closed',
-        testnet_after_hours_enabled: true,
-      },
+  enabled: true,
+  execution: {
+    gate: {
+      allowed: gate.allowed,
+      blocked_reasons: gate.blocked_reasons,
+      execution_route: gate.execution_route,
+      reason: gate.reason,
     },
+    route: gate.execution_route.route,
   },
-  route_reacquisition_board: baseRouteBoard,
-  tigerbeetle_ledger: baseTigerBeetleLedger,
-}
-
-const paperRouteTarget = {
-  hypothesis_id: 'H-PAIRS-01',
-  candidate_id: 'candidate-paper-route',
-  strategy_name: 'paper-route-candidate-v1',
-  window_start: '2026-05-26T13:30:00+00:00',
-  window_end: '2026-05-26T20:00:00+00:00',
-  paper_route_probe_symbols: ['AAPL', 'AMZN'],
-  paper_route_probe_next_session_max_notional: '25',
-  dependency_quorum_decision: 'missing',
-  continuity_ok: 'false',
-  drift_ok: 'false',
-  runtime_window_import_health_gate: {
-    schema_version: 'torghut.runtime-window-import-health-gate.v1',
-    dependency_quorum_decision: 'missing',
-    continuity_ok: 'false',
-    drift_ok: 'false',
-    ready: false,
-    blockers: [
-      'runtime_window_import_dependency_quorum_missing',
-      'runtime_window_import_continuity_missing',
-      'runtime_window_import_drift_missing',
-    ],
-  },
-}
-
-const buildPaperRouteEvidence = (targets: Array<Record<string, unknown>>) => ({
-  schema_version: 'torghut.paper-route-evidence.v1',
-  next_paper_route_runtime_window_targets: {
-    schema_version: 'torghut.next-paper-route-runtime-window-targets.v1',
-    promotion_allowed: false,
-    final_promotion_allowed: false,
-    final_promotion_authorized: false,
-    target_count: targets.length,
-    runtime_window_import_health_gate: {
-      schema_version: 'torghut.runtime-window-import-health-gate-summary.v1',
-      target_count: targets.length,
-      ready_target_count: 0,
-      blocked_target_count: targets.length,
-      blockers: [],
-    },
-    targets,
+  live_submission_gate: gate,
+  mode: 'live',
+  service: 'torghut',
+  tigerbeetle_ledger: {
+    blockers: [],
+    ok: true,
+    reconciliation_ok: true,
+    reconciliation_stale: false,
   },
 })
 
-const buildProofs = (targets: Array<Record<string, unknown>>) => ({
-  schema_version: 'torghut.proofs.v1',
-  tigerbeetle_reconciliation: baseProofTigerBeetleReconciliation,
-  promotion_authority: {
-    allowed: false,
-    final_promotion_allowed: false,
-    blockers: ['live_runtime_ledger_authority_required'],
-  },
-  proofs: targets.map((target) => ({
-    identity: {
-      hypothesis_id: target.hypothesis_id,
-      candidate_id: target.candidate_id,
-      runtime_strategy_name: target.strategy_name,
-      account_label: 'TORGHUT_SIM',
-      source_kind: 'runtime_window',
-      target_notional: target.paper_route_probe_next_session_max_notional,
-    },
-    window: {
-      start: target.window_start,
-      end: target.window_end,
-    },
-    symbols: target.paper_route_probe_symbols,
-    health: {
-      dependency_quorum_ok: false,
-      continuity_ok: false,
-      drift_ok: false,
-      blockers: ['runtime_window_import_health_gate_pending'],
-    },
-  })),
-})
-
-const baseDigest = {
-  business_state: 'repair_only',
-  revenue_ready: false,
-  repair_queue: [{ code: 'repair_signal_freshness', reason: 'signal_lag_exceeded', dimension: 'signal_continuity' }],
-  blockers: [{ reason: 'simple_submit_disabled' }],
-  capital: {
-    live_submission_allowed: false,
-    capital_state: 'zero_notional',
-    max_notional: '0',
-  },
-  health: {
-    readyz_status: 'degraded',
-    readyz_ok: false,
-    dependency_failures: [
-      { name: 'live_submission_gate', detail: 'simple_submit_disabled' },
-      { name: 'profitability_proof_floor', detail: 'repair_only' },
-    ],
-  },
-}
-
-const baseReadyz = {
-  status: 'degraded',
-  scheduler: { ok: true, running: true },
-  dependencies: {
-    postgres: { ok: true },
-    clickhouse: { ok: true },
-    database: { ok: true },
-    live_submission_gate: { ok: false, detail: 'simple_submit_disabled' },
-    profitability_proof_floor: { ok: false, detail: 'repair_only', capital_state: 'zero_notional' },
-  },
-}
-
-const acceptedSourceStaleReadyz = {
-  status: 'degraded',
-  scheduler: { ok: true, running: true },
-  dependencies: {
-    postgres: { ok: true },
-    clickhouse: { ok: true },
-    database: { ok: true },
-    live_submission_gate: { ok: false, detail: 'accepted_ta_signal_stale' },
-    profitability_proof_floor: { ok: false, detail: 'repair_only', capital_state: 'zero_notional' },
-  },
-  live_submission_gate: {
-    allowed: false,
-    reason: 'accepted_ta_signal_stale',
-    blocked_reasons: ['accepted_ta_signal_stale'],
-    accepted_sources: ['ta'],
-    latest_accepted_event_at: '2026-06-30T20:54:52Z',
-    accepted_lag_seconds: 615152,
-    accepted_max_lag_seconds: 120,
-    accepted_source_state: 'stale',
-    blocking_reason: 'accepted_ta_signal_stale',
-    clickhouse_ta_freshness: {
-      accepted_sources: ['ta'],
-      latest_accepted_event_at: '2026-06-30T20:54:52Z',
-      accepted_lag_seconds: 615152,
-      accepted_max_lag_seconds: 120,
-      accepted_source_state: 'stale',
-      blocking_reason: 'accepted_ta_signal_stale',
-    },
-  },
-}
-
-const acceptedSourceStaleDigest = {
-  ...baseDigest,
-  blockers: [{ reason: 'accepted_ta_signal_stale' }, { reason: 'hypothesis_not_promotion_eligible' }],
-  capital: {
-    ...baseDigest.capital,
-    capital_stage: 'operational_blocked',
-    live_submission_reason: 'accepted_ta_signal_stale',
-  },
-  health: {
-    ...baseDigest.health,
-    readyz_status: 'ok',
-    readyz_ok: true,
-    dependency_failures: [
-      { name: 'live_submission_gate', detail: 'accepted_ta_signal_stale' },
-      { name: 'profitability_proof_floor', detail: 'repair_only' },
-    ],
-  },
-  repair_queue: [{ code: 'repair_accepted_ta_signal_stale', reason: 'accepted_ta_signal_stale' }],
-}
-
-const acceptedSourceStaleTradingStatus = {
-  ...baseTradingStatus,
-  live_submission_gate: {
-    ...baseTradingStatus.live_submission_gate,
-    allowed: false,
-    reason: 'accepted_ta_signal_stale',
-    blocked_reasons: ['accepted_ta_signal_stale'],
-    capital_stage: 'operational_blocked',
-    capital_state: 'blocked',
-    accepted_sources: ['ta'],
-    latest_accepted_event_at: '2026-06-30T20:54:52Z',
-    accepted_lag_seconds: 615152,
-    accepted_max_lag_seconds: 120,
-    accepted_source_state: 'stale',
-    blocking_reason: 'accepted_ta_signal_stale',
-    clickhouse_ta_freshness: {
-      accepted_sources: ['ta'],
-      latest_accepted_event_at: '2026-06-30T20:54:52Z',
-      accepted_lag_seconds: 615152,
-      accepted_max_lag_seconds: 120,
-      accepted_source_state: 'stale',
-      blocking_reason: 'accepted_ta_signal_stale',
-      excluded_fresher_sources: [
-        {
-          source: 'rest',
-          excluded_reason: 'source_not_allowed_for_live_runtime',
-          latest_signal_at: '2026-07-02T20:32:00Z',
-        },
-      ],
-    },
-    live_submit_activation: baseLiveSubmitActivation,
-  },
-  operational_submission_gate: {
-    allowed: false,
-    blocked_reasons: ['accepted_ta_signal_stale'],
-    reason: 'accepted_ta_signal_stale',
-  },
-  submission_authority: {
-    schema_version: 'torghut.submission-authority.v1',
-    authority_scope: 'none',
-    effective_submit_mode: 'blocked',
-    can_submit_now: false,
-    reason: 'accepted_ta_signal_stale',
-    operational_submission_gate: {
-      allowed: false,
-      blocked_reasons: ['accepted_ta_signal_stale'],
-      reason: 'accepted_ta_signal_stale',
-    },
-  },
-}
-
-const coreDependenciesOnlyReadyz = {
-  status: 'degraded',
-  reason_codes: ['alpaca_degraded'],
-  scheduler: { ok: true, running: true },
-  readiness_surface: 'core_dependencies_only',
-  dependencies: {
-    postgres: { ok: true },
-    clickhouse: { ok: true },
-    database: { ok: true },
-    alpaca: {
-      ok: false,
-      detail: 'alpaca account probe timed out after 2.00s',
-    },
-  },
-  live_submission_gate: {
-    allowed: false,
-    promotion_authority: false,
-    promotion_authority_ok: false,
-    final_authority_ok: false,
-    final_promotion_allowed: false,
-    final_promotion_authorized: false,
-    reason: 'readyz_core_dependencies_only',
-    reason_codes: ['readyz_core_dependencies_only'],
-    blocked_reasons: ['readyz_core_dependencies_only'],
-    capital_stage: 'shadow',
-    capital_state: 'observe',
-    read_model_evaluated: false,
-    readiness_surface: 'core_dependencies_only',
-    live_submit_activation: baseLiveSubmitActivation,
-  },
-}
-
-describe('validatePostDeployEvidence', () => {
-  it('accepts normal 2xx readyz with route board evidence', () => {
+describe('Torghut post-deploy evidence', () => {
+  it('accepts a healthy active-session runtime', () => {
     const result = validatePostDeployEvidence({
+      readyz: readyz(),
       readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: baseTradingStatus,
+      tradingStatus: tradingStatus(),
     })
 
-    expect(result.readyzAcceptedReason).toBe('healthy_2xx')
-    expect(result.liveSubmitContract).toBe('bounded_live_submit_active')
-    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `bounded_live_submit_active`')
+    expect(result.readinessContract).toBe('active_session_ready')
+    expect(result.summaryLines.join('\n')).toContain('4x gross')
   })
 
-  it('accepts 2xx readyz with a closed shadow zero-notional gate', () => {
+  it('accepts a healthy runtime whose only blocker is a closed regular session', () => {
     const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: {
-        ...baseDigest,
-        blockers: [{ reason: 'hypothesis_not_promotion_eligible' }, { reason: 'empirical_jobs_not_ready' }],
-        capital: {
-          ...baseDigest.capital,
-          capital_stage: 'shadow',
-          configured_live_promotion: false,
-        },
-        health: {
-          ...baseDigest.health,
-          readyz_status: 'ok',
-          readyz_ok: true,
-          dependency_failures: [
-            { name: 'live_submission_gate', detail: 'hypothesis_not_promotion_eligible' },
-            { name: 'profitability_proof_floor', detail: 'repair_only' },
-          ],
-        },
-        repair_queue: [],
-      },
-      tradingStatus: {
-        ...baseTradingStatus,
-        empirical_jobs: {
-          ready: false,
-          status: 'degraded',
-          authority: 'empirical',
-          blocked_reasons: [],
-        },
-        live_submission_gate: {
-          ...baseTradingStatus.live_submission_gate,
-          allowed: false,
-          reason: 'hypothesis_not_promotion_eligible',
-          blocked_reasons: [
-            'empirical_jobs_not_ready',
-            'hypothesis_not_promotion_eligible',
-            'runtime_profit_target_import_required',
-            'runtime_window_import_required',
-          ],
-          capital_stage: 'shadow',
-          capital_state: 'observe',
-          configured_live_promotion: false,
-          live_submit_activation: {
-            configured: false,
-            valid: true,
-            expired: false,
-            expires_at: null,
-            reason: null,
-          },
-        },
-      },
-    })
-
-    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
-    expect(result.liveSubmitContract).toBe('shadow_zero_notional_gate_closed')
-    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `shadow_zero_notional_gate_closed`')
-  })
-
-  it('accepts 2xx readyz with accepted TA stale fail-closed at zero notional', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: acceptedSourceStaleDigest,
-      tradingStatus: acceptedSourceStaleTradingStatus,
-    })
-
-    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
-    expect(result.liveSubmitContract).toBe('accepted_source_stale_zero_notional')
-    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `accepted_source_stale_zero_notional`')
-  })
-
-  it('rejects accepted TA stale status when top-level accepted freshness is missing', () => {
-    const {
-      accepted_sources: _acceptedSources,
-      latest_accepted_event_at: _latestAcceptedEventAt,
-      accepted_lag_seconds: _acceptedLagSeconds,
-      accepted_max_lag_seconds: _acceptedMaxLagSeconds,
-      accepted_source_state: _acceptedSourceState,
-      blocking_reason: _blockingReason,
-      ...gateWithoutTopLevelFreshness
-    } = acceptedSourceStaleTradingStatus.live_submission_gate
-
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: acceptedSourceStaleDigest,
-        tradingStatus: {
-          ...acceptedSourceStaleTradingStatus,
-          live_submission_gate: gateWithoutTopLevelFreshness,
-        },
-      }),
-    ).toThrow('torghut live_submission_gate.accepted_sources')
-  })
-
-  it('rejects accepted TA stale status when top-level freshness diverges from nested freshness', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: acceptedSourceStaleDigest,
-        tradingStatus: {
-          ...acceptedSourceStaleTradingStatus,
-          live_submission_gate: {
-            ...acceptedSourceStaleTradingStatus.live_submission_gate,
-            accepted_lag_seconds: 1,
-          },
-        },
-      }),
-    ).toThrow('accepted_lag_seconds must mirror')
-  })
-
-  it('rejects accepted TA stale status when required freshness lag is null', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: {
-          ...acceptedSourceStaleReadyz,
-          live_submission_gate: {
-            ...acceptedSourceStaleReadyz.live_submission_gate,
-            accepted_lag_seconds: null,
-          },
-        },
-        revenueRepairDigest: acceptedSourceStaleDigest,
-        tradingStatus: {
-          ...acceptedSourceStaleTradingStatus,
-          live_submission_gate: {
-            ...acceptedSourceStaleTradingStatus.live_submission_gate,
-            accepted_lag_seconds: null,
-          },
-        },
-      }),
-    ).toThrow('torghut live_submission_gate.accepted_lag_seconds must be a non-negative integer')
-  })
-
-  it('rejects accepted TA stale contract with malformed submission authority schema', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: acceptedSourceStaleDigest,
-        tradingStatus: {
-          ...acceptedSourceStaleTradingStatus,
-          submission_authority: {
-            ...acceptedSourceStaleTradingStatus.submission_authority,
-            schema_version: 'torghut.submission-authority.v0',
-          },
-        },
-      }),
-    ).toThrow('submission_authority.schema_version')
-  })
-
-  it('accepts 2xx readyz with operational submission ready but capital still zero-notional repair-only', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: {
-        ...baseDigest,
-        capital: {
-          live_submission_allowed: true,
-          live_submission_reason: 'operational_submission_ready',
-          capital_stage: 'live',
-          capital_state: 'zero_notional',
-          configured_live_promotion: false,
-          max_notional: '0',
-          proof_floor_state: 'repair_only',
-          route_state: 'repair_only',
-        },
-        health: {
-          ...baseDigest.health,
-          readyz_status: 'ok',
-          readyz_ok: true,
-          dependency_failures: [{ name: 'profitability_proof_floor', detail: 'repair_only' }],
-        },
-        repair_queue: [],
-      },
-      tradingStatus: {
-        ...baseTradingStatus,
-        empirical_jobs: {
-          ready: false,
-          status: 'degraded',
-          blocked_reasons: ['job_stale'],
-        },
-        operational_submission_gate: {
-          allowed: true,
-          blocked_reasons: [],
-          reason: 'operational_submission_ready',
-          execution_route: {
-            route: 'testnet',
-            reason: 'alpaca_regular_session_closed',
-            testnet_after_hours_enabled: true,
-          },
-        },
-        proof_floor: {
-          floor_state: 'repair_only',
-          capital_state: 'zero_notional',
-          max_notional: '0',
-        },
-      },
-    })
-
-    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
-    expect(result.liveSubmitContract).toBe('operational_zero_notional_repair')
-    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `operational_zero_notional_repair`')
-  })
-
-  it('accepts healthy readyz after live submit activation expiry when live submit is blocked', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: {
-        ...baseTradingStatus,
-        live_submission_gate: {
-          ...baseTradingStatus.live_submission_gate,
-          allowed: false,
-          reason: 'live_submit_activation_expired',
-          blocked_reasons: ['live_submit_activation_expired'],
-          live_submit_activation: {
-            ...baseLiveSubmitActivation,
-            expired: true,
-            reason: 'live_submit_activation_expired',
-          },
-        },
-      },
-    })
-
-    expect(result.liveSubmitContract).toBe('expired_activation_blocked')
-    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `expired_activation_blocked`')
-  })
-
-  it('rejects healthy readyz after live submit activation expiry when live submit is still allowed', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: {
-          ...baseTradingStatus,
-          live_submission_gate: {
-            ...baseTradingStatus.live_submission_gate,
-            allowed: true,
-            live_submit_activation: {
-              ...baseLiveSubmitActivation,
-              expired: true,
-              reason: 'live_submit_activation_expired',
-            },
-          },
-        },
-      }),
-    ).toThrow('live_submission_gate.allowed must be false')
-  })
-
-  it('rejects healthy readyz when live submit activation expiry reason is missing', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: {
-          ...baseTradingStatus,
-          live_submission_gate: {
-            ...baseTradingStatus.live_submission_gate,
-            allowed: false,
-            reason: 'live_submit_activation_expired',
-            blocked_reasons: ['live_submit_activation_expired'],
-            live_submit_activation: {
-              ...baseLiveSubmitActivation,
-              expired: true,
-              reason: null,
-            },
-          },
-        },
-      }),
-    ).toThrow('live_submit_activation.reason must be live_submit_activation_expired')
-  })
-
-  it('rejects healthy readyz when submission authority drifts away from operational submission', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: {
-          ...baseTradingStatus,
-          submission_authority: {
-            ...baseTradingStatus.submission_authority,
-            can_submit_now: false,
-          },
-        },
-      }),
-    ).toThrow('submission_authority.can_submit_now=true')
-  })
-
-  it('reports stale empirical jobs as diagnostics without blocking live-submit rollout acceptance', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: {
-        ...baseTradingStatus,
-        empirical_jobs: {
-          ready: false,
-          status: 'degraded',
-          blocked_reasons: ['job_stale'],
-        },
-      },
-    })
-
-    expect(result.liveSubmitContract).toBe('bounded_live_submit_active')
-    expect(result.summaryLines.join('\n')).toContain(
-      'Empirical jobs diagnostic: ready=`false`, status=`degraded`, blocked=`job_stale`',
-    )
-  })
-
-  it('accepts repair-only zero-notional readyz 503 without treating it as a rollout failure', () => {
-    const result = validatePostDeployEvidence({
+      readyz: readyz(marketClosedGate),
       readyzHttpStatus: '503',
-      readyz: baseReadyz,
-      revenueRepairDigest: baseDigest,
-      tradingStatus: baseTradingStatus,
+      tradingStatus: tradingStatus(marketClosedGate),
     })
 
-    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
-    expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `repair_only_zero_notional`')
+    expect(result.readinessContract).toBe('market_closed')
   })
 
-  it('accepts accepted-source stale readyz 503 when submission is fail-closed at zero notional', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '503',
-      readyz: acceptedSourceStaleReadyz,
-      revenueRepairDigest: acceptedSourceStaleDigest,
-      tradingStatus: acceptedSourceStaleTradingStatus,
-    })
-
-    expect(result.readyzAcceptedReason).toBe('repair_only_zero_notional')
-    expect(result.liveSubmitContract).toBe('accepted_source_stale_zero_notional')
-    expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `repair_only_zero_notional`')
-    expect(result.summaryLines.join('\n')).toContain('Live submit contract: `accepted_source_stale_zero_notional`')
-  })
-
-  it('rejects accepted-source stale readyz 503 when top-level freshness is not mirrored', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '503',
-        readyz: {
-          ...acceptedSourceStaleReadyz,
-          live_submission_gate: {
-            ...acceptedSourceStaleReadyz.live_submission_gate,
-            accepted_lag_seconds: 1,
-          },
-        },
-        revenueRepairDigest: acceptedSourceStaleDigest,
-        tradingStatus: acceptedSourceStaleTradingStatus,
-      }),
-    ).toThrow('mirrored accepted-source freshness fields')
-  })
-
-  it('accepts core-dependencies-only readyz 503 when the deploy surface is healthy and the gate is closed', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '503',
-      readyz: coreDependenciesOnlyReadyz,
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: baseTradingStatus,
-    })
-
-    expect(result.readyzAcceptedReason).toBe('core_dependencies_only_gate_closed')
-    expect(result.liveSubmitContract).toBe('bounded_live_submit_active')
-    expect(result.summaryLines.join('\n')).toContain('Readyz acceptance: `core_dependencies_only_gate_closed`')
-  })
-
-  it('rejects core-dependencies-only readyz 503 when a core runtime dependency is down', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '503',
-        readyz: {
-          ...coreDependenciesOnlyReadyz,
-          dependencies: {
-            ...coreDependenciesOnlyReadyz.dependencies,
-            database: { ok: false, detail: 'schema drift' },
-          },
-        },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-      }),
-    ).toThrow('readyz dependencies.database.ok must be true')
-  })
-
-  it('rejects core-dependencies-only readyz 503 if it carries live submission authority', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '503',
-        readyz: {
-          ...coreDependenciesOnlyReadyz,
-          live_submission_gate: {
-            ...coreDependenciesOnlyReadyz.live_submission_gate,
-            allowed: true,
-          },
-        },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-      }),
-    ).toThrow('live_submission_gate.allowed=false')
-  })
-
-  it('rejects repair-only 503 when runtime dependencies are down', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '503',
-        readyz: {
-          ...baseReadyz,
-          dependencies: {
-            ...baseReadyz.dependencies,
-            postgres: { ok: false, detail: 'down' },
-          },
-        },
-        revenueRepairDigest: baseDigest,
-        tradingStatus: baseTradingStatus,
-      }),
-    ).toThrow('readyz dependencies.postgres.ok must be true')
-  })
-
-  it('rejects repair-only 503 when capital is not clamped to zero', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '503',
-        readyz: baseReadyz,
-        revenueRepairDigest: {
-          ...baseDigest,
-          capital: {
-            ...baseDigest.capital,
-            max_notional: '100',
-          },
-        },
-        tradingStatus: baseTradingStatus,
-      }),
-    ).toThrow('max_notional=0')
-  })
-
-  it('accepts matching live and sim proof target plans', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: baseTradingStatus,
-      paperRouteEvidence: buildProofs([paperRouteTarget]),
-      simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
-    })
-
-    expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
-    expect(result.summaryLines.join('\n')).toContain('Live target count: `1`')
-    expect(result.summaryLines.join('\n')).toContain('Sim target count: `1`')
-  })
-
-  it('rejects canonical proofs that omit TigerBeetle reconciliation proof', () => {
-    const proofPayload = buildProofs([paperRouteTarget])
-    delete (proofPayload as Record<string, unknown>).tigerbeetle_reconciliation
-
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: proofPayload,
-        simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
-      }),
-    ).toThrow('tigerbeetle_reconciliation must be an object')
-  })
-
-  it('rejects canonical proofs with stale TigerBeetle reconciliation proof', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: {
-          ...buildProofs([paperRouteTarget]),
-          tigerbeetle_reconciliation: {
-            ...baseProofTigerBeetleReconciliation,
-            ok: false,
-            reconciliation_ok: false,
-            reconciliation_stale: true,
-            blockers: ['tigerbeetle_reconciliation_stale'],
-          },
-        },
-        simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
-      }),
-    ).toThrow('tigerbeetle_reconciliation.ok must be true')
-  })
-
-  it('accepts canonical proofs whose TigerBeetle reconciliation readback is newer than status but still fresh', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: baseTradingStatus,
-      paperRouteEvidence: {
-        ...buildProofs([paperRouteTarget]),
-        tigerbeetle_reconciliation: {
-          ...baseProofTigerBeetleReconciliation,
-          latest_reconciliation: {
-            ...baseProofTigerBeetleReconciliation.latest_reconciliation,
-            finished_at: '2026-06-17T14:01:00+00:00',
-          },
-        },
-      },
-      simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
-    })
-
-    expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
-  })
-
-  it('rejects canonical proofs whose TigerBeetle reconciliation readback is outside status freshness age', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: {
-          ...buildProofs([paperRouteTarget]),
-          tigerbeetle_reconciliation: {
-            ...baseProofTigerBeetleReconciliation,
-            latest_reconciliation: {
-              ...baseProofTigerBeetleReconciliation.latest_reconciliation,
-              finished_at: '2026-06-17T14:10:01+00:00',
-            },
-          },
-        },
-        simPaperRouteEvidence: buildProofs([{ ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' }]),
-      }),
-    ).toThrow('latest finished_at must be within max age of torghut status')
-  })
-
-  it('uses raw paper-route targets when source collection is the selected next plan', () => {
-    const rawLivePlan = buildPaperRouteEvidence([paperRouteTarget]).next_paper_route_runtime_window_targets
-    const rawSimPlan = buildPaperRouteEvidence([
-      { ...paperRouteTarget, source_account_label: 'TORGHUT_SIM' },
-    ]).next_paper_route_runtime_window_targets
-    const selectedSourceCollectionPlan = {
-      schema_version: 'torghut.runtime-ledger-paper-probation-import-plan.v1',
-      source: 'paper_route_observed_strategy_source_collection',
-      promotion_allowed: false,
-      final_promotion_allowed: false,
-      final_promotion_authorized: false,
-      target_count: 1,
-      targets: [
-        {
-          hypothesis_id: 'H-MICRO-01',
-          candidate_id: 'candidate-source-collection',
-          strategy_name: 'microbar-volume-continuation-long-top2-chip-v1',
-          source_kind: 'runtime_ledger_source_collection_candidate',
-        },
-      ],
+  it('rejects a degraded runtime with any blocker beyond market closure', () => {
+    const gate = {
+      ...marketClosedGate,
+      blocked_reasons: ['mainnet_route_unavailable', 'broker_unavailable'],
     }
 
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: baseTradingStatus,
-      paperRouteEvidence: {
-        schema_version: 'torghut.paper-route-evidence.v1',
-        next_paper_route_runtime_window_targets: selectedSourceCollectionPlan,
-        raw_next_paper_route_runtime_window_targets: rawLivePlan,
-      },
-      simPaperRouteEvidence: {
-        schema_version: 'torghut.paper-route-evidence.v1',
-        next_paper_route_runtime_window_targets: selectedSourceCollectionPlan,
-        raw_next_paper_route_runtime_window_targets: rawSimPlan,
-      },
-    })
-
-    expect(result.summaryLines.join('\n')).toContain('Torghut Paper Route Target Mirror')
-    expect(result.summaryLines.join('\n')).toContain('Live target count: `1`')
-    expect(result.summaryLines.join('\n')).toContain('Sim target count: `1`')
-  })
-
-  it('rejects an empty sim paper-route plan when live torghut exposes a target', () => {
     expect(() =>
       validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([]),
+        readyz: readyz(gate),
+        readyzHttpStatus: '503',
+        tradingStatus: tradingStatus(gate),
       }),
-    ).toThrow('torghut-sim paper-route target plan is empty while live torghut exposes targets')
+    ).toThrow('acceptable only when the regular market session is closed')
   })
 
-  it('rejects a sim paper-route plan missing the live target identity', () => {
+  it('rejects disagreement between readiness and status submission authority', () => {
     expect(() =>
       validatePostDeployEvidence({
+        readyz: readyz(),
         readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, candidate_id: 'other-candidate' }]),
+        tradingStatus: tradingStatus(marketClosedGate),
       }),
-    ).toThrow('torghut-sim paper-route target plan missing live target')
+    ).toThrow('contracts differ')
   })
 
-  it('rejects a sim paper-route plan with a broader symbol envelope than live', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([
-          { ...paperRouteTarget, paper_route_probe_symbols: ['AMZN', 'AAPL', 'INTC'] },
-        ]),
-      }),
-    ).toThrow('torghut-sim paper-route target symbols differ from live target')
-  })
-
-  it('accepts a sim paper-route plan scoped to a smaller strategy universe', () => {
-    const result = validatePostDeployEvidence({
-      readyzHttpStatus: '200',
-      readyz: { status: 'ok' },
-      revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-      tradingStatus: baseTradingStatus,
-      paperRouteEvidence: buildPaperRouteEvidence([
-        { ...paperRouteTarget, paper_route_probe_symbols: ['AAPL', 'AMZN', 'INTC', 'NVDA'] },
-      ]),
-      simPaperRouteEvidence: buildPaperRouteEvidence([
-        {
-          ...paperRouteTarget,
-          paper_route_probe_symbols: ['AAPL', 'AMZN'],
-          paper_route_probe_strategy_scope_applied: true,
-          paper_route_probe_scope_authority: 'strategy_universe',
-        },
-      ]),
-    })
-
-    expect(result.summaryLines.join('\n')).toContain('Sim constrained target count: `1`')
-  })
-
-  it('rejects a narrower sim paper-route plan without explicit strategy-universe scope', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([
-          { ...paperRouteTarget, paper_route_probe_symbols: ['AAPL', 'AMZN', 'INTC'] },
-        ]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([
-          { ...paperRouteTarget, paper_route_probe_symbols: ['AAPL', 'AMZN'] },
-        ]),
-      }),
-    ).toThrow('torghut-sim paper-route target symbols differ from live target')
-  })
-
-  it('rejects a sim paper-route plan with a different notional envelope than live', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([
-          { ...paperRouteTarget, paper_route_probe_next_session_max_notional: '50' },
-        ]),
-      }),
-    ).toThrow('torghut-sim paper-route target notional differs from live target')
-  })
-
-  it('rejects paper-route target plans that accidentally authorize promotion', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: {
-          ...buildPaperRouteEvidence([paperRouteTarget]),
-          next_paper_route_runtime_window_targets: {
-            ...buildPaperRouteEvidence([paperRouteTarget]).next_paper_route_runtime_window_targets,
-            final_promotion_authorized: true,
-          },
-        },
-        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-      }),
-    ).toThrow('final_promotion_authorized must not be true')
-  })
-
-  it('rejects paper-route targets that accidentally authorize promotion', () => {
-    expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([{ ...paperRouteTarget, promotion_allowed: true }]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-      }),
-    ).toThrow('target 0 promotion_allowed must not be true')
-  })
-
-  it('rejects paper-route targets that omit runtime-window import health gates', () => {
-    const target: Record<string, unknown> = { ...paperRouteTarget }
-    delete target.runtime_window_import_health_gate
-    delete target.dependency_quorum_decision
-    delete target.continuity_ok
-    delete target.drift_ok
+  it('rejects stale ledger reconciliation', () => {
+    const status = tradingStatus()
+    status.tigerbeetle_ledger.reconciliation_stale = true
 
     expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([target]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-      }),
-    ).toThrow('target 0 missing runtime-window import health gate fields')
+      validatePostDeployEvidence({ readyz: readyz(), readyzHttpStatus: '200', tradingStatus: status }),
+    ).toThrow('ledger reconciliation is not current and healthy')
   })
 
-  it('rejects paper-route target plans that omit runtime-window health gate summary', () => {
-    const paperRouteEvidence = buildPaperRouteEvidence([paperRouteTarget])
-    delete (paperRouteEvidence.next_paper_route_runtime_window_targets as Record<string, unknown>)
-      .runtime_window_import_health_gate
+  it('rejects a drifted capital limit', () => {
+    const status = tradingStatus()
+    status.capital_controls.gross_limit = 1
 
     expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence,
-        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-      }),
-    ).toThrow('target plan runtime_window_import_health_gate must be an object')
+      validatePostDeployEvidence({ readyz: readyz(), readyzHttpStatus: '200', tradingStatus: status }),
+    ).toThrow('capital_controls.gross_limit must be 4')
   })
 
-  it('rejects paper-route targets with inconsistent runtime-window health gate envelopes', () => {
+  it('rejects an unhealthy core dependency', () => {
+    const payload = readyz()
+    payload.dependencies.clickhouse.ok = false
+
     expect(() =>
-      validatePostDeployEvidence({
-        readyzHttpStatus: '200',
-        readyz: { status: 'ok' },
-        revenueRepairDigest: { ...baseDigest, repair_queue: [] },
-        tradingStatus: baseTradingStatus,
-        paperRouteEvidence: buildPaperRouteEvidence([
-          {
-            ...paperRouteTarget,
-            runtime_window_import_health_gate: {
-              ...paperRouteTarget.runtime_window_import_health_gate,
-              drift_ok: 'true',
-            },
-          },
-        ]),
-        simPaperRouteEvidence: buildPaperRouteEvidence([paperRouteTarget]),
-      }),
-    ).toThrow('target 0 runtime-window health gate drift_ok mismatch')
+      validatePostDeployEvidence({ readyz: payload, readyzHttpStatus: '200', tradingStatus: tradingStatus() }),
+    ).toThrow('clickhouse is not healthy')
   })
 })

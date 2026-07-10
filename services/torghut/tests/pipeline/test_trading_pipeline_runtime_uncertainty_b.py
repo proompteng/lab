@@ -6,6 +6,7 @@ from tests.pipeline.trading_pipeline_base import (
     DecisionEngine,
     FakeAlpacaClient,
     FakeIngestor,
+    FakePriceFetcher,
     OrderExecutor,
     OrderFirewall,
     Path,
@@ -270,6 +271,7 @@ class TestTradingPipelineRuntimeUncertaintyB(TradingPipelineTestCaseBase):
                 state=state,
                 account_label="paper",
                 session_factory=self.session_local,
+                price_fetcher=FakePriceFetcher(Decimal("100")),
             )
 
             pipeline.run_once()

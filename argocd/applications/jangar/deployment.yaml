@@ -247,10 +247,6 @@ spec:
               value: "15"
             - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS
               value: "120"
-            - name: JANGAR_TORGHUT_STATUS_URL
-              value: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
-            - name: JANGAR_TORGHUT_STATUS_TIMEOUT_MS
-              value: "3000"
             - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
               value: "15"
             - name: JANGAR_FEATURE_FLAGS_URL

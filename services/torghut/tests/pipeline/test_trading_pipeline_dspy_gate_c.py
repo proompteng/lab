@@ -54,7 +54,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -84,7 +83,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -147,31 +145,8 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             )
             pipeline._is_market_session_open = lambda _now=None: True
 
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             self._seed_promotion_certificate_evidence()
-            with (
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
-            ):
-                pipeline.run_once()
+            pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -203,9 +178,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
-            ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"
@@ -261,7 +233,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -287,7 +258,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -343,31 +313,8 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             )
             pipeline._is_market_session_open = lambda _now=None: True
 
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             self._seed_promotion_certificate_evidence()
-            with (
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
-            ):
-                pipeline.run_once()
+            pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -438,7 +385,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             "trading_simulation_enabled": config.settings.trading_simulation_enabled,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_allow_shorts": config.settings.trading_allow_shorts,
             "trading_fractional_equities_enabled": config.settings.trading_fractional_equities_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
@@ -471,7 +417,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         config.settings.trading_simulation_enabled = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_allow_shorts = True
         config.settings.trading_fractional_equities_enabled = True
         config.settings.trading_universe_source = "static"
@@ -520,7 +465,14 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             )
 
             alpaca_client = PositionedAlpacaClient(
-                [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+                [
+                    {
+                        "symbol": "AAPL",
+                        "qty": "2",
+                        "side": "long",
+                        "market_value": "200",
+                    }
+                ]
             )
             execution_adapter = SimulationExecutionAdapter(
                 bootstrap_servers=None,
@@ -550,35 +502,18 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             )
             pipeline._is_market_session_open = lambda _now=None: True
 
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             self._seed_promotion_certificate_evidence()
             with (
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
                 patch(
                     "app.trading.scheduler.pipeline.run_cycle.trading_now",
                     return_value=signal.event_ts,
                 ),
                 patch(
                     "app.trading.scheduler.pipeline.decision_lifecycle.trading_now",
+                    return_value=signal.event_ts,
+                ),
+                patch(
+                    "app.trading.scheduler.capital_controls.trading_now",
                     return_value=signal.event_ts,
                 ),
                 patch(
@@ -620,6 +555,9 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
                             "qty": str(remaining_qty.normalize()),
                             "side": "long",
                             "alpaca_account_label": "live",
+                            "market_value": str(
+                                (remaining_qty * Decimal("100")).normalize()
+                            ),
                         }
                     ],
                 )
@@ -638,9 +576,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
-            ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_allow_shorts = original["trading_allow_shorts"]
             config.settings.trading_fractional_equities_enabled = original[
@@ -835,7 +770,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -849,7 +783,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = False
@@ -898,31 +831,8 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             )
             pipeline._is_market_session_open = lambda _now=None: True
 
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             self._seed_promotion_certificate_evidence()
-            with (
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
-            ):
-                pipeline.run_once()
+            pipeline.run_once()
 
             with self.session_local() as session:
                 llm_reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -942,9 +852,6 @@ class TestTradingPipelineDspyGateC(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
-            ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

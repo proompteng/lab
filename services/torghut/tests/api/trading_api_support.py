@@ -26,22 +26,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app import bootstrap as app_bootstrap
 from app.api import health_checks as health_checks_api
-from app.api import health_cache_state, proof_contracts
-from app.api import maintenance as maintenance_api
-from app.api import proof_floor_payloads as proof_floor_payloads_api
-from app.api import proofs as proofs_api
+from app.api import health_cache_state
 from app.api import status_helpers as status_helpers_api
-from app.api import trading_misc as trading_misc_api
+from app.api.runtime_ledger_status import daily_runtime_ledger_portfolio_summary
 from app.api.readiness_helpers import readiness_surface as readiness_surface_helpers
 from app.db import get_session
 from app.main import app
-from app.trading.paper_route_target_plan import (
-    fetch_paper_route_target_plan_url as shared_fetch_paper_route_target_plan_url,
-    paper_route_target_plan_probe_symbols,
-)
-from app.trading.proofs.targets import (
-    next_regular_equities_session_window as _next_regular_equities_session_window,
-)
 from app.trading.forecast_runtime import forecast_registry
 from app.trading.scheduler import TradingScheduler
 from app.trading.feature_quality import FeatureQualityReport
@@ -80,38 +70,18 @@ _build_hypothesis_runtime_payload = health_checks_api.build_hypothesis_runtime_p
 _build_live_submission_gate_payload = (
     health_checks_api.build_api_live_submission_gate_payload
 )
-_build_route_image_proof_summary = (
-    proof_floor_payloads_api.build_route_image_proof_summary
-)
 _check_alpaca = health_checks_api.check_alpaca_dependency
-_daily_runtime_ledger_portfolio_summary = (
-    trading_misc_api.daily_runtime_ledger_portfolio_summary
-)
+_daily_runtime_ledger_portfolio_summary = daily_runtime_ledger_portfolio_summary
 _decimal_or_none = health_checks_api.decimal_or_none
-_fetch_paper_route_target_plan_url = proofs_api._fetch_paper_route_target_plan_url
 _forecast_service_status = health_checks_api.forecast_service_status
-_load_external_paper_route_target_plan = (
-    proofs_api._load_external_paper_route_target_plan
-)
 _load_options_catalog_freshness_summary = (
     health_checks_api.load_options_catalog_freshness_summary
 )
-_load_rejected_signal_outcome_learning_summary = (
-    proof_floor_payloads_api.load_rejected_signal_outcome_learning_summary
-)
-_merge_external_paper_route_target_plan = (
-    proofs_api._merge_external_paper_route_target_plan
-)
-_paper_route_target_plan_from_payload = proofs_api._paper_route_target_plan_from_payload
 _readiness_dependency_cache_key = (
     readiness_surface_helpers.readiness_dependency_cache_key
 )
 _readiness_dependency_checks = readiness_surface_helpers.readiness_dependency_checks
-_retryable_tca_recompute_error = proof_contracts.retryable_tca_recompute_error
 _route_claim_symbols = health_checks_api.route_claim_symbols
-_route_continuity_packet_for_proof_floor = (
-    proof_floor_payloads_api.route_continuity_packet_for_proof_floor
-)
 healthz = app_bootstrap.healthz
 
 
@@ -142,11 +112,6 @@ def _install_pipeline_universe_resolver(
     resolver: object,
 ) -> None:
     setattr(scheduler, "_pipeline", SimpleNamespace(universe_resolver=resolver))
-
-
-def _paper_route_pre_session_snapshot_as_of(generated_at: datetime) -> datetime:
-    window_start, _ = _next_regular_equities_session_window(generated_at)
-    return window_start - timedelta(minutes=15)
 
 
 def _freshness_carry_ledger_for_test(dimension_id: str) -> dict[str, object]:
@@ -519,7 +484,6 @@ class _PostgresRuntimeLedgerPortfolioSummarySession:
 
 class TradingApiTestCaseBase(TestCase):
     def setUp(self) -> None:
-        self._clear_trading_health_surface_cache()
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         _OPTIONS_CATALOG_FRESHNESS_CACHE.clear()
@@ -541,14 +505,10 @@ class TradingApiTestCaseBase(TestCase):
             "app.api.health_checks.shared_context.SessionLocal",
             "app.api.health_checks.load_options_catalog_freshness_summary.SessionLocal",
             "app.api.health_checks.remember_alpaca_success.SessionLocal",
-            "app.api.maintenance.SessionLocal",
-            "app.api.proofs.SessionLocal",
-            "app.api.readiness_helpers.evaluate_trading_health_payload.SessionLocal",
             "app.api.readiness_helpers.refresh_universe_state_for_readiness.SessionLocal",
             "app.api.readiness_helpers.readiness_surface.SessionLocal",
             "app.api.trading_status.SessionLocal",
             "app.api.status_helpers.SessionLocal",
-            "app.api.trading_misc.consumer_evidence_payload.SessionLocal",
             "app.api.vnext_helpers.SessionLocal",
         ):
             session_local_patch = patch(session_local_target, self.session_local)
@@ -658,7 +618,7 @@ class TradingApiTestCaseBase(TestCase):
             session.add(
                 PositionSnapshot(
                     alpaca_account_label="TORGHUT_SIM",
-                    as_of=_paper_route_pre_session_snapshot_as_of(now),
+                    as_of=now,
                     equity=Decimal("100000"),
                     cash=Decimal("100000"),
                     buying_power=Decimal("200000"),
@@ -670,16 +630,6 @@ class TradingApiTestCaseBase(TestCase):
     def _clear_trading_scheduler_state(self) -> None:
         if hasattr(app.state, "trading_scheduler"):
             del app.state.trading_scheduler
-
-    def _clear_trading_health_surface_cache(self) -> None:
-        with health_cache_state.TRADING_HEALTH_SURFACE_EVALUATION_LOCK:
-            refresh_futures = list(
-                health_cache_state.TRADING_HEALTH_SURFACE_EVALUATIONS.values()
-            )
-            health_cache_state.TRADING_HEALTH_SURFACE_EVALUATIONS.clear()
-            health_cache_state.TRADING_HEALTH_SURFACE_PAYLOAD_CACHE.clear()
-        for refresh_future in refresh_futures:
-            refresh_future.cancel()
 
     def _enable_exact_options_catalog_route_scope(self) -> None:
         original_exact_scope = (
@@ -749,29 +699,19 @@ __all__: tuple[str, ...] = (
     "_assert_dspy_cutover_migration_guard",
     "_build_hypothesis_runtime_payload",
     "_build_live_submission_gate_payload",
-    "_build_route_image_proof_summary",
     "_check_alpaca",
     "_daily_runtime_ledger_portfolio_summary",
     "_decimal_or_none",
-    "_fetch_paper_route_target_plan_url",
     "_forecast_service_status",
     "_freshness_carry_ledger_for_test",
     "_install_pipeline_universe_resolver",
     "_json_paths_containing",
     "_json_truthy_paths_for_keys",
-    "_load_external_paper_route_target_plan",
     "_load_options_catalog_freshness_summary",
-    "_load_rejected_signal_outcome_learning_summary",
     "_mark_static_universe_loaded",
-    "_merge_external_paper_route_target_plan",
-    "_next_regular_equities_session_window",
-    "_paper_route_pre_session_snapshot_as_of",
-    "_paper_route_target_plan_from_payload",
     "_readiness_dependency_cache_key",
     "_readiness_dependency_checks",
-    "_retryable_tca_recompute_error",
     "_route_claim_symbols",
-    "_route_continuity_packet_for_proof_floor",
     "_truthful_empirical_payload",
     "app",
     "app_bootstrap",
@@ -785,21 +725,15 @@ __all__: tuple[str, ...] = (
     "healthz",
     "inspect",
     "json",
-    "maintenance_api",
     "os",
-    "paper_route_target_plan_probe_symbols",
     "patch",
     "persist_completion_trace",
-    "proof_floor_payloads_api",
-    "proofs_api",
     "select",
     "sessionmaker",
     "settings",
-    "shared_fetch_paper_route_target_plan_url",
     "status_helpers_api",
     "time",
     "timedelta",
     "timezone",
-    "trading_misc_api",
     "urlsplit",
 )

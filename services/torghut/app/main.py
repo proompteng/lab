@@ -7,9 +7,6 @@ from .api.application import build_registered_app
 
 create_app = app_bootstrap.create_app
 
-app = build_registered_app(
-    create_app(),
-    register_whitepaper_inngest_routes=app_bootstrap.register_whitepaper_inngest_routes,
-)
+app = build_registered_app(create_app())
 
 __all__ = ("app", "create_app")

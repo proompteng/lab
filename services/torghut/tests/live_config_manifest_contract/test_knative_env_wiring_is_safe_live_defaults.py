@@ -4,9 +4,7 @@ from tests.live_config_manifest_contract.support import (
     Decimal,
     Mapping,
     Settings,
-    _HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL,
     _QUOTE_COVERED_PAPER_STRATEGY_UNIVERSE,
-    _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
     _TestLiveConfigManifestContractBase,
     _assert_chip_universe,
     _assert_exact_live_execution_chip_universe,
@@ -46,7 +44,12 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertFalse(settings.trading_autonomy_enabled)
         self.assertFalse(settings.trading_autonomy_allow_live_promotion)
         self.assertFalse(settings.trading_evidence_continuity_enabled)
-        self.assertFalse(settings.trading_emergency_stop_enabled)
+        self.assertTrue(settings.trading_emergency_stop_enabled)
+        self.assertEqual(settings.trading_daily_loss_stop_pct_equity, 0.01)
+        self.assertEqual(settings.trading_persistent_drawdown_stop_pct_equity, 0.05)
+        self.assertEqual(settings.trading_order_reprice_seconds, 2.0)
+        self.assertEqual(settings.trading_order_max_attempts, 3)
+        self.assertEqual(settings.trading_order_slippage_bps, 8.0)
         self.assertFalse(settings.trading_feature_flags_enabled)
         self.assertFalse(settings.trading_execution_advisor_enabled)
         self.assertFalse(settings.trading_execution_advisor_live_apply_enabled)
@@ -187,31 +190,19 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                     cast(list[object], raw_symbols),
                     context=f"{name} universe",
                 )
+            self.assertNotIn("max_notional_per_trade", strategy)
+            position_limit = _strategy_decimal(strategy, "max_position_pct_equity")
+            self.assertIsNotNone(position_limit)
+            self.assertLessEqual(position_limit or Decimal("0"), Decimal("0.5"))
             if str(strategy.get("strategy_type")) == "microbar_cross_sectional_long_v1":
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("50000"),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("2.0"),
-                )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
             elif (
                 str(strategy.get("strategy_type"))
                 == "microbar_cross_sectional_pairs_v1"
             ):
                 self.assertEqual(name, "microbar-cross-sectional-pairs-v1")
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal(_HPAIRS_BOUNDED_PAPER_COLLECTION_MAX_NOTIONAL),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("10.0"),
-                )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
-                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "10.0")
+                self.assertEqual(params.get("max_gross_exposure_pct_equity"), "4.0")
                 self.assertEqual(params.get("max_pair_legs"), "2")
                 self.assertEqual(params.get("top_n"), "1")
                 self.assertEqual(
@@ -231,14 +222,6 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                 self.assertEqual(params.get("stop_loss_lockout_seconds"), "1800")
             elif str(strategy.get("strategy_type")) == "intraday_tsmom_v1":
                 self.assertEqual(name, "intraday-tsmom-profit-v3")
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("3750"),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("0.125"),
-                )
                 self.assertEqual(params.get("max_spread_bps"), "20")
                 self.assertEqual(params.get("long_stop_loss_bps"), "6")
                 self.assertEqual(params.get("short_stop_loss_bps"), "6")
@@ -246,14 +229,6 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
             elif str(strategy.get("strategy_type")) == "breakout_continuation_long_v1":
                 self.assertEqual(name, "breakout-continuation-long-v1")
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade"),
-                    Decimal("50000"),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("3.0"),
-                )
                 self.assertEqual(params.get("max_spread_bps"), "20")
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
             elif str(strategy.get("strategy_type")) in {
@@ -267,15 +242,6 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                         "mean-reversion-exhaustion-short-v1",
                     },
                 )
-                self.assertLessEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade")
-                    or Decimal("0"),
-                    Decimal("31590"),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("1.0"),
-                )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
                 self.assertLessEqual(
                     Decimal(str(params.get("max_spread_bps") or "0")),
@@ -283,15 +249,6 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                 )
             elif str(strategy.get("strategy_type")) == "washout_rebound_long_v1":
                 self.assertEqual(name, "washout-rebound-long-v1")
-                self.assertLessEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade")
-                    or Decimal("0"),
-                    Decimal("63180"),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("2.0"),
-                )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
                 self.assertLessEqual(
                     Decimal(str(params.get("max_spread_bps") or "0")),
@@ -299,15 +256,6 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
                 )
             elif str(strategy.get("strategy_type")) == "late_day_continuation_long_v1":
                 self.assertEqual(name, "late-day-continuation-long-v1")
-                self.assertLessEqual(
-                    _strategy_decimal(strategy, "max_notional_per_trade")
-                    or Decimal("0"),
-                    Decimal("94770"),
-                )
-                self.assertEqual(
-                    _strategy_decimal(strategy, "max_position_pct_equity"),
-                    Decimal("3.0"),
-                )
                 self.assertEqual(params.get("position_isolation_mode"), "per_strategy")
                 self.assertLessEqual(
                     Decimal(str(params.get("max_spread_bps") or "0")),
@@ -409,22 +357,16 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "",
             "v2 broker envelopes carry the producer account label and can prevent TORGHUT_SIM linkage",
         )
-        self.assertTrue(
-            _manifest_bool(sim_env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED")
-        )
-        self.assertFalse(
-            _manifest_bool(sim_env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE")
-        )
-        self.assertEqual(
-            sim_env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
-        )
-        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
-        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
-        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED", sim_env)
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE", sim_env)
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL", sim_env)
+        self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER", sim_env)
+        self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL", sim_env)
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.50")
+        self.assertEqual(sim_env.get("TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY"), "0.50")
         self.assertEqual(
             sim_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "0.05",
+            "4.0",
         )
         self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_WORKFLOW_ENABLED"))
         self.assertFalse(_manifest_bool(sim_env, "WHITEPAPER_KAFKA_ENABLED"))
@@ -432,14 +374,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertFalse(
             _manifest_bool(sim_env, "WHITEPAPER_SEMANTIC_INDEXING_ENABLED")
         )
-        self.assertEqual(
-            sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_URL"),
-            "http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20",
-        )
-        self.assertEqual(
-            sim_env.get("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS"),
-            "10",
-        )
+        self.assertNotIn("TRADING_PAPER_ROUTE_TARGET_PLAN_URL", sim_env)
+        self.assertNotIn("TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS", sim_env)
         self.assertFalse(_manifest_bool(sim_env, "TRADING_SIMULATION_ENABLED"))
         self.assertEqual(sim_env.get("TRADING_UNIVERSE_SOURCE"), "static")
         self.assertEqual(
@@ -503,7 +439,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_FEED"),
-            "iex",
+            "sip",
         )
         self.assertEqual(
             _load_torghut_knative_env().get("TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS"),
@@ -556,13 +492,31 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
 
         self.assertEqual(live_env.get("TRADING_MODE"), "live")
         self.assertTrue(_manifest_bool(live_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED", live_env)
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL", live_env)
+        self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER", live_env)
+        self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL", live_env)
+        self.assertNotIn("TRADING_PAPER_ROUTE_TARGET_PLAN_URL", live_env)
+        self.assertNotIn("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT", live_env)
+        self.assertNotIn("TRADING_TESTNET_AFTER_HOURS_ENABLED", live_env)
+        self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.50")
+        self.assertEqual(live_env.get("TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY"), "0.50")
         self.assertEqual(
-            live_env.get("TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT"),
-            "2026-08-01T00:00:00Z",
+            live_env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
+            "4.0",
         )
+        self.assertEqual(
+            live_env.get("TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY"),
+            "0.50",
+        )
+        self.assertEqual(
+            live_env.get("TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS"), "1000"
+        )
+        self.assertEqual(live_env.get("TRADING_ALPACA_QUOTE_FEED"), "sip")
+        self.assertTrue(_manifest_bool(live_env, "TRADING_EMERGENCY_STOP_ENABLED"))
         self.assertTrue(
             _manifest_bool(live_env, "TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED"),
-            "live proof floor requires lifecycle telemetry even while submit stays disabled",
+            "live execution requires lifecycle telemetry",
         )
         self.assertTrue(_manifest_bool(live_env, "TRADING_ORDER_FEED_ENABLED"))
         self.assertEqual(
@@ -685,23 +639,26 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
 
     def test_torghut_knative_manifests_enable_tigerbeetle_journal(self) -> None:
-        expected = {
+        common_expected = {
             "TORGHUT_TIGERBEETLE_ENABLED": "true",
-            "TORGHUT_TIGERBEETLE_REQUIRED": "false",
             "TORGHUT_TIGERBEETLE_CLUSTER_ID": "2001",
             "TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES": "torghut-tigerbeetle.torghut.svc.cluster.local:3000",
             "TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS": "5",
             "TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS": "10",
             "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
-            "TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED": "false",
         }
-        for relative_path in (
-            "argocd/applications/torghut/knative-service.yaml",
-            "argocd/applications/torghut/knative-service-sim.yaml",
-        ):
+        requirements = {
+            "argocd/applications/torghut/knative-service.yaml": "true",
+            "argocd/applications/torghut/knative-service-sim.yaml": "false",
+        }
+        for relative_path, required in requirements.items():
             env = _load_knative_env(relative_path)
-            for key, value in expected.items():
+            for key, value in common_expected.items():
                 self.assertEqual(env.get(key), value, f"{relative_path} {key}")
+            self.assertEqual(env.get("TORGHUT_TIGERBEETLE_REQUIRED"), required)
+            self.assertEqual(
+                env.get("TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"), required
+            )
 
     def test_torghut_tigerbeetle_client_pods_allow_io_uring(self) -> None:
         for relative_path in (

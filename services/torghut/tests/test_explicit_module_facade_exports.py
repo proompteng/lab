@@ -13,9 +13,7 @@ EXPLICIT_IMPORT_SURFACES = (
     "app.config",
     "app.metrics",
     "app.api.health_checks",
-    "app.api.proof_floor_payloads",
     "app.api.readiness_helpers",
-    "app.api.trading_misc",
     "app.models.entities",
     "app.trading.alpha.lane",
     "app.trading.autonomy.gates",
@@ -69,11 +67,9 @@ EXPLICIT_IMPORT_SURFACES = (
     "app.trading.intraday_tsmom_contract",
     "app.trading.llm.dspy_compile.workflow",
     "app.trading.order_feed",
-    "app.trading.paper_route_target_plan",
     "app.trading.portfolio",
     "app.trading.profit_freshness_frontier",
     "app.trading.profitability_archive",
-    "app.trading.proof_floor",
     "app.trading.reporting",
     "app.trading.revenue_repair",
     "app.trading.research_sleeves",
@@ -82,12 +78,8 @@ EXPLICIT_IMPORT_SURFACES = (
     "app.trading.runtime_ledger",
     "app.trading.runtime_window_import",
     "app.trading.scheduler.governance",
-    "app.trading.scheduler.paper_route_probe",
     "app.trading.scheduler.pipeline",
-    "app.trading.scheduler.source_collection",
     "app.trading.scheduler.state",
-    "app.trading.scheduler.submission_preparation",
-    "app.trading.scheduler.target_plan_helpers",
     "app.trading.session_context",
     "app.trading.strategy_runtime",
     "app.trading.submission_council",
@@ -98,27 +90,17 @@ EXPLICIT_IMPORT_SURFACES = (
     "app.whitepapers.workflow",
     "scripts.analyze_historical_simulation",
     "scripts.historical_simulation_analysis",
-    "scripts.assemble_runtime_ledger_proof_packet",
-    "scripts.runtime_ledger_proof_packet",
     "scripts.audit_hpairs_signal_liveness",
     "scripts.hpairs_signal_liveness_audit",
     "scripts.audit_hpairs_source_proof_census",
     "scripts.hpairs_source_proof_census_audit",
     "scripts.build_historical_profitability_proof",
     "scripts.historical_profitability_proof",
-    "scripts.flatten_paper_account_positions",
-    "scripts.paper_account_position_flattening",
     "scripts.historical_simulation_runtime_verification",
     "scripts.journal_tigerbeetle_order_events",
     "scripts.tigerbeetle_order_journal",
     "scripts.local_intraday_tsmom_replay",
     "scripts.intraday_tsmom_replay",
-    "scripts.materialize_bounded_paper_route_targets",
-    "scripts.paper_route_target_materialization",
-    "scripts.readback_hpairs_profit_proof_gap",
-    "scripts.hpairs_profit_proof_gap_readback",
-    "scripts.run_local_simple_lane_replay",
-    "scripts.simple_lane_replay",
     "scripts.run_simulation_analysis",
     "scripts.run_strategy_autoresearch_loop",
     "scripts.strategy_autoresearch_loop",
@@ -126,8 +108,6 @@ EXPLICIT_IMPORT_SURFACES = (
     "scripts.historical_simulation_startup.__main__",
     "scripts.ta_replay_runner",
     "scripts.technical_analysis_replay",
-    "scripts.verify_trading_readiness",
-    "scripts.trading_readiness_verification",
 )
 
 COMPAT_MODULE_CLASS_ATTR = "__" + "CompatModule__"
@@ -169,10 +149,6 @@ def test_app_and_script_import_surfaces_do_not_ship_runtime_compat_modules() -> 
 def test_owner_modules_do_not_patch_through_public_wrappers() -> None:
     service_root = Path(__file__).resolve().parents[1]
     forbidden_by_path = {
-        "scripts/runtime_ledger_proof_packet/io_artifacts.py": (
-            "_public_wrapper_attr",
-            "scripts.assemble_runtime_ledger_proof_packet",
-        ),
         "scripts/hpairs_source_proof_census_audit/shared_context.py": (
             "_facade_attr",
             "scripts.audit_hpairs_source_proof_census",
@@ -232,21 +208,6 @@ def test_generated_split_package_directories_are_absent() -> None:
     )
 
     assert generated_package_dirs == []
-
-
-def test_flatten_package_does_not_patch_through_public_script_shim() -> None:
-    service_root = Path(__file__).resolve().parents[1]
-    flatten_package_root = (
-        service_root / "scripts" / "paper_account_position_flattening"
-    )
-    public_shim_module = "scripts.flatten_paper_account_positions"
-    shim_backchannel_paths = sorted(
-        str(path.relative_to(service_root))
-        for path in flatten_package_root.rglob("*.py")
-        if public_shim_module in path.read_text()
-    )
-
-    assert shim_backchannel_paths == []
 
 
 def test_whitepaper_autoresearch_entrypoint_exports_only_cli_surface() -> None:

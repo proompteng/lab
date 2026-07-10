@@ -48,7 +48,7 @@ from .contexts import (
     MarketContextBlockRequest,
 )
 from .shared import (
-    TradingPipelineBase,
+    TradingPipelineRuntime,
     RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS,
 )
 from .support import (
@@ -61,7 +61,7 @@ from .support import (
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineReviewMixin(TradingPipelineBase):
+class TradingPipelineReviewMixin(TradingPipelineRuntime):
     def _resolve_regime_confidence_thresholds(
         self,
         entropy_band: str,
@@ -309,7 +309,7 @@ class TradingPipelineReviewMixin(TradingPipelineBase):
             return guardrail_block
 
         if engine is None:
-            engine = cast(LLMReviewEngine, self.llm_review_engine or LLMReviewEngine())
+            engine = self.llm_review_engine or LLMReviewEngine()
 
         circuit_open = self._handle_llm_circuit_open(
             LLMPolicyReviewRequest(

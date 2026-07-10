@@ -42,7 +42,7 @@ from .governance.governance_mixin_runtime_methods import (
 from .governance.shared_context import TradingSchedulerGovernanceMixinFields
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
-from .runtime_pipeline_factory import build_simple_trading_pipeline_for_account
+from .runtime_pipeline_factory import build_trading_pipeline_for_account
 from .state import TradingState
 
 logger = logging.getLogger(__name__)
@@ -400,7 +400,7 @@ class TradingScheduler(
         }
 
     def _build_pipeline_for_account(self, lane: TradingAccountLane) -> TradingPipeline:
-        return build_simple_trading_pipeline_for_account(
+        return build_trading_pipeline_for_account(
             lane=lane,
             state=self.state,
         )

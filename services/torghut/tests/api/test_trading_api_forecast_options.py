@@ -78,7 +78,6 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
         self.assertEqual(status["source"], "empirical_jobs")
 
     def tearDown(self) -> None:
-        self._clear_trading_health_surface_cache()
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
         app.dependency_overrides.clear()
@@ -231,12 +230,9 @@ class TestTradingApiForecastOptions(TradingApiTestCaseBase):
                     observed_at=datetime(2026, 6, 1, 12, tzinfo=timezone.utc),
                 )
 
-        self.assertTrue(payload["read_model_unavailable"])
+        self.assertEqual(payload["status"], "unavailable")
         self.assertEqual(payload["bucket_count"], 0)
-        self.assertEqual(
-            payload["blockers"], ["portfolio_runtime_ledger_summary_query_timeout"]
-        )
-        self.assertEqual(payload["query_limit"], 200)
+        self.assertEqual(payload["reason_codes"], ["runtime_ledger_query_timeout"])
         self.assertEqual(rollback.call_count, 1)
 
     def test_daily_runtime_ledger_portfolio_summary_uses_status_timeout(

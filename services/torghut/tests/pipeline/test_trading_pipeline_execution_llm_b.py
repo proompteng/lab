@@ -53,7 +53,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -191,7 +190,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
             "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
-            "trading_testnet_after_hours_enabled": config.settings.trading_testnet_after_hours_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
             "llm_enabled": config.settings.llm_enabled,
@@ -212,7 +210,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
         config.settings.trading_enabled = True
         config.settings.trading_simple_submit_enabled = True
         config.settings.trading_live_submit_enabled = True
-        config.settings.trading_testnet_after_hours_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
         config.settings.llm_enabled = True
@@ -340,31 +337,8 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
                 llm_review_engine=FakeLLMReviewEngine(error=RuntimeError("boom")),
             )
             pipeline_live._is_market_session_open = lambda _now=None: True
-            eligible_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             self._seed_promotion_certificate_evidence()
-            with (
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
-            ):
-                pipeline_live.run_once()
+            pipeline_live.run_once()
 
             with self.session_local() as session:
                 executions = session.execute(select(Execution)).scalars().all()
@@ -383,9 +357,6 @@ class TestTradingPipelineExecutionLlmB(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_live_submit_enabled = original[
                 "trading_live_submit_enabled"
-            ]
-            config.settings.trading_testnet_after_hours_enabled = original[
-                "trading_testnet_after_hours_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

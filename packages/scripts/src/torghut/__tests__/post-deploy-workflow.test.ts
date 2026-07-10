@@ -65,11 +65,13 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('torghut-ws-options')
   })
 
-  it('delegates readyz acceptance to the revenue repair evidence validator', () => {
+  it('delegates readyz and status agreement to the runtime contract validator', () => {
     expect(workflow).toContain('TORGHUT_READYZ_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"')
+    expect(workflow).toContain('TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"')
     expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
-    expect(workflow).not.toContain('Torghut /readyz returned HTTP')
+    expect(workflow).not.toContain('/trading/revenue-repair')
+    expect(workflow).not.toContain('/trading/proofs')
   })
 
   it('runs market-data freshness verification after deploy evidence is accepted', () => {
@@ -100,8 +102,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('python3 -m json.tool "${output_path}"')
     expect(workflow).toContain('not usable JSON yet; retrying')
     expect(workflow).toContain('fetch_json_2xx')
-    expect(workflow).toContain('fetch_json_2xx_optional')
-    expect(workflow).toContain('Torghut sim /trading/proofs')
+    expect(workflow).not.toContain('fetch_json_2xx_optional')
     expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
   })
 
@@ -115,44 +116,10 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('--max-time 90')
   })
 
-  it('verifies torghut-sim paper-route target mirroring after deploy', () => {
+  it('keeps simulation rollout readiness without obsolete paper-route evidence', () => {
     expect(workflow).toContain('wait_knative_service_ready torghut-sim')
-    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/proofs')
-    expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/proofs')
-    expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
-    expect(workflow).toContain('capture_paper_route_mirror_evidence()')
-    expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry')
-  })
-
-  it('keeps slow paper-route proof endpoints from failing otherwise healthy rollouts', () => {
-    expect(workflow).toContain('Torghut /trading/revenue-repair')
-    expect(workflow).toContain('fetch_json_2xx \\')
-    expect(workflow).toContain('fetch_json_2xx_optional()')
-    expect(workflow).toContain('PAPER_ROUTE_EVIDENCE_ATTEMPTS=1')
-    expect(workflow).toContain('PAPER_ROUTE_HTTP_MAX_TIME_SECONDS=8')
-    expect(workflow).toContain('--max-time "${PAPER_ROUTE_HTTP_MAX_TIME_SECONDS}"')
-    expect(workflow).toContain(
-      'Paper-route mirror evidence unavailable; hard rollout, image-pull, readyz, status, and revenue-repair gates passed',
-    )
-    expect(workflow).toContain('unavailable after bounded optional evidence retry')
-    expect(workflow).toContain('unset TORGHUT_PAPER_ROUTE_EVIDENCE')
-    expect(workflow).toContain('unset TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
-    expect(workflow).toContain('run_post_deploy_evidence_validator')
-  })
-
-  it('retries transient sim paper-route target mirror gaps before failing verification', () => {
-    expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry()')
-    expect(workflow).toContain('post-deploy-evidence-validator.out')
-    expect(workflow).toContain(
-      'torghut-sim paper-route target plan (is empty while live torghut exposes targets|missing live target)',
-    )
-    expect(workflow).toContain(
-      'Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads',
-    )
-    expect(workflow).toContain('Torghut sim paper-route target mirror did not materialize after bounded retry window')
-    expect(workflow).toContain('SIM_MIRROR_ATTEMPTS=12')
-    expect(workflow).toContain('SIM_MIRROR_RETRY_INTERVAL_SECONDS=5')
-    expect(workflow).not.toContain('sleep 10')
+    expect(workflow).not.toContain('PAPER_ROUTE_EVIDENCE')
+    expect(workflow).not.toContain('SIM_MIRROR')
   })
 
   it('requests explicit Argo sync before polling deployed revisions', () => {

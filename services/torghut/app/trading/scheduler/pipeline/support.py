@@ -168,6 +168,8 @@ def price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
         "as_of": snapshot.as_of.isoformat(),
         "price": str(snapshot.price) if snapshot.price is not None else None,
         "spread": str(snapshot.spread) if snapshot.spread is not None else None,
+        "bid": str(snapshot.bid) if snapshot.bid is not None else None,
+        "ask": str(snapshot.ask) if snapshot.ask is not None else None,
         "source": snapshot.source,
     }
 
