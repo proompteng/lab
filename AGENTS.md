@@ -91,7 +91,7 @@
 - Fetch thread-aware review state; flat issue/PR comments are insufficient. Inspect unresolved inline threads, review submissions, resolution state, and the reviewed commit SHA.
 - Address actionable findings in severity order, with P0/P1 correctness, security, data-loss, and rollout issues blocking all lower-priority work. Add regression coverage or exact live validation appropriate to the finding.
 - Push the fix before replying. Reply with the commit and validation evidence, and resolve the thread only after the fix is present on the PR branch.
-- Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review targets an older commit. A user must explicitly waive this gate if Codex is unavailable.
+- Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review targets an older commit.
 
 ## UI/UX
 
