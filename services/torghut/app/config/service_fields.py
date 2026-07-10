@@ -40,6 +40,15 @@ class CoreSettingsFields(BaseSettings):
         description="PostgreSQL connection string.",
     )
 
+    torghut_command_api_token: Optional[str] = Field(
+        default=None,
+        alias="TORGHUT_COMMAND_API_TOKEN",
+        description=(
+            "Token required by state-changing Torghut API routes. Commands fail closed "
+            "when this token is unset."
+        ),
+    )
+
     tigerbeetle_enabled: bool = Field(
         default=False,
         alias="TORGHUT_TIGERBEETLE_ENABLED",
@@ -362,6 +371,44 @@ class CoreSettingsFields(BaseSettings):
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
 
     trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
+
+    trading_run_once_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="TRADING_RUN_ONCE_TIMEOUT_SECONDS",
+        description="Maximum scheduler wait for one account trading iteration.",
+    )
+
+    trading_reconcile_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="TRADING_RECONCILE_TIMEOUT_SECONDS",
+        description="Maximum scheduler wait for one account reconciliation iteration.",
+    )
+
+    trading_lane_shutdown_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        alias="TRADING_LANE_SHUTDOWN_TIMEOUT_SECONDS",
+        description=(
+            "Maximum shutdown drain wait for timed-out lane work before unsafe lane "
+            "resource cleanup is skipped."
+        ),
+    )
+
+    trading_runtime_readiness_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        alias="TRADING_RUNTIME_READINESS_TIMEOUT_SECONDS",
+        description="Maximum wait for the runtime readiness database/schema check.",
+    )
+
+    trading_runtime_readiness_cache_ttl_seconds: float = Field(
+        default=5.0,
+        ge=0,
+        alias="TRADING_RUNTIME_READINESS_CACHE_TTL_SECONDS",
+        description="TTL for successful runtime readiness database/schema snapshots.",
+    )
 
     trading_order_feed_enabled: bool = Field(
         default=False, alias="TRADING_ORDER_FEED_ENABLED"

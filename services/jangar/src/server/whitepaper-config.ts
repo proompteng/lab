@@ -1,6 +1,5 @@
 type EnvSource = Record<string, string | undefined>
 
-const DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH = '/var/run/secrets/kubernetes.io/serviceaccount/token'
 const DEFAULT_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
 const DEFAULT_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS = 12
 const DEFAULT_WHITEPAPER_OUTPUT_FETCH_DELAY_MS = 5_000
@@ -37,8 +36,6 @@ export type WhitepaperControlConfig = {
   enabled: boolean
   baseUrl: string
   token: string | null
-  useServiceAccountToken: boolean
-  serviceAccountTokenPath: string
   outputFetchAttempts: number
   outputFetchDelayMs: number
 }
@@ -63,13 +60,9 @@ export const resolveWhitepaperControlConfig = (env: EnvSource = process.env): Wh
     normalizeNonEmpty(env.TORGHUT_BASE_URL) ??
     DEFAULT_WHITEPAPER_FINALIZE_BASE_URL,
   token:
+    normalizeNonEmpty(env.TORGHUT_COMMAND_API_TOKEN) ??
     normalizeNonEmpty(env.JANGAR_WHITEPAPER_CONTROL_TOKEN) ??
-    normalizeNonEmpty(env.JANGAR_WHITEPAPER_FINALIZE_TOKEN) ??
-    normalizeNonEmpty(env.WHITEPAPER_WORKFLOW_API_TOKEN) ??
-    normalizeNonEmpty(env.JANGAR_API_KEY),
-  useServiceAccountToken: parseBoolean(env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN, true),
-  serviceAccountTokenPath:
-    normalizeNonEmpty(env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH) ?? DEFAULT_SERVICE_ACCOUNT_TOKEN_PATH,
+    normalizeNonEmpty(env.JANGAR_WHITEPAPER_FINALIZE_TOKEN),
   outputFetchAttempts: parsePositiveInt(
     env.JANGAR_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS,
     DEFAULT_WHITEPAPER_OUTPUT_FETCH_ATTEMPTS,

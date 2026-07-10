@@ -101,7 +101,7 @@ Options:
   -h, --help               Show this help message
 
 Environment:
-  TORGHUT_BASE_URL, WHITEPAPER_WORKFLOW_API_TOKEN, JANGAR_API_KEY
+  TORGHUT_BASE_URL, TORGHUT_COMMAND_API_TOKEN
 
 Examples:
   bun run packages/scripts/src/torghut/generate-whitepaper-replay-workflows.ts
@@ -124,7 +124,7 @@ const parseArgs = (argv: string[]): Options => {
     outputDir: defaultOutputDir,
     post: false,
     baseUrl: defaultBaseUrl,
-    authToken: process.env.WHITEPAPER_WORKFLOW_API_TOKEN ?? process.env.JANGAR_API_KEY,
+    authToken: process.env.TORGHUT_COMMAND_API_TOKEN,
   }
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -594,7 +594,7 @@ bun run whitepapers:replay
 Generate and post the payloads:
 
 \`\`\`bash
-WHITEPAPER_WORKFLOW_API_TOKEN=<token> \\
+TORGHUT_COMMAND_API_TOKEN=<token> \\
 TORGHUT_BASE_URL=http://localhost:8181 \\
 bun run whitepapers:replay --post
 \`\`\`

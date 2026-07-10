@@ -30,9 +30,7 @@ from app.whitepapers import (
     whitepaper_workflow_enabled,
 )
 
-from ..bootstrap import (
-    require_whitepaper_control_token as _require_whitepaper_control_token,
-)
+from .command_auth import require_command_auth
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -47,12 +45,6 @@ def whitepaper_status(request: Request) -> dict[str, object]:
     )
     task = getattr(worker, "_task", None) if worker is not None else None
     worker_running = bool(task is not None and not task.done())
-    control_token = (
-        os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
-        or os.getenv("WHITEPAPER_AGENTRUN_API_TOKEN", "").strip()
-        or os.getenv("AGENTS_API_KEY", "").strip()
-        or os.getenv("JANGAR_API_KEY", "").strip()
-    )
     return {
         "workflow_enabled": whitepaper_workflow_enabled(),
         "kafka_enabled": whitepaper_kafka_enabled(),
@@ -82,19 +74,19 @@ def whitepaper_status(request: Request) -> dict[str, object]:
             "WHITEPAPER_REQUEUE_COMMENT_KEYWORD",
             "research whitepaper",
         ),
-        "control_auth_enabled": bool(control_token),
+        "control_auth_enabled": bool(
+            request.app.state.settings.torghut_command_api_token
+        ),
     }
 
 
 @router.post("/whitepapers/events/github-issue")
 def ingest_whitepaper_github_issue(
-    request: Request,
     payload: dict[str, object] = Body(default={}),
     session: Session = Depends(get_session),
+    _command_auth: None = Depends(require_command_auth),
 ) -> JSONResponse:
     """Ingest a GitHub issue webhook payload and create/update whitepaper workflow state."""
-
-    _require_whitepaper_control_token(request)
 
     try:
         result = WHITEPAPER_WORKFLOW.ingest_github_issue_event(
@@ -133,12 +125,10 @@ def ingest_whitepaper_github_issue(
 @router.post("/whitepapers/runs/{run_id}/dispatch-agentrun")
 def dispatch_whitepaper_agentrun(
     run_id: str,
-    request: Request,
     session: Session = Depends(get_session),
+    _command_auth: None = Depends(require_command_auth),
 ) -> dict[str, object]:
     """Dispatch Codex AgentRun for an existing whitepaper analysis run."""
-
-    _require_whitepaper_control_token(request)
 
     try:
         result = WHITEPAPER_WORKFLOW.dispatch_codex_agentrun(session, run_id)
@@ -158,13 +148,11 @@ def dispatch_whitepaper_agentrun(
 @router.post("/whitepapers/runs/{run_id}/finalize")
 def finalize_whitepaper_run(
     run_id: str,
-    request: Request,
     payload: dict[str, object] = Body(default={}),
     session: Session = Depends(get_session),
+    _command_auth: None = Depends(require_command_auth),
 ) -> dict[str, object]:
     """Finalize run outputs from Inngest/AgentRun synthesis and verdict payloads."""
-
-    _require_whitepaper_control_token(request)
 
     try:
         result = WHITEPAPER_WORKFLOW.finalize_run(
@@ -188,13 +176,11 @@ def finalize_whitepaper_run(
 @router.post("/whitepapers/runs/{run_id}/approve-implementation")
 def approve_whitepaper_for_engineering(
     run_id: str,
-    request: Request,
     payload: dict[str, object] = Body(default={}),
     session: Session = Depends(get_session),
+    _command_auth: None = Depends(require_command_auth),
 ) -> dict[str, object]:
     """Manually approve a completed whitepaper for B1 engineering dispatch."""
-
-    _require_whitepaper_control_token(request)
 
     approved_by = str(
         payload.get("approved_by") or payload.get("approvedBy") or ""

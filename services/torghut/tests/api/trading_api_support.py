@@ -519,6 +519,14 @@ class _PostgresRuntimeLedgerPortfolioSummarySession:
 
 class TradingApiTestCaseBase(TestCase):
     def setUp(self) -> None:
+        previous_command_token = settings.torghut_command_api_token
+        settings.torghut_command_api_token = "test-command-token"
+        self.addCleanup(
+            setattr,
+            settings,
+            "torghut_command_api_token",
+            previous_command_token,
+        )
         self._clear_trading_health_surface_cache()
         _TRADING_DEPENDENCY_HEALTH_CACHE.clear()
         _ALPACA_HEALTH_STATE.clear()
@@ -560,7 +568,10 @@ class TradingApiTestCaseBase(TestCase):
                 yield session
 
         app.dependency_overrides[get_session] = _override_session
-        self.client = TestClient(app)
+        self.client = TestClient(
+            app,
+            headers={"Authorization": "Bearer test-command-token"},
+        )
 
         with self.session_local() as session:
             strategy = Strategy(

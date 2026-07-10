@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import inngest
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from inngest.fast_api import serve as inngest_fastapi_serve
 from sqlalchemy.exc import SQLAlchemyError
@@ -18,7 +18,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from .api.build_metadata import BUILD_COMMIT, BUILD_VERSION
 from .api.runtime_services import WHITEPAPER_WORKFLOW
 from .config import settings
-from .db import SessionLocal, ensure_schema
+from .db import SessionLocal, check_schema_current
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
 from .trading.autonomy import assert_runtime_gate_policy_contract
 from .trading.autoresearch_routes import router as autoresearch_router
@@ -32,33 +32,6 @@ from .whitepapers import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-def _extract_bearer_token(authorization_header: str | None) -> str | None:
-    if not authorization_header:
-        return None
-    prefix = "bearer "
-    if not authorization_header.lower().startswith(prefix):
-        return None
-    token = authorization_header[len(prefix) :].strip()
-    return token or None
-
-
-def _require_whitepaper_control_token(request: Request) -> None:
-    expected_token = (
-        os.getenv("WHITEPAPER_WORKFLOW_API_TOKEN", "").strip()
-        or os.getenv("WHITEPAPER_AGENTRUN_API_TOKEN", "").strip()
-        or os.getenv("AGENTS_API_KEY", "").strip()
-        or os.getenv("JANGAR_API_KEY", "").strip()
-    )
-    if not expected_token:
-        return
-
-    provided_token = _extract_bearer_token(request.headers.get("authorization")) or (
-        request.headers.get("x-whitepaper-token", "").strip() or None
-    )
-    if provided_token != expected_token:
-        raise HTTPException(status_code=401, detail="whitepaper_control_auth_required")
 
 
 def _env_or_none(name: str) -> str | None:
@@ -134,6 +107,26 @@ def _assert_dspy_cutover_migration_guard() -> None:
         return
     reason_summary = "|".join(reasons) if reasons else "unknown"
     raise RuntimeError(f"dspy_cutover_migration_guard_failed:{reason_summary}")
+
+
+def _validate_runtime_schema() -> None:
+    """Require the database to be migrated without writing schema at API startup."""
+
+    with SessionLocal() as session:
+        schema_status = check_schema_current(session)
+    if bool(schema_status.get("schema_current")):
+        return
+    missing_heads = cast(list[object], schema_status.get("schema_missing_heads") or [])
+    unexpected_heads = cast(
+        list[object], schema_status.get("schema_unexpected_heads") or []
+    )
+    missing = ",".join(str(item) for item in missing_heads)
+    unexpected = ",".join(str(item) for item in unexpected_heads)
+    raise RuntimeError(
+        "database_schema_mismatch:"
+        f"missing_heads={missing or 'none'}:unexpected_heads={unexpected or 'none'}; "
+        "run `uv run --frozen alembic upgrade heads` before starting Torghut"
+    )
 
 
 def _register_whitepaper_inngest_routes(app: FastAPI) -> inngest.Inngest | None:
@@ -276,34 +269,45 @@ async def lifespan(app: FastAPI):
     )
 
     try:
-        ensure_schema()
-    except SQLAlchemyError as exc:  # pragma: no cover - defensive for startup only
-        logger.warning("Database not reachable during startup: %s", exc)
+        try:
+            _validate_runtime_schema()
+        except (RuntimeError, SQLAlchemyError) as exc:
+            if settings.trading_enabled:
+                raise
+            logger.warning(
+                "Database/schema unavailable during non-trading startup: %s", exc
+            )
 
-    if settings.trading_autonomy_enabled:
-        assert_runtime_gate_policy_contract(settings.trading_autonomy_gate_policy_path)
+        if settings.trading_autonomy_enabled:
+            assert_runtime_gate_policy_contract(
+                settings.trading_autonomy_gate_policy_path
+            )
 
-    if settings.trading_enabled:
-        _assert_dspy_cutover_migration_guard()
-        validate_hypothesis_registry_from_settings()
-        await scheduler.start()
-    if whitepaper_workflow_enabled():
-        await whitepaper_worker.start()
+        if settings.trading_enabled:
+            _assert_dspy_cutover_migration_guard()
+            validate_hypothesis_registry_from_settings()
+            await scheduler.start()
+        if whitepaper_workflow_enabled():
+            await whitepaper_worker.start()
 
-    logger.info(
-        "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s inngest_registered=%s",
-        bool(getattr(scheduler, "_task", None)),
-        bool(getattr(whitepaper_worker, "_task", None)),
-        bool(getattr(app.state, "whitepaper_inngest_registered", False)),
-    )
+        logger.info(
+            "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s inngest_registered=%s",
+            bool(getattr(scheduler, "_task", None)),
+            bool(getattr(whitepaper_worker, "_task", None)),
+            bool(getattr(app.state, "whitepaper_inngest_registered", False)),
+        )
 
-    yield
-
-    logger.info("Torghut shutdown initiated")
-    await whitepaper_worker.stop()
-    await scheduler.stop()
-    shutdown_posthog_telemetry()
-    logger.info("Torghut shutdown complete")
+        yield
+    finally:
+        logger.info("Torghut shutdown initiated")
+        try:
+            await whitepaper_worker.stop()
+        finally:
+            try:
+                await scheduler.stop()
+            finally:
+                shutdown_posthog_telemetry()
+                logger.info("Torghut shutdown complete")
 
 
 def sqlalchemy_exception_handler(
@@ -353,9 +357,8 @@ env_csv = _env_csv
 env_json_string_list = _env_json_string_list
 env_or_none = _env_or_none
 evaluate_scheduler_status = _evaluate_scheduler_status
-extract_bearer_token = _extract_bearer_token
 register_whitepaper_inngest_routes = _register_whitepaper_inngest_routes
-require_whitepaper_control_token = _require_whitepaper_control_token
+validate_runtime_schema = _validate_runtime_schema
 
 
 __all__ = [
@@ -364,19 +367,17 @@ __all__ = [
     "_env_json_string_list",
     "_env_or_none",
     "_evaluate_scheduler_status",
-    "_extract_bearer_token",
     "_register_whitepaper_inngest_routes",
-    "_require_whitepaper_control_token",
+    "_validate_runtime_schema",
     "assert_dspy_cutover_migration_guard",
     "create_app",
     "env_csv",
     "env_json_string_list",
     "env_or_none",
     "evaluate_scheduler_status",
-    "extract_bearer_token",
     "healthz",
     "lifespan",
     "register_whitepaper_inngest_routes",
-    "require_whitepaper_control_token",
     "sqlalchemy_exception_handler",
+    "validate_runtime_schema",
 ]

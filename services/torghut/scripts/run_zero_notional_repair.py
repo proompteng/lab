@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -59,14 +60,22 @@ def _repair_url(
     return f"{base}/trading/profit-freshness/zero-notional-repair?{query}"
 
 
-def _post_repair(url: str, *, timeout_seconds: float) -> dict[str, Any]:
+def _post_repair(
+    url: str,
+    *,
+    timeout_seconds: float,
+    auth_token: str | None = None,
+) -> dict[str, Any]:
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     request = urllib.request.Request(
         url,
         data=b"{}",
-        headers={
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        },
+        headers=headers,
         method="POST",
     )
     with urllib.request.urlopen(
@@ -179,7 +188,11 @@ def _run_repair_request(
     attempt_errors: list[str] = []
     for attempt in range(1, attempts + 1):
         try:
-            receipt = _post_repair(url, timeout_seconds=float(args.timeout_seconds))
+            receipt = _post_repair(
+                url,
+                timeout_seconds=float(args.timeout_seconds),
+                auth_token=_text(args.auth_token) or None,
+            )
             receipt["request_url"] = url
             receipt["fetch_attempts"] = attempt
             exit_code, validation_errors = _receipt_exit_code(
@@ -294,6 +307,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--drift-limit", type=int, default=1000)
     parser.add_argument("--attempts", type=int, default=3)
     parser.add_argument("--timeout-seconds", type=float, default=45.0)
+    parser.add_argument(
+        "--auth-token",
+        default=os.getenv("TORGHUT_COMMAND_API_TOKEN", "").strip() or None,
+        help="Torghut command bearer token (default: TORGHUT_COMMAND_API_TOKEN).",
+    )
     parser.add_argument("--retry-backoff-seconds", type=float, default=5.0)
     parser.add_argument("--allow-no-selected-repair", action="store_true")
     parser.add_argument("--allow-no-signal-blocked", action="store_true")

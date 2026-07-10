@@ -168,6 +168,11 @@ class TestTradingSchedulerSafety(TestCase):
         scheduler = TradingScheduler()
         scheduler._active_simulation_run_id = "sim-run-1"
         scheduler.state.last_error = "stale_error"
+        scheduler.state.last_trading_error = "stale_trading_error"
+        scheduler.state.last_reconcile_error = "stale_reconcile_error"
+        scheduler.state.last_autonomy_error = "stale_autonomy_error"
+        scheduler.state.last_evidence_error = "stale_evidence_error"
+        scheduler._scheduler_last_error = "stale_scheduler_error"
         scheduler.state.last_ingest_reason = "no_signals_in_window"
         scheduler.state.last_signal_continuity_state = "actionable_source_fault"
         scheduler.state.last_signal_continuity_reason = "no_signals_in_window"
@@ -209,6 +214,11 @@ class TestTradingSchedulerSafety(TestCase):
 
         self.assertEqual(scheduler._active_simulation_run_id, "sim-run-2")
         self.assertIsNone(scheduler.state.last_error)
+        self.assertIsNone(scheduler.state.last_trading_error)
+        self.assertIsNone(scheduler.state.last_reconcile_error)
+        self.assertIsNone(scheduler.state.last_autonomy_error)
+        self.assertIsNone(scheduler.state.last_evidence_error)
+        self.assertIsNone(scheduler._scheduler_last_error)
         self.assertIsNone(scheduler.state.last_ingest_reason)
         self.assertIsNone(scheduler.state.last_signal_continuity_state)
         self.assertIsNone(scheduler.state.last_signal_continuity_reason)

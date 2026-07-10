@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises'
-
 import { createGitHubClient } from '~/server/github-client'
 import { asRecord, asString, readNested } from '@proompteng/agent-contracts'
 import { resolveWhitepaperControlConfig, resolveWhitepaperGitHubConfig } from '~/server/whitepaper-config'
@@ -83,18 +81,7 @@ const resolveParam = (params: Record<string, unknown>, keys: string[]) => {
   return ''
 }
 
-const resolveWhitepaperFinalizeToken = async () => {
-  const control = resolveWhitepaperControlConfig(process.env)
-  if (control.token) return control.token
-  if (!control.useServiceAccountToken) return null
-
-  try {
-    const token = (await readFile(control.serviceAccountTokenPath, 'utf8')).trim()
-    return token || null
-  } catch {
-    return null
-  }
-}
+const resolveWhitepaperFinalizeToken = () => resolveWhitepaperControlConfig(process.env).token
 
 const buildWhitepaperArtifactPayloads = (rawArtifacts: unknown) => {
   if (!Array.isArray(rawArtifacts)) return []
@@ -349,7 +336,7 @@ const fetchWhitepaperOutputs = async (input: {
 
 const postWhitepaperFinalize = async (runId: string, payload: Record<string, unknown>) => {
   const baseUrl = resolveWhitepaperFinalizeBaseUrl().replace(/\/+$/, '')
-  const token = await resolveWhitepaperFinalizeToken()
+  const token = resolveWhitepaperFinalizeToken()
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }

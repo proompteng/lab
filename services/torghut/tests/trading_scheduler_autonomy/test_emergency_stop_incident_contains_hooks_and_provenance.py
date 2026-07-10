@@ -116,7 +116,9 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
 
         self.assertEqual(failing_lane.run_once_calls, 1)
         self.assertEqual(healthy_lane.run_once_calls, 1)
-        self.assertIsNone(scheduler.state.last_error)
+        expected_error = "trading_lane[paper-a]:run_once_failed"
+        self.assertEqual(scheduler.state.last_trading_error, expected_error)
+        self.assertEqual(scheduler.state.last_error, expected_error)
         self.assertEqual(safety_calls["count"], 1)
         self.assertIsNotNone(scheduler.state.last_run_at)
         self.assertEqual(failing_lane.run_once_last_error, "run_once_failed")
@@ -146,7 +148,9 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertEqual(failing_lane.reconcile_calls, 1)
         self.assertEqual(healthy_lane.reconcile_calls, 1)
         self.assertEqual(healthy_lane.reconcile_return, 2)
-        self.assertIsNone(scheduler.state.last_error)
+        expected_error = "reconcile_lane[paper-a]:reconcile_failed"
+        self.assertEqual(scheduler.state.last_reconcile_error, expected_error)
+        self.assertEqual(scheduler.state.last_error, expected_error)
         self.assertEqual(safety_calls["count"], 1)
         self.assertIsNotNone(scheduler.state.last_reconcile_at)
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")

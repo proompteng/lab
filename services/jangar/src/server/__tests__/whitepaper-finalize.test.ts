@@ -1,5 +1,3 @@
-import { readFile, unlink, writeFile } from 'node:fs/promises'
-
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { maybeFinalizeWhitepaperRun } from '~/server/whitepaper-finalize'
@@ -78,7 +76,7 @@ describe('whitepaper finalize domain hook', () => {
     process.env.GITHUB_TOKEN = 'github-token'
     process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
     process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
-    process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN = 'whitepaper-token'
+    process.env.TORGHUT_COMMAND_API_TOKEN = 'whitepaper-token'
 
     await maybeFinalizeWhitepaperRun({
       resource: buildAgentRun(),
@@ -111,40 +109,5 @@ describe('whitepaper finalize domain hook', () => {
         ceph_object_key: 'object-key',
       }),
     ])
-  })
-
-  it('uses the service-account token fallback for failed whitepaper AgentRuns', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }))
-    vi.stubGlobal('fetch', fetchMock)
-    process.env.JANGAR_WHITEPAPER_FINALIZE_ENABLED = 'true'
-    process.env.JANGAR_WHITEPAPER_FINALIZE_BASE_URL = 'http://torghut.local'
-    process.env.JANGAR_WHITEPAPER_FINALIZE_USE_SERVICE_ACCOUNT_TOKEN = 'true'
-    delete process.env.JANGAR_WHITEPAPER_FINALIZE_TOKEN
-
-    const tokenPath = `/tmp/jangar-whitepaper-finalize-token-${Date.now()}`
-    await writeFile(tokenPath, 'sa-token\n', 'utf8')
-    process.env.JANGAR_WHITEPAPER_SERVICE_ACCOUNT_TOKEN_PATH = tokenPath
-
-    try {
-      await maybeFinalizeWhitepaperRun({
-        resource: buildAgentRun({ spec: { parameters: { runId: 'wp-failed' } } }),
-        nextStatus: { phase: 'Failed' },
-        previousPhase: 'Running',
-        nextPhase: 'Failed',
-      })
-    } finally {
-      await unlink(tokenPath).catch(() => undefined)
-    }
-
-    const [[url, init]] = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit]>
-    expect(String(url)).toBe('http://torghut.local/whitepapers/runs/wp-failed/finalize')
-    expect((init.headers as Record<string, string>).authorization).toBe('Bearer sa-token')
-    expect(JSON.parse(String(init.body))).toEqual(
-      expect.objectContaining({
-        status: 'failed',
-        failure_reason: 'agentrun_failed',
-      }),
-    )
-    expect(await readFile(tokenPath, 'utf8').catch(() => null)).toBeNull()
   })
 })

@@ -48,16 +48,20 @@ class TestRunZeroNotionalRepair(TestCase):
         self.assertTrue(script._bool_false("false"))
 
     def test_run_posts_capital_safe_repair_request(self) -> None:
-        args = script.parse_args(
-            [
-                "--service-url",
-                "http://torghut-sim.torghut.svc.cluster.local/",
-                "--execute",
-                "--drift-limit",
-                "321",
-                "--json",
-            ]
-        )
+        with patch.dict(
+            script.os.environ,
+            {"TORGHUT_COMMAND_API_TOKEN": "test-command-token"},
+        ):
+            args = script.parse_args(
+                [
+                    "--service-url",
+                    "http://torghut-sim.torghut.svc.cluster.local/",
+                    "--execute",
+                    "--drift-limit",
+                    "321",
+                    "--json",
+                ]
+            )
 
         with patch.object(
             script.urllib.request,
@@ -73,6 +77,10 @@ class TestRunZeroNotionalRepair(TestCase):
         self.assertEqual(request.get_method(), "POST")
         self.assertEqual(request.data, b"{}")
         self.assertEqual(request.get_header("Accept"), "application/json")
+        self.assertEqual(
+            request.get_header("Authorization"),
+            "Bearer test-command-token",
+        )
         self.assertEqual(
             request.full_url,
             "http://torghut-sim.torghut.svc.cluster.local/trading/"

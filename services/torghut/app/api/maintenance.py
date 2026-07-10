@@ -8,7 +8,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -32,6 +32,7 @@ from app.trading.tca import refresh_execution_tca_metrics
 from app.trading.zero_notional_repair_executor import run_zero_notional_repair
 
 from .application import get_app
+from .command_auth import require_command_auth
 from .readiness_helpers import (
     evaluate_database_contract,
     evaluate_trading_health_payload,
@@ -109,6 +110,7 @@ def trading_revenue_repair() -> dict[str, object]:
 
 @router.post("/trading/profit-freshness/zero-notional-repair")
 def trading_profit_freshness_zero_notional_repair(
+    request: Request,
     execute: bool = Query(default=False),
     action: str | None = Query(
         default=None,
@@ -126,6 +128,9 @@ def trading_profit_freshness_zero_notional_repair(
     ),
 ) -> dict[str, object]:
     """Plan or run an allowlisted zero-notional repair from the freshness frontier."""
+
+    if execute:
+        require_command_auth(request)
 
     status_payload = trading_status()
     frontier = cast(

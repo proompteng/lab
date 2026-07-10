@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -9,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.config import settings
 from app.db import get_session
 from app.main import app
 from app.models import Base
@@ -16,17 +16,11 @@ from app.whitepapers.workflow import IssueKickoffResult
 
 
 class TestWhitepaperApi(TestCase):
+    command_token = "test-command-token"
+
     def setUp(self) -> None:
-        self._saved_whitepaper_token = os.environ.get("WHITEPAPER_WORKFLOW_API_TOKEN")
-        self._saved_whitepaper_agentrun_token = os.environ.get(
-            "WHITEPAPER_AGENTRUN_API_TOKEN"
-        )
-        self._saved_agents_api_key = os.environ.get("AGENTS_API_KEY")
-        self._saved_jangar_api_key = os.environ.get("JANGAR_API_KEY")
-        os.environ.pop("WHITEPAPER_WORKFLOW_API_TOKEN", None)
-        os.environ.pop("WHITEPAPER_AGENTRUN_API_TOKEN", None)
-        os.environ.pop("AGENTS_API_KEY", None)
-        os.environ.pop("JANGAR_API_KEY", None)
+        self._saved_command_token = settings.torghut_command_api_token
+        settings.torghut_command_api_token = self.command_token
 
         self.engine = create_engine(
             "sqlite+pysqlite:///:memory:",
@@ -49,26 +43,9 @@ class TestWhitepaperApi(TestCase):
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
+        settings.torghut_command_api_token = self._saved_command_token
         app.dependency_overrides.clear()
         self.engine.dispose()
-        if self._saved_whitepaper_token is not None:
-            os.environ["WHITEPAPER_WORKFLOW_API_TOKEN"] = self._saved_whitepaper_token
-        else:
-            os.environ.pop("WHITEPAPER_WORKFLOW_API_TOKEN", None)
-        if self._saved_whitepaper_agentrun_token is not None:
-            os.environ["WHITEPAPER_AGENTRUN_API_TOKEN"] = (
-                self._saved_whitepaper_agentrun_token
-            )
-        else:
-            os.environ.pop("WHITEPAPER_AGENTRUN_API_TOKEN", None)
-        if self._saved_agents_api_key is not None:
-            os.environ["AGENTS_API_KEY"] = self._saved_agents_api_key
-        else:
-            os.environ.pop("AGENTS_API_KEY", None)
-        if self._saved_jangar_api_key is not None:
-            os.environ["JANGAR_API_KEY"] = self._saved_jangar_api_key
-        else:
-            os.environ.pop("JANGAR_API_KEY", None)
 
     @patch("app.api.whitepaper.whitepaper_workflow_enabled", return_value=True)
     @patch("app.api.whitepaper.whitepaper_kafka_enabled", return_value=False)
@@ -82,6 +59,7 @@ class TestWhitepaperApi(TestCase):
         payload = response.json()
         self.assertTrue(payload["workflow_enabled"])
         self.assertFalse(payload["kafka_enabled"])
+        self.assertTrue(payload["control_auth_enabled"])
 
     @patch(
         "app.api.whitepaper.WHITEPAPER_WORKFLOW.ingest_github_issue_event",
@@ -95,7 +73,9 @@ class TestWhitepaperApi(TestCase):
     )
     def test_ingest_issue_endpoint(self, _mock_ingest: object) -> None:
         response = self.client.post(
-            "/whitepapers/events/github-issue", json={"event": "issues"}
+            "/whitepapers/events/github-issue",
+            json={"event": "issues"},
+            headers={"Authorization": f"Bearer {self.command_token}"},
         )
         self.assertEqual(response.status_code, 202)
         payload = response.json()
@@ -107,7 +87,10 @@ class TestWhitepaperApi(TestCase):
         return_value={"agentrun_name": "agentrun-1", "status": "pending"},
     )
     def test_dispatch_agentrun_endpoint(self, _mock_dispatch: object) -> None:
-        response = self.client.post("/whitepapers/runs/wp-1/dispatch-agentrun")
+        response = self.client.post(
+            "/whitepapers/runs/wp-1/dispatch-agentrun",
+            headers={"X-Torghut-Command-Token": self.command_token},
+        )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["agentrun_name"], "agentrun-1")
@@ -118,36 +101,42 @@ class TestWhitepaperApi(TestCase):
     )
     def test_finalize_endpoint(self, _mock_finalize: object) -> None:
         response = self.client.post(
-            "/whitepapers/runs/wp-1/finalize", json={"status": "completed"}
+            "/whitepapers/runs/wp-1/finalize",
+            json={"status": "completed"},
+            headers={"Authorization": f"Bearer {self.command_token}"},
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload["status"], "completed")
 
-    def test_control_endpoints_require_token_when_configured(self) -> None:
-        with patch.dict(os.environ, {"AGENTS_API_KEY": "secret-token"}, clear=False):
+    def test_control_endpoints_fail_closed_without_configured_token(self) -> None:
+        with patch.object(settings, "torghut_command_api_token", None):
             response = self.client.post(
                 "/whitepapers/runs/wp-1/finalize", json={"status": "completed"}
             )
-            self.assertEqual(response.status_code, 401)
-            self.assertEqual(
-                response.json()["detail"], "whitepaper_control_auth_required"
-            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "command_auth_not_configured")
+
+    def test_control_endpoints_reject_wrong_token(self) -> None:
+        response = self.client.post(
+            "/whitepapers/runs/wp-1/finalize",
+            json={"status": "completed"},
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["detail"], "command_auth_required")
 
     @patch(
         "app.api.whitepaper.WHITEPAPER_WORKFLOW.finalize_run",
         return_value={"run_id": "wp-1", "status": "completed"},
     )
     def test_control_endpoints_accept_valid_token(self, _mock_finalize: object) -> None:
-        with patch.dict(
-            os.environ, {"WHITEPAPER_AGENTRUN_API_TOKEN": "secret-token"}, clear=False
-        ):
-            response = self.client.post(
-                "/whitepapers/runs/wp-1/finalize",
-                json={"status": "completed"},
-                headers={"Authorization": "Bearer secret-token"},
-            )
-            self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            "/whitepapers/runs/wp-1/finalize",
+            json={"status": "completed"},
+            headers={"Authorization": f"Bearer {self.command_token}"},
+        )
+        self.assertEqual(response.status_code, 200)
 
     @patch(
         "app.api.whitepaper.WHITEPAPER_WORKFLOW.approve_for_engineering",
@@ -165,6 +154,7 @@ class TestWhitepaperApi(TestCase):
                 "approval_reason": "Manual override for B1 engineering dispatch.",
                 "approval_source": "jangar_ui",
             },
+            headers={"Authorization": f"Bearer {self.command_token}"},
         )
         self.assertEqual(response.status_code, 200)
         payload = response.json()

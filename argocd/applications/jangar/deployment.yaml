@@ -54,6 +54,16 @@ spec:
           env:
             - name: NODE_ENV
               value: production
+            - name: TORGHUT_COMMAND_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-command-auth
+                  key: token
+            - name: JANGAR_WHITEPAPER_CONTROL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-command-auth
+                  key: token
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA

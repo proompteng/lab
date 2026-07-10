@@ -648,11 +648,7 @@ class WhitepaperWorkflowApiMethods(_WhitepaperWorkflowApiBase):
                 raise RuntimeError("agents_endpoint_not_configured")
             submit_url = f"{agents_base_url.rstrip('/')}/v1/agent-runs"
 
-        auth_token = (
-            _str_env("WHITEPAPER_AGENTRUN_API_TOKEN")
-            or _str_env("AGENTS_API_KEY")
-            or _str_env("JANGAR_API_KEY")
-        )
+        auth_token = _str_env("WHITEPAPER_AGENTRUN_API_TOKEN")
         timeout = _int_env("WHITEPAPER_AGENTRUN_TIMEOUT_SECONDS", 20)
         status, _, raw_bytes = _http_request_bytes(
             submit_url,

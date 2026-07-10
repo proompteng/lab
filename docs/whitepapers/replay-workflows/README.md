@@ -14,7 +14,7 @@ bun run whitepapers:replay
 Generate and post the payloads:
 
 ```bash
-WHITEPAPER_WORKFLOW_API_TOKEN=<token> \
+TORGHUT_COMMAND_API_TOKEN=<token> \
 TORGHUT_BASE_URL=http://localhost:8181 \
 bun run whitepapers:replay --post
 ```

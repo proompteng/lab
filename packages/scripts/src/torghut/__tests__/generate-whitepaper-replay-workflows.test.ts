@@ -93,6 +93,18 @@ Paper: Janus-Q: End-to-End RL for Event-Driven Stock Trading with LLM Baselines`
     expect(options.authToken).toBe('secret')
   })
 
+  it('uses only the dedicated Torghut command token by default', () => {
+    const originalCommandToken = process.env.TORGHUT_COMMAND_API_TOKEN
+    process.env.TORGHUT_COMMAND_API_TOKEN = 'command-token'
+
+    try {
+      expect(__private.parseArgs([]).authToken).toBe('command-token')
+    } finally {
+      if (originalCommandToken === undefined) delete process.env.TORGHUT_COMMAND_API_TOKEN
+      else process.env.TORGHUT_COMMAND_API_TOKEN = originalCommandToken
+    }
+  })
+
   it('selects a single generated payload by synthetic issue number', () => {
     const outputDir = '/tmp/replay-workflows'
     const records = [

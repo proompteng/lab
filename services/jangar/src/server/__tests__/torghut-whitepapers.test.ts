@@ -7,12 +7,12 @@ describe('approveTorghutWhitepaperForImplementation', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
     delete process.env.JANGAR_WHITEPAPER_CONTROL_BASE_URL
-    delete process.env.JANGAR_WHITEPAPER_CONTROL_TOKEN
+    delete process.env.TORGHUT_COMMAND_API_TOKEN
   })
 
   it('submits manual approval to Torghut with fixed jangar_ui source', async () => {
     process.env.JANGAR_WHITEPAPER_CONTROL_BASE_URL = 'http://torghut.internal/'
-    process.env.JANGAR_WHITEPAPER_CONTROL_TOKEN = 'secret-token'
+    process.env.TORGHUT_COMMAND_API_TOKEN = 'secret-token'
 
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ run_id: 'wp-1', status: 'completed' }), {

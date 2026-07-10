@@ -2,14 +2,17 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 from pytest import MonkeyPatch
 from sqlalchemy.orm import Session
 
 from app.api.trading_misc import lean_backtests, simulation_progress
 from app.config import settings
+from app.main import app
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,37 @@ class FakeLeanLaneManager:
     ) -> dict[str, object]:
         _ = session
         return {"lookback_hours": lookback_hours, "status": "ok"}
+
+
+def test_lean_backtest_submission_requires_dedicated_command_token() -> None:
+    client = TestClient(app)
+    with (
+        patch.object(settings, "trading_lean_lane_disable_switch", True),
+        patch.object(settings, "torghut_command_api_token", None),
+    ):
+        response = client.post("/trading/lean/backtests", json={"config": {}})
+        assert response.status_code == 503
+        assert response.json()["detail"] == "command_auth_not_configured"
+
+    with (
+        patch.object(settings, "trading_lean_lane_disable_switch", True),
+        patch.object(settings, "torghut_command_api_token", "test-command-token"),
+    ):
+        response = client.post(
+            "/trading/lean/backtests",
+            json={"config": {}},
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert response.status_code == 401
+        assert response.json()["detail"] == "command_auth_required"
+
+        response = client.post(
+            "/trading/lean/backtests",
+            json={"config": {}},
+            headers={"X-Torghut-Command-Token": "test-command-token"},
+        )
+        assert response.status_code == 409
+        assert response.json()["detail"] == "lean_lane_disabled"
 
 
 @pytest.fixture()

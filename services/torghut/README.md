@@ -19,6 +19,9 @@ export APP_ENV=dev
 # export APCA_API_BASE_URL=...
 
 # shortcuts
+# initialize or upgrade the local database before starting the API
+uv run --frozen alembic upgrade heads
+
 # normal server
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8181
 
@@ -479,7 +482,7 @@ base_branch: main
 - Manual Jangar UI approvals can override below-threshold runs (`approval_source=jangar_ui`) while keeping downstream rollout gates fail-closed.
 - Dispatch endpoint uses `WHITEPAPER_AGENTRUN_SUBMIT_URL`; default fallback is `http://agents.agents.svc.cluster.local/v1/agent-runs`.
 - Idempotency: `run_id` is deterministic for `(repository#issue_number, attachment_url)` so replays do not create duplicate workflow rows for the same paper in the same issue.
-- Optional API auth for manual control endpoints (`/whitepapers/events/github-issue`, `/dispatch-agentrun`, `/finalize`): set `WHITEPAPER_WORKFLOW_API_TOKEN` (or rely on `JANGAR_API_KEY` fallback) and send `Authorization: Bearer <token>`.
+- Required API auth for state-changing endpoints (`/whitepapers/events/github-issue`, `/dispatch-agentrun`, `/finalize`, `/approve-implementation`, LEAN submission, and executable zero-notional repair): set `TORGHUT_COMMAND_API_TOKEN` and send `Authorization: Bearer <token>` or `X-Torghut-Command-Token: <token>`. Commands fail closed when the token is unset.
 
 Endpoints:
 

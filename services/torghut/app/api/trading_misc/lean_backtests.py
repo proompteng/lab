@@ -12,6 +12,7 @@ from app.api.runtime_services import LEAN_LANE_MANAGER
 from app.config import settings
 from app.db import get_session
 
+from ..command_auth import require_command_auth
 from .router import router
 
 
@@ -20,6 +21,7 @@ def submit_lean_backtest(
     payload: dict[str, object] = Body(default={}),
     requested_by: str | None = Query(default=None),
     session: Session = Depends(get_session),
+    _command_auth: None = Depends(require_command_auth),
 ) -> dict[str, object]:
     """Submit an asynchronous LEAN backtest and persist metadata for governance."""
 

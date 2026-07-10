@@ -42,6 +42,7 @@ from .governance.governance_mixin_runtime_methods import (
 from .governance.shared_context import TradingSchedulerGovernanceMixinFields
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
+from .runtime_lane_supervision import TradingSchedulerLaneSupervisionMixin
 from .runtime_pipeline_factory import build_simple_trading_pipeline_for_account
 from .state import TradingState
 
@@ -50,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 class TradingScheduler(
     TradingSchedulerGovernanceMixinFields,
+    TradingSchedulerLaneSupervisionMixin,
     TradingSchedulerGovernanceLifecycleMethods,
     TradingSchedulerGovernanceDecisionMethods,
     TradingSchedulerGovernanceRuntimeMethods,
@@ -61,6 +63,9 @@ class TradingScheduler(
         self._pipeline: Optional[TradingPipeline] = None
         self._pipelines: list[TradingPipeline] = []
         self._active_simulation_run_id: str | None = None
+        self._lane_tasks: dict[str, asyncio.Task[object]] = {}
+        self._scheduler_last_error: str | None = None
+        self._lane_shutdown_incomplete = False
 
     def _emit_autonomy_domain_telemetry(
         self,
@@ -448,6 +453,8 @@ class TradingScheduler(
     async def start(self) -> None:
         if self._task:
             return
+        if self._lane_shutdown_incomplete:
+            raise RuntimeError("scheduler_restart_blocked_by_incomplete_lane_shutdown")
         self._assert_trading_shorts_startup_policy()
         if not self._pipelines:
             lanes = settings.trading_accounts
@@ -474,7 +481,7 @@ class TradingScheduler(
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
-        if not self._task:
+        if not self._task and not self._lane_tasks:
             return
         account_labels = ",".join(
             pipeline.account_label
@@ -484,12 +491,15 @@ class TradingScheduler(
         )
         logger.info("Trading scheduler stopping accounts=%s", account_labels or "none")
         self._stop_event.set()
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
-        self._task = None
+        if self._task is not None:
+            self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            self._task = None
+        lane_work_drained = await self._drain_lane_work()
+        self._lane_shutdown_incomplete = not lane_work_drained
         self.state.startup_started_at = None
         self.state.signal_bootstrap_started_at = None
         self.state.signal_bootstrap_completed_at = None
@@ -497,8 +507,14 @@ class TradingScheduler(
         active_pipelines = self._pipelines or (
             [self._pipeline] if self._pipeline is not None else []
         )
-        for pipeline in active_pipelines:
-            pipeline.order_feed_ingestor.close()
+        if lane_work_drained:
+            for pipeline in active_pipelines:
+                pipeline.order_feed_ingestor.close()
+        elif active_pipelines:
+            logger.error(
+                "Skipping lane resource cleanup because timed-out work is still running accounts=%s",
+                account_labels or "none",
+            )
         self._pipelines = []
         self._pipeline = None
         logger.info("Trading scheduler stopped")
@@ -573,6 +589,11 @@ class TradingScheduler(
         active_run_id: str,
     ) -> None:
         self.state.last_error = None
+        self.state.last_trading_error = None
+        self.state.last_reconcile_error = None
+        self.state.last_autonomy_error = None
+        self.state.last_evidence_error = None
+        self._scheduler_last_error = None
         self.state.last_ingest_signals_total = 0
         self.state.last_ingest_window_start = None
         self.state.last_ingest_window_end = None
@@ -626,10 +647,19 @@ class TradingScheduler(
             if self._pipeline is None:
                 raise RuntimeError("trading_pipeline_not_initialized")
             active_pipelines = self._pipelines or [self._pipeline]
+            lane_errors: list[str] = []
             for pipeline in active_pipelines:
                 try:
-                    await asyncio.to_thread(pipeline.run_once)
+                    await self._run_lane_work(
+                        operation="trading",
+                        account_label=pipeline.account_label,
+                        work=pipeline.run_once,
+                        timeout_seconds=settings.trading_run_once_timeout_seconds,
+                    )
                 except Exception as lane_exc:
+                    lane_errors.append(
+                        f"trading_lane[{pipeline.account_label}]:{lane_exc}"
+                    )
                     self._emit_runtime_loop_failure(
                         loop_name="trading_lane",
                         error=lane_exc,
@@ -641,11 +671,13 @@ class TradingScheduler(
                         lane_exc,
                     )
             self.state.last_run_at = datetime.now(timezone.utc)
-            self.state.last_error = None
+            self.state.last_trading_error = ";".join(lane_errors) or None
+            self._refresh_lane_error_state()
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="trading", error=exc)
             logger.exception("Trading loop failed: %s", exc)
-            self.state.last_error = str(exc)
+            self.state.last_trading_error = str(exc)
+            self._refresh_lane_error_state()
         finally:
             self._evaluate_safety_controls()
 
@@ -655,10 +687,20 @@ class TradingScheduler(
                 raise RuntimeError("trading_pipeline_not_initialized")
             updates = 0
             active_pipelines = self._pipelines or [self._pipeline]
+            lane_errors: list[str] = []
             for pipeline in active_pipelines:
                 try:
-                    updates += await asyncio.to_thread(pipeline.reconcile)
+                    result = await self._run_lane_work(
+                        operation="reconcile",
+                        account_label=pipeline.account_label,
+                        work=pipeline.reconcile,
+                        timeout_seconds=settings.trading_reconcile_timeout_seconds,
+                    )
+                    updates += int(cast(int, result))
                 except Exception as lane_exc:
+                    lane_errors.append(
+                        f"reconcile_lane[{pipeline.account_label}]:{lane_exc}"
+                    )
                     self._emit_runtime_loop_failure(
                         loop_name="reconcile_lane",
                         error=lane_exc,
@@ -672,11 +714,13 @@ class TradingScheduler(
             if updates:
                 logger.info("Reconciled %s executions", updates)
             self.state.last_reconcile_at = datetime.now(timezone.utc)
-            self.state.last_error = None
+            self.state.last_reconcile_error = ";".join(lane_errors) or None
+            self._refresh_lane_error_state()
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="reconcile", error=exc)
             logger.exception("Reconcile loop failed: %s", exc)
-            self.state.last_error = str(exc)
+            self.state.last_reconcile_error = str(exc)
+            self._refresh_lane_error_state()
         finally:
             self._evaluate_safety_controls()
 
@@ -686,11 +730,12 @@ class TradingScheduler(
                 raise RuntimeError("trading_pipeline_not_initialized")
             await asyncio.to_thread(self._run_autonomous_cycle)
             self.state.last_autonomy_error = None
+            self._refresh_lane_error_state()
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="autonomy", error=exc)
             logger.exception("Autonomous loop failed: %s", exc)
-            self.state.last_error = str(exc)
             self.state.last_autonomy_error = str(exc)
+            self._refresh_lane_error_state()
             self.state.autonomy_failure_streak += 1
             self._clear_autonomy_result_state()
         finally:
@@ -701,10 +746,13 @@ class TradingScheduler(
             if self._pipeline is None:
                 raise RuntimeError("trading_pipeline_not_initialized")
             await asyncio.to_thread(self._run_evidence_continuity_check)
+            self.state.last_evidence_error = None
+            self._refresh_lane_error_state()
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="evidence", error=exc)
             logger.exception("Evidence continuity check failed: %s", exc)
-            self.state.last_error = str(exc)
+            self.state.last_evidence_error = str(exc)
+            self._refresh_lane_error_state()
 
 
 __all__ = ["TradingScheduler"]

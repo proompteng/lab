@@ -38,6 +38,11 @@ spec:
               env:
                 - name: PYTHONUNBUFFERED
                   value: "1"
+                - name: TORGHUT_COMMAND_API_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: torghut-command-auth
+                      key: token
               command:
                 - /bin/bash
                 - -lc

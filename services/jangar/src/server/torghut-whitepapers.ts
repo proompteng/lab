@@ -1,6 +1,5 @@
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
-import { readFile } from 'node:fs/promises'
 import type { Pool } from 'pg'
 import {
   resolveWhitepaperControlConfig,
@@ -405,19 +404,7 @@ const resolveWhitepaperControlBaseUrl = () => {
   return resolveWhitepaperControlConfig(process.env).baseUrl.replace(/\/+$/, '')
 }
 
-const resolveWhitepaperControlToken = async () => {
-  const control = resolveWhitepaperControlConfig(process.env)
-  const explicit = control.token
-  if (explicit) return explicit
-
-  if (!control.useServiceAccountToken) return null
-  try {
-    const token = (await readFile(control.serviceAccountTokenPath, 'utf8')).trim()
-    return token || null
-  } catch {
-    return null
-  }
-}
+const resolveWhitepaperControlToken = () => resolveWhitepaperControlConfig(process.env).token
 
 const resolveWhitepaperStorageConfig = (): WhitepaperStorageConfig | null => {
   const configured = resolveConfiguredWhitepaperStorageConfig(process.env)
@@ -710,7 +697,7 @@ export const searchTorghutWhitepapersSemantic = async (
     scopeRaw === 'full_text' || scopeRaw === 'synthesis' || scopeRaw === 'all' ? scopeRaw : 'all'
 
   const baseUrl = resolveWhitepaperControlBaseUrl()
-  const token = await resolveWhitepaperControlToken()
+  const token = resolveWhitepaperControlToken()
   const headers: Record<string, string> = {
     accept: 'application/json',
   }
@@ -1221,7 +1208,7 @@ export const approveTorghutWhitepaperForImplementation = async (
   if (!approvalReason) throw new Error('approval_reason_required')
 
   const baseUrl = resolveWhitepaperControlBaseUrl()
-  const token = await resolveWhitepaperControlToken()
+  const token = resolveWhitepaperControlToken()
   const headers: Record<string, string> = {
     'content-type': 'application/json',
   }

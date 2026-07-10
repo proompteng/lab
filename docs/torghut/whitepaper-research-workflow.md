@@ -119,8 +119,7 @@ For Kafka ingestion path:
 For AgentRun submission:
 
 - `WHITEPAPER_AGENTRUN_SUBMIT_URL` or `AGENTS_BASE_URL` (default fallback: `http://agents.agents.svc.cluster.local`)
-- optional `WHITEPAPER_AGENTRUN_API_TOKEN` or `AGENTS_API_KEY`
-- `JANGAR_BASE_URL` / `JANGAR_API_KEY` are compatibility aliases only for older deployments.
+- optional `WHITEPAPER_AGENTRUN_API_TOKEN` (Torghut -> Agents authentication only)
 
 For deterministic engineering trigger + rollout policy:
 
@@ -139,9 +138,8 @@ For comment-based requeue:
 
 For manual control endpoint auth:
 
-- optional `WHITEPAPER_WORKFLOW_API_TOKEN` (if unset, Torghut falls back to `WHITEPAPER_AGENTRUN_API_TOKEN`,
-  then `AGENTS_API_KEY`, then the legacy `JANGAR_API_KEY`)
-- when either token is set, send `Authorization: Bearer <token>` or `x-whitepaper-token`
+- required `TORGHUT_COMMAND_API_TOKEN`; commands return `503 command_auth_not_configured` when it is unset
+- send `Authorization: Bearer <token>` or `X-Torghut-Command-Token: <token>`
 
 ## Trigger path A (normal): GitHub issue -> Kafka -> Torghut
 
@@ -157,7 +155,7 @@ Use this when validating locally or replaying a webhook event.
 
 ```bash
 curl -sS -X POST "http://localhost:8181/whitepapers/events/github-issue" \
-  -H "Authorization: Bearer <WHITEPAPER_WORKFLOW_API_TOKEN>" \
+  -H "Authorization: Bearer <TORGHUT_COMMAND_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "event": "issues",
@@ -214,7 +212,7 @@ If `WHITEPAPER_AGENTRUN_AUTO_DISPATCH=false` (or dispatch failed), dispatch expl
 
 ```bash
 curl -sS -X POST "http://localhost:8181/whitepapers/runs/<run_id>/dispatch-agentrun" \
-  -H "Authorization: Bearer <WHITEPAPER_WORKFLOW_API_TOKEN>" | jq
+  -H "Authorization: Bearer <TORGHUT_COMMAND_API_TOKEN>" | jq
 ```
 
 ## Finalize run from orchestration outputs
@@ -223,7 +221,7 @@ When synthesis/verdict/PR outputs are ready:
 
 ```bash
 curl -sS -X POST "http://localhost:8181/whitepapers/runs/<run_id>/finalize" \
-  -H "Authorization: Bearer <WHITEPAPER_WORKFLOW_API_TOKEN>" \
+  -H "Authorization: Bearer <TORGHUT_COMMAND_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "status": "completed",
@@ -256,7 +254,7 @@ For below-threshold runs, Jangar whitepaper library dispatches:
 
 ```bash
 curl -sS -X POST "http://localhost:8181/whitepapers/runs/<run_id>/approve-implementation" \
-  -H "Authorization: Bearer <WHITEPAPER_WORKFLOW_API_TOKEN>" \
+  -H "Authorization: Bearer <TORGHUT_COMMAND_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "approved_by": "operator@example.com",

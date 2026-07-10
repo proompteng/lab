@@ -6,10 +6,19 @@ from tests.api.trading_api_support import (
     _freshness_carry_ledger_for_test,
     _retryable_tca_recompute_error,
     patch,
+    settings,
 )
 
 
 class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
+    def test_zero_notional_execution_fails_closed_without_command_token(self) -> None:
+        with patch.object(settings, "torghut_command_api_token", None):
+            response = self.client.post(
+                "/trading/profit-freshness/zero-notional-repair?execute=true"
+            )
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["detail"], "command_auth_not_configured")
+
     def test_trading_revenue_repair_endpoint_returns_business_digest(self) -> None:
         readyz_payload: dict[str, object] = {
             "status": "degraded",
@@ -400,10 +409,18 @@ class TestTradingApiRevenueZeroRepair(TradingApiTestCaseBase):
             "expected_gate_delta": 1,
             "rollback_target": "keep Torghut max_notional=0",
         }
-        with patch("app.api.maintenance.trading_status", return_value=status_payload):
+        with (
+            patch("app.api.maintenance.trading_status", return_value=status_payload),
+            patch.object(
+                settings,
+                "torghut_command_api_token",
+                "test-command-token",
+            ),
+        ):
             response = self.client.post(
                 "/trading/profit-freshness/zero-notional-repair?execute=true",
                 json=repair_lot_dispatch_ticket,
+                headers={"Authorization": "Bearer test-command-token"},
             )
 
         self.assertEqual(response.status_code, 200)

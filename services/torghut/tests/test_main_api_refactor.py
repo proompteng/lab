@@ -30,6 +30,7 @@ def test_main_exports_fastapi_app_with_routes() -> None:
         "/healthz": {"GET"},
         "/db-check": {"GET"},
         "/readyz": {"GET"},
+        "/runtime-readyz": {"GET"},
         "/metrics": {"GET"},
         "/trading/status": {"GET"},
         "/trading/loop/status": {"GET"},
@@ -78,6 +79,7 @@ def test_api_application_mounts_concrete_routers() -> None:
 
     assert {
         "/readyz",
+        "/runtime-readyz",
         "/trading/status",
         "/trading/loop/status",
         "/trading/health",
