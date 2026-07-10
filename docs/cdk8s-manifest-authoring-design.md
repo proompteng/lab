@@ -2,17 +2,23 @@
 
 ## Status
 
-- Decision: Accepted
-- Adoption: Implementation in progress
+- Decision: Adopted
+- Adoption: Complete
 - Last verified: 2026-07-09
 - Pilot: `docs`
 - Second live adopter: `analysis`
 - Runtime sources of truth: `argocd/applications/docs/**`, `argocd/applications/analysis/**`
-- Application sources: `apps/docs/**`, `apps/analysis/**`
+- Manifest authoring sources: `packages/k8s/src/apps/docs/**`, `packages/k8s/src/apps/analysis/**`
+- Workload sources: `apps/docs/**`, `apps/analysis/**`
 - Cluster: `galactic-tailscale`, Kubernetes `v1.35.0`
+- Implementation: [PR #12214](https://github.com/proompteng/lab/pull/12214), merge
+  `90cc200975cce30cfa233e63f3e23546a45d4653`
+- Acceptance evidence: [cdk8s adoption rollout proof](./cdk8s-adoption-rollout-proof-2026-07-09.md)
 
-This document defines the intended manifest-authoring model. Until an application is migrated, its existing files under
-`argocd/applications/**` remain authoritative.
+This document defines the established manifest-authoring model. For registered applications, TypeScript under
+`packages/k8s/src/apps/**` is the authoring source and committed per-resource YAML under
+`argocd/applications/*/generated/**` is the GitOps source reconciled by Argo CD. Applications that have not been migrated
+continue to use their existing files under `argocd/applications/**`.
 
 ## Executive Decision
 
@@ -423,13 +429,13 @@ deletion, and manual workload recreation are not part of the rollback path.
 
 Expansion is based on manifest complexity and runtime blast radius, not directory size alone.
 
-| Wave | Applications                    | New capability proved                                       |
-| ---- | ------------------------------- | ----------------------------------------------------------- |
+| Wave | Applications                    | New capability proved                                        |
+| ---- | ------------------------------- | ------------------------------------------------------------ |
 | 1    | `docs`, `analysis`              | Live no-diff cutover; pinned CRD; Tailscale Service metadata |
-| 2    | `proompteng`                    | Runtime environment values                                  |
-| 3    | `app`, `synthesis`, `oirat`     | Broader routing, configuration, RBAC, and sealed references |
-| 4    | `bumba`, `froussard`, `forgejo` | Persistence, secrets, workers, and third-party composition  |
-| 5    | `agents`, `jangar`, `torghut`   | Large CRD-heavy control planes and stateful dependencies    |
+| 2    | `proompteng`                    | Runtime environment values                                   |
+| 3    | `app`, `synthesis`, `oirat`     | Broader routing, configuration, RBAC, and sealed references  |
+| 4    | `bumba`, `froussard`, `forgejo` | Persistence, secrets, workers, and third-party composition   |
+| 5    | `agents`, `jangar`, `torghut`   | Large CRD-heavy control planes and stateful dependencies     |
 
 Third-party Helm releases and remote vendor bases remain Helm/YAML unless a separate decision demonstrates a concrete
 maintenance benefit. Shared higher-level constructs require at least two proven consumers and their own tests.
