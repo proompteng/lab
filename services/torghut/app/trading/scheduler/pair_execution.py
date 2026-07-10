@@ -6,13 +6,19 @@ import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from decimal import Decimal
-from typing import cast
+from typing import Any, cast
 
 from ...config import settings
 from ..models import StrategyDecision
 from ..pair_intent import is_pair_entry
 from ..portfolio import AllocationResult
-from ..portfolio.allocation_helpers import extract_decision_price, portfolio_exposure
+from ..portfolio.allocation_helpers import (
+    apply_projected_position_decision,
+    extract_decision_price,
+    portfolio_exposure,
+    position_market_value,
+    remaining_symbol_capacity,
+)
 
 
 def partition_pair_allocations(
@@ -35,23 +41,50 @@ def reserve_pair_allocations(
     for allocation in allocations:
         decision = allocation.decision
         grouped.setdefault(_pair_signal_epoch(decision), []).append(allocation)
-    return [
-        _reserve_group(group, account=account, positions=positions)
-        for _, group in sorted(grouped.items())
+    projected_positions: list[dict[str, Any]] = [
+        dict(position) for position in positions
     ]
+    remaining_buying_power = _spendable_buying_power(account)
+    reserved_groups: list[list[AllocationResult]] = []
+    for _, group in sorted(grouped.items()):
+        reserved_group = _reserve_group(
+            group,
+            account=account,
+            positions=projected_positions,
+            buying_power_available=remaining_buying_power,
+        )
+        reserved_groups.append(reserved_group)
+        if not reserved_group or any(not item.approved for item in reserved_group):
+            continue
+        reserved_notional = sum(
+            (item.approved_notional or Decimal("0")) for item in reserved_group
+        )
+        if remaining_buying_power is not None:
+            remaining_buying_power = max(
+                Decimal("0"), remaining_buying_power - reserved_notional
+            )
+        for item in reserved_group:
+            apply_projected_position_decision(projected_positions, item.decision)
+    return reserved_groups
 
 
 def _reserve_group(
     group: list[AllocationResult],
     *,
     account: dict[str, str],
-    positions: list[dict[str, object]],
+    positions: list[dict[str, Any]],
+    buying_power_available: Decimal | None,
 ) -> list[AllocationResult]:
     reason = _pair_group_rejection(group)
     if reason is not None:
         return [_reject_pair_allocation(item, reason) for item in group]
 
-    leg_notional = _reserved_leg_notional(group, account=account, positions=positions)
+    leg_notional = _reserved_leg_notional(
+        group,
+        account=account,
+        positions=positions,
+        buying_power_available=buying_power_available,
+    )
     if leg_notional <= 0:
         return [
             _reject_pair_allocation(item, "pair_capital_reservation_unavailable")
@@ -124,16 +157,20 @@ def _reserved_leg_notional(
     group: list[AllocationResult],
     *,
     account: dict[str, str],
-    positions: list[dict[str, object]],
+    positions: list[dict[str, Any]],
+    buying_power_available: Decimal | None,
 ) -> Decimal:
     equity = _positive_decimal(account.get("equity"))
-    buying_power = _nonnegative_decimal(account.get("buying_power"))
     approved_notionals = [
         item.approved_notional
         for item in group
         if item.approved_notional is not None and item.approved_notional > 0
     ]
-    if equity is None or buying_power is None or len(approved_notionals) != len(group):
+    if (
+        equity is None
+        or buying_power_available is None
+        or len(approved_notionals) != len(group)
+    ):
         return Decimal("0")
 
     gross, net = portfolio_exposure(positions)
@@ -146,20 +183,34 @@ def _reserved_leg_notional(
     if net_fraction is not None and abs(net) > equity * net_fraction:
         return Decimal("0")
     gross_room_per_leg = max(Decimal("0"), gross_limit - gross) / len(group)
-    buying_power_fraction = (
-        Decimal("10000")
-        - Decimal(str(settings.trading_simple_buying_power_reserve_bps))
-    ) / Decimal("10000")
-    buying_power_per_leg = max(
-        Decimal("0"), buying_power * buying_power_fraction
-    ) / len(group)
+    buying_power_per_leg = max(Decimal("0"), buying_power_available) / len(group)
     symbol_limit = equity * Decimal(str(settings.trading_simple_max_symbol_pct_equity))
+    symbol_rooms = [
+        remaining_symbol_capacity(
+            symbol_limit,
+            current_value=position_market_value(item.decision.symbol, positions)
+            or Decimal("0"),
+            action=item.decision.action,
+            allow_shorts=True,
+        )
+        or Decimal("0")
+        for item in group
+    ]
     return min(
         min(approved_notionals),
         gross_room_per_leg,
         buying_power_per_leg,
-        symbol_limit,
+        min(symbol_rooms),
     )
+
+
+def _spendable_buying_power(account: Mapping[str, object]) -> Decimal | None:
+    buying_power = _nonnegative_decimal(account.get("buying_power"))
+    reserve_bps = _nonnegative_decimal(settings.trading_simple_buying_power_reserve_bps)
+    if buying_power is None or reserve_bps is None:
+        return None
+    reserve_bps = min(Decimal("10000"), reserve_bps)
+    return buying_power * (Decimal("10000") - reserve_bps) / Decimal("10000")
 
 
 def _pair_group_id(group: list[AllocationResult]) -> str:

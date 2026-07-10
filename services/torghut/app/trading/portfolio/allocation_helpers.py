@@ -65,6 +65,68 @@ def position_summary(
     return total_qty, total_value
 
 
+def position_qty(symbol: str, positions: Iterable[dict[str, Any]]) -> Decimal:
+    return position_summary(symbol, positions)[0]
+
+
+def position_market_value(
+    symbol: str,
+    positions: Iterable[dict[str, Any]],
+) -> Decimal | None:
+    total_market_value = Decimal("0")
+    has_market_value = False
+    for position in positions:
+        if position.get("symbol") != symbol:
+            continue
+        market_value = optional_decimal(position.get("market_value"))
+        if market_value is None:
+            continue
+        total_market_value += market_value
+        has_market_value = True
+    return total_market_value if has_market_value else None
+
+
+def projected_position_market_value(
+    current_market_value: Decimal | None,
+    delta: Decimal,
+    decision_price: Decimal | None,
+) -> Decimal | None:
+    if decision_price is None:
+        return current_market_value
+    return (current_market_value or Decimal("0")) + (delta * decision_price)
+
+
+def apply_projected_position_decision(
+    positions: list[dict[str, Any]],
+    decision: StrategyDecision,
+) -> None:
+    qty = optional_decimal(decision.qty)
+    if qty is None or qty <= 0 or decision.action not in {"buy", "sell"}:
+        return
+    current_qty = position_qty(decision.symbol, positions)
+    current_market_value = position_market_value(decision.symbol, positions)
+    delta = qty if decision.action == "buy" else -qty
+    projected_qty = current_qty + delta
+    projected_market_value = projected_position_market_value(
+        current_market_value,
+        delta,
+        extract_decision_price(decision),
+    )
+    positions[:] = [
+        position for position in positions if position.get("symbol") != decision.symbol
+    ]
+    if projected_qty == 0:
+        return
+    projected_position = {
+        "symbol": decision.symbol,
+        "qty": str(abs(projected_qty)),
+        "side": "short" if projected_qty < 0 else "long",
+    }
+    if projected_market_value is not None:
+        projected_position["market_value"] = str(projected_market_value)
+    positions.append(projected_position)
+
+
 def gross_cap_for_symbol(
     max_gross: Optional[Decimal],
     current_gross: Decimal,

@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pytest
+
 from app.config import settings
 from app.trading.models import StrategyDecision
 from app.trading.portfolio import (
@@ -174,6 +176,85 @@ def test_pair_reservation_scopes_groups_by_signal_timestamp() -> None:
         for item in group
     }
     assert len(group_ids) == 2
+
+
+@pytest.mark.parametrize(
+    (
+        "gross_limit",
+        "symbol_limit",
+        "reserve_bps",
+        "buying_power",
+        "symbols",
+        "expected_first_notional",
+    ),
+    [
+        (4.0, 0.5, 0.0, "200000", ("NVDA", "AMD"), Decimal("20000")),
+        (1.0, 1.0, 0.0, "200000", ("MU", "AVGO"), Decimal("20000")),
+        (4.0, 1.0, 1000.0, "40000", ("MU", "AVGO"), Decimal("18000")),
+    ],
+    ids=("symbol", "gross", "buying-power"),
+)
+def test_pair_reservations_carry_capacity_across_epochs(
+    monkeypatch: pytest.MonkeyPatch,
+    gross_limit: float,
+    symbol_limit: float,
+    reserve_bps: float,
+    buying_power: str,
+    symbols: tuple[str, str],
+    expected_first_notional: Decimal,
+) -> None:
+    monkeypatch.setattr(
+        settings, "trading_simple_max_gross_exposure_pct_equity", gross_limit
+    )
+    monkeypatch.setattr(settings, "trading_simple_max_symbol_pct_equity", symbol_limit)
+    monkeypatch.setattr(
+        settings, "trading_simple_buying_power_reserve_bps", reserve_bps
+    )
+    first_event = datetime(2026, 7, 10, 14, 0, tzinfo=timezone.utc)
+    second_event = datetime(2026, 7, 10, 14, 1, tzinfo=timezone.utc)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="NVDA",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("20000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol="AMD",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("20000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol=symbols[0],
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("20000"),
+                event_ts=second_event,
+            ),
+            _allocation(
+                symbol=symbols[1],
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("20000"),
+                event_ts=second_event,
+            ),
+        ],
+        account={"equity": "40000", "buying_power": buying_power},
+        positions=[],
+    )
+
+    assert all(item.approved for item in groups[0])
+    assert {item.approved_notional for item in groups[0]} == {expected_first_notional}
+    assert not any(item.approved for item in groups[1])
+    assert all(
+        "pair_capital_reservation_unavailable" in item.reason_codes
+        for item in groups[1]
+    )
 
 
 def test_pair_reservation_submits_the_net_reducing_leg_first() -> None:
