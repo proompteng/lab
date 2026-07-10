@@ -19,6 +19,10 @@ Start here when deciding which documentation to trust.
 - Temporal Bun SDK docs: `temporal-bun-sdk/README.md`
 - Secure action gateway: `secure-action-gateway/README.md`
 
+## Active Architecture Proposals
+
+- TypeScript Kubernetes manifest authoring: `cdk8s-manifest-authoring-design.md`
+
 ## Historical And Research Corpora
 
 - Agents design archive: `agents/designs/README.md`
