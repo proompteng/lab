@@ -84,6 +84,15 @@
 - Before running `gh pr create` or `gh pr edit`, do a quick placeholder scan on the temp body file and remove anything that reads like template scaffolding.
 - If a PR body is wrong after creation, fix it immediately with `gh pr edit <num> --body-file <temp file>` rather than “patching” it in the GitHub UI.
 
+## Codex Reviews
+
+- Treat Codex review as a required PR completion gate in addition to CI. Codex feedback can arrive after status checks pass, so do not merge or report a PR ready immediately after `gh pr checks` succeeds.
+- After opening a PR or pushing a new review-addressing commit, wait until Codex has reviewed the current head SHA. If no current-head review starts automatically, comment `@codex review` and continue polling review submissions and unresolved threads.
+- Fetch thread-aware review state; flat issue/PR comments are insufficient. Inspect unresolved inline threads, review submissions, resolution state, and the reviewed commit SHA.
+- Address actionable findings in severity order, with P0/P1 correctness, security, data-loss, and rollout issues blocking all lower-priority work. Add regression coverage or exact live validation appropriate to the finding.
+- Push the fix before replying. Reply with the commit and validation evidence, resolve the thread only after the fix is present on the PR branch, then wait for Codex to review the new head.
+- Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review targets an older commit. A user must explicitly waive this gate if Codex is unavailable.
+
 ## UI/UX
 
 - Tailwind CSS only; class order layout → spacing → sizing → typography → colors; use `cn()` for conditionals.

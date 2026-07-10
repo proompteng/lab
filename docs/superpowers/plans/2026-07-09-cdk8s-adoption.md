@@ -32,6 +32,8 @@ The following was verified on 2026-07-09 against `origin/main` and the live `gal
   `dcf956e7540fdb0b92e7b1f0088d6ededd73a645`.
 - Argo deleted the generated Olden Application. Because `preserveResourcesOnDeletion: true` left the Deployment and
   Service orphaned, those two resources were explicitly deleted. The `olden` namespace remains Active.
+- A follow-up adds `cascadeResourcesOnDeletion: true` for Olden so a future generated Application carries Argo's
+  resources finalizer and repeated disablement does not orphan a publicly routed workload.
 - Root finished `Synced/Healthy` at the same merge revision.
 
 This rollout behavior is a hard requirement for future disable/rollback procedures: ApplicationSet removal and child
@@ -240,6 +242,7 @@ The implementation PR must leave Olden disabled. Re-enable only after the genera
 
 - [ ] Create a fresh re-enable branch from the implementation merge.
 - [ ] Change Olden to `enabled: "true"` and temporarily set `automation: manual`.
+- [ ] Confirm the generated Olden Application carries `resources-finalizer.argocd.argoproj.io` before syncing it.
 - [ ] Validate the product ApplicationSet and enabled-app inventory counts.
 - [ ] Merge after green CI.
 - [ ] Sync root through Argo and wait for the generated Olden Application.
@@ -310,11 +313,13 @@ After all intended consumers use committed generated YAML:
    review boundary.
 2. If an enabled application renders incorrectly before sync, do not sync it. Revert the implementation commit.
 3. If a live application regresses, revert to the last handwritten or generated-good revision and sync through Argo.
-4. If an application must be disabled, set its ApplicationSet entry to `enabled: "false"`, then verify the generated
-   Application and child resources independently. Do not assume `preserveResourcesOnDeletion` prunes or preserves child
-   workloads consistently.
-5. Delete orphaned resources explicitly only after the Application is gone and the desired disabled state is confirmed.
-6. Preserve namespaces unless namespace deletion is explicitly requested.
+4. If an application must be disabled, require an explicit per-app cascade/preserve decision. Apps marked
+   `cascadeResourcesOnDeletion: true` must receive `resources-finalizer.argocd.argoproj.io` before they are removed from
+   the generator.
+5. After setting an ApplicationSet entry to `enabled: "false"`, verify the generated Application and child resources
+   independently. Do not infer pruning from Application deletion alone.
+6. Delete orphaned resources explicitly only after the Application is gone and the desired disabled state is confirmed.
+7. Preserve namespaces unless namespace deletion is explicitly requested.
 
 ## Adoption Completion Gates
 

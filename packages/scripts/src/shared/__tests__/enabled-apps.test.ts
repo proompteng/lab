@@ -7,7 +7,19 @@ import { assertEnabledAppBuildPolicy, loadEnabledAppInventory } from '../enabled
 
 const inventory = loadEnabledAppInventory()
 const productApplicationSet = YAML.parse(readFileSync('argocd/applicationsets/product.yaml', 'utf8')) as {
-  spec?: { syncPolicy?: { preserveResourcesOnDeletion?: boolean } }
+  spec?: {
+    syncPolicy?: { preserveResourcesOnDeletion?: boolean }
+    generators?: Array<{
+      matrix?: {
+        generators?: Array<{
+          list?: {
+            elements?: Array<{ name?: string; cascadeResourcesOnDeletion?: boolean }>
+          }
+        }>
+      }
+    }>
+    templatePatch?: string
+  }
 }
 
 const entry = (name: string) => {
@@ -29,6 +41,12 @@ describe('enabled app inventory', () => {
 
   it('records preservation intent when a product app is disabled', () => {
     expect(productApplicationSet.spec?.syncPolicy?.preserveResourcesOnDeletion).toBe(true)
+  })
+
+  it('cascades Olden resources when its generated Application is deleted', () => {
+    const productElements = productApplicationSet.spec?.generators?.[0]?.matrix?.generators?.[1]?.list?.elements ?? []
+    expect(productElements.find((candidate) => candidate.name === 'olden')?.cascadeResourcesOnDeletion).toBe(true)
+    expect(productApplicationSet.spec?.templatePatch).toContain('resources-finalizer.argocd.argoproj.io')
   })
 
   it('does not inspect local lab manifests for external source applications', () => {
