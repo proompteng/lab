@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import cast
 
@@ -37,16 +38,13 @@ def reserve_pair_allocations(
     account: dict[str, str],
     positions: list[dict[str, object]],
 ) -> list[list[AllocationResult]]:
-    grouped: dict[tuple[str, str, str], list[AllocationResult]] = {}
-    for allocation in allocations:
-        decision = allocation.decision
-        grouped.setdefault(_pair_signal_epoch(decision), []).append(allocation)
+    grouped = _pair_allocation_cohorts(allocations)
     projected_positions: list[dict[str, object]] = [
         dict(position) for position in positions
     ]
     remaining_buying_power = _spendable_buying_power(account)
     reserved_groups: list[list[AllocationResult]] = []
-    for _, group in sorted(grouped.items()):
+    for group in grouped:
         reserved_group = _reserve_group(
             group,
             account=account,
@@ -66,6 +64,130 @@ def reserve_pair_allocations(
         for item in reserved_group:
             apply_projected_position_decision(projected_positions, item.decision)
     return reserved_groups
+
+
+def _pair_allocation_cohorts(
+    allocations: Iterable[AllocationResult],
+) -> list[list[AllocationResult]]:
+    scopes: dict[tuple[str, str, int], list[AllocationResult]] = {}
+    for allocation in allocations:
+        decision = allocation.decision
+        scope = (
+            decision.strategy_id,
+            decision.timeframe,
+            _pair_side_count(decision),
+        )
+        scopes.setdefault(scope, []).append(allocation)
+
+    max_skew = timedelta(milliseconds=max(1, settings.trading_poll_ms))
+    cohorts: list[list[AllocationResult]] = []
+    for (_, _, side_count), scoped_allocations in sorted(scopes.items()):
+        matches, unmatched = _nearest_opposite_side_matches(
+            scoped_allocations, max_skew=max_skew
+        )
+        cohorts.extend(
+            _cohort_pair_matches(
+                matches,
+                side_count=side_count,
+                max_skew=max_skew,
+            )
+        )
+        cohorts.extend([[allocation] for allocation in unmatched])
+    return sorted(cohorts, key=_pair_group_order)
+
+
+def _nearest_opposite_side_matches(
+    allocations: list[AllocationResult],
+    *,
+    max_skew: timedelta,
+) -> tuple[list[tuple[AllocationResult, AllocationResult]], list[AllocationResult]]:
+    high = [item for item in allocations if _pair_side(item.decision) == "high_rank"]
+    low = [item for item in allocations if _pair_side(item.decision) == "low_rank"]
+    candidates: list[tuple[timedelta, datetime, datetime, str, str, int, int]] = []
+    for high_index, high_item in enumerate(high):
+        for low_index, low_item in enumerate(low):
+            high_ts = high_item.decision.event_ts
+            low_ts = low_item.decision.event_ts
+            skew = abs(high_ts - low_ts)
+            if skew <= max_skew:
+                candidates.append(
+                    (
+                        skew,
+                        min(high_ts, low_ts),
+                        max(high_ts, low_ts),
+                        high_item.decision.symbol,
+                        low_item.decision.symbol,
+                        high_index,
+                        low_index,
+                    )
+                )
+
+    used_high: set[int] = set()
+    used_low: set[int] = set()
+    matches: list[tuple[AllocationResult, AllocationResult]] = []
+    for *_, high_index, low_index in sorted(candidates):
+        if high_index in used_high or low_index in used_low:
+            continue
+        used_high.add(high_index)
+        used_low.add(low_index)
+        matches.append((high[high_index], low[low_index]))
+
+    matched_ids = {id(item) for match in matches for item in match}
+    unmatched = [item for item in allocations if id(item) not in matched_ids]
+    return matches, unmatched
+
+
+def _cohort_pair_matches(
+    matches: list[tuple[AllocationResult, AllocationResult]],
+    *,
+    side_count: int,
+    max_skew: timedelta,
+) -> list[list[AllocationResult]]:
+    cohorts: list[list[AllocationResult]] = []
+    current: list[tuple[AllocationResult, AllocationResult]] = []
+    for match in sorted(matches, key=_pair_match_order):
+        candidate = [*current, match]
+        if current and (
+            len(candidate) > side_count or _pair_match_span(candidate) > max_skew
+        ):
+            cohorts.append([item for pair in current for item in pair])
+            current = []
+        current.append(match)
+        if len(current) == side_count:
+            cohorts.append([item for pair in current for item in pair])
+            current = []
+    if current:
+        cohorts.append([item for pair in current for item in pair])
+    return cohorts
+
+
+def _pair_match_order(
+    match: tuple[AllocationResult, AllocationResult],
+) -> tuple[datetime, datetime, str, str]:
+    high, low = match
+    return (
+        min(high.decision.event_ts, low.decision.event_ts),
+        max(high.decision.event_ts, low.decision.event_ts),
+        high.decision.symbol,
+        low.decision.symbol,
+    )
+
+
+def _pair_match_span(
+    matches: list[tuple[AllocationResult, AllocationResult]],
+) -> timedelta:
+    timestamps = [item.decision.event_ts for match in matches for item in match]
+    return max(timestamps) - min(timestamps)
+
+
+def _pair_group_order(group: list[AllocationResult]) -> tuple[datetime, str, str]:
+    first = min(group, key=lambda item: _allocation_order(item))
+    return _allocation_order(first)
+
+
+def _allocation_order(allocation: AllocationResult) -> tuple[datetime, str, str]:
+    decision = allocation.decision
+    return decision.event_ts, decision.strategy_id, decision.symbol
 
 
 def _reserve_group(
@@ -140,6 +262,11 @@ def _pair_group_rejection(group: list[AllocationResult]) -> str | None:
         return "pair_opposite_leg_missing"
     if high_count != low_count:
         return "pair_leg_count_unbalanced"
+    expected_side_counts = {_pair_side_count(item.decision) for item in group}
+    if len(expected_side_counts) != 1:
+        return "pair_leg_contract_inconsistent"
+    if high_count != expected_side_counts.pop():
+        return "pair_leg_count_incomplete"
     if len({item.decision.symbol for item in group}) != len(group):
         return "pair_symbol_duplicated"
     return None
@@ -151,6 +278,17 @@ def _pair_side(decision: StrategyDecision) -> str | None:
         if separator and key == "pair_side" and value in {"high_rank", "low_rank"}:
             return value
     return None
+
+
+def _pair_side_count(decision: StrategyDecision) -> int:
+    for token in str(decision.rationale or "").split(","):
+        key, separator, value = token.strip().partition(":")
+        if separator and key == "pair_side_count":
+            try:
+                return max(1, int(value))
+            except ValueError:
+                return 1
+    return 1
 
 
 def _reserved_leg_notional(
@@ -215,19 +353,18 @@ def _spendable_buying_power(account: Mapping[str, object]) -> Decimal | None:
 
 def _pair_group_id(group: list[AllocationResult]) -> str:
     parts = [
-        ":".join((*_pair_signal_epoch(item.decision), item.decision.symbol))
+        ":".join(
+            (
+                item.decision.strategy_id,
+                item.decision.timeframe,
+                item.decision.event_ts.isoformat(),
+                item.decision.symbol,
+            )
+        )
         for item in sorted(group, key=lambda item: item.decision.symbol)
     ]
     digest = hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()[:20]
     return f"pair-{digest}"
-
-
-def _pair_signal_epoch(decision: StrategyDecision) -> tuple[str, str, str]:
-    return (
-        decision.strategy_id,
-        decision.timeframe,
-        decision.event_ts.isoformat(),
-    )
 
 
 def _reject_pair_allocation(
