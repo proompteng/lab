@@ -23,7 +23,7 @@
 - Cleanup
   - Remove compatibility wrappers only after import scans are clean.
   - Do not touch untracked artifacts such as `.coverage`.
-  - This file is the canonical plan; do not use `docs/superpowers/plans/` for this refactor.
+  - This file is the canonical plan for this refactor.
 
 ## PR And Rollout Plan
 

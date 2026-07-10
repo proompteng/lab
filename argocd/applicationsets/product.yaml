@@ -73,6 +73,7 @@ spec:
                 path: argocd/applications/olden
                 namespace: olden
                 renderWithLovely: false
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
@@ -503,11 +504,21 @@ spec:
           - PruneLast=true
           - ClientSideApplyMigration=false
   templatePatch: |
-    {{- if .annotations }}
+    {{- $cascadeResourcesOnDeletion := false -}}
+    {{- if hasKey . "cascadeResourcesOnDeletion" -}}
+    {{- $cascadeResourcesOnDeletion = .cascadeResourcesOnDeletion -}}
+    {{- end -}}
+    {{- if or .annotations $cascadeResourcesOnDeletion }}
     metadata:
+    {{- if $cascadeResourcesOnDeletion }}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    {{- end }}
+    {{- if .annotations }}
       annotations:
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
+    {{- end }}
     {{- end }}
     {{- end }}
     {{- $hasDestServer := hasKey . "destinationServer" -}}
