@@ -87,10 +87,12 @@
 ## Codex Reviews
 
 - Treat Codex review as a required PR completion gate in addition to CI. Codex feedback can arrive after status checks pass, so do not merge or report a PR ready immediately after `gh pr checks` succeeds.
-- After opening a PR or pushing a new review-addressing commit, wait until Codex has reviewed the current head SHA. If no current-head review starts automatically, comment `@codex review` and continue polling review submissions and unresolved threads.
+- Let the automatic Codex review run while CI is active. After CI completes, inspect the current head SHA, review submissions, and unresolved threads before deciding whether another request is needed.
+- If the current head has neither a completed nor an in-progress Codex review, post exactly one `@codex review` comment for that SHA. Never post a duplicate request for the same head.
+- After an explicit request or an automatic-review acknowledgement, wait at most five minutes for a terminal result and check no more than once per minute. At the deadline, stop polling, leave the PR draft or unmerged, and report `Codex review pending for <sha>`; do not call the PR ready.
 - Fetch thread-aware review state; flat issue/PR comments are insufficient. Inspect unresolved inline threads, review submissions, resolution state, and the reviewed commit SHA.
 - Address actionable findings in severity order, with P0/P1 correctness, security, data-loss, and rollout issues blocking all lower-priority work. Add regression coverage or exact live validation appropriate to the finding.
-- Push the fix before replying. Reply with the commit and validation evidence, resolve the thread only after the fix is present on the PR branch, then wait for Codex to review the new head.
+- Push the fix before replying. Reply with the commit and validation evidence, resolve the thread only after the fix is present on the PR branch, then apply the same one-request, five-minute protocol to the new head.
 - Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review targets an older commit. A user must explicitly waive this gate if Codex is unavailable.
 
 ## UI/UX
