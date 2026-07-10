@@ -24,7 +24,7 @@ execute inside Argo CD.
 The design deliberately separates authoring from reconciliation:
 
 - TypeScript is the source for migrated Kubernetes objects.
-- Generated YAML is the review and GitOps artifact.
+- Generated YAML files are the review and GitOps artifacts.
 - Kustomize continues to own image digest substitution.
 - Argo CD continues to reconcile static YAML.
 - CI proves determinism, semantic parity, schema validity, and source/output consistency.
@@ -73,7 +73,7 @@ The new path reuses the useful TypeScript experience but removes runtime synthes
 flowchart LR
   A["TypeScript chart and tests"] --> B["Pinned cdk8s compiler"]
   C["Pinned Kubernetes and Traefik schemas"] --> B
-  B --> D["Committed generated YAML"]
+  B --> D["Committed generated YAML files"]
   D --> E["Existing Kustomization"]
   F["Image digest promotion"] --> E
   E --> G["Argo CD"]
@@ -109,7 +109,10 @@ packages/k8s/
 
 argocd/applications/docs/
   generated/
-    docs.k8s.yaml
+    kustomization.yaml
+    deployment-docs.yaml
+    ingressroute-docs.yaml
+    service-docs.yaml
   kustomization.yaml
 ```
 
@@ -123,7 +126,7 @@ low-level generated constructs so the pull request exposes every Kubernetes fiel
 ### Application declaration
 
 `packages/k8s/src/application.ts` defines the registration contract. An application declaration owns its stable name,
-namespace, generated output path, and chart factory:
+namespace, generated output directory, and chart factory:
 
 ```ts
 import type { Chart } from 'cdk8s'
@@ -132,7 +135,7 @@ import type { Construct } from 'constructs'
 export interface ApplicationDefinition {
   readonly name: string
   readonly namespace: string
-  readonly outputPath: `argocd/applications/${string}/generated/${string}.k8s.yaml`
+  readonly outputDir: `argocd/applications/${string}/generated`
   readonly create: (scope: Construct) => Chart
 }
 
@@ -148,7 +151,7 @@ import { DocsChart } from './chart'
 export const docsApplication = defineApplication({
   name: 'docs',
   namespace: 'docs',
-  outputPath: 'argocd/applications/docs/generated/docs.k8s.yaml',
+  outputDir: 'argocd/applications/docs/generated',
   create(scope) {
     return new DocsChart(scope, 'docs', { namespace: 'docs' })
   },
@@ -164,17 +167,17 @@ import { docsApplication } from './apps/docs/application'
 export const applicationRegistry = defineApplicationRegistry([docsApplication])
 ```
 
-`defineApplicationRegistry` fails on duplicate application names, namespaces/output paths that violate policy, and two
-applications targeting the same file. Filesystem auto-discovery is not used; adding one import and one registry entry is
-an intentional review boundary.
+`defineApplicationRegistry` fails on duplicate application names, namespaces/output directories that violate policy,
+and two applications targeting the same directory. Filesystem auto-discovery is not used; adding one import and one
+registry entry is an intentional review boundary.
 
 To declare another application:
 
 1. create `packages/k8s/src/apps/<name>/chart.ts` and `chart.test.ts`;
-2. create `application.ts` with `defineApplication({ name, namespace, outputPath, create })`;
+2. create `application.ts` with `defineApplication({ name, namespace, outputDir, create })`;
 3. import that definition into `registry.ts` and add it once;
 4. run `bun run --filter @proompteng/k8s synth -- --app <name>`;
-5. add the generated file to the application's Kustomization only after parity validation passes.
+5. add the generated directory to the application's Kustomization only after parity validation passes.
 
 ## Authoring Contract
 
@@ -194,7 +197,9 @@ To declare another application:
 - Vendor the Traefik IngressRoute CRD from chart `41.0.1`, the version pinned in
   `argocd/applications/traefik/kustomization.yaml`, and generate committed L1 bindings from that file.
 - Synthesis may read only committed inputs. Environment variables must not change production values.
-- Produce one stable multi-document file per application.
+- Produce exactly one YAML file per Kubernetes resource. Each file contains one document and is named
+  `<kind-kebab>-<metadata.name>.yaml`; synthesis fails on filename or resource-identity collisions.
+- Generate a `kustomization.yaml` inside the output directory with a sorted, explicit list of the resource files.
 - Exclude timestamps, Git revisions, absolute paths, random values, and dependency banners from output.
 - Generated files are changed only by the synth command.
 
@@ -205,11 +210,22 @@ Kustomization retains the digest and remains the write-back target for release a
 
 ```yaml
 resources:
-  - generated/docs.k8s.yaml
+  - generated
 images:
   - name: registry.ide-newton.ts.net/lab/docs
     newName: registry.ide-newton.ts.net/lab/docs
     digest: sha256:...
+```
+
+The generated directory is itself a Kustomization:
+
+```yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment-docs.yaml
+  - ingressroute-docs.yaml
+  - service-docs.yaml
 ```
 
 cdk8s must not embed the promoted digest. This keeps manifest authoring independent from image publication and avoids
@@ -261,14 +277,14 @@ allowed differences. Any spec, metadata, or object-set difference blocks the mig
 
 `packages/k8s/package.json` is named `@proompteng/k8s` and exposes these commands:
 
-| Command                                           | Responsibility                                                        |
-| ------------------------------------------------- | --------------------------------------------------------------------- |
-| `synth -- --app <name>`                           | Atomically regenerate exactly one application's tracked output        |
-| `synth:check -- --app <name>`                     | Compare one clean synthesis with tracked output without writing       |
-| `synth:check -- --all`                            | Check every registered application without writing                    |
-| `test`                                            | Run registry, chart structure, and policy tests                       |
-| `imports:check`                                   | Regenerate pinned L1 imports and fail on schema drift                 |
-| `parity -- --app <name> --baseline <path-or-ref>` | Compare normalized handwritten and generated resources during cutover |
+| Command                                           | Responsibility                                                         |
+| ------------------------------------------------- | ---------------------------------------------------------------------- |
+| `synth -- --app <name>`                           | Replace one application's validated per-resource output directory      |
+| `synth:check -- --app <name>`                     | Compare one clean output directory with tracked output without writing |
+| `synth:check -- --all`                            | Check every registered application without writing                     |
+| `test`                                            | Run registry, chart structure, and policy tests                        |
+| `imports:check`                                   | Regenerate pinned L1 imports and fail on schema drift                  |
+| `parity -- --app <name> --baseline <path-or-ref>` | Compare normalized handwritten and generated resources during cutover  |
 
 The package scripts are thin aliases over the single CLI:
 
@@ -296,19 +312,22 @@ bun run --filter @proompteng/k8s synth:check -- --all
 
 ### Generation flow
 
-`src/cli.ts` does not discover applications or infer output paths. It performs the following steps:
+`src/cli.ts` does not discover applications or infer output directories. It performs the following steps:
 
 1. parse `--app`, require exactly one registered name for a writing synthesis, and reject unknown names;
 2. look up the `ApplicationDefinition` in the explicit registry;
-3. create a staging directory beside the declared target so the final rename stays on one filesystem;
-4. instantiate a cdk8s `App` with `YamlOutputType.FILE_PER_CHART`, construct only the selected chart, and synthesize into
-   staging;
-5. load the synthesized objects and run identity, Namespace/Secret, selector, image, and application-specific policy
-   assertions;
-6. normalize the output filename to the declaration's `outputPath` basename;
-7. in write mode, atomically rename the validated staged file over the tracked output;
-8. in check mode, byte-compare staged and tracked output and exit non-zero on drift without modifying the worktree;
-9. remove staging in a `finally` block on success or failure.
+3. create a staging directory beside the declared output directory so every rename stays on one filesystem;
+4. instantiate a cdk8s `App` with `YamlOutputType.FILE_PER_RESOURCE`, `outputFileExtension: '.yaml'`, and construct
+   metadata disabled; construct only the selected chart and synthesize into staging;
+5. load each synthesized file, require exactly one Kubernetes document per file, and run identity, Namespace/Secret,
+   selector, image, and application-specific policy assertions;
+6. rename every staged manifest to `<kind-kebab>-<metadata.name>.yaml`, reject collisions, and sort the filenames;
+7. emit a staged `kustomization.yaml` containing the sorted, explicit resource list;
+8. in write mode, swap the validated staged directory into `outputDir`, retaining the old directory as a rollback backup
+   until the swap succeeds;
+9. in check mode, recursively compare the staged directory with tracked output and exit non-zero on added, removed, or
+   changed files without modifying the worktree;
+10. restore the backup on a failed swap and remove staging/backup directories in a `finally` block.
 
 Writing `--all` is intentionally unsupported so one failed chart cannot leave a partially regenerated multi-application
 worktree. CI uses the non-writing `synth:check -- --all` path.
@@ -324,8 +343,9 @@ CI runs only when the manifest package, imported schemas, generated output, Kust
 7. reject Namespace and plaintext Secret objects;
 8. verify the final image is still digest-pinned after Kustomize rendering.
 
-Synthesis writes to a temporary directory first and replaces tracked output only after every assertion succeeds. A failed
-chart or import must not leave partially regenerated GitOps state.
+Synthesis writes the complete resource set to a temporary directory first and swaps the tracked directory only after
+every manifest and the generated Kustomization pass. A failed chart or import must not leave partially regenerated GitOps
+state.
 
 ## Migration and Rollout
 
@@ -333,20 +353,21 @@ chart or import must not leave partially regenerated GitOps state.
 
 - Add `packages/k8s` as workspace package `@proompteng/k8s` with the typed definition registry and pinned dependencies.
 - Generate and commit Kubernetes 1.35 and Traefik 41.0.1 L1 imports.
-- Add deterministic synthesis, atomic output, policy assertions, and blocking CI.
+- Add deterministic synthesis, transactional output-directory swaps, policy assertions, and blocking CI.
 - Repair Bonjour only enough to use it as a disabled compiler canary; do not enable it or retain Argo runtime synthesis
   as the target design.
 
 ### Phase 2: synthesize `docs` without changing Argo input
 
 - Implement the `docs` chart and structural tests.
-- Generate `argocd/applications/docs/generated/docs.k8s.yaml` alongside the handwritten files.
+- Generate `deployment-docs.yaml`, `ingressroute-docs.yaml`, `service-docs.yaml`, and the generated Kustomization under
+  `argocd/applications/docs/generated/` alongside the handwritten files.
 - Run full normalized parity against the current Deployment, Service, and IngressRoute.
 - Review the generated YAML as the intended live object set.
 
 ### Phase 3: cut over the live application
 
-- Change only `argocd/applications/docs/kustomization.yaml` to reference the generated file.
+- Change only `argocd/applications/docs/kustomization.yaml` to reference the generated directory.
 - Remove the three superseded handwritten resource files in the same pull request.
 - Confirm the final Kustomize render is semantically identical to the pre-migration render.
 - Capture the current Deployment revision, ReplicaSet, pod UID, Service cluster IP, and IngressRoute before merge.
