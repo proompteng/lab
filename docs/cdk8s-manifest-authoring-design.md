@@ -85,13 +85,20 @@ flowchart LR
 ### Repository layout
 
 ```text
-packages/k8s-manifests/
-  package.json
+packages/k8s/
+  package.json                 # name: @proompteng/k8s
   cdk8s.yaml
   tsconfig.json
+  crds/
+    traefik-41.0.1.yaml
   src/
+    application.ts
+    registry.ts
+    cli.ts
+    synth.ts
     apps/
       docs/
+        application.ts
         chart.ts
         chart.test.ts
     imports/
@@ -99,7 +106,6 @@ packages/k8s-manifests/
       traefik.io.ts
     policy/
       manifest-assertions.ts
-    synth.ts
 
 argocd/applications/docs/
   generated/
@@ -113,6 +119,62 @@ promoting the application image.
 
 Shared constructs are introduced only after a second migrated application needs the same contract. The first chart uses
 low-level generated constructs so the pull request exposes every Kubernetes field being preserved.
+
+### Application declaration
+
+`packages/k8s/src/application.ts` defines the registration contract. An application declaration owns its stable name,
+namespace, generated output path, and chart factory:
+
+```ts
+import type { Chart } from 'cdk8s'
+import type { Construct } from 'constructs'
+
+export interface ApplicationDefinition {
+  readonly name: string
+  readonly namespace: string
+  readonly outputPath: `argocd/applications/${string}/generated/${string}.k8s.yaml`
+  readonly create: (scope: Construct) => Chart
+}
+
+export const defineApplication = <const T extends ApplicationDefinition>(definition: T): T => definition
+```
+
+The `docs` manifest module declares itself in `packages/k8s/src/apps/docs/application.ts`:
+
+```ts
+import { defineApplication } from '../../application'
+import { DocsChart } from './chart'
+
+export const docsApplication = defineApplication({
+  name: 'docs',
+  namespace: 'docs',
+  outputPath: 'argocd/applications/docs/generated/docs.k8s.yaml',
+  create(scope) {
+    return new DocsChart(scope, 'docs', { namespace: 'docs' })
+  },
+})
+```
+
+`packages/k8s/src/registry.ts` is deliberately explicit:
+
+```ts
+import { defineApplicationRegistry } from './application'
+import { docsApplication } from './apps/docs/application'
+
+export const applicationRegistry = defineApplicationRegistry([docsApplication])
+```
+
+`defineApplicationRegistry` fails on duplicate application names, namespaces/output paths that violate policy, and two
+applications targeting the same file. Filesystem auto-discovery is not used; adding one import and one registry entry is
+an intentional review boundary.
+
+To declare another application:
+
+1. create `packages/k8s/src/apps/<name>/chart.ts` and `chart.test.ts`;
+2. create `application.ts` with `defineApplication({ name, namespace, outputPath, create })`;
+3. import that definition into `registry.ts` and add it once;
+4. run `bun run --filter @proompteng/k8s synth -- --app <name>`;
+5. add the generated file to the application's Kustomization only after parity validation passes.
 
 ## Authoring Contract
 
@@ -197,15 +259,59 @@ allowed differences. Any spec, metadata, or object-set difference blocks the mig
 
 ## Compiler and CI Design
 
-The manifest package exposes these commands:
+`packages/k8s/package.json` is named `@proompteng/k8s` and exposes these commands:
 
-| Command                    | Responsibility                                                        |
-| -------------------------- | --------------------------------------------------------------------- |
-| `manifests:synth -- <app>` | Atomically regenerate one application's tracked output                |
-| `manifests:synth:check`    | Regenerate in a temporary directory and fail on tracked-output drift  |
-| `manifests:test`           | Run chart structure and policy tests                                  |
-| `manifests:imports:check`  | Regenerate pinned L1 imports and fail on schema drift                 |
-| `manifests:parity`         | Compare normalized handwritten and generated resources during cutover |
+| Command                                           | Responsibility                                                        |
+| ------------------------------------------------- | --------------------------------------------------------------------- |
+| `synth -- --app <name>`                           | Atomically regenerate exactly one application's tracked output        |
+| `synth:check -- --app <name>`                     | Compare one clean synthesis with tracked output without writing       |
+| `synth:check -- --all`                            | Check every registered application without writing                    |
+| `test`                                            | Run registry, chart structure, and policy tests                       |
+| `imports:check`                                   | Regenerate pinned L1 imports and fail on schema drift                 |
+| `parity -- --app <name> --baseline <path-or-ref>` | Compare normalized handwritten and generated resources during cutover |
+
+The package scripts are thin aliases over the single CLI:
+
+```json
+{
+  "name": "@proompteng/k8s",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "synth": "bun run src/cli.ts synth",
+    "synth:check": "bun run src/cli.ts check",
+    "test": "bun test",
+    "imports:check": "bun run src/cli.ts imports-check",
+    "parity": "bun run src/cli.ts parity"
+  }
+}
+```
+
+The normal invocation from the repository root is:
+
+```bash
+bun run --filter @proompteng/k8s synth -- --app docs
+bun run --filter @proompteng/k8s synth:check -- --all
+```
+
+### Generation flow
+
+`src/cli.ts` does not discover applications or infer output paths. It performs the following steps:
+
+1. parse `--app`, require exactly one registered name for a writing synthesis, and reject unknown names;
+2. look up the `ApplicationDefinition` in the explicit registry;
+3. create a staging directory beside the declared target so the final rename stays on one filesystem;
+4. instantiate a cdk8s `App` with `YamlOutputType.FILE_PER_CHART`, construct only the selected chart, and synthesize into
+   staging;
+5. load the synthesized objects and run identity, Namespace/Secret, selector, image, and application-specific policy
+   assertions;
+6. normalize the output filename to the declaration's `outputPath` basename;
+7. in write mode, atomically rename the validated staged file over the tracked output;
+8. in check mode, byte-compare staged and tracked output and exit non-zero on drift without modifying the worktree;
+9. remove staging in a `finally` block on success or failure.
+
+Writing `--all` is intentionally unsupported so one failed chart cannot leave a partially regenerated multi-application
+worktree. CI uses the non-writing `synth:check -- --all` path.
 
 CI runs only when the manifest package, imported schemas, generated output, Kustomization, or lockfile changes. It must:
 
@@ -225,7 +331,7 @@ chart or import must not leave partially regenerated GitOps state.
 
 ### Phase 1: establish the compiler
 
-- Add the dedicated workspace package and pinned dependencies.
+- Add `packages/k8s` as workspace package `@proompteng/k8s` with the typed definition registry and pinned dependencies.
 - Generate and commit Kubernetes 1.35 and Traefik 41.0.1 L1 imports.
 - Add deterministic synthesis, atomic output, policy assertions, and blocking CI.
 - Repair Bonjour only enough to use it as a disabled compiler canary; do not enable it or retain Argo runtime synthesis
