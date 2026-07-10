@@ -413,13 +413,14 @@ ENGINE = ReplicatedReplacingMergeTree(
   - ensure monitor thresholds are configured and fail-closed,
   - reset/inspect simulation `trade_cursor` when re-running with the same DB.
 
-5. `kubectl` is image-owned in `services/torghut/Dockerfile`.
+5. `kubectl` is image-owned in `nix/images/torghut.nix`.
 
 - The workflow no longer downloads `kubectl` at runtime.
 - Ensure the Torghut image includes an architecture-correct `kubectl` for your runtime:
-  - `/usr/local/bin/kubectl`
+  - `command -v kubectl`
   - verify startup with `kubectl version --client`
-- If you see `Exec format error`, rebuild `registry.ide-newton.ts.net/lab/torghut` after updating `services/torghut/Dockerfile` with the runtime platform mapping.
+- If you see `Exec format error`, update `nix/images/torghut.nix`, validate with `nix build .#torghut-image`, and let
+  `torghut-build-push` publish both architecture-specific images.
 
 6. One-hour simulation replay can produce TA outputs but still fail pre-decision on feature quality.
 

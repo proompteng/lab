@@ -53,6 +53,9 @@ const pathPatternOccurrences = (pattern: string): number =>
 const ciPathPatternIndex = (pattern: string): number =>
   ciWorkflow.split('\n').findIndex((line) => line.trim() === `- '${pattern}'`)
 
+const ciPathPatternOccurrences = (pattern: string): number =>
+  ciWorkflow.split('\n').filter((line) => line.trim() === `- '${pattern}'`).length
+
 const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string => {
   const markerIndex = releaseWorkflow.indexOf(markerPath)
   if (markerIndex < 0) {
@@ -69,13 +72,24 @@ const staleDiffBlockFor = (releaseWorkflow: string, markerPath: string): string 
 }
 
 describe('torghut build-push workflow', () => {
-  it('builds the core Torghut image for source and image input changes only', () => {
+  it('builds the core Torghut image for source and owned image input changes', () => {
     const requiredPatterns = [
       'services/torghut/**',
       'packages/scripts/src/torghut/**',
       'packages/scripts/src/shared/cli.ts',
       'packages/scripts/src/shared/git.ts',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+      'flake.nix',
+      'flake.lock',
       'nix/images/torghut.nix',
+      'nix/cache-push.sh',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-push.sh',
+      'nix/oci-release-contract.sh',
     ]
 
     for (const pattern of requiredPatterns) {
@@ -85,18 +99,24 @@ describe('torghut build-push workflow', () => {
     const scriptsInclude = pathPatternIndex('packages/scripts/src/torghut/**')
     expect(pathPatternIndex('!packages/scripts/src/torghut/__tests__/**')).toBeGreaterThan(scriptsInclude)
     expect(pathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')).toBeGreaterThan(scriptsInclude)
+    expect(pathPatternIndex('!packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBeGreaterThan(
+      scriptsInclude,
+    )
     expect(pathPatternIndex('packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts')).toBe(-1)
-    for (const workflowOnlyPath of [
-      '.github/workflows/torghut-build-push.yaml',
+    for (const unrelatedPath of [
+      'services/dorvud/**',
+      'services/jangar/**',
+      'packages/scripts/src/shared/**',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+      'packages/scripts/src/shared/oci-digest.ts',
+      '.github/workflows/torghut-ci.yml',
       '.github/workflows/torghut-release.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      '.github/actions/setup-nix-toolchain/**',
     ]) {
-      expect(pathPatternIndex(workflowOnlyPath)).toBe(-1)
+      expect(pathPatternIndex(unrelatedPath)).toBe(-1)
     }
   })
 
-  it('does not run full Torghut service CI for the Hyperliquid feed release updater', () => {
+  it('runs Torghut CI for owned inputs but not the Hyperliquid feed updater', () => {
     const scriptsInclude = ciPathPatternIndex('packages/scripts/src/torghut/**')
     const testsExclude = ciPathPatternIndex('!packages/scripts/src/torghut/__tests__/**')
     const testFilesExclude = ciPathPatternIndex('!packages/scripts/src/torghut/**/*.test.ts')
@@ -106,8 +126,34 @@ describe('torghut build-push workflow', () => {
     expect(testsExclude).toBeGreaterThan(scriptsInclude)
     expect(testFilesExclude).toBeGreaterThan(scriptsInclude)
     expect(updaterExclude).toBeGreaterThan(scriptsInclude)
-    expect(ciPathPatternIndex('.github/workflows/torghut-ci.yml')).toBe(-1)
-    expect(ciPathPatternIndex('.github/workflows/torghut-build-push.yaml')).toBe(-1)
+    for (const ownedInput of [
+      '.github/workflows/torghut-ci.yml',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+      'flake.nix',
+      'flake.lock',
+      'nix/images/torghut.nix',
+      'nix/cache-push.sh',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-push.sh',
+      'nix/oci-release-contract.sh',
+    ]) {
+      expect(ciPathPatternOccurrences(ownedInput)).toBe(2)
+    }
+    for (const unrelatedInput of [
+      'services/dorvud/**',
+      'services/jangar/**',
+      'packages/scripts/src/shared/**',
+      'packages/scripts/src/shared/nix-oci-deploy.ts',
+      'packages/scripts/src/shared/oci-digest.ts',
+      '.github/workflows/agents-build-push.yml',
+    ]) {
+      expect(ciPathPatternIndex(unrelatedInput)).toBe(-1)
+    }
   })
 
   it('does not use actions/cache on the ARC-backed build runner', () => {

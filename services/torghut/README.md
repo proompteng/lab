@@ -59,12 +59,10 @@ uv run --frozen python scripts/check_migration_graph.py
 Optional migration-lineage controls:
 
 - `TRADING_DB_SCHEMA_GRAPH_BRANCH_TOLERANCE` (default `1`)
-- `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS` (default `false`; use `true` for controlled override windows)
-- If a PR intentionally changes migration topology beyond the current allowlist, update
-  `DEFAULT_ALLOWED_DIVERGENT_SIGNATURES` in `scripts/check_migration_graph.py` in the same change or land a merge
-  migration that brings the graph back within tolerance. CI will reject undocumented divergence.
-- Remove the runtime override from GitOps after merge migrations collapse the graph back to the tolerated branch count;
-  keep the feature flag default disabled outside explicit rollout windows.
+- The checked-in graph must have one root and one head. There is no embedded divergent-signature allowlist.
+- If a PR intentionally needs a short-lived branch, pass its exact graph signature with `--allow-signature` (or
+  `TRADING_DB_SCHEMA_GRAPH_ALLOWED_DIVERGENCE_SIGNATURES`) in the same change and land a merge migration promptly.
+- `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS` is an emergency-only process override. Do not persist it in GitOps.
 
 ## Pylint size and design guardrails
 
@@ -112,9 +110,26 @@ cd services/torghut
 uv run --frozen python scripts/measure_torghut_tech_debt.py --baseline config/quality/tech-debt-baseline.json --enforce-ratchet
 ```
 
-The ratchet fails when tracked debt counters increase, including over-threshold files/functions/classes, broad `Any`
-imports, broad exception catches, sleep calls, `NotImplementedError` scaffolding, ignore comments, and Pylint design
-findings. Ordinary file and line counts are reported for context but are not ratcheted.
+The ratchet fails when tracked debt counters increase, including production Python file/line budgets across `app` and
+`scripts`, over-threshold files/functions/classes, broad `Any` imports, broad exception catches, sleep calls,
+`NotImplementedError` scaffolding, ignore comments, and Pylint design findings. Tests remain visible in total counts but
+do not consume the production file/line budget. Pylint execution errors and missing Pylint installations fail the
+measurement instead of silently recording zero findings.
+
+## Runtime image ownership
+
+The production Torghut image is built from the `torghut-image` flake package in
+[`nix/images/torghut.nix`](../../nix/images/torghut.nix):
+
+```bash
+nix build .#torghut-image
+```
+
+The current image intentionally retains `kubectl`, `pigz`, `zstd`, a shell, and the operational scripts because
+simulation and repair jobs invoke them in-container. Before shrinking that tool surface, split the API runtime from an
+admin/research image, move operational jobs to the latter, and validate TigerBeetle plus historical-simulation flows on
+both architectures. Non-root execution and a `RuntimeDefault` seccomp profile should be completed with that split; the
+current Knative `Unconfined` contract is not changed implicitly by image cleanup.
 
 ## Dead-code audit (Vulture)
 

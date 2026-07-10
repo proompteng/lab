@@ -109,10 +109,10 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
    - Per-lane blockers are now scoped via each hypothesis manifest dependency capabilities, so a degraded dependency (for example
      `jangar_dependency_delay`) should only affect hypotheses that explicitly require that capability.
    - Read segment output from `dependency_quorum.segments` to confirm impact: check each `segment`, `status`, `scope`, and `reasons` before rerouting incident response.
-   - If rollout must tolerate the current branched graph, verify the PR also updated `scripts/check_migration_graph.py`
-     allowlist evidence for the new signature; temporary GitOps overrides are not sufficient for CI.
-   - After merge migrations reduce the graph back within tolerance, remove
-     `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true` from GitOps and confirm warnings clear from `/db-check`.
+   - The checked-in graph must remain at one root and one head. If an intentional short-lived branch is unavoidable,
+     pass its exact signature explicitly to `scripts/check_migration_graph.py` in the same change.
+   - Do not persist `TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS=true` in GitOps; confirm `/db-check` reports no
+     topology warnings after the merge migration lands.
 3. Validate signal freshness and TA pipeline health.
    - `kubectl -n torghut get deploy torghut-clickhouse-guardrails-exporter torghut-ws torghut-ta`
    - `kubectl -n torghut port-forward svc/torghut-ws 19090:9090`

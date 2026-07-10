@@ -16,8 +16,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
-SCHEMA_VERSION = "torghut.tech-debt-measurement.v1"
+SCHEMA_VERSION = "torghut.tech-debt-measurement.v2"
 DEFAULT_PATHS = ("app", "scripts", "tests")
+PRODUCTION_ROOTS = ("app", "scripts")
 FILE_LINE_THRESHOLDS = (1000,)
 FUNCTION_LINE_THRESHOLDS = (100, 250, 500, 750)
 CLASS_LINE_THRESHOLDS = (300, 500, 750)
@@ -55,6 +56,10 @@ _PYLINT_MESSAGE_RE = re.compile(
 )
 
 
+class PylintMeasurementError(RuntimeError):
+    """Raised when Pylint cannot produce a trustworthy debt inventory."""
+
+
 @dataclass(frozen=True)
 class RatchetViolation:
     metric: str
@@ -68,11 +73,15 @@ class RatchetViolation:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
     root = Path(args.root).resolve()
-    measurement = measure_torghut_debt(
-        root=root,
-        paths=tuple(args.paths),
-        include_pylint_design=not args.skip_pylint_design,
-    )
+    try:
+        measurement = measure_torghut_debt(
+            root=root,
+            paths=tuple(args.paths),
+            include_pylint_design=not args.skip_pylint_design,
+        )
+    except PylintMeasurementError as exc:
+        print(f"Torghut tech-debt measurement failed: {exc}", file=sys.stderr)
+        return 2
     if args.baseline and args.enforce_ratchet:
         baseline = cast(
             Mapping[str, object],
@@ -177,6 +186,10 @@ def measure_torghut_debt(
         "schema_version": SCHEMA_VERSION,
         "paths": sorted(paths),
         "roots": {key: root_counts[key] for key in sorted(root_counts)},
+        "production": {
+            "paths": list(PRODUCTION_ROOTS),
+            **_count_production_roots(root_counts),
+        },
         "total": {
             "files": sum(item["files"] for item in root_counts.values()),
             "lines": sum(item["lines"] for item in root_counts.values()),
@@ -200,22 +213,35 @@ def measure_pylint_design(
     scan_paths = [path for path in paths if (root / path).exists()]
     if not scan_paths:
         return _empty_pylint_design()
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "pylint",
-            *scan_paths,
-            "--disable=all",
-            f"--enable={','.join(PYLINT_DESIGN_RULES)}",
-            "--score=n",
-        ],
-        cwd=root,
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pylint",
+                *scan_paths,
+                "--disable=all",
+                f"--enable={','.join(PYLINT_DESIGN_RULES)}",
+                "--reports=n",
+                "--score=n",
+            ],
+            cwd=root,
+            check=False,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+        )
+    except OSError as exc:
+        raise PylintMeasurementError(f"unable to start Pylint: {exc}") from exc
+    # Pylint uses bit 3 (exit code 8) for refactor findings. Those findings are
+    # the inventory being measured; every other non-zero status means the scan
+    # itself failed or produced output outside the enabled rule family.
+    if result.returncode not in {0, 8}:
+        diagnostic = result.stdout.strip().splitlines()
+        detail = diagnostic[-1] if diagnostic else "no diagnostic output"
+        raise PylintMeasurementError(
+            f"Pylint exited with status {result.returncode}: {detail}"
+        )
     return parse_pylint_design_output(result.stdout)
 
 
@@ -272,6 +298,9 @@ def ratchet_violations(
 
 def ratcheted_metrics(measurement: Mapping[str, object]) -> dict[str, int]:
     metrics: dict[str, int] = {}
+    production = _production_budget(measurement)
+    for key, value in production.items():
+        metrics[f"production.{key}"] = value
     threshold_counts = cast(
         Mapping[str, object], measurement.get("threshold_counts", {})
     )
@@ -295,6 +324,51 @@ def ratcheted_metrics(measurement: Mapping[str, object]) -> dict[str, int]:
         if isinstance(value, int):
             metrics[f"pylint_design.by_code.{code}"] = value
     return metrics
+
+
+def _production_budget(measurement: Mapping[str, object]) -> dict[str, int]:
+    """Read v2 production totals, deriving them from v1 root totals if needed."""
+    production = measurement.get("production")
+    if isinstance(production, Mapping):
+        payload = cast(Mapping[str, object], production)
+        files = payload.get("files")
+        lines = payload.get("lines")
+        if isinstance(files, int) and isinstance(lines, int):
+            return {"files": files, "lines": lines}
+
+    roots = measurement.get("roots")
+    if not isinstance(roots, Mapping):
+        return {}
+    root_payload = cast(Mapping[str, object], roots)
+    files = 0
+    lines = 0
+    found = False
+    for name in PRODUCTION_ROOTS:
+        summary = root_payload.get(name)
+        if not isinstance(summary, Mapping):
+            continue
+        found = True
+        summary_payload = cast(Mapping[str, object], summary)
+        root_files = summary_payload.get("files")
+        root_lines = summary_payload.get("lines")
+        if isinstance(root_files, int):
+            files += root_files
+        if isinstance(root_lines, int):
+            lines += root_lines
+    return {"files": files, "lines": lines} if found else {}
+
+
+def _count_production_roots(
+    root_counts: Mapping[str, Mapping[str, int]],
+) -> dict[str, int]:
+    return {
+        "files": sum(
+            root_counts.get(name, {}).get("files", 0) for name in PRODUCTION_ROOTS
+        ),
+        "lines": sum(
+            root_counts.get(name, {}).get("lines", 0) for name in PRODUCTION_ROOTS
+        ),
+    }
 
 
 def format_json(measurement: Mapping[str, object]) -> str:

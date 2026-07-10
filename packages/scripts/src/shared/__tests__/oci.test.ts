@@ -564,8 +564,24 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain("'packages/scripts/src/shared/**'")
       expect(workflow).not.toContain('- packages/scripts/src/shared/**')
       expect(workflow).not.toContain("'packages/scripts/src/shared/nix-oci-deploy.ts'")
+    }
+
+    for (const workflow of [
+      agentsBuildWorkflow,
+      arcRunnerBuildWorkflow,
+      jangarBuildWorkflow,
+      symphonyBuildWorkflow,
+      sagBuildWorkflow,
+      productNixWorkflow,
+      headlampWorkflow,
+    ]) {
       expect(workflow).not.toContain("- 'nix/oci-release-contract.sh'")
     }
+    for (const helperInput of nixImageHelperInputs) {
+      expect(torghutBuildWorkflow).toContain(`- '${helperInput}'`)
+    }
+    expect(torghutBuildWorkflow).not.toContain("- 'packages/scripts/src/shared/oci-digest.ts'")
+    expect(torghutBuildWorkflow).not.toContain("- 'packages/scripts/src/shared/docker.ts'")
 
     expect(productNixWorkflow).not.toContain("'nix/**'")
     expect(agentsBuildWorkflow).not.toContain("'packages/scripts/src/shared/docker.ts'")
@@ -660,7 +676,6 @@ describe('native OCI build workflows', () => {
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
-      torghutBuildWorkflow,
       torghutTaBuildWorkflow,
       torghutWsBuildWorkflow,
       torghutHyperliquidFeedBuildWorkflow,
@@ -670,16 +685,41 @@ describe('native OCI build workflows', () => {
       expect(workflow).not.toContain("- '.github/workflows/")
       expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
     }
+
+    for (const ownedInput of [
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+    ]) {
+      expect(torghutBuildWorkflow).toContain(`- '${ownedInput}'`)
+    }
+    expect(torghutBuildWorkflow).not.toContain("- '.github/workflows/torghut-release.yml'")
+    expect(torghutBuildWorkflow).not.toContain("- '.github/workflows/agents-build-push.yml'")
   })
 
   it('does not fan out service CI on image workflow-only changes', () => {
-    for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow, torghutCiWorkflow]) {
+    for (const workflow of [agentsCiWorkflow, symphonyCiWorkflow]) {
       expect(workflow).not.toContain("- '.github/workflows/")
       expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
       expect(workflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
     }
     expect(agentsCiWorkflow).not.toContain("- 'package.json'")
-    expect(torghutCiWorkflow).not.toContain('github/workflows/torghut-')
+    for (const ownedInput of [
+      '.github/workflows/torghut-ci.yml',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain/**',
+      'flake.nix',
+      'flake.lock',
+      'nix/images/torghut.nix',
+      ...nixImageHelperInputs,
+    ]) {
+      expect(torghutCiWorkflow).toContain(`- '${ownedInput}'`)
+    }
+    expect(torghutCiWorkflow).not.toContain("- '.github/workflows/agents-build-push.yml'")
+    expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/**'")
+    expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/nix-oci-deploy.ts'")
     expect(torghutCiWorkflow).not.toContain("- 'packages/scripts/src/shared/oci-digest.ts'")
   })
 

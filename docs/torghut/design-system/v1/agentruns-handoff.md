@@ -314,7 +314,7 @@ Concrete commands live in `docs/torghut/ci-cd.md`. Quick pointers:
 
 - WS forwarder image: `services/dorvud/websockets/Dockerfile`
 - TA Flink job image: `services/dorvud/technical-analysis-flink/Dockerfile`
-- Trading service image: `services/torghut/Dockerfile`
+- Trading service image: `nix/images/torghut.nix` (`nix build .#torghut-image`)
 
 ## Known sharp edges (production-proven)
 

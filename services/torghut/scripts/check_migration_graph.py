@@ -12,12 +12,6 @@ from typing import Any
 
 from app.db import _parse_migration_graph
 
-# Current graph is intentionally branched while merge migrations are in progress.
-# Any new divergent graph shape must update this allowlist explicitly in the same change.
-DEFAULT_ALLOWED_DIVERGENT_SIGNATURES = {
-    "ac5a75f133e919f02b8064501a537fd3fc2580fa14d8ab6906edcf599ede1235",
-}
-
 
 def _parse_bool(value: str | None, *, default: bool = False) -> bool:
     if value is None:
@@ -108,10 +102,7 @@ def main() -> int:
         for parent in _as_list(summary.get("expected_migration_orphan_parents"))
     ]
 
-    allowed_signatures = set(DEFAULT_ALLOWED_DIVERGENT_SIGNATURES)
-    allowed_signatures.update(
-        {signature for signature in args.allow_signature if signature}
-    )
+    allowed_signatures = {signature for signature in args.allow_signature if signature}
     env_allowed_signatures = os.getenv(
         "TRADING_DB_SCHEMA_GRAPH_ALLOWED_DIVERGENCE_SIGNATURES", ""
     ).strip()

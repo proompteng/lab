@@ -68,7 +68,7 @@ class TestCheckMigrationGraphScript(TestCase):
             ],
         )
 
-    def test_cli_accepts_allowlisted_signature_for_known_divergence(self) -> None:
+    def test_cli_accepts_explicit_signature_for_intentional_divergence(self) -> None:
         with TemporaryDirectory() as tmpdir:
             versions_dir = Path(tmpdir)
             _write_migration(versions_dir / "0001_root.py", "0001_root", None)
@@ -95,3 +95,21 @@ class TestCheckMigrationGraphScript(TestCase):
                 f"migration branch count 2 exceeds allowed 1; allowlisted signature {signature}"
             ],
         )
+
+    def test_repository_graph_has_one_root_and_one_head_without_overrides(self) -> None:
+        result = self._run_script()
+
+        self.assertEqual(result.returncode, 0, msg=result.stdout or result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(len(payload["roots"]), 1)
+        self.assertEqual(len(payload["heads"]), 1)
+        self.assertEqual(payload["warnings"], [])
+
+    def test_sim_manifest_does_not_enable_schema_graph_divergence(self) -> None:
+        repo_root = _service_root().parents[1]
+        manifest = (
+            repo_root / "argocd/applications/torghut/knative-service-sim.yaml"
+        ).read_text(encoding="utf-8")
+
+        self.assertNotIn("TRADING_DB_SCHEMA_GRAPH_ALLOW_DIVERGENCE_ROOTS", manifest)

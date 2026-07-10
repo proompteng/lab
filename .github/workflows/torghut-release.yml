@@ -133,6 +133,7 @@ jobs:
                     nix/oci-inspect-archive.sh \
                     nix/oci-push.sh \
                     nix/oci-release-contract.sh \
+                    flake.nix \
                     flake.lock \
                     services/torghut/uv.lock \
                     .github/workflows/torghut-build-push.yaml \
