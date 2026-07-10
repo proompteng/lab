@@ -343,6 +343,11 @@ jobs:
       - run: bun run --filter @proompteng/otel build
 
       - run: bun run --filter @proompteng/bonjour build
+      - run: |
+          set -euo pipefail
+          bun run --filter @proompteng/bonjour synth
+          test "$(find services/bonjour/manifests -type f -name '*.yaml' | wc -l | tr -d ' ')" = 3
+          ! grep -R '^---$' services/bonjour/manifests
 
   codex:
     needs: check_changed_files

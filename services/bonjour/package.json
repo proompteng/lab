@@ -2,14 +2,14 @@
   "name": "@proompteng/bonjour",
   "version": "0.1.0",
   "private": true,
-  "description": "Example Hono server with cdk8s manifests generated through the CLI for Argo CD CMP integration.",
+  "description": "Disabled Hono sample with locally generated cdk8s manifests for compiler smoke testing.",
   "type": "module",
   "main": "dist/server.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "dev": "tsx src/server.ts",
     "build": "tsc --project tsconfig.json --noEmit false --sourceMap true --declaration true --declarationDir dist",
-    "synth": "bunx cdk8s-cli synth --no-check-upgrade",
+    "synth": "cdk8s synth --no-check-upgrade",
     "clean": "rimraf dist manifests",
     "lint:oxlint": "oxlint --config ../../.oxlintrc.json .",
     "lint:oxlint:type": "oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./tsconfig.json . && oxlint --config ../../.oxlintrc.json --type-aware --tsconfig ./infra/tsconfig.json infra"

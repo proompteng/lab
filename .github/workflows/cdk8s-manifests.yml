@@ -1,0 +1,126 @@
+name: cdk8s-manifests
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+    paths:
+      - 'packages/k8s/**'
+      - 'argocd/applications/docs/**'
+      - 'argocd/applications/analysis/**'
+      - 'argocd/applications/*/generated/**'
+      - 'argocd/applications/argocd/base/image-updater-product.yaml'
+      - 'bun.lock'
+      - 'package.json'
+      - 'scripts/kubeconform.sh'
+      - 'schemas/custom/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/cdk8s-manifests.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/k8s/**'
+      - 'argocd/applications/docs/**'
+      - 'argocd/applications/analysis/**'
+      - 'argocd/applications/*/generated/**'
+      - 'argocd/applications/argocd/base/image-updater-product.yaml'
+      - 'bun.lock'
+      - 'package.json'
+      - 'scripts/kubeconform.sh'
+      - 'schemas/custom/**'
+      - 'flake.nix'
+      - 'flake.lock'
+      - 'nix/**'
+      - '.github/actions/setup-nix-toolchain/**'
+      - '.github/workflows/cdk8s-manifests.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Cache Bun packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-1.3.14-
+
+      - name: Install dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/k8s
+
+      - name: Check formatting
+        run: bunx oxfmt --check packages/k8s
+
+      - name: Lint
+        run: bun run --filter @proompteng/k8s lint:oxlint
+
+      - name: Type-check lint
+        run: bun run --filter @proompteng/k8s lint:oxlint:type
+
+      - name: Type-check
+        run: bun run --filter @proompteng/k8s typecheck
+
+      - name: Test charts and compiler policies
+        run: bun run --filter @proompteng/k8s test
+
+      - name: Check imported API definitions
+        run: |
+          set -euo pipefail
+          bun run --filter @proompteng/k8s imports:check
+          git diff --exit-code -- packages/k8s/src/imports
+
+      - name: Check synthesis determinism and tracked output
+        run: |
+          set -euo pipefail
+          bun run --filter @proompteng/k8s synth:check -- --all
+          bun run --filter @proompteng/k8s synth:check -- --all
+          git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
+
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          extra-nix-config: |
+            experimental-features = nix-command flakes
+
+      - name: Render and validate generated applications
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t applications < <(bun run packages/k8s/src/cli.ts list)
+          test "${#applications[@]}" -gt 0
+          for application in "${applications[@]}"; do
+            rendered="${RUNNER_TEMP}/${application}.yaml"
+            nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+            nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
+            nix develop -c scripts/kubeconform.sh "${rendered}"
+          done
+          if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
+            echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2
+            exit 1
+          fi
+          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/docs@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/docs.yaml"
+          grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis:[0-9a-f]{40}$' "${RUNNER_TEMP}/analysis.yaml"
+          grep -Fq 'writeBackTarget: kustomization:/argocd/applications/docs' argocd/applications/argocd/base/image-updater-product.yaml
+          grep -Fq 'writeBackTarget: kustomization:/argocd/applications/analysis' argocd/applications/argocd/base/image-updater-product.yaml
