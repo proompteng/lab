@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -23,6 +23,7 @@ def _allocation(
     pair_side: str,
     notional: Decimal,
     event_ts: datetime | None = None,
+    pair_side_count: int = 1,
 ) -> AllocationResult:
     price = Decimal("100")
     decision = StrategyDecision(
@@ -36,7 +37,8 @@ def _allocation(
         limit_price=price,
         rationale=(
             "microbar_cross_sectional_pair_entry,"
-            f"pair_side:{pair_side},selection_mode:continuation"
+            f"pair_side:{pair_side},pair_side_count:{pair_side_count},"
+            f"max_pair_legs:{pair_side_count * 2},selection_mode:continuation"
         ),
         params={
             "price": str(price),
@@ -176,6 +178,155 @@ def test_pair_reservation_scopes_groups_by_signal_timestamp() -> None:
         for item in group
     }
     assert len(group_ids) == 2
+
+
+def test_pair_reservation_matches_staggered_legs_within_poll_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "trading_poll_ms", 5000)
+    first_event = datetime(2026, 7, 10, 14, 30, tzinfo=timezone.utc)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="AAPL",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol="AMZN",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event + timedelta(seconds=1),
+            ),
+        ],
+        account={"equity": "40000", "buying_power": "100000"},
+        positions=[],
+    )
+
+    assert len(groups) == 1
+    assert all(item.approved for item in groups[0])
+    assert {item.decision.symbol for item in groups[0]} == {"AAPL", "AMZN"}
+
+
+def test_pair_reservation_matches_nearest_legs_across_staggered_epochs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "trading_poll_ms", 5000)
+    first_event = datetime(2026, 7, 10, 14, 30, tzinfo=timezone.utc)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="AAPL",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol="NVDA",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event + timedelta(seconds=1),
+            ),
+            _allocation(
+                symbol="AMD",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event + timedelta(seconds=1),
+            ),
+            _allocation(
+                symbol="AMZN",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event + timedelta(seconds=2),
+            ),
+        ],
+        account={"equity": "40000", "buying_power": "100000"},
+        positions=[],
+    )
+
+    assert len(groups) == 2
+    assert all(len(group) == 2 for group in groups)
+    assert all(item.approved for group in groups for item in group)
+    assert [{item.decision.symbol for item in group} for group in groups] == [
+        {"AAPL", "AMZN"},
+        {"NVDA", "AMD"},
+    ]
+
+
+def test_pair_reservation_rejects_legs_beyond_poll_interval(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "trading_poll_ms", 5000)
+    first_event = datetime(2026, 7, 10, 14, 30, tzinfo=timezone.utc)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="AAPL",
+                action="buy",
+                pair_side="high_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event,
+            ),
+            _allocation(
+                symbol="AMZN",
+                action="sell",
+                pair_side="low_rank",
+                notional=Decimal("10000"),
+                event_ts=first_event + timedelta(seconds=6),
+            ),
+        ],
+        account={"equity": "40000", "buying_power": "100000"},
+        positions=[],
+    )
+
+    assert len(groups) == 2
+    assert not any(item.approved for group in groups for item in group)
+    assert all(
+        "pair_opposite_leg_missing" in item.reason_codes
+        for group in groups
+        for item in group
+    )
+
+
+def test_pair_reservation_rejects_incomplete_multi_pair_cohort(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(settings, "trading_poll_ms", 5000)
+
+    groups = reserve_pair_allocations(
+        [
+            _allocation(
+                symbol="AAPL",
+                action="buy",
+                pair_side="high_rank",
+                pair_side_count=2,
+                notional=Decimal("10000"),
+            ),
+            _allocation(
+                symbol="AMZN",
+                action="sell",
+                pair_side="low_rank",
+                pair_side_count=2,
+                notional=Decimal("10000"),
+            ),
+        ],
+        account={"equity": "40000", "buying_power": "100000"},
+        positions=[],
+    )
+
+    assert len(groups) == 1
+    assert not any(item.approved for item in groups[0])
+    assert all("pair_leg_count_incomplete" in item.reason_codes for item in groups[0])
 
 
 @pytest.mark.parametrize(
