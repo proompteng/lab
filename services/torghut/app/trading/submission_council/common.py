@@ -188,11 +188,7 @@ def decimal_text(value: Decimal) -> str:
 
 
 def bounded_paper_route_probe_notional() -> Decimal:
-    return max(
-        _safe_decimal(settings.trading_simple_paper_route_probe_max_notional)
-        or Decimal("0"),
-        Decimal("0"),
-    )
+    return Decimal("0")
 
 
 def _bounded_paper_route_probe_collection_payload(

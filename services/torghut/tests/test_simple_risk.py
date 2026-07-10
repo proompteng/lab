@@ -136,6 +136,80 @@ class TestSimpleRisk(TestCase):
             Decimal(result.diagnostics["buying_power_after_reserve"]),
         )
 
+    def test_gross_target_uses_equity_ceiling_and_reserved_buying_power(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(qty="500", price="100"),
+            account={"buying_power": "30000", "equity": "10000", "cash": "0"},
+            positions=[
+                {
+                    "symbol": "MSFT",
+                    "qty": "100",
+                    "market_value": "10000",
+                    "side": "long",
+                }
+            ],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+            buying_power_reserve_bps=Decimal("1000"),
+            max_gross_exposure_pct_equity=Decimal("4"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("270"))
+        self.assertEqual(result.notional, Decimal("27000"))
+        self.assertEqual(result.diagnostics["gross_cap_notional"], "40000")
+        self.assertEqual(result.diagnostics["buying_power_after_reserve"], "27000.0")
+
+    def test_net_cap_clamps_directional_exposure(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(qty="20", price="100"),
+            account={"buying_power": "10000", "equity": "10000", "cash": "0"},
+            positions=[
+                {
+                    "symbol": "MSFT",
+                    "qty": "40",
+                    "market_value": "4000",
+                    "side": "long",
+                }
+            ],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+            max_net_exposure_pct_equity=Decimal("0.5"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("10"))
+        self.assertEqual(result.diagnostics["current_net_notional"], "4000")
+        self.assertEqual(result.diagnostics["net_cap_notional"], "5000.0")
+        self.assertTrue(result.decision.params["execution"]["capped_by_net"])
+
+    def test_net_cap_allows_a_trade_that_reduces_an_existing_breach(self) -> None:
+        result = prepare_simple_decision(
+            decision=self._decision(action="sell", qty="20", price="100"),
+            account={"buying_power": "0", "equity": "10000", "cash": "0"},
+            positions=[
+                {
+                    "symbol": "AAPL",
+                    "qty": "60",
+                    "market_value": "6000",
+                    "side": "long",
+                }
+            ],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+            max_net_exposure_pct_equity=Decimal("0.5"),
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("20"))
+        self.assertFalse(result.decision.params["execution"]["capped_by_net"])
+
     def test_rejects_when_buying_power_cap_leaves_less_than_min_qty(self) -> None:
         result = prepare_simple_decision(
             decision=self._decision(qty="5"),
@@ -149,6 +223,32 @@ class TestSimpleRisk(TestCase):
 
         self.assertFalse(result.approved)
         self.assertEqual(result.reject_reason, "insufficient_buying_power")
+
+    def test_short_buying_power_uses_three_percent_ask_uplift(self) -> None:
+        decision = self._decision(action="sell", qty="10", price="100")
+        decision = decision.model_copy(
+            update={
+                "params": {
+                    "price": "100",
+                    "price_snapshot": {"price": "100", "ask": "101"},
+                }
+            }
+        )
+
+        result = prepare_simple_decision(
+            decision=decision,
+            account={"buying_power": "500", "equity": "10000", "cash": "0"},
+            positions=[],
+            fractional_equities_enabled=False,
+            allow_shorts=True,
+            max_notional_per_order=None,
+            max_notional_per_symbol=None,
+        )
+
+        self.assertTrue(result.approved)
+        self.assertEqual(result.decision.qty, Decimal("4"))
+        self.assertEqual(result.diagnostics["buying_power_reference_price"], "104.03")
+        self.assertEqual(result.diagnostics["buying_power_required_notional"], "416.12")
 
     def test_rejects_when_buying_power_is_zero(self) -> None:
         result = prepare_simple_decision(

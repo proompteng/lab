@@ -629,7 +629,6 @@ def build_profit_carry_passport_ledger(
             ),
             "proof_floor_ref": proof_floor.get("receipt_id")
             or proof_floor.get("schema_version"),
-            "revenue_repair_digest_ref": "/trading/revenue-repair",
             "repair_outcome_dividend_ledger_ref": _mapping(
                 repair_outcome_dividend_ledger
             ).get("ledger_id"),

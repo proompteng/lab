@@ -15,7 +15,9 @@ from ....models import (
 )
 from ....observability import capture_posthog_event
 from ...models import StrategyDecision
+from ...pair_intent import is_pair_entry
 from ...prices import MarketSnapshot
+from ...simple_risk import prepare_simple_decision
 from ...execution_runtime import ExecutionOrderResult, record_last_execution_order
 from ...tca import derive_adaptive_execution_policy
 from ..state import (
@@ -31,11 +33,10 @@ from .contexts import (
     ExecutionPolicyRequest,
     ExecutionFallbackRequest,
     LLMReviewContext,
-    LiveSubmissionGateInputs,
     OrderSubmissionRequest,
     RiskVerdictRequest,
 )
-from .shared import TradingPipelineBase
+from .shared import TradingPipelineRuntime
 from .support import (
     allocator_rejection_reasons,
     autonomy_gate_report_is_saturated_fail_sentinel,
@@ -48,6 +49,17 @@ from .support import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _minimum_limit(*values: Decimal | None) -> Decimal | None:
+    limits = [value for value in values if value is not None and value >= 0]
+    return min(limits) if limits else None
+
+
+def _equity_limit(equity: Decimal | None, fraction: Decimal | None) -> Decimal | None:
+    if equity is None or equity <= 0 or fraction is None or fraction <= 0:
+        return None
+    return equity * fraction
 
 
 def _decision_execution_notional(decision: StrategyDecision) -> Decimal:
@@ -80,7 +92,7 @@ def _decision_execution_notional(decision: StrategyDecision) -> Decimal:
     return Decimal("0")
 
 
-class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
+class TradingPipelineSubmissionPolicyMixin(TradingPipelineRuntime):
     def _prepare_decision_for_submission(
         self,
         *,
@@ -137,6 +149,14 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
                 ),
             )
             return None
+
+        preparation = self._apply_capital_exposure_limits(
+            context=context,
+            decision=decision,
+        )
+        if preparation is None:
+            return None
+        decision = preparation
 
         decision, gate_payload, gate_rejection = self._apply_runtime_uncertainty_gate(
             decision, positions=context.positions
@@ -215,6 +235,88 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
             gate_rejection=None,
         )
         return decision, snapshot
+
+    def _apply_capital_exposure_limits(
+        self,
+        *,
+        context: DecisionSubmissionContext,
+        decision: StrategyDecision,
+    ) -> StrategyDecision | None:
+        equity = optional_decimal(context.account.get("equity"))
+        max_order_notional = None
+        if settings.trading_mode != "live":
+            max_order_notional = _minimum_limit(
+                optional_decimal(settings.trading_max_notional_per_trade),
+                optional_decimal(context.strategy.max_notional_per_trade),
+            )
+        max_symbol_notional = _minimum_limit(
+            _equity_limit(
+                equity,
+                optional_decimal(settings.trading_simple_max_symbol_pct_equity),
+            ),
+            _equity_limit(
+                equity,
+                optional_decimal(settings.trading_max_position_pct_equity),
+            ),
+            _equity_limit(
+                equity,
+                optional_decimal(context.strategy.max_position_pct_equity),
+            ),
+        )
+        if settings.trading_mode != "live":
+            max_symbol_notional = _minimum_limit(
+                max_symbol_notional,
+                optional_decimal(settings.trading_allocator_max_symbol_notional),
+            )
+        preparation = prepare_simple_decision(
+            decision=decision,
+            account=context.account,
+            positions=context.positions,
+            fractional_equities_enabled=settings.trading_fractional_equities_enabled,
+            allow_shorts=settings.trading_allow_shorts,
+            max_notional_per_order=max_order_notional,
+            max_notional_per_symbol=max_symbol_notional,
+            buying_power_reserve_bps=Decimal(
+                str(settings.trading_simple_buying_power_reserve_bps)
+            ),
+            max_order_pct_equity=optional_decimal(
+                settings.trading_simple_max_order_pct_equity
+            ),
+            max_gross_exposure_pct_equity=optional_decimal(
+                settings.trading_simple_max_gross_exposure_pct_equity
+            ),
+            max_net_exposure_pct_equity=(
+                None
+                if is_pair_entry(decision)
+                else optional_decimal(
+                    settings.trading_simple_max_net_exposure_pct_equity
+                )
+            ),
+            require_equity_for_exposure_increase=settings.trading_simple_submit_enabled,
+        )
+        if not preparation.approved:
+            self._record_decision_rejection(
+                DecisionRejectionRequest(
+                    context.session,
+                    decision,
+                    context.decision_row,
+                    [preparation.reject_reason or "capital_exposure_rejected"],
+                    "Decision rejected by capital exposure limits strategy_id=%s symbol=%s reason=%s",
+                )
+            )
+            return None
+        decision = preparation.decision
+        self.executor.sync_decision_state(
+            context.session,
+            context.decision_row,
+            decision,
+        )
+        self.executor.update_decision_params(
+            context.session,
+            context.decision_row,
+            decision.params,
+        )
+        return decision
 
     def _record_runtime_uncertainty_gate_result(
         self,
@@ -646,9 +748,7 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineBase):
                 decision.symbol,
             )
             return False
-        live_submission_gate = self._live_submission_gate(
-            inputs=LiveSubmissionGateInputs(session=session)
-        )
+        live_submission_gate = self._live_submission_gate()
         if settings.trading_mode == "live" and not bool(
             live_submission_gate.get("allowed", False)
         ):

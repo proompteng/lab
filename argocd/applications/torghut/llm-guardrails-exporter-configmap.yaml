@@ -16,7 +16,6 @@ data:
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     TORGHUT_BASE_URL = os.environ.get("TORGHUT_BASE_URL", "http://torghut.torghut.svc.cluster.local")
-    METRICS_PATH = os.environ.get("TORGHUT_METRICS_PATH", "/trading/metrics")
     STATUS_PATH = os.environ.get("TORGHUT_STATUS_PATH", "/trading/status")
     EXPORTER_PORT = int(os.environ.get("EXPORTER_PORT", "9110"))
     SCRAPE_INTERVAL_SECONDS = int(os.environ.get("SCRAPE_INTERVAL_SECONDS", "30"))
@@ -71,11 +70,10 @@ data:
     def scrape_once():
         now = time.time()
         try:
-            payload = fetch_json(METRICS_PATH)
-            metrics = payload.get("metrics", {})
-            if not isinstance(metrics, dict):
-                raise RuntimeError("metrics payload missing or invalid")
             status_payload = fetch_json(STATUS_PATH)
+            metrics = status_payload.get("metrics", {})
+            if not isinstance(metrics, dict):
+                raise RuntimeError("status metrics payload missing or invalid")
             llm = status_payload.get("llm", {})
             if not isinstance(llm, dict):
                 llm = {}

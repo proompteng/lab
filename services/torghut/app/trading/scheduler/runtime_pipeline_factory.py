@@ -18,11 +18,10 @@ from ..risk import RiskEngine
 from ..universe import UniverseResolver
 from .pipeline import TradingPipeline
 from .pipeline.contexts import TradingPipelineRuntimeDependencies
-from .simple_pipeline import SimpleTradingPipeline
 from .state import TradingState
 
 
-def build_simple_trading_pipeline_for_account(
+def build_trading_pipeline_for_account(
     *,
     lane: TradingAccountLane,
     state: TradingState,
@@ -57,4 +56,4 @@ def build_simple_trading_pipeline_for_account(
         strategy_catalog=strategy_catalog,
         order_feed_ingestor=OrderFeedIngestor(default_account_label=lane.label),
     )
-    return SimpleTradingPipeline(dependencies=dependencies)
+    return TradingPipeline(dependencies=dependencies)

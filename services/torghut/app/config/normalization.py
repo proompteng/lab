@@ -383,14 +383,6 @@ class SettingsNormalizationMixin(
                 "TRADING_PLANNED_DECISION_TIMEOUT_SECONDS must be >= 0",
             ),
             (
-                self.trading_simple_max_notional_per_order,
-                "TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER must be >= 0",
-            ),
-            (
-                self.trading_simple_max_notional_per_symbol,
-                "TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL must be >= 0",
-            ),
-            (
                 self.trading_simple_max_order_pct_equity,
                 "TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY must be >= 0",
             ),
@@ -399,20 +391,48 @@ class SettingsNormalizationMixin(
                 "TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY must be >= 0",
             ),
             (
+                self.trading_simple_max_net_exposure_pct_equity,
+                "TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY must be >= 0",
+            ),
+            (
+                self.trading_simple_max_symbol_pct_equity,
+                "TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY must be >= 0",
+            ),
+            (
                 self.trading_simple_buying_power_reserve_bps,
                 "TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS must be >= 0",
             ),
             (
-                self.trading_simple_paper_route_probe_max_notional,
-                "TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL must be >= 0",
+                self.trading_daily_loss_stop_pct_equity,
+                "TRADING_DAILY_LOSS_STOP_PCT_EQUITY must be >= 0",
             ),
             (
-                self.trading_simple_paper_route_probe_exit_lookback_hours,
-                "TRADING_SIMPLE_PAPER_ROUTE_PROBE_EXIT_LOOKBACK_HOURS must be >= 0",
+                self.trading_persistent_drawdown_stop_pct_equity,
+                "TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY must be >= 0",
             ),
             (
-                self.trading_paper_route_target_plan_timeout_seconds,
-                "TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS must be >= 0",
+                self.trading_order_reprice_seconds,
+                "TRADING_ORDER_REPRICE_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_order_max_attempts,
+                "TRADING_ORDER_MAX_ATTEMPTS must be >= 0",
+            ),
+            (
+                self.trading_order_slippage_bps,
+                "TRADING_ORDER_SLIPPAGE_BPS must be >= 0",
+            ),
+            (
+                self.trading_closeout_reprice_seconds,
+                "TRADING_CLOSEOUT_REPRICE_SECONDS must be >= 0",
+            ),
+            (
+                self.trading_closeout_max_attempts,
+                "TRADING_CLOSEOUT_MAX_ATTEMPTS must be >= 0",
+            ),
+            (
+                self.trading_closeout_slippage_bps,
+                "TRADING_CLOSEOUT_SLIPPAGE_BPS must be >= 0",
             ),
             (
                 self.trading_readiness_dependency_cache_stale_tolerance_seconds,
@@ -446,6 +466,42 @@ class SettingsNormalizationMixin(
         if not (0 <= self.trading_allocator_regime_low_confidence_multiplier <= 1):
             raise ValueError(
                 "TRADING_ALLOCATOR_REGIME_LOW_CONFIDENCE_MULTIPLIER must be within [0, 1]"
+            )
+        for value, name in (
+            (
+                self.trading_daily_loss_stop_pct_equity,
+                "TRADING_DAILY_LOSS_STOP_PCT_EQUITY",
+            ),
+            (
+                self.trading_persistent_drawdown_stop_pct_equity,
+                "TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY",
+            ),
+        ):
+            if not 0 < value <= 1:
+                raise ValueError(f"{name} must be within (0, 1]")
+        if self.trading_order_max_attempts < 1:
+            raise ValueError("TRADING_ORDER_MAX_ATTEMPTS must be >= 1")
+        if self.trading_closeout_max_attempts < 1:
+            raise ValueError("TRADING_CLOSEOUT_MAX_ATTEMPTS must be >= 1")
+        if not (
+            self.trading_new_exposure_cutoff_time_et
+            <= self.trading_flatten_start_time_et
+            <= self.trading_flat_confirmation_time_et
+        ):
+            raise ValueError(
+                "TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET, "
+                "TRADING_FLATTEN_START_TIME_ET, and "
+                "TRADING_FLAT_CONFIRMATION_TIME_ET must be ordered"
+            )
+        if (
+            self.trading_enabled
+            and self.trading_mode == "live"
+            and self.trading_simple_submit_enabled
+            and self.trading_live_submit_enabled
+            and not self.trading_emergency_stop_enabled
+        ):
+            raise ValueError(
+                "TRADING_EMERGENCY_STOP_ENABLED must be true when live submission is enabled"
             )
 
     def _validate_allocator_map_settings(self) -> None:

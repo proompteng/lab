@@ -16,28 +16,10 @@ The empirical workflow depends on the namespace-local sealed secret
 `rook-ceph-rgw-argo-workflows` for Argo archive-log uploads. Keep that secret managed here so
 workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.
 
-Runtime-ledger proof packet assembly is no longer scheduled by a Torghut CronJob. Use the explicit operator/API repair
-paths and Argo workflow submissions for bounded proof collection; do not reintroduce a GitOps CronJob that silently
-promotes or imports runtime-window evidence on a timer.
-
-The `torghut-paper-account-flatten` CronJob runs at 09:05, 09:15, 09:20, and 09:25 America/New_York before the regular
-session, then repeats those minutes during the post-close 16:00 hour.
-The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before explicit
-operator proof collection turns a closed paper-route window into authority-checkable runtime-ledger evidence.
-
 The live TigerBeetle journal CronJob uses small supervised source slices. Keep the execution batch and order-event
-max-batch settings conservative enough to finish under the watchdog; failed slices do not grant accounting authority and
-slow the backlog drain that feeds runtime-ledger proof.
+max-batch settings conservative enough to finish under the watchdog; failed slices block the runtime ledger gate.
 
 Trigger a simulation run via Argo:
-
-The proof packet separates post-cost proof authority from live capital promotion
-authority. `post_cost_proof_authority.allowed=true` means the runtime-ledger
-packet proved the configured post-cost target from paper-route/runtime evidence.
-`promotion_authority.allowed` and `capital_promotion_authority.allowed` can still
-remain false when submit, certificate, or promotion-decision gates are blocked;
-that is an explicit GitOps/manual-promotion prerequisite, not evidence that the
-runtime-ledger proof is missing.
 
 ```bash
 argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workflows \

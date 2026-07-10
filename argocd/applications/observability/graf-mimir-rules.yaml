@@ -695,7 +695,7 @@ data:
             annotations:
               summary: Torghut LLM guardrails scrape failing
               description: |
-                The LLM guardrails exporter cannot reach /trading/metrics or /trading/status.
+                The LLM guardrails exporter cannot read /trading/status.
                 Review torghut service health and network policies.
               runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
           - alert: TorghutLLMGuardrailsBlocking

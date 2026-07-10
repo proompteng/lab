@@ -340,7 +340,7 @@ describe('torghut build-push workflow', () => {
     expect(pytestShardJobBody).toContain(
       'uv run --frozen pytest --collect-only -q tests --ignore=tests/autoresearch_runner',
     )
-    expect(pytestShardJobBody).toContain('EXPECTED_MIN_COUNT_MISMATCH:%d')
+    expect(pytestShardJobBody).not.toContain('EXPECTED_MIN_COUNT_MISMATCH')
     expect(pytestShardJobBody).toContain('"${TEST_NODES[@]}"')
     expect(pytestShardJobBody).not.toContain("find tests -name 'test_*.py'")
     expect(pytestShardJobBody).not.toContain('"${TEST_FILES[@]}"')

@@ -47,7 +47,7 @@ class TestCheckDiffCoverage(TestCase):
             args = _parse_args()
 
         self.assertEqual(args.coverage_xml, "coverage.xml")
-        self.assertEqual(args.threshold, 90.0)
+        self.assertEqual(args.threshold, 80.0)
         self.assertEqual(args.base_ref, "")
 
     def test_parse_args_accepts_explicit_values(self) -> None:

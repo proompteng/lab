@@ -121,15 +121,6 @@ class DecisionSubmissionContext:
 
 
 @dataclass(frozen=True)
-class LiveSubmissionGateInputs:
-    session: Session | None = None
-    hypothesis_summary: Mapping[str, Any] | None = None
-    empirical_jobs_status: Mapping[str, Any] | None = None
-    dspy_runtime_status: Mapping[str, Any] | None = None
-    quant_health_status: Mapping[str, Any] | None = None
-
-
-@dataclass(frozen=True)
 class DecisionBlockRequest:
     session: Session
     decision: StrategyDecision

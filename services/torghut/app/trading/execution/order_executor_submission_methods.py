@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from ...models import (
     coerce_json_payload,
 )
+from ..broker_risk_snapshot import (
+    normalize_live_open_order_rows,
+    normalize_live_position_rows,
+)
 from ...config import settings
 from ..models import ExecutionRequest, StrategyDecision
 from ..quantity_rules import (
@@ -352,6 +356,8 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
     def _list_open_orders(execution_client: Any) -> list[dict[str, Any]]:
         lister = getattr(execution_client, "list_orders", None)
         if not callable(lister):
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_open_order_read_unavailable")
             return []
         orders: Any
         try:
@@ -360,24 +366,34 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
             try:
                 orders = lister()
             except Exception as exc:
+                if settings.trading_mode == "live":
+                    raise RuntimeError("live_broker_open_order_read_failed") from exc
                 logger.warning(
                     "Failed to list open orders for broker precheck: %s", exc
                 )
                 return []
         except Exception as exc:
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_open_order_read_failed") from exc
             logger.warning("Failed to list open orders for broker precheck: %s", exc)
             return []
 
         if not isinstance(orders, list):
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_open_order_read_invalid")
             return []
         raw_orders = cast(list[object], orders)
         normalized: list[dict[str, Any]] = []
         for order in raw_orders:
             if not isinstance(order, Mapping):
+                if settings.trading_mode == "live":
+                    raise RuntimeError("live_broker_open_order_read_invalid")
                 continue
             mapped = cast(Mapping[object, Any], order)
             normalized.append({str(key): value for key, value in mapped.items()})
-        return normalized
+        if settings.trading_mode != "live":
+            return normalized
+        return cast(list[dict[str, Any]], normalize_live_open_order_rows(normalized))
 
     @staticmethod
     def _list_positions(execution_client: Any) -> list[dict[str, Any]] | None:
@@ -388,20 +404,30 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         try:
             positions = lister()
         except Exception as exc:
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_position_read_failed") from exc
             logger.warning("Failed to list positions for broker precheck: %s", exc)
             return None
         if positions is None:
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_position_read_unavailable")
             return None
         if not isinstance(positions, list):
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_position_read_invalid")
             return []
         raw_positions = cast(list[object], positions)
         normalized: list[dict[str, Any]] = []
         for position in raw_positions:
             if not isinstance(position, Mapping):
+                if settings.trading_mode == "live":
+                    raise RuntimeError("live_broker_position_read_invalid")
                 continue
             mapped = cast(Mapping[object, Any], position)
             normalized.append({str(key): value for key, value in mapped.items()})
-        return normalized
+        if settings.trading_mode != "live":
+            return normalized
+        return cast(list[dict[str, Any]], normalize_live_position_rows(normalized))
 
     def _get_account(
         self, execution_client: Any, *, force_refresh: bool = False

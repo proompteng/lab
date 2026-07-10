@@ -20,7 +20,6 @@ const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultZeroNotionalDriftRepairManifestPath = 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml'
-const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
 const defaultTigerBeetleJournalOrderEventsManifestPath =
   'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
 const defaultGeneratedResourceRetentionManifestPath =
@@ -50,7 +49,6 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
-  paperAccountFlattenManifestPath?: string
   tigerBeetleJournalOrderEventsManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
@@ -78,7 +76,6 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
-  paperAccountFlattenManifestPath?: string
   tigerBeetleJournalOrderEventsManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
@@ -315,11 +312,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.zeroNotionalDriftRepairManifestPath ?? defaultZeroNotionalDriftRepairManifestPath,
     'torghut-zero-notional-drift-repair image reference',
   )
-  const paperAccountFlatten = updateImageOnlyManifest(
-    options,
-    options.paperAccountFlattenManifestPath ?? defaultPaperAccountFlattenManifestPath,
-    'torghut-paper-account-flatten image reference',
-  )
   const tigerBeetleJournalOrderEvents = updateImageOnlyManifest(
     options,
     options.tigerBeetleJournalOrderEventsManifestPath ?? defaultTigerBeetleJournalOrderEventsManifestPath,
@@ -376,7 +368,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     zeroNotionalDriftRepair,
-    paperAccountFlatten,
     tigerBeetleJournalOrderEvents,
     generatedResourceRetention,
     tigerBeetleSmoke,
@@ -418,7 +409,6 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --zero-notional-drift-repair-manifest-path <path>
-  --paper-account-flatten-manifest-path <path>
   --tigerbeetle-journal-order-events-manifest-path <path>
   --generated-resource-retention-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
@@ -497,9 +487,6 @@ Options:
       case '--zero-notional-drift-repair-manifest-path':
         options.zeroNotionalDriftRepairManifestPath = value
         break
-      case '--paper-account-flatten-manifest-path':
-        options.paperAccountFlattenManifestPath = value
-        break
       case '--tigerbeetle-journal-order-events-manifest-path':
         options.tigerBeetleJournalOrderEventsManifestPath = value
         break
@@ -576,8 +563,6 @@ const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     zeroNotionalDriftRepairManifestPath:
       parsed.zeroNotionalDriftRepairManifestPath ?? process.env.TORGHUT_ZERO_NOTIONAL_DRIFT_REPAIR_MANIFEST_PATH,
-    paperAccountFlattenManifestPath:
-      parsed.paperAccountFlattenManifestPath ?? process.env.TORGHUT_PAPER_ACCOUNT_FLATTEN_MANIFEST_PATH,
     generatedResourceRetentionManifestPath:
       parsed.generatedResourceRetentionManifestPath ?? process.env.TORGHUT_GENERATED_RESOURCE_RETENTION_MANIFEST_PATH,
     tigerBeetleSmokeManifestPath:

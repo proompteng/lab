@@ -58,37 +58,10 @@ from app.trading.llm.schema import (
 from app.trading.models import SignalEnvelope, StrategyDecision
 from app.trading.prices import MarketSnapshot, PriceFetcher
 from app.trading.ingest import SignalBatch
-from app.trading.paper_route_target_plan import (
-    materialize_bounded_paper_route_target_plan,
-    paper_route_target_plan_from_payload,
-)
 from app.trading.quote_quality import QuoteQualityStatus
 from app.trading.reconcile import Reconciler
-from app.trading.runtime_decision_authority import (
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
-    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-)
 from app.trading.risk import RiskEngine
 from app.trading.scheduler.pipeline import TradingPipeline
-from app.trading.scheduler.simple_pipeline import SimpleTradingPipeline
-from app.trading.scheduler.target_plan_helpers import (
-    bounded_paper_route_collection_entry_metadata as _bounded_paper_route_collection_entry_metadata,
-    bounded_sim_collection_blockers as _bounded_sim_collection_blockers,
-    bounded_sim_collection_metadata_from_decision as _bounded_sim_collection_metadata_from_decision,
-    bounded_sim_collection_target_with_runtime_account_audit as _bounded_sim_collection_target_with_runtime_account_audit,
-    executable_bid_ask_present as _executable_bid_ask_present,
-    paper_route_probe_entry_metadata as _paper_route_probe_entry_metadata,
-    paper_route_probe_lineage_from_params as _paper_route_probe_lineage_from_params,
-    parse_target_datetime as _parse_target_datetime,
-    safe_int as _safe_int,
-    strategy_signal_paper_entry_metadata as _strategy_signal_paper_entry_metadata,
-    target_notional_sizing_audit_from_params as _target_notional_sizing_audit_from_params,
-    target_probe_action as _target_probe_action,
-    target_probe_symbol_notional_budget as _target_probe_symbol_notional_budget,
-    target_probe_window as _target_probe_window,
-    target_truthy as _target_truthy,
-)
 from app.trading.scheduler.pipeline_helpers import (
     _apply_projected_position_decision,
     _build_dspy_lineage,
@@ -239,6 +212,14 @@ class FakeIngestor:
     def commit_cursor(self, session: Session, batch: SignalBatch) -> None:
         self.committed_batches += 1
         return None
+
+    def latest_signal_status(self) -> dict[str, object]:
+        return {
+            "accepted_sources": ["ta"],
+            "accepted_source_state": "fresh",
+            "accepted_lag_seconds": 1,
+            "accepted_max_lag_seconds": 300,
+        }
 
 
 class NoSignalReasonIngestor(FakeIngestor):
@@ -494,7 +475,7 @@ class RejectingAlpacaClient(FakeAlpacaClient):
         firewall_token: object | None = None,
     ) -> dict[str, str]:
         self.submit_calls += 1
-        raise Exception(
+        raise RuntimeError(
             '{"code":40310000,"existing_order_id":"order-existing","message":"potential wash trade detected","reject_reason":"opposite side market/stop order exists"}'
         )
 
@@ -871,7 +852,6 @@ def _set_llm_guardrails(config, *, adjustment_approved: bool = False) -> None:
 __all__: tuple[str, ...] = (
     "AdaptiveExecutionPolicyDecision",
     "Any",
-    "BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
     "Base",
     "Callable",
     "CountingAlpacaClient",
@@ -910,7 +890,6 @@ __all__: tuple[str, ...] = (
     "PositionedAlpacaClient",
     "PriceFetcher",
     "QuoteQualityStatus",
-    "ROUTE_ACQUISITION_SOURCE_DECISION_MODE",
     "RaisingObserveDecisionEngine",
     "RecentDecisionSummary",
     "Reconciler",
@@ -919,7 +898,6 @@ __all__: tuple[str, ...] = (
     "RejectingAlpacaClient",
     "RiskEngine",
     "SQLAlchemyError",
-    "STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE",
     "SellInventoryConflictAlpacaClient",
     "SellInventoryConflictRetryClient",
     "Sequence",
@@ -927,7 +905,6 @@ __all__: tuple[str, ...] = (
     "SignalBatch",
     "SignalEnvelope",
     "SimpleNamespace",
-    "SimpleTradingPipeline",
     "SimulationExecutionAdapter",
     "Strategy",
     "StrategyDecision",
@@ -945,31 +922,16 @@ __all__: tuple[str, ...] = (
     "VNextDatasetSnapshot",
     "WarmupIngestor",
     "_apply_projected_position_decision",
-    "_bounded_paper_route_collection_entry_metadata",
-    "_bounded_sim_collection_blockers",
-    "_bounded_sim_collection_metadata_from_decision",
-    "_bounded_sim_collection_target_with_runtime_account_audit",
     "_build_dspy_lineage",
     "_committee_trace_has_veto",
     "_default_probabilities",
-    "_executable_bid_ask_present",
     "is_entry_action_for_strategies",
     "is_exit_action_for_strategies",
     "_market_context_bundle",
-    "_paper_route_probe_entry_metadata",
-    "_paper_route_probe_lineage_from_params",
-    "_parse_target_datetime",
     "_project_open_orders_onto_positions",
-    "_safe_int",
     "_set_llm_guardrails",
-    "_strategy_signal_paper_entry_metadata",
     "strategy_uses_position_isolation",
-    "_target_notional_sizing_audit_from_params",
     "_target_price_snapshots",
-    "_target_probe_action",
-    "_target_probe_symbol_notional_budget",
-    "_target_probe_window",
-    "_target_truthy",
     "_with_default_executable_quote",
     "build_hypothesis_runtime_summary",
     "cast",
@@ -978,9 +940,7 @@ __all__: tuple[str, ...] = (
     "date",
     "datetime",
     "json",
-    "materialize_bounded_paper_route_target_plan",
     "os",
-    "paper_route_target_plan_from_payload",
     "patch",
     "select",
     "sessionmaker",

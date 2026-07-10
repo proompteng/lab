@@ -36,9 +36,6 @@ from app.db import SessionLocal
 from app.models import ExecutionTCAMetric
 from app.trading.ingest import ClickHouseSignalIngestor
 from app.trading.scheduler import TradingScheduler
-from app.trading.submission_council import (
-    build_shadow_first_toggle_parity as _build_shadow_first_toggle_parity,
-)
 from app.trading.tca import build_tca_gate_inputs
 
 logger = logging.getLogger(__name__)
@@ -298,79 +295,28 @@ def load_clickhouse_ta_status(
 def budget_exhausted_live_submission_gate_payload(
     *,
     reason: str,
-    empirical_jobs_status: Mapping[str, Any],
-    quant_health_status: Mapping[str, Any],
 ) -> dict[str, object]:
     operational_blockers = [reason]
     if not settings.trading_simple_submit_enabled:
         operational_blockers.append("submit_disabled")
     return {
+        "schema_version": "torghut.operational-submission-gate.v2",
         "allowed": False,
         "reason": reason,
         "blocked_reasons": list(dict.fromkeys(operational_blockers)),
         "reason_codes": [reason],
         "read_model_unavailable": True,
         "read_model_status": "timeout",
-        "capital_stage": "shadow",
-        "active_capital_stage": "shadow",
-        "capital_state": "observe",
-        "configured_live_promotion": bool(
-            settings.trading_autonomy_allow_live_promotion
-        ),
-        "autonomy_promotion_eligible": False,
-        "autonomy_promotion_action": None,
-        "drift_live_promotion_eligible": False,
-        "promotion_eligible_total": 0,
-        "paper_probation_eligible_total": 0,
-        "dependency_quorum_decision": "unknown",
-        "continuity_ok": False,
-        "continuity_reason": reason,
-        "drift_ok": False,
-        "drift_reason": reason,
-        "empirical_jobs_ready": empirical_jobs_status.get("ready"),
-        "dspy_live_ready": None,
-        "critical_toggle_parity": _build_shadow_first_toggle_parity(),
-        "critical_toggle_parity_blocking_mismatches": [],
-        "quant_evidence": dict(quant_health_status),
-        "quant_health_ref": {
-            "account": quant_health_status.get("account"),
-            "window": quant_health_status.get("window"),
-            "status": quant_health_status.get("status"),
-            "source_url": quant_health_status.get("source_url"),
+        "capital_stage": "blocked",
+        "capital_state": "blocked",
+        "authority_scope": "operational_submission",
+        "configured_live_submit": settings.trading_live_submit_enabled,
+        "simple_submit_enabled": settings.trading_simple_submit_enabled,
+        "operational_submission_gate": {
+            "allowed": False,
+            "reason": reason,
+            "blocked_reasons": list(dict.fromkeys(operational_blockers)),
         },
-        "segment_summary": {
-            "state": "blocked",
-            "reason_codes": [reason],
-            "read_model_unavailable": True,
-        },
-        "lineage_ref": {
-            "source": "trading_status",
-            "status": "unavailable",
-            "reason_codes": [reason],
-            "read_model_unavailable": True,
-        },
-        "evaluated_tuples": [],
-        "runtime_ledger_repair_candidates": [],
-        "runtime_ledger_paper_probation_candidates": [],
-        "runtime_ledger_source_collection_candidates": [],
-        "runtime_ledger_source_collection_candidate_total": 0,
-        "runtime_ledger_paper_probation_eligible_total": 0,
-        "runtime_ledger_paper_probation_import_plan": {
-            "state": "unavailable",
-            "reason_codes": [reason],
-            "read_model_unavailable": True,
-        },
-        "profit_window_contract": {
-            "state": "blocked",
-            "reason_codes": [reason],
-            "read_model_unavailable": True,
-        },
-        "profit_lease_projection": {
-            "state": "blocked",
-            "blocking_reason_codes": [reason],
-            "read_model_unavailable": True,
-        },
-        "pipeline_mode": settings.trading_pipeline_mode,
     }
 
 

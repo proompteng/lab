@@ -7,7 +7,6 @@ from .adapter_types import (
     AlpacaExecutionAdapter,
     ExecutionAdapter,
     OrderSubmission,
-    SessionRoutingExecutionAdapter,
     SimulationExecutionAdapter,
     logger,
 )
@@ -39,7 +38,6 @@ __all__ = [
     "ExecutionAdapter",
     "LeanExecutionAdapter",
     "OrderSubmission",
-    "SessionRoutingExecutionAdapter",
     "SimulationExecutionAdapter",
     "classify_failure_taxonomy",
     "classify_fallback_reason",

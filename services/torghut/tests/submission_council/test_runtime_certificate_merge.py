@@ -2,108 +2,18 @@ from __future__ import annotations
 
 
 from tests.submission_council.support import (
-    Base,
     SimpleNamespace,
-    StaticPool,
     SubmissionCouncilTestCase,
     _merge_runtime_certificate_evidence,
     _metric_window_activity_reason_codes,
     _refresh_runtime_summary_totals,
-    build_live_submission_gate_payload,
-    create_engine,
     datetime,
-    patch,
-    sessionmaker,
     timedelta,
     timezone,
 )
 
 
 class TestSubmissionCouncilRuntimeCertificateMerge(SubmissionCouncilTestCase):
-    def test_live_gate_seeds_hpairs_bounded_collection_target_without_source_rows(
-        self,
-    ) -> None:
-        engine = create_engine(
-            "sqlite+pysqlite:///:memory:",
-            future=True,
-            connect_args={"check_same_thread": False},
-            poolclass=StaticPool,
-        )
-        Base.metadata.create_all(engine)
-        session_local = sessionmaker(bind=engine, expire_on_commit=False, future=True)
-
-        class _RegistryItem:
-            hypothesis_id = "H-PAIRS-01"
-
-            def model_dump(self, *, mode: str = "json") -> dict[str, object]:
-                return {
-                    "hypothesis_id": "H-PAIRS-01",
-                    "candidate_id": "c88421d619759b2cfaa6f4d0",
-                    "strategy_id": "microbar_cross_sectional_pairs_v1@research",
-                    "strategy_family": "microbar_cross_sectional_pairs",
-                    "lane_id": "microbar_cross_sectional_pairs",
-                    "dataset_snapshot_ref": "portfolio-profit-autoresearch-500-v1",
-                }
-
-        registry = SimpleNamespace(
-            loaded=True,
-            path="test-registry",
-            errors=[],
-            items=[_RegistryItem()],
-        )
-
-        with session_local() as session:
-            with patch(
-                "app.trading.submission_council.runtime_summary.load_hypothesis_registry",
-                return_value=registry,
-            ):
-                gate = build_live_submission_gate_payload(
-                    SimpleNamespace(
-                        market_session_open=True,
-                        last_autonomy_promotion_eligible=False,
-                        last_autonomy_promotion_action=None,
-                        drift_live_promotion_eligible=False,
-                        last_market_context_freshness_seconds=45,
-                        metrics=SimpleNamespace(
-                            feature_batch_rows_total=9,
-                            feature_null_rate={"price": 0.0},
-                            feature_staleness_ms_p95=250,
-                            feature_duplicate_ratio=0.0,
-                            decision_state_total={},
-                        ),
-                    ),
-                    hypothesis_summary={
-                        "summary": {
-                            "promotion_eligible_total": 0,
-                            "capital_stage_totals": {"shadow": 1},
-                            "dependency_quorum": {
-                                "decision": "allow",
-                                "reasons": [],
-                                "message": "ready",
-                            },
-                        },
-                        "items": [],
-                    },
-                    empirical_jobs_status={"ready": True, "status": "healthy"},
-                    dspy_runtime_status={"mode": "inactive"},
-                    quant_health_status=self._healthy_quant_status(),
-                    promotion_certificate_evidence=[],
-                    session=session,
-                )
-
-        self.assertTrue(gate["allowed"])
-        self.assertEqual(gate["reason"], "operational_submission_ready")
-        self.assertFalse(gate["runtime_ledger_paper_probation_candidates"])
-        self.assertFalse(gate["runtime_ledger_source_collection_candidates"])
-        self.assertNotIn("runtime_window_import_required", gate["blocked_reasons"])
-        import_plan = gate["runtime_ledger_paper_probation_import_plan"]
-        self.assertEqual(
-            import_plan["schema_version"],
-            "torghut.runtime-ledger-paper-probation-import-plan.v1",
-        )
-        self.assertEqual(import_plan["target_count"], 1)
-        self.assertEqual(import_plan["targets"][0]["hypothesis_id"], "H-PAIRS-01")
-
     def test_metric_window_activity_rejects_tca_proxy_expectancy(self) -> None:
         metric_window = SimpleNamespace(
             market_session_count=3,

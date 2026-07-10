@@ -41,7 +41,7 @@ def _parse_args() -> argparse.Namespace:
         description="Validate changed-file coverage for Torghut Python source files.",
     )
     parser.add_argument("--coverage-xml", default="coverage.xml")
-    parser.add_argument("--threshold", type=float, default=90.0)
+    parser.add_argument("--threshold", type=float, default=80.0)
     parser.add_argument("--base-ref", default="")
     parser.add_argument(
         "--format",

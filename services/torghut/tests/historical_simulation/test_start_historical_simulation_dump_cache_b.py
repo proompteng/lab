@@ -600,6 +600,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                 _ = timeout
 
         with TemporaryDirectory() as tmp_dir:
+            resources = replace(resources, output_root=Path(tmp_dir))
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
             row = {
                 "source_topic": resources.source_topic_by_role["trades"],
@@ -685,6 +686,7 @@ class TestStartHistoricalSimulationDumpCacheB(StartHistoricalSimulationTestCaseB
                 _ = timeout
 
         with TemporaryDirectory() as tmp_dir:
+            resources = replace(resources, output_root=Path(tmp_dir))
             dump_path = Path(tmp_dir) / "source-dump.ndjson"
             row = {
                 "source_topic": resources.source_topic_by_role["trades"],

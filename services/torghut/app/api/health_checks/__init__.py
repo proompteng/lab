@@ -16,7 +16,6 @@ from .load_options_catalog_freshness_summary import (
     load_last_decision_at,
     load_options_catalog_freshness_summary,
     raw_hypothesis_runtime_payload,
-    simple_lane_status_payload,
 )
 from .remember_alpaca_success import (
     budget_exhausted_live_submission_gate_payload,
@@ -44,7 +43,6 @@ check_clickhouse_dependency = check_clickhouse
 check_postgres_dependency = check_postgres
 build_hypothesis_runtime_payload = raw_hypothesis_runtime_payload
 build_api_live_submission_gate_payload = api_live_submission_gate_payload
-build_simple_lane_status_payload = simple_lane_status_payload
 lean_authority_status = lean_authority_status_payload
 
 __all__ = (
@@ -75,5 +73,4 @@ __all__ = (
     "load_last_decision_at",
     "build_hypothesis_runtime_payload",
     "build_api_live_submission_gate_payload",
-    "build_simple_lane_status_payload",
 )

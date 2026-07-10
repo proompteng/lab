@@ -19,7 +19,6 @@ def _base_inputs() -> dict[str, object]:
         "window": "15m",
         "trading_mode": "live",
         "torghut_revision": "torghut-00308",
-        "revenue_repair_digest_ref": "/trading/revenue-repair",
         "consumer_evidence_receipt": {
             "receipt_id": "torghut-consumer-evidence:test",
             "fresh_until": "2026-05-08T12:33:00+00:00",
@@ -440,7 +439,6 @@ def _hpairs_ready_ledger(**overrides: object) -> dict[str, object]:
         "window": "15m",
         "trading_mode": "paper",
         "torghut_revision": "torghut-hpairs",
-        "revenue_repair_digest_ref": "/trading/revenue-repair/hpairs",
         "consumer_evidence_receipt": {
             "receipt_id": "torghut-consumer-evidence:hpairs-ready",
             "fresh_until": "2026-05-08T12:33:00+00:00",

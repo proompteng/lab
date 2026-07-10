@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import cast
-
-from .submission_authority import operational_submission_gate_status
 
 _OPERATIONAL_REJECT_REASONS = frozenset(
     {
@@ -22,48 +20,6 @@ _OPERATIONAL_REJECT_REASONS = frozenset(
 )
 _OPERATIONAL_REJECT_SUFFIXES = ("_unavailable",)
 _OPERATIONAL_REJECT_PREFIXES = ("dependency_not_ready:",)
-
-
-@dataclass(frozen=True)
-class ExecutionRouteDecision:
-    route: str
-    reason: str
-    alpaca_regular_session_open: bool
-    testnet_after_hours_enabled: bool
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "route": self.route,
-            "reason": self.reason,
-            "alpaca_regular_session_open": self.alpaca_regular_session_open,
-            "testnet_after_hours_enabled": self.testnet_after_hours_enabled,
-        }
-
-
-@dataclass(frozen=True)
-class ExecutionGate:
-    allowed: bool
-    reason: str
-    blocked_reasons: Sequence[str]
-    route: ExecutionRouteDecision
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "allowed": self.allowed,
-            "reason": self.reason,
-            "blocked_reasons": list(self.blocked_reasons),
-            "execution_route": self.route.to_payload(),
-        }
-
-
-@dataclass(frozen=True)
-class ExecutionGateInputs:
-    trading_enabled: bool
-    submit_enabled: bool
-    live_submit_enabled: bool
-    kill_switch_enabled: bool
-    route_available: bool
-    route: ExecutionRouteDecision
 
 
 @dataclass(frozen=True)
@@ -88,45 +44,15 @@ class ExecutionOrderResult:
         }
 
 
-def build_execution_gate(
-    *,
-    inputs: ExecutionGateInputs,
-    diagnostics: Mapping[str, object] | None = None,
-) -> ExecutionGate:
-    """Build the hard operational gate.
-
-    Diagnostics are intentionally accepted but ignored. Profit, proof, and
-    runtime-ledger status must not become implicit submit authority again.
-    """
-
-    _ = diagnostics
-    blocked_reasons: list[str] = []
-    if not inputs.trading_enabled:
-        blocked_reasons.append("trading_disabled")
-    if not inputs.submit_enabled:
-        blocked_reasons.append("submit_disabled")
-    if not inputs.live_submit_enabled:
-        blocked_reasons.append("live_submit_disabled")
-    if inputs.kill_switch_enabled:
-        blocked_reasons.append("kill_switch_enabled")
-    if not inputs.route_available:
-        blocked_reasons.append(f"{inputs.route.route}_unavailable")
-    reason = blocked_reasons[0] if blocked_reasons else "operational_submission_ready"
-    return ExecutionGate(
-        allowed=not blocked_reasons,
-        reason=reason,
-        blocked_reasons=tuple(blocked_reasons),
-        route=inputs.route,
-    )
-
-
 def build_execution_status_payload(
     *,
     state: object,
     live_submission_gate: Mapping[str, object],
 ) -> dict[str, object]:
     metrics = getattr(state, "metrics")
-    gate = operational_submission_gate_status(live_submission_gate)
+    gate = _mapping(live_submission_gate.get("operational_submission_gate"))
+    if not gate:
+        gate = live_submission_gate
     route = _execution_route_payload(gate, live_submission_gate)
     gate_payload = {
         "allowed": bool(gate.get("allowed") is True),
@@ -231,11 +157,7 @@ def _strings(value: object) -> list[str]:
 
 
 __all__ = [
-    "ExecutionGate",
-    "ExecutionGateInputs",
     "ExecutionOrderResult",
-    "ExecutionRouteDecision",
-    "build_execution_gate",
     "build_execution_status_payload",
     "record_last_execution_order",
 ]

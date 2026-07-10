@@ -1,5 +1,6 @@
 """Runtime risk, allocator, readiness, and integration settings."""
 
+from datetime import time
 from decimal import Decimal
 from typing import Literal, Optional
 
@@ -160,20 +161,8 @@ class RuntimeRiskSettingsFields(BaseSettings):
         description="Order-submission pipeline implementation. The simple lane is the only supported path.",
     )
 
-    trading_simple_max_notional_per_order: Optional[float] = Field(
-        default=None,
-        alias="TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER",
-        description="Simple-lane max notional cap per submitted order.",
-    )
-
-    trading_simple_max_notional_per_symbol: Optional[float] = Field(
-        default=None,
-        alias="TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL",
-        description="Simple-lane absolute exposure cap per symbol.",
-    )
-
     trading_simple_max_order_pct_equity: Optional[float] = Field(
-        default=0.25,
+        default=0.50,
         alias="TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY",
         description=(
             "Simple-lane max new-exposure order notional as a fraction of account "
@@ -182,7 +171,7 @@ class RuntimeRiskSettingsFields(BaseSettings):
     )
 
     trading_simple_max_gross_exposure_pct_equity: Optional[float] = Field(
-        default=1.0,
+        default=4.0,
         alias="TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY",
         description=(
             "Simple-lane max gross exposure as a fraction of account equity. "
@@ -190,8 +179,26 @@ class RuntimeRiskSettingsFields(BaseSettings):
         ),
     )
 
+    trading_simple_max_net_exposure_pct_equity: Optional[float] = Field(
+        default=0.50,
+        alias="TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY",
+        description=(
+            "Simple-lane maximum absolute net exposure as a fraction of account "
+            "equity. Trades that reduce absolute net exposure remain allowed."
+        ),
+    )
+
+    trading_simple_max_symbol_pct_equity: Optional[float] = Field(
+        default=0.50,
+        alias="TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY",
+        description=(
+            "Simple-lane maximum absolute exposure per symbol as a fraction of "
+            "account equity. Closing or covering quantity is exempt."
+        ),
+    )
+
     trading_simple_buying_power_reserve_bps: float = Field(
-        default=25.0,
+        default=1000.0,
         alias="TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS",
         description=(
             "Simple-lane buying-power reserve in basis points before quantity "
@@ -215,107 +222,13 @@ class RuntimeRiskSettingsFields(BaseSettings):
         ),
     )
 
-    trading_testnet_after_hours_enabled: bool = Field(
-        default=False,
-        alias="TRADING_TESTNET_AFTER_HOURS_ENABLED",
-        description=(
-            "Route live-mode orders to the deterministic testnet/simulation adapter "
-            "outside Alpaca regular market hours."
-        ),
-    )
-
-    trading_live_submit_activation_expires_at: Optional[str] = Field(
-        default=None,
-        alias="TRADING_LIVE_SUBMIT_ACTIVATION_EXPIRES_AT",
-        description=(
-            "Optional UTC timestamp that expires a temporary live-submit activation. "
-            "Once expired or invalid, live submission fails closed."
-        ),
-    )
-
     trading_simple_order_feed_telemetry_enabled: bool = Field(
         default=False,
         alias="TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED",
         description=(
-            "In simple mode, enable Kafka order-feed ingestion for runtime lifecycle "
-            "evidence and proof-floor authority."
+            "In simple mode, enable Kafka order-feed ingestion for execution "
+            "lifecycle telemetry and reconciliation."
         ),
-    )
-
-    trading_simple_paper_route_probe_enabled: bool = Field(
-        default=False,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED",
-        description=(
-            "Permit bounded paper-only route-acquisition probes when the proof floor "
-            "is zero-notional because route/TCA evidence must be rebuilt."
-        ),
-    )
-
-    trading_simple_paper_route_probe_allow_live_mode: bool = Field(
-        default=False,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE",
-        description=(
-            "Permit bounded paper-route evidence collection while TRADING_MODE=live. "
-            "This does not grant live capital or promotion authority."
-        ),
-    )
-
-    trading_simple_paper_route_probe_max_notional: float = Field(
-        default=25.0,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL",
-        description="Maximum notional per paper route-acquisition probe order.",
-    )
-
-    trading_simple_paper_route_probe_retry_attempt_limit: int = Field(
-        default=2,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_ATTEMPT_LIMIT",
-        description=(
-            "Maximum times a persisted proof-floor-blocked decision may be reopened "
-            "for bounded paper-route probe submission."
-        ),
-    )
-
-    trading_simple_paper_route_probe_retry_batch_limit: int = Field(
-        default=4,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_BATCH_LIMIT",
-        description=(
-            "Maximum persisted proof-floor-blocked decisions to retry in one simple "
-            "pipeline cycle."
-        ),
-    )
-
-    trading_simple_paper_route_probe_retry_scan_limit: int = Field(
-        default=64,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_SCAN_LIMIT",
-        description=(
-            "Maximum recent blocked decisions to scan when looking for bounded "
-            "paper-route probe retry candidates."
-        ),
-    )
-
-    trading_simple_paper_route_probe_exit_lookback_hours: int = Field(
-        default=72,
-        alias="TRADING_SIMPLE_PAPER_ROUTE_PROBE_EXIT_LOOKBACK_HOURS",
-        description=(
-            "How far back the simple paper-route probe exit repair path scans for "
-            "filled paper probe entries that missed their configured exit minute."
-        ),
-    )
-
-    trading_paper_route_target_plan_url: Optional[str] = Field(
-        default=None,
-        alias="TRADING_PAPER_ROUTE_TARGET_PLAN_URL",
-        description=(
-            "Optional paper-route target-plan URL used when this service has no "
-            "local runtime-ledger paper-probation plan. Intended for paper services "
-            "that execute bounded route probes from the live gate's authoritative plan."
-        ),
-    )
-
-    trading_paper_route_target_plan_timeout_seconds: float = Field(
-        default=3.0,
-        alias="TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS",
-        description="Timeout for fetching TRADING_PAPER_ROUTE_TARGET_PLAN_URL.",
     )
 
     trading_emergency_stop_enabled: bool = Field(
@@ -331,6 +244,66 @@ class RuntimeRiskSettingsFields(BaseSettings):
             "Consecutive safety-control cycles with no freshness breach before auto-clearing "
             "a freshness-triggered emergency stop."
         ),
+    )
+
+    trading_daily_loss_stop_pct_equity: float = Field(
+        default=0.01,
+        alias="TRADING_DAILY_LOSS_STOP_PCT_EQUITY",
+        description="Live account equity loss from the session start that latches a stop.",
+    )
+
+    trading_persistent_drawdown_stop_pct_equity: float = Field(
+        default=0.05,
+        alias="TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY",
+        description="Live account equity drawdown from its persisted high-water mark.",
+    )
+
+    trading_new_exposure_cutoff_time_et: time = Field(
+        default=time(hour=15, minute=30),
+        alias="TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET",
+    )
+
+    trading_flatten_start_time_et: time = Field(
+        default=time(hour=15, minute=45),
+        alias="TRADING_FLATTEN_START_TIME_ET",
+    )
+
+    trading_flat_confirmation_time_et: time = Field(
+        default=time(hour=15, minute=50),
+        alias="TRADING_FLAT_CONFIRMATION_TIME_ET",
+    )
+
+    trading_order_reprice_seconds: float = Field(
+        default=2.0,
+        alias="TRADING_ORDER_REPRICE_SECONDS",
+        description="Seconds between live marketable-limit status checks and repricing.",
+    )
+
+    trading_order_max_attempts: int = Field(
+        default=3,
+        alias="TRADING_ORDER_MAX_ATTEMPTS",
+        description="Maximum live marketable-limit submissions for one decision.",
+    )
+
+    trading_order_slippage_bps: float = Field(
+        default=8.0,
+        alias="TRADING_ORDER_SLIPPAGE_BPS",
+        description="Maximum adverse repricing from the initial marketable limit.",
+    )
+
+    trading_closeout_reprice_seconds: float = Field(
+        default=2.0,
+        alias="TRADING_CLOSEOUT_REPRICE_SECONDS",
+    )
+
+    trading_closeout_max_attempts: int = Field(
+        default=3,
+        alias="TRADING_CLOSEOUT_MAX_ATTEMPTS",
+    )
+
+    trading_closeout_slippage_bps: float = Field(
+        default=8.0,
+        alias="TRADING_CLOSEOUT_SLIPPAGE_BPS",
     )
 
     trading_rollback_signal_lag_seconds_limit: int = Field(
@@ -387,7 +360,7 @@ class RuntimeRiskSettingsFields(BaseSettings):
         default=False,
         alias="TRADING_JANGAR_QUANT_HEALTH_REQUIRED",
         description=(
-            "Require the external Jangar quant health endpoint before live submission gates and /trading/health can pass. "
+            "Require the external Jangar quant health endpoint before the live submission gate can pass. "
             "Leave false for Torghut-owned local strategy execution."
         ),
     )

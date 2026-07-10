@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from ....models import Execution, TradeDecision
 from .contexts import StrategyPositionExposureUpdate
 from .shared import (
-    TradingPipelineBase,
+    TradingPipelineRuntime,
     aware_utc,
     normalized_symbol,
     same_side_position_exposure,
@@ -48,7 +48,7 @@ _StrategyPositionExposuresBySymbol: TypeAlias = dict[
 ]
 
 
-class TradingPipelinePositionExposureMixin(TradingPipelineBase):
+class TradingPipelinePositionExposureMixin(TradingPipelineRuntime):
     def _load_strategy_position_tag_rows(
         self,
         session: Session,

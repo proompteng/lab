@@ -11,6 +11,7 @@ from ..fragility import (
     FragilityState,
 )
 from ..models import StrategyDecision
+from ..pair_intent import is_pair_entry
 from ..quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
@@ -401,13 +402,14 @@ class PortfolioSizer:
         if gross_cap is not None:
             caps["gross_exposure"] = gross_cap
 
-        net_cap = net_cap_for_trade(
-            self.config.max_net_exposure,
-            snapshot.net_exposure,
-            decision.action,
-        )
-        if net_cap is not None:
-            caps["net_exposure"] = net_cap
+        if not is_pair_entry(decision):
+            net_cap = net_cap_for_trade(
+                self.config.max_net_exposure,
+                snapshot.net_exposure,
+                decision.action,
+            )
+            if net_cap is not None:
+                caps["net_exposure"] = net_cap
         return caps, reasons
 
     def _finalize_sized_order(

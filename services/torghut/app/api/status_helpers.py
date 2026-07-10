@@ -28,7 +28,7 @@ from .health_checks import (
     load_tca_summary,
     unavailable_tigerbeetle_reconciliation_payload,
 )
-from .trading_misc import daily_runtime_ledger_portfolio_summary
+from .runtime_ledger_status import daily_runtime_ledger_portfolio_summary
 from .vnext_helpers import load_llm_evaluation
 
 _build_hypothesis_runtime_payload = build_hypothesis_runtime_payload
@@ -292,31 +292,6 @@ def _budget_unavailable_hypothesis_runtime_payload(
     )
 
 
-def _deferred_hypothesis_payload_for_live_submission_gate() -> dict[str, object]:
-    payload, _summary, _dependency_quorum = (
-        _budget_unavailable_hypothesis_runtime_payload(
-            reason="hypothesis_runtime_deferred_until_after_live_submission_gate"
-        )
-    )
-    dependency_quorum = payload.get("dependency_quorum")
-    if not isinstance(dependency_quorum, Mapping):
-        return payload
-
-    nested_summary = payload.get("summary")
-    summary_payload: dict[str, object] = (
-        dict(cast(Mapping[str, object], nested_summary))
-        if isinstance(nested_summary, Mapping)
-        else {}
-    )
-    if "dependency_quorum" not in summary_payload:
-        payload = dict(payload)
-        summary_payload["dependency_quorum"] = dict(
-            cast(Mapping[str, object], dependency_quorum)
-        )
-        payload["summary"] = summary_payload
-    return payload
-
-
 def _hypothesis_payload_read_model_unavailable(
     payload: Mapping[str, object] | None,
 ) -> bool:
@@ -430,9 +405,6 @@ budget_unavailable_tca_summary_payload = _budget_unavailable_tca_summary_payload
 budget_unavailable_tigerbeetle_ledger_payload = (
     _budget_unavailable_tigerbeetle_ledger_payload
 )
-deferred_hypothesis_payload_for_live_submission_gate = (
-    _deferred_hypothesis_payload_for_live_submission_gate
-)
 hypothesis_payload_read_model_unavailable = _hypothesis_payload_read_model_unavailable
 load_trading_status_llm_evaluation = _load_trading_status_llm_evaluation
 load_trading_status_tca_summary = _load_trading_status_tca_summary
@@ -455,7 +427,6 @@ __all__ = [
     "_budget_unavailable_tigerbeetle_ledger_payload",
     "_unavailable_runtime_ledger_portfolio_summary",
     "_budget_unavailable_hypothesis_runtime_payload",
-    "_deferred_hypothesis_payload_for_live_submission_gate",
     "_hypothesis_payload_read_model_unavailable",
     "_load_trading_status_llm_evaluation",
     "_load_trading_status_tca_summary",
@@ -469,7 +440,6 @@ __all__ = [
     "budget_unavailable_llm_evaluation_payload",
     "budget_unavailable_tca_summary_payload",
     "budget_unavailable_tigerbeetle_ledger_payload",
-    "deferred_hypothesis_payload_for_live_submission_gate",
     "hypothesis_payload_read_model_unavailable",
     "load_trading_status_llm_evaluation",
     "load_trading_status_tca_summary",

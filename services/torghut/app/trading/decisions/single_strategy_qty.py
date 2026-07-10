@@ -196,7 +196,8 @@ def resolve_qty(
 ) -> tuple[Decimal, dict[str, Any]]:
     """Resolve an asset-class-aware quantity from strategy settings.
 
-    Precedence:
+    Live mode uses equity-relative strategy sizing and ignores fixed notional
+    budgets. Paper and simulation retain the replay contract precedence:
     - `min(max_notional_per_trade, equity * max_position_pct_equity)` when both are available
     - `max_notional_per_trade`
     - `equity * max_position_pct_equity`
@@ -229,6 +230,25 @@ def single_strategy_budget(
 ) -> StrategyBudget:
     max_notional = optional_decimal(strategy.max_notional_per_trade)
     max_pct = optional_decimal(strategy.max_position_pct_equity)
+    if settings.trading_mode == "live":
+        live_pcts = [
+            value
+            for value in (
+                max_pct,
+                optional_decimal(settings.trading_max_position_pct_equity),
+                optional_decimal(settings.trading_simple_max_symbol_pct_equity),
+            )
+            if value is not None and value > 0
+        ]
+        live_pct = min(live_pcts) if live_pcts else None
+        return StrategyBudget(
+            notional_budget=(
+                equity * live_pct
+                if equity is not None and live_pct is not None and equity > 0
+                else None
+            ),
+            method="live_equity_pct",
+        )
     pct_notional: Optional[Decimal] = None
     if equity is not None and max_pct is not None and max_pct > 0:
         pct_notional = equity * max_pct

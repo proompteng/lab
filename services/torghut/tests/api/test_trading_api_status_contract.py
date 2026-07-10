@@ -4,66 +4,93 @@ from tests.api.trading_api_support import TradingApiTestCaseBase, patch
 
 
 class TestTradingApiStatusContract(TradingApiTestCaseBase):
-    def test_trading_status_surfaces_budget_and_safety_contract_keys(self) -> None:
-        live_submission_gate = {
-            "allowed": False,
-            "reason": "hypothesis_not_promotion_eligible",
-            "blocked_reasons": ["hypothesis_not_promotion_eligible"],
-            "read_model_unavailable": False,
-            "promotion_authority": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
+    def test_trading_status_exposes_only_operational_runtime_state(self) -> None:
+        freshness = {
+            "state": "current",
+            "accepted_sources": ["ta"],
+            "accepted_source_state": "current",
+            "accepted_lag_seconds": 2,
+            "blocking_reason": None,
         }
-
-        with patch(
-            "app.api.trading_status._build_live_submission_gate_payload",
-            return_value=live_submission_gate,
+        gate = {
+            "schema_version": "torghut.operational-submission-gate.v2",
+            "allowed": True,
+            "reason": "operational_submission_ready",
+            "blocked_reasons": [],
+            "reason_codes": ["operational_submission_ready"],
+            "execution_route": {"route": "alpaca"},
+        }
+        with (
+            patch(
+                "app.api.trading_status.load_clickhouse_ta_status",
+                return_value=freshness,
+            ),
+            patch(
+                "app.api.trading_status.build_api_live_submission_gate_payload",
+                return_value=gate,
+            ),
+            patch(
+                "app.api.trading_status._read_with_session",
+                side_effect=(
+                    {"ok": True},
+                    {"status": "current"},
+                    {"status": "current"},
+                    None,
+                ),
+            ),
         ):
             response = self.client.get("/trading/status")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertTrue(
+        self.assertEqual(
+            set(payload),
             {
-                "status_read_budget",
+                "service",
+                "build",
+                "mode",
+                "pipeline_mode",
+                "enabled",
+                "running",
+                "last_run_at",
+                "last_reconcile_at",
+                "last_decision_at",
+                "last_error",
+                "accepted_source_freshness",
                 "live_submission_gate",
-                "submission_authority",
-                "proof_floor",
+                "capital_controls",
+                "execution",
+                "signal_continuity",
+                "market_context",
+                "shorting_metadata",
                 "tigerbeetle_ledger",
-                "portfolio_runtime_ledger_summary",
-                "hypotheses",
-            }.issubset(payload),
-        )
-        self.assertIn("skipped_reads", payload["status_read_budget"])
-        live_submission_gate = payload["live_submission_gate"]
-        self.assertIn("allowed", live_submission_gate)
-        self.assertIn("read_model_unavailable", live_submission_gate)
-        self.assertIn("promotion_authority", live_submission_gate)
-        self.assertIn("final_authority_ok", live_submission_gate)
-
-    def test_trading_status_scrubs_legacy_alpha_readiness_reason(self) -> None:
-        legacy_reason = "_".join(("alpha", "readiness", "not", "promotion", "eligible"))
-        live_submission_gate = {
-            "allowed": False,
-            "reason": legacy_reason,
-            "blocked_reasons": [legacy_reason, "hypothesis_not_promotion_eligible"],
-            "operational_submission_gate": {
-                "allowed": False,
-                "reason": legacy_reason,
-                "blocked_reasons": [legacy_reason],
+                "runtime_ledger",
+                "tca",
+                "metrics",
+                "llm",
             },
-            "read_model_unavailable": False,
-            "promotion_authority": False,
-            "final_authority_ok": False,
-            "final_promotion_allowed": False,
-        }
-
-        with patch(
-            "app.api.trading_status._build_live_submission_gate_payload",
-            return_value=live_submission_gate,
+        )
+        self.assertEqual(payload["accepted_source_freshness"], freshness)
+        self.assertEqual(payload["live_submission_gate"], gate)
+        self.assertEqual(payload["capital_controls"]["gross_limit"], 4.0)
+        self.assertEqual(payload["capital_controls"]["net_limit"], 0.5)
+        self.assertEqual(payload["capital_controls"]["symbol_limit"], 0.5)
+        for retired_key in (
+            "autonomy",
+            "control_plane_contract",
+            "empirical_jobs",
+            "hypotheses",
+            "profit_lease_projection",
+            "proof_floor",
+            "quant_evidence",
+            "shadow_first",
+            "submission_authority",
         ):
-            response = self.client.get("/trading/status")
+            self.assertNotIn(retired_key, payload)
+
+    def test_metrics_endpoint_is_prometheus_text(self) -> None:
+        response = self.client.get("/metrics")
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn(legacy_reason, response.text)
-        self.assertIn("hypothesis_not_promotion_eligible", response.text)
+        self.assertTrue(response.headers["content-type"].startswith("text/plain"))
+        self.assertIn("torghut_trading_capital_new_exposure_allowed", response.text)

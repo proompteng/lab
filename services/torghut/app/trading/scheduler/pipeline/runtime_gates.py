@@ -9,6 +9,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, cast
 
+from alpaca.common.exceptions import APIError
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ....config import settings
@@ -16,6 +18,7 @@ from ....models import (
     TradeDecision,
 )
 from ...firewall import OrderFirewallBlocked
+from ...execution.order_lifecycle import OrderLifecycleSafetyError
 from ...models import StrategyDecision
 from ...regime_hmm import (
     HMMRegimeContext,
@@ -33,7 +36,7 @@ from .contexts import (
     OrderSubmissionRequest,
 )
 from .shared import (
-    TradingPipelineBase,
+    TradingPipelineRuntime,
     RUNTIME_UNCERTAINTY_DEGRADE_MAX_PARTICIPATION_RATE,
     RUNTIME_UNCERTAINTY_DEGRADE_MIN_EXECUTION_SECONDS,
     RUNTIME_UNCERTAINTY_DEGRADE_QTY_MULTIPLIER,
@@ -50,6 +53,42 @@ from .support import (
     select_strictest_runtime_uncertainty_gate,
     uncertainty_gate_staleness_reason,
 )
+
+
+_TERMINAL_ORDER_STATUSES = {"canceled", "cancelled", "expired", "rejected"}
+
+
+def terminal_unfilled_execution_reason(execution: object) -> str | None:
+    status = str(getattr(execution, "status", "") or "").strip().lower()
+    if status not in _TERMINAL_ORDER_STATUSES:
+        return None
+    if _execution_has_fill(execution):
+        return None
+    return f"order_terminal_unfilled_{status}"
+
+
+def _execution_has_fill(execution: object) -> bool:
+    if _positive_decimal(getattr(execution, "filled_qty", None)) is not None:
+        return True
+    for attribute in ("raw_order", "execution_audit_json"):
+        payload = getattr(execution, attribute, None)
+        if not isinstance(payload, Mapping):
+            continue
+        lifecycle = cast(Mapping[object, object], payload).get("_order_lifecycle")
+        if not isinstance(lifecycle, Mapping):
+            continue
+        lifecycle_payload = cast(Mapping[object, object], lifecycle)
+        if _positive_decimal(lifecycle_payload.get("filled_qty_total")) is not None:
+            return True
+    return False
+
+
+def _positive_decimal(value: object) -> Decimal | None:
+    try:
+        parsed = Decimal(str(value or 0))
+    except (ArithmeticError, ValueError):
+        return None
+    return parsed if parsed.is_finite() and parsed > 0 else None
 
 
 def _execution_quantity_resolution_mismatched(
@@ -273,7 +312,7 @@ def _optional_stripped_text(value: object) -> str | None:
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineRuntimeGatesMixin(TradingPipelineBase):
+class TradingPipelineRuntimeGatesMixin(TradingPipelineRuntime):
     def _maybe_record_lean_strategy_shadow(
         self,
         *,
@@ -351,17 +390,73 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineBase):
                 execution_expected_adapter=request.selected_adapter_name,
                 retry_delays=retry_delays_seconds,
             )
+            terminal_reason = terminal_unfilled_execution_reason(execution)
+            if terminal_reason is not None:
+                return self._handle_terminal_unfilled_execution(
+                    request=request,
+                    execution=execution,
+                    reason=terminal_reason,
+                )
             return execution, False
         except OrderFirewallBlocked as exc:
             return self._handle_order_firewall_block(
                 request=request,
                 exc=exc,
             )
-        except Exception as exc:
+        except (
+            APIError,
+            OSError,
+            RuntimeError,
+            SQLAlchemyError,
+            TypeError,
+            ValueError,
+        ) as exc:
             return self._handle_order_submit_exception(
                 request=request,
                 exc=exc,
             )
+
+    def _handle_terminal_unfilled_execution(
+        self,
+        *,
+        request: OrderSubmissionRequest,
+        execution: object,
+        reason: str,
+    ) -> tuple[object, bool]:
+        self.state.metrics.orders_rejected_total += 1
+        self.state.metrics.record_decision_state("rejected")
+        self.state.metrics.record_decision_rejection_reasons([reason])
+        self.state.metrics.record_execution_submit_result(
+            status="rejected",
+            adapter=request.selected_adapter_name,
+        )
+        self.executor.mark_rejected(
+            request.session,
+            request.decision_row,
+            reason,
+            metadata_update=self._decision_lifecycle_metadata(
+                submission_stage="rejected_unfilled"
+            ),
+        )
+        self._emit_domain_telemetry(
+            DomainTelemetryEvent(
+                event_name="torghut.execution.rejected",
+                severity="warning",
+                decision=request.decision,
+                decision_row=request.decision_row,
+                execution=execution,
+                reason_codes=[reason],
+                extra_properties={"rejection_type": "terminal_unfilled"},
+            )
+        )
+        logger.warning(
+            "Order terminated without a fill strategy_id=%s decision_id=%s symbol=%s reason=%s",
+            request.decision.strategy_id,
+            request.decision_row.id,
+            request.decision.symbol,
+            reason,
+        )
+        return execution, True
 
     def _handle_order_firewall_block(
         self,
@@ -409,6 +504,8 @@ class TradingPipelineRuntimeGatesMixin(TradingPipelineBase):
         request: OrderSubmissionRequest,
         exc: Exception,
     ) -> tuple[None, bool]:
+        if isinstance(exc, OrderLifecycleSafetyError):
+            self.capital_safety.trigger_flatten(str(exc))
         self.state.metrics.orders_rejected_total += 1
         self.state.metrics.record_decision_state("rejected")
         self.state.metrics.record_decision_rejection_reasons(
