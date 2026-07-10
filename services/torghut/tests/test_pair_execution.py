@@ -21,7 +21,6 @@ def _allocation(
     pair_side: str,
     notional: Decimal,
     event_ts: datetime | None = None,
-    signal_seq: int = 1,
 ) -> AllocationResult:
     price = Decimal("100")
     decision = StrategyDecision(
@@ -39,7 +38,6 @@ def _allocation(
         ),
         params={
             "price": str(price),
-            "signal_seq": signal_seq,
             "allocator": {"approved": True},
         },
     )
@@ -161,59 +159,6 @@ def test_pair_reservation_scopes_groups_by_signal_timestamp() -> None:
                 pair_side="low_rank",
                 notional=Decimal("10000"),
                 event_ts=second_event,
-            ),
-        ],
-        account={"equity": "40000", "buying_power": "100000"},
-        positions=[],
-    )
-
-    assert len(groups) == 2
-    assert all(len(group) == 2 for group in groups)
-    assert all(item.approved for group in groups for item in group)
-    group_ids = {
-        item.decision.params["pair_execution"]["group_id"]
-        for group in groups
-        for item in group
-    }
-    assert len(group_ids) == 2
-
-
-def test_pair_reservation_scopes_same_timestamp_by_signal_sequence() -> None:
-    event_ts = datetime(2026, 7, 10, 14, 0, tzinfo=timezone.utc)
-
-    groups = reserve_pair_allocations(
-        [
-            _allocation(
-                symbol="NVDA",
-                action="buy",
-                pair_side="high_rank",
-                notional=Decimal("10000"),
-                event_ts=event_ts,
-                signal_seq=1,
-            ),
-            _allocation(
-                symbol="AMD",
-                action="sell",
-                pair_side="low_rank",
-                notional=Decimal("10000"),
-                event_ts=event_ts,
-                signal_seq=1,
-            ),
-            _allocation(
-                symbol="NVDA",
-                action="buy",
-                pair_side="high_rank",
-                notional=Decimal("10000"),
-                event_ts=event_ts,
-                signal_seq=2,
-            ),
-            _allocation(
-                symbol="AMD",
-                action="sell",
-                pair_side="low_rank",
-                notional=Decimal("10000"),
-                event_ts=event_ts,
-                signal_seq=2,
             ),
         ],
         account={"equity": "40000", "buying_power": "100000"},
