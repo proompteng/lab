@@ -6,7 +6,7 @@ import hashlib
 from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from decimal import Decimal
-from typing import Any, cast
+from typing import cast
 
 from ...config import settings
 from ..models import StrategyDecision
@@ -41,7 +41,7 @@ def reserve_pair_allocations(
     for allocation in allocations:
         decision = allocation.decision
         grouped.setdefault(_pair_signal_epoch(decision), []).append(allocation)
-    projected_positions: list[dict[str, Any]] = [
+    projected_positions: list[dict[str, object]] = [
         dict(position) for position in positions
     ]
     remaining_buying_power = _spendable_buying_power(account)
@@ -72,7 +72,7 @@ def _reserve_group(
     group: list[AllocationResult],
     *,
     account: dict[str, str],
-    positions: list[dict[str, Any]],
+    positions: list[dict[str, object]],
     buying_power_available: Decimal | None,
 ) -> list[AllocationResult]:
     reason = _pair_group_rejection(group)
@@ -157,7 +157,7 @@ def _reserved_leg_notional(
     group: list[AllocationResult],
     *,
     account: dict[str, str],
-    positions: list[dict[str, Any]],
+    positions: list[dict[str, object]],
     buying_power_available: Decimal | None,
 ) -> Decimal:
     equity = _positive_decimal(account.get("equity"))
