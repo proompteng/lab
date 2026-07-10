@@ -1,7 +1,5 @@
 # Torghut Autoresearch Runner CI Single-Job Refactor Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Replace the 16 visible `Pytest autoresearch runner N` CI jobs with one autoresearch CI job while splitting the 13.6k-line autoresearch test file into maintainable focused files.
 
 **Architecture:** Keep autoresearch tests isolated from the normal Torghut pytest shards, but run them through one dedicated GitHub Actions job using local `pytest-xdist` parallelism inside that runner. Split the monolithic `tests/test_run_whitepaper_autoresearch_profit_target.py` by behavior area into a new `tests/autoresearch_runner/` package with shared helpers and a non-collected base test case.
