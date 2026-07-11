@@ -388,6 +388,33 @@ describe('torghut build-push workflow', () => {
     expect(autoresearchJobBody).not.toContain('name: torghut-coverage-autoresearch-runner\n')
   })
 
+  it('requires the PostgreSQL submission-claim CAS gate before the aggregate passes', () => {
+    const postgresJobStart = ciWorkflow.indexOf('\n  postgres-cas:')
+    const postgresJobEnd = ciWorkflow.indexOf('\n  pytest-shards:', postgresJobStart)
+    const postgresJobBody = ciWorkflow.slice(postgresJobStart, postgresJobEnd)
+
+    expect(postgresJobStart).toBeGreaterThan(-1)
+    expect(postgresJobEnd).toBeGreaterThan(postgresJobStart)
+    expect(postgresJobBody).toContain('name: PostgreSQL submission-claim CAS')
+    expect(postgresJobBody).toContain('image: postgres:18-trixie')
+    expect(postgresJobBody).toContain('--health-cmd "pg_isready -U torghut -d torghut_test"')
+    expect(postgresJobBody).toContain(
+      'TORGHUT_TEST_POSTGRES_DSN: postgresql+psycopg://torghut:torghut@127.0.0.1:5432/torghut_test',
+    )
+    expect(postgresJobBody).toContain('${TORGHUT_TEST_POSTGRES_DSN:?')
+    expect(postgresJobBody).toContain('uv run --frozen pytest -q')
+    expect(postgresJobBody).toContain('tests/execution/test_decision_submission_claims_postgres.py')
+    expect(postgresJobBody).toContain('tests/execution/test_decision_submission_claim_identity_races_postgres.py')
+    expect(postgresJobBody).not.toContain('-n auto')
+
+    const aggregateStart = ciWorkflow.indexOf('\n  lint-and-tests:')
+    const aggregateEnd = ciWorkflow.indexOf('\n  quality-signals:', aggregateStart)
+    const aggregateBody = ciWorkflow.slice(aggregateStart, aggregateEnd)
+
+    expect(aggregateBody).toContain('- postgres-cas')
+    expect(aggregateBody).toContain('needs.postgres-cas.result')
+  })
+
   it('shards primary Torghut pytest by collected test node instead of file list', () => {
     const pytestShardJob = ciWorkflow.indexOf('pytest-shards:')
     const nextJob = ciWorkflow.indexOf('\n  pytest-autoresearch-runner:', pytestShardJob)
