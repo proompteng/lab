@@ -22,6 +22,7 @@ from ..execution_adapters import ExecutionAdapter, OrderSubmission
 from ..models import SignalEnvelope, StrategyDecision
 from ..prices import PriceFetcher
 from ..session_context import regular_session_open_utc_for
+from ..tigerbeetle_client import check_tigerbeetle_health
 from ..tigerbeetle_reconcile.latest_tigerbeetle_reconciliation_status_p import (
     latest_tigerbeetle_reconciliation_status_payload,
 )
@@ -211,8 +212,9 @@ class CapitalSafetyController:
         return None
 
     def _ledger_stop_reason(self, session: Session, *, now: datetime) -> str | None:
-        required = bool(settings.tigerbeetle_reconcile_required)
-        if not required:
+        protocol_required = bool(settings.tigerbeetle_required)
+        reconciliation_required = bool(settings.tigerbeetle_reconcile_required)
+        if not protocol_required and not reconciliation_required:
             self.state.capital_ledger_state = "not_required"
             self.state.capital_ledger_reason = None
             return None
@@ -222,6 +224,21 @@ class CapitalSafetyController:
             and monotonic_now - self._ledger_checked_at_monotonic < 30
         ):
             return self._ledger_stop_reason_cache
+        if protocol_required:
+            try:
+                protocol_health = check_tigerbeetle_health(settings)
+            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+                logger.exception("TigerBeetle protocol safety check failed")
+                reason = f"tigerbeetle_protocol_unavailable:{type(exc).__name__}"
+                self._record_ledger_state(reason=reason, now=now)
+                return reason
+            if not protocol_health.enabled or not protocol_health.ok:
+                reason = "tigerbeetle_protocol_unavailable"
+                self._record_ledger_state(reason=reason, now=now)
+                return reason
+        if not reconciliation_required:
+            self._record_ledger_state(reason=None, now=now)
+            return None
         try:
             payload = latest_tigerbeetle_reconciliation_status_payload(
                 session,

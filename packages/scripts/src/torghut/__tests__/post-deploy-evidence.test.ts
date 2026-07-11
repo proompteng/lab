@@ -153,6 +153,17 @@ describe('Torghut post-deploy evidence', () => {
     expect(result.readinessContract).toBe('active_session_ready')
   })
 
+  it('rejects broken synchronous ledger references when reconciliation is optional', () => {
+    const status = tradingStatus()
+    status.tigerbeetle_ledger.blockers = ['tigerbeetle_runtime_ledger_signed_refs_missing']
+    status.tigerbeetle_ledger.reconciliation_ok = false
+    status.tigerbeetle_ledger.reconciliation_required = false
+
+    expect(() =>
+      validatePostDeployEvidence({ readyz: readyz(), readyzHttpStatus: '200', tradingStatus: status }),
+    ).toThrow('ledger has blockers: tigerbeetle_runtime_ledger_signed_refs_missing')
+  })
+
   it('rejects an unhealthy TigerBeetle protocol when reconciliation is optional', () => {
     const status = tradingStatus()
     status.tigerbeetle_ledger.ok = false

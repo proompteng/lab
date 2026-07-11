@@ -126,6 +126,10 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_reconcile_required", True),
             patch.object(controller, "_load_risk_snapshot", return_value=risk),
             patch(
+                "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
+                return_value=SimpleNamespace(enabled=True, ok=True),
+            ),
+            patch(
                 "app.trading.scheduler.capital_controls.latest_tigerbeetle_reconciliation_status_payload",
                 return_value={
                     "ok": True,
@@ -156,6 +160,10 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_required", True),
             patch.object(settings, "tigerbeetle_reconcile_required", False),
             patch(
+                "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
+                return_value=SimpleNamespace(enabled=True, ok=True),
+            ),
+            patch(
                 "app.trading.scheduler.capital_controls.latest_tigerbeetle_reconciliation_status_payload",
                 side_effect=AssertionError(
                     "periodic reconciliation should not be read"
@@ -168,7 +176,47 @@ class TestCapitalSafetyController(TestCase):
             )
 
         self.assertIsNone(reason)
-        self.assertEqual(controller.state.capital_ledger_state, "not_required")
+        self.assertEqual(controller.state.capital_ledger_state, "current")
+
+    def test_required_protocol_failure_latches_stop_without_reconciliation(
+        self,
+    ) -> None:
+        adapter = _ExecutionAdapter([])
+        controller = self._controller(adapter)
+        now = datetime(2026, 7, 10, 15, 0, tzinfo=ZoneInfo("America/New_York"))
+        risk = CapitalRiskSnapshot(
+            current_equity=Decimal("10000"),
+            daily_start_equity=Decimal("10000"),
+            high_water_equity=Decimal("10000"),
+            daily_loss_ratio=Decimal("0"),
+            drawdown_ratio=Decimal("0"),
+        )
+
+        with (
+            patch.object(settings, "trading_mode", "live"),
+            patch.object(settings, "tigerbeetle_required", True),
+            patch.object(settings, "tigerbeetle_reconcile_required", False),
+            patch.object(controller, "_load_risk_snapshot", return_value=risk),
+            patch(
+                "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
+                return_value=SimpleNamespace(enabled=True, ok=False),
+            ),
+            patch(
+                "app.trading.scheduler.capital_controls.latest_tigerbeetle_reconciliation_status_payload",
+                side_effect=AssertionError(
+                    "periodic reconciliation should not be read"
+                ),
+            ),
+        ):
+            controller.evaluate(SimpleNamespace(), SimpleNamespace(as_of=now))
+
+        self.assertTrue(controller.state.emergency_stop_active)
+        self.assertIn(
+            "tigerbeetle_protocol_unavailable",
+            controller.state.emergency_stop_reason,
+        )
+        self.assertEqual(controller.state.capital_ledger_state, "blocked")
+        self.assertEqual(adapter.cancel_calls, 1)
 
     def test_new_exposure_is_blocked_at_1530_et(self) -> None:
         controller = self._controller()
