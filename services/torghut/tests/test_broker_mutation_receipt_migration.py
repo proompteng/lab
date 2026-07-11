@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from unittest import TestCase
 from unittest.mock import patch
 
@@ -18,6 +19,10 @@ class TestBrokerMutationReceiptMigration(TestCase):
         self.assertEqual(module.revision, "0059_broker_mutation_receipts")
         self.assertEqual(module.down_revision, "0058_decision_submission_claims")
         self.assertLessEqual(len(module.revision), 32)
+        self.assertLessEqual(
+            len(Path(module.__file__ or "").read_text(encoding="utf-8").splitlines()),
+            1000,
+        )
 
     def test_upgrade_creates_immutable_header_and_append_only_events(self) -> None:
         module = load_migration_module(MIGRATION_FILENAME)
@@ -105,14 +110,29 @@ class TestBrokerMutationReceiptMigration(TestCase):
         self.assertIn("broker_io_started", checks)
         self.assertIn("already_satisfied", checks)
         self.assertIn("preflight", checks)
+        self.assertIn("settlement_outcome = 'acknowledged'", checks)
+        self.assertIn("settlement_source = 'primary'", checks)
+        self.assertIn("broker_reference IS NOT NULL", checks)
         self.assertIn("sequence_no > 0", checks)
 
         index_names = {item.args[0] for item in create_index.call_args_list}
         self.assertIn("uq_broker_mutation_receipt_client", index_names)
         self.assertIn("uq_broker_mutation_receipt_intent", index_names)
+        self.assertIn("uq_bm_receipt_submit_claim", index_names)
         self.assertIn("uq_broker_mutation_receipt_event_seq", index_names)
         self.assertIn("ix_broker_mutation_receipt_latest", index_names)
         self.assertIn("ix_broker_mutation_receipt_recovery_due", index_names)
+        submit_claim_index = next(
+            item
+            for item in create_index.call_args_list
+            if item.args[0] == "uq_bm_receipt_submit_claim"
+        )
+        self.assertEqual(submit_claim_index.args[2], ["submission_claim_id"])
+        self.assertTrue(submit_claim_index.kwargs["unique"])
+        self.assertIn(
+            "operation = 'submit_order' AND submission_claim_id IS NOT NULL",
+            str(submit_claim_index.kwargs["postgresql_where"]),
+        )
         for call_args in (*create_table.call_args_list, *create_index.call_args_list):
             name = call_args.args[0]
             self.assertLessEqual(len(name), 63)
@@ -136,6 +156,9 @@ class TestBrokerMutationReceiptMigration(TestCase):
         self.assertIn("previous.state = 'claimed'", guard_sql)
         self.assertIn("NEW.settlement_source <> 'preflight'", guard_sql)
         self.assertIn("NEW.settlement_outcome <> 'already_satisfied'", guard_sql)
+        self.assertIn("NEW.settlement_source = 'recovery'", guard_sql)
+        self.assertIn("NEW.settlement_outcome = 'acknowledged'", guard_sql)
+        self.assertIn("NEW.broker_reference IS NULL", guard_sql)
         self.assertIn("torghut_lock_submission_identities", guard_sql)
         self.assertLess(
             guard_sql.index("torghut_lock_submission_identities"),
@@ -165,6 +188,10 @@ class TestBrokerMutationReceiptMigration(TestCase):
             downgrade_sql,
         )
         self.assertGreaterEqual(drop_index.call_count, 1)
+        self.assertIn(
+            "uq_bm_receipt_submit_claim",
+            {item.args[0] for item in drop_index.call_args_list},
+        )
         self.assertEqual(
             [item.args[0] for item in drop_table.call_args_list],
             ["broker_mutation_receipt_events", "broker_mutation_receipts"],

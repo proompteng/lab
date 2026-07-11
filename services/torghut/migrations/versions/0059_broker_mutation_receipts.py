@@ -304,7 +304,9 @@ def _create_receipt_events() -> None:
             "settlement_outcome IS NULL OR "
             "(settlement_outcome = 'already_satisfied' "
             "AND settlement_source = 'preflight') OR "
-            "(settlement_outcome <> 'already_satisfied' "
+            "(settlement_outcome = 'acknowledged' "
+            "AND settlement_source = 'primary') OR "
+            "(settlement_outcome IN ('reconciled', 'rejected') "
             "AND settlement_source IN ('primary', 'recovery'))",
             name="ck_bm_event_settlement_pair",
         ),
@@ -313,7 +315,9 @@ def _create_receipt_events() -> None:
             "AND settlement_outcome IS NOT NULL AND settled_at IS NOT NULL "
             "AND settlement_evidence_json IS NOT NULL "
             "AND settlement_evidence_sha256 ~ '^[0-9a-f]{64}$' "
-            "AND octet_length(settlement_evidence_json) BETWEEN 2 AND 4096) OR "
+            "AND octet_length(settlement_evidence_json) BETWEEN 2 AND 4096 "
+            "AND (settlement_outcome NOT IN ('acknowledged', 'reconciled') "
+            "OR broker_reference IS NOT NULL)) OR "
             "(state <> 'settled' AND settlement_source IS NULL "
             "AND settlement_outcome IS NULL AND broker_reference IS NULL "
             "AND execution_id IS NULL AND settlement_evidence_json IS NULL "
@@ -372,6 +376,15 @@ def _create_indexes() -> None:
         ["submission_claim_id"],
     )
     op.create_index(
+        "uq_bm_receipt_submit_claim",
+        "broker_mutation_receipts",
+        ["submission_claim_id"],
+        unique=True,
+        postgresql_where=sa.text(
+            "operation = 'submit_order' AND submission_claim_id IS NOT NULL"
+        ),
+    )
+    op.create_index(
         "ix_broker_mutation_receipt_workflow",
         "broker_mutation_receipts",
         ["workflow_id"],
@@ -411,9 +424,7 @@ def _create_header_guards() -> None:
         sa.text(
             """
             CREATE FUNCTION torghut_guard_broker_mutation_receipt()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
+            RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
                 intent_document jsonb;
                 intent_key_count integer;
@@ -423,7 +434,6 @@ def _create_header_guards() -> None:
                     RAISE EXCEPTION 'broker mutation receipt header is immutable'
                         USING ERRCODE = '23514';
                 END IF;
-
                 NEW.created_at := clock_timestamp();
                 IF NEW.canonical_intent_sha256 IS DISTINCT FROM encode(
                     digest(convert_to(NEW.canonical_intent_json, 'UTF8'), 'sha256'),
@@ -477,7 +487,6 @@ def _create_header_guards() -> None:
                     RAISE EXCEPTION 'broker mutation receipt intent identity mismatch'
                         USING ERRCODE = '23514';
                 END IF;
-
                 PERFORM torghut_lock_submission_identities(
                     ARRAY[
                         'torghut:broker-mutation:client:' || NEW.broker_route
@@ -538,9 +547,7 @@ def _create_header_guards() -> None:
         sa.text(
             """
             CREATE FUNCTION torghut_require_bm_receipt_first_event()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
+            RETURNS trigger LANGUAGE plpgsql AS $$
             BEGIN
                 IF NOT EXISTS (
                     SELECT 1 FROM broker_mutation_receipt_events
@@ -580,10 +587,7 @@ def _create_event_guards() -> None:
                 left_event broker_mutation_receipt_events,
                 right_event broker_mutation_receipt_events,
                 ignored_keys text[]
-            ) RETURNS boolean
-            LANGUAGE sql
-            IMMUTABLE
-            AS $$
+            ) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$
                 SELECT (to_jsonb(left_event) - ignored_keys)
                     IS NOT DISTINCT FROM
                        (to_jsonb(right_event) - ignored_keys)
@@ -595,9 +599,7 @@ def _create_event_guards() -> None:
         sa.text(
             """
             CREATE FUNCTION torghut_guard_broker_mutation_event()
-            RETURNS trigger
-            LANGUAGE plpgsql
-            AS $$
+            RETURNS trigger LANGUAGE plpgsql AS $$
             DECLARE
                 receipt_row broker_mutation_receipts%ROWTYPE;
                 previous broker_mutation_receipt_events%ROWTYPE;
@@ -632,7 +634,6 @@ def _create_event_guards() -> None:
                         'broker mutation receipt evidence hash mismatch: settlement'
                         USING ERRCODE = '23514';
                 END IF;
-
                 PERFORM torghut_lock_submission_identities(ARRAY[
                     'torghut:broker-mutation:receipt:' || NEW.receipt_id::text
                 ]);
@@ -693,7 +694,6 @@ def _create_event_guards() -> None:
                     RAISE EXCEPTION 'broker I/O quarantine is irreversible'
                         USING ERRCODE = '23514';
                 END IF;
-
                 IF NEW.event_type = 'primary_claimed' THEN
                     requested_interval :=
                         NEW.primary_lease_expires_at - NEW.primary_claimed_at;
@@ -711,6 +711,7 @@ def _create_event_guards() -> None:
                            NEW, previous, base_ignored || ARRAY[
                                'state', 'primary_token', 'primary_epoch',
                                'primary_owner', 'primary_writer_generation',
+                               'submission_claim_token', 'submission_claim_fencing_epoch', 'submission_claim_owner',
                                'primary_claimed_at', 'primary_lease_expires_at',
                                'released_at', 'release_reason'
                            ]
@@ -887,6 +888,11 @@ def _create_event_guards() -> None:
                     ELSIF previous.state = 'broker_io' THEN
                         IF NEW.settlement_source NOT IN ('primary', 'recovery')
                            OR NEW.settlement_outcome = 'already_satisfied'
+                           OR (NEW.settlement_source = 'recovery' AND
+                               NEW.settlement_outcome = 'acknowledged')
+                           OR (NEW.settlement_outcome IN
+                               ('acknowledged', 'reconciled') AND
+                               NEW.broker_reference IS NULL)
                            OR (NEW.settlement_source = 'primary' AND
                                NEW.event_writer_generation IS DISTINCT FROM
                                    previous.primary_writer_generation)
@@ -984,6 +990,7 @@ def downgrade() -> None:
         ("uq_broker_mutation_receipt_event_seq", "broker_mutation_receipt_events"),
         ("ix_broker_mutation_receipt_target", "broker_mutation_receipts"),
         ("ix_broker_mutation_receipt_workflow", "broker_mutation_receipts"),
+        ("uq_bm_receipt_submit_claim", "broker_mutation_receipts"),
         ("ix_broker_mutation_receipt_claim", "broker_mutation_receipts"),
         ("uq_broker_mutation_receipt_intent", "broker_mutation_receipts"),
         ("uq_broker_mutation_receipt_client", "broker_mutation_receipts"),

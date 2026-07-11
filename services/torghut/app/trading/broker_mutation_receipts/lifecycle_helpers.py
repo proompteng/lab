@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 import uuid
-import json
-from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
-from typing import cast
 from sqlalchemy.orm import Session
 
 from ...models import BrokerMutationReceipt, BrokerMutationReceiptEvent
-from .canonicalization import verify_canonical_broker_mutation_evidence
+from .canonicalization import (
+    verify_broker_mutation_recovery_observation,
+    verify_broker_mutation_settlement,
+)
 from .persistence import (
     append_full_state_event,
     close_read_transaction,
@@ -49,6 +51,19 @@ class LockedReceipt:
     event: BrokerMutationReceiptEvent
     snapshot: BrokerMutationReceiptSnapshot
     now: datetime
+
+
+@contextmanager
+def rollback_session_on_error(session: Session) -> Iterator[None]:
+    """Rollback every exceptional exit without adding a broad exception handler."""
+
+    completed = False
+    try:
+        yield
+        completed = True
+    finally:
+        if not completed:
+            session.rollback()
 
 
 def lock_current_receipt(
@@ -187,6 +202,7 @@ def require_recovery_handle(
 def normalized_recovery_observation(
     observation: BrokerMutationRecoveryObservation,
 ) -> BrokerMutationRecoveryObservation:
+    verify_broker_mutation_recovery_observation(observation)
     if observation.outcome not in {"not_found", "indeterminate"}:
         raise BrokerMutationReceiptValidationError("recovery_outcome_invalid")
     checked_client_request_id = required_text(
@@ -199,22 +215,6 @@ def normalized_recovery_observation(
         field="checked_target_key",
         maximum=256,
     )
-    verify_canonical_broker_mutation_evidence(
-        observation.evidence_json,
-        observation.evidence_sha256,
-    )
-    evidence_document = json.loads(observation.evidence_json)
-    if not isinstance(evidence_document, Mapping):  # pragma: no cover - verifier
-        raise BrokerMutationReceiptValidationError("recovery_evidence_invalid")
-    evidence = cast(Mapping[str, object], evidence_document)
-    if (
-        evidence.get("checked_client_request_id") != checked_client_request_id
-        or evidence.get("checked_target_key") != checked_target_key
-        or not isinstance(evidence.get("observation"), Mapping)
-    ):
-        raise BrokerMutationReceiptValidationError(
-            "recovery_evidence_identity_mismatch"
-        )
     return BrokerMutationRecoveryObservation(
         checked_client_request_id=checked_client_request_id,
         checked_target_key=checked_target_key,
@@ -229,6 +229,7 @@ def normalized_settlement(
     *,
     expected_source: BrokerMutationSettlementSource,
 ) -> BrokerMutationSettlement:
+    verify_broker_mutation_settlement(settlement)
     if settlement.source != expected_source:
         raise BrokerMutationReceiptValidationError(
             f"settlement_source_mismatch:{expected_source}:{settlement.source}"
@@ -264,10 +265,6 @@ def normalized_settlement(
         raise BrokerMutationReceiptValidationError(
             f"{settlement.outcome}_requires_broker_reference"
         )
-    verify_canonical_broker_mutation_evidence(
-        settlement.evidence_json,
-        settlement.evidence_sha256,
-    )
     return BrokerMutationSettlement(
         source=expected_source,
         outcome=settlement.outcome,
@@ -316,6 +313,17 @@ def require_compatible_terminal(
     return snapshot
 
 
+def require_unlinked_terminal(
+    snapshot: BrokerMutationReceiptSnapshot,
+) -> None:
+    """Force linked submit terminals through the atomic P0b/P0c coordinator."""
+
+    if snapshot.intent.submission_claim_id is not None:
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_requires_atomic_terminal_coordinator"
+        )
+
+
 __all__ = [
     "LockedReceipt",
     "append_and_commit",
@@ -327,9 +335,11 @@ __all__ = [
     "normalized_settlement",
     "primary_handle_matches",
     "read_and_close",
+    "rollback_session_on_error",
     "recovery_handle_matches",
     "require_compatible_terminal",
     "require_primary_handle",
     "require_recovery_handle",
+    "require_unlinked_terminal",
     "settlement_is_compatible",
 ]

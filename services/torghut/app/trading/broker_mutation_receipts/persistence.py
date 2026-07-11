@@ -14,6 +14,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ...models import BrokerMutationReceipt, BrokerMutationReceiptEvent
+from ..decision_submission_claims.types import DecisionSubmissionClaimHandle
 from .types import (
     BrokerMutationIntent,
     BrokerMutationOperation,
@@ -51,6 +52,9 @@ _EVENT_FULL_STATE_FIELDS: tuple[str, ...] = (
     "primary_epoch",
     "primary_owner",
     "primary_writer_generation",
+    "submission_claim_token",
+    "submission_claim_fencing_epoch",
+    "submission_claim_owner",
     "primary_claimed_at",
     "primary_lease_expires_at",
     "released_at",
@@ -119,10 +123,11 @@ def snapshot_from_models(
     receipt_id = _database_uuid(header.id, field="receipt_id")
     if _database_uuid(event.receipt_id, field="event_receipt_id") != receipt_id:
         raise BrokerMutationReceiptError("receipt_event_identity_mismatch")
+    intent = _intent_from_model(header)
     recovery_handle = _recovery_handle_from_model(event, receipt_id=receipt_id)
     return BrokerMutationReceiptSnapshot(
         receipt_id=receipt_id,
-        intent=_intent_from_model(header),
+        intent=intent,
         creator_owner=header.creator_owner,
         origin_writer_generation=int(header.origin_writer_generation),
         created_at=as_database_utc_datetime(header.created_at, field="created_at"),
@@ -132,6 +137,10 @@ def snapshot_from_models(
             primary_epoch=int(event.primary_epoch),
             primary_owner=event.primary_owner,
             primary_writer_generation=int(event.primary_writer_generation),
+        ),
+        submission_claim_handle=_submission_claim_handle_from_model(
+            event,
+            intent=intent,
         ),
         recovery_handle=recovery_handle,
         lifecycle=BrokerMutationReceiptLifecycle(
@@ -192,6 +201,45 @@ def snapshot_from_models(
                 field="settled_at",
             ),
         ),
+    )
+
+
+def _submission_claim_handle_from_model(
+    event: BrokerMutationReceiptEvent,
+    *,
+    intent: BrokerMutationIntent,
+) -> DecisionSubmissionClaimHandle | None:
+    values = (
+        event.submission_claim_token,
+        event.submission_claim_fencing_epoch,
+        event.submission_claim_owner,
+    )
+    if intent.submission_claim_id is None:
+        if any(value is not None for value in values):
+            raise BrokerMutationReceiptError(
+                "unlinked_receipt_event_has_submission_claim_identity"
+            )
+        return None
+    if any(value is None for value in values):
+        raise BrokerMutationReceiptError(
+            "linked_receipt_event_missing_submission_claim_identity"
+        )
+    fencing_epoch = int(event.submission_claim_fencing_epoch or 0)
+    owner = str(event.submission_claim_owner or "")
+    if fencing_epoch <= 0 or not owner:
+        raise BrokerMutationReceiptError(
+            "linked_receipt_event_submission_claim_identity_invalid"
+        )
+    return DecisionSubmissionClaimHandle(
+        decision_id=intent.submission_claim_id,
+        claim_token=_database_uuid(
+            event.submission_claim_token,
+            field="submission_claim_token",
+        ),
+        fencing_epoch=fencing_epoch,
+        account_label=intent.account_label,
+        client_order_id=intent.client_request_id,
+        claim_owner=owner,
     )
 
 

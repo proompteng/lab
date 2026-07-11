@@ -8,7 +8,12 @@ from datetime import datetime, timedelta
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from ..decision_submission_claims.types import DecisionSubmissionClaimHandle
 from .canonicalization import verify_broker_mutation_intent
+from .linked_submission import (
+    normalize_linked_submission_handle,
+    validate_linked_receipt_state,
+)
 from .lifecycle_helpers import committed_snapshot
 from .persistence import (
     append_full_state_event,
@@ -28,10 +33,12 @@ from .types import (
     BrokerMutationReceiptSnapshot,
 )
 from .validation import (
+    RECEIPT_DEFAULT_LEASE_SECONDS,
     RECEIPT_MAX_LEASE_SECONDS,
     RECEIPT_MIN_LEASE_SECONDS,
     BrokerMutationReceiptConflictError,
     BrokerMutationReceiptError,
+    BrokerMutationReceiptValidationError,
     as_uuid,
     bounded_seconds,
     positive_integer,
@@ -46,6 +53,7 @@ class _PrimaryRequest:
     writer_generation: int
     token: uuid.UUID
     lease_seconds: int
+    submission_claim_handle: DecisionSubmissionClaimHandle | None
 
 
 def acquire_broker_mutation_receipt(
@@ -80,9 +88,28 @@ def _normalize_primary_request(
 ) -> _PrimaryRequest:
     configured = options or BrokerMutationReceiptAcquireOptions()
     verify_broker_mutation_intent(intent)
+    owner = required_text(primary_owner, field="primary_owner", maximum=128)
+    submission_claim_handle = normalize_linked_submission_handle(
+        intent,
+        configured.submission_claim_handle,
+        expected_owner=owner,
+    )
+    lease_seconds = bounded_seconds(
+        configured.lease_seconds,
+        minimum=RECEIPT_MIN_LEASE_SECONDS,
+        maximum=RECEIPT_MAX_LEASE_SECONDS,
+        field="lease_seconds",
+    )
+    if (
+        submission_claim_handle is not None
+        and lease_seconds > RECEIPT_DEFAULT_LEASE_SECONDS
+    ):
+        raise BrokerMutationReceiptValidationError(
+            f"linked_submission_lease_too_large:{RECEIPT_DEFAULT_LEASE_SECONDS}"
+        )
     return _PrimaryRequest(
         intent=intent,
-        owner=required_text(primary_owner, field="primary_owner", maximum=128),
+        owner=owner,
         writer_generation=positive_integer(
             writer_generation,
             field="writer_generation",
@@ -92,12 +119,8 @@ def _normalize_primary_request(
             if configured.primary_token is not None
             else uuid.uuid4()
         ),
-        lease_seconds=bounded_seconds(
-            configured.lease_seconds,
-            minimum=RECEIPT_MIN_LEASE_SECONDS,
-            maximum=RECEIPT_MAX_LEASE_SECONDS,
-            field="lease_seconds",
-        ),
+        lease_seconds=lease_seconds,
+        submission_claim_handle=submission_claim_handle,
     )
 
 
@@ -105,16 +128,27 @@ def _acquire_primary(
     session: Session,
     request: _PrimaryRequest,
 ) -> BrokerMutationReceiptAcquireResult:
-    candidate_id = uuid.uuid4()
-    inserted_id = insert_receipt_header_if_absent(
-        session,
-        receipt_id=candidate_id,
-        intent=request.intent,
-        creator_owner=request.owner,
-        origin_writer_generation=request.writer_generation,
-    )
+    header = resolve_receipt_header(session, intent=request.intent, for_update=True)
     now = database_now(session)
-    if inserted_id is not None:
+    if header is None:
+        validate_linked_receipt_state(
+            session,
+            intent=request.intent,
+            handle=request.submission_claim_handle,
+            receipt_state="claimed",
+            expected_owner=request.owner,
+        )
+        inserted_id = insert_receipt_header_if_absent(
+            session,
+            receipt_id=uuid.uuid4(),
+            intent=request.intent,
+            creator_owner=request.owner,
+            origin_writer_generation=request.writer_generation,
+        )
+        if inserted_id is None:
+            raise BrokerMutationReceiptConflictError(
+                "broker_mutation_submission_claim_reserved"
+            )
         append_full_state_event(
             session,
             receipt_id=inserted_id,
@@ -125,13 +159,28 @@ def _acquire_primary(
             receipt=committed_snapshot(session, inserted_id),
         )
 
-    header = resolve_receipt_header(session, intent=request.intent, for_update=True)
-    if header is None:  # pragma: no cover - an identity conflict caused the no-op
-        raise BrokerMutationReceiptError("broker_mutation_receipt_identity_missing")
     event = load_latest_receipt_event(session, header.id)
     if event is None:  # pragma: no cover - deferred database guard forbids this
         raise BrokerMutationReceiptError("broker_mutation_receipt_event_missing")
     snapshot = snapshot_from_models(header, event)
+    normalized_submission_handle = validate_linked_receipt_state(
+        session,
+        intent=request.intent,
+        handle=request.submission_claim_handle,
+        receipt_state=snapshot.state,
+        expected_owner=request.owner,
+    )
+    active_or_irreversible = snapshot.state in {"broker_io", "settled"} or (
+        snapshot.state == "claimed"
+        and snapshot.lifecycle.primary_lease_expires_at > now
+    )
+    if (
+        active_or_irreversible
+        and snapshot.submission_claim_handle != normalized_submission_handle
+    ):
+        raise BrokerMutationReceiptConflictError(
+            "broker_mutation_submission_claim_event_identity_mismatch"
+        )
     existing = _existing_primary_result(session, request, snapshot, now)
     if existing is not None:
         return existing
@@ -147,6 +196,21 @@ def _acquire_primary(
         primary_epoch=event.primary_epoch + 1,
         primary_owner=request.owner,
         primary_writer_generation=request.writer_generation,
+        submission_claim_token=(
+            request.submission_claim_handle.claim_token
+            if request.submission_claim_handle is not None
+            else None
+        ),
+        submission_claim_fencing_epoch=(
+            request.submission_claim_handle.fencing_epoch
+            if request.submission_claim_handle is not None
+            else None
+        ),
+        submission_claim_owner=(
+            request.submission_claim_handle.claim_owner
+            if request.submission_claim_handle is not None
+            else None
+        ),
         primary_claimed_at=now,
         primary_lease_expires_at=now + timedelta(seconds=request.lease_seconds),
         released_at=None,
@@ -225,6 +289,21 @@ def _initial_event_values(
         "primary_epoch": 1,
         "primary_owner": request.owner,
         "primary_writer_generation": request.writer_generation,
+        "submission_claim_token": (
+            request.submission_claim_handle.claim_token
+            if request.submission_claim_handle is not None
+            else None
+        ),
+        "submission_claim_fencing_epoch": (
+            request.submission_claim_handle.fencing_epoch
+            if request.submission_claim_handle is not None
+            else None
+        ),
+        "submission_claim_owner": (
+            request.submission_claim_handle.claim_owner
+            if request.submission_claim_handle is not None
+            else None
+        ),
         "primary_claimed_at": now,
         "primary_lease_expires_at": now + timedelta(seconds=request.lease_seconds),
         "released_at": None,

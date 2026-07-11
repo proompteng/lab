@@ -8,18 +8,29 @@ from datetime import timedelta
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
+from ..decision_submission_claims.types import DecisionSubmissionClaimHandle
+from .linked_submission import (
+    transition_linked_submission_io_uncommitted,
+    validate_linked_receipt_state,
+)
 from .lifecycle_helpers import (
     LockedReceipt,
     append_and_commit,
+    committed_snapshot,
     lock_current_receipt,
     normalized_primary_handle,
     normalized_settlement,
     read_and_close,
     require_compatible_terminal,
     require_primary_handle,
+    require_unlinked_terminal,
+    rollback_session_on_error,
 )
 from .persistence import full_state_values_from_event
+from .persistence import append_full_state_event
 from .types import (
+    BrokerMutationIoPermit,
+    BrokerMutationIoStartResult,
     BrokerMutationReceiptHandle,
     BrokerMutationReceiptSnapshot,
     BrokerMutationReceiptState,
@@ -34,7 +45,9 @@ from .validation import (
     RECEIPT_MIN_LEASE_SECONDS,
     RECEIPT_MIN_RECOVERY_SECONDS,
     BrokerMutationReceiptError,
+    BrokerMutationReceiptConflictError,
     BrokerMutationReceiptFenceError,
+    BrokerMutationReceiptValidationError,
     bounded_seconds,
     required_text,
 )
@@ -66,6 +79,10 @@ def renew_broker_mutation_receipt(
             field="lease_seconds",
         )
         current = _locked_primary(session, normalized)
+        if current.snapshot.intent.submission_claim_id is not None:
+            raise BrokerMutationReceiptValidationError(
+                "linked_submission_receipt_renewal_forbidden"
+            )
         if current.snapshot.state != "claimed" or (
             current.snapshot.lifecycle.primary_lease_expires_at <= current.now
         ):
@@ -140,11 +157,12 @@ def mark_broker_mutation_io_started(
     session: Session,
     *,
     handle: BrokerMutationReceiptHandle,
+    submission_claim_handle: DecisionSubmissionClaimHandle | None = None,
     recovery_seconds: int = RECEIPT_DEFAULT_RECOVERY_SECONDS,
-) -> BrokerMutationReceiptSnapshot:
+) -> BrokerMutationIoStartResult:
     """Commit the irreversible ambiguity boundary before the broker call."""
 
-    try:
+    with rollback_session_on_error(session):
         normalized = normalized_primary_handle(handle)
         bounded_recovery = bounded_seconds(
             recovery_seconds,
@@ -153,8 +171,28 @@ def mark_broker_mutation_io_started(
             field="recovery_seconds",
         )
         current = _locked_primary(session, normalized)
+        normalized_submission_handle = validate_linked_receipt_state(
+            session,
+            intent=current.snapshot.intent,
+            handle=submission_claim_handle,
+            receipt_state=current.snapshot.state,
+            expected_owner=normalized.primary_owner,
+        )
+        if current.snapshot.submission_claim_handle != normalized_submission_handle:
+            raise BrokerMutationReceiptConflictError(
+                "broker_mutation_submission_claim_event_identity_mismatch"
+            )
         if current.snapshot.state in {"broker_io", "settled"}:
-            return read_and_close(session, current.snapshot)
+            outcome = (
+                "already_started"
+                if current.snapshot.state == "broker_io"
+                else "settled"
+            )
+            return BrokerMutationIoStartResult(
+                outcome=outcome,
+                receipt=read_and_close(session, current.snapshot),
+                permit=None,
+            )
         if current.snapshot.state != "claimed" or (
             current.snapshot.lifecycle.primary_lease_expires_at <= current.now
         ):
@@ -162,22 +200,52 @@ def mark_broker_mutation_io_started(
                 f"broker_mutation_primary_cannot_start_io:{normalized.receipt_id}"
             )
         values = full_state_values_from_event(current.event)
+        recovery_after = current.now + timedelta(seconds=bounded_recovery)
+        if normalized_submission_handle is not None:
+            transition_linked_submission_io_uncommitted(
+                session,
+                intent=current.snapshot.intent,
+                handle=normalized_submission_handle,
+                broker_io_started_at=current.now,
+                recovery_after=recovery_after,
+            )
         values.update(
             sequence_no=current.event.sequence_no + 1,
             event_type="broker_io_started",
             state="broker_io",
             event_writer_generation=normalized.primary_writer_generation,
             broker_io_started_at=current.now,
-            recovery_after=current.now + timedelta(seconds=bounded_recovery),
+            recovery_after=recovery_after,
         )
-        return append_and_commit(
-            session,
-            receipt_id=normalized.receipt_id,
-            values=values,
+        append_full_state_event(
+            session, receipt_id=normalized.receipt_id, values=values
         )
-    except (BrokerMutationReceiptError, SQLAlchemyError):
-        session.rollback()
-        raise
+        started = committed_snapshot(session, normalized.receipt_id)
+        return BrokerMutationIoStartResult(
+            outcome="authorized",
+            receipt=started,
+            permit=BrokerMutationIoPermit(
+                receipt_id=started.receipt_id,
+                primary_token=normalized.primary_token,
+                primary_epoch=normalized.primary_epoch,
+                event_sequence_no=started.lifecycle.sequence_no,
+                submission_claim_id=(
+                    normalized_submission_handle.decision_id
+                    if normalized_submission_handle is not None
+                    else None
+                ),
+                submission_claim_token=(
+                    normalized_submission_handle.claim_token
+                    if normalized_submission_handle is not None
+                    else None
+                ),
+                submission_claim_fencing_epoch=(
+                    normalized_submission_handle.fencing_epoch
+                    if normalized_submission_handle is not None
+                    else None
+                ),
+            ),
+        )
 
 
 def settle_broker_mutation_preflight(
@@ -231,6 +299,7 @@ def _settle_primary_path(
             expected_source=path.expected_source,
         )
         current = _locked_primary(session, normalized_handle)
+        require_unlinked_terminal(current.snapshot)
         if current.snapshot.state == "settled":
             compatible = require_compatible_terminal(
                 current.snapshot,

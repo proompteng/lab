@@ -42,3 +42,10 @@ def test_receipt_postgres_races_are_a_required_ci_gate() -> None:
 
     assert "name: PostgreSQL mutation fencing CAS" in workflow
     assert "tests/execution/test_broker_mutation_receipts_postgres.py" in workflow
+    assert (
+        "tests/execution/test_broker_mutation_linked_receipts_postgres.py" in workflow
+    )
+    assert (
+        "tests/execution/test_broker_mutation_receipt_boundaries_postgres.py"
+        in workflow
+    )

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Mapping, TypeAlias
 
+from ..decision_submission_claims.types import DecisionSubmissionClaimHandle
 from .validation import (
     RECEIPT_DEFAULT_LEASE_SECONDS,
     BrokerMutationReceiptValidationError,
@@ -64,6 +65,11 @@ BrokerMutationReceiptAcquireOutcome = Literal[
     "already_owned",
     "busy",
     "recovery_required",
+    "settled",
+]
+BrokerMutationIoStartOutcome = Literal[
+    "authorized",
+    "already_started",
     "settled",
 ]
 BrokerMutationRecoveryAcquireOutcome = Literal[
@@ -134,6 +140,7 @@ class BrokerMutationIntent:
 class BrokerMutationReceiptAcquireOptions:
     primary_token: uuid.UUID | str | None = None
     lease_seconds: int = RECEIPT_DEFAULT_LEASE_SECONDS
+    submission_claim_handle: DecisionSubmissionClaimHandle | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,6 +210,7 @@ class BrokerMutationReceiptSnapshot:
     origin_writer_generation: int
     created_at: datetime
     primary_handle: BrokerMutationReceiptHandle
+    submission_claim_handle: DecisionSubmissionClaimHandle | None
     recovery_handle: BrokerMutationRecoveryHandle | None
     lifecycle: BrokerMutationReceiptLifecycle
     recovery: BrokerMutationRecoveryAudit
@@ -237,6 +245,30 @@ class BrokerMutationReceiptAcquireResult:
     @property
     def acquired(self) -> bool:
         return self.outcome in {"acquired", "already_owned"}
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationIoPermit:
+    """Ephemeral authorization returned only to the broker-I/O transition winner."""
+
+    receipt_id: uuid.UUID
+    primary_token: uuid.UUID
+    primary_epoch: int
+    event_sequence_no: int
+    submission_claim_id: uuid.UUID | None
+    submission_claim_token: uuid.UUID | None
+    submission_claim_fencing_epoch: int | None
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationIoStartResult:
+    outcome: BrokerMutationIoStartOutcome
+    receipt: BrokerMutationReceiptSnapshot
+    permit: BrokerMutationIoPermit | None
+
+    @property
+    def authorized(self) -> bool:
+        return self.outcome == "authorized" and self.permit is not None
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,12 +318,25 @@ class BrokerMutationSettlementRequest:
 
 
 def broker_mutation_runtime_result(
-    settlement_outcome: BrokerMutationSettlementOutcome | None,
+    receipt: BrokerMutationReceiptSnapshot,
 ) -> BrokerMutationRuntimeResult:
-    """Map durable receipt truth to the future runtime contract."""
+    """Map only a durable receipt snapshot to the future runtime contract."""
 
-    if settlement_outcome is None:
+    settlement_outcome = receipt.settlement.outcome
+    if not receipt.settled:
         return "deferred"
+    if settlement_outcome is None:
+        raise BrokerMutationReceiptValidationError(
+            "settled_receipt_requires_settlement_outcome"
+        )
+    if (
+        receipt.intent.submission_claim_id is not None
+        and settlement_outcome in {"acknowledged", "reconciled"}
+        and receipt.settlement.execution_id is None
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_success_requires_execution"
+        )
     if settlement_outcome == "acknowledged":
         return "submitted"
     if settlement_outcome == "reconciled":
@@ -308,6 +353,9 @@ def broker_mutation_runtime_result(
 __all__ = [
     "BrokerMutationIntent",
     "BrokerMutationIntentRequest",
+    "BrokerMutationIoPermit",
+    "BrokerMutationIoStartOutcome",
+    "BrokerMutationIoStartResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",
     "BrokerMutationReceiptAcquireOptions",

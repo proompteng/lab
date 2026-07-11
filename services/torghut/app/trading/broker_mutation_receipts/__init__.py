@@ -11,6 +11,8 @@ from .canonicalization import (
     build_broker_mutation_settlement,
     canonicalize_broker_mutation_evidence,
     fingerprint_broker_endpoint,
+    verify_broker_mutation_recovery_observation,
+    verify_broker_mutation_settlement,
     verify_broker_mutation_intent,
 )
 from .read_models import (
@@ -35,6 +37,9 @@ from .transitions import (
 from .types import (
     BrokerMutationIntent,
     BrokerMutationIntentRequest,
+    BrokerMutationIoPermit,
+    BrokerMutationIoStartOutcome,
+    BrokerMutationIoStartResult,
     BrokerMutationOperation,
     BrokerMutationPurpose,
     BrokerMutationReceiptEventSnapshot,
@@ -70,6 +75,9 @@ __all__ = [
     "BROKER_MUTATION_INTENT_SCHEMA_VERSION",
     "BrokerMutationIntent",
     "BrokerMutationIntentRequest",
+    "BrokerMutationIoPermit",
+    "BrokerMutationIoStartOutcome",
+    "BrokerMutationIoStartResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",
     "BrokerMutationReceiptConflictError",
@@ -115,5 +123,7 @@ __all__ = [
     "settle_broker_mutation_preflight",
     "settle_broker_mutation_primary",
     "settle_broker_mutation_recovery",
+    "verify_broker_mutation_recovery_observation",
+    "verify_broker_mutation_settlement",
     "verify_broker_mutation_intent",
 ]

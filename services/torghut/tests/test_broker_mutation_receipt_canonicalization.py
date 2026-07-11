@@ -14,6 +14,8 @@ from app.trading.broker_mutation_receipts.canonicalization import (
     build_broker_mutation_settlement,
     canonicalize_broker_mutation_evidence,
     fingerprint_broker_endpoint,
+    verify_broker_mutation_recovery_observation,
+    verify_broker_mutation_settlement,
     verify_canonical_broker_mutation_evidence,
     verify_broker_mutation_intent,
 )
@@ -21,10 +23,7 @@ from app.trading.broker_mutation_receipts.types import (
     BrokerMutationIntentRequest,
     BrokerMutationRecoveryObservationRequest,
     BrokerMutationSettlementRequest,
-    BrokerMutationSettlementOutcome,
     BrokerMutationTarget,
-    BrokerMutationRuntimeResult,
-    broker_mutation_runtime_result,
 )
 from app.trading.broker_mutation_receipts.validation import (
     BrokerMutationReceiptValidationError,
@@ -118,6 +117,37 @@ def test_canonicalization_rejects_floats_controls_and_changed_semantics() -> Non
     buy = _submit_intent(request={"side": "buy", "qty": Decimal("1")})
     sell = _submit_intent(request={"side": "sell", "qty": Decimal("1")})
     assert buy.canonical_intent_sha256 != sell.canonical_intent_sha256
+
+
+@pytest.mark.parametrize(
+    "secret_key",
+    [
+        "Api.Key",
+        "access-token",
+        "AUTHORIZATION",
+        "cookie",
+        "db_password",
+        "clientSecret",
+        "credentials",
+        "private-key",
+        "bearer",
+    ],
+)
+def test_canonical_payloads_reject_recursive_secret_bearing_keys(
+    secret_key: str,
+) -> None:
+    payload = {"transport": {"metadata": {secret_key: "must-not-persist"}}}
+
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="secret_bearing_key_forbidden",
+    ):
+        _submit_intent(request=payload)
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="secret_bearing_key_forbidden",
+    ):
+        canonicalize_broker_mutation_evidence(payload)
 
 
 @pytest.mark.parametrize(
@@ -223,7 +253,7 @@ def test_evidence_is_canonical_hashed_and_rejects_floats() -> None:
         canonicalize_broker_mutation_evidence("unstructured")
 
 
-def test_evidence_builders_enforce_source_and_outcome_contracts() -> None:
+def test_recovery_evidence_binds_identity_and_outcome() -> None:
     observation = build_broker_mutation_recovery_observation(
         BrokerMutationRecoveryObservationRequest(
             checked_client_request_id="request-1",
@@ -236,13 +266,32 @@ def test_evidence_builders_enforce_source_and_outcome_contracts() -> None:
         observation.evidence_json,
         observation.evidence_sha256,
     )
+    verify_broker_mutation_recovery_observation(observation)
+    observation_document = json.loads(observation.evidence_json)
+    assert observation_document == {
+        "schema_version": "torghut.broker-mutation-recovery-evidence.v1",
+        "checked_client_request_id": "request-1",
+        "checked_target_key": "order-1",
+        "outcome": "not_found",
+        "observation": {"broker_status": "not_found"},
+    }
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="recovery_evidence_identity_mismatch",
+    ):
+        verify_broker_mutation_recovery_observation(
+            replace(observation, outcome="indeterminate")
+        )
 
+
+def test_settlement_evidence_binds_every_terminal_fact() -> None:
+    execution_id = uuid.uuid4()
     settlement = build_broker_mutation_settlement(
         BrokerMutationSettlementRequest(
             source="primary",
             outcome="acknowledged",
             broker_reference="broker-order-1",
-            execution_id=None,
+            execution_id=execution_id,
             evidence_payload={"broker_status": "accepted"},
         )
     )
@@ -251,7 +300,42 @@ def test_evidence_builders_enforce_source_and_outcome_contracts() -> None:
         settlement.evidence_json,
         settlement.evidence_sha256,
     )
+    verify_broker_mutation_settlement(settlement)
+    settlement_document = json.loads(settlement.evidence_json)
+    assert settlement_document == {
+        "schema_version": "torghut.broker-mutation-settlement-evidence.v1",
+        "source": "primary",
+        "outcome": "acknowledged",
+        "broker_reference": "broker-order-1",
+        "execution_id": str(execution_id),
+        "evidence": {"broker_status": "accepted"},
+    }
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="settlement_evidence_identity_mismatch",
+    ):
+        verify_broker_mutation_settlement(
+            replace(settlement, broker_reference="broker-order-2")
+        )
 
+    drifted_document = {**settlement_document, "outcome": "rejected"}
+    drifted_json, drifted_sha256 = canonicalize_broker_mutation_evidence(
+        drifted_document
+    )
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="settlement_evidence_identity_mismatch",
+    ):
+        verify_broker_mutation_settlement(
+            replace(
+                settlement,
+                evidence_json=drifted_json,
+                evidence_sha256=drifted_sha256,
+            )
+        )
+
+
+def test_settlement_builder_enforces_source_and_outcome_contracts() -> None:
     invalid_pairs = (
         ("preflight", "rejected", None),
         ("primary", "already_satisfied", None),
@@ -271,6 +355,34 @@ def test_evidence_builders_enforce_source_and_outcome_contracts() -> None:
             )
 
 
+def test_evidence_builders_reject_secret_bearing_payloads() -> None:
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="secret_bearing_key_forbidden",
+    ):
+        build_broker_mutation_recovery_observation(
+            BrokerMutationRecoveryObservationRequest(
+                checked_client_request_id="request-1",
+                checked_target_key="order-1",
+                outcome="not_found",
+                evidence_payload={"transport": {"Authorization": "forbidden"}},
+            )
+        )
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="secret_bearing_key_forbidden",
+    ):
+        build_broker_mutation_settlement(
+            BrokerMutationSettlementRequest(
+                source="primary",
+                outcome="rejected",
+                broker_reference=None,
+                execution_id=None,
+                evidence_payload={"transport": {"private-key": "forbidden"}},
+            )
+        )
+
+
 def test_evidence_verifier_rejects_hash_and_encoding_drift() -> None:
     evidence_json, evidence_sha256 = canonicalize_broker_mutation_evidence(
         {"status": "accepted", "quantity": Decimal("1.25")}
@@ -283,20 +395,3 @@ def test_evidence_verifier_rejects_hash_and_encoding_drift() -> None:
             evidence_json.replace(":", ": ", 1),
             hashlib.sha256(evidence_json.replace(":", ": ", 1).encode()).hexdigest(),
         )
-
-
-@pytest.mark.parametrize(
-    ("settlement_outcome", "runtime_result"),
-    [
-        (None, "deferred"),
-        ("acknowledged", "submitted"),
-        ("reconciled", "reconciled"),
-        ("already_satisfied", "already_processed"),
-        ("rejected", "rejected"),
-    ],
-)
-def test_runtime_mapping_never_treats_unsettled_as_submitted(
-    settlement_outcome: BrokerMutationSettlementOutcome | None,
-    runtime_result: BrokerMutationRuntimeResult,
-) -> None:
-    assert broker_mutation_runtime_result(settlement_outcome) == runtime_result

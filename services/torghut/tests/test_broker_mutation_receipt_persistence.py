@@ -72,6 +72,9 @@ def _initial_event(now: datetime, token: uuid.UUID) -> dict[str, object]:
         "primary_epoch": 1,
         "primary_owner": "writer-a",
         "primary_writer_generation": 7,
+        "submission_claim_token": None,
+        "submission_claim_fencing_epoch": None,
+        "submission_claim_owner": None,
         "primary_claimed_at": now,
         "primary_lease_expires_at": now + timedelta(seconds=30),
         "released_at": None,
@@ -129,6 +132,7 @@ def test_sqlite_persistence_round_trip_and_exact_identity_conflict(
     with sessions() as session:
         snapshot = load_receipt_snapshot(session, receipt_id)
         assert snapshot is not None
+        assert snapshot.submission_claim_handle is None
         assert snapshot.intent == intent
         assert snapshot.primary_handle.primary_token == primary_token
         assert snapshot.primary_handle.primary_writer_generation == 7

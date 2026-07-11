@@ -150,12 +150,13 @@ def _start_due_recovery(
         acquired = _acquire(session, client_request_id, token=uuid.uuid4())
     primary_handle = acquired.receipt.primary_handle
     with sessions() as session:
-        broker_io = mark_broker_mutation_io_started(
+        io_start = mark_broker_mutation_io_started(
             session,
             handle=primary_handle,
             recovery_seconds=30,
         )
-    receipt_id = broker_io.receipt_id
+    assert io_start.authorized
+    receipt_id = io_start.receipt.receipt_id
     _force_recovery_due(sessions, receipt_id)
     with sessions() as session:
         assert list_due_broker_mutation_receipt_ids(session) == (receipt_id,)
@@ -274,9 +275,7 @@ def test_preflight_settlement_never_fabricates_broker_io(tmp_path: Path) -> None
     assert settled.state == "settled"
     assert settled.lifecycle.broker_io_started_at is None
     assert settled.settlement.outcome == "already_satisfied"
-    assert broker_mutation_runtime_result(settled.settlement.outcome) == (
-        "already_processed"
-    )
+    assert broker_mutation_runtime_result(settled) == "already_processed"
 
 
 def test_broker_io_is_irreversible_and_primary_settlement_is_idempotent(
@@ -287,15 +286,25 @@ def test_broker_io_is_irreversible_and_primary_settlement_is_idempotent(
         acquired = _acquire(session, "cancel-terminal", token=uuid.uuid4())
     primary = acquired.receipt.primary_handle
     with sessions() as session:
-        broker_io = mark_broker_mutation_io_started(
+        io_start = mark_broker_mutation_io_started(
             session,
             handle=primary,
             recovery_seconds=30,
         )
+    assert io_start.authorized
+    assert io_start.permit is not None
+    assert io_start.permit.receipt_id == primary.receipt_id
+    broker_io = io_start.receipt
     assert broker_io.state == "broker_io"
     with sessions() as session:
         repeated_boundary = mark_broker_mutation_io_started(session, handle=primary)
-    assert repeated_boundary.lifecycle.sequence_no == broker_io.lifecycle.sequence_no
+    assert not repeated_boundary.authorized
+    assert repeated_boundary.outcome == "already_started"
+    assert repeated_boundary.permit is None
+    assert (
+        repeated_boundary.receipt.lifecycle.sequence_no
+        == broker_io.lifecycle.sequence_no
+    )
     with sessions() as session:
         with pytest.raises(BrokerMutationReceiptFenceError):
             release_broker_mutation_receipt(
@@ -319,7 +328,7 @@ def test_broker_io_is_irreversible_and_primary_settlement_is_idempotent(
             handle=primary,
             settlement=acknowledged,
         )
-    assert broker_mutation_runtime_result(settled.settlement.outcome) == "submitted"
+    assert broker_mutation_runtime_result(settled) == "submitted"
     with sessions() as session:
         idempotent = settle_broker_mutation_primary(
             session,
@@ -459,7 +468,7 @@ def test_recovery_settlement_is_compatible_with_late_primary_ack(
             settlement=reconciled,
         )
     assert settled.settlement.outcome == "reconciled"
-    assert broker_mutation_runtime_result(settled.settlement.outcome) == "reconciled"
+    assert broker_mutation_runtime_result(settled) == "reconciled"
 
     late_ack = build_broker_mutation_settlement(
         BrokerMutationSettlementRequest(

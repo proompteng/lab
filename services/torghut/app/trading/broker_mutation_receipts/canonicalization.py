@@ -48,7 +48,21 @@ from .validation import (
 
 
 BROKER_MUTATION_INTENT_SCHEMA_VERSION = "torghut.broker-mutation-intent.v1"
+_RECOVERY_EVIDENCE_SCHEMA_VERSION = "torghut.broker-mutation-recovery-evidence.v1"
+_SETTLEMENT_EVIDENCE_SCHEMA_VERSION = "torghut.broker-mutation-settlement-evidence.v1"
 _DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+_SECRET_BEARING_KEY_MARKERS = (
+    "apikey",
+    "authorization",
+    "bearer",
+    "cookie",
+    "credential",
+    "password",
+    "passwd",
+    "privatekey",
+    "secret",
+    "token",
+)
 
 _ROUTES: tuple[BrokerMutationRoute, ...] = ("alpaca", "hyperliquid")
 _OPERATIONS: tuple[BrokerMutationOperation, ...] = (
@@ -428,18 +442,70 @@ def build_broker_mutation_recovery_observation(
     evidence_payload = cast(Mapping[str, object], raw_evidence)
     evidence_json, evidence_sha256 = canonicalize_broker_mutation_evidence(
         {
+            "schema_version": _RECOVERY_EVIDENCE_SCHEMA_VERSION,
             "checked_client_request_id": checked_client_request_id,
             "checked_target_key": checked_target_key,
+            "outcome": outcome,
             "observation": evidence_payload,
         }
     )
-    return BrokerMutationRecoveryObservation(
+    observation = BrokerMutationRecoveryObservation(
         checked_client_request_id=checked_client_request_id,
         checked_target_key=checked_target_key,
         outcome=outcome,
         evidence_json=evidence_json,
         evidence_sha256=evidence_sha256,
     )
+    verify_broker_mutation_recovery_observation(observation)
+    return observation
+
+
+def verify_broker_mutation_recovery_observation(
+    observation: object,
+) -> None:
+    """Verify that immutable recovery evidence binds every asserted fact."""
+
+    if not isinstance(observation, BrokerMutationRecoveryObservation):
+        raise BrokerMutationReceiptValidationError(
+            "broker_mutation_recovery_observation_invalid"
+        )
+    checked_client_request_id = required_text(
+        observation.checked_client_request_id,
+        field="checked_client_request_id",
+        maximum=128,
+    )
+    checked_target_key = required_text(
+        observation.checked_target_key,
+        field="checked_target_key",
+        maximum=256,
+    )
+    outcome = enum_value(
+        observation.outcome,
+        field="recovery_outcome",
+        allowed=_RECOVERY_OUTCOMES,
+    )
+    evidence = _verified_evidence_document(
+        observation.evidence_json,
+        observation.evidence_sha256,
+    )
+    expected_keys = {
+        "schema_version",
+        "checked_client_request_id",
+        "checked_target_key",
+        "outcome",
+        "observation",
+    }
+    if (
+        set(evidence) != expected_keys
+        or evidence.get("schema_version") != _RECOVERY_EVIDENCE_SCHEMA_VERSION
+        or evidence.get("checked_client_request_id") != checked_client_request_id
+        or evidence.get("checked_target_key") != checked_target_key
+        or evidence.get("outcome") != outcome
+        or not isinstance(evidence.get("observation"), Mapping)
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "recovery_evidence_identity_mismatch"
+        )
 
 
 def build_broker_mutation_settlement(
@@ -471,17 +537,103 @@ def build_broker_mutation_settlement(
         raise BrokerMutationReceiptValidationError(
             f"{outcome}_requires_broker_reference"
         )
+    execution_id = optional_uuid(request.execution_id, field="execution_id")
+    raw_evidence: object = request.evidence_payload
+    if not isinstance(raw_evidence, Mapping):
+        raise BrokerMutationReceiptValidationError("settlement_evidence_must_be_object")
+    evidence_payload = cast(Mapping[str, object], raw_evidence)
     evidence_json, evidence_sha256 = canonicalize_broker_mutation_evidence(
-        request.evidence_payload
+        {
+            "schema_version": _SETTLEMENT_EVIDENCE_SCHEMA_VERSION,
+            "source": source,
+            "outcome": outcome,
+            "broker_reference": broker_reference,
+            "execution_id": str(execution_id) if execution_id is not None else None,
+            "evidence": evidence_payload,
+        }
     )
-    return BrokerMutationSettlement(
+    settlement = BrokerMutationSettlement(
         source=source,
         outcome=outcome,
         broker_reference=broker_reference,
-        execution_id=optional_uuid(request.execution_id, field="execution_id"),
+        execution_id=execution_id,
         evidence_json=evidence_json,
         evidence_sha256=evidence_sha256,
     )
+    verify_broker_mutation_settlement(settlement)
+    return settlement
+
+
+def verify_broker_mutation_settlement(settlement: object) -> None:
+    """Verify that immutable settlement evidence binds every terminal fact."""
+
+    if not isinstance(settlement, BrokerMutationSettlement):
+        raise BrokerMutationReceiptValidationError("broker_mutation_settlement_invalid")
+    source = cast(
+        BrokerMutationSettlementSource,
+        enum_value(
+            settlement.source,
+            field="settlement_source",
+            allowed=_SETTLEMENT_SOURCES,
+        ),
+    )
+    outcome = cast(
+        BrokerMutationSettlementOutcome,
+        enum_value(
+            settlement.outcome,
+            field="settlement_outcome",
+            allowed=_SETTLEMENT_OUTCOMES,
+        ),
+    )
+    _validate_settlement_contract(source=source, outcome=outcome)
+    broker_reference = optional_text(
+        settlement.broker_reference,
+        field="broker_reference",
+        maximum=256,
+    )
+    if outcome in {"acknowledged", "reconciled"} and broker_reference is None:
+        raise BrokerMutationReceiptValidationError(
+            f"{outcome}_requires_broker_reference"
+        )
+    execution_id = optional_uuid(settlement.execution_id, field="execution_id")
+    evidence = _verified_evidence_document(
+        settlement.evidence_json,
+        settlement.evidence_sha256,
+    )
+    expected_keys = {
+        "schema_version",
+        "source",
+        "outcome",
+        "broker_reference",
+        "execution_id",
+        "evidence",
+    }
+    if (
+        set(evidence) != expected_keys
+        or evidence.get("schema_version") != _SETTLEMENT_EVIDENCE_SCHEMA_VERSION
+        or evidence.get("source") != source
+        or evidence.get("outcome") != outcome
+        or evidence.get("broker_reference") != broker_reference
+        or evidence.get("execution_id")
+        != (str(execution_id) if execution_id is not None else None)
+        or not isinstance(evidence.get("evidence"), Mapping)
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "settlement_evidence_identity_mismatch"
+        )
+
+
+def _verified_evidence_document(
+    evidence_json: object,
+    evidence_sha256: str,
+) -> Mapping[str, object]:
+    verify_canonical_broker_mutation_evidence(evidence_json, evidence_sha256)
+    if not isinstance(evidence_json, str):  # pragma: no cover - verified above
+        raise BrokerMutationReceiptValidationError("evidence_json_must_be_string")
+    document = json.loads(evidence_json, parse_float=Decimal)
+    if not isinstance(document, Mapping):  # pragma: no cover - canonical verifier
+        raise BrokerMutationReceiptValidationError("evidence_must_be_object")
+    return cast(Mapping[str, object], document)
 
 
 def _validate_settlement_contract(
@@ -620,6 +772,7 @@ def _canonical_mapping(
             raise BrokerMutationReceiptValidationError(
                 f"{path}_key_surrounding_whitespace_forbidden"
             )
+        _reject_secret_bearing_key(key, path=path)
         if key in normalized:
             raise BrokerMutationReceiptValidationError(f"{path}_key_collision:{key}")
         normalized[key] = _canonical_json_value(
@@ -628,6 +781,18 @@ def _canonical_mapping(
             depth=depth + 1,
         )
     return normalized
+
+
+def _reject_secret_bearing_key(key: str, *, path: str) -> None:
+    security_key = re.sub(
+        r"[^a-z0-9]",
+        "",
+        unicodedata.normalize("NFKC", key).casefold(),
+    )
+    if any(marker in security_key for marker in _SECRET_BEARING_KEY_MARKERS):
+        raise BrokerMutationReceiptValidationError(
+            f"{path}_secret_bearing_key_forbidden"
+        )
 
 
 def _canonical_decimal(value: Decimal, *, path: str) -> str:
@@ -667,6 +832,8 @@ __all__ = [
     "build_broker_mutation_settlement",
     "canonicalize_broker_mutation_evidence",
     "fingerprint_broker_endpoint",
+    "verify_broker_mutation_recovery_observation",
+    "verify_broker_mutation_settlement",
     "verify_broker_mutation_intent",
     "verify_canonical_broker_mutation_evidence",
 ]
