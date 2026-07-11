@@ -254,6 +254,43 @@ class SimulationProcessRoleTests(IsolatedAsyncioTestCase):
         self.assertEqual(attempts, 2)
         scheduler.stop.assert_awaited_once()
 
+    async def test_simulation_supervisor_latches_non_retryable_startup_failure(
+        self,
+    ) -> None:
+        scheduler = _FakeScheduler()
+        scheduler.start.side_effect = ValueError("invalid scheduler configuration")
+        app = FastAPI()
+        with (
+            patch.object(settings, "process_role", "simulation"),
+            patch.object(settings, "trading_mode", "paper"),
+            patch.object(settings, "trading_enabled", True),
+            patch.object(settings, "trading_scheduler_leadership_required", True),
+            patch.object(
+                settings,
+                "trading_scheduler_leadership_lock_name",
+                "torghut:simulation-scheduler",
+            ),
+            patch.object(settings, "trading_autonomy_enabled", False),
+            patch.object(bootstrap, "TradingScheduler", return_value=scheduler),
+            patch.object(bootstrap, "whitepaper_workflow_enabled", return_value=False),
+            patch.object(bootstrap, "ensure_schema"),
+            patch.object(bootstrap, "_assert_dspy_cutover_migration_guard"),
+        ):
+            async with bootstrap.lifespan(app):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "invalid scheduler configuration",
+                ):
+                    await app.state.trading_scheduler_supervisor
+                await asyncio.sleep(0)
+                self.assertEqual(
+                    scheduler.state.last_error,
+                    "scheduler_startup_supervisor_failed:ValueError",
+                )
+
+        scheduler.start.assert_awaited_once()
+        scheduler.stop.assert_awaited_once()
+
     async def test_disabled_simulation_serves_without_starting_scheduler(self) -> None:
         scheduler = _FakeScheduler()
         app = FastAPI()

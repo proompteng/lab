@@ -6,6 +6,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from typing import Any, cast
 
 from fastapi import FastAPI, Request
@@ -70,26 +71,35 @@ async def _supervise_embedded_scheduler(scheduler: TradingScheduler) -> None:
                 retry_seconds,
                 exc,
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # pragma: no cover - defensive supervisor boundary
-            scheduler.state.last_error = (
-                f"scheduler_startup_supervisor_failed:{type(exc).__name__}"
-            )
-            logger.exception(
-                "Simulation scheduler supervisor stopped after non-retryable startup failure"
-            )
-            return
         await asyncio.sleep(retry_seconds)
+
+
+def _embedded_scheduler_supervisor_completed(
+    scheduler: TradingScheduler,
+    supervisor: asyncio.Task[None],
+) -> None:
+    """Latch an unexpected supervisor failure without retrying unsafe errors."""
+
+    if supervisor.cancelled():
+        return
+    error = supervisor.exception()
+    if error is None:
+        return
+    scheduler.state.last_error = (
+        f"scheduler_startup_supervisor_failed:{type(error).__name__}"
+    )
+    logger.error(
+        "Simulation scheduler supervisor stopped after non-retryable startup failure",
+        exc_info=(type(error), error, error.__traceback__),
+    )
 
 
 async def _stop_embedded_scheduler_supervisor(
     supervisor: asyncio.Task[None] | None,
 ) -> None:
-    if supervisor is None:
+    if supervisor is None or supervisor.done():
         return
-    if not supervisor.done():
-        supervisor.cancel()
+    supervisor.cancel()
     try:
         await supervisor
     except asyncio.CancelledError:
@@ -196,6 +206,9 @@ async def lifespan(app: FastAPI):
                     _supervise_embedded_scheduler(scheduler),
                     name="torghut-simulation-scheduler-supervisor",
                 )
+                scheduler_supervisor.add_done_callback(
+                    partial(_embedded_scheduler_supervisor_completed, scheduler)
+                )
                 app.state.trading_scheduler_supervisor = scheduler_supervisor
             if whitepaper_worker is not None and whitepaper_workflow_enabled():
                 await whitepaper_worker.start()
@@ -272,6 +285,7 @@ evaluate_scheduler_status = _evaluate_scheduler_status
 __all__ = [
     "_assert_dspy_cutover_migration_guard",
     "_assert_main_process_role_contract",
+    "_embedded_scheduler_supervisor_completed",
     "_stop_embedded_scheduler_supervisor",
     "_supervise_embedded_scheduler",
     "_evaluate_scheduler_status",
