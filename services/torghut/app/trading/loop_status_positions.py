@@ -34,15 +34,37 @@ def managed_exchange_positions(
     selected_symbols: Sequence[str],
     configured_symbols: Sequence[str] = (),
 ) -> list[Mapping[str, object]]:
-    managed_coins = position_coin_set(persisted_positions)
-    managed_coins.update(_canonical_coin(symbol) for symbol in selected_symbols)
-    managed_coins.update(_canonical_coin(symbol) for symbol in configured_symbols)
+    configured_keys = {_coin_key(symbol) for symbol in configured_symbols}
+    configured_scoped_bases = {
+        _base_coin(key) for key in configured_keys if _is_scoped_coin(key)
+    }
+    exact_scoped_keys = {key for key in configured_keys if _is_scoped_coin(key)}
+    unscoped_bases = {
+        _base_coin(key) for key in configured_keys if not _is_scoped_coin(key)
+    }
+    for symbol in [
+        *(
+            coin
+            for row in persisted_positions
+            if (coin := _optional_text(row.get("coin"))) is not None
+        ),
+        *selected_symbols,
+    ]:
+        key = _coin_key(symbol)
+        if _is_scoped_coin(key):
+            exact_scoped_keys.add(key)
+        elif _base_coin(key) not in configured_scoped_bases:
+            unscoped_bases.add(_base_coin(key))
     return [
         position
         for position in raw_exchange_positions
         if (
             (coin := _optional_text(position.get("coin"))) is not None
-            and _canonical_coin(coin) in managed_coins
+            and _matches_managed_coin(
+                coin,
+                exact_scoped_keys=exact_scoped_keys,
+                unscoped_bases=unscoped_bases,
+            )
         )
     ]
 
@@ -68,7 +90,34 @@ def position_coin_set(rows: Sequence[Mapping[str, object]]) -> set[str]:
 
 
 def _canonical_coin(value: str) -> str:
-    return value.strip().split(":")[-1].upper()
+    return _base_coin(_coin_key(value))
+
+
+def _coin_key(value: str) -> str:
+    parts = [part.strip() for part in value.split(":") if part.strip()]
+    if len(parts) <= 1:
+        return (parts[0] if parts else "").upper()
+    return f"{parts[0].lower()}:{parts[-1].upper()}"
+
+
+def _base_coin(value: str) -> str:
+    return value.split(":")[-1].upper()
+
+
+def _is_scoped_coin(value: str) -> bool:
+    return ":" in value
+
+
+def _matches_managed_coin(
+    value: str,
+    *,
+    exact_scoped_keys: set[str],
+    unscoped_bases: set[str],
+) -> bool:
+    key = _coin_key(value)
+    if _is_scoped_coin(key):
+        return key in exact_scoped_keys or _base_coin(key) in unscoped_bases
+    return _base_coin(key) in unscoped_bases
 
 
 def _account_position_rows(

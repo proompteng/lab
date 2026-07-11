@@ -108,8 +108,17 @@ const validateReleaseContract = (contract: NixRolloutReleaseContract): string[] 
   return errors
 }
 
-const contractCoversImage = (contract: NixRolloutReleaseContract, image: string): boolean =>
-  contract.image === image && contract.reference === `${image}@${contract.digest}`
+const imageRepository = (reference: string): string => {
+  const withoutDigest = reference.split('@', 1)[0] ?? reference
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
+}
+
+const contractCoversImage = (contract: NixRolloutReleaseContract, image: string): boolean => {
+  const repository = imageRepository(image)
+  return imageRepository(contract.image) === repository && contract.reference === `${contract.image}@${contract.digest}`
+}
 
 const countByClass = (entries: EnabledAppInventoryEntry[]): Record<string, number> =>
   entries.reduce<Record<string, number>>((counts, entry) => {

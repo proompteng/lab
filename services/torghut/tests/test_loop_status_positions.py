@@ -32,6 +32,20 @@ def test_configured_coin_remains_managed_when_not_selected_this_cycle() -> None:
     assert managed == list(raw)
 
 
+def test_scoped_configuration_does_not_claim_same_coin_on_another_dex() -> None:
+    configured = {"coin": "xyz:NVDA", "size": "1"}
+    other_dex = {"coin": "abc:NVDA", "size": "1"}
+
+    managed = managed_exchange_positions(
+        ({"coin": "NVDA"},),
+        (configured, other_dex),
+        ("NVDA",),
+        ("xyz:NVDA",),
+    )
+
+    assert managed == [configured]
+
+
 def test_unconfigured_unpersisted_coin_is_not_claimed() -> None:
     raw = ({"coin": "xyz:UNMANAGED", "size": "1"},)
 
