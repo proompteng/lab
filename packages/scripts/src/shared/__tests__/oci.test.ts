@@ -1001,8 +1001,15 @@ describe('native OCI build workflows', () => {
     expect(jangarReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
     expect(jangarReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
     expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
-    expect(jangarReleaseWorkflow).toContain('JANGAR_SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}')
-    expect(jangarReleaseWorkflow).toContain('- Source CI run: `${{ github.event.workflow_run.id }}`')
+    expect(jangarReleaseWorkflow).toContain(`source_ci_run_id:
+        description: Successful jangar-build-push run ID that produced the image
+        required: true`)
+    expect(jangarReleaseWorkflow).toContain(
+      'JANGAR_SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_ci_run_id }}',
+    )
+    expect(jangarReleaseWorkflow).toContain(
+      '- Source CI run: `${{ github.event.workflow_run.id || inputs.source_ci_run_id }}`',
+    )
     expect(jangarReleaseWorkflow).not.toContain('JANGAR_SOURCE_CI_RUN_ID: ${{ github.run_id }}')
     expect(jangarReleaseWorkflow).not.toContain('docker buildx')
     expect(jangarReleaseWorkflow).not.toContain('docker/setup-buildx-action')
