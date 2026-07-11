@@ -188,33 +188,12 @@ def _acquire_primary(
         raise BrokerMutationReceiptConflictError("broker_mutation_primary_token_reuse")
     values = full_state_values_from_event(event)
     values.update(
-        sequence_no=event.sequence_no + 1,
-        event_type="primary_claimed",
-        state="claimed",
-        event_writer_generation=request.writer_generation,
-        primary_token=request.token,
-        primary_epoch=event.primary_epoch + 1,
-        primary_owner=request.owner,
-        primary_writer_generation=request.writer_generation,
-        submission_claim_token=(
-            request.submission_claim_handle.claim_token
-            if request.submission_claim_handle is not None
-            else None
-        ),
-        submission_claim_fencing_epoch=(
-            request.submission_claim_handle.fencing_epoch
-            if request.submission_claim_handle is not None
-            else None
-        ),
-        submission_claim_owner=(
-            request.submission_claim_handle.claim_owner
-            if request.submission_claim_handle is not None
-            else None
-        ),
-        primary_claimed_at=now,
-        primary_lease_expires_at=now + timedelta(seconds=request.lease_seconds),
-        released_at=None,
-        release_reason=None,
+        _primary_claim_event_values(
+            request,
+            now,
+            sequence_no=event.sequence_no + 1,
+            primary_epoch=event.primary_epoch + 1,
+        )
     )
     append_full_state_event(session, receipt_id=header.id, values=values)
     return BrokerMutationReceiptAcquireResult(
@@ -280,34 +259,7 @@ def _initial_event_values(
     request: _PrimaryRequest,
     now: datetime,
 ) -> dict[str, object]:
-    return {
-        "sequence_no": 1,
-        "event_type": "primary_claimed",
-        "state": "claimed",
-        "event_writer_generation": request.writer_generation,
-        "primary_token": request.token,
-        "primary_epoch": 1,
-        "primary_owner": request.owner,
-        "primary_writer_generation": request.writer_generation,
-        "submission_claim_token": (
-            request.submission_claim_handle.claim_token
-            if request.submission_claim_handle is not None
-            else None
-        ),
-        "submission_claim_fencing_epoch": (
-            request.submission_claim_handle.fencing_epoch
-            if request.submission_claim_handle is not None
-            else None
-        ),
-        "submission_claim_owner": (
-            request.submission_claim_handle.claim_owner
-            if request.submission_claim_handle is not None
-            else None
-        ),
-        "primary_claimed_at": now,
-        "primary_lease_expires_at": now + timedelta(seconds=request.lease_seconds),
-        "released_at": None,
-        "release_reason": None,
+    values: dict[str, object] = {
         "broker_io_started_at": None,
         "recovery_after": None,
         "recovery_token": None,
@@ -328,6 +280,50 @@ def _initial_event_values(
         "settlement_evidence_json": None,
         "settlement_evidence_sha256": None,
         "settled_at": None,
+    }
+    values.update(
+        _primary_claim_event_values(
+            request,
+            now,
+            sequence_no=1,
+            primary_epoch=1,
+        )
+    )
+    return values
+
+
+def _primary_claim_event_values(
+    request: _PrimaryRequest,
+    now: datetime,
+    *,
+    sequence_no: int,
+    primary_epoch: int,
+) -> dict[str, object]:
+    """Serialize the complete primary fence for both first claim and takeover."""
+
+    submission_handle = request.submission_claim_handle
+    return {
+        "sequence_no": sequence_no,
+        "event_type": "primary_claimed",
+        "state": "claimed",
+        "event_writer_generation": request.writer_generation,
+        "primary_token": request.token,
+        "primary_epoch": primary_epoch,
+        "primary_owner": request.owner,
+        "primary_writer_generation": request.writer_generation,
+        "submission_claim_token": (
+            submission_handle.claim_token if submission_handle is not None else None
+        ),
+        "submission_claim_fencing_epoch": (
+            submission_handle.fencing_epoch if submission_handle is not None else None
+        ),
+        "submission_claim_owner": (
+            submission_handle.claim_owner if submission_handle is not None else None
+        ),
+        "primary_claimed_at": now,
+        "primary_lease_expires_at": now + timedelta(seconds=request.lease_seconds),
+        "released_at": None,
+        "release_reason": None,
     }
 
 
