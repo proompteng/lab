@@ -48,7 +48,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(settings.trading_daily_loss_stop_pct_equity, 0.01)
         self.assertEqual(settings.trading_persistent_drawdown_stop_pct_equity, 0.05)
         self.assertEqual(settings.trading_order_reprice_seconds, 2.0)
-        self.assertEqual(settings.trading_order_max_attempts, 3)
+        self.assertEqual(settings.trading_order_max_attempts, 1)
+        self.assertEqual(settings.trading_execution_max_retries, 0)
         self.assertEqual(settings.trading_order_slippage_bps, 8.0)
         self.assertFalse(settings.trading_feature_flags_enabled)
         self.assertFalse(settings.trading_execution_advisor_enabled)
@@ -317,13 +318,18 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "Replace=true",
         )
 
-    def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:
+    def test_sim_manifest_contains_paper_live_signal_profile_for_safe_migration(
+        self,
+    ) -> None:
         sim_env = _load_knative_env(
             "argocd/applications/torghut/knative-service-sim.yaml"
         )
         live_env = _load_torghut_knative_env()
 
-        self.assertTrue(_manifest_bool(sim_env, "TRADING_ENABLED"))
+        self.assertFalse(
+            _manifest_bool(sim_env, "TRADING_ENABLED"),
+            "the old unfenced image must stop before the simulation role is promoted",
+        )
         self.assertEqual(
             sim_env.get("SIM_DB_DSN"),
             sim_env.get("DB_DSN"),
@@ -331,6 +337,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
         self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
+        self.assertEqual(sim_env.get("TRADING_ORDER_MAX_ATTEMPTS"), "1")
+        self.assertEqual(sim_env.get("TRADING_EXECUTION_MAX_RETRIES"), "0")
         self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertTrue(_manifest_bool(sim_env, "TRADING_ORDER_FEED_ENABLED"))
         self.assertTrue(

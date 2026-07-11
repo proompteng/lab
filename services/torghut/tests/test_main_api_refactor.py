@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.routing import APIRoute
 
 from app import main as main_module
+from app import scheduler_main
 from app.api.application import api_routers, get_app
 
 
@@ -35,6 +36,7 @@ def test_main_exports_operational_api_only() -> None:
 def test_main_public_contract_is_entrypoint_only() -> None:
     assert main_module.__all__ == ("app", "create_app")
     assert get_app() is main_module.app
+    assert get_app("scheduler") is scheduler_main.app
 
     removed_private_attrs = (
         "ROUTER_PROVIDERS",

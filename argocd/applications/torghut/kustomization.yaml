@@ -17,6 +17,8 @@ resources:
   - tigerbeetle-cluster.yaml
   - tigerbeetle-smoke-job.yaml
   - knative-service.yaml
+  - scheduler-deployment.yaml
+  - scheduler-service.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml
   - ingressroute-flink-k8s-private.yaml

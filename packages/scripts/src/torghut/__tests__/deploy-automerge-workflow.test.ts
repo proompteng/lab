@@ -63,6 +63,13 @@ describe('torghut-deploy-automerge workflow', () => {
     }
   })
 
+  test('carries the scheduler image through release and automatic deploy merge allowlists', () => {
+    const schedulerManifest = 'argocd/applications/torghut/scheduler-deployment.yaml'
+
+    expect(countOccurrences(releaseWorkflow, schedulerManifest)).toBe(3)
+    expect(countOccurrences(deployAutomergeWorkflow, `'${schedulerManifest}'`)).toBe(2)
+  })
+
   test('allowlists TA and WS promotion manifests for automatic release PR merges', () => {
     const promotedTaManifests = [
       'argocd/applications/torghut/ta/flinkdeployment.yaml',

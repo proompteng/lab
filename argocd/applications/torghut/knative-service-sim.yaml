@@ -36,6 +36,12 @@ spec:
             - name: http1
               containerPort: 8181
           env:
+            - name: TORGHUT_PROCESS_ROLE
+              value: simulation
+            - name: TRADING_SCHEDULER_LEADERSHIP_REQUIRED
+              value: "true"
+            - name: TRADING_SCHEDULER_LEADERSHIP_LOCK_NAME
+              value: torghut:simulation-scheduler
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL
@@ -120,7 +126,11 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
-              value: "true"
+              value: "false"
+            - name: TRADING_ORDER_MAX_ATTEMPTS
+              value: "1"
+            - name: TRADING_EXECUTION_MAX_RETRIES
+              value: "0"
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED

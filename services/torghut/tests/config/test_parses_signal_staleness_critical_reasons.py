@@ -300,6 +300,7 @@ class TestParsesSignalStalenessCriticalReasons(_TestConfigBase):
             "trading_live_submit_enabled",
             "trading_simple_order_feed_telemetry_enabled",
             "trading_options_catalog_freshness_exact_route_scope_enabled",
+            "trading_scheduler_leadership_required",
             "trading_empirical_jobs_health_required",
             "trading_jangar_quant_health_required",
             "tigerbeetle_enabled",

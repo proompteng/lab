@@ -11,6 +11,73 @@ from pydantic_settings import BaseSettings
 class CoreSettingsFields(BaseSettings):
     """Environment-backed settings."""
 
+    process_role: Literal["api", "scheduler", "simulation"] = Field(
+        default="api",
+        alias="TORGHUT_PROCESS_ROLE",
+        description=(
+            "Exclusive runtime role for this process. API processes remain stateless; "
+            "dedicated scheduler processes own live trading background loops, while "
+            "the isolated simulation service may own its paper scheduler locally."
+        ),
+    )
+
+    trading_scheduler_leadership_required: bool = Field(
+        default=False,
+        alias="TRADING_SCHEDULER_LEADERSHIP_REQUIRED",
+        description="Require durable PostgreSQL leadership before scheduler work starts.",
+    )
+
+    trading_scheduler_leadership_lock_name: str = Field(
+        default="torghut:trading-scheduler",
+        min_length=1,
+        max_length=128,
+        alias="TRADING_SCHEDULER_LEADERSHIP_LOCK_NAME",
+        description=(
+            "Stable namespace hashed into the PostgreSQL scheduler advisory-lock ID. "
+            "Independent trading runtimes must use distinct names."
+        ),
+    )
+
+    trading_scheduler_leadership_check_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS",
+        description="Interval between scheduler leadership-session health checks.",
+    )
+
+    trading_scheduler_shutdown_drain_seconds: float = Field(
+        default=45.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS",
+        description=(
+            "Maximum graceful-shutdown time for in-flight broker work. A timeout "
+            "terminates the process without releasing scheduler leadership."
+        ),
+    )
+
+    trading_scheduler_success_max_age_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS",
+        description=(
+            "Maximum age of the scheduler's last fully successful trading cycle "
+            "before readiness fails closed."
+        ),
+    )
+
+    trading_scheduler_runtime_base_url: str = Field(
+        default="http://torghut-scheduler.torghut.svc.cluster.local:8183",
+        alias="TRADING_SCHEDULER_RUNTIME_BASE_URL",
+        description="Internal base URL for scheduler-owned status and metrics surfaces.",
+    )
+
+    trading_scheduler_runtime_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS",
+        description="Timeout for stateless API reads of scheduler-owned runtime surfaces.",
+    )
+
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
     )
@@ -361,7 +428,15 @@ class CoreSettingsFields(BaseSettings):
 
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
 
-    trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
+    trading_reconcile_ms: int = Field(
+        default=15000,
+        gt=0,
+        alias="TRADING_RECONCILE_MS",
+        description=(
+            "Interval between reconciliation cycles. Must remain below the scheduler "
+            "success freshness window so a healthy scheduler can stay ready."
+        ),
+    )
 
     trading_order_feed_enabled: bool = Field(
         default=False, alias="TRADING_ORDER_FEED_ENABLED"

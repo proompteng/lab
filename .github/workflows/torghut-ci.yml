@@ -263,13 +263,52 @@ jobs:
             echo "${label} release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
           }
 
+          assert_image_contract_parity() {
+            local env_name="$1"
+            local image_name="$2"
+            local reference_manifest="$3"
+            shift 3
+            local reference_source_sha reference_image_ref manifest_path source_sha image_ref
+
+            reference_source_sha="$(resolve_source_sha "${reference_manifest}" "${env_name}")"
+            reference_image_ref="$(resolve_image_ref "${reference_manifest}" "${image_name}")"
+            for manifest_path in "$@"; do
+              source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
+              image_ref="$(resolve_image_ref "${manifest_path}" "${image_name}")"
+              if [ "${source_sha}" != "${reference_source_sha}" ]; then
+                echo "Runtime manifest ${manifest_path} ${env_name}=${source_sha:-unset} differs from ${reference_manifest}=${reference_source_sha:-unset}"
+                exit 1
+              fi
+              if [ "${image_ref}" != "${reference_image_ref}" ]; then
+                echo "Runtime manifest ${manifest_path} image=${image_ref:-unset} differs from ${reference_manifest}=${reference_image_ref:-unset}"
+                exit 1
+              fi
+            done
+          }
+
           verified_any=false
-          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|zero-notional-drift-repair-cronjob|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
+          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|zero-notional-drift-repair-cronjob|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
             verify_image_contract \
               "Torghut" \
               argocd/applications/torghut/knative-service.yaml \
               TORGHUT_COMMIT \
               registry.ide-newton.ts.net/lab/torghut
+            verify_image_contract \
+              "Torghut simulation" \
+              argocd/applications/torghut/knative-service-sim.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            verify_image_contract \
+              "Torghut scheduler" \
+              argocd/applications/torghut/scheduler-deployment.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            assert_image_contract_parity \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut \
+              argocd/applications/torghut/knative-service.yaml \
+              argocd/applications/torghut/knative-service-sim.yaml \
+              argocd/applications/torghut/scheduler-deployment.yaml
             verified_any=true
           fi
           if matches_changed '^argocd/applications/(torghut/(ta|ta-sim)/flinkdeployment\.yaml|torghut-options/ta/flinkdeployment\.yaml)$'; then

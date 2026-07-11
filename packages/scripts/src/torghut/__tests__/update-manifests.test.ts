@@ -9,6 +9,7 @@ import { __private } from '../update-manifests'
 const createFixture = () => {
   const dir = mkdtempSync(join(tmpdir(), 'torghut-manifests-test-'))
   const serviceManifestPath = join(dir, 'knative-service.yaml')
+  const schedulerManifestPath = join(dir, 'scheduler-deployment.yaml')
   const simulationServiceManifestPath = join(dir, 'knative-service-sim.yaml')
   const migrationManifestPath = join(dir, 'db-migrations-job.yaml')
   const historicalWorkflowManifestPath = join(dir, 'historical-simulation-workflowtemplate.yaml')
@@ -45,6 +46,30 @@ spec:
               value: old-version
             - name: TORGHUT_COMMIT
               value: old-commit
+`,
+    'utf8',
+  )
+  writeFileSync(
+    schedulerManifestPath,
+    `apiVersion: apps/v1
+kind: Deployment
+spec:
+  template:
+    spec:
+      containers:
+        - name: torghut-scheduler
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:1111111111111111111111111111111111111111111111111111111111111111
+          env:
+            - name: TORGHUT_VERSION
+              value: old-version
+            - name: TORGHUT_COMMIT
+              value: old-commit
+            - name: TORGHUT_IMAGE_DIGEST
+              value: sha256:1111111111111111111111111111111111111111111111111111111111111111
+            - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
+              value: linux/amd64
+            - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
+              value: linux/amd64
 `,
     'utf8',
   )
@@ -171,6 +196,7 @@ spec:
   return {
     dir,
     serviceManifestPath,
+    schedulerManifestPath,
     simulationServiceManifestPath,
     migrationManifestPath,
     historicalWorkflowManifestPath,
@@ -200,6 +226,7 @@ const updateOptionsForFixture = (
   commit: '1234567890abcdef1234567890abcdef12345678',
   rolloutTimestamp: '2026-02-21T04:00:00Z',
   manifestPath: relative(repoRoot, fixture.serviceManifestPath),
+  schedulerManifestPath: relative(repoRoot, fixture.schedulerManifestPath),
   simulationManifestPath: relative(repoRoot, fixture.simulationServiceManifestPath),
   migrationManifestPath: relative(repoRoot, fixture.migrationManifestPath),
   historicalSimulationWorkflowManifestPath: relative(repoRoot, fixture.historicalWorkflowManifestPath),
@@ -261,6 +288,7 @@ describe('update-manifests', () => {
     const result = __private.updateTorghutManifests(updateOptionsForFixture(fixture))
 
     const serviceManifest = readFileSync(fixture.serviceManifestPath, 'utf8')
+    const schedulerManifest = readFileSync(fixture.schedulerManifestPath, 'utf8')
     const simulationServiceManifest = readFileSync(fixture.simulationServiceManifestPath, 'utf8')
     const migrationManifest = readFileSync(fixture.migrationManifestPath, 'utf8')
     const historicalWorkflowManifest = readFileSync(fixture.historicalWorkflowManifestPath, 'utf8')
@@ -287,6 +315,15 @@ describe('update-manifests', () => {
     expect(serviceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
     expect(serviceManifest).toContain('value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e')
     expect(serviceManifest).toContain('value: linux/amd64,linux/arm64')
+    expect(schedulerManifest).toContain(
+      'image: registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+    )
+    expect(schedulerManifest).toContain('value: v0.600.0')
+    expect(schedulerManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
+    expect(schedulerManifest).toContain(
+      'value: sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
+    )
+    expect(schedulerManifest.match(/value: linux\/amd64,linux\/arm64/g)?.length).toBe(2)
     expect(simulationServiceManifest).toContain('client.knative.dev/updateTimestamp: "2026-02-21T04:00:00Z"')
     expect(simulationServiceManifest).toContain('value: v0.600.0')
     expect(simulationServiceManifest).toContain('value: 1234567890abcdef1234567890abcdef12345678')
@@ -327,7 +364,7 @@ describe('update-manifests', () => {
     expect(result.imageRef).toBe(
       'registry.ide-newton.ts.net/lab/torghut@sha256:430763ebeeda8734e1da3ae8c6b665bcc1b380fb815317fffc98371cccea219e',
     )
-    expect(result.changedPaths.length).toBe(15)
+    expect(result.changedPaths.length).toBe(16)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })
@@ -349,7 +386,7 @@ describe('update-manifests', () => {
       expect(manifest).toContain('value: old-version')
       expect(manifest).toContain('value: old-commit')
     }
-    expect(result.changedPaths.length).toBe(13)
+    expect(result.changedPaths.length).toBe(14)
 
     rmSync(fixture.dir, { recursive: true, force: true })
   })

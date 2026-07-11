@@ -30,6 +30,7 @@ ARG TORGHUT_COMMIT
 COPY app ./app
 COPY migrations ./migrations
 RUN test -f /app/app/main.py \
+ && test -f /app/app/scheduler_main.py \
  && test -f /app/app/trading/forecast_runtime.py \
  && test -f /app/app/trading/lean_runtime.py
 RUN --mount=type=cache,target=/root/.cache/uv \
@@ -72,6 +73,7 @@ COPY migrations ./migrations
 COPY scripts ./scripts
 COPY README.md .
 RUN test -f /app/app/main.py \
+ && test -f /app/app/scheduler_main.py \
  && test -f /app/app/trading/forecast_runtime.py \
  && test -f /app/app/trading/lean_runtime.py
 

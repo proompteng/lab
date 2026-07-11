@@ -32,12 +32,12 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "torghut_trading_execution_clean_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}",
+              "expr": "torghut_trading_execution_clean_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}",
               "legendFormat": "clean ratio",
               "refId": "A"
             },
             {
-              "expr": "torghut_trading_execution_reject_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}",
+              "expr": "torghut_trading_execution_reject_ratio{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}",
               "legendFormat": "reject ratio",
               "refId": "B"
             }
@@ -53,12 +53,12 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\", reason=\"qty_below_min\"}[30m]) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]), 1)",
+              "expr": "increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\", reason=\"qty_below_min\"}[30m]) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]), 1)",
               "legendFormat": "qty_below_min ratio (30m)",
               "refId": "A"
             },
             {
-              "expr": "sum(increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\", reason=~\"llm_unavailable_.*\"}[30m])) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]), 1)",
+              "expr": "sum(increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\", reason=~\"llm_unavailable_.*\"}[30m])) / clamp_min(increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]), 1)",
               "legendFormat": "llm_unavailable ratio (30m)",
               "refId": "B"
             }
@@ -74,7 +74,7 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "topk(10, increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[2h]))",
+              "expr": "topk(10, increase(torghut_trading_decision_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[2h]))",
               "legendFormat": "{{reason}}",
               "refId": "A"
             }
@@ -90,7 +90,7 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "increase(torghut_trading_llm_unavailable_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[2h])",
+              "expr": "increase(torghut_trading_llm_unavailable_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[2h])",
               "legendFormat": "{{reason}}",
               "refId": "A"
             }
@@ -106,7 +106,7 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "increase(torghut_trading_llm_unavailable_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[2h])",
+              "expr": "increase(torghut_trading_llm_unavailable_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[2h])",
               "legendFormat": "{{reason}}",
               "refId": "A"
             }
@@ -122,12 +122,12 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "rate(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "expr": "rate(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
               "legendFormat": "submitted/s",
               "refId": "A"
             },
             {
-              "expr": "rate(torghut_trading_orders_rejected_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "expr": "rate(torghut_trading_orders_rejected_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
               "legendFormat": "rejected/s",
               "refId": "B"
             }
@@ -175,27 +175,27 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "sum(increase(torghut_trading_feature_quality_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m]))",
+              "expr": "sum(increase(torghut_trading_feature_quality_reject_reason_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m]))",
               "legendFormat": "quality rejected",
               "refId": "A"
             },
             {
-              "expr": "increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "expr": "increase(torghut_trading_decisions_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
               "legendFormat": "decisions",
               "refId": "B"
             },
             {
-              "expr": "sum(increase(torghut_trading_execution_submit_attempt_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m]))",
+              "expr": "sum(increase(torghut_trading_execution_submit_attempt_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m]))",
               "legendFormat": "submit attempts",
               "refId": "C"
             },
             {
-              "expr": "sum(increase(torghut_trading_execution_submit_result_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\", status=\"accepted\"}[15m]))",
+              "expr": "sum(increase(torghut_trading_execution_submit_result_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\", status=\"accepted\"}[15m]))",
               "legendFormat": "submit accepted",
               "refId": "D"
             },
             {
-              "expr": "increase(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[15m])",
+              "expr": "increase(torghut_trading_orders_submitted_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[15m])",
               "legendFormat": "orders submitted",
               "refId": "E"
             }
@@ -211,7 +211,7 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "sum by (stage, outcome) (increase(torghut_trading_qty_resolution_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]))",
+              "expr": "sum by (stage, outcome) (increase(torghut_trading_qty_resolution_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]))",
               "legendFormat": "{{stage}} {{outcome}}",
               "refId": "A"
             }
@@ -227,7 +227,7 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "sum by (stage, context) (increase(torghut_trading_sell_inventory_context_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]))",
+              "expr": "sum by (stage, context) (increase(torghut_trading_sell_inventory_context_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]))",
               "legendFormat": "{{stage}} {{context}}",
               "refId": "A"
             }
@@ -243,17 +243,17 @@ data:
           "options": {"tooltip": {"mode": "single"}},
           "targets": [
             {
-              "expr": "increase(torghut_trading_signal_batch_order_violation_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m])",
+              "expr": "increase(torghut_trading_signal_batch_order_violation_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m])",
               "legendFormat": "order violations",
               "refId": "A"
             },
             {
-              "expr": "increase(torghut_trading_execution_validation_mismatch_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m])",
+              "expr": "increase(torghut_trading_execution_validation_mismatch_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m])",
               "legendFormat": "validation mismatches",
               "refId": "B"
             },
             {
-              "expr": "sum by (code, reason) (increase(torghut_trading_execution_local_reject_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut\"}[30m]))",
+              "expr": "sum by (code, reason) (increase(torghut_trading_execution_local_reject_total{job=\"torghut\", namespace=\"torghut\", service=\"torghut-scheduler\"}[30m]))",
               "legendFormat": "{{code}} {{reason}}",
               "refId": "C"
             }

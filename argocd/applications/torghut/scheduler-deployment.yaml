@@ -1,43 +1,57 @@
-apiVersion: serving.knative.dev/v1
-kind: Service
+apiVersion: apps/v1
+kind: Deployment
 metadata:
-  name: torghut
+  name: torghut-scheduler
   namespace: torghut
   labels:
     app.kubernetes.io/name: torghut
-    app.kubernetes.io/component: backend
+    app.kubernetes.io/component: trading-scheduler
     app.kubernetes.io/part-of: lab
-    networking.knative.dev/visibility: cluster-local
   annotations:
-    argocd.argoproj.io/sync-wave: "0"
-    serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
-    serving.knative.dev/rollout-duration: 10s
-    argocd.argoproj.io/tracking-id: torghut:serving.knative.dev/Service:torghut/torghut
+    argocd.argoproj.io/sync-wave: "2"
 spec:
+  # P0a containment: keep the dedicated writer disabled until the scheduler-free
+  # API revision is live and every legacy Knative revision has been removed.
+  replicas: 0
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut
+      app.kubernetes.io/component: trading-scheduler
   template:
     metadata:
-      annotations:
-        client.knative.dev/updateTimestamp: "2026-07-11T06:40:51Z"
-        autoscaling.knative.dev/maxScale: "1"
-        autoscaling.knative.dev/target: "80"
+      labels:
+        app.kubernetes.io/name: torghut
+        app.kubernetes.io/component: trading-scheduler
+        app.kubernetes.io/part-of: lab
     spec:
+      serviceAccountName: torghut-runtime
       nodeSelector:
         kubernetes.io/arch: arm64
-      containerConcurrency: 0
-      timeoutSeconds: 60
+      terminationGracePeriodSeconds: 60
       containers:
-        - name: user-container
+        - name: torghut-scheduler
           imagePullPolicy: IfNotPresent
           securityContext:
             seccompProfile:
               type: Unconfined
           image: registry.ide-newton.ts.net/lab/torghut@sha256:1eeedfdf05a52af671a315110af7a8247496c8b67f7433d58e4751a64458ad20
+          command:
+            - uvicorn
+          args:
+            - app.scheduler_main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8183"
           ports:
-            - name: http1
-              containerPort: 8181
+            - name: metrics
+              containerPort: 8183
           env:
             - name: TORGHUT_PROCESS_ROLE
-              value: api
+              value: scheduler
             - name: TRADING_SCHEDULER_RUNTIME_BASE_URL
               value: http://torghut-scheduler.torghut.svc.cluster.local:8183
             - name: TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS
@@ -46,6 +60,10 @@ spec:
               value: "45"
             - name: TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS
               value: "30"
+            - name: TRADING_SCHEDULER_LEADERSHIP_REQUIRED
+              value: "true"
+            - name: TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS
+              value: "5"
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL
@@ -133,9 +151,7 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
-              # The GitOps manifest can land before the matching image promotion.
-              # Keep even the previous image scheduler-free during that window.
-              value: "false"
+              value: "true"
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
@@ -457,24 +473,24 @@ spec:
               value: linux/amd64,linux/arm64
             - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
               value: linux/amd64,linux/arm64
-          livenessProbe:
-            httpGet:
-              path: /healthz
-              port: 8181
-            failureThreshold: 6
-            periodSeconds: 10
-            timeoutSeconds: 10
           startupProbe:
             httpGet:
               path: /healthz
-              port: 8181
+              port: 8183
             failureThreshold: 60
             periodSeconds: 5
             timeoutSeconds: 10
-          readinessProbe:
+          livenessProbe:
             httpGet:
               path: /healthz
-              port: 8181
+              port: 8183
+            failureThreshold: 6
+            periodSeconds: 10
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /scheduler/readyz
+              port: 8183
             failureThreshold: 3
             periodSeconds: 5
             timeoutSeconds: 10
@@ -489,19 +505,7 @@ spec:
             - name: strategy-config
               mountPath: /etc/torghut
               readOnly: true
-            - name: whitepapers-config
-              mountPath: /etc/torghut/whitepapers-config
-              readOnly: true
-            - name: whitepapers-secret
-              mountPath: /etc/torghut/whitepapers-secret
-              readOnly: true
       volumes:
         - name: strategy-config
           configMap:
             name: torghut-strategy-config
-        - name: whitepapers-config
-          configMap:
-            name: torghut-whitepapers
-        - name: whitepapers-secret
-          secret:
-            secretName: torghut-whitepapers

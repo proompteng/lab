@@ -233,6 +233,47 @@ jobs:
             done
           done
 
+          TORGHUT_SCHEDULER_REPLICAS="$(
+            kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'
+          )"
+          case "${TORGHUT_SCHEDULER_REPLICAS}" in
+            0 | 1)
+              ;;
+            *)
+              echo "Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}"
+              exit 1
+              ;;
+          esac
+          echo "Torghut scheduler desired replicas: ${TORGHUT_SCHEDULER_REPLICAS}"
+          if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+            kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m
+          fi
+
+          if ! TORGHUT_SIM_TRADING_ENABLED="$(
+            kubectl get ksvc torghut-sim -n torghut -o json |
+              jq -r '
+                [.spec.template.spec.containers[]
+                  | select(.name == "user-container")
+                  | (.env // [])[]
+                  | select(.name == "TRADING_ENABLED")
+                  | (.value // "")]
+                | if length == 1 then .[0] else "" end
+              '
+          )"; then
+            echo "Failed to read torghut-sim desired TRADING_ENABLED from the live Knative Service"
+            exit 1
+          fi
+          case "${TORGHUT_SIM_TRADING_ENABLED}" in
+            true | false)
+              ;;
+            *)
+              echo "torghut-sim desired TRADING_ENABLED must be exactly true or false; got ${TORGHUT_SIM_TRADING_ENABLED:-unset}"
+              exit 1
+              ;;
+          esac
+          export TORGHUT_SIM_TRADING_ENABLED
+          echo "torghut-sim desired TRADING_ENABLED=${TORGHUT_SIM_TRADING_ENABLED}"
+
           KNSVC_READY_ATTEMPTS=60
           KNSVC_READY_INTERVAL_SECONDS=2
 
@@ -322,6 +363,8 @@ jobs:
           JSON_EVIDENCE_ATTEMPTS=3
           READYZ_EVIDENCE_ATTEMPTS=12
           EVIDENCE_RETRY_INTERVAL_SECONDS=2
+          FULL_CONTRACT_ATTEMPTS=120
+          FULL_CONTRACT_INTERVAL_SECONDS=10
 
           fetch_json() {
             local url="$1"
@@ -419,70 +462,117 @@ jobs:
             done
           }
 
-          fetch_json_2xx() {
-            local url="$1"
-            local output_path="$2"
-            local label="$3"
-            local status
-
-            for attempt in $(seq 1 "${JSON_EVIDENCE_ATTEMPTS}"); do
-              status="$(
-                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
-                  -o "${output_path}" -w '%{http_code}' "${url}" || true
-              )"
-              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                return 0
-              fi
-
-              if [ "${attempt}" -eq "${JSON_EVIDENCE_ATTEMPTS}" ]; then
-                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                  [ "${status}" != '000' ] &&
-                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                  echo "${label} returned HTTP ${status}; expected 2xx" >&2
-                else
-                  echo "${label} did not return a parseable JSON HTTP 2xx response; status=${status:-empty}" >&2
-                fi
-                head -c 1000 "${output_path}" >&2 || true
-                echo >&2
-                return 1
-              fi
-
-              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                [ "${status}" != '000' ] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                echo "Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying" >&2
-              else
-                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON 2xx yet; retrying" >&2
-              fi
-              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
-            done
+          append_contract_diagnostic() {
+            local message="$1"
+            if [ -n "${CONTRACT_DIAGNOSTICS}" ]; then
+              CONTRACT_DIAGNOSTICS="${CONTRACT_DIAGNOSTICS}; ${message}"
+            else
+              CONTRACT_DIAGNOSTICS="${message}"
+            fi
           }
 
-          TORGHUT_READYZ_HTTP_STATUS="$(
-            fetch_readyz_json \
-              http://torghut.torghut.svc.cluster.local/readyz \
-              "${EVIDENCE_DIR}/torghut-readyz.json" \
-              "Torghut /readyz"
-          )"
-          if [ -z "${TORGHUT_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_READYZ_HTTP_STATUS}" = '000' ]; then
-            echo "Torghut /readyz did not return an HTTP response"
-            exit 1
-          fi
-          if ! [[ "${TORGHUT_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]]; then
-            echo "Torghut /readyz returned invalid HTTP status ${TORGHUT_READYZ_HTTP_STATUS}"
-            exit 1
-          fi
-          echo "Torghut /readyz HTTP ${TORGHUT_READYZ_HTTP_STATUS}"
+          for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do
+            rm -f \
+              "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+              "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+              "${EVIDENCE_DIR}/torghut-sim-status.json" \
+              "${EVIDENCE_DIR}/torghut-status.json"
+            unset TORGHUT_SCHEDULER_READYZ_HTTP_STATUS TORGHUT_SCHEDULER_READYZ_PAYLOAD
+            CONTRACT_CAPTURE_OK='true'
+            CONTRACT_DIAGNOSTICS=''
 
-          fetch_json_2xx \
-            http://torghut.torghut.svc.cluster.local/trading/status \
-            "${EVIDENCE_DIR}/torghut-status.json" \
-            "Torghut /trading/status"
-          export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
-          export TORGHUT_READYZ_HTTP_STATUS
-          export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
-          bun run packages/scripts/src/torghut/post-deploy-evidence.ts
+            if ! TORGHUT_API_READYZ_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut.torghut.svc.cluster.local/readyz \
+                "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+                "Torghut stable API /readyz" \
+                2> "${EVIDENCE_DIR}/torghut-api-readyz-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'stable API readiness capture failed'
+            elif ! [[ "${TORGHUT_API_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_API_READYZ_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "stable API readiness returned invalid HTTP status ${TORGHUT_API_READYZ_HTTP_STATUS:-unset}"
+            fi
+
+            if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+              if ! TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(
+                fetch_readyz_json \
+                  http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz \
+                  "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+                  "Torghut scheduler /readyz" \
+                  2> "${EVIDENCE_DIR}/torghut-scheduler-readyz-fetch.err"
+              )"; then
+                CONTRACT_CAPTURE_OK='false'
+                append_contract_diagnostic 'scheduler readiness capture failed'
+              elif ! [[ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+                [ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" = '000' ]; then
+                CONTRACT_CAPTURE_OK='false'
+                append_contract_diagnostic "scheduler readiness returned invalid HTTP status ${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS:-unset}"
+              else
+                export TORGHUT_SCHEDULER_READYZ_HTTP_STATUS
+                export TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"
+              fi
+            fi
+
+            if ! TORGHUT_STATUS_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut.torghut.svc.cluster.local/trading/status \
+                "${EVIDENCE_DIR}/torghut-status.json" \
+                "Torghut /trading/status" \
+                2> "${EVIDENCE_DIR}/torghut-status-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'trading status capture failed'
+            elif ! [[ "${TORGHUT_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_STATUS_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "trading status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS:-unset}"
+            fi
+
+            if ! TORGHUT_SIM_STATUS_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut-sim.torghut.svc.cluster.local/trading/status \
+                "${EVIDENCE_DIR}/torghut-sim-status.json" \
+                "Torghut simulation /trading/status" \
+                2> "${EVIDENCE_DIR}/torghut-sim-status-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'simulation trading status capture failed'
+            elif ! [[ "${TORGHUT_SIM_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_SIM_STATUS_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "simulation trading status returned invalid HTTP status ${TORGHUT_SIM_STATUS_HTTP_STATUS:-unset}"
+            fi
+
+            if [ "${CONTRACT_CAPTURE_OK}" = 'true' ]; then
+              export TORGHUT_SCHEDULER_REPLICAS
+              export TORGHUT_STATUS_HTTP_STATUS
+              export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
+              export TORGHUT_API_READYZ_HTTP_STATUS
+              export TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"
+              export TORGHUT_SIM_STATUS_HTTP_STATUS
+              export TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"
+              if CONTRACT_DIAGNOSTICS="$(
+                bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1
+              )"; then
+                printf '%s\n' "${CONTRACT_DIAGNOSTICS}"
+                echo "Torghut full post-deploy contract converged on attempt ${contract_attempt}"
+                break
+              fi
+            fi
+
+            CONTRACT_DIAGNOSTIC_LINE="$(
+              printf '%s\n' "${CONTRACT_DIAGNOSTICS}" | tail -n 1 | cut -c 1-500
+            )"
+            echo "Attempt ${contract_attempt}/${FULL_CONTRACT_ATTEMPTS}: Torghut full contract not converged: ${CONTRACT_DIAGNOSTIC_LINE:-unknown error}"
+            if [ "${contract_attempt}" -eq "${FULL_CONTRACT_ATTEMPTS}" ]; then
+              echo "Torghut full post-deploy contract did not converge after ${FULL_CONTRACT_ATTEMPTS} attempts"
+              exit 1
+            fi
+            sleep "${FULL_CONTRACT_INTERVAL_SECONDS}"
+          done
 
       - name: Verify market-data freshness
         shell: bash

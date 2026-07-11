@@ -20,6 +20,14 @@ from .normalization import SettingsNormalizationMixin
 
 
 class SettingsAccessorsMixin(SettingsNormalizationMixin):
+    def _validate_scheduler_timing_settings(self) -> None:
+        success_max_age_ms = self.trading_scheduler_success_max_age_seconds * 1000.0
+        if self.trading_reconcile_ms >= success_max_age_ms:
+            raise ValueError(
+                "TRADING_RECONCILE_MS must be strictly less than "
+                "TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS * 1000"
+            )
+
     def _validate_tigerbeetle_settings(self) -> None:
         if self.tigerbeetle_cluster_id <= 0:
             raise ValueError("TORGHUT_TIGERBEETLE_CLUSTER_ID must be > 0")
@@ -48,6 +56,7 @@ class SettingsAccessorsMixin(SettingsNormalizationMixin):
         self._normalize_optional_nullable_settings()
         self._normalize_trading_csv_settings()
         self._normalize_tigerbeetle_settings()
+        self._validate_scheduler_timing_settings()
         self._validate_trading_source_settings()
         self._normalize_llm_settings()
         self._validate_allocator_scalar_settings()

@@ -63,6 +63,38 @@ class _StockDataClientLike(Protocol):
     def get_stock_bars(self, _request_params: StockBarsRequest, /) -> Any: ...
 
 
+class _SingleAttemptTradingClient(TradingClient):
+    """Alpaca trading client with SDK-level HTTP retries disabled.
+
+    A broker mutation can succeed even when its HTTP response is lost. Retrying that
+    request inside the SDK would hide a second broker attempt from Torghut's durable
+    execution state machine, so every service-created client performs one HTTP
+    attempt and lets the caller reconcile an ambiguous result.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        secret_key: str | None = None,
+        *,
+        paper: bool = True,
+        url_override: str | None = None,
+    ) -> None:
+        super().__init__(
+            api_key=api_key,
+            secret_key=secret_key,
+            paper=paper,
+            url_override=url_override,
+        )
+
+        retry_configuration = vars(self)
+        retry_attempts = retry_configuration.get("_retry")
+        if type(retry_attempts) is not int:
+            raise RuntimeError("alpaca_sdk_retry_control_unavailable")
+
+        self._retry = 0
+
+
 class _ReadOnlyTradingClient:
     """Named Alpaca trading reads exposed outside the firewall boundary."""
 
@@ -108,16 +140,29 @@ class TorghutAlpacaClient:
         use_paper = paper if paper is not None else settings.trading_mode != "live"
         self.endpoint_class = "paper" if use_paper else "live"
 
-        # Default to paper trading; override URL if provided.
-        raw_trading_client: _TradingClientLike = trading_client or TradingClient(
-            api_key=key,
-            secret_key=secret,
-            paper=use_paper,
-            url_override=base,
-        )
-        self._trading = raw_trading_client
+        # Broker mutations use a dedicated single-attempt client so an ambiguous
+        # response cannot cause a hidden resubmission. Reads keep the SDK's retry
+        # policy because repeating a read does not create broker-side state.
+        if trading_client is None:
+            read_trading_client: _ReadOnlyTradingClientLike = TradingClient(
+                api_key=key,
+                secret_key=secret,
+                paper=use_paper,
+                url_override=base,
+            )
+            mutation_trading_client: _TradingClientLike = _SingleAttemptTradingClient(
+                api_key=key,
+                secret_key=secret,
+                paper=use_paper,
+                url_override=base,
+            )
+        else:
+            read_trading_client = trading_client
+            mutation_trading_client = trading_client
+
+        self._trading = mutation_trading_client
         self.trading: _ReadOnlyTradingClient = _ReadOnlyTradingClient(
-            raw_trading_client
+            read_trading_client
         )
 
         # Market Data v2 (stocks).

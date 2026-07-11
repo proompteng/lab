@@ -261,9 +261,9 @@ class TestTorghutScheduledMaintenance(_TestLiveConfigManifestContractBase):
         env_from = first_container.get("envFrom", [])
         self.assertEqual(env_from, [])
 
-    def test_manifest_simple_lane_profile_is_enforced(self) -> None:
+    def test_api_manifest_simple_lane_profile_is_enforced(self) -> None:
         env = _load_torghut_knative_env()
-        self.assertTrue(_manifest_bool(env, "TRADING_ENABLED"))
+        self.assertFalse(_manifest_bool(env, "TRADING_ENABLED"))
         self.assertEqual(env.get("TRADING_MODE"), "live")
         self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "static")
