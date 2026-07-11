@@ -103,7 +103,7 @@ def mark_decision_submission_broker_io_started(
             outcome="transitioned",
             claim=claim,
         )
-    except DecisionSubmissionFenceError:
+    except (DecisionSubmissionFenceError, DecisionSubmissionClaimValidationError):
         replay = _boundary_replay_result(session, handle)
         if replay is not None:
             return replay
