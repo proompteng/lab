@@ -513,6 +513,7 @@ class TradingScheduler(
             self.state.signal_bootstrap_completed_at = None
             self.state.running = False
             self._task = asyncio.create_task(self._run_loop())
+            self._task.add_done_callback(self._scheduler_loop_completed)
             self._leadership_task = asyncio.create_task(self._monitor_leadership())
             self._leadership_task.add_done_callback(self._leadership_monitor_completed)
             startup_cleanup.pop_all()
@@ -657,6 +658,29 @@ class TradingScheduler(
             "Trading scheduler leadership monitor crashed; writer stopped error=%s",
             detail,
             exc_info=(type(error), error, error.__traceback__),
+        )
+        self._fatal_exit(70)
+
+    def _scheduler_loop_completed(self, scheduler_task: asyncio.Task[None]) -> None:
+        if self._stop_event.is_set():
+            return
+        if scheduler_task.cancelled():
+            error: BaseException | None = None
+            state_reason = "scheduler_loop_cancelled_unexpectedly"
+            detail = "task_cancelled"
+        else:
+            error = scheduler_task.exception()
+            if error is None:
+                state_reason = "scheduler_loop_exited_unexpectedly"
+                detail = "task_returned"
+            else:
+                state_reason, detail = "scheduler_loop_failed", type(error).__name__
+        self._latch_leadership_failure(state_reason=state_reason, detail=detail)
+        logger.critical(
+            "Scheduler loop stopped unexpectedly reason=%s detail=%s",
+            state_reason,
+            detail,
+            exc_info=error,
         )
         self._fatal_exit(70)
 

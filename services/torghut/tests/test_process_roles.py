@@ -409,6 +409,11 @@ class SchedulerProcessRoleTests(IsolatedAsyncioTestCase):
 
 
 class SchedulerReadinessTests(TestCase):
+    def setUp(self) -> None:
+        trading_enabled = patch.object(settings, "trading_enabled", True)
+        trading_enabled.start()
+        self.addCleanup(trading_enabled.stop)
+
     def test_readiness_requires_running_error_free_completed_cycles(self) -> None:
         scheduler = _FakeScheduler()
         with patch.object(settings, "process_role", "scheduler"):
@@ -542,18 +547,66 @@ class SchedulerReadinessTests(TestCase):
 class SchedulerLivenessTests(TestCase):
     def test_liveness_requires_healthy_acquired_leadership(self) -> None:
         scheduler = _FakeScheduler()
-        with patch.object(settings, "process_role", "scheduler"):
+        scheduler.state.running = True
+        with (
+            patch.object(settings, "process_role", "scheduler"),
+            patch.object(settings, "trading_enabled", True),
+        ):
             payload = scheduler_main.scheduler_liveness_payload(scheduler)
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["detail"], "ok")
+        self.assertEqual(
+            payload["trading"],
+            {"enabled": True, "loop_required": True, "running": True},
+        )
 
     def test_liveness_fails_closed_when_leadership_is_unavailable(self) -> None:
         scheduler = _FakeScheduler()
+        scheduler.state.running = True
         scheduler.leadership_status.healthy = False
 
-        with patch.object(settings, "process_role", "scheduler"):
+        with (
+            patch.object(settings, "process_role", "scheduler"),
+            patch.object(settings, "trading_enabled", True),
+        ):
             payload = scheduler_main.scheduler_liveness_payload(scheduler)
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["detail"], "scheduler_leadership_unhealthy")
+
+    def test_liveness_fails_closed_when_required_trading_loop_is_not_running(
+        self,
+    ) -> None:
+        scheduler = _FakeScheduler()
+
+        with (
+            patch.object(settings, "process_role", "scheduler"),
+            patch.object(settings, "trading_enabled", True),
+        ):
+            payload = scheduler_main.scheduler_liveness_payload(scheduler)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["detail"], "scheduler_loop_not_running")
+        self.assertEqual(
+            payload["trading"],
+            {"enabled": True, "loop_required": True, "running": False},
+        )
+
+    def test_liveness_permits_stopped_loop_when_trading_is_disabled(self) -> None:
+        scheduler = _FakeScheduler()
+        scheduler.leadership_status.healthy = False
+        scheduler.leadership_status.acquired = False
+
+        with (
+            patch.object(settings, "process_role", "scheduler"),
+            patch.object(settings, "trading_enabled", False),
+        ):
+            payload = scheduler_main.scheduler_liveness_payload(scheduler)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["detail"], "trading_disabled")
+        self.assertEqual(
+            payload["trading"],
+            {"enabled": False, "loop_required": False, "running": False},
+        )

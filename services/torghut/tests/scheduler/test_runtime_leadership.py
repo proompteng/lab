@@ -70,6 +70,16 @@ class _BlockingBrokerScheduler(TradingScheduler):
         return
 
 
+class _ReturningLoopScheduler(_StoppedLoopScheduler):
+    async def _run_loop(self) -> None:
+        return
+
+
+class _FailingLoopScheduler(_StoppedLoopScheduler):
+    async def _run_loop(self) -> None:
+        raise RuntimeError("scheduler loop exploded")
+
+
 class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
     @staticmethod
     def _prepared_scheduler(
@@ -92,7 +102,8 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
 
     async def test_start_acquires_and_stop_releases_writer_fence(self) -> None:
         leadership = _FakeLeadership()
-        scheduler = self._prepared_scheduler(leadership)
+        fatal_exit = Mock()
+        scheduler = self._prepared_scheduler(leadership, fatal_exit=fatal_exit)
 
         await scheduler.start()
         await scheduler.stop()
@@ -100,6 +111,81 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         self.assertEqual(leadership.acquire_calls, 1)
         self.assertEqual(leadership.release_calls, 1)
         self.assertFalse(scheduler.leadership_status.acquired)
+        fatal_exit.assert_not_called()
+
+    async def test_unexpected_loop_return_is_process_fatal(self) -> None:
+        leadership = _FakeLeadership()
+        fatal_called = asyncio.Event()
+        fatal_exit = Mock(side_effect=lambda _code: fatal_called.set())
+        scheduler = _ReturningLoopScheduler(
+            leadership=leadership,
+            fatal_exit=fatal_exit,
+        )
+        scheduler._pipelines = self._prepared_scheduler(leadership)._pipelines
+        scheduler._pipeline = scheduler._pipelines[0]
+
+        await scheduler.start()
+        await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
+
+        self.assertEqual(
+            scheduler.state.last_error,
+            "scheduler_loop_exited_unexpectedly:task_returned",
+        )
+        self.assertEqual(
+            scheduler.state.emergency_stop_reason,
+            "scheduler_loop_exited_unexpectedly",
+        )
+        fatal_exit.assert_called_once_with(70)
+        await scheduler.stop()
+
+    async def test_unexpected_loop_exception_is_process_fatal(self) -> None:
+        leadership = _FakeLeadership()
+        fatal_called = asyncio.Event()
+        fatal_exit = Mock(side_effect=lambda _code: fatal_called.set())
+        scheduler = _FailingLoopScheduler(
+            leadership=leadership,
+            fatal_exit=fatal_exit,
+        )
+        scheduler._pipelines = self._prepared_scheduler(leadership)._pipelines
+        scheduler._pipeline = scheduler._pipelines[0]
+
+        await scheduler.start()
+        await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
+
+        self.assertEqual(
+            scheduler.state.last_error,
+            "scheduler_loop_failed:RuntimeError",
+        )
+        self.assertEqual(
+            scheduler.state.emergency_stop_reason,
+            "scheduler_loop_failed",
+        )
+        fatal_exit.assert_called_once_with(70)
+        await scheduler.stop()
+
+    async def test_unexpected_loop_cancellation_is_process_fatal(self) -> None:
+        leadership = _FakeLeadership()
+        fatal_called = asyncio.Event()
+        fatal_exit = Mock(side_effect=lambda _code: fatal_called.set())
+        scheduler = self._prepared_scheduler(leadership, fatal_exit=fatal_exit)
+
+        await scheduler.start()
+        scheduler_task = scheduler._task
+        self.assertIsNotNone(scheduler_task)
+        assert scheduler_task is not None
+        scheduler_task.cancel()
+        await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
+
+        self.assertEqual(
+            scheduler.state.last_error,
+            "scheduler_loop_cancelled_unexpectedly:task_cancelled",
+        )
+        self.assertEqual(
+            scheduler.state.emergency_stop_reason,
+            "scheduler_loop_cancelled_unexpectedly",
+        )
+        fatal_exit.assert_called_once_with(70)
+        await scheduler.stop()
 
     async def test_startup_failure_releases_fence_without_starting_loop(self) -> None:
         leadership = _FakeLeadership(

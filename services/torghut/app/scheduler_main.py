@@ -138,32 +138,61 @@ def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object
 
 
 def scheduler_liveness_payload(scheduler: TradingScheduler) -> dict[str, object]:
-    """Fail closed when durable scheduler leadership is missing or unhealthy."""
+    """Require a healthy trading loop and leadership when trading is enabled."""
 
+    trading_enabled = bool(settings.trading_enabled)
+    running = bool(getattr(scheduler.state, "running", False))
     leadership_status = getattr(scheduler, "leadership_status", None)
     if callable(leadership_status):
         leadership_status = leadership_status()
+    trading_payload = {
+        "enabled": trading_enabled,
+        "loop_required": trading_enabled,
+        "running": running,
+    }
     if leadership_status is None:
+        if not trading_enabled:
+            return {
+                "ok": True,
+                "process_role": settings.process_role,
+                "detail": "trading_disabled",
+                "trading": trading_payload,
+            }
         return {
             "ok": False,
             "process_role": settings.process_role,
             "detail": "leadership_status_unavailable",
+            "trading": trading_payload,
         }
 
     required = bool(getattr(leadership_status, "required", True))
     acquired = bool(getattr(leadership_status, "acquired", False))
     healthy = bool(getattr(leadership_status, "healthy", False))
-    ok = healthy and (acquired or not required)
+    leadership_ok = healthy and (acquired or not required)
+    leadership_payload = {
+        "required": required,
+        "acquired": acquired,
+        "healthy": healthy,
+        "failure_reason": getattr(leadership_status, "failure_reason", None),
+    }
+    if not trading_enabled:
+        ok = True
+        detail = "trading_disabled"
+    elif not leadership_ok:
+        ok = False
+        detail = "scheduler_leadership_unhealthy"
+    elif not running:
+        ok = False
+        detail = "scheduler_loop_not_running"
+    else:
+        ok = True
+        detail = "ok"
     return {
         "ok": ok,
         "process_role": settings.process_role,
-        "detail": "ok" if ok else "scheduler_leadership_unhealthy",
-        "leadership": {
-            "required": required,
-            "acquired": acquired,
-            "healthy": healthy,
-            "failure_reason": getattr(leadership_status, "failure_reason", None),
-        },
+        "detail": detail,
+        "trading": trading_payload,
+        "leadership": leadership_payload,
     }
 
 
