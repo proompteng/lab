@@ -74,7 +74,9 @@ const tradingStatus = (gate: typeof activeGate | typeof marketClosedGate = activ
   tigerbeetle_ledger: {
     blockers: [],
     ok: true,
+    protocol_ok: true,
     reconciliation_ok: true,
+    reconciliation_required: true,
     reconciliation_stale: false,
   },
 })
@@ -133,6 +135,33 @@ describe('Torghut post-deploy evidence', () => {
     expect(() =>
       validatePostDeployEvidence({ readyz: readyz(), readyzHttpStatus: '200', tradingStatus: status }),
     ).toThrow('ledger reconciliation is not current and healthy')
+  })
+
+  it('accepts stale reconciliation diagnostics when periodic reconciliation is optional', () => {
+    const status = tradingStatus()
+    status.tigerbeetle_ledger.blockers = ['tigerbeetle_reconciliation_stale']
+    status.tigerbeetle_ledger.reconciliation_ok = false
+    status.tigerbeetle_ledger.reconciliation_required = false
+    status.tigerbeetle_ledger.reconciliation_stale = true
+
+    const result = validatePostDeployEvidence({
+      readyz: readyz(),
+      readyzHttpStatus: '200',
+      tradingStatus: status,
+    })
+
+    expect(result.readinessContract).toBe('active_session_ready')
+  })
+
+  it('rejects an unhealthy TigerBeetle protocol when reconciliation is optional', () => {
+    const status = tradingStatus()
+    status.tigerbeetle_ledger.ok = false
+    status.tigerbeetle_ledger.protocol_ok = false
+    status.tigerbeetle_ledger.reconciliation_required = false
+
+    expect(() =>
+      validatePostDeployEvidence({ readyz: readyz(), readyzHttpStatus: '200', tradingStatus: status }),
+    ).toThrow('ledger protocol is not healthy')
   })
 
   it('rejects a drifted capital limit', () => {

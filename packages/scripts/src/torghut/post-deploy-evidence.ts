@@ -134,7 +134,18 @@ const requireExecutionProjection = (status: JsonObject, gate: GateSnapshot) => {
 
 const requireLedgerHealth = (status: JsonObject) => {
   const ledger = requireObject(status.tigerbeetle_ledger, 'trading status tigerbeetle_ledger')
-  if (ledger.ok !== true || ledger.reconciliation_ok !== true || ledger.reconciliation_stale !== false) {
+  if (
+    !requireBoolean(ledger.ok, 'trading status tigerbeetle_ledger.ok') ||
+    !requireBoolean(ledger.protocol_ok, 'trading status tigerbeetle_ledger.protocol_ok')
+  ) {
+    throw new Error('TigerBeetle ledger protocol is not healthy')
+  }
+  const reconciliationRequired = requireBoolean(
+    ledger.reconciliation_required,
+    'trading status tigerbeetle_ledger.reconciliation_required',
+  )
+  if (!reconciliationRequired) return
+  if (ledger.reconciliation_ok !== true || ledger.reconciliation_stale !== false) {
     throw new Error('TigerBeetle ledger reconciliation is not current and healthy')
   }
   if (requireStringList(ledger.blockers, 'trading status tigerbeetle_ledger.blockers').length > 0) {
