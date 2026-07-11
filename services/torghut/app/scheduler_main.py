@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, cast
+from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.types import ExceptionHandler
 
 from .api.application import build_registered_app
 from .bootstrap import assert_dspy_cutover_migration_guard, sqlalchemy_exception_handler
@@ -139,7 +140,10 @@ async def scheduler_lifespan(app: FastAPI):
 def create_scheduler_app() -> FastAPI:
     app = FastAPI(title="torghut-scheduler", lifespan=scheduler_lifespan)
     app.state.settings = settings
-    app.add_exception_handler(SQLAlchemyError, cast(Any, sqlalchemy_exception_handler))
+    app.add_exception_handler(
+        SQLAlchemyError,
+        cast(ExceptionHandler, sqlalchemy_exception_handler),
+    )
     app.add_api_route("/healthz", scheduler_healthz, methods=["GET"])
     app.add_api_route("/scheduler/readyz", scheduler_readyz, methods=["GET"])
     return app

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 from collections.abc import Iterable, Mapping
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
@@ -43,6 +44,7 @@ from .governance.governance_mixin_runtime_methods import (
 from .governance.shared_context import TradingSchedulerGovernanceMixinFields
 from .leadership import (
     PostgresSchedulerLeadership,
+    SchedulerLeadershipError,
     SchedulerLeadershipStatus,
 )
 from .pipeline import TradingPipeline
@@ -470,6 +472,12 @@ class TradingScheduler(
             return
         try:
             await asyncio.to_thread(self._leadership.acquire)
+        except SchedulerLeadershipError as exc:
+            self.state.running = False
+            self.state.last_error = f"scheduler_startup_failed:{type(exc).__name__}"
+            raise
+        with ExitStack() as startup_cleanup:
+            startup_cleanup.callback(self._leadership.release)
             self._assert_trading_shorts_startup_policy()
             if not self._pipelines:
                 lanes = settings.trading_accounts
@@ -477,32 +485,28 @@ class TradingScheduler(
                     self._build_pipeline_for_account(lane) for lane in lanes
                 ]
                 self._pipeline = self._pipelines[0] if self._pipelines else None
-        except Exception as exc:
+            account_labels = ",".join(
+                pipeline.account_label for pipeline in self._pipelines
+            )
+            logger.info(
+                "Trading scheduler starting accounts=%s poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_enabled=%s autonomy_interval_seconds=%s evidence_enabled=%s evidence_interval_seconds=%s",
+                account_labels or "none",
+                settings.trading_poll_ms / 1000,
+                settings.trading_reconcile_ms / 1000,
+                settings.trading_autonomy_enabled,
+                max(30, settings.trading_autonomy_interval_seconds),
+                settings.trading_evidence_continuity_enabled,
+                max(300, settings.trading_evidence_continuity_interval_seconds),
+            )
+            self._stop_event.clear()
+            self.state.startup_started_at = datetime.now(timezone.utc)
+            self.state.signal_bootstrap_started_at = self.state.startup_started_at
+            self.state.signal_bootstrap_completed_at = None
             self.state.running = False
-            self.state.last_error = f"scheduler_startup_failed:{type(exc).__name__}"
-            if self._leadership.status.acquired:
-                await asyncio.to_thread(self._leadership.release)
-            raise
-        account_labels = ",".join(
-            pipeline.account_label for pipeline in self._pipelines
-        )
-        logger.info(
-            "Trading scheduler starting accounts=%s poll_interval_seconds=%s reconcile_interval_seconds=%s autonomy_enabled=%s autonomy_interval_seconds=%s evidence_enabled=%s evidence_interval_seconds=%s",
-            account_labels or "none",
-            settings.trading_poll_ms / 1000,
-            settings.trading_reconcile_ms / 1000,
-            settings.trading_autonomy_enabled,
-            max(30, settings.trading_autonomy_interval_seconds),
-            settings.trading_evidence_continuity_enabled,
-            max(300, settings.trading_evidence_continuity_interval_seconds),
-        )
-        self._stop_event.clear()
-        self.state.startup_started_at = datetime.now(timezone.utc)
-        self.state.signal_bootstrap_started_at = self.state.startup_started_at
-        self.state.signal_bootstrap_completed_at = None
-        self.state.running = False
-        self._task = asyncio.create_task(self._run_loop())
-        self._leadership_task = asyncio.create_task(self._monitor_leadership())
+            self._task = asyncio.create_task(self._run_loop())
+            self._leadership_task = asyncio.create_task(self._monitor_leadership())
+            self._leadership_task.add_done_callback(self._leadership_monitor_completed)
+            startup_cleanup.pop_all()
 
     async def stop(self) -> None:
         account_labels = ",".join(
@@ -517,10 +521,7 @@ class TradingScheduler(
         if leadership_task is not None:
             leadership_task.cancel()
             if leadership_task is not asyncio.current_task():
-                try:
-                    await leadership_task
-                except asyncio.CancelledError:
-                    pass
+                await asyncio.gather(leadership_task, return_exceptions=True)
         self._leadership_task = None
         task = self._task
         if task is not None:
@@ -557,14 +558,10 @@ class TradingScheduler(
 
                 status = self._leadership.status
                 reason = status.failure_reason or "leadership_unhealthy"
-                self.state.last_error = f"scheduler_leadership_lost:{reason}"
-                self.state.emergency_stop_active = True
-                self.state.emergency_stop_reason = "scheduler_leadership_lost"
-                self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
-                self._stop_event.set()
-                task = self._task
-                if task is not None:
-                    task.cancel()
+                self._latch_leadership_failure(
+                    state_reason="scheduler_leadership_lost",
+                    detail=reason,
+                )
                 logger.critical(
                     "Trading scheduler leadership lost; writer stopped reason=%s",
                     reason,
@@ -572,18 +569,43 @@ class TradingScheduler(
                 return
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # pragma: no cover - last-resort process guard
-            self.state.last_error = (
-                f"scheduler_leadership_monitor_failed:{type(exc).__name__}"
-            )
-            self.state.emergency_stop_active = True
-            self.state.emergency_stop_reason = "scheduler_leadership_monitor_failed"
-            self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
-            self._stop_event.set()
-            task = self._task
-            if task is not None:
-                task.cancel()
-            logger.exception("Trading scheduler leadership monitor failed")
+
+    def _leadership_monitor_completed(
+        self,
+        monitor_task: asyncio.Task[None],
+    ) -> None:
+        """Fail closed if the monitor itself exits with any unexpected error."""
+
+        if monitor_task.cancelled():
+            return
+        error = monitor_task.exception()
+        if error is None:
+            return
+        detail = type(error).__name__
+        self._latch_leadership_failure(
+            state_reason="scheduler_leadership_monitor_failed",
+            detail=detail,
+        )
+        logger.critical(
+            "Trading scheduler leadership monitor crashed; writer stopped error=%s",
+            detail,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+    def _latch_leadership_failure(
+        self,
+        *,
+        state_reason: str,
+        detail: str,
+    ) -> None:
+        self.state.last_error = f"{state_reason}:{detail}"
+        self.state.emergency_stop_active = True
+        self.state.emergency_stop_reason = state_reason
+        self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+        self._stop_event.set()
+        task = self._task
+        if task is not None:
+            task.cancel()
 
     async def _run_loop(self) -> None:
         self.state.running = True

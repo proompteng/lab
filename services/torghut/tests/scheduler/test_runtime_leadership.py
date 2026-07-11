@@ -22,6 +22,7 @@ class _FakeLeadership:
         self.check_calls = 0
         self.release_calls = 0
         self.check_result = True
+        self.check_error: Exception | None = None
 
     def acquire(self) -> None:
         self.acquire_calls += 1
@@ -31,6 +32,8 @@ class _FakeLeadership:
 
     def check(self) -> bool:
         self.check_calls += 1
+        if self.check_error is not None:
+            raise self.check_error
         if not self.check_result:
             self.status = replace(
                 self.status,
@@ -95,6 +98,20 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             "scheduler_startup_failed:SchedulerLeadershipError",
         )
 
+    async def test_post_acquire_startup_failure_releases_writer_fence(self) -> None:
+        leadership = _FakeLeadership()
+        scheduler = self._prepared_scheduler(leadership)
+        scheduler._assert_trading_shorts_startup_policy = Mock(
+            side_effect=RuntimeError("startup policy failed")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "startup policy failed"):
+            await scheduler.start()
+
+        self.assertIsNone(scheduler._task)
+        self.assertEqual(leadership.acquire_calls, 1)
+        self.assertEqual(leadership.release_calls, 1)
+
     async def test_leadership_loss_cancels_loop_and_latches_emergency_stop(
         self,
     ) -> None:
@@ -124,6 +141,36 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             "scheduler_leadership_lost:leadership_connection_lost:OperationalError",
         )
         self.assertTrue(scheduler._stop_event.is_set())
+        self.assertTrue(scheduler._task is not None and scheduler._task.cancelled())
+
+        await scheduler.stop()
+
+    async def test_monitor_crash_cancels_loop_and_fails_closed(self) -> None:
+        leadership = _FakeLeadership()
+        leadership.check_error = RuntimeError("monitor exploded")
+        scheduler = self._prepared_scheduler(leadership)
+
+        with patch.object(
+            settings,
+            "trading_scheduler_leadership_check_seconds",
+            0.001,
+        ):
+            await scheduler.start()
+            for _ in range(100):
+                if scheduler.state.emergency_stop_active:
+                    break
+                await asyncio.sleep(0.001)
+            await asyncio.sleep(0)
+
+        self.assertTrue(scheduler.state.emergency_stop_active)
+        self.assertEqual(
+            scheduler.state.emergency_stop_reason,
+            "scheduler_leadership_monitor_failed",
+        )
+        self.assertEqual(
+            scheduler.state.last_error,
+            "scheduler_leadership_monitor_failed:RuntimeError",
+        )
         self.assertTrue(scheduler._task is not None and scheduler._task.cancelled())
 
         await scheduler.stop()
