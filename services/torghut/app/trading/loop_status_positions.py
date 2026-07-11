@@ -10,14 +10,15 @@ from typing import cast
 def raw_account_positions(account_row: Mapping[str, object]) -> list[dict[str, object]]:
     payload = _mapping_payload(account_row.get("raw_payload"))
     positions: list[dict[str, object]] = []
-    for raw_position in _account_position_rows(payload):
+    for dex_scope, raw_position in _account_position_rows(payload):
         position = _mapping_payload(raw_position.get("position"))
         coin = _optional_text(position.get("coin"))
         if coin is None:
             continue
+        scoped_coin = _position_coin_for_scope(coin, dex_scope)
         positions.append(
             {
-                "coin": coin,
+                "coin": scoped_coin,
                 "size": _optional_text(position.get("szi")) or "0",
                 "entry_price": _optional_text(position.get("entryPx")),
                 "notional_usd": _optional_text(position.get("positionValue")) or "0",
@@ -122,26 +123,46 @@ def _matches_managed_coin(
 
 def _account_position_rows(
     payload: Mapping[str, object],
-) -> list[Mapping[str, object]]:
-    rows: list[Mapping[str, object]] = []
-    _extend_position_rows(rows, payload.get("assetPositions"))
+) -> list[tuple[str | None, Mapping[str, object]]]:
+    rows: list[tuple[str | None, Mapping[str, object]]] = []
+    _extend_position_rows(rows, payload.get("assetPositions"), dex_scope=None)
     dex_states = payload.get("dexStates")
     if isinstance(dex_states, Mapping):
-        for raw_state in cast(Mapping[object, object], dex_states).values():
+        for raw_dex, raw_state in cast(Mapping[object, object], dex_states).items():
             state = _mapping_payload(raw_state)
-            _extend_position_rows(rows, state.get("assetPositions"))
+            _extend_position_rows(
+                rows,
+                state.get("assetPositions"),
+                dex_scope=_optional_text(raw_dex),
+            )
     clearinghouse_state = _mapping_payload(payload.get("clearinghouseState"))
-    _extend_position_rows(rows, clearinghouse_state.get("assetPositions"))
+    _extend_position_rows(
+        rows,
+        clearinghouse_state.get("assetPositions"),
+        dex_scope=None,
+    )
     return rows
 
 
-def _extend_position_rows(rows: list[Mapping[str, object]], value: object) -> None:
+def _position_coin_for_scope(coin: str, dex_scope: str | None) -> str:
+    key = _coin_key(coin)
+    if dex_scope is None or _is_scoped_coin(key):
+        return key
+    return _coin_key(f"{dex_scope}:{coin}")
+
+
+def _extend_position_rows(
+    rows: list[tuple[str | None, Mapping[str, object]]],
+    value: object,
+    *,
+    dex_scope: str | None,
+) -> None:
     if not isinstance(value, list):
         return
     for raw_position in cast(list[object], value):
         if not isinstance(raw_position, Mapping):
             continue
-        rows.append(cast(Mapping[str, object], raw_position))
+        rows.append((dex_scope, cast(Mapping[str, object], raw_position)))
 
 
 def _mapping_payload(value: object) -> Mapping[str, object]:

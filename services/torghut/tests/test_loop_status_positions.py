@@ -11,6 +11,7 @@ from app.trading.loop_status import (
 from app.trading.loop_status_positions import (
     managed_exchange_positions,
     position_coin_set,
+    raw_account_positions,
 )
 
 
@@ -60,6 +61,28 @@ def test_unconfigured_unpersisted_coin_is_not_claimed() -> None:
     assert managed_exchange_positions((), raw, (), ("xyz:MU",)) == []
 
 
+def test_raw_dex_positions_inherit_parent_scope_when_coin_is_unscoped() -> None:
+    positions = raw_account_positions(
+        {
+            "raw_payload": {
+                "dexStates": {
+                    "xyz": {
+                        "assetPositions": [{"position": {"coin": "NVDA", "szi": "1"}}]
+                    },
+                    "abc": {
+                        "assetPositions": [{"position": {"coin": "NVDA", "szi": "2"}}]
+                    },
+                }
+            }
+        }
+    )
+
+    assert [(row["coin"], row["size"]) for row in positions] == [
+        ("abc:NVDA", "2"),
+        ("xyz:NVDA", "1"),
+    ]
+
+
 def test_unmanaged_scoped_position_blocks_reconciliation() -> None:
     generated_at = datetime(2026, 7, 11, 17, 0, tzinfo=timezone.utc)
     rows = LoopStatusRows(
@@ -74,14 +97,10 @@ def test_unmanaged_scoped_position_blocks_reconciliation() -> None:
             "raw_payload": {
                 "dexStates": {
                     "xyz": {
-                        "assetPositions": [
-                            {"position": {"coin": "xyz:NVDA", "szi": "1"}}
-                        ]
+                        "assetPositions": [{"position": {"coin": "NVDA", "szi": "1"}}]
                     },
                     "abc": {
-                        "assetPositions": [
-                            {"position": {"coin": "abc:NVDA", "szi": "1"}}
-                        ]
+                        "assetPositions": [{"position": {"coin": "NVDA", "szi": "1"}}]
                     },
                 }
             },
