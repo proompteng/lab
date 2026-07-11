@@ -233,6 +233,38 @@ class TestDurableInventoryBrokerReadback(_TestOrderIdempotencyBase):
                 )
             )
 
+    def test_durable_inventory_normalizes_persisted_symbol_case_and_whitespace(
+        self,
+    ) -> None:
+        with self.session_local() as session:
+            session.add(
+                Execution(
+                    alpaca_account_label="paper",
+                    alpaca_order_id="normalized-symbol-buy",
+                    client_order_id="normalized-symbol-client",
+                    symbol=" aapl ",
+                    side="buy",
+                    order_type="market",
+                    time_in_force="day",
+                    submitted_qty=Decimal("0.5"),
+                    filled_qty=Decimal("0.5"),
+                    status="filled",
+                    execution_expected_adapter="alpaca",
+                    execution_actual_adapter="alpaca",
+                    raw_order={},
+                )
+            )
+            session.commit()
+
+            self.assertEqual(
+                OrderExecutor._durable_position_qty_for_symbol(
+                    session=session,
+                    symbol="AaPl",
+                    account_label="paper",
+                ),
+                Decimal("0.5"),
+            )
+
     def test_durable_inventory_excludes_non_broker_routes(self) -> None:
         with self.session_local() as session:
             rows = [

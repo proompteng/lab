@@ -819,8 +819,6 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
-            _add_lagging_broker_fill(session, "2")
-            session.commit()
 
             sell_decision = StrategyDecision(
                 strategy_id=str(strategy.id),

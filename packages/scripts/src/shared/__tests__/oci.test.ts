@@ -1001,6 +1001,9 @@ describe('native OCI build workflows', () => {
     expect(jangarReleaseWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
     expect(jangarReleaseWorkflow).toContain('crane digest "${IMAGE_NAME}:${IMAGE_TAG}"')
     expect(jangarReleaseWorkflow).toContain('nix run .#assert-oci-platforms -- "${IMAGE}@${DIGEST}"')
+    expect(jangarReleaseWorkflow).toContain('JANGAR_SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id }}')
+    expect(jangarReleaseWorkflow).toContain('- Source CI run: `${{ github.event.workflow_run.id }}`')
+    expect(jangarReleaseWorkflow).not.toContain('JANGAR_SOURCE_CI_RUN_ID: ${{ github.run_id }}')
     expect(jangarReleaseWorkflow).not.toContain('docker buildx')
     expect(jangarReleaseWorkflow).not.toContain('docker/setup-buildx-action')
   })
@@ -1020,6 +1023,7 @@ describe('native OCI build workflows', () => {
   })
 
   it('routes the enabled Torghut family images through real Nix OCI attrs', () => {
+    expect(torghutReleaseWorkflow).toContain("TORGHUT_INCLUDE_OPTIONS_MANIFESTS: 'true'")
     for (const [workflow, imageName, packageAttr, artifact] of [
       [torghutBuildWorkflow, 'torghut', 'torghut-image', 'torghut-release-contract'],
       [torghutTaBuildWorkflow, 'torghut-ta', 'torghut-ta-image', 'torghut-ta-release-contract'],

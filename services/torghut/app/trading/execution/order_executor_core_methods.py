@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from alpaca.common.exceptions import APIError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -351,7 +351,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             Execution.execution_actual_adapter,
         ).where(
             Execution.alpaca_account_label == account_label,
-            Execution.symbol == normalized_symbol,
+            func.upper(func.trim(Execution.symbol)) == normalized_symbol,
         )
         total = Decimal("0")
         observed = False

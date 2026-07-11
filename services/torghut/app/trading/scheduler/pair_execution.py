@@ -22,6 +22,10 @@ from ..portfolio.allocation_helpers import (
 )
 
 
+_PairMatch = tuple[AllocationResult, AllocationResult]
+_PairMatchCandidate = tuple[timedelta, datetime, datetime, str, str, int, int]
+
+
 def partition_pair_allocations(
     allocations: Iterable[AllocationResult],
 ) -> tuple[list[AllocationResult], list[AllocationResult]]:
@@ -100,10 +104,22 @@ def _nearest_opposite_side_matches(
     allocations: list[AllocationResult],
     *,
     max_skew: timedelta,
-) -> tuple[list[tuple[AllocationResult, AllocationResult]], list[AllocationResult]]:
+) -> tuple[list[_PairMatch], list[AllocationResult]]:
     high = [item for item in allocations if _pair_side(item.decision) == "high_rank"]
     low = [item for item in allocations if _pair_side(item.decision) == "low_rank"]
-    candidates: list[tuple[timedelta, datetime, datetime, str, str, int, int]] = []
+    matches = _select_opposite_side_matches(high, low, max_skew=max_skew)
+    matched_ids = {id(item) for match in matches for item in match}
+    unmatched = [item for item in allocations if id(item) not in matched_ids]
+    return matches, unmatched
+
+
+def _opposite_side_match_candidates(
+    high: list[AllocationResult],
+    low: list[AllocationResult],
+    *,
+    max_skew: timedelta,
+) -> list[_PairMatchCandidate]:
+    candidates: list[_PairMatchCandidate] = []
     for high_index, high_item in enumerate(high):
         for low_index, low_item in enumerate(low):
             high_ts = high_item.decision.event_ts
@@ -121,30 +137,36 @@ def _nearest_opposite_side_matches(
                         low_index,
                     )
                 )
+    return candidates
 
+
+def _select_opposite_side_matches(
+    high: list[AllocationResult],
+    low: list[AllocationResult],
+    *,
+    max_skew: timedelta,
+) -> list[_PairMatch]:
     used_high: set[int] = set()
     used_low: set[int] = set()
-    matches: list[tuple[AllocationResult, AllocationResult]] = []
+    matches: list[_PairMatch] = []
+    candidates = _opposite_side_match_candidates(high, low, max_skew=max_skew)
     for *_, high_index, low_index in sorted(candidates):
         if high_index in used_high or low_index in used_low:
             continue
         used_high.add(high_index)
         used_low.add(low_index)
         matches.append((high[high_index], low[low_index]))
-
-    matched_ids = {id(item) for match in matches for item in match}
-    unmatched = [item for item in allocations if id(item) not in matched_ids]
-    return matches, unmatched
+    return matches
 
 
 def _cohort_pair_matches(
-    matches: list[tuple[AllocationResult, AllocationResult]],
+    matches: list[_PairMatch],
     *,
     side_count: int,
     max_skew: timedelta,
 ) -> list[list[AllocationResult]]:
     cohorts: list[list[AllocationResult]] = []
-    current: list[tuple[AllocationResult, AllocationResult]] = []
+    current: list[_PairMatch] = []
     for match in sorted(matches, key=_pair_match_order):
         candidate = [*current, match]
         if current and (
@@ -162,7 +184,7 @@ def _cohort_pair_matches(
 
 
 def _pair_match_order(
-    match: tuple[AllocationResult, AllocationResult],
+    match: _PairMatch,
 ) -> tuple[datetime, datetime, str, str]:
     high, low = match
     return (
@@ -174,7 +196,7 @@ def _pair_match_order(
 
 
 def _pair_match_span(
-    matches: list[tuple[AllocationResult, AllocationResult]],
+    matches: list[_PairMatch],
 ) -> timedelta:
     timestamps = [item.decision.event_ts for match in matches for item in match]
     return max(timestamps) - min(timestamps)
