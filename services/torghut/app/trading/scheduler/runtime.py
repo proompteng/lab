@@ -747,6 +747,8 @@ class TradingScheduler(
         self.state.last_error = None
         self.state.last_trading_error = None
         self.state.last_reconcile_error = None
+        self.state.last_autonomy_error = None
+        self.state.last_evidence_error = None
         self.state.last_ingest_signals_total = 0
         self.state.last_ingest_window_start = None
         self.state.last_ingest_window_end = None
@@ -894,6 +896,16 @@ class TradingScheduler(
         self.state.last_reconcile_error = error
         self._refresh_runtime_iteration_error(previous_error=previous_error)
 
+    def _set_autonomy_iteration_error(self, error: str | None) -> None:
+        previous_error = self.state.last_autonomy_error
+        self.state.last_autonomy_error = error
+        self._refresh_runtime_iteration_error(previous_error=previous_error)
+
+    def _set_evidence_iteration_error(self, error: str | None) -> None:
+        previous_error = self.state.last_evidence_error
+        self.state.last_evidence_error = error
+        self._refresh_runtime_iteration_error(previous_error=previous_error)
+
     def _refresh_runtime_iteration_error(
         self,
         *,
@@ -904,6 +916,8 @@ class TradingScheduler(
             for error in (
                 self.state.last_trading_error,
                 self.state.last_reconcile_error,
+                self.state.last_autonomy_error,
+                self.state.last_evidence_error,
             )
             if error is not None
         )
@@ -918,12 +932,11 @@ class TradingScheduler(
             if self._pipeline is None:
                 raise RuntimeError("trading_pipeline_not_initialized")
             await asyncio.to_thread(self._run_autonomous_cycle)
-            self.state.last_autonomy_error = None
+            self._set_autonomy_iteration_error(None)
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="autonomy", error=exc)
             logger.exception("Autonomous loop failed: %s", exc)
-            self.state.last_error = str(exc)
-            self.state.last_autonomy_error = str(exc)
+            self._set_autonomy_iteration_error(str(exc))
             self.state.autonomy_failure_streak += 1
             self._clear_autonomy_result_state()
         finally:
@@ -934,10 +947,11 @@ class TradingScheduler(
             if self._pipeline is None:
                 raise RuntimeError("trading_pipeline_not_initialized")
             await asyncio.to_thread(self._run_evidence_continuity_check)
+            self._set_evidence_iteration_error(None)
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="evidence", error=exc)
             logger.exception("Evidence continuity check failed: %s", exc)
-            self.state.last_error = str(exc)
+            self._set_evidence_iteration_error(str(exc))
 
 
 __all__ = ["TradingScheduler"]

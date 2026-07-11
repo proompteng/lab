@@ -184,6 +184,61 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertIsNone(scheduler.state.last_reconcile_error)
         self.assertIsNotNone(scheduler.state.last_reconcile_at)
 
+    def test_successful_autonomy_retry_clears_its_readiness_error(self) -> None:
+        scheduler = TradingScheduler()
+        lane = _PipelineIterationStub(account_label="paper-a")
+        scheduler._pipelines = [lane]
+        scheduler._pipeline = lane
+        scheduler._evaluate_safety_controls = lambda: None
+
+        with patch.object(
+            scheduler,
+            "_run_autonomous_cycle",
+            side_effect=RuntimeError("autonomy unavailable"),
+        ):
+            asyncio.run(scheduler._run_autonomy_iteration())
+
+        self.assertEqual(scheduler.state.last_error, "autonomy unavailable")
+        self.assertEqual(
+            scheduler.state.last_autonomy_error,
+            "autonomy unavailable",
+        )
+
+        with patch.object(scheduler, "_run_autonomous_cycle", return_value=None):
+            asyncio.run(scheduler._run_autonomy_iteration())
+
+        self.assertIsNone(scheduler.state.last_autonomy_error)
+        self.assertIsNone(scheduler.state.last_error)
+
+    def test_successful_evidence_retry_clears_its_readiness_error(self) -> None:
+        scheduler = TradingScheduler()
+        lane = _PipelineIterationStub(account_label="paper-a")
+        scheduler._pipelines = [lane]
+        scheduler._pipeline = lane
+
+        with patch.object(
+            scheduler,
+            "_run_evidence_continuity_check",
+            side_effect=RuntimeError("evidence unavailable"),
+        ):
+            asyncio.run(scheduler._run_evidence_iteration())
+
+        self.assertEqual(scheduler.state.last_error, "evidence unavailable")
+        self.assertEqual(
+            scheduler.state.last_evidence_error,
+            "evidence unavailable",
+        )
+
+        with patch.object(
+            scheduler,
+            "_run_evidence_continuity_check",
+            return_value=None,
+        ):
+            asyncio.run(scheduler._run_evidence_iteration())
+
+        self.assertIsNone(scheduler.state.last_evidence_error)
+        self.assertIsNone(scheduler.state.last_error)
+
     def test_run_reconcile_iteration_continues_with_partial_lane_failure(self) -> None:
         scheduler = TradingScheduler()
         failing_lane = _PipelineIterationStub(

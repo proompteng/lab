@@ -18,6 +18,8 @@ class _FakeScheduler:
             last_run_at=None,
             last_trading_error=None,
             last_reconcile_error=None,
+            last_autonomy_error=None,
+            last_evidence_error=None,
             last_error=None,
         )
         self.start = AsyncMock()
@@ -243,6 +245,19 @@ class SchedulerReadinessTests(TestCase):
             payload["last_trading_error"],
             "trading_lane_failures:paper-a",
         )
+
+    def test_readiness_exposes_autonomy_error_when_shared_error_is_clear(self) -> None:
+        scheduler = _FakeScheduler()
+        scheduler.state.running = True
+        scheduler.state.last_run_at = datetime.now(timezone.utc)
+        scheduler.state.last_autonomy_error = "autonomy unavailable"
+
+        with patch.object(settings, "process_role", "scheduler"):
+            payload = scheduler_main.scheduler_readiness_payload(scheduler)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["detail"], "scheduler_cycle_failed")
+        self.assertEqual(payload["last_autonomy_error"], "autonomy unavailable")
 
 
 class SchedulerLivenessTests(TestCase):

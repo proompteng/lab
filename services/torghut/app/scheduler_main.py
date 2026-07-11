@@ -60,9 +60,13 @@ def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object
     state = scheduler.state
     running = bool(getattr(state, "running", False))
     last_run_at = getattr(state, "last_run_at", None)
-    last_error = getattr(state, "last_error", None)
-    last_trading_error = getattr(state, "last_trading_error", None)
-    last_reconcile_error = getattr(state, "last_reconcile_error", None)
+    loop_errors = {
+        "last_error": getattr(state, "last_error", None),
+        "last_trading_error": getattr(state, "last_trading_error", None),
+        "last_reconcile_error": getattr(state, "last_reconcile_error", None),
+        "last_autonomy_error": getattr(state, "last_autonomy_error", None),
+        "last_evidence_error": getattr(state, "last_evidence_error", None),
+    }
     success_age_seconds = _scheduler_success_age_seconds(last_run_at)
     success_is_fresh = (
         success_age_seconds is not None
@@ -72,10 +76,7 @@ def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object
     )
     leadership = scheduler_liveness_payload(scheduler)
     leadership_ok = bool(leadership["ok"])
-    cycle_failed = any(
-        error is not None
-        for error in (last_error, last_trading_error, last_reconcile_error)
-    )
+    cycle_failed = any(error is not None for error in loop_errors.values())
     ready = running and success_is_fresh and not cycle_failed and leadership_ok
     payload: dict[str, object] = {
         "ok": ready,
@@ -95,12 +96,9 @@ def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object
         payload["last_run_at"] = last_run_at.isoformat()
     if success_age_seconds is not None:
         payload["success_age_seconds"] = success_age_seconds
-    if last_error is not None:
-        payload["last_error"] = str(last_error)
-    if last_trading_error is not None:
-        payload["last_trading_error"] = str(last_trading_error)
-    if last_reconcile_error is not None:
-        payload["last_reconcile_error"] = str(last_reconcile_error)
+    for key, error in loop_errors.items():
+        if error is not None:
+            payload[key] = str(error)
     return payload
 
 
