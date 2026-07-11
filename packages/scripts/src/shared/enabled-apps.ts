@@ -37,6 +37,7 @@ type JsonRecord = Record<string, unknown>
 const labRepoURL = 'https://github.com/proompteng/lab.git'
 const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
 const labImageRegistry = 'registry.ide-newton.ts.net'
+const sha256HexPattern = /^[0-9a-f]{64}$/
 
 const earlyNixImageApps = new Set([
   'agents',
@@ -245,9 +246,12 @@ const collectRepoImages = (yamlPath: string, document: unknown): string[] => {
 
     const registry = asString(record.registry)
     const repository = asString(record.repository)
-    if (repository?.startsWith(labImagePrefix)) images.add(repository)
+    const tag = asString(record.tag)
+    const splitDigestReference =
+      repository?.endsWith('@sha256') && tag && sha256HexPattern.test(tag) ? `${repository}:${tag}` : undefined
+    if (repository?.startsWith(labImagePrefix)) images.add(splitDigestReference ?? repository)
     if (registry === labImageRegistry && repository?.startsWith('lab/')) {
-      images.add(`${registry}/${repository}`)
+      images.add(`${registry}/${splitDigestReference ?? repository}`)
     }
 
     if (basename(yamlPath) === 'kustomization.yaml' && Array.isArray(record.images)) {

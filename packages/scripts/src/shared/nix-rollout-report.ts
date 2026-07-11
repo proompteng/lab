@@ -125,7 +125,9 @@ const imageDigest = (reference: string): string | undefined => {
 const contractCoversImage = (contract: NixRolloutReleaseContract, image: string): boolean => {
   const repository = imageRepository(image)
   const deployedDigest = imageDigest(image)
+  const malformedDigestReference = image.includes('@') && deployedDigest === undefined
   return (
+    !malformedDigestReference &&
     imageRepository(contract.image) === repository &&
     contract.reference === `${contract.image}@${contract.digest}` &&
     (deployedDigest === undefined || deployedDigest === contract.digest)

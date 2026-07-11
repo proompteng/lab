@@ -155,6 +155,35 @@ describe('Nix rollout report', () => {
     expect(report.releaseContracts.missingForNixImages).toEqual(['torghut'])
   })
 
+  it('fails closed for incomplete digest references', () => {
+    const digest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'headlamp',
+          repoImages: ['registry.ide-newton.ts.net/lab/headlamp@sha256'],
+          nixImageAttr: 'headlamp-image',
+          buildScriptPath: 'packages/scripts/src/headlamp/build-image.ts',
+          deployScriptPath: 'packages/scripts/src/headlamp/deploy-service.ts',
+          workflowPaths: ['.github/workflows/headlamp-ci.yml'],
+        }),
+      ]),
+      releaseContracts: [
+        validContract({
+          service: 'headlamp',
+          image: 'registry.ide-newton.ts.net/lab/headlamp',
+          digest,
+          reference: `registry.ide-newton.ts.net/lab/headlamp@${digest}`,
+          packageAttr: 'headlamp-image',
+        }),
+      ],
+      requireContracts: true,
+    })
+
+    expect(report.releaseContracts.valid).toBe(1)
+    expect(report.releaseContracts.missingForNixImages).toEqual(['headlamp'])
+  })
+
   it('flags invalid release contracts and missing required contract coverage', () => {
     const report = buildNixRolloutReport({
       inventory: inventory([

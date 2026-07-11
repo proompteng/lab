@@ -81,7 +81,9 @@ describe('enabled app inventory', () => {
     expect(entry('headlamp')).toMatchObject({
       class: 'nix-image',
       hasHelmChart: true,
-      repoImages: ['registry.ide-newton.ts.net/lab/headlamp@sha256'],
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/headlamp@sha256:6d61f6563c3df42d176b1d445a757df48f0c6f84c02baa4f4f76dbd258ee2ddd',
+      ],
       nixImageAttr: 'headlamp-image',
       buildScriptPath: 'packages/scripts/src/headlamp/build-image.ts',
       deployScriptPath: 'packages/scripts/src/headlamp/deploy-service.ts',
