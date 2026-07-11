@@ -1,5 +1,9 @@
 """Domain modules for Torghut ORM entity definitions."""
 
+from .broker_mutation_records import (
+    BrokerMutationReceipt,
+    BrokerMutationReceiptEvent,
+)
 from .research_records import (
     ResearchAttempt,
     ResearchCandidate,
@@ -93,6 +97,8 @@ __all__ = [
     "AutoresearchEpoch",
     "AutoresearchPortfolioCandidate",
     "AutoresearchProposalScore",
+    "BrokerMutationReceipt",
+    "BrokerMutationReceiptEvent",
     "CreatedAtMixin",
     "EvidenceEpochRecord",
     "EvidenceReceiptRecord",

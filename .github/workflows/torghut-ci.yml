@@ -601,7 +601,7 @@ jobs:
         run: uv run --frozen python scripts/check_migration_graph.py
 
   postgres-cas:
-    name: PostgreSQL submission-claim CAS
+    name: PostgreSQL mutation fencing CAS
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs:
@@ -663,7 +663,7 @@ jobs:
         working-directory: services/torghut
         run: uv sync --frozen --extra dev
 
-      - name: PostgreSQL migration and recovery CAS integration
+      - name: PostgreSQL mutation fencing integration
         working-directory: services/torghut
         shell: bash
         env:
@@ -673,7 +673,10 @@ jobs:
           : "${TORGHUT_TEST_POSTGRES_DSN:?TORGHUT_TEST_POSTGRES_DSN is required}"
           uv run --frozen pytest -q \
             tests/execution/test_decision_submission_claims_postgres.py \
-            tests/execution/test_decision_submission_claim_identity_races_postgres.py
+            tests/execution/test_decision_submission_claim_identity_races_postgres.py \
+            tests/execution/test_broker_mutation_receipts_postgres.py \
+            tests/execution/test_broker_mutation_linked_receipts_postgres.py \
+            tests/execution/test_broker_mutation_receipt_boundaries_postgres.py
 
   pytest-shards:
     name: Pytest shard ${{ matrix.shard }}
