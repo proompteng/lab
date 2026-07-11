@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Mapping, cast
 from unittest import TestCase
 
-from yaml import safe_load
+from yaml import safe_load, safe_load_all
 
 
 def _repo_root() -> Path:
@@ -94,6 +94,16 @@ class SingleWriterSchedulerManifestTests(TestCase):
         self.assertEqual(
             env["TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS"].get("value"), "5"
         )
+        self.assertEqual(
+            env["TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS"].get("value"), "45"
+        )
+        self.assertEqual(
+            env["TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS"].get("value"), "30"
+        )
+        self.assertGreater(
+            pod_spec["terminationGracePeriodSeconds"],
+            int(cast(str, env["TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS"]["value"])),
+        )
         readiness = cast(Mapping[str, object], container["readinessProbe"])
         readiness_http = cast(Mapping[str, object], readiness["httpGet"])
         liveness = cast(Mapping[str, object], container["livenessProbe"])
@@ -147,6 +157,50 @@ class SingleWriterSchedulerManifestTests(TestCase):
             any("revision-prune" in resource for resource in resources),
             "revision cleanup is a guarded one-time operation, not a persistent Job",
         )
+
+        manifest_root = _repo_root() / "argocd/applications/torghut"
+        for resource_path in manifest_root.rglob("*.yaml"):
+            for document in safe_load_all(resource_path.read_text(encoding="utf-8")):
+                if not isinstance(document, dict):
+                    continue
+                manifest = cast(dict[str, object], document)
+                kind = str(manifest.get("kind") or "")
+                serialized = str(manifest).lower()
+                if kind in {"Job", "CronJob"}:
+                    self.assertNotIn("revisions.serving.knative.dev", serialized)
+                    self.assertNotIn("delete revision", serialized)
+                    self.assertNotIn("delete revisions", serialized)
+                if kind not in {"Role", "ClusterRole"}:
+                    continue
+                rules = cast(list[Mapping[str, object]], manifest.get("rules", []))
+                for rule in rules:
+                    api_groups = cast(list[str], rule.get("apiGroups", []))
+                    rule_resources = cast(list[str], rule.get("resources", []))
+                    verbs = cast(list[str], rule.get("verbs", []))
+                    grants_revision_delete = (
+                        "serving.knative.dev" in api_groups
+                        and bool({"revisions", "revisions/*"} & set(rule_resources))
+                        and bool({"delete", "deletecollection", "*"} & set(verbs))
+                    )
+                    self.assertFalse(
+                        grants_revision_delete,
+                        "revision cleanup must not have persistent delete RBAC",
+                    )
+
+    def test_one_time_cleanup_runbook_rejects_stale_or_tagged_traffic(self) -> None:
+        readme = (_repo_root() / "argocd/applications/torghut/README.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            '[[ "$KSVC_GENERATION" == "$KSVC_OBSERVED_GENERATION" ]]',
+            readme,
+        )
+        self.assertIn('PINNED_KSVC_UID="$KSVC_UID"', readme)
+        self.assertIn('PINNED_KSVC_GENERATION="$KSVC_GENERATION"', readme)
+        self.assertIn('(.spec.traffic[0].tag // "") == ""', readme)
+        self.assertIn('(.status.traffic[0].tag // "") == ""', readme)
+        self.assertIn('(.status.traffic[0].url // "") == ""', readme)
 
     def test_runtime_image_requires_scheduler_entrypoint(self) -> None:
         dockerfile = (_repo_root() / "services/torghut/Dockerfile").read_text(

@@ -33,6 +33,26 @@ class CoreSettingsFields(BaseSettings):
         description="Interval between scheduler leadership-session health checks.",
     )
 
+    trading_scheduler_shutdown_drain_seconds: float = Field(
+        default=45.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS",
+        description=(
+            "Maximum graceful-shutdown time for in-flight broker work. A timeout "
+            "terminates the process without releasing scheduler leadership."
+        ),
+    )
+
+    trading_scheduler_success_max_age_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS",
+        description=(
+            "Maximum age of the scheduler's last fully successful trading cycle "
+            "before readiness fails closed."
+        ),
+    )
+
     trading_scheduler_runtime_base_url: str = Field(
         default="http://torghut-scheduler.torghut.svc.cluster.local:8183",
         alias="TRADING_SCHEDULER_RUNTIME_BASE_URL",

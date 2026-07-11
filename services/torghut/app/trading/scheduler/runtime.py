@@ -44,6 +44,7 @@ from .governance.governance_mixin_runtime_methods import (
 from .governance.shared_context import TradingSchedulerGovernanceMixinFields
 from .leadership import (
     PostgresSchedulerLeadership,
+    SchedulerLeadership,
     SchedulerLeadershipError,
     SchedulerLeadershipStatus,
 )
@@ -64,7 +65,7 @@ class TradingScheduler(
     def __init__(
         self,
         *,
-        leadership: PostgresSchedulerLeadership | None = None,
+        leadership: SchedulerLeadership | None = None,
         fatal_exit: Callable[[int], object] | None = None,
     ) -> None:
         self.state = TradingState()
@@ -519,19 +520,39 @@ class TradingScheduler(
         )
         logger.info("Trading scheduler stopping accounts=%s", account_labels or "none")
         self._stop_event.set()
-        leadership_task = self._leadership_task
-        if leadership_task is not None:
-            leadership_task.cancel()
-            if leadership_task is not asyncio.current_task():
-                await asyncio.gather(leadership_task, return_exceptions=True)
-        self._leadership_task = None
         task = self._task
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
+        drain_seconds = settings.trading_scheduler_shutdown_drain_seconds
+        deadline = asyncio.get_running_loop().time() + drain_seconds
+        if task is not None and task is not asyncio.current_task():
+            completed, _ = await asyncio.wait({task}, timeout=drain_seconds)
+            if not completed:
+                self._fail_closed_on_shutdown_timeout(
+                    phase="scheduler_loop",
+                    drain_seconds=drain_seconds,
+                )
+                return
+
+        leadership_task = self._leadership_task
+        if (
+            leadership_task is not None
+            and leadership_task is not asyncio.current_task()
+        ):
+            remaining_seconds = max(
+                0.0,
+                deadline - asyncio.get_running_loop().time(),
+            )
+            completed, _ = await asyncio.wait(
+                {leadership_task},
+                timeout=remaining_seconds,
+            )
+            if not completed:
+                self._fail_closed_on_shutdown_timeout(
+                    phase="leadership_monitor",
+                    drain_seconds=drain_seconds,
+                )
+                return
+
+        self._leadership_task = None
         self._task = None
         self.state.startup_started_at = None
         self.state.signal_bootstrap_started_at = None
@@ -547,13 +568,50 @@ class TradingScheduler(
         await asyncio.to_thread(self._leadership.release)
         logger.info("Trading scheduler stopped")
 
+    def _fail_closed_on_shutdown_timeout(
+        self,
+        *,
+        phase: str,
+        drain_seconds: float,
+    ) -> None:
+        reason = f"scheduler_shutdown_drain_timeout:{phase}"
+        self.state.last_error = reason
+        self.state.emergency_stop_active = True
+        self.state.emergency_stop_reason = reason
+        self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+        logger.critical(
+            "Trading scheduler shutdown drain timed out; retaining writer fence "
+            "phase=%s drain_seconds=%s",
+            phase,
+            drain_seconds,
+        )
+        self._fatal_exit(70)
+
     async def _monitor_leadership(self) -> None:
         """Cancel broker-affecting work as soon as the writer fence is lost."""
 
         check_seconds = settings.trading_scheduler_leadership_check_seconds
         try:
-            while not self._stop_event.is_set():
-                await asyncio.sleep(check_seconds)
+            while True:
+                scheduler_task = self._task
+                if self._stop_event.is_set():
+                    if scheduler_task is None or scheduler_task.done():
+                        return
+                    await asyncio.wait({scheduler_task}, timeout=check_seconds)
+                else:
+                    try:
+                        await asyncio.wait_for(
+                            self._stop_event.wait(),
+                            timeout=check_seconds,
+                        )
+                    except TimeoutError:
+                        pass
+
+                scheduler_task = self._task
+                if self._stop_event.is_set() and (
+                    scheduler_task is None or scheduler_task.done()
+                ):
+                    return
                 healthy = await asyncio.to_thread(self._leadership.check)
                 if healthy:
                     continue
@@ -653,7 +711,13 @@ class TradingScheduler(
                     await self._run_evidence_iteration()
                     last_evidence_check = now
 
-                await asyncio.sleep(poll_interval)
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(),
+                        timeout=poll_interval,
+                    )
+                except TimeoutError:
+                    pass
         finally:
             self.state.running = False
             logger.info("Trading scheduler loop exited")
@@ -681,6 +745,8 @@ class TradingScheduler(
         active_run_id: str,
     ) -> None:
         self.state.last_error = None
+        self.state.last_trading_error = None
+        self.state.last_reconcile_error = None
         self.state.last_ingest_signals_total = 0
         self.state.last_ingest_window_start = None
         self.state.last_ingest_window_end = None
@@ -730,63 +796,122 @@ class TradingScheduler(
         return now - last_run >= timedelta(seconds=interval_seconds)
 
     async def _run_trading_iteration(self) -> None:
-        try:
-            if self._pipeline is None:
-                raise RuntimeError("trading_pipeline_not_initialized")
-            active_pipelines = self._pipelines or [self._pipeline]
-            for pipeline in active_pipelines:
-                try:
-                    await asyncio.to_thread(pipeline.run_once)
-                except Exception as lane_exc:
-                    self._emit_runtime_loop_failure(
-                        loop_name="trading_lane",
-                        error=lane_exc,
-                        account_label=pipeline.account_label,
-                    )
-                    logger.exception(
-                        "Trading lane failed account=%s: %s",
-                        pipeline.account_label,
-                        lane_exc,
-                    )
-            self.state.last_run_at = datetime.now(timezone.utc)
-            self.state.last_error = None
-        except Exception as exc:  # pragma: no cover - loop guard
-            self._emit_runtime_loop_failure(loop_name="trading", error=exc)
-            logger.exception("Trading loop failed: %s", exc)
-            self.state.last_error = str(exc)
-        finally:
+        if self._pipeline is None:
+            error = RuntimeError("trading_pipeline_not_initialized")
+            self._emit_runtime_loop_failure(loop_name="trading", error=error)
+            self._set_trading_iteration_error(str(error))
             self._evaluate_safety_controls()
+            return
+
+        failed_accounts: list[str] = []
+        active_pipelines = self._pipelines or [self._pipeline]
+        for pipeline in active_pipelines:
+            outcome = (
+                await asyncio.gather(
+                    asyncio.to_thread(pipeline.run_once),
+                    return_exceptions=True,
+                )
+            )[0]
+            if isinstance(outcome, Exception):
+                failed_accounts.append(pipeline.account_label)
+                self._emit_runtime_loop_failure(
+                    loop_name="trading_lane",
+                    error=outcome,
+                    account_label=pipeline.account_label,
+                )
+                logger.error(
+                    "Trading lane failed account=%s error=%s",
+                    pipeline.account_label,
+                    outcome,
+                    exc_info=(type(outcome), outcome, outcome.__traceback__),
+                )
+            elif isinstance(outcome, BaseException):
+                raise outcome
+
+        if failed_accounts:
+            self._set_trading_iteration_error(
+                "trading_lane_failures:" + ",".join(failed_accounts)
+            )
+        else:
+            self.state.last_run_at = datetime.now(timezone.utc)
+            self._set_trading_iteration_error(None)
+        self._evaluate_safety_controls()
 
     async def _run_reconcile_iteration(self) -> None:
-        try:
-            if self._pipeline is None:
-                raise RuntimeError("trading_pipeline_not_initialized")
-            updates = 0
-            active_pipelines = self._pipelines or [self._pipeline]
-            for pipeline in active_pipelines:
-                try:
-                    updates += await asyncio.to_thread(pipeline.reconcile)
-                except Exception as lane_exc:
-                    self._emit_runtime_loop_failure(
-                        loop_name="reconcile_lane",
-                        error=lane_exc,
-                        account_label=pipeline.account_label,
-                    )
-                    logger.exception(
-                        "Reconcile lane failed account=%s: %s",
-                        pipeline.account_label,
-                        lane_exc,
-                    )
-            if updates:
-                logger.info("Reconciled %s executions", updates)
-            self.state.last_reconcile_at = datetime.now(timezone.utc)
-            self.state.last_error = None
-        except Exception as exc:  # pragma: no cover - loop guard
-            self._emit_runtime_loop_failure(loop_name="reconcile", error=exc)
-            logger.exception("Reconcile loop failed: %s", exc)
-            self.state.last_error = str(exc)
-        finally:
+        if self._pipeline is None:
+            error = RuntimeError("trading_pipeline_not_initialized")
+            self._emit_runtime_loop_failure(loop_name="reconcile", error=error)
+            self._set_reconcile_iteration_error(str(error))
             self._evaluate_safety_controls()
+            return
+
+        updates = 0
+        failed_accounts: list[str] = []
+        active_pipelines = self._pipelines or [self._pipeline]
+        for pipeline in active_pipelines:
+            outcome = (
+                await asyncio.gather(
+                    asyncio.to_thread(pipeline.reconcile),
+                    return_exceptions=True,
+                )
+            )[0]
+            if isinstance(outcome, Exception):
+                failed_accounts.append(pipeline.account_label)
+                self._emit_runtime_loop_failure(
+                    loop_name="reconcile_lane",
+                    error=outcome,
+                    account_label=pipeline.account_label,
+                )
+                logger.error(
+                    "Reconcile lane failed account=%s error=%s",
+                    pipeline.account_label,
+                    outcome,
+                    exc_info=(type(outcome), outcome, outcome.__traceback__),
+                )
+            elif isinstance(outcome, BaseException):
+                raise outcome
+            else:
+                updates += outcome
+
+        if updates:
+            logger.info("Reconciled %s executions", updates)
+        if failed_accounts:
+            self._set_reconcile_iteration_error(
+                "reconcile_lane_failures:" + ",".join(failed_accounts)
+            )
+        else:
+            self.state.last_reconcile_at = datetime.now(timezone.utc)
+            self._set_reconcile_iteration_error(None)
+        self._evaluate_safety_controls()
+
+    def _set_trading_iteration_error(self, error: str | None) -> None:
+        previous_error = self.state.last_trading_error
+        self.state.last_trading_error = error
+        self._refresh_runtime_iteration_error(previous_error=previous_error)
+
+    def _set_reconcile_iteration_error(self, error: str | None) -> None:
+        previous_error = self.state.last_reconcile_error
+        self.state.last_reconcile_error = error
+        self._refresh_runtime_iteration_error(previous_error=previous_error)
+
+    def _refresh_runtime_iteration_error(
+        self,
+        *,
+        previous_error: str | None,
+    ) -> None:
+        active_errors = tuple(
+            error
+            for error in (
+                self.state.last_trading_error,
+                self.state.last_reconcile_error,
+            )
+            if error is not None
+        )
+        if active_errors:
+            if self.state.last_error is None or self.state.last_error == previous_error:
+                self.state.last_error = ";".join(active_errors)
+        elif self.state.last_error == previous_error:
+            self.state.last_error = None
 
     async def _run_autonomy_iteration(self) -> None:
         try:

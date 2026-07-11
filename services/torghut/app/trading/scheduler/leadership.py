@@ -6,7 +6,7 @@ import hashlib
 import threading
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Callable, Protocol
 
 from sqlalchemy import text
 from sqlalchemy.engine import Connection, Engine
@@ -38,6 +38,19 @@ class SchedulerLeadershipStatus:
 
 class SchedulerLeadershipError(RuntimeError):
     """Raised when required scheduler leadership cannot be established."""
+
+
+class SchedulerLeadership(Protocol):
+    """Structural writer-fence contract used by the scheduler runtime."""
+
+    @property
+    def status(self) -> SchedulerLeadershipStatus: ...
+
+    def acquire(self) -> None: ...
+
+    def check(self) -> bool: ...
+
+    def release(self) -> None: ...
 
 
 class PostgresSchedulerLeadership:
@@ -203,6 +216,7 @@ class PostgresSchedulerLeadership:
 __all__ = [
     "DEFAULT_SCHEDULER_ADVISORY_LOCK_ID",
     "PostgresSchedulerLeadership",
+    "SchedulerLeadership",
     "SchedulerLeadershipError",
     "SchedulerLeadershipStatus",
     "scheduler_advisory_lock_id",

@@ -610,6 +610,8 @@ class TradingState:
     startup_started_at: Optional[datetime] = None
     last_run_at: Optional[datetime] = None
     last_reconcile_at: Optional[datetime] = None
+    last_trading_error: Optional[str] = None
+    last_reconcile_error: Optional[str] = None
     last_error: Optional[str] = None
     autonomy_runs_total: int = 0
     autonomy_signals_total: int = 0

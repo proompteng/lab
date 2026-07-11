@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import replace
 from types import SimpleNamespace
-from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -54,15 +54,32 @@ class _FakeLeadership:
         )
 
 
+class _StoppedLoopScheduler(TradingScheduler):
+    async def _run_loop(self) -> None:
+        await self._stop_event.wait()
+
+    def _assert_trading_shorts_startup_policy(self) -> None:
+        return
+
+
+class _BlockingBrokerScheduler(TradingScheduler):
+    def _assert_trading_shorts_startup_policy(self) -> None:
+        return
+
+    def _evaluate_safety_controls(self) -> None:
+        return
+
+
 class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
     @staticmethod
-    def _prepared_scheduler(leadership: _FakeLeadership) -> TradingScheduler:
-        async def block_until_cancelled() -> None:
-            await asyncio.Event().wait()
-
-        scheduler = TradingScheduler(
-            leadership=leadership,  # type: ignore[arg-type]
-            fatal_exit=Mock(),
+    def _prepared_scheduler(
+        leadership: _FakeLeadership,
+        *,
+        fatal_exit: Mock | None = None,
+    ) -> TradingScheduler:
+        scheduler = _StoppedLoopScheduler(
+            leadership=leadership,
+            fatal_exit=fatal_exit or Mock(),
         )
         scheduler._pipelines = [
             SimpleNamespace(
@@ -71,8 +88,6 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             )
         ]
         scheduler._pipeline = scheduler._pipelines[0]
-        scheduler._assert_trading_shorts_startup_policy = Mock()  # type: ignore[method-assign]
-        scheduler._run_loop = block_until_cancelled  # type: ignore[method-assign]
         return scheduler
 
     async def test_start_acquires_and_stop_releases_writer_fence(self) -> None:
@@ -121,7 +136,9 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
     ) -> None:
         leadership = _FakeLeadership()
         leadership.check_result = False
-        scheduler = self._prepared_scheduler(leadership)
+        fatal_called = asyncio.Event()
+        fatal_exit = Mock(side_effect=lambda _code: fatal_called.set())
+        scheduler = self._prepared_scheduler(leadership, fatal_exit=fatal_exit)
 
         with patch.object(
             settings,
@@ -129,11 +146,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             0.001,
         ):
             await scheduler.start()
-            for _ in range(100):
-                if scheduler.state.emergency_stop_active:
-                    break
-                await asyncio.sleep(0.001)
-            await asyncio.sleep(0)
+            await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
 
         self.assertTrue(scheduler.state.emergency_stop_active)
         self.assertEqual(
@@ -146,14 +159,16 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         )
         self.assertTrue(scheduler._stop_event.is_set())
         self.assertTrue(scheduler._task is not None and scheduler._task.cancelled())
-        cast(Mock, scheduler._fatal_exit).assert_called_once_with(70)
+        fatal_exit.assert_called_once_with(70)
 
         await scheduler.stop()
 
     async def test_monitor_crash_cancels_loop_and_fails_closed(self) -> None:
         leadership = _FakeLeadership()
         leadership.check_error = RuntimeError("monitor exploded")
-        scheduler = self._prepared_scheduler(leadership)
+        fatal_called = asyncio.Event()
+        fatal_exit = Mock(side_effect=lambda _code: fatal_called.set())
+        scheduler = self._prepared_scheduler(leadership, fatal_exit=fatal_exit)
 
         with patch.object(
             settings,
@@ -161,11 +176,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             0.001,
         ):
             await scheduler.start()
-            for _ in range(100):
-                if scheduler.state.emergency_stop_active:
-                    break
-                await asyncio.sleep(0.001)
-            await asyncio.sleep(0)
+            await asyncio.wait_for(fatal_called.wait(), timeout=1.0)
 
         self.assertTrue(scheduler.state.emergency_stop_active)
         self.assertEqual(
@@ -177,9 +188,56 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             "scheduler_leadership_monitor_failed:RuntimeError",
         )
         self.assertTrue(scheduler._task is not None and scheduler._task.cancelled())
-        cast(Mock, scheduler._fatal_exit).assert_called_once_with(70)
+        fatal_exit.assert_called_once_with(70)
 
         await scheduler.stop()
+
+    async def test_shutdown_timeout_keeps_writer_fence_until_broker_work_drains(
+        self,
+    ) -> None:
+        leadership = _FakeLeadership()
+        fatal_exit = Mock()
+        scheduler = _BlockingBrokerScheduler(
+            leadership=leadership,
+            fatal_exit=fatal_exit,
+        )
+        run_once_started = threading.Event()
+        allow_run_once_to_finish = threading.Event()
+
+        def blocking_run_once() -> None:
+            run_once_started.set()
+            allow_run_once_to_finish.wait(timeout=2.0)
+
+        pipeline = SimpleNamespace(
+            account_label="paper",
+            order_feed_ingestor=SimpleNamespace(close=Mock()),
+            run_once=blocking_run_once,
+        )
+        scheduler._pipelines = [pipeline]
+        scheduler._pipeline = pipeline
+
+        with (
+            patch.object(settings, "trading_scheduler_shutdown_drain_seconds", 0.01),
+            patch.object(settings, "trading_scheduler_leadership_check_seconds", 0.01),
+        ):
+            await scheduler.start()
+            self.assertTrue(
+                await asyncio.to_thread(run_once_started.wait, 1.0),
+                "run_once did not start",
+            )
+            scheduler_task = scheduler._task
+            await scheduler.stop()
+
+        fatal_exit.assert_called_once_with(70)
+        self.assertEqual(leadership.release_calls, 0)
+        self.assertTrue(leadership.status.acquired)
+        self.assertIs(scheduler._task, scheduler_task)
+
+        allow_run_once_to_finish.set()
+        if scheduler_task is not None:
+            await asyncio.wait_for(scheduler_task, timeout=1.0)
+        await scheduler.stop()
+        self.assertEqual(leadership.release_calls, 1)
 
 
 __all__ = ["TradingSchedulerLeadershipTests"]

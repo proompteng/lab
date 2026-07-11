@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import AsyncMock, patch
@@ -16,6 +16,8 @@ class _FakeScheduler:
         self.state = SimpleNamespace(
             running=False,
             last_run_at=None,
+            last_trading_error=None,
+            last_reconcile_error=None,
             last_error=None,
         )
         self.start = AsyncMock()
@@ -47,6 +49,12 @@ class ProcessRoleSettingsTests(TestCase):
             process_settings.trading_scheduler_leadership_check_seconds, 5.0
         )
         self.assertEqual(
+            process_settings.trading_scheduler_shutdown_drain_seconds, 45.0
+        )
+        self.assertEqual(
+            process_settings.trading_scheduler_success_max_age_seconds, 30.0
+        )
+        self.assertEqual(
             process_settings.trading_scheduler_runtime_base_url,
             "http://torghut-scheduler.torghut.svc.cluster.local:8183",
         )
@@ -70,6 +78,20 @@ class ProcessRoleSettingsTests(TestCase):
             Settings(
                 _env_file=None,
                 TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS=0,
+            )
+        with self.assertRaisesRegex(
+            ValueError, "TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS"
+        ):
+            Settings(
+                _env_file=None,
+                TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS=0,
+            )
+        with self.assertRaisesRegex(
+            ValueError, "TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS"
+        ):
+            Settings(
+                _env_file=None,
+                TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS=0,
             )
 
 
@@ -174,6 +196,53 @@ class SchedulerReadinessTests(TestCase):
 
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["last_error"], "broker unavailable")
+        self.assertEqual(payload["detail"], "scheduler_cycle_failed")
+
+    def test_readiness_fails_closed_when_last_success_is_stale(self) -> None:
+        scheduler = _FakeScheduler()
+        scheduler.state.running = True
+        scheduler.state.last_run_at = datetime.now(timezone.utc) - timedelta(seconds=31)
+
+        with (
+            patch.object(settings, "process_role", "scheduler"),
+            patch.object(settings, "trading_scheduler_success_max_age_seconds", 30.0),
+        ):
+            payload = scheduler_main.scheduler_readiness_payload(scheduler)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["detail"], "scheduler_success_stale")
+        self.assertGreater(payload["success_age_seconds"], 30.0)
+
+    def test_readiness_requires_healthy_writer_leadership(self) -> None:
+        scheduler = _FakeScheduler()
+        scheduler.state.running = True
+        scheduler.state.last_run_at = datetime.now(timezone.utc)
+        scheduler.leadership_status.healthy = False
+
+        with patch.object(settings, "process_role", "scheduler"):
+            payload = scheduler_main.scheduler_readiness_payload(scheduler)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["detail"], "scheduler_leadership_unhealthy")
+
+    def test_readiness_cannot_mask_latest_trading_failure_with_shared_error_clear(
+        self,
+    ) -> None:
+        scheduler = _FakeScheduler()
+        scheduler.state.running = True
+        scheduler.state.last_run_at = datetime.now(timezone.utc)
+        scheduler.state.last_error = None
+        scheduler.state.last_trading_error = "trading_lane_failures:paper-a"
+
+        with patch.object(settings, "process_role", "scheduler"):
+            payload = scheduler_main.scheduler_readiness_payload(scheduler)
+
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["detail"], "scheduler_cycle_failed")
+        self.assertEqual(
+            payload["last_trading_error"],
+            "trading_lane_failures:paper-a",
+        )
 
 
 class SchedulerLivenessTests(TestCase):

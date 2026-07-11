@@ -42,6 +42,10 @@ spec:
               value: http://torghut-scheduler.torghut.svc.cluster.local:8183
             - name: TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS
               value: "2"
+            - name: TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS
+              value: "45"
+            - name: TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS
+              value: "30"
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL

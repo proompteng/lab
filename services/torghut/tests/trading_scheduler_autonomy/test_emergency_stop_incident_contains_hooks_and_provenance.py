@@ -116,11 +116,73 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
 
         self.assertEqual(failing_lane.run_once_calls, 1)
         self.assertEqual(healthy_lane.run_once_calls, 1)
-        self.assertIsNone(scheduler.state.last_error)
+        self.assertEqual(
+            scheduler.state.last_error,
+            "trading_lane_failures:paper-a",
+        )
+        self.assertEqual(
+            scheduler.state.last_trading_error,
+            "trading_lane_failures:paper-a",
+        )
         self.assertEqual(safety_calls["count"], 1)
-        self.assertIsNotNone(scheduler.state.last_run_at)
+        self.assertIsNone(scheduler.state.last_run_at)
         self.assertEqual(failing_lane.run_once_last_error, "run_once_failed")
         self.assertEqual(healthy_lane.run_once_last_error, None)
+
+    def test_run_trading_iteration_never_records_success_when_all_lanes_fail(
+        self,
+    ) -> None:
+        scheduler = TradingScheduler()
+        first_lane = _PipelineIterationStub(
+            account_label="paper-a",
+            run_once_fail=True,
+        )
+        second_lane = _PipelineIterationStub(
+            account_label="paper-b",
+            run_once_fail=True,
+        )
+        scheduler._pipelines = [first_lane, second_lane]
+        scheduler._pipeline = first_lane
+
+        asyncio.run(scheduler._run_trading_iteration())
+
+        self.assertEqual(first_lane.run_once_calls, 1)
+        self.assertEqual(second_lane.run_once_calls, 1)
+        self.assertEqual(
+            scheduler.state.last_error,
+            "trading_lane_failures:paper-a,paper-b",
+        )
+        self.assertEqual(
+            scheduler.state.last_trading_error,
+            "trading_lane_failures:paper-a,paper-b",
+        )
+        self.assertIsNone(scheduler.state.last_run_at)
+
+    def test_successful_reconcile_cannot_mask_latest_trading_failure(self) -> None:
+        scheduler = TradingScheduler()
+        lane = _PipelineIterationStub(
+            account_label="paper-a",
+            run_once_fail=True,
+            reconcile_return=1,
+        )
+        scheduler._pipelines = [lane]
+        scheduler._pipeline = lane
+        scheduler.state.last_run_at = datetime.now(timezone.utc)
+        scheduler._evaluate_safety_controls = lambda: None
+
+        asyncio.run(scheduler._run_trading_iteration())
+        asyncio.run(scheduler._run_reconcile_iteration())
+
+        self.assertEqual(
+            scheduler.state.last_error,
+            "trading_lane_failures:paper-a",
+        )
+        self.assertEqual(
+            scheduler.state.last_trading_error,
+            "trading_lane_failures:paper-a",
+        )
+        self.assertIsNone(scheduler.state.last_reconcile_error)
+        self.assertIsNotNone(scheduler.state.last_reconcile_at)
 
     def test_run_reconcile_iteration_continues_with_partial_lane_failure(self) -> None:
         scheduler = TradingScheduler()
@@ -146,9 +208,12 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertEqual(failing_lane.reconcile_calls, 1)
         self.assertEqual(healthy_lane.reconcile_calls, 1)
         self.assertEqual(healthy_lane.reconcile_return, 2)
-        self.assertIsNone(scheduler.state.last_error)
+        self.assertEqual(
+            scheduler.state.last_error,
+            "reconcile_lane_failures:paper-a",
+        )
         self.assertEqual(safety_calls["count"], 1)
-        self.assertIsNotNone(scheduler.state.last_reconcile_at)
+        self.assertIsNone(scheduler.state.last_reconcile_at)
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
         self.assertEqual(healthy_lane.reconcile_last_error, None)
 

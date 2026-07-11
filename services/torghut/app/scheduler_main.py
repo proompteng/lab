@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import cast
 
 from fastapi import FastAPI, Request
@@ -23,24 +24,83 @@ from .whitepapers import WhitepaperKafkaWorker, whitepaper_workflow_enabled
 logger = logging.getLogger(__name__)
 
 
+def _scheduler_success_age_seconds(last_run_at: object) -> float | None:
+    if not isinstance(last_run_at, datetime):
+        return None
+    normalized = last_run_at
+    if normalized.tzinfo is None:
+        normalized = normalized.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - normalized).total_seconds()
+
+
+def _scheduler_readiness_detail(
+    *,
+    running: bool,
+    last_run_at: object,
+    success_is_fresh: bool,
+    cycle_failed: bool,
+    leadership_ok: bool,
+) -> str:
+    if not running:
+        return "scheduler_not_running"
+    if cycle_failed:
+        return "scheduler_cycle_failed"
+    if last_run_at is None:
+        return "scheduler_success_missing"
+    if not success_is_fresh:
+        return "scheduler_success_stale"
+    if not leadership_ok:
+        return "scheduler_leadership_unhealthy"
+    return "ok"
+
+
 def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object]:
-    """Return a process-local scheduler readiness snapshot."""
+    """Require a fresh, fully successful cycle and healthy writer leadership."""
 
     state = scheduler.state
     running = bool(getattr(state, "running", False))
     last_run_at = getattr(state, "last_run_at", None)
     last_error = getattr(state, "last_error", None)
-    ready = running and last_run_at is not None and last_error is None
+    last_trading_error = getattr(state, "last_trading_error", None)
+    last_reconcile_error = getattr(state, "last_reconcile_error", None)
+    success_age_seconds = _scheduler_success_age_seconds(last_run_at)
+    success_is_fresh = (
+        success_age_seconds is not None
+        and 0
+        <= success_age_seconds
+        <= settings.trading_scheduler_success_max_age_seconds
+    )
+    leadership = scheduler_liveness_payload(scheduler)
+    leadership_ok = bool(leadership["ok"])
+    cycle_failed = any(
+        error is not None
+        for error in (last_error, last_trading_error, last_reconcile_error)
+    )
+    ready = running and success_is_fresh and not cycle_failed and leadership_ok
     payload: dict[str, object] = {
         "ok": ready,
         "process_role": settings.process_role,
         "running": running,
-        "detail": "ok" if ready else "scheduler_not_ready",
+        "detail": _scheduler_readiness_detail(
+            running=running,
+            last_run_at=last_run_at,
+            success_is_fresh=success_is_fresh,
+            cycle_failed=cycle_failed,
+            leadership_ok=leadership_ok,
+        ),
+        "success_max_age_seconds": settings.trading_scheduler_success_max_age_seconds,
+        "leadership": leadership.get("leadership"),
     }
     if last_run_at is not None:
         payload["last_run_at"] = last_run_at.isoformat()
+    if success_age_seconds is not None:
+        payload["success_age_seconds"] = success_age_seconds
     if last_error is not None:
         payload["last_error"] = str(last_error)
+    if last_trading_error is not None:
+        payload["last_trading_error"] = str(last_trading_error)
+    if last_reconcile_error is not None:
+        payload["last_reconcile_error"] = str(last_reconcile_error)
     return payload
 
 
