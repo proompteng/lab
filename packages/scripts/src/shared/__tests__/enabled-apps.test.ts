@@ -91,6 +91,19 @@ describe('enabled app inventory', () => {
     expect(entry('headlamp').workflowPaths).toContain('.github/workflows/headlamp-ci.yml')
   })
 
+  it('preserves sibling digest pins for Helm values and Kustomize images', () => {
+    expect(entry('app').repoImages).toEqual([
+      'registry.ide-newton.ts.net/lab/app@sha256:586a5a937f5812b059ff5f228fe8c6f7efb05c5a1ce3c67e4452fa6a8041c7ff',
+    ])
+    expect(entry('agents').repoImages).toEqual([
+      'registry.ide-newton.ts.net/lab/agents-codex-runner@sha256:1e9e47aaedadf5429de22359e48262520cb2787f38dbd29bc0971aaaf52e80c7',
+      'registry.ide-newton.ts.net/lab/agents-control-plane@sha256:bf03a79b1fce3ed2f404e4fe04b2c7e5711740dd9b2ad530a9c3381112202cb3',
+      'registry.ide-newton.ts.net/lab/agents-controller@sha256:c60652f0ca10496edb27116e1b7afa7c8e59b73e3b7361173602491d9b32d7e5',
+      'registry.ide-newton.ts.net/lab/agents-shell@sha256:837942c706d7bde2462b08e053b6c91fb3c0d4d30db95874fb0de460438837d0',
+      'registry.ide-newton.ts.net/lab/anypi:a5796fc2b@sha256:4e4e7ac9f646c061baaa7478ae42bf3acefc2ab46b2640ffa52b677cb8ed86ca',
+    ])
+  })
+
   it('marks only approved early build-owning apps as Nix image candidates', () => {
     for (const name of [
       'oirat',
@@ -237,7 +250,9 @@ describe('enabled app inventory', () => {
     expect(entry('tigresse')).toMatchObject({
       class: 'vendor-manifest',
       hasHelmChart: true,
-      repoImages: ['registry.ide-newton.ts.net/lab/tigresse'],
+      repoImages: [
+        'registry.ide-newton.ts.net/lab/tigresse@sha256:a357c07d629f9561f04b3452c1d9c41b81b9d816d29de415bd0141e859e92e39',
+      ],
     })
     expect(entry('tigresse').deferredReason).toContain('proompteng/tigresse')
   })

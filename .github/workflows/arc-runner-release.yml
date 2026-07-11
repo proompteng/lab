@@ -98,6 +98,7 @@ jobs:
             changed_paths="$(git diff --name-only "${source_sha}..HEAD")"
             arc_image_input_changes="$(
               printf '%s\n' "${changed_paths}" | grep -E \
+                -e '^flake\.nix$' \
                 -e '^flake\.lock$' \
                 -e '^nix/images/arc-runner\.nix$' \
                 -e '^nix/packages\.nix$' \

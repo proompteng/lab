@@ -6,6 +6,7 @@ permissions:
 on:
   pull_request:
     paths:
+      - 'flake.nix'
       - 'nix/images/arc-runner.nix'
       - 'flake.lock'
       - 'nix/packages.nix'
@@ -22,6 +23,7 @@ on:
     branches:
       - main
     paths:
+      - 'flake.nix'
       - 'nix/images/arc-runner.nix'
       - 'flake.lock'
       - 'nix/packages.nix'

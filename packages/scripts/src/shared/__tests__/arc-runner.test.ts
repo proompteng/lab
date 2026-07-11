@@ -144,8 +144,7 @@ describe('ARC Nix runner toolchain', () => {
     expect(arcRunnerBuildWorkflow).toContain(
       "latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}",
     )
-    expect(arcRunnerBuildWorkflow).not.toContain("- 'flake.nix'")
-    expect(arcRunnerBuildWorkflow).not.toContain('- flake.nix')
+    expect(arcRunnerBuildTriggerPaths).toContain('flake.nix')
     expect(arcRunnerBuildWorkflow).not.toContain('docker buildx')
     expect(arcRunnerBuildWorkflow).not.toContain('docker/setup-buildx-action')
     expect(arcRunnerBuildWorkflow).not.toContain('docker run')
@@ -186,7 +185,7 @@ describe('ARC Nix runner toolchain', () => {
       )
     }
     expect(arcRunnerReleaseWorkflow).not.toContain('nix/oci-release-contract\\.sh')
-    expect(arcRunnerReleaseWorkflow).not.toContain('flake\\.nix')
+    expect(arcRunnerReleaseWorkflow).toContain('flake\\.nix')
     expect(arcRunnerReleaseWorkflow).not.toContain('\\.github/workflows/arc-runner-release\\.yml')
     expect(arcRunnerReleaseWorkflow).toContain('nix run .#assert-oci-platforms')
     expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')
