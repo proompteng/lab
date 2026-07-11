@@ -45,7 +45,7 @@ class TestLinkedSubmissionRecoveryMigration(TestCase):
             "'checked_client_order_id'",
             "'checked_target_key'",
             "'observation_outcome'",
-            "terminal_document ->> 'observation_outcome' <> 'found'",
+            "IS DISTINCT FROM 'found'",
             "linked recovery terminal evidence envelope mismatch",
             "linked nonterminal recovery state is asymmetric",
             "event.recovery_token IS DISTINCT FROM claim.recovery_token",
