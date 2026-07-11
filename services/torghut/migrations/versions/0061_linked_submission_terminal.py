@@ -275,6 +275,13 @@ def _rewire_linked_event_guards() -> None:
                         USING ERRCODE = '23503';
                 END IF;
                 IF receipt.submission_claim_id IS NULL THEN
+                    IF NEW.submission_claim_token IS NOT NULL
+                       OR NEW.submission_claim_fencing_epoch IS NOT NULL
+                       OR NEW.submission_claim_owner IS NOT NULL THEN
+                        RAISE EXCEPTION
+                            'unlinked broker mutation event has claim identity'
+                            USING ERRCODE = '23514';
+                    END IF;
                     RETURN NEW;
                 END IF;
                 SELECT * INTO claim FROM trade_decision_submission_claims

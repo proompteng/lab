@@ -404,8 +404,15 @@ describe('torghut build-push workflow', () => {
     expect(postgresJobBody).toContain('${TORGHUT_TEST_POSTGRES_DSN:?')
     expect(postgresJobBody).toContain('uv run --frozen pytest -q')
     expect(postgresJobBody).toContain('COVERAGE_FILE: .coverage.postgres-cas')
+    expect(postgresJobBody.split('\n').map((line) => line.trim())).toContain('--cov \\')
     expect(postgresJobBody).toContain('--cov-branch')
+    expect(postgresJobBody).toContain('--cov-fail-under=0')
+    expect(postgresJobBody).toContain('--cov-report=')
+    expect(postgresJobBody).toContain('if: always()')
     expect(postgresJobBody).toContain('name: torghut-coverage-postgres-cas')
+    expect(postgresJobBody).toContain('path: services/torghut/.coverage.postgres-cas')
+    expect(postgresJobBody).toContain('if-no-files-found: error')
+    expect(postgresJobBody).toContain('include-hidden-files: true')
     expect(postgresJobBody).toContain('tests/execution/test_decision_submission_claims_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_decision_submission_claim_identity_races_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_broker_mutation_receipts_postgres.py')
@@ -420,6 +427,12 @@ describe('torghut build-push workflow', () => {
 
     expect(aggregateBody).toContain('- postgres-cas')
     expect(aggregateBody).toContain('needs.postgres-cas.result')
+    expect(aggregateBody).toContain('pattern: torghut-coverage-*')
+    expect(aggregateBody).toContain('merge-multiple: true')
+    expect(aggregateBody).toContain('coverage_files=(.coverage.*)')
+    expect(aggregateBody).toContain('python -m coverage combine "${coverage_files[@]}"')
+    expect(aggregateBody).toContain('python -m coverage report --fail-under=70')
+    expect(aggregateBody).toContain('scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 80')
   })
 
   it('shards primary Torghut pytest by collected test node instead of file list', () => {
