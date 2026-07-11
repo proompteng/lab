@@ -676,7 +676,8 @@ jobs:
             tests/execution/test_decision_submission_claim_identity_races_postgres.py \
             tests/execution/test_broker_mutation_receipts_postgres.py \
             tests/execution/test_broker_mutation_linked_receipts_postgres.py \
-            tests/execution/test_broker_mutation_receipt_boundaries_postgres.py
+            tests/execution/test_broker_mutation_receipt_boundaries_postgres.py \
+            tests/execution/test_linked_submission_terminal_postgres.py
 
   pytest-shards:
     name: Pytest shard ${{ matrix.shard }}

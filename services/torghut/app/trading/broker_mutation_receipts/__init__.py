@@ -19,6 +19,11 @@ from .read_models import (
     get_broker_mutation_receipt,
     get_broker_mutation_receipt_history,
 )
+from .linked_terminal import (
+    LINKED_SUBMISSION_TERMINAL_SCHEMA_VERSION,
+    build_linked_submission_terminal_settlement,
+    settle_linked_submission_primary,
+)
 from .recovery import (
     acquire_broker_mutation_recovery,
     list_due_broker_mutation_receipt_ids,
@@ -40,6 +45,7 @@ from .types import (
     BrokerMutationIoPermit,
     BrokerMutationIoStartOutcome,
     BrokerMutationIoStartResult,
+    BrokerMutationLinkedSubmissionTerminalResult,
     BrokerMutationOperation,
     BrokerMutationPurpose,
     BrokerMutationReceiptEventSnapshot,
@@ -73,11 +79,13 @@ from .validation import (
 
 __all__ = [
     "BROKER_MUTATION_INTENT_SCHEMA_VERSION",
+    "LINKED_SUBMISSION_TERMINAL_SCHEMA_VERSION",
     "BrokerMutationIntent",
     "BrokerMutationIntentRequest",
     "BrokerMutationIoPermit",
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
+    "BrokerMutationLinkedSubmissionTerminalResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",
     "BrokerMutationReceiptConflictError",
@@ -107,6 +115,7 @@ __all__ = [
     "acquire_broker_mutation_recovery",
     "broker_mutation_runtime_result",
     "build_broker_mutation_intent",
+    "build_linked_submission_terminal_settlement",
     "build_broker_mutation_recovery_observation",
     "build_broker_mutation_settlement",
     "canonicalize_broker_mutation_evidence",
@@ -122,6 +131,7 @@ __all__ = [
     "renew_broker_mutation_recovery",
     "settle_broker_mutation_preflight",
     "settle_broker_mutation_primary",
+    "settle_linked_submission_primary",
     "settle_broker_mutation_recovery",
     "verify_broker_mutation_recovery_observation",
     "verify_broker_mutation_settlement",
