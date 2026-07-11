@@ -683,7 +683,8 @@ jobs:
             tests/execution/test_broker_mutation_linked_receipts_postgres.py \
             tests/execution/test_broker_mutation_receipt_boundaries_postgres.py \
             tests/execution/test_linked_submission_terminal_postgres.py \
-            tests/execution/test_loop_status_read_indexes_postgres.py
+            tests/execution/test_loop_status_read_indexes_postgres.py \
+            tests/execution/test_linked_submission_recovery_postgres.py
 
       - name: Upload PostgreSQL coverage data
         if: always()

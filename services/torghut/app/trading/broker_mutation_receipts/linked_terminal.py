@@ -20,6 +20,7 @@ from ..decision_submission_claims.types import (
     DecisionSubmissionClaimError,
     DecisionSubmissionClaimHandle,
     DecisionSubmissionClaimSnapshot,
+    DecisionSubmissionRecoveryHandle,
     DecisionSubmissionTerminalIdentity,
 )
 from ..decision_submission_claims.validation import normalized_terminal_identity
@@ -48,7 +49,9 @@ from .types import (
     BrokerMutationReceiptHandle,
     BrokerMutationReceiptSnapshot,
     BrokerMutationSettlement,
+    BrokerMutationSettlementOutcome,
     BrokerMutationSettlementRequest,
+    BrokerMutationSettlementSource,
 )
 from .validation import (
     BrokerMutationReceiptConflictError,
@@ -68,7 +71,7 @@ _SUCCESS_OUTCOMES: frozenset[str] = frozenset({"acknowledged", "reconciled"})
 def build_linked_submission_terminal_settlement(
     request: BrokerMutationLinkedSubmissionSettlementRequest,
 ) -> BrokerMutationSettlement:
-    """Build the exact sanitized evidence envelope bound to a submission claim."""
+    """Build primary-response evidence bound to one submission claim."""
 
     source = request.source
     outcome = request.outcome
@@ -80,21 +83,48 @@ def build_linked_submission_terminal_settlement(
         raise BrokerMutationReceiptValidationError(
             "linked_submission_terminal_outcome_invalid"
         )
+    return _build_linked_submission_terminal_settlement(
+        source="primary",
+        outcome=cast(BrokerMutationSettlementOutcome, outcome),
+        claim_handle=request.claim_handle,
+        broker_status=request.broker_status,
+        rejection_code=request.rejection_code,
+        broker_reference=request.broker_reference,
+        execution_id=request.execution_id,
+    )
+
+
+def _build_linked_submission_terminal_settlement(
+    *,
+    source: BrokerMutationSettlementSource,
+    outcome: BrokerMutationSettlementOutcome,
+    claim_handle: DecisionSubmissionClaimHandle | DecisionSubmissionRecoveryHandle,
+    broker_status: str,
+    rejection_code: str | None,
+    broker_reference: str | None,
+    execution_id: uuid.UUID | str | None,
+) -> BrokerMutationSettlement:
+    """Build the shared exact evidence envelope after source-specific validation."""
+
+    if outcome not in {*_SUCCESS_OUTCOMES, "rejected"}:
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_terminal_outcome_invalid"
+        )
     status = _stable_broker_value(
-        request.broker_status,
+        broker_status,
         field="broker_status",
         maximum=64,
     )
     code = _linked_rejection_code(
         outcome=outcome,
-        rejection_code=request.rejection_code,
+        rejection_code=rejection_code,
     )
     if outcome == "rejected":
-        if request.broker_reference is not None or request.execution_id is not None:
+        if broker_reference is not None or execution_id is not None:
             raise BrokerMutationReceiptValidationError(
                 "linked_submission_rejection_forbids_execution_identity"
             )
-    elif request.broker_reference is None or request.execution_id is None:
+    elif broker_reference is None or execution_id is None:
         raise BrokerMutationReceiptValidationError(
             "linked_submission_success_requires_execution_identity"
         )
@@ -102,13 +132,13 @@ def build_linked_submission_terminal_settlement(
         BrokerMutationSettlementRequest(
             source=source,
             outcome=outcome,
-            broker_reference=request.broker_reference,
-            execution_id=request.execution_id,
+            broker_reference=broker_reference,
+            execution_id=execution_id,
             evidence_payload={
                 "schema_version": LINKED_SUBMISSION_TERMINAL_SCHEMA_VERSION,
-                "decision_id": str(request.claim_handle.decision_id),
-                "account_label": request.claim_handle.account_label,
-                "client_order_id": request.claim_handle.client_order_id,
+                "decision_id": str(claim_handle.decision_id),
+                "account_label": claim_handle.account_label,
+                "client_order_id": claim_handle.client_order_id,
                 "broker_status": status,
                 "rejection_code": code,
             },
@@ -187,7 +217,7 @@ def settle_linked_submission_primary(
             )
 
         session.flush()
-        terminal_values = _claim_terminal_values(
+        terminal_values = linked_submission_claim_terminal_values(
             session,
             claim_handle=claim_handle,
             settlement=normalized_terminal,
@@ -232,14 +262,14 @@ def settle_linked_submission_primary(
                 f"linked_submission_claim_terminal_invalid:{exc}"
             ) from exc
         commit_or_rollback(session)
-        return _committed_terminal_result(
+        return committed_linked_submission_terminal_result(
             session,
             receipt_id=normalized_handle.receipt_id,
             decision_id=claim_handle.decision_id,
         )
 
 
-def _claim_terminal_values(
+def linked_submission_claim_terminal_values(
     session: Session,
     *,
     claim_handle: DecisionSubmissionClaimHandle,
@@ -430,7 +460,7 @@ def _claim_snapshot(
     return snapshot_claim_from_model(row)
 
 
-def _committed_terminal_result(
+def committed_linked_submission_terminal_result(
     session: Session,
     *,
     receipt_id: uuid.UUID,

@@ -50,3 +50,4 @@ def test_receipt_postgres_races_are_a_required_ci_gate() -> None:
         in workflow
     )
     assert "tests/execution/test_linked_submission_terminal_postgres.py" in workflow
+    assert "tests/execution/test_linked_submission_recovery_postgres.py" in workflow

@@ -20,7 +20,6 @@ from app.trading.broker_mutation_receipts import (
     BrokerMutationRecoveryAcquireOptions,
     BrokerMutationReceiptAcquireOptions,
     BrokerMutationReceiptAcquireResult,
-    BrokerMutationReceiptConflictError,
     BrokerMutationReceiptFenceError,
     BrokerMutationReceiptHandle,
     BrokerMutationReceiptValidationError,
@@ -393,54 +392,9 @@ def _assert_linked_post_io_contract(
         assert history[-1].snapshot.submission_claim_handle == claim_handle
     _force_recovery_due(schema_engine, receipt_id)
     with sessions() as session:
-        recovery = acquire_broker_mutation_recovery(
-            session,
-            receipt_id=receipt_id,
-            recovery_owner="reconciler-a",
-            writer_generation=1,
-            options=BrokerMutationRecoveryAcquireOptions(
-                recovery_token=uuid.uuid4(),
-            ),
-        )
-    assert recovery.outcome == "acquired"
-    with schema_engine.begin() as connection:
-        connection.execute(
-            text(
-                "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
-            )
-        )
-        connection.execute(
-            text(
-                "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE trade_decision_submission_claims "
-                "SET state = 'claimed', broker_io_started_at = NULL, "
-                "recovery_after = NULL "
-                "WHERE trade_decision_id = :decision_id"
-            ),
-            {"decision_id": fixture.decision_id},
-        )
-        connection.execute(
-            text(
-                "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
-            )
-        )
-        connection.execute(
-            text(
-                "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
-            )
-        )
-    with sessions() as session:
         with pytest.raises(
-            BrokerMutationReceiptConflictError,
-            match="linked_submission_lifecycle_mismatch:broker_io:claimed",
+            BrokerMutationReceiptValidationError,
+            match="atomic_recovery_coordinator",
         ):
             acquire_broker_mutation_recovery(
                 session,
