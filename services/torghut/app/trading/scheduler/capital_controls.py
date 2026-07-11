@@ -227,7 +227,7 @@ class CapitalSafetyController:
         if protocol_required:
             try:
                 protocol_health = check_tigerbeetle_health(settings)
-            except (OSError, RuntimeError, TypeError, ValueError) as exc:
+            except Exception as exc:
                 logger.exception("TigerBeetle protocol safety check failed")
                 reason = f"tigerbeetle_protocol_unavailable:{type(exc).__name__}"
                 self._record_ledger_state(reason=reason, now=now)

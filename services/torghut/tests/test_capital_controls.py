@@ -227,12 +227,12 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_reconcile_required", False),
             patch(
                 "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
-                side_effect=RuntimeError("protocol probe failed"),
+                side_effect=ModuleNotFoundError("tigerbeetle package unavailable"),
             ),
         ):
             reason = controller._ledger_stop_reason(SimpleNamespace(), now=now)
 
-        self.assertEqual(reason, "tigerbeetle_protocol_unavailable:RuntimeError")
+        self.assertEqual(reason, "tigerbeetle_protocol_unavailable:ModuleNotFoundError")
         self.assertEqual(controller.state.capital_ledger_state, "blocked")
         self.assertEqual(controller.state.capital_ledger_reason, reason)
 
