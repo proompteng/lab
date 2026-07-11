@@ -106,7 +106,13 @@ def _acquire_primary(
     lease_expires_at = now + timedelta(seconds=request.lease_seconds)
     if _insert_primary(session, request, decision, now, lease_expires_at):
         return _committed_result(session, request.decision_id, "acquired")
-    if _take_over_expired_primary(session, request, decision, now, lease_expires_at):
+    if current is not None and _take_over_expired_primary(
+        session,
+        request,
+        current,
+        now,
+        lease_expires_at,
+    ):
         return _committed_result(session, request.decision_id, "acquired")
     return _contention_result(session, request, now)
 
@@ -224,22 +230,27 @@ def _insert_primary(
 def _take_over_expired_primary(
     session: Session,
     request: _PrimaryRequest,
-    decision: TradeDecision,
+    current: DecisionSubmissionClaimSnapshot,
     now: datetime,
     lease_expires_at: datetime,
 ) -> bool:
+    takeover_token = (
+        request.token if request.token != current.handle.claim_token else uuid.uuid4()
+    )
     acquired_id = session.execute(
         update(TradeDecisionSubmissionClaim)
         .where(
             TradeDecisionSubmissionClaim.trade_decision_id == request.decision_id,
-            TradeDecisionSubmissionClaim.account_label == decision.alpaca_account_label,
+            TradeDecisionSubmissionClaim.account_label == current.handle.account_label,
             TradeDecisionSubmissionClaim.client_order_id == request.client_order_id,
             TradeDecisionSubmissionClaim.state == "claimed",
+            TradeDecisionSubmissionClaim.claim_token == current.handle.claim_token,
+            TradeDecisionSubmissionClaim.fencing_epoch == current.handle.fencing_epoch,
             TradeDecisionSubmissionClaim.broker_io_started_at.is_(None),
             TradeDecisionSubmissionClaim.lease_expires_at <= now,
         )
         .values(
-            claim_token=request.token,
+            claim_token=takeover_token,
             fencing_epoch=TradeDecisionSubmissionClaim.fencing_epoch + 1,
             claim_owner=request.owner,
             claimed_at=now,

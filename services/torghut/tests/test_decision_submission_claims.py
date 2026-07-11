@@ -134,6 +134,41 @@ def test_only_first_submission_boundary_transition_grants_io_permit(
     assert repeated.claim.state == "broker_io"
 
 
+def test_submitted_boundary_retry_returns_terminal_snapshot(tmp_path: Path) -> None:
+    sessions, decision_id, client_order_id = _session_factory(
+        tmp_path / "submitted-boundary-retry.db"
+    )
+    handle = _enter_broker_io(sessions, decision_id, client_order_id)
+    with sessions() as session:
+        execution = _pending_execution(
+            session,
+            decision_id=decision_id,
+            client_order_id=client_order_id,
+            broker_order_id="submitted-retry-order",
+        )
+        submitted = mark_decision_submission_succeeded(
+            session,
+            handle=handle,
+            terminal=_terminal_identity(
+                execution,
+                client_order_id=client_order_id,
+                broker_order_id="submitted-retry-order",
+            ),
+        )
+        execution_id = execution.id
+    assert submitted.state == "submitted"
+
+    with sessions() as session:
+        replay = mark_decision_submission_broker_io_started(
+            session,
+            handle=handle,
+        )
+
+    assert replay.outcome == "submitted"
+    assert not replay.transitioned
+    assert replay.claim.execution_id == execution_id
+
+
 def _force_recovery_due(
     sessions: sessionmaker[Session], decision_id: uuid.UUID
 ) -> None:
@@ -269,6 +304,41 @@ def test_pre_broker_release_expires_claim_and_fences_old_owner(tmp_path: Path) -
                 session,
                 handle=first_handle,
             )
+
+
+def test_takeover_rotates_reused_expired_claim_token(tmp_path: Path) -> None:
+    sessions, decision_id, client_order_id = _session_factory(
+        tmp_path / "reused-expired-token.db"
+    )
+    reused_token = uuid.uuid4()
+    with sessions() as session:
+        first = acquire_decision_submission_claim(
+            session,
+            decision_id=decision_id,
+            client_order_id=client_order_id,
+            claim_owner="worker-a",
+            options=DecisionSubmissionClaimAcquireOptions(claim_token=reused_token),
+        )
+    assert first.claim is not None
+    with sessions() as session:
+        release_decision_submission_claim(
+            session,
+            handle=first.claim.handle,
+            reason="retry with deterministic token",
+        )
+    with sessions() as session:
+        takeover = acquire_decision_submission_claim(
+            session,
+            decision_id=decision_id,
+            client_order_id=client_order_id,
+            claim_owner="worker-b",
+            options=DecisionSubmissionClaimAcquireOptions(claim_token=reused_token),
+        )
+
+    assert takeover.outcome == "acquired"
+    assert takeover.claim is not None
+    assert takeover.claim.handle.fencing_epoch == 2
+    assert takeover.claim.handle.claim_token != reused_token
 
 
 def test_broker_io_boundary_rechecks_decision_and_execution(tmp_path: Path) -> None:

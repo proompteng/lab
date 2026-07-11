@@ -15,10 +15,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import settings
 from app.models import TradeDecisionSubmissionClaim
 from app.trading.decision_submission_claims import (
+    DecisionSubmissionClaimAcquireOptions,
     DecisionSubmissionClaimValidationError,
     acquire_decision_submission_claim,
     acquire_decision_submission_recovery_claim,
     mark_decision_submission_broker_io_started,
+    release_decision_submission_claim,
 )
 from tests.execution.decision_submission_claims_postgres_support import (
     POSTGRES_DSN as _POSTGRES_DSN,
@@ -287,6 +289,7 @@ def test_postgres_recovery_cas_and_transition_guards(
         )
 
         _assert_boundary_guards(schema_engine)
+        _assert_reused_expired_token_rotates(schema_engine)
         _assert_public_error_paths_release_locks(schema_engine)
         _assert_rejected(schema_engine, "TRUNCATE trade_decision_submission_claims")
         with pytest.raises(DBAPIError):
@@ -488,7 +491,6 @@ def _assert_public_error_paths_release_locks(engine: Engine) -> None:
         assert boundary.claim.state == "broker_io"
     finally:
         first_session.close()
-
     mismatch_decision = uuid.uuid4()
     mismatch_client_id = "ab" * 32
     mismatch_execution = uuid.uuid4()
@@ -548,6 +550,51 @@ def _assert_public_error_paths_release_locks(engine: Engine) -> None:
             probe_session.rollback()
     finally:
         failed_session.close()
+
+
+def _assert_reused_expired_token_rotates(engine: Engine) -> None:
+    sessions = sessionmaker(
+        bind=engine,
+        class_=Session,
+        expire_on_commit=False,
+        future=True,
+    )
+    decision_id = uuid.uuid4()
+    client_order_id = "reuse-token".ljust(64, "x")
+    reused_token = uuid.uuid4()
+    with engine.begin() as connection:
+        _insert_decision(
+            connection,
+            decision_id=decision_id,
+            client_order_id=client_order_id,
+        )
+    with sessions() as session:
+        acquired = acquire_decision_submission_claim(
+            session,
+            decision_id=decision_id,
+            client_order_id=client_order_id,
+            claim_owner="token-owner-a",
+            options=DecisionSubmissionClaimAcquireOptions(claim_token=reused_token),
+        )
+    assert acquired.claim is not None
+    with sessions() as session:
+        release_decision_submission_claim(
+            session,
+            handle=acquired.claim.handle,
+            reason="postgres takeover token rotation",
+        )
+    with sessions() as session:
+        takeover = acquire_decision_submission_claim(
+            session,
+            decision_id=decision_id,
+            client_order_id=client_order_id,
+            claim_owner="token-owner-b",
+            options=DecisionSubmissionClaimAcquireOptions(claim_token=reused_token),
+        )
+    assert takeover.outcome == "acquired"
+    assert takeover.claim is not None
+    assert takeover.claim.handle.fencing_epoch == 2
+    assert takeover.claim.handle.claim_token != reused_token
 
 
 @pytest.mark.skipif(

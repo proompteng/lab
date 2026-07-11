@@ -83,6 +83,9 @@ def mark_decision_submission_broker_io_started(
             maximum=CLAIM_MAX_RECOVERY_SECONDS,
             field="recovery_seconds",
         )
+        replay = _boundary_replay_result(session, handle)
+        if replay is not None:
+            return replay
         validate_broker_io_boundary(session, handle=handle)
         now = database_now(session)
         claim = transition_primary(
@@ -101,23 +104,28 @@ def mark_decision_submission_broker_io_started(
             claim=claim,
         )
     except DecisionSubmissionFenceError:
-        snapshot = get_decision_submission_claim(session, handle.decision_id)
-        if (
-            primary_handle_matches(snapshot, handle)
-            and snapshot is not None
-            and snapshot.state in {"broker_io", "submitted"}
-        ):
-            outcome = (
-                "already_started" if snapshot.state == "broker_io" else "submitted"
-            )
-            return DecisionSubmissionBoundaryResult(
-                outcome=outcome,
-                claim=snapshot,
-            )
+        replay = _boundary_replay_result(session, handle)
+        if replay is not None:
+            return replay
         raise
     except (DecisionSubmissionClaimError, SQLAlchemyError):
         session.rollback()
         raise
+
+
+def _boundary_replay_result(
+    session: Session,
+    handle: DecisionSubmissionClaimHandle,
+) -> DecisionSubmissionBoundaryResult | None:
+    snapshot = get_decision_submission_claim(session, handle.decision_id)
+    if (
+        not primary_handle_matches(snapshot, handle)
+        or snapshot is None
+        or snapshot.state not in {"broker_io", "submitted"}
+    ):
+        return None
+    outcome = "already_started" if snapshot.state == "broker_io" else "submitted"
+    return DecisionSubmissionBoundaryResult(outcome=outcome, claim=snapshot)
 
 
 def mark_decision_submission_succeeded(
