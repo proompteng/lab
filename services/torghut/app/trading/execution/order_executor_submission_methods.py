@@ -91,7 +91,6 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
             execution_client,
             request,
             self._list_open_orders(execution_client),
-            position_qty=_optional_decimal(conflict.get("position_qty")),
         )
         recovery: dict[str, Any] = {
             "source": "broker_precheck",
@@ -325,7 +324,11 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
             return broker_position_qty
         if durable_position_qty is None or durable_position_qty <= 0:
             return broker_position_qty
-        if broker_position_qty is None or broker_position_qty <= 0:
+        if broker_position_qty is None:
+            return durable_position_qty
+        if broker_position_qty <= 0:
+            return broker_position_qty
+        if request.qty <= durable_position_qty and broker_position_qty < request.qty:
             return durable_position_qty
         return broker_position_qty
 

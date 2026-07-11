@@ -4,10 +4,12 @@ from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
     Decimal,
+    Execution,
     ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
     OrderExecutor,
+    PositionLookupNoneClient,
     SimulationExecutionAdapter,
     Strategy,
     StrategyDecision,
@@ -19,6 +21,26 @@ from tests.order_idempotency.support import (
     settings,
     timezone,
 )
+
+
+def _add_lagging_broker_fill(session: object, suffix: str) -> None:
+    session.add(
+        Execution(
+            alpaca_account_label="paper",
+            alpaca_order_id=f"lagging-setup-buy-{suffix}",
+            client_order_id=f"lagging-setup-client-{suffix}",
+            symbol="AAPL",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            submitted_qty=Decimal("0.5"),
+            filled_qty=Decimal("0.5"),
+            status="filled",
+            execution_expected_adapter="alpaca",
+            execution_actual_adapter="alpaca",
+            raw_order={},
+        )
+    )
 
 
 class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
@@ -706,8 +728,11 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 buy_decision,
                 buy_decision_row,
                 "paper",
+                execution_expected_adapter="alpaca",
             )
             self.assertIsNotNone(buy_execution)
+            _add_lagging_broker_fill(session, "1")
+            session.commit()
 
             sell_decision = StrategyDecision(
                 strategy_id=str(strategy.id),
@@ -721,7 +746,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             sell_decision_row = executor.ensure_decision(
                 session, sell_decision, strategy, "paper"
             )
-            lagging_client = FakeAlpacaClient()
+            lagging_client = PositionLookupNoneClient()
 
             sell_execution = executor.submit_order(
                 session,
@@ -739,7 +764,7 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
     def test_submit_order_precheck_blocks_second_lagging_fractional_exit_when_reserved(
         self,
     ) -> None:
-        class LaggingReservedSellClient(FakeAlpacaClient):
+        class LaggingReservedSellClient(PositionLookupNoneClient):
             def list_orders(self, status: str = "all") -> list[dict[str, str]]:
                 if status != "open":
                     return []
@@ -785,15 +810,15 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
             buy_decision_row = executor.ensure_decision(
                 session, buy_decision, strategy, "paper"
             )
-            self.assertIsNotNone(
-                executor.submit_order(
-                    session,
-                    FilledAlpacaClient(),
-                    buy_decision,
-                    buy_decision_row,
-                    "paper",
-                )
+            buy_execution = executor.submit_order(
+                session,
+                FilledAlpacaClient(),
+                buy_decision,
+                buy_decision_row,
+                "paper",
+                execution_expected_adapter="alpaca",
             )
+            self.assertIsNotNone(buy_execution)
 
             sell_decision = StrategyDecision(
                 strategy_id=str(strategy.id),

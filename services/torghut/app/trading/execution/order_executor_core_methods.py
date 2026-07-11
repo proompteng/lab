@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from alpaca.common.exceptions import APIError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -76,6 +76,11 @@ from .order_executor_core_support import (
     submission_extra_params as _submission_extra_params,
     unknown_position_sell_inventory_conflict as _unknown_position_sell_inventory_conflict,
     validate_pre_submit_request as _validate_pre_submit_request,
+)
+
+
+_BROKER_DURABLE_POSITION_ADAPTERS = frozenset(
+    {"alpaca", "alpaca_fallback", "alpaca_paper"}
 )
 
 
@@ -235,7 +240,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             decision=decision,
             decision_row=decision_row,
             request=prepared.request,
-            position_qty=prepared.quantity_resolution.position_qty,
             fractional_equities_enabled=bool(
                 prepared.quantity_resolution.fractional_allowed
             ),
@@ -289,6 +293,10 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request,
             durable_position_qty=durable_position_qty,
         )
+        if quantity_resolution.position_qty is not None:
+            request.extra_params["_prechecked_position_qty"] = str(
+                quantity_resolution.position_qty
+            )
         self._raise_order_submission_precheck_errors(
             execution_client=inputs.execution_client,
             request=request,
@@ -337,16 +345,24 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         normalized_symbol = symbol.strip().upper()
         if not normalized_symbol:
             return None
-        stmt = select(Execution.side, Execution.filled_qty).where(
+        stmt = select(
+            Execution.side,
+            Execution.filled_qty,
+            Execution.execution_actual_adapter,
+        ).where(
             Execution.alpaca_account_label == account_label,
-            Execution.symbol == normalized_symbol,
-            Execution.filled_qty > 0,
+            func.upper(func.trim(Execution.symbol)) == normalized_symbol,
         )
         total = Decimal("0")
         observed = False
-        for side, filled_qty in session.execute(stmt):
-            qty = _optional_decimal(filled_qty)
-            if qty is None or qty <= 0:
+        for side, filled_qty, actual_adapter in session.execute(stmt):
+            if (
+                str(actual_adapter or "").strip().lower()
+                not in _BROKER_DURABLE_POSITION_ADAPTERS
+            ):
+                continue
+            qty = _optional_decimal(filled_qty) or Decimal("0")
+            if qty <= 0:
                 continue
             normalized_side = str(side or "").strip().lower()
             if normalized_side == "buy":
@@ -365,14 +381,12 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         decision: StrategyDecision,
         decision_row: TradeDecision,
         request: ExecutionRequest,
-        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> _ResolvedSellInventory:
         conflict = self._find_sell_inventory_conflict(
             execution_client,
             request,
             self._list_open_orders(execution_client),
-            position_qty=position_qty,
         )
         if conflict is None:
             return _ResolvedSellInventory(request=request, decision=decision)
@@ -383,7 +397,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             decision_row=decision_row,
             request=request,
             conflict=conflict,
-            position_qty=position_qty,
             fractional_equities_enabled=fractional_equities_enabled,
         )
 
@@ -396,7 +409,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         decision_row: TradeDecision,
         request: ExecutionRequest,
         conflict: Mapping[str, Any],
-        position_qty: Decimal | None,
         fractional_equities_enabled: bool,
     ) -> _ResolvedSellInventory:
         request, adjustment, unresolved = self._resolve_sell_inventory_conflict(
@@ -877,8 +889,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         execution_client: Any,
         request: ExecutionRequest,
         open_orders: list[dict[str, Any]],
-        *,
-        position_qty: Decimal | None = None,
     ) -> dict[str, Any] | None:
         request_symbol = _sell_inventory_request_symbol(request)
         if request_symbol is None:
@@ -888,7 +898,9 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         if reservations.held_qty <= 0:
             return None
 
-        resolved_position_qty = position_qty
+        resolved_position_qty = _optional_decimal(
+            request.extra_params.get("_prechecked_position_qty")
+        )
         if resolved_position_qty is None:
             resolved_position_qty = cls._position_qty_for_symbol(
                 execution_client, request_symbol

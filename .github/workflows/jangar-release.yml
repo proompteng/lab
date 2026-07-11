@@ -20,6 +20,10 @@ on:
         description: Image digest override (sha256:...)
         required: false
         type: string
+      source_ci_run_id:
+        description: Successful jangar-build-push run ID that produced the image
+        required: true
+        type: string
 
 concurrency:
   group: jangar-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha || github.ref }}
@@ -138,7 +142,7 @@ jobs:
           JANGAR_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
           JANGAR_SOURCE_HEAD_SHA: ${{ steps.meta.outputs.source_sha }}
           JANGAR_GITOPS_REVISION: ${{ steps.meta.outputs.source_sha }}
-          JANGAR_SOURCE_CI_RUN_ID: ${{ github.run_id }}
+          JANGAR_SOURCE_CI_RUN_ID: ${{ github.event.workflow_run.id || inputs.source_ci_run_id }}
           JANGAR_SOURCE_CI_CONCLUSION: success
           JANGAR_MANIFEST_IMAGE_DIGEST: ${{ steps.digest.outputs.digest }}
           JANGAR_SERVING_BUILD_COMMIT: ${{ steps.meta.outputs.source_sha }}
@@ -191,7 +195,7 @@ jobs:
             - Source commit: `${{ steps.meta.outputs.source_sha }}`
             - Image tag: `${{ steps.meta.outputs.tag }}`
             - Image digest: `${{ steps.digest.outputs.digest }}`
-            - Source CI run: `${{ github.run_id }}`
+            - Source CI run: `${{ github.event.workflow_run.id || inputs.source_ci_run_id }}`
             - Updated API rollout annotation
             - Published source-serving proof env for revenue repair custody gates
 

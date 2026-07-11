@@ -6,7 +6,7 @@ import json
 import shlex
 import subprocess
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Literal, Sequence
 from zoneinfo import ZoneInfo
 
@@ -19,6 +19,16 @@ SCHEMA_VERSION = "torghut.market-data-chain-smoke.v1"
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 REGULAR_SESSION_OPEN_MINUTE = 9 * 60 + 30
 REGULAR_SESSION_CLOSE_MINUTE = 16 * 60
+EARLY_CLOSE_SESSION_CLOSE_MINUTE = 13 * 60
+DEFAULT_MARKET_EARLY_CLOSES: frozenset[date] = frozenset(
+    {
+        date(2026, 11, 27),
+        date(2026, 12, 24),
+        date(2027, 11, 26),
+        date(2028, 7, 3),
+        date(2028, 11, 24),
+    }
+)
 DEFAULT_TOPICS = (
     "torghut.trades.v1",
     "torghut.quotes.v1",
@@ -414,9 +424,14 @@ def resolve_freshness_market_session_state(
     minute_of_day = local_now.hour * 60 + local_now.minute
     if local_now.date() in configured_market_holidays():
         return "outside_regular_session"
+    session_close_minute = (
+        EARLY_CLOSE_SESSION_CLOSE_MINUTE
+        if local_now.date() in DEFAULT_MARKET_EARLY_CLOSES
+        else REGULAR_SESSION_CLOSE_MINUTE
+    )
     if (
         local_now.weekday() < 5
-        and REGULAR_SESSION_OPEN_MINUTE <= minute_of_day < REGULAR_SESSION_CLOSE_MINUTE
+        and REGULAR_SESSION_OPEN_MINUTE <= minute_of_day < session_close_minute
     ):
         return "regular_open"
     return "outside_regular_session"

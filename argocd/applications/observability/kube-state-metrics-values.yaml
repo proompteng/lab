@@ -2,6 +2,12 @@ fullnameOverride: observability-kube-state-metrics
 prometheusScrape: false
 replicas: 1
 
+collectors:
+  - deployments
+  - nodes
+  - pods
+
+
 resources:
   requests:
     cpu: 100m

@@ -179,8 +179,6 @@ class _OrderExecutorContract(Protocol):
         execution_client: Any,
         request: ExecutionRequest,
         open_orders: list[dict[str, Any]],
-        *,
-        position_qty: Decimal | None = None,
     ) -> dict[str, Any] | None: ...
 
     @classmethod

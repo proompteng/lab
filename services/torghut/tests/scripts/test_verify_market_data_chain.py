@@ -187,6 +187,44 @@ def test_resolve_freshness_market_session_state_uses_market_holidays() -> None:
     )
 
 
+def test_resolve_freshness_market_session_state_handles_early_closes() -> None:
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 11, 27, 17, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "regular_open"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 11, 27, 18, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2026, 12, 24, 18, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2028, 7, 3, 17, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
+    assert (
+        resolve_freshness_market_session_state(
+            datetime(2028, 11, 24, 18, 30, tzinfo=UTC),
+            "auto",
+        )
+        == "outside_regular_session"
+    )
+
+
 def test_read_kubernetes_secret_decodes_without_exposing_encoded_value(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
