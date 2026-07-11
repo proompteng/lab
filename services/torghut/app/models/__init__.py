@@ -73,6 +73,7 @@ from .entities import (
     TimestampMixin,
     ToolRunLog,
     TradeDecision,
+    TradeDecisionSubmissionClaim,
     TradeCursor,
 )
 
@@ -153,6 +154,7 @@ __all__ = [
     "TimestampMixin",
     "ToolRunLog",
     "TradeDecision",
+    "TradeDecisionSubmissionClaim",
     "TradeCursor",
 ]
 

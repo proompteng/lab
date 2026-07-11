@@ -54,6 +54,7 @@ from .trading_records import (
     TigerBeetleTransferRef,
     TimestampMixin,
     TradeDecision,
+    TradeDecisionSubmissionClaim,
 )
 from .whitepaper_content import (
     WhitepaperAnalysisRun,
@@ -133,6 +134,7 @@ __all__ = [
     "ToolRunLog",
     "TradeCursor",
     "TradeDecision",
+    "TradeDecisionSubmissionClaim",
     "VNextCompletionGateResult",
     "VNextDatasetSnapshot",
     "VNextEmpiricalJobRun",
