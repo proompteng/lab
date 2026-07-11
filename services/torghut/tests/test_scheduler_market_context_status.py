@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from app import config
 from app.trading.llm.schema import MarketContextBundle
@@ -53,6 +53,7 @@ class _PipelineWithLlmReview:
 
 class _PipelineLabelStub:
     account_label = "live"
+    order_feed_ingestor = SimpleNamespace(close=Mock())
 
 
 class TestTradingSchedulerMarketContextStatus(TestCase):
@@ -476,13 +477,14 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
 
     def test_start_reports_existing_pipeline_labels(self) -> None:
         async def run_once() -> None:
-            scheduler = TradingScheduler()
+            fatal_exit = Mock()
+            scheduler = TradingScheduler(fatal_exit=fatal_exit)
             pipeline = _PipelineLabelStub()
             cast(Any, scheduler)._pipelines = [pipeline]
             cast(Any, scheduler)._pipeline = pipeline
 
             async def fake_run_loop() -> None:
-                return None
+                await scheduler._stop_event.wait()
 
             with (
                 patch.object(scheduler, "_assert_trading_shorts_startup_policy"),
@@ -491,7 +493,9 @@ class TestTradingSchedulerMarketContextStatus(TestCase):
                 await scheduler.start()
                 task = scheduler._task
                 self.assertIsNotNone(task)
-                await cast(asyncio.Task[None], task)
+                self.assertFalse(cast(asyncio.Task[None], task).done())
+                await scheduler.stop()
+                fatal_exit.assert_not_called()
 
         asyncio.run(run_once())
 
