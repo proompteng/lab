@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
@@ -65,6 +65,7 @@ class TradingScheduler(
         self,
         *,
         leadership: PostgresSchedulerLeadership | None = None,
+        fatal_exit: Callable[[int], object] | None = None,
     ) -> None:
         self.state = TradingState()
         self._task: Optional[asyncio.Task[None]] = None
@@ -77,6 +78,7 @@ class TradingScheduler(
             engine=database_engine,
             required=settings.trading_scheduler_leadership_required,
         )
+        self._fatal_exit = fatal_exit or os._exit
 
     @property
     def leadership_status(self) -> SchedulerLeadershipStatus:
@@ -566,6 +568,7 @@ class TradingScheduler(
                     "Trading scheduler leadership lost; writer stopped reason=%s",
                     reason,
                 )
+                self._fatal_exit(70)
                 return
         except asyncio.CancelledError:
             raise
@@ -591,6 +594,7 @@ class TradingScheduler(
             detail,
             exc_info=(type(error), error, error.__traceback__),
         )
+        self._fatal_exit(70)
 
     def _latch_leadership_failure(
         self,

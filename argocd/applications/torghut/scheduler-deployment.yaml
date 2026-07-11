@@ -52,6 +52,10 @@ spec:
           env:
             - name: TORGHUT_PROCESS_ROLE
               value: scheduler
+            - name: TRADING_SCHEDULER_RUNTIME_BASE_URL
+              value: http://torghut-scheduler.torghut.svc.cluster.local:8183
+            - name: TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS
+              value: "2"
             - name: TRADING_SCHEDULER_LEADERSHIP_REQUIRED
               value: "true"
             - name: TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS

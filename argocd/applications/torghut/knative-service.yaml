@@ -38,6 +38,10 @@ spec:
           env:
             - name: TORGHUT_PROCESS_ROLE
               value: api
+            - name: TRADING_SCHEDULER_RUNTIME_BASE_URL
+              value: http://torghut-scheduler.torghut.svc.cluster.local:8183
+            - name: TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS
+              value: "2"
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL

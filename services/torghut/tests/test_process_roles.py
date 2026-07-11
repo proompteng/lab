@@ -46,6 +46,14 @@ class ProcessRoleSettingsTests(TestCase):
         self.assertEqual(
             process_settings.trading_scheduler_leadership_check_seconds, 5.0
         )
+        self.assertEqual(
+            process_settings.trading_scheduler_runtime_base_url,
+            "http://torghut-scheduler.torghut.svc.cluster.local:8183",
+        )
+        self.assertEqual(
+            process_settings.trading_scheduler_runtime_timeout_seconds,
+            2.0,
+        )
 
         with self.assertRaisesRegex(ValueError, "TORGHUT_PROCESS_ROLE"):
             Settings(_env_file=None, TORGHUT_PROCESS_ROLE="worker")
@@ -55,6 +63,13 @@ class ProcessRoleSettingsTests(TestCase):
             Settings(
                 _env_file=None,
                 TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS=0,
+            )
+        with self.assertRaisesRegex(
+            ValueError, "TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS"
+        ):
+            Settings(
+                _env_file=None,
+                TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS=0,
             )
 
 

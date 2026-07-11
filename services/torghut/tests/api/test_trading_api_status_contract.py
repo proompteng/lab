@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from fastapi.responses import JSONResponse, Response
+
+from app.config import settings
 from tests.api.trading_api_support import TradingApiTestCaseBase, patch
 
 
@@ -21,6 +24,7 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
             "execution_route": {"route": "alpaca"},
         }
         with (
+            patch.object(settings, "process_role", "scheduler"),
             patch(
                 "app.api.trading_status.load_clickhouse_ta_status",
                 return_value=freshness,
@@ -89,8 +93,45 @@ class TestTradingApiStatusContract(TradingApiTestCaseBase):
             self.assertNotIn(retired_key, payload)
 
     def test_metrics_endpoint_is_prometheus_text(self) -> None:
-        response = self.client.get("/metrics")
+        with patch.object(settings, "process_role", "scheduler"):
+            response = self.client.get("/metrics")
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.headers["content-type"].startswith("text/plain"))
         self.assertIn("torghut_trading_capital_new_exposure_allowed", response.text)
+
+    def test_stateless_api_proxies_scheduler_runtime_surfaces(self) -> None:
+        with (
+            patch.object(settings, "process_role", "api"),
+            patch(
+                "app.api.trading_status.proxy_scheduler_response",
+                return_value=JSONResponse(
+                    status_code=200,
+                    content={"service": "torghut", "running": True},
+                ),
+            ) as status_proxy,
+            patch(
+                "app.api.metrics.proxy_scheduler_response",
+                return_value=Response(
+                    content="torghut_scheduler_leadership_acquired 1\n",
+                    media_type="text/plain",
+                ),
+            ) as metrics_proxy,
+        ):
+            status_response = self.client.get("/trading/status")
+            metrics_response = self.client.get("/metrics")
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertTrue(status_response.json()["running"])
+        self.assertIn(
+            "torghut_scheduler_leadership_acquired 1",
+            metrics_response.text,
+        )
+        status_proxy.assert_called_once_with(
+            path="/trading/status",
+            accept="application/json",
+        )
+        metrics_proxy.assert_called_once_with(
+            path="/metrics",
+            accept="text/plain; version=0.0.4",
+        )

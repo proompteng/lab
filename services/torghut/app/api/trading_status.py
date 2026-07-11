@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import TypeVar
 
 from fastapi import APIRouter
+from fastapi.responses import Response
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -26,6 +27,7 @@ from .health_checks import (
     load_tca_summary,
 )
 from .runtime_ledger_status import daily_runtime_ledger_portfolio_summary
+from .scheduler_proxy import proxy_scheduler_response
 
 router = APIRouter()
 T = TypeVar("T")
@@ -112,8 +114,14 @@ def _runtime_ledger(session: Session) -> dict[str, object]:
     )
 
 
-@router.get("/trading/status")
-def trading_status() -> dict[str, object]:
+@router.get("/trading/status", response_model=None)
+def trading_status() -> dict[str, object] | Response:
+    if settings.process_role == "api":
+        return proxy_scheduler_response(
+            path="/trading/status",
+            accept="application/json",
+        )
+
     scheduler = get_trading_scheduler()
     state = scheduler.state
     accepted_source = load_clickhouse_ta_status(scheduler)

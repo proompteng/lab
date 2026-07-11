@@ -33,6 +33,19 @@ class CoreSettingsFields(BaseSettings):
         description="Interval between scheduler leadership-session health checks.",
     )
 
+    trading_scheduler_runtime_base_url: str = Field(
+        default="http://torghut-scheduler.torghut.svc.cluster.local:8183",
+        alias="TRADING_SCHEDULER_RUNTIME_BASE_URL",
+        description="Internal base URL for scheduler-owned status and metrics surfaces.",
+    )
+
+    trading_scheduler_runtime_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS",
+        description="Timeout for stateless API reads of scheduler-owned runtime surfaces.",
+    )
+
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
     )

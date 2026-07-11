@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from types import SimpleNamespace
+from typing import cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import Mock, patch
 
@@ -59,7 +60,10 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         async def block_until_cancelled() -> None:
             await asyncio.Event().wait()
 
-        scheduler = TradingScheduler(leadership=leadership)  # type: ignore[arg-type]
+        scheduler = TradingScheduler(
+            leadership=leadership,  # type: ignore[arg-type]
+            fatal_exit=Mock(),
+        )
         scheduler._pipelines = [
             SimpleNamespace(
                 account_label="paper",
@@ -142,6 +146,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
         )
         self.assertTrue(scheduler._stop_event.is_set())
         self.assertTrue(scheduler._task is not None and scheduler._task.cancelled())
+        cast(Mock, scheduler._fatal_exit).assert_called_once_with(70)
 
         await scheduler.stop()
 
@@ -172,6 +177,7 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             "scheduler_leadership_monitor_failed:RuntimeError",
         )
         self.assertTrue(scheduler._task is not None and scheduler._task.cancelled())
+        cast(Mock, scheduler._fatal_exit).assert_called_once_with(70)
 
         await scheduler.stop()
 

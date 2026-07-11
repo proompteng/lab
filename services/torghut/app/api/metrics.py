@@ -5,8 +5,10 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import Response
 
+from app.config import settings
 from app.metrics import render_trading_metrics
 
+from .scheduler_proxy import proxy_scheduler_response
 from .trading_scheduler_state import get_trading_scheduler
 
 router = APIRouter()
@@ -14,6 +16,12 @@ router = APIRouter()
 
 @router.get("/metrics")
 def prometheus_metrics() -> Response:
+    if settings.process_role == "api":
+        return proxy_scheduler_response(
+            path="/metrics",
+            accept="text/plain; version=0.0.4",
+        )
+
     scheduler = get_trading_scheduler()
     state = scheduler.state
     leadership = scheduler.leadership_status

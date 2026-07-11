@@ -501,7 +501,6 @@ class TradingApiTestCaseBase(TestCase):
             bind=engine, expire_on_commit=False, future=True
         )
         for session_local_target in (
-            "app.bootstrap.SessionLocal",
             "app.api.health_checks.shared_context.SessionLocal",
             "app.api.health_checks.load_options_catalog_freshness_summary.SessionLocal",
             "app.api.health_checks.remember_alpaca_success.SessionLocal",

@@ -7,6 +7,8 @@ This directory contains the Argo CD application resources for the `torghut` name
 The Knative `Service/torghut` is a stateless API reader (`TORGHUT_PROCESS_ROLE=api`). It must never start trading or
 reconciliation loops. `Deployment/torghut-scheduler` is the only workload configured with
 `TORGHUT_PROCESS_ROLE=scheduler`; it uses `Recreate` rollout semantics and starts at zero replicas for P0a containment.
+The API proxies `/trading/status` and `/metrics` to that scheduler and returns `503` when it is unavailable; it never
+manufactures runtime state from its dormant local scheduler object.
 
 Rollout is deliberately two-stage. First promote and prove the scheduler-free API image while the scheduler
 Deployment remains at zero. Then perform the documented one-time emergency removal of legacy Knative revisions and
