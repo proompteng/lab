@@ -247,6 +247,7 @@ jobs:
           done
 
           echo "eligible=true" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"
           echo "reason=eligible:${release_kind}" >> "$GITHUB_OUTPUT"
 
       - name: Eligibility summary
@@ -263,6 +264,7 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}
         run: |
           set -euo pipefail
 
@@ -278,5 +280,4 @@ jobs:
             exit 0
           fi
 
-          current_head_sha="$(gh pr view "$PR_NUMBER" -R "$GH_REPO" --json headRefOid --jq '.headRefOid')"
-          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash --match-head-commit "$current_head_sha"
+          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash --match-head-commit "$PR_HEAD_SHA"

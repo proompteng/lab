@@ -1470,7 +1470,10 @@ describe('native OCI build workflows', () => {
     expect(releasePrAutomergeWorkflow).not.toContain(
       'allowed_authors=("app/github-actions" "github-actions[bot]" "gregkonush")',
     )
-    expect(releasePrAutomergeWorkflow).toContain('--match-head-commit "$current_head_sha"')
+    expect(releasePrAutomergeWorkflow).toContain('echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"')
+    expect(releasePrAutomergeWorkflow).toContain('PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}')
+    expect(releasePrAutomergeWorkflow).toContain('--match-head-commit "$PR_HEAD_SHA"')
+    expect(releasePrAutomergeWorkflow).not.toContain('current_head_sha="$(gh pr view')
     expect(torghutDeployAutomergeWorkflow).toContain('--match-head-commit "${PR_HEAD_SHA}"')
     expect(releasePrAutomergeWorkflow).toContain('reason=eligible:${release_kind}')
   })
