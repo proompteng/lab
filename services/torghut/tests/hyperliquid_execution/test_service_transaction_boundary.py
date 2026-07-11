@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
+from typing import Never
 
 from pytest import MonkeyPatch, raises
 from sqlalchemy.exc import SQLAlchemyError
@@ -15,6 +15,7 @@ from app.hyperliquid_execution.models import (
     AccountState,
     ExecutionMarket,
     FeatureSnapshot,
+    Fill,
     RuntimeDependencyStatus,
 )
 from app.hyperliquid_execution.metrics import HyperliquidExecutionMetrics
@@ -111,7 +112,7 @@ class _RecordingRepository:
 
 
 class _FailingCycleService:
-    def run_once(self, _session: object) -> Any:
+    def run_once(self, _session: object) -> Never:
         raise TimeoutError("clickhouse timed out")
 
 
@@ -194,7 +195,7 @@ class _RecordingExchange:
         self._events.append("external:liquidity")
         return markets, RuntimeDependencyStatus("liquidity", True)
 
-    def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Any]:
+    def reconcile_fills(self, _market_id_by_coin: dict[str, str]) -> list[Fill]:
         self._events.append("external:fills")
         return []
 
