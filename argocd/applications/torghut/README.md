@@ -2,6 +2,25 @@
 
 This directory contains the Argo CD application resources for the `torghut` namespace.
 
+## Live API and scheduler ownership
+
+The Knative `Service/torghut` is a stateless API reader (`TORGHUT_PROCESS_ROLE=api`). It must never start trading or
+reconciliation loops. `Deployment/torghut-scheduler` is the only workload configured with
+`TORGHUT_PROCESS_ROLE=scheduler`; it uses `Recreate` rollout semantics and starts at zero replicas for P0a containment.
+
+Rollout is deliberately two-stage. First promote and prove the scheduler-free API image while the scheduler
+Deployment remains at zero. Then perform the documented one-time emergency removal of legacy Knative revisions and
+prove that no scheduler loop remains. Only after those checks pass may a follow-up GitOps change scale the advisory-
+locked scheduler Deployment to one replica. Do not add a persistent revision-cleanup Job or combine those stages.
+Do not restore `autoscaling.knative.dev/minScale` on the API template: the annotation is copied onto immutable
+revisions and was the reason stale revisions remained hot. Activate the current API revision with an explicit request
+when rollout proof needs a running pod.
+
+The API and scheduler currently keep explicit environment entries so the live direct-env safety contract remains
+auditable. `test_single_writer_scheduler_manifest.py` enforces exact parity except for the process role and the two
+scheduler-only leadership settings; migrate both manifests to one typed generated source in a follow-up without
+weakening that contract.
+
 ## TA replay workflow (canonical)
 
 This is the single, canonical TA replay/backfill workflow that oncall should follow (and that an AgentRun can later
@@ -178,7 +197,7 @@ This script intentionally keeps defaults conservative and does not automate dest
 ### Safety gates (read first)
 - **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
   trading first and keep it paused until verification passes.
-  - set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml`
+  - set `spec.replicas: 0` in `argocd/applications/torghut/scheduler-deployment.yaml`
   - keep `TRADING_MODE=paper` unless the recovery explicitly requires live mode
 - **Unique consumer group required (hard requirement):** every replay/backfill must use a **new** `TA_GROUP_ID`
   (consumer-group isolation). Never reuse an old replay group id.
@@ -206,7 +225,7 @@ Before touching the TA job or Kafka topics, record the following in your ticket/
 Goal: recompute TA outputs from retained Kafka inputs without deleting topics or Flink state.
 
 1) Pause trading (recommended; required if signal correctness is uncertain)
-   - `argocd/applications/torghut/knative-service.yaml`: set `TRADING_ENABLED=false`, then Argo sync.
+   - `argocd/applications/torghut/scheduler-deployment.yaml`: set `spec.replicas: 0`, then Argo sync.
 2) Suspend TA to stop writes while you switch group id
    - GitOps-first: set `spec.job.state: suspended` in `argocd/applications/torghut/ta/flinkdeployment.yaml`, then Argo sync.
    - Emergency-only:
@@ -251,7 +270,7 @@ Before starting, get explicit human confirmation that the following are acceptab
 - Deleting Flink checkpoint/savepoint directories under `s3a://flink-checkpoints/torghut/technical-analysis/...`
 
 0) Pause trading (required)
-- Set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml` and Argo sync.
+- Set `spec.replicas: 0` in `argocd/applications/torghut/scheduler-deployment.yaml` and Argo sync.
 
 1) Suspend the job (same as Mode 1)
 

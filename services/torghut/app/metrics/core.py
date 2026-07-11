@@ -426,6 +426,14 @@ SERVICE_LABEL_GAUGES: dict[str, tuple[str, str]] = {
 }
 
 DIRECT_GAUGES: dict[str, tuple[str, str]] = {
+    "scheduler_leadership_acquired": (
+        "torghut_scheduler_leadership_acquired",
+        "Whether this process currently owns the PostgreSQL scheduler writer fence.",
+    ),
+    "scheduler_leadership_healthy": (
+        "torghut_scheduler_leadership_healthy",
+        "Whether the scheduler writer fence is currently healthy.",
+    ),
     "feature_staleness_ms_p95": (
         "torghut_trading_feature_staleness_ms_p95",
         "Feature staleness p95 for the latest ingest batch.",

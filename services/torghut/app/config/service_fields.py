@@ -11,6 +11,28 @@ from pydantic_settings import BaseSettings
 class CoreSettingsFields(BaseSettings):
     """Environment-backed settings."""
 
+    process_role: Literal["api", "scheduler"] = Field(
+        default="api",
+        alias="TORGHUT_PROCESS_ROLE",
+        description=(
+            "Exclusive runtime role for this process. API processes remain stateless; "
+            "only scheduler processes may own trading background loops."
+        ),
+    )
+
+    trading_scheduler_leadership_required: bool = Field(
+        default=False,
+        alias="TRADING_SCHEDULER_LEADERSHIP_REQUIRED",
+        description="Require durable PostgreSQL leadership before scheduler work starts.",
+    )
+
+    trading_scheduler_leadership_check_seconds: float = Field(
+        default=5.0,
+        gt=0,
+        alias="TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS",
+        description="Interval between scheduler leadership-session health checks.",
+    )
+
     app_env: Literal["dev", "stage", "prod"] = Field(
         default="dev", alias="APP_ENV", description="Deployment environment."
     )

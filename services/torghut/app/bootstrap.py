@@ -13,14 +13,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .api.build_metadata import BUILD_COMMIT, BUILD_VERSION
 from .config import settings
-from .db import SessionLocal, ensure_schema
+from .db import ensure_schema
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
-from .trading.autonomy import assert_runtime_gate_policy_contract
 from .trading.scheduler import TradingScheduler
-from .whitepapers import (
-    WhitepaperKafkaWorker,
-    whitepaper_workflow_enabled,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +23,14 @@ logger = logging.getLogger(__name__)
 def _evaluate_scheduler_status(
     scheduler: TradingScheduler,
 ) -> tuple[bool, dict[str, object]]:
+    if settings.process_role == "api":
+        return True, {
+            "ok": True,
+            "detail": "external_scheduler",
+            "running": False,
+            "owner": "torghut-scheduler",
+        }
+
     scheduler_ok = True
     scheduler_detail = "ok"
 
@@ -80,19 +83,23 @@ def _assert_dspy_cutover_migration_guard() -> None:
 async def lifespan(app: FastAPI):
     """Run startup/shutdown tasks using FastAPI lifespan hooks."""
 
+    if settings.process_role != "api":
+        raise RuntimeError(
+            "torghut_api_process_role_mismatch:expected=api:"
+            f"actual={settings.process_role}"
+        )
+
     scheduler = TradingScheduler()
-    whitepaper_worker = WhitepaperKafkaWorker(session_factory=SessionLocal)
     app.state.trading_scheduler = scheduler
-    app.state.whitepaper_worker = whitepaper_worker
     logger.info(
-        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s log_level=%s log_format=%s trading_enabled=%s whitepaper_workflow_enabled=%s",
+        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s process_role=%s log_level=%s log_format=%s trading_enabled=%s",
         BUILD_VERSION,
         BUILD_COMMIT,
         settings.app_env,
+        settings.process_role,
         settings.log_level,
         settings.log_format,
         settings.trading_enabled,
-        whitepaper_workflow_enabled(),
     )
 
     try:
@@ -100,28 +107,15 @@ async def lifespan(app: FastAPI):
     except SQLAlchemyError as exc:  # pragma: no cover - defensive for startup only
         logger.warning("Database not reachable during startup: %s", exc)
 
-    if settings.trading_autonomy_enabled:
-        assert_runtime_gate_policy_contract(settings.trading_autonomy_gate_policy_path)
+    logger.info("Torghut startup complete background_worker_owner=external")
 
-    if settings.trading_enabled:
-        _assert_dspy_cutover_migration_guard()
-        await scheduler.start()
-    if whitepaper_workflow_enabled():
-        await whitepaper_worker.start()
-
-    logger.info(
-        "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s",
-        bool(getattr(scheduler, "_task", None)),
-        bool(getattr(whitepaper_worker, "_task", None)),
-    )
-
-    yield
-
-    logger.info("Torghut shutdown initiated")
-    await whitepaper_worker.stop()
-    await scheduler.stop()
-    shutdown_posthog_telemetry()
-    logger.info("Torghut shutdown complete")
+    try:
+        yield
+    finally:
+        logger.info("Torghut shutdown initiated")
+        await scheduler.stop()
+        shutdown_posthog_telemetry()
+        logger.info("Torghut shutdown complete")
 
 
 def sqlalchemy_exception_handler(

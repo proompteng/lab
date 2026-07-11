@@ -16,8 +16,11 @@ router = APIRouter()
 def prometheus_metrics() -> Response:
     scheduler = get_trading_scheduler()
     state = scheduler.state
+    leadership = scheduler.leadership_status
     payload = {
         **state.metrics.to_payload(),
+        "scheduler_leadership_acquired": int(leadership.acquired),
+        "scheduler_leadership_healthy": int(leadership.healthy),
         "capital_new_exposure_allowed": int(state.capital_new_exposure_allowed),
         "capital_daily_loss_ratio": state.capital_daily_loss_ratio,
         "capital_drawdown_ratio": state.capital_drawdown_ratio,

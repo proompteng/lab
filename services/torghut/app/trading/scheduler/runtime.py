@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
 from ...config import TradingAccountLane, settings
+from ...db import engine as database_engine
 from ...observability import capture_posthog_event
 from ..execution import OrderExecutor
 from ..llm.dspy_programs.runtime import (
@@ -40,6 +41,10 @@ from .governance.governance_mixin_runtime_methods import (
     TradingSchedulerGovernanceRuntimeMethods,
 )
 from .governance.shared_context import TradingSchedulerGovernanceMixinFields
+from .leadership import (
+    PostgresSchedulerLeadership,
+    SchedulerLeadershipStatus,
+)
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
 from .runtime_pipeline_factory import build_trading_pipeline_for_account
@@ -54,13 +59,28 @@ class TradingScheduler(
     TradingSchedulerGovernanceDecisionMethods,
     TradingSchedulerGovernanceRuntimeMethods,
 ):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        leadership: PostgresSchedulerLeadership | None = None,
+    ) -> None:
         self.state = TradingState()
         self._task: Optional[asyncio.Task[None]] = None
+        self._leadership_task: Optional[asyncio.Task[None]] = None
         self._stop_event = asyncio.Event()
         self._pipeline: Optional[TradingPipeline] = None
         self._pipelines: list[TradingPipeline] = []
         self._active_simulation_run_id: str | None = None
+        self._leadership = leadership or PostgresSchedulerLeadership(
+            engine=database_engine,
+            required=settings.trading_scheduler_leadership_required,
+        )
+
+    @property
+    def leadership_status(self) -> SchedulerLeadershipStatus:
+        """Return the process-local writer-fence state for probes and metrics."""
+
+        return self._leadership.status
 
     def _emit_autonomy_domain_telemetry(
         self,
@@ -448,11 +468,21 @@ class TradingScheduler(
     async def start(self) -> None:
         if self._task:
             return
-        self._assert_trading_shorts_startup_policy()
-        if not self._pipelines:
-            lanes = settings.trading_accounts
-            self._pipelines = [self._build_pipeline_for_account(lane) for lane in lanes]
-            self._pipeline = self._pipelines[0] if self._pipelines else None
+        try:
+            await asyncio.to_thread(self._leadership.acquire)
+            self._assert_trading_shorts_startup_policy()
+            if not self._pipelines:
+                lanes = settings.trading_accounts
+                self._pipelines = [
+                    self._build_pipeline_for_account(lane) for lane in lanes
+                ]
+                self._pipeline = self._pipelines[0] if self._pipelines else None
+        except Exception as exc:
+            self.state.running = False
+            self.state.last_error = f"scheduler_startup_failed:{type(exc).__name__}"
+            if self._leadership.status.acquired:
+                await asyncio.to_thread(self._leadership.release)
+            raise
         account_labels = ",".join(
             pipeline.account_label for pipeline in self._pipelines
         )
@@ -472,10 +502,9 @@ class TradingScheduler(
         self.state.signal_bootstrap_completed_at = None
         self.state.running = False
         self._task = asyncio.create_task(self._run_loop())
+        self._leadership_task = asyncio.create_task(self._monitor_leadership())
 
     async def stop(self) -> None:
-        if not self._task:
-            return
         account_labels = ",".join(
             pipeline.account_label
             for pipeline in (
@@ -484,11 +513,22 @@ class TradingScheduler(
         )
         logger.info("Trading scheduler stopping accounts=%s", account_labels or "none")
         self._stop_event.set()
-        self._task.cancel()
-        try:
-            await self._task
-        except asyncio.CancelledError:
-            pass
+        leadership_task = self._leadership_task
+        if leadership_task is not None:
+            leadership_task.cancel()
+            if leadership_task is not asyncio.current_task():
+                try:
+                    await leadership_task
+                except asyncio.CancelledError:
+                    pass
+        self._leadership_task = None
+        task = self._task
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         self._task = None
         self.state.startup_started_at = None
         self.state.signal_bootstrap_started_at = None
@@ -501,7 +541,49 @@ class TradingScheduler(
             pipeline.order_feed_ingestor.close()
         self._pipelines = []
         self._pipeline = None
+        await asyncio.to_thread(self._leadership.release)
         logger.info("Trading scheduler stopped")
+
+    async def _monitor_leadership(self) -> None:
+        """Cancel broker-affecting work as soon as the writer fence is lost."""
+
+        check_seconds = settings.trading_scheduler_leadership_check_seconds
+        try:
+            while not self._stop_event.is_set():
+                await asyncio.sleep(check_seconds)
+                healthy = await asyncio.to_thread(self._leadership.check)
+                if healthy:
+                    continue
+
+                status = self._leadership.status
+                reason = status.failure_reason or "leadership_unhealthy"
+                self.state.last_error = f"scheduler_leadership_lost:{reason}"
+                self.state.emergency_stop_active = True
+                self.state.emergency_stop_reason = "scheduler_leadership_lost"
+                self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+                self._stop_event.set()
+                task = self._task
+                if task is not None:
+                    task.cancel()
+                logger.critical(
+                    "Trading scheduler leadership lost; writer stopped reason=%s",
+                    reason,
+                )
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - last-resort process guard
+            self.state.last_error = (
+                f"scheduler_leadership_monitor_failed:{type(exc).__name__}"
+            )
+            self.state.emergency_stop_active = True
+            self.state.emergency_stop_reason = "scheduler_leadership_monitor_failed"
+            self.state.emergency_stop_triggered_at = datetime.now(timezone.utc)
+            self._stop_event.set()
+            task = self._task
+            if task is not None:
+                task.cancel()
+            logger.exception("Trading scheduler leadership monitor failed")
 
     async def _run_loop(self) -> None:
         self.state.running = True
