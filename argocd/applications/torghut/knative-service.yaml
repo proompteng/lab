@@ -86,7 +86,7 @@ spec:
             - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
               value: "true"
             - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
-              value: "true"
+              value: "false"
             - name: APCA_API_KEY_ID
               valueFrom:
                 secretKeyRef:

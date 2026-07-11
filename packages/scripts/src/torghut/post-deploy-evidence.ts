@@ -34,6 +34,11 @@ const EXPECTED_CAPITAL_LIMITS = {
   symbol_limit: 0.5,
 } as const
 
+const OPTIONAL_RECONCILIATION_DIAGNOSTICS = new Set([
+  'tigerbeetle_reconciliation_missing',
+  'tigerbeetle_reconciliation_stale',
+])
+
 const requireObject = (value: unknown, label: string): JsonObject => {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error(`${label} must be an object`)
@@ -134,10 +139,28 @@ const requireExecutionProjection = (status: JsonObject, gate: GateSnapshot) => {
 
 const requireLedgerHealth = (status: JsonObject) => {
   const ledger = requireObject(status.tigerbeetle_ledger, 'trading status tigerbeetle_ledger')
-  if (ledger.ok !== true || ledger.reconciliation_ok !== true || ledger.reconciliation_stale !== false) {
+  if (
+    !requireBoolean(ledger.ok, 'trading status tigerbeetle_ledger.ok') ||
+    !requireBoolean(ledger.protocol_ok, 'trading status tigerbeetle_ledger.protocol_ok')
+  ) {
+    throw new Error('TigerBeetle ledger protocol is not healthy')
+  }
+  const reconciliationRequired = requireBoolean(
+    ledger.reconciliation_required,
+    'trading status tigerbeetle_ledger.reconciliation_required',
+  )
+  const blockers = requireStringList(ledger.blockers, 'trading status tigerbeetle_ledger.blockers')
+  if (!reconciliationRequired) {
+    const blockingDiagnostics = blockers.filter((blocker) => !OPTIONAL_RECONCILIATION_DIAGNOSTICS.has(blocker))
+    if (blockingDiagnostics.length > 0) {
+      throw new Error(`TigerBeetle ledger has blockers: ${blockingDiagnostics.join(', ')}`)
+    }
+    return
+  }
+  if (ledger.reconciliation_ok !== true || ledger.reconciliation_stale !== false) {
     throw new Error('TigerBeetle ledger reconciliation is not current and healthy')
   }
-  if (requireStringList(ledger.blockers, 'trading status tigerbeetle_ledger.blockers').length > 0) {
+  if (blockers.length > 0) {
     throw new Error('TigerBeetle ledger reconciliation has blockers')
   }
 }

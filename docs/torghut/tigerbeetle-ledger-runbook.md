@@ -23,6 +23,11 @@ The current bootstrap topology is not full TigerBeetle production HA. Do not cla
 - Smoke hook: `argocd/applications/torghut/tigerbeetle-smoke-job.yaml`
 - Design: `docs/torghut/tigerbeetle-ledger-design.md`
 
+Torghut does not schedule a TigerBeetle catch-up or reconciliation CronJob. Live
+order events, executions, costs, and runtime-ledger buckets journal synchronously.
+The bounded journal runner remains available for explicit operator-driven repair,
+but stale periodic reconciliation is not a service-readiness requirement.
+
 ## Normal Verification
 
 ```bash
@@ -58,7 +63,7 @@ For HTTP checks, inspect:
 - `/trading/health`: same readiness dependency payload
 - `/trading/status`: top-level `tigerbeetle_ledger`
 
-Optional protocol failures do not make Torghut unready while `TORGHUT_TIGERBEETLE_REQUIRED=false`. If `TORGHUT_TIGERBEETLE_REQUIRED=true`, protocol failure becomes a readiness blocker. If `TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=true`, missing, degraded, or stale reconciliation becomes a readiness blocker. Staleness is controlled by `TORGHUT_TIGERBEETLE_RECONCILE_MAX_AGE_SECONDS` (default `3600`) and is exposed as `reconciliation_age_seconds`, `reconciliation_max_age_seconds`, `reconciliation_stale`, and the `tigerbeetle_reconciliation_stale` blocker.
+Optional protocol failures do not make Torghut unready while `TORGHUT_TIGERBEETLE_REQUIRED=false`. If `TORGHUT_TIGERBEETLE_REQUIRED=true`, protocol failure becomes a readiness blocker. Scheduled reconciliation is disabled, so `TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED=false`; reconciliation age and staleness remain diagnostic fields without blocking readiness or new exposure.
 
 ## Reconciliation Semantics
 
@@ -92,7 +97,7 @@ Reconciliation blockers are proof blockers, not profitability claims:
 - `tigerbeetle_client_unavailable`
 - `tigerbeetle_reconciliation_stale`
 
-The journal job emits stable JSON with schema version `torghut.tigerbeetle-journal-order-events.v1`, top-level `ok`/`status`, per-source batch counts, sampled errors, and the reconciliation payload so proof packets and readiness readback can distinguish durable ledger evidence from degraded or stale ledger parity.
+The operator-driven journal runner emits stable JSON with schema version `torghut.tigerbeetle-journal-order-events.v1`, top-level `ok`/`status`, per-source batch counts, sampled errors, and the reconciliation payload so repair evidence can distinguish durable ledger evidence from degraded or stale ledger parity.
 
 ## Rollout Checklist
 
@@ -123,4 +128,4 @@ The journal job emits stable JSON with schema version `torghut.tigerbeetle-journ
 - PVC pending: check `rook-ceph-block` and node/storage availability.
 - Smoke job cannot import `tigerbeetle`: image digest was not updated to a build that includes the new Python dependency.
 - Smoke job times out: inspect TigerBeetle pod logs and the service endpoint.
-- Reconciliation reports unlinked events: order-feed persisted proof evidence that was not journaled; inspect journal settings and `tigerbeetle_transfer_refs`.
+- Synchronous journaling reports unlinked evidence: inspect journal settings and `tigerbeetle_transfer_refs`, then run `python scripts/run_tigerbeetle_journal_cron.py --preset live --json` explicitly if a bounded repair is required.

@@ -619,7 +619,7 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertIsInstance(resources, list)
         self.assertIn("tigerbeetle-cluster.yaml", resources)
         self.assertIn("tigerbeetle-smoke-job.yaml", resources)
-        self.assertIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
+        self.assertNotIn("tigerbeetle-journal-order-events-cronjob.yaml", resources)
         self.assertNotIn(
             "bounded-paper-route-target-materialization-cronjob.yaml", resources
         )
@@ -648,16 +648,17 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "TORGHUT_TIGERBEETLE_JOURNAL_ENABLED": "true",
         }
         requirements = {
-            "argocd/applications/torghut/knative-service.yaml": "true",
-            "argocd/applications/torghut/knative-service-sim.yaml": "false",
+            "argocd/applications/torghut/knative-service.yaml": ("true", "false"),
+            "argocd/applications/torghut/knative-service-sim.yaml": ("false", "false"),
         }
-        for relative_path, required in requirements.items():
+        for relative_path, (required, reconcile_required) in requirements.items():
             env = _load_knative_env(relative_path)
             for key, value in common_expected.items():
                 self.assertEqual(env.get(key), value, f"{relative_path} {key}")
             self.assertEqual(env.get("TORGHUT_TIGERBEETLE_REQUIRED"), required)
             self.assertEqual(
-                env.get("TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"), required
+                env.get("TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED"),
+                reconcile_required,
             )
 
     def test_torghut_tigerbeetle_client_pods_allow_io_uring(self) -> None:

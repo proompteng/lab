@@ -17,6 +17,7 @@ from app.api.health_checks import (
     tigerbeetle_status_int,
 )
 from app.api.health_checks import tigerbeetle_health as health_checks_context
+from app.api.status_helpers import budget_unavailable_tigerbeetle_ledger_payload
 from app.models import (
     Base,
     StrategyRuntimeLedgerBucket,
@@ -95,6 +96,7 @@ class TestTigerBeetleStatus(TestCase):
         self.assertEqual(ref_counts_mock.call_args.kwargs["full_ref_scan"], False)
 
     def test_status_reuses_latest_reconciliation_ref_counts(self) -> None:
+        settings.tigerbeetle_reconcile_required = True
         latest_reconciliation = {
             "ok": True,
             "status": "ok",
@@ -139,7 +141,60 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(ref_counts["bounded_status_live_query_skipped"])
         self.assertNotIn("tigerbeetle_ref_counts_unavailable", payload["blockers"])
 
+    def test_optional_reconciliation_queries_current_runtime_ref_counts(self) -> None:
+        latest_reconciliation = {
+            "ok": True,
+            "status": "ok",
+            "age_seconds": 7_200,
+            "reconciliation_stale": True,
+            "blockers": [],
+            "ref_counts": {
+                "account_ref_count": 100,
+                "transfer_ref_count": 100,
+                "runtime_ledger_ref_count": 1,
+                "runtime_ledger_signed_ref_count": 1,
+                "runtime_ledger_missing_signed_ref_count": 0,
+                "runtime_ledger_missing_account_ref_count": 0,
+            },
+        }
+        current_ref_counts = {
+            "schema_version": "torghut.tigerbeetle-ref-counts.v1",
+            "cluster_id": 2001,
+            "account_ref_count": 100,
+            "transfer_ref_count": 100,
+            "by_source_type": {"strategy_runtime_ledger_bucket": 1},
+            "runtime_ledger_ref_count": 1,
+            "runtime_ledger_signed_ref_count": 0,
+            "runtime_ledger_missing_signed_ref_count": 1,
+            "runtime_ledger_missing_account_ref_count": 0,
+            "source_materialization": {},
+        }
+
+        with Session(self.engine) as session:
+            with (
+                patch.object(
+                    health_checks_context,
+                    "latest_tigerbeetle_reconciliation_payload",
+                    return_value=latest_reconciliation,
+                ),
+                patch.object(
+                    health_checks_context,
+                    "tigerbeetle_ref_counts",
+                    return_value=current_ref_counts,
+                ) as ref_counts_mock,
+            ):
+                payload = build_tigerbeetle_ledger_status(session)
+
+        ref_counts_mock.assert_called_once()
+        self.assertEqual(payload["runtime_ledger_signed_ref_count"], 0)
+        self.assertEqual(payload["runtime_ledger_missing_signed_ref_count"], 1)
+        self.assertIn(
+            "tigerbeetle_runtime_ledger_signed_refs_missing",
+            payload["blockers"],
+        )
+
     def test_status_reuses_latest_reconciliation_top_level_counts(self) -> None:
+        settings.tigerbeetle_reconcile_required = True
         latest_reconciliation = {
             "ok": True,
             "status": "ok",
@@ -190,6 +245,7 @@ class TestTigerBeetleStatus(TestCase):
     def test_status_uses_compact_reconciliation_without_payload_or_ref_scan(
         self,
     ) -> None:
+        settings.tigerbeetle_reconcile_required = True
         observed_at = datetime.now(timezone.utc)
         with Session(self.engine) as session:
             session.add(
@@ -359,6 +415,41 @@ class TestTigerBeetleStatus(TestCase):
         self.assertFalse(payload["protocol_ok"])
         self.assertFalse(payload["protocol_probe_skipped"])
         self.assertIn("tigerbeetle_protocol_unhealthy", payload["blockers"])
+
+    def test_required_protocol_does_not_require_periodic_reconciliation(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        settings.tigerbeetle_reconcile_required = False
+        health = TigerBeetleHealth(
+            enabled=True,
+            required=True,
+            ok=True,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error=None,
+        )
+
+        with Session(self.engine) as session:
+            with patch.object(
+                health_checks_context, "check_tigerbeetle_health", return_value=health
+            ):
+                payload = build_tigerbeetle_ledger_status(session)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["protocol_ok"])
+        self.assertFalse(payload["reconciliation_required"])
+        self.assertNotIn("tigerbeetle_reconciliation_missing", payload["blockers"])
+
+    def test_budget_unavailable_payload_keeps_reconciliation_optional(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        settings.tigerbeetle_reconcile_required = False
+
+        payload = budget_unavailable_tigerbeetle_ledger_payload("budget_unavailable")
+
+        self.assertTrue(payload["required"])
+        self.assertFalse(payload["reconcile_required"])
+        self.assertFalse(payload["reconciliation_required"])
 
     def test_missing_reconciliation_blocks_only_when_required(self) -> None:
         settings.tigerbeetle_reconcile_required = True

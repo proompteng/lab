@@ -271,9 +271,34 @@ def build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
             last_error=str(exc),
         )
 
+    reconciliation_required = bool(settings.tigerbeetle_reconcile_required)
+    reconciliation_max_age_seconds = max(
+        1,
+        int(settings.tigerbeetle_reconcile_max_age_seconds),
+    )
+    latest_reconciliation_age_seconds = (
+        tigerbeetle_status_int(latest_reconciliation.get("age_seconds"))
+        if latest_reconciliation is not None
+        else None
+    )
+    latest_reconciliation_stale = bool(
+        latest_reconciliation is not None
+        and (
+            bool(latest_reconciliation.get("reconciliation_stale"))
+            or (
+                latest_reconciliation_age_seconds is not None
+                and latest_reconciliation_age_seconds > reconciliation_max_age_seconds
+            )
+        )
+    )
+
     ref_counts: dict[str, object]
     ref_counts_available = True
-    latest_ref_counts = latest_reconciliation_ref_counts(latest_reconciliation)
+    latest_ref_counts = (
+        latest_reconciliation_ref_counts(latest_reconciliation)
+        if reconciliation_required and not latest_reconciliation_stale
+        else None
+    )
     if latest_ref_counts is not None:
         ref_counts = latest_ref_counts
     else:
@@ -316,9 +341,6 @@ def build_tigerbeetle_ledger_status(session: Session) -> dict[str, object]:
     ):
         blockers.append("tigerbeetle_protocol_unhealthy")
     reconciliation_ok = True
-    reconciliation_required = bool(
-        settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required
-    )
     if latest_reconciliation is None:
         if reconciliation_required:
             reconciliation_ok = False

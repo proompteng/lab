@@ -409,9 +409,7 @@ def _actual_shape_matches(actual: object, spec: TigerBeetleTransferSpec) -> bool
 def _required(settings_obj: Settings, require_tigerbeetle: bool | None) -> bool:
     if require_tigerbeetle is not None:
         return require_tigerbeetle
-    return bool(
-        settings_obj.tigerbeetle_required or settings_obj.tigerbeetle_reconcile_required
-    )
+    return bool(settings_obj.tigerbeetle_reconcile_required)
 
 
 def _status(*, blockers: Sequence[str], required: bool, source_count: int) -> str:
