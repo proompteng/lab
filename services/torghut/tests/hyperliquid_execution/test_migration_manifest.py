@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.migration_testing import migration_path
 
-TORGHUT_ROOT = Path(__file__).resolve().parents[2]
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
-MIGRATION = (
-    TORGHUT_ROOT / "migrations/versions/0056_hyperliquid_execution_v2_hard_reset.py"
-)
-MULTIFACTOR_MIGRATION = (
-    TORGHUT_ROOT / "migrations/versions/0057_generic_multifactor_machine.py"
-)
+MIGRATION = migration_path("0056_hyperliquid_execution_v2_hard_reset.py")
+MULTIFACTOR_MIGRATION = migration_path("0057_generic_multifactor_machine.py")
 CONFIGMAP = REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/configmap.yaml"
 DEPLOYMENT = (
     REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/deployment.yaml"
