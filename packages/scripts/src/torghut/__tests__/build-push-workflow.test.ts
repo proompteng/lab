@@ -314,6 +314,65 @@ describe('torghut build-push workflow', () => {
     expect(ciWorkflow).not.toContain('--workflow torghut-ci.yml')
   })
 
+  it('verifies every core Torghut runtime manifest directly when the runtime manifest group changes', () => {
+    const releaseManifestJob = ciWorkflow.indexOf('release-manifests:')
+    const releaseManifestJobBody = ciWorkflow.slice(
+      releaseManifestJob,
+      ciWorkflow.indexOf('\n  pyright:', releaseManifestJob),
+    )
+    const runtimeGroupStart = releaseManifestJobBody.indexOf(
+      "if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment",
+    )
+    const runtimeGroupEnd = releaseManifestJobBody.indexOf('verified_any=true', runtimeGroupStart)
+    const runtimeGroupBody = releaseManifestJobBody.slice(runtimeGroupStart, runtimeGroupEnd)
+    const runtimeGroupLines = runtimeGroupBody.split('\n').map((line) => line.trim())
+    const runtimeCalls = runtimeGroupLines.reduce<string[][]>((calls, line) => {
+      if (line === 'verify_image_contract \\') {
+        calls.push([line])
+      } else if (calls.length > 0 && calls.at(-1)!.length < 5) {
+        calls.at(-1)!.push(line)
+      }
+      return calls
+    }, [])
+
+    expect(runtimeGroupStart).toBeGreaterThan(-1)
+    expect(runtimeGroupEnd).toBeGreaterThan(runtimeGroupStart)
+    expect(runtimeCalls).toEqual([
+      [
+        'verify_image_contract \\',
+        '"Torghut" \\',
+        'argocd/applications/torghut/knative-service.yaml \\',
+        'TORGHUT_COMMIT \\',
+        'registry.ide-newton.ts.net/lab/torghut',
+      ],
+      [
+        'verify_image_contract \\',
+        '"Torghut simulation" \\',
+        'argocd/applications/torghut/knative-service-sim.yaml \\',
+        'TORGHUT_COMMIT \\',
+        'registry.ide-newton.ts.net/lab/torghut',
+      ],
+      [
+        'verify_image_contract \\',
+        '"Torghut scheduler" \\',
+        'argocd/applications/torghut/scheduler-deployment.yaml \\',
+        'TORGHUT_COMMIT \\',
+        'registry.ide-newton.ts.net/lab/torghut',
+      ],
+    ])
+    const parityCall = runtimeGroupLines.indexOf('assert_image_contract_parity \\')
+    expect(runtimeGroupLines.slice(parityCall, parityCall + 6)).toEqual([
+      'assert_image_contract_parity \\',
+      'TORGHUT_COMMIT \\',
+      'registry.ide-newton.ts.net/lab/torghut \\',
+      'argocd/applications/torghut/knative-service.yaml \\',
+      'argocd/applications/torghut/knative-service-sim.yaml \\',
+      'argocd/applications/torghut/scheduler-deployment.yaml',
+    ])
+    expect(releaseManifestJobBody).toContain('if [ "${source_sha}" != "${reference_source_sha}" ]; then')
+    expect(releaseManifestJobBody).toContain('if [ "${image_ref}" != "${reference_image_ref}" ]; then')
+  })
+
   it('shards the expensive autoresearch runner tests in Torghut CI', () => {
     const autoresearchJob = ciWorkflow.indexOf('pytest-autoresearch-runner:')
     const nextJob = ciWorkflow.indexOf('\n  lint-and-tests:', autoresearchJob)
