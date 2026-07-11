@@ -122,14 +122,45 @@ describe('torghut post-deploy verifier workflow', () => {
     const apiCapture = workflow.indexOf('TORGHUT_API_READYZ_HTTP_STATUS="$(')
     const schedulerCondition = workflow.indexOf('if [ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]; then', apiCapture)
     const schedulerCapture = workflow.indexOf('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
-    const schedulerConditionEnd = workflow.indexOf('\n          fi', schedulerCapture)
+    const schedulerPayloadExport = workflow.indexOf('export TORGHUT_SCHEDULER_READYZ_PAYLOAD', schedulerCapture)
 
     expect(apiCapture).toBeGreaterThan(-1)
     expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/readyz')
     expect(schedulerCondition).toBeGreaterThan(apiCapture)
     expect(schedulerCapture).toBeGreaterThan(schedulerCondition)
-    expect(schedulerConditionEnd).toBeGreaterThan(schedulerCapture)
+    expect(schedulerPayloadExport).toBeGreaterThan(schedulerCapture)
     expect(workflow).not.toContain('touch "${EVIDENCE_DIR}/torghut-scheduler-readyz.json"')
+  })
+
+  it('bounds full-contract convergence and fails after the final attempt', () => {
+    const finalFailure = workflow.indexOf(
+      'Torghut full post-deploy contract did not converge after ${FULL_CONTRACT_ATTEMPTS} attempts',
+    )
+    const finalExit = workflow.indexOf('exit 1', finalFailure)
+
+    expect(workflow).toContain('FULL_CONTRACT_ATTEMPTS=120')
+    expect(workflow).toContain('FULL_CONTRACT_INTERVAL_SECONDS=10')
+    expect(workflow).toContain('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
+    expect(workflow).toContain('sleep "${FULL_CONTRACT_INTERVAL_SECONDS}"')
+    expect(workflow).toContain('[ "${contract_attempt}" -eq "${FULL_CONTRACT_ATTEMPTS}" ]')
+    expect(finalFailure).toBeGreaterThan(-1)
+    expect(finalExit).toBeGreaterThan(finalFailure)
+  })
+
+  it('refetches every evidence surface and invokes the strict validator inside each convergence attempt', () => {
+    const loopStart = workflow.indexOf('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
+    const loopEnd = workflow.indexOf('\n          done', loopStart)
+    const loopBody = workflow.slice(loopStart, loopEnd)
+
+    expect(loopStart).toBeGreaterThan(-1)
+    expect(loopEnd).toBeGreaterThan(loopStart)
+    expect(loopBody).toContain('rm -f \\')
+    expect(loopBody).toContain('TORGHUT_API_READYZ_HTTP_STATUS="$(')
+    expect(loopBody).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
+    expect(loopBody).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
+    expect(loopBody).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1')
+    expect(loopBody).toContain('[ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]')
+    expect(loopBody).not.toContain('contract_mismatch_accepted')
   })
 
   it('retries parseable JSON evidence capture before invoking the validator', () => {
@@ -144,7 +175,7 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
     expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/status')
     expect(workflow).toContain('export TORGHUT_STATUS_HTTP_STATUS')
-    expect(workflow).toContain('Torghut /trading/status HTTP ${TORGHUT_STATUS_HTTP_STATUS}')
+    expect(workflow).toContain('trading status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS:-unset}')
     expect(workflow).toContain('HTTP_MAX_TIME_SECONDS=15')
     expect(workflow).toContain('JSON_EVIDENCE_ATTEMPTS=3')
     expect(workflow).toContain('--max-time "${HTTP_MAX_TIME_SECONDS}"')
