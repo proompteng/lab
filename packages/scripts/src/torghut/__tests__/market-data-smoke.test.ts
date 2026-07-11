@@ -734,7 +734,7 @@ describe('market data smoke freshness evaluation', () => {
     expect(result.summaryLines.join('\n')).toContain('source_write_records=`15`')
   })
 
-  it('allows the bounded startup heartbeat source to finish after emitting', () => {
+  it('allows the bounded startup heartbeat source to stay finished after savepoint restore', () => {
     const result = evaluateMarketDataSmoke({
       now: new Date('2026-07-07T17:00:30Z'),
       mode: 'auto',
@@ -756,7 +756,7 @@ describe('market data smoke freshness evaluation', () => {
           {
             name: 'Source: Collection Source',
             status: 'FINISHED',
-            metrics: { 'read-records': 0, 'write-records': 1 },
+            metrics: { 'read-records': 0, 'write-records': 0 },
           },
         ],
       },

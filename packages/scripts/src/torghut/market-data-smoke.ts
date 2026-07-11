@@ -321,7 +321,7 @@ const sumOptionalRecords = (
 }
 
 const isExpectedFinishedTaFlinkVertex = (vertex: TaFlinkVertexSnapshot): boolean =>
-  vertex.name === 'Source: Collection Source' && vertex.status === 'FINISHED' && vertex.writeRecords > 0
+  vertex.name === 'Source: Collection Source' && vertex.status === 'FINISHED'
 
 const summarizeKafkaRole = (
   now: Date,
