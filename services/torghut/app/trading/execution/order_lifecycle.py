@@ -19,6 +19,16 @@ class OrderLifecycleSafetyError(RuntimeError):
 _TERMINAL_ORDER_STATUSES = {"canceled", "expired", "filled", "rejected"}
 _RETRYABLE_TERMINAL_ORDER_STATUSES = {"canceled", "expired"}
 
+# Previous live manifests permitted these broker idempotency-key attempts. Keep
+# the read-only recovery boundary stable when new submission attempts are reduced.
+HISTORICAL_LIVE_ORDER_ATTEMPT_SCAN_LIMIT = 3
+
+
+def live_order_recovery_scan_limit(configured_attempts: int) -> int:
+    """Include historical broker ids without authorizing new attempts."""
+
+    return max(configured_attempts, HISTORICAL_LIVE_ORDER_ATTEMPT_SCAN_LIMIT)
+
 
 class OrderLifecycleClient(Protocol):
     """Broker mutations and reads needed by bounded repricing."""
@@ -437,5 +447,6 @@ __all__ = [
     "OrderLifecycleSafetyError",
     "attempt_client_order_ids",
     "fetch_existing_orders",
+    "live_order_recovery_scan_limit",
     "submit_with_bounded_repricing",
 ]

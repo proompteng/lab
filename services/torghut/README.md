@@ -150,7 +150,8 @@ TRADING_ORDER_SLIPPAGE_BPS=8
 ```
 
 Keep decision submissions at one lifecycle attempt and zero transport retries until every broker submit/cancel step has
-a durable mutation receipt. Emergency reduce-only closeout attempts remain a separate risk-control contract.
+a durable mutation receipt. Read-only recovery still scans the historical `-r2` and `-r3` broker idempotency keys
+without authorizing new attempts. Emergency reduce-only closeout attempts remain a separate risk-control contract.
 
 Do not add fixed live notional, paper probe, target-plan, proof-floor, or configured-collection settings. Historical
 simulation may retain deterministic fixed sizing for replay compatibility, but those values must not enter live order

@@ -32,6 +32,7 @@ from .order_lifecycle import (
     OrderLifecyclePolicy,
     OrderLifecycleResult,
     fetch_existing_orders,
+    live_order_recovery_scan_limit,
     submit_with_bounded_repricing,
 )
 from ..quantity_rules import (
@@ -560,7 +561,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             execution_client,
             decision_row.decision_hash,
             max_attempts=(
-                settings.trading_order_max_attempts
+                live_order_recovery_scan_limit(settings.trading_order_max_attempts)
                 if settings.trading_mode == "live"
                 else 1
             ),
