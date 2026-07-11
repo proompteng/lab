@@ -81,7 +81,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "dev": "bun --watch src/bin/start-worker.ts",
-    "build": "node -e \"require('child_process').execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '--project', 'tsconfig.json', '--pretty', 'false'], { stdio: 'inherit' })\"",
+    "build": "tsc --project tsconfig.json --pretty false",
     "test": "bun test",
     "test:load": "bun scripts/run-worker-load.ts",
     "evidence:production": "bun scripts/collect-production-evidence.ts",
@@ -105,7 +105,7 @@
     "@connectrpc/connect-node": "^2.1.1",
     "@effect/schema": "^0.75.5",
     "effect": "^3.21.2",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

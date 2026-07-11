@@ -6,6 +6,9 @@ const withMDX = createMDX()
 const config = {
   reactStrictMode: true,
   output: 'standalone',
+  experimental: {
+    useTypeScriptCli: true,
+  },
 }
 
 export default withMDX(config)

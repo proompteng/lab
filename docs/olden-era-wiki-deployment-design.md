@@ -167,7 +167,7 @@ Replace `apps/olden/package.json` with:
     "@types/react-dom": "19.2.3",
     "postcss": "^8.5.14",
     "tailwindcss": "^4.2.4",
-    "typescript": "^6.0.3"
+    "typescript": "^7.0.2"
   }
 }
 ```

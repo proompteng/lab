@@ -76,14 +76,14 @@ export function LinkForm({
     const parsed = linkInputSchema.safeParse(normalizeForm(form))
     if (!parsed.success) {
       const fieldErrors: FieldErrors = {}
-      parsed.error.errors.forEach((err) => {
+      parsed.error.issues.forEach((err) => {
         const field = err.path[0]
         if (typeof field === 'string') {
           fieldErrors[field as keyof FormState] = err.message
         }
       })
       setErrors(fieldErrors)
-      const first = parsed.error.errors[0]
+      const first = parsed.error.issues[0]
       toast.error(first?.message ?? 'Please fix the highlighted fields and try again.')
       return null
     }
