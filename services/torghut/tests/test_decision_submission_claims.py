@@ -411,6 +411,48 @@ def test_recovery_lease_is_separate_and_only_one_reader_acquires(
         assert row.recovery_fencing_epoch == 1
 
 
+def test_recovery_takeover_rotates_reused_expired_token(tmp_path: Path) -> None:
+    sessions, decision_id, client_order_id = _session_factory(
+        tmp_path / "reused-recovery-token.db"
+    )
+    _enter_broker_io(sessions, decision_id, client_order_id)
+    _force_recovery_due(sessions, decision_id)
+    reused_token = uuid.uuid4()
+
+    with sessions() as session:
+        first = acquire_decision_submission_recovery_claim(
+            session,
+            decision_id=decision_id,
+            recovery_owner="reader-a",
+            recovery_token=reused_token,
+        )
+    assert first.outcome == "acquired"
+    assert first.claim is not None
+    assert first.claim.recovery_handle is not None
+    assert first.claim.recovery_handle.recovery_token == reused_token
+    assert first.claim.recovery_handle.recovery_fencing_epoch == 1
+
+    with sessions() as session:
+        row = session.get(TradeDecisionSubmissionClaim, decision_id)
+        assert row is not None
+        row.recovery_lease_expires_at = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        session.commit()
+
+    with sessions() as session:
+        takeover = acquire_decision_submission_recovery_claim(
+            session,
+            decision_id=decision_id,
+            recovery_owner="reader-b",
+            recovery_token=reused_token,
+        )
+    assert takeover.outcome == "acquired"
+    assert takeover.claim is not None
+    assert takeover.claim.recovery_handle is not None
+    assert takeover.claim.recovery_handle.recovery_fencing_epoch == 2
+    assert takeover.claim.recovery_handle.recovery_token != reused_token
+    assert takeover.claim.recovery_handle.recovery_owner == "reader-b"
+
+
 @pytest.mark.parametrize("outcome", ["not_found", "indeterminate"])
 def test_negative_recovery_observation_stays_quarantined_and_fences_stale_reader(
     tmp_path: Path,

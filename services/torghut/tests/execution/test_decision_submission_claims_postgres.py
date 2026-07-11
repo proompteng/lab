@@ -289,7 +289,7 @@ def test_postgres_recovery_cas_and_transition_guards(
         )
 
         _assert_boundary_guards(schema_engine)
-        _assert_reused_expired_token_rotates(schema_engine)
+        _assert_reused_expired_tokens_rotate(schema_engine)
         _assert_public_error_paths_release_locks(schema_engine)
         _assert_rejected(schema_engine, "TRUNCATE trade_decision_submission_claims")
         with pytest.raises(DBAPIError):
@@ -552,7 +552,7 @@ def _assert_public_error_paths_release_locks(engine: Engine) -> None:
         failed_session.close()
 
 
-def _assert_reused_expired_token_rotates(engine: Engine) -> None:
+def _assert_reused_expired_tokens_rotate(engine: Engine) -> None:
     sessions = sessionmaker(
         bind=engine,
         class_=Session,
@@ -595,6 +595,57 @@ def _assert_reused_expired_token_rotates(engine: Engine) -> None:
     assert takeover.claim is not None
     assert takeover.claim.handle.fencing_epoch == 2
     assert takeover.claim.handle.claim_token != reused_token
+
+    recovery_decision_id = uuid.uuid4()
+    recovery_client_order_id = "reuse-recovery-token".ljust(64, "y")
+    reused_recovery_token = uuid.uuid4()
+    with engine.begin() as connection:
+        _insert_decision(
+            connection,
+            decision_id=recovery_decision_id,
+            client_order_id=recovery_client_order_id,
+        )
+        _insert_claimed(
+            connection,
+            decision_id=recovery_decision_id,
+            client_order_id=recovery_client_order_id,
+            claim_token=uuid.uuid4(),
+        )
+        _enter_broker_io(connection, decision_id=recovery_decision_id)
+    with sessions() as session:
+        first_recovery = acquire_decision_submission_recovery_claim(
+            session,
+            decision_id=recovery_decision_id,
+            recovery_owner="recovery-owner-a",
+            recovery_token=reused_recovery_token,
+        )
+    assert first_recovery.outcome == "acquired"
+    assert first_recovery.claim is not None
+    assert first_recovery.claim.recovery_handle is not None
+    assert first_recovery.claim.recovery_handle.recovery_token == reused_recovery_token
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE trade_decision_submission_claims "
+                "SET recovery_lease_expires_at = clock_timestamp() - interval '1 second' "
+                "WHERE trade_decision_id = :decision_id"
+            ),
+            {"decision_id": recovery_decision_id},
+        )
+    with sessions() as session:
+        recovery_takeover = acquire_decision_submission_recovery_claim(
+            session,
+            decision_id=recovery_decision_id,
+            recovery_owner="recovery-owner-b",
+            recovery_token=reused_recovery_token,
+        )
+    assert recovery_takeover.outcome == "acquired"
+    assert recovery_takeover.claim is not None
+    assert recovery_takeover.claim.recovery_handle is not None
+    assert recovery_takeover.claim.recovery_handle.recovery_fencing_epoch == 2
+    assert (
+        recovery_takeover.claim.recovery_handle.recovery_token != reused_recovery_token
+    )
 
 
 @pytest.mark.skipif(

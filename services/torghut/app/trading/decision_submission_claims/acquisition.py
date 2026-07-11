@@ -376,11 +376,29 @@ def _lease_recovery(
     session: Session,
     request: _RecoveryLeaseRequest,
 ) -> bool:
+    current = load_snapshot(session, request.decision_id)
+    if current is None:
+        return False
+    current_handle = current.recovery_handle
+    current_token = (
+        current_handle.recovery_token if current_handle is not None else None
+    )
+    current_epoch = (
+        current_handle.recovery_fencing_epoch if current_handle is not None else 0
+    )
+    takeover_token = request.token if request.token != current_token else uuid.uuid4()
+    token_fence = (
+        TradeDecisionSubmissionClaim.recovery_token.is_(None)
+        if current_token is None
+        else TradeDecisionSubmissionClaim.recovery_token == current_token
+    )
     acquired_id = session.execute(
         update(TradeDecisionSubmissionClaim)
         .where(
             TradeDecisionSubmissionClaim.trade_decision_id == request.decision_id,
             TradeDecisionSubmissionClaim.state == "broker_io",
+            token_fence,
+            TradeDecisionSubmissionClaim.recovery_fencing_epoch == current_epoch,
             TradeDecisionSubmissionClaim.recovery_after.is_not(None),
             TradeDecisionSubmissionClaim.recovery_after <= request.now,
             or_(
@@ -389,7 +407,7 @@ def _lease_recovery(
             ),
         )
         .values(
-            recovery_token=request.token,
+            recovery_token=takeover_token,
             recovery_fencing_epoch=(
                 TradeDecisionSubmissionClaim.recovery_fencing_epoch + 1
             ),
