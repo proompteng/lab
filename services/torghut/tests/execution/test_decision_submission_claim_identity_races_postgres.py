@@ -176,10 +176,12 @@ def _assert_app_boundary_locks_before_parent(engine: Engine) -> None:
 
     def enter_boundary() -> DecisionSubmissionClaimSnapshot:
         with sessions() as session:
-            return mark_decision_submission_broker_io_started(
+            result = mark_decision_submission_broker_io_started(
                 session,
                 handle=handle,
             )
+            assert result.transitioned
+            return result.claim
 
     def insert_execution() -> None:
         with engine.begin() as connection:

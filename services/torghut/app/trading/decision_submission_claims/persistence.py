@@ -196,6 +196,32 @@ def transition_primary(
     )
 
 
+def transition_primary_uncommitted(
+    session: Session,
+    *,
+    handle: DecisionSubmissionClaimHandle,
+    expected_state: str,
+    values: dict[str, object],
+    require_unexpired_lease: bool,
+) -> DecisionSubmissionClaimSnapshot:
+    """Apply a fenced primary CAS without committing the caller's transaction."""
+
+    now = database_now(session)
+    predicates = _primary_predicates(handle, expected_state)
+    if require_unexpired_lease:
+        predicates.append(TradeDecisionSubmissionClaim.lease_expires_at > now)
+    return _transition_uncommitted(
+        session,
+        decision_id=handle.decision_id,
+        fencing_error=(
+            "decision_submission_claim_fenced:"
+            f"{handle.decision_id}:{handle.fencing_epoch}:{expected_state}"
+        ),
+        predicates=predicates,
+        values={**values, "updated_at": now},
+    )
+
+
 def _primary_predicates(
     handle: DecisionSubmissionClaimHandle, expected_state: str
 ) -> list[ColumnElement[bool]]:
@@ -249,6 +275,34 @@ def _commit_transition(
     predicates: list[ColumnElement[bool]],
     values: dict[str, object],
 ) -> DecisionSubmissionClaimSnapshot:
+    try:
+        _transition_uncommitted(
+            session,
+            decision_id=decision_id,
+            fencing_error=fencing_error,
+            predicates=predicates,
+            values=values,
+        )
+        commit_or_rollback(session)
+    except (DecisionSubmissionClaimError, SQLAlchemyError):
+        session.rollback()
+        raise
+    snapshot = load_snapshot(session, decision_id)
+    if snapshot is None:  # pragma: no cover - committed row must be readable
+        close_read_transaction(session)
+        raise DecisionSubmissionClaimError("transitioned_claim_not_found")
+    close_read_transaction(session)
+    return snapshot
+
+
+def _transition_uncommitted(
+    session: Session,
+    *,
+    decision_id: object,
+    fencing_error: str,
+    predicates: list[ColumnElement[bool]],
+    values: dict[str, object],
+) -> DecisionSubmissionClaimSnapshot:
     transitioned_id = session.execute(
         update(TradeDecisionSubmissionClaim)
         .where(*predicates)
@@ -256,12 +310,8 @@ def _commit_transition(
         .returning(TradeDecisionSubmissionClaim.trade_decision_id)
     ).scalar_one_or_none()
     if transitioned_id is None:
-        session.rollback()
         raise DecisionSubmissionFenceError(fencing_error)
-    commit_or_rollback(session)
     snapshot = load_snapshot(session, decision_id)
-    if snapshot is None:  # pragma: no cover - committed row must be readable
-        close_read_transaction(session)
+    if snapshot is None:  # pragma: no cover - transitioned row must be readable
         raise DecisionSubmissionClaimError("transitioned_claim_not_found")
-    close_read_transaction(session)
     return snapshot

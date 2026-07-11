@@ -25,6 +25,11 @@ ClaimAcquisitionOutcome = Literal[
     "execution_exists",
     "not_claimable",
 ]
+SubmissionBoundaryOutcome = Literal[
+    "transitioned",
+    "already_started",
+    "submitted",
+]
 RecoveryClaimAcquisitionOutcome = Literal[
     "acquired",
     "already_owned",
@@ -192,6 +197,18 @@ class DecisionSubmissionClaimResult:
     @property
     def acquired(self) -> bool:
         return self.outcome in {"acquired", "already_owned"}
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionSubmissionBoundaryResult:
+    """Claim-boundary result; never authorizes a broker mutation by itself."""
+
+    outcome: SubmissionBoundaryOutcome
+    claim: DecisionSubmissionClaimSnapshot
+
+    @property
+    def transitioned(self) -> bool:
+        return self.outcome == "transitioned"
 
 
 @dataclass(frozen=True, slots=True)

@@ -484,7 +484,8 @@ def _assert_public_error_paths_release_locks(engine: Engine) -> None:
                 second_session,
                 handle=acquired.claim.handle,
             )
-        assert boundary.state == "broker_io"
+        assert boundary.transitioned
+        assert boundary.claim.state == "broker_io"
     finally:
         first_session.close()
 

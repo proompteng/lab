@@ -101,12 +101,37 @@ def _enter_broker_io(
     with sessions() as session:
         handle = _acquire(session, decision_id, client_order_id)
     with sessions() as session:
-        snapshot = mark_decision_submission_broker_io_started(
+        io_start = mark_decision_submission_broker_io_started(
             session,
             handle=handle,
         )
-    assert snapshot.state == "broker_io"
+    assert io_start.transitioned
+    assert io_start.claim.state == "broker_io"
     return handle
+
+
+def test_only_first_submission_boundary_transition_grants_io_permit(
+    tmp_path: Path,
+) -> None:
+    sessions, decision_id, client_order_id = _session_factory(
+        tmp_path / "one-shot-io-permit.db"
+    )
+    with sessions() as session:
+        handle = _acquire(session, decision_id, client_order_id)
+    with sessions() as session:
+        first = mark_decision_submission_broker_io_started(
+            session,
+            handle=handle,
+        )
+    assert first.transitioned
+    with sessions() as session:
+        repeated = mark_decision_submission_broker_io_started(
+            session,
+            handle=handle,
+        )
+    assert repeated.outcome == "already_started"
+    assert not repeated.transitioned
+    assert repeated.claim.state == "broker_io"
 
 
 def _force_recovery_due(

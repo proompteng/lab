@@ -28,6 +28,7 @@ from .types import (
     DecisionSubmissionClaimSnapshot,
     DecisionSubmissionClaimValidationError,
     DecisionSubmissionFenceError,
+    DecisionSubmissionBoundaryResult,
     DecisionSubmissionRecoveryHandle,
     DecisionSubmissionRecoveryObservation,
     DecisionSubmissionTerminalIdentity,
@@ -72,8 +73,8 @@ def mark_decision_submission_broker_io_started(
     *,
     handle: DecisionSubmissionClaimHandle,
     recovery_seconds: int = CLAIM_DEFAULT_RECOVERY_SECONDS,
-) -> DecisionSubmissionClaimSnapshot:
-    """Commit the irreversible ambiguity boundary before broker I/O."""
+) -> DecisionSubmissionBoundaryResult:
+    """Commit claim ambiguity truth without granting broker authorization."""
 
     try:
         bounded_recovery = bounded_seconds(
@@ -84,7 +85,7 @@ def mark_decision_submission_broker_io_started(
         )
         validate_broker_io_boundary(session, handle=handle)
         now = database_now(session)
-        return transition_primary(
+        claim = transition_primary(
             session,
             handle=handle,
             expected_state="claimed",
@@ -95,6 +96,10 @@ def mark_decision_submission_broker_io_started(
             },
             require_unexpired_lease=True,
         )
+        return DecisionSubmissionBoundaryResult(
+            outcome="transitioned",
+            claim=claim,
+        )
     except DecisionSubmissionFenceError:
         snapshot = get_decision_submission_claim(session, handle.decision_id)
         if (
@@ -102,7 +107,13 @@ def mark_decision_submission_broker_io_started(
             and snapshot is not None
             and snapshot.state in {"broker_io", "submitted"}
         ):
-            return snapshot
+            outcome = (
+                "already_started" if snapshot.state == "broker_io" else "submitted"
+            )
+            return DecisionSubmissionBoundaryResult(
+                outcome=outcome,
+                claim=snapshot,
+            )
         raise
     except (DecisionSubmissionClaimError, SQLAlchemyError):
         session.rollback()

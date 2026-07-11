@@ -27,6 +27,7 @@ from .types import (
     DecisionSubmissionClaimHandle,
     DecisionSubmissionClaimResult,
     DecisionSubmissionClaimSnapshot,
+    DecisionSubmissionBoundaryResult,
     DecisionSubmissionClaimValidationError,
     DecisionSubmissionFenceError,
     DecisionSubmissionRecoveryClaimResult,
@@ -35,6 +36,7 @@ from .types import (
     DecisionSubmissionTerminalIdentity,
     RecoveryClaimAcquisitionOutcome,
     RecoveryObservationOutcome,
+    SubmissionBoundaryOutcome,
 )
 
 __all__ = [
@@ -51,6 +53,7 @@ __all__ = [
     "DecisionSubmissionClaimHandle",
     "DecisionSubmissionClaimResult",
     "DecisionSubmissionClaimSnapshot",
+    "DecisionSubmissionBoundaryResult",
     "DecisionSubmissionClaimValidationError",
     "DecisionSubmissionFenceError",
     "DecisionSubmissionRecoveryClaimResult",
@@ -59,6 +62,7 @@ __all__ = [
     "DecisionSubmissionTerminalIdentity",
     "RecoveryClaimAcquisitionOutcome",
     "RecoveryObservationOutcome",
+    "SubmissionBoundaryOutcome",
     "acquire_decision_submission_claim",
     "acquire_decision_submission_recovery_claim",
     "get_decision_submission_claim",
