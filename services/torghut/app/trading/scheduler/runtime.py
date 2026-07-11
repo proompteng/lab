@@ -887,30 +887,34 @@ class TradingScheduler(
         self._evaluate_safety_controls()
 
     def _set_trading_iteration_error(self, error: str | None) -> None:
-        previous_error = self.state.last_trading_error
+        previous_iteration_error = self._runtime_iteration_error()
         self.state.last_trading_error = error
-        self._refresh_runtime_iteration_error(previous_error=previous_error)
+        self._refresh_runtime_iteration_error(
+            previous_iteration_error=previous_iteration_error
+        )
 
     def _set_reconcile_iteration_error(self, error: str | None) -> None:
-        previous_error = self.state.last_reconcile_error
+        previous_iteration_error = self._runtime_iteration_error()
         self.state.last_reconcile_error = error
-        self._refresh_runtime_iteration_error(previous_error=previous_error)
+        self._refresh_runtime_iteration_error(
+            previous_iteration_error=previous_iteration_error
+        )
 
     def _set_autonomy_iteration_error(self, error: str | None) -> None:
-        previous_error = self.state.last_autonomy_error
+        previous_iteration_error = self._runtime_iteration_error()
         self.state.last_autonomy_error = error
-        self._refresh_runtime_iteration_error(previous_error=previous_error)
+        self._refresh_runtime_iteration_error(
+            previous_iteration_error=previous_iteration_error
+        )
 
     def _set_evidence_iteration_error(self, error: str | None) -> None:
-        previous_error = self.state.last_evidence_error
+        previous_iteration_error = self._runtime_iteration_error()
         self.state.last_evidence_error = error
-        self._refresh_runtime_iteration_error(previous_error=previous_error)
+        self._refresh_runtime_iteration_error(
+            previous_iteration_error=previous_iteration_error
+        )
 
-    def _refresh_runtime_iteration_error(
-        self,
-        *,
-        previous_error: str | None,
-    ) -> None:
+    def _runtime_iteration_error(self) -> str | None:
         active_errors = tuple(
             error
             for error in (
@@ -921,11 +925,17 @@ class TradingScheduler(
             )
             if error is not None
         )
-        if active_errors:
-            if self.state.last_error is None or self.state.last_error == previous_error:
-                self.state.last_error = ";".join(active_errors)
-        elif self.state.last_error == previous_error:
-            self.state.last_error = None
+        if not active_errors:
+            return None
+        return ";".join(active_errors)
+
+    def _refresh_runtime_iteration_error(
+        self,
+        *,
+        previous_iteration_error: str | None,
+    ) -> None:
+        if self.state.last_error in (None, previous_iteration_error):
+            self.state.last_error = self._runtime_iteration_error()
 
     async def _run_autonomy_iteration(self) -> None:
         try:

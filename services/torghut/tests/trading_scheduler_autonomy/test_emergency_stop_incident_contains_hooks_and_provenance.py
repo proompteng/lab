@@ -239,6 +239,32 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertIsNone(scheduler.state.last_evidence_error)
         self.assertIsNone(scheduler.state.last_error)
 
+    def test_successful_retries_clear_aggregate_iteration_error(self) -> None:
+        scheduler = TradingScheduler()
+
+        scheduler._set_trading_iteration_error("trading unavailable")
+        scheduler._set_reconcile_iteration_error("reconcile unavailable")
+
+        self.assertEqual(
+            scheduler.state.last_error,
+            "trading unavailable;reconcile unavailable",
+        )
+
+        scheduler._set_trading_iteration_error(None)
+        self.assertEqual(scheduler.state.last_error, "reconcile unavailable")
+
+        scheduler._set_reconcile_iteration_error(None)
+        self.assertIsNone(scheduler.state.last_error)
+
+    def test_iteration_recovery_preserves_non_iteration_runtime_error(self) -> None:
+        scheduler = TradingScheduler()
+        scheduler._set_trading_iteration_error("trading unavailable")
+        scheduler.state.last_error = "leadership_lost"
+
+        scheduler._set_trading_iteration_error(None)
+
+        self.assertEqual(scheduler.state.last_error, "leadership_lost")
+
     def test_run_reconcile_iteration_continues_with_partial_lane_failure(self) -> None:
         scheduler = TradingScheduler()
         failing_lane = _PipelineIterationStub(
