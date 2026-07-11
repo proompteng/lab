@@ -11,6 +11,7 @@ on:
       - unlabeled
     paths:
       - 'argocd/applications/torghut/knative-service.yaml'
+      - 'argocd/applications/torghut/scheduler-deployment.yaml'
       - 'argocd/applications/torghut/knative-service-sim.yaml'
       - 'argocd/applications/torghut/db-migrations-job.yaml'
       - 'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
@@ -85,6 +86,7 @@ jobs:
 
           allowed_paths=(
             'argocd/applications/torghut/knative-service.yaml'
+            'argocd/applications/torghut/scheduler-deployment.yaml'
             'argocd/applications/torghut/knative-service-sim.yaml'
             'argocd/applications/torghut/db-migrations-job.yaml'
             'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
