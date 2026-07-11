@@ -12,7 +12,7 @@ const defaultContractPath = '.artifacts/jangar/release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/jangar'
 
 const buildTriggerPathRegex =
-  /^(services\/jangar\/|services\/bumba\/|packages\/(agent-contracts|codex|cx-tools|design|discord|otel|temporal-bun-sdk)\/|nix\/images\/jangar\.nix$|nix\/images\/openai-codex-cli\.nix$|nix\/images\/bun-workspace-service\.nix$|nix\/packages\.nix$|nix\/cache-push\.sh$|nix\/ci-nix-oci-summary\.sh$|nix\/ci-run-timed\.sh$|nix\/oci-inspect-archive\.sh$|nix\/oci-push\.sh$|nix\/oci-release-contract\.sh$|flake\.lock$|bun\.lock$|tsconfig\.base\.json$)/
+  /^(services\/jangar\/|services\/bumba\/|packages\/(agent-contracts|codex|cx-tools|design|discord|otel|temporal-bun-sdk)\/|nix\/images\/jangar\.nix$|nix\/images\/openai-codex-cli\.nix$|nix\/images\/bun-workspace-service\.nix$|nix\/packages\.nix$|nix\/cache-push\.sh$|nix\/ci-nix-oci-summary\.sh$|nix\/ci-run-timed\.sh$|nix\/oci-inspect-archive\.sh$|nix\/oci-push\.sh$|flake\.lock$|bun\.lock$|tsconfig\.base\.json$)/
 
 type CliOptions = {
   eventName?: string
@@ -243,7 +243,7 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
     reason = stalenessDecision.reason
   } else {
     sourceSha = options.commitShaInput?.trim() || mainHead
-    tag = options.imageTagInput?.trim() || sourceSha.slice(0, 8)
+    tag = options.imageTagInput?.trim() || `sha-${sourceSha}`
     reason = 'manual-or-dispatch'
   }
 

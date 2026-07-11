@@ -57,6 +57,25 @@ count_image_cache_status() {
   echo "${count}"
 }
 
+count_image_cache_status_rows() {
+  local expected_status="$1"
+  if ! compgen -G "${log_dir}/image-cache-push-status-*.txt" >/dev/null; then
+    echo 0
+    return
+  fi
+  awk -F $'\t' -v expected="${expected_status}" '$1 == expected {count += 1} END {print count + 0}' \
+    "${log_dir}"/image-cache-push-status-*.txt
+}
+
+sum_image_cache_skipped_bytes() {
+  if ! compgen -G "${log_dir}/image-cache-push-status-*.txt" >/dev/null; then
+    echo 0
+    return
+  fi
+  awk -F $'\t' '$1 == "skipped-size" {total += $2} END {print total + 0}' \
+    "${log_dir}"/image-cache-push-status-*.txt
+}
+
 count_existing_image_archives() {
   local image_tar archive_count
   archive_count=0
@@ -98,6 +117,8 @@ image_archives="$(count_existing_image_archives)"
 image_archive_bytes="$(sum_existing_image_archive_bytes)"
 image_cache_warm_successes="$(count_image_cache_status succeeded)"
 image_cache_warm_failures="$(count_image_cache_status failed)"
+image_cache_warm_skipped_size="$(count_image_cache_status_rows skipped-size)"
+image_cache_warm_skipped_bytes="$(sum_image_cache_skipped_bytes)"
 
 {
   echo "## Nix OCI Cache Summary"
@@ -120,6 +141,8 @@ image_cache_warm_failures="$(count_image_cache_status failed)"
   echo "| Existing image archive bytes | ${image_archive_bytes} |"
   echo "| Image archive Attic warm successes | ${image_cache_warm_successes} |"
   echo "| Image archive Attic warm failures | ${image_cache_warm_failures} |"
+  echo "| Image archive Attic warm size skips | ${image_cache_warm_skipped_size} |"
+  echo "| Image archive Attic warm skipped bytes | ${image_cache_warm_skipped_bytes} |"
   echo
 
   if [[ -f "${timings_file}" ]]; then

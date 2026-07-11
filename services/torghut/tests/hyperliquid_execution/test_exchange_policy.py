@@ -205,11 +205,17 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
 
 class _FakeSdkInfo:
     def __init__(self) -> None:
-        self.name_to_coin: dict[str, int] = {
+        self.name_to_coin: dict[str, object] = {
             "NVDA": 0,
             "HALT": 1,
             "AMD": 2,
             "SPX": 3,
+        }
+        self.coin_to_asset: dict[object, int] = {
+            0: 110000,
+            1: 110001,
+            2: 110002,
+            3: 110003,
         }
 
 

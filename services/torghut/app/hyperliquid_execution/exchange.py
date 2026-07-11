@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import replace
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
@@ -33,6 +33,7 @@ _SUPPORTED_LIMIT_TIFS = {"Ioc"}
 _BPS_DENOMINATOR = Decimal("10000")
 _BOOK_UNAVAILABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     AttributeError,
+    InvalidOperation,
     LookupError,
     OSError,
     RuntimeError,
@@ -533,6 +534,7 @@ class HyperliquidSdkExecutionExchange:
                 self._config.exchange_api_url,
                 skip_ws=True,
                 perp_dexs=list(perp_dexs),
+                timeout=float(self._config.exchange_staleness_seconds),
             )
             self._sdk_info_perp_dexs = perp_dexs
         return self._sdk_info

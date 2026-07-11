@@ -32,13 +32,18 @@ def managed_exchange_positions(
     persisted_positions: Sequence[Mapping[str, object]],
     raw_exchange_positions: Sequence[Mapping[str, object]],
     selected_symbols: Sequence[str],
+    configured_symbols: Sequence[str] = (),
 ) -> list[Mapping[str, object]]:
     managed_coins = position_coin_set(persisted_positions)
-    managed_coins.update(selected_symbols)
+    managed_coins.update(_canonical_coin(symbol) for symbol in selected_symbols)
+    managed_coins.update(_canonical_coin(symbol) for symbol in configured_symbols)
     return [
         position
         for position in raw_exchange_positions
-        if _optional_text(position.get("coin")) in managed_coins
+        if (
+            (coin := _optional_text(position.get("coin"))) is not None
+            and _canonical_coin(coin) in managed_coins
+        )
     ]
 
 
@@ -56,8 +61,14 @@ def unmanaged_exchange_positions(
 
 def position_coin_set(rows: Sequence[Mapping[str, object]]) -> set[str]:
     return {
-        coin for row in rows if (coin := _optional_text(row.get("coin"))) is not None
+        _canonical_coin(coin)
+        for row in rows
+        if (coin := _optional_text(row.get("coin"))) is not None
     }
+
+
+def _canonical_coin(value: str) -> str:
+    return value.strip().split(":")[-1].upper()
 
 
 def _account_position_rows(

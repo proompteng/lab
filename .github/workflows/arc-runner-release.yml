@@ -98,10 +98,6 @@ jobs:
             changed_paths="$(git diff --name-only "${source_sha}..HEAD")"
             arc_image_input_changes="$(
               printf '%s\n' "${changed_paths}" | grep -E \
-                -e '^\.github/actions/setup-nix-toolchain/' \
-                -e '^\.github/workflows/arc-runner-build-push\.yml$' \
-                -e '^\.github/workflows/nix-oci-build-common\.yml$' \
-                -e '^flake\.nix$' \
                 -e '^flake\.lock$' \
                 -e '^nix/images/arc-runner\.nix$' \
                 -e '^nix/packages\.nix$' \
@@ -113,7 +109,6 @@ jobs:
                 -e '^nix/oci-doctor\.sh$' \
                 -e '^nix/oci-inspect-archive\.sh$' \
                 -e '^nix/oci-push\.sh$' \
-                -e '^nix/oci-release-contract\.sh$' \
                 -e '^nix/toolchain-doctor\.sh$' || true
             )"
             if [[ -n "${arc_image_input_changes}" ]]; then

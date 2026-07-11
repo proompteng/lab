@@ -23,6 +23,8 @@ This is the final report for the enabled-app Nix build performance rollout as of
   `.github/workflows/froussard-ci.yml`, `.github/workflows/arc-runner-build-push.yml`, and
   `.github/workflows/attic-build-push.yaml`, and `.github/workflows/headlamp-ci.yml` using
   `.github/workflows/nix-oci-build-common.yml`; product apps use `.github/workflows/product-nix-images.yml`;
+  the Symphony family uses `.github/workflows/symphony-build-push.yaml` and
+  `.github/workflows/symphony-release.yml`;
   Jangar uses `.github/workflows/jangar-build-push.yaml`; Agents uses `.github/workflows/agents-build-push.yml`;
   Torghut uses `.github/workflows/torghut-build-push.yaml`, `.github/workflows/torghut-ta-build-push.yaml`,
   `.github/workflows/torghut-ws-build-push.yaml`, and `.github/workflows/torghut-hyperliquid-feed-build-push.yaml`.
@@ -634,8 +636,20 @@ Current enabled-app readback plus Olden's final pre-disable evidence:
 ### Product Cache Status
 
 The product build jobs used Attic setup and pushed build-platform helper closures plus image archive closures to Attic.
-The release contracts prove digest and platform identity, but they do not include normalized `cacheProvenance` objects.
-This checkpoint therefore records job wall times and does not claim cache-hit counts.
+The same run's performance summaries provide normalized cache and phase evidence from the real build jobs:
+
+| Service/platform | Attic substitutions | cache.nixos.org substitutions | Local builds | Planned local blocks | Build archive | Push platform image |
+| ---------------- | ------------------: | -----------------------------: | -----------: | -------------------: | ------------: | ------------------: |
+| `docs/amd64` | 0 | 45 | 14 | 2 | 81s | 63s |
+| `docs/arm64` | 1 | 14 | 1 | 1 | 71s | 50s |
+| `app/amd64` | 1 | 14 | 1 | 1 | 322s | 73s |
+| `app/arm64` | 0 | 45 | 14 | 2 | 406s | 97s |
+| `olden/amd64` | 1 | 14 | 1 | 1 | 61s | 57s |
+| `olden/arm64` | 1 | 14 | 1 | 1 | 85s | 54s |
+| `proompteng/amd64` | 0 | 45 | 14 | 2 | 70s | 72s |
+| `proompteng/arm64` | 0 | 45 | 14 | 2 | 150s | 57s |
+| `synthesis/amd64` | 1 | 14 | 1 | 1 | 123s | 53s |
+| `synthesis/arm64` | 0 | 45 | 14 | 2 | 312s | 69s |
 
 The July 4 product run is not yet a clean performance win across the board: `app` arm64 took `41m31s` and `synthesis`
 arm64 took `29m31s`, largely in image archive warming. The next product optimization should reduce or bound closure
@@ -770,7 +784,8 @@ Current readback:
 - Deployment status: `ready=1`, `available=1`, `updated=1`, generation equals observed generation
 - Pod: `jangar-5747b5586b-vd62t`, `2/2 Running`, `0` restarts
 - Service endpoints: `10.244.5.21:8080`
-- Readiness smoke: `http://jangar/healthz` returned `200` from an in-cluster `curlimages/curl` pod.
+- Readiness smoke: `http://jangar/health` returned `200` from an in-cluster `curlimages/curl` pod, matching the
+  deployed readiness probe and current Jangar health route.
 
 Post-deploy verifier run [28760860423](https://github.com/proompteng/lab/actions/runs/28760860423) proved the
 full Jangar runtime verifier contract on `main`:
@@ -877,6 +892,20 @@ Current readback:
 - in-cluster service smoke:
   - `http://agents/ready` returned `HTTP 200`
   - `http://agents-shell/readyz` returned `HTTP 200`
+
+Runner execution proof was completed on 2026-07-11 with AgentRun
+`agents-shell-audit-every-unresolved-review-thread-auth-eb474464`:
+
+- AgentRun phase: `Succeeded`
+- runtime Job: `agents-shell-audit-every-unresolved-review-thread-auth-2ca59ed6`
+- runner image:
+  `registry.ide-newton.ts.net/lab/agents-codex-runner:sha-350c4bde2ca3ed0f704c959eb2c386c9010cc606@sha256:1e9e47aaedadf5429de22359e48262520cb2787f38dbd29bc0971aaaf52e80c7`
+- runner adapter/model: `codex-app-server` / `gpt-5.5`
+- execution window: `2026-07-11T16:51:14Z` through `2026-07-11T16:59:49Z`
+- workload result: searched 461 merged pull requests and enumerated 94 unresolved Codex review threads across
+  61 merged pull requests
+- runner exit code: `0`; Kubernetes Job reached `Complete` with one succeeded pod
+- no repository changes or pull request were created by the audit run
 
 ### Agents Cache Status
 

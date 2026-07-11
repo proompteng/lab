@@ -106,7 +106,15 @@ runs:
         set -euo pipefail
         export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
         store_info_log="$(mktemp)"
-        if nix store info >"${store_info_log}" 2>&1; then
+        write_probe="$(mktemp)"
+        trap 'rm -f "${store_info_log}" "${write_probe}"' EXIT
+        printf 'lab-nix-store-write-probe\n' > "${write_probe}"
+
+        probe_store_write() {
+          nix store add-file "${write_probe}" >/dev/null
+        }
+
+        if nix store info >"${store_info_log}" 2>&1 && probe_store_write; then
           rm -f "${store_info_log}"
           exit 0
         fi
@@ -114,11 +122,13 @@ runs:
           echo 'NIX_REMOTE=daemon' >> "${GITHUB_ENV}"
           export NIX_REMOTE=daemon
           nix store info
+          probe_store_write
           rm -f "${store_info_log}"
           exit 0
         fi
         real_nix="$(command -v nix)"
-        if sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" store info >/dev/null 2>&1; then
+        if sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" store info >/dev/null 2>&1 &&
+          sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" store add-file "${write_probe}" >/dev/null 2>&1; then
           wrapper_dir="${RUNNER_TEMP:-/tmp}/lab-nix-sudo-wrapper"
           mkdir -p "${wrapper_dir}"
           cat > "${wrapper_dir}/nix" <<EOF
@@ -129,7 +139,9 @@ runs:
           chmod +x "${wrapper_dir}/nix"
           echo "${wrapper_dir}" >> "${GITHUB_PATH}"
           echo 'LAB_NIX_WITH_SUDO=true' >> "${GITHUB_ENV}"
+          echo "LAB_NIX_WRAPPER_DIR=${wrapper_dir}" >> "${GITHUB_ENV}"
           PATH="${wrapper_dir}:${PATH}" nix store info
+          PATH="${wrapper_dir}:${PATH}" nix store add-file "${write_probe}" >/dev/null
           rm -f "${store_info_log}"
           exit 0
         fi
@@ -145,7 +157,8 @@ runs:
         REQUIRE_PREINSTALLED: ${{ inputs.require-preinstalled }}
       run: |
         set -euo pipefail
-        export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+        wrapper_prefix="${LAB_NIX_WRAPPER_DIR:+${LAB_NIX_WRAPPER_DIR}:}"
+        export PATH="${wrapper_prefix}${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
         missing=()
         required_commands=(
           nix

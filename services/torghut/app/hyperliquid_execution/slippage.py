@@ -12,7 +12,10 @@ def sdk_mid_price(info: object, coin: str, dex: str) -> Decimal | None:
     raw_mid = cast(Mapping[str, object], mid_loader(**{"dex": dex})).get(coin)
     if raw_mid is None:
         return None
-    return Decimal(str(raw_mid))
+    mid_price = Decimal(str(raw_mid))
+    if not mid_price.is_finite() or mid_price <= Decimal("0"):
+        raise ValueError("invalid_mid_price")
+    return mid_price
 
 
 def sdk_slippage_limit_price(

@@ -13,7 +13,7 @@ on:
         required: false
         type: string
       image_tag:
-        description: Image tag to promote (defaults to source short SHA)
+        description: Image tag to promote (defaults to sha-<full commit SHA>)
         required: false
         type: string
       image_digest:
@@ -130,7 +130,6 @@ jobs:
                     nix/ci-run-timed.sh \
                     nix/oci-inspect-archive.sh \
                     nix/oci-push.sh \
-                    nix/oci-release-contract.sh \
                     flake.lock
                 )"
                 if [ -n "${WS_CHANGES}" ]; then
@@ -152,7 +151,7 @@ jobs:
             if [ -n "${IMAGE_TAG_INPUT}" ]; then
               TAG="${IMAGE_TAG_INPUT}"
             else
-              TAG="$(git rev-parse --short=8 "${SOURCE_SHA}")"
+              TAG="sha-${SOURCE_SHA}"
             fi
           fi
 

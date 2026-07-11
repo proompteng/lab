@@ -24,7 +24,6 @@ const buildTriggerPathPatterns = [
   /^nix\/ci-run-timed\.sh$/,
   /^nix\/oci-inspect-archive\.sh$/,
   /^nix\/oci-push\.sh$/,
-  /^nix\/oci-release-contract\.sh$/,
   /^flake\.lock$/,
   /^package\.json$/,
   /^bun\.lock$/,
@@ -228,7 +227,7 @@ export const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): 
     reason = stalenessDecision.reason
   } else {
     sourceSha = options.commitShaInput?.trim() || mainHead
-    tag = options.imageTagInput?.trim() || sourceSha.slice(0, 8)
+    tag = options.imageTagInput?.trim() || `sha-${sourceSha}`
     reason = 'manual-or-dispatch'
   }
 

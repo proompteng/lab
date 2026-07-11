@@ -94,6 +94,7 @@ class LoopStatusOptions:
     min_recent_fills: int = DEFAULT_MIN_RECENT_FILLS
     freshness_threshold_seconds: int = DEFAULT_FRESHNESS_THRESHOLD_SECONDS
     account_freshness_seconds: int = DEFAULT_ACCOUNT_FRESHNESS_SECONDS
+    configured_symbols: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -297,6 +298,7 @@ def _proof_summary(
         rows.positions,
         raw_exchange_positions,
         _selected_symbols(rows),
+        options.configured_symbols,
     )
     return LoopProofSummary(
         query_errors=tuple(rows.query_errors),

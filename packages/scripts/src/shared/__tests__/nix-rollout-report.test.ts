@@ -128,6 +128,58 @@ describe('Nix rollout report', () => {
     expect(report.releaseContracts.missingForNixImages).toEqual(['app'])
   })
 
+  it('rejects truncated digests even when they use the sha256 prefix', () => {
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'app',
+          nixImageAttr: 'app-image',
+          buildScriptPath: 'packages/scripts/src/app/build-image.ts',
+          deployScriptPath: 'packages/scripts/src/app/deploy-service.ts',
+          workflowPaths: ['.github/workflows/product-nix-images.yml'],
+        }),
+      ]),
+      releaseContracts: [
+        validContract({ digest: 'sha256:todo', reference: 'registry.ide-newton.ts.net/lab/app@sha256:todo' }),
+      ],
+      requireContracts: true,
+    })
+
+    expect(report.releaseContracts.valid).toBe(0)
+    expect(report.releaseContracts.invalid[0]).toContain('digest is not a full sha256 digest')
+    expect(report.releaseContracts.missingForNixImages).toEqual(['app'])
+  })
+
+  it('requires release-contract coverage for every image owned by a Nix app', () => {
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'agents',
+          repoImages: [
+            'registry.ide-newton.ts.net/lab/agents-controller',
+            'registry.ide-newton.ts.net/lab/agents-runner',
+          ],
+          nixImageAttr: 'agents-controller-image',
+          buildScriptPath: 'packages/scripts/src/agents/build-image.ts',
+          deployScriptPath: 'packages/scripts/src/agents/deploy-service.ts',
+          workflowPaths: ['.github/workflows/agents-build-push.yml'],
+        }),
+      ]),
+      releaseContracts: [
+        validContract({
+          service: 'agents-controller',
+          image: 'registry.ide-newton.ts.net/lab/agents-controller',
+          reference:
+            'registry.ide-newton.ts.net/lab/agents-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          packageAttr: 'agents-controller-image',
+        }),
+      ],
+      requireContracts: true,
+    })
+
+    expect(report.releaseContracts.missingForNixImages).toEqual(['agents:registry.ide-newton.ts.net/lab/agents-runner'])
+  })
+
   it('formats a markdown report with inventory and gate sections', () => {
     const report = buildNixRolloutReport({
       inventory: inventory([
