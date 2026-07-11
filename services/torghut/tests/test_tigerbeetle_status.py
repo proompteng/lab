@@ -17,6 +17,7 @@ from app.api.health_checks import (
     tigerbeetle_status_int,
 )
 from app.api.health_checks import tigerbeetle_health as health_checks_context
+from app.api.status_helpers import budget_unavailable_tigerbeetle_ledger_payload
 from app.models import (
     Base,
     StrategyRuntimeLedgerBucket,
@@ -383,6 +384,17 @@ class TestTigerBeetleStatus(TestCase):
         self.assertTrue(payload["protocol_ok"])
         self.assertFalse(payload["reconciliation_required"])
         self.assertNotIn("tigerbeetle_reconciliation_missing", payload["blockers"])
+
+    def test_budget_unavailable_payload_keeps_reconciliation_optional(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        settings.tigerbeetle_reconcile_required = False
+
+        payload = budget_unavailable_tigerbeetle_ledger_payload("budget_unavailable")
+
+        self.assertTrue(payload["required"])
+        self.assertFalse(payload["reconcile_required"])
+        self.assertFalse(payload["reconciliation_required"])
 
     def test_missing_reconciliation_blocks_only_when_required(self) -> None:
         settings.tigerbeetle_reconcile_required = True
