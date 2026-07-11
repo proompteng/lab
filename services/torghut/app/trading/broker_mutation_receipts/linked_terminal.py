@@ -43,13 +43,12 @@ from .persistence import (
     load_receipt_snapshot,
 )
 from .types import (
+    BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationLinkedSubmissionTerminalResult,
     BrokerMutationReceiptHandle,
     BrokerMutationReceiptSnapshot,
     BrokerMutationSettlement,
-    BrokerMutationSettlementOutcome,
     BrokerMutationSettlementRequest,
-    BrokerMutationSettlementSource,
 )
 from .validation import (
     BrokerMutationReceiptConflictError,
@@ -67,17 +66,12 @@ _SUCCESS_OUTCOMES: frozenset[str] = frozenset({"acknowledged", "reconciled"})
 
 
 def build_linked_submission_terminal_settlement(
-    *,
-    source: BrokerMutationSettlementSource,
-    outcome: BrokerMutationSettlementOutcome,
-    claim_handle: DecisionSubmissionClaimHandle,
-    broker_status: str,
-    rejection_code: str | None,
-    broker_reference: str | None,
-    execution_id: uuid.UUID | str | None,
+    request: BrokerMutationLinkedSubmissionSettlementRequest,
 ) -> BrokerMutationSettlement:
     """Build the exact sanitized evidence envelope bound to a submission claim."""
 
+    source = request.source
+    outcome = request.outcome
     if source != "primary":
         raise BrokerMutationReceiptValidationError(
             "linked_submission_terminal_source_invalid"
@@ -87,17 +81,20 @@ def build_linked_submission_terminal_settlement(
             "linked_submission_terminal_outcome_invalid"
         )
     status = _stable_broker_value(
-        broker_status,
+        request.broker_status,
         field="broker_status",
         maximum=64,
     )
-    code = _linked_rejection_code(outcome=outcome, rejection_code=rejection_code)
+    code = _linked_rejection_code(
+        outcome=outcome,
+        rejection_code=request.rejection_code,
+    )
     if outcome == "rejected":
-        if broker_reference is not None or execution_id is not None:
+        if request.broker_reference is not None or request.execution_id is not None:
             raise BrokerMutationReceiptValidationError(
                 "linked_submission_rejection_forbids_execution_identity"
             )
-    elif broker_reference is None or execution_id is None:
+    elif request.broker_reference is None or request.execution_id is None:
         raise BrokerMutationReceiptValidationError(
             "linked_submission_success_requires_execution_identity"
         )
@@ -105,13 +102,13 @@ def build_linked_submission_terminal_settlement(
         BrokerMutationSettlementRequest(
             source=source,
             outcome=outcome,
-            broker_reference=broker_reference,
-            execution_id=execution_id,
+            broker_reference=request.broker_reference,
+            execution_id=request.execution_id,
             evidence_payload={
                 "schema_version": LINKED_SUBMISSION_TERMINAL_SCHEMA_VERSION,
-                "decision_id": str(claim_handle.decision_id),
-                "account_label": claim_handle.account_label,
-                "client_order_id": claim_handle.client_order_id,
+                "decision_id": str(request.claim_handle.decision_id),
+                "account_label": request.claim_handle.account_label,
+                "client_order_id": request.claim_handle.client_order_id,
                 "broker_status": status,
                 "rejection_code": code,
             },

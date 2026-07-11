@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import settings
 from app.trading.broker_mutation_receipts import (
+    BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationReceiptAcquireOptions,
     BrokerMutationReceiptAcquireResult,
     BrokerMutationReceiptConflictError,
@@ -157,13 +158,15 @@ def _success_settlement(
     broker_order_id: str,
 ):
     return build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="acknowledged",
-        claim_handle=fixture.claim_handle,
-        broker_status="accepted",
-        rejection_code=None,
-        broker_reference=broker_order_id,
-        execution_id=execution_id,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="acknowledged",
+            claim_handle=fixture.claim_handle,
+            broker_status="accepted",
+            rejection_code=None,
+            broker_reference=broker_order_id,
+            execution_id=execution_id,
+        )
     )
 
 
@@ -259,13 +262,15 @@ def test_linked_primary_rejection_never_fabricates_execution(
 ) -> None:
     fixture, acquired = _enter_linked_io(terminal_harness)
     settlement = build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="rejected",
-        claim_handle=fixture.claim_handle,
-        broker_status="rejected",
-        rejection_code="broker_rejected",
-        broker_reference=None,
-        execution_id=None,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="rejected",
+            claim_handle=fixture.claim_handle,
+            broker_status="rejected",
+            rejection_code="broker_rejected",
+            broker_reference=None,
+            execution_id=None,
+        )
     )
     with terminal_harness.sessions() as session:
         terminal = settle_linked_submission_primary(
@@ -289,13 +294,15 @@ def test_linked_primary_rejection_never_fabricates_execution(
     assert execution_count == 0
 
     drift = build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="rejected",
-        claim_handle=fixture.claim_handle,
-        broker_status="rejected",
-        rejection_code="risk_rejected",
-        broker_reference=None,
-        execution_id=None,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="rejected",
+            claim_handle=fixture.claim_handle,
+            broker_status="rejected",
+            rejection_code="risk_rejected",
+            broker_reference=None,
+            execution_id=None,
+        )
     )
     with terminal_harness.sessions() as session:
         with pytest.raises(
@@ -440,13 +447,15 @@ def test_postgres_0061_rejects_each_standalone_terminal_half(
     execution_id = uuid.uuid4()
     broker_order_id = "raw-half"
     rejected_settlement = build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="rejected",
-        claim_handle=fixture.claim_handle,
-        broker_status="rejected",
-        rejection_code="raw_rejected",
-        broker_reference=None,
-        execution_id=None,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="rejected",
+            claim_handle=fixture.claim_handle,
+            broker_status="rejected",
+            rejection_code="raw_rejected",
+            broker_reference=None,
+            execution_id=None,
+        )
     )
 
     with pytest.raises(DBAPIError, match="linked nonterminal state is asymmetric"):
@@ -825,22 +834,26 @@ def test_linked_rejection_race_preserves_first_terminal_evidence(
 ) -> None:
     fixture, acquired = _enter_linked_io(terminal_harness)
     first = build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="rejected",
-        claim_handle=fixture.claim_handle,
-        broker_status="rejected",
-        rejection_code="first_rejection",
-        broker_reference=None,
-        execution_id=None,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="rejected",
+            claim_handle=fixture.claim_handle,
+            broker_status="rejected",
+            rejection_code="first_rejection",
+            broker_reference=None,
+            execution_id=None,
+        )
     )
     conflicting = build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="rejected",
-        claim_handle=fixture.claim_handle,
-        broker_status="rejected",
-        rejection_code="second_rejection",
-        broker_reference=None,
-        execution_id=None,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="rejected",
+            claim_handle=fixture.claim_handle,
+            broker_status="rejected",
+            rejection_code="second_rejection",
+            broker_reference=None,
+            execution_id=None,
+        )
     )
     terminal_inserted = Event()
     release_winner = Event()

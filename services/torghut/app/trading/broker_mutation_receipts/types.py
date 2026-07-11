@@ -253,6 +253,19 @@ class BrokerMutationLinkedSubmissionTerminalResult:
 
 
 @dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionSettlementRequest:
+    """Untrusted broker terminal fields bound to one submission claim."""
+
+    source: str
+    outcome: str
+    claim_handle: DecisionSubmissionClaimHandle
+    broker_status: str
+    rejection_code: str | None
+    broker_reference: str | None
+    execution_id: uuid.UUID | str | None
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerMutationReceiptAcquireResult:
     outcome: BrokerMutationReceiptAcquireOutcome
     receipt: BrokerMutationReceiptSnapshot
@@ -371,6 +384,7 @@ __all__ = [
     "BrokerMutationIoPermit",
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
+    "BrokerMutationLinkedSubmissionSettlementRequest",
     "BrokerMutationLinkedSubmissionTerminalResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",

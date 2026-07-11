@@ -24,6 +24,7 @@ from app.trading.broker_mutation_receipts.canonicalization import (
 )
 from app.trading.broker_mutation_receipts.types import (
     BrokerMutationIntentRequest,
+    BrokerMutationLinkedSubmissionSettlementRequest,
     BrokerMutationRecoveryObservationRequest,
     BrokerMutationSettlementRequest,
     BrokerMutationTarget,
@@ -411,13 +412,15 @@ def test_linked_terminal_builder_binds_exact_claim_and_rejection_semantics() -> 
         claim_owner="writer-a",
     )
     settlement = build_linked_submission_terminal_settlement(
-        source="primary",
-        outcome="rejected",
-        claim_handle=handle,
-        broker_status="rejected",
-        rejection_code="insufficient_buying_power",
-        broker_reference=None,
-        execution_id=None,
+        BrokerMutationLinkedSubmissionSettlementRequest(
+            source="primary",
+            outcome="rejected",
+            claim_handle=handle,
+            broker_status="rejected",
+            rejection_code="insufficient_buying_power",
+            broker_reference=None,
+            execution_id=None,
+        )
     )
     document = json.loads(settlement.evidence_json)
     assert document["evidence"] == {
@@ -430,64 +433,76 @@ def test_linked_terminal_builder_binds_exact_claim_and_rejection_semantics() -> 
     }
     with pytest.raises(BrokerMutationReceiptValidationError):
         build_linked_submission_terminal_settlement(
-            source="primary",
-            outcome="rejected",
-            claim_handle=handle,
-            broker_status="rejected",
-            rejection_code=None,
-            broker_reference=None,
-            execution_id=None,
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="primary",
+                outcome="rejected",
+                claim_handle=handle,
+                broker_status="rejected",
+                rejection_code=None,
+                broker_reference=None,
+                execution_id=None,
+            )
         )
     with pytest.raises(BrokerMutationReceiptValidationError):
         build_linked_submission_terminal_settlement(
-            source="primary",
-            outcome="acknowledged",
-            claim_handle=handle,
-            broker_status="accepted",
-            rejection_code=None,
-            broker_reference="broker-order",
-            execution_id=None,
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="primary",
+                outcome="acknowledged",
+                claim_handle=handle,
+                broker_status="accepted",
+                rejection_code=None,
+                broker_reference="broker-order",
+                execution_id=None,
+            )
         )
     with pytest.raises(
         BrokerMutationReceiptValidationError,
         match="linked_submission_terminal_source_invalid",
     ):
         build_linked_submission_terminal_settlement(
-            source="recovery",
-            outcome="reconciled",
-            claim_handle=handle,
-            broker_status="accepted",
-            rejection_code=None,
-            broker_reference="broker-order",
-            execution_id=uuid.uuid4(),
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="recovery",
+                outcome="reconciled",
+                claim_handle=handle,
+                broker_status="accepted",
+                rejection_code=None,
+                broker_reference="broker-order",
+                execution_id=uuid.uuid4(),
+            )
         )
     with pytest.raises(BrokerMutationReceiptValidationError):
         build_linked_submission_terminal_settlement(
-            source="primary",
-            outcome="rejected",
-            claim_handle=handle,
-            broker_status="rejected",
-            rejection_code="broker_rejected",
-            broker_reference="broker-order",
-            execution_id=None,
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="primary",
+                outcome="rejected",
+                claim_handle=handle,
+                broker_status="rejected",
+                rejection_code="broker_rejected",
+                broker_reference="broker-order",
+                execution_id=None,
+            )
         )
     with pytest.raises(BrokerMutationReceiptValidationError):
         build_linked_submission_terminal_settlement(
-            source="primary",
-            outcome="acknowledged",
-            claim_handle=handle,
-            broker_status="accepted",
-            rejection_code="unexpected_code",
-            broker_reference="broker-order",
-            execution_id=uuid.uuid4(),
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="primary",
+                outcome="acknowledged",
+                claim_handle=handle,
+                broker_status="accepted",
+                rejection_code="unexpected_code",
+                broker_reference="broker-order",
+                execution_id=uuid.uuid4(),
+            )
         )
     with pytest.raises(BrokerMutationReceiptValidationError):
         build_linked_submission_terminal_settlement(
-            source="primary",
-            outcome="rejected",
-            claim_handle=handle,
-            broker_status="rejected",
-            rejection_code="Not Stable",
-            broker_reference=None,
-            execution_id=None,
+            BrokerMutationLinkedSubmissionSettlementRequest(
+                source="primary",
+                outcome="rejected",
+                claim_handle=handle,
+                broker_status="rejected",
+                rejection_code="Not Stable",
+                broker_reference=None,
+                execution_id=None,
+            )
         )
