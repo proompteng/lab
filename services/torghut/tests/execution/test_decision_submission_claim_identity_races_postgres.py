@@ -4,7 +4,6 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 from threading import Barrier, Event
-from typing import Any
 
 import pytest
 from alembic import command
@@ -75,10 +74,10 @@ def _assert_app_acquire_locks_before_parent(engine: Engine) -> None:
 
     def pause_after_lock(
         _connection: Connection,
-        _cursor: Any,
+        _cursor: object,
         statement: str,
-        _parameters: Any,
-        _context: Any,
+        _parameters: object,
+        _context: object,
         _executemany: bool,
     ) -> None:
         if "torghut_lock_submission_identities" in statement:
@@ -164,10 +163,10 @@ def _assert_app_boundary_locks_before_parent(engine: Engine) -> None:
 
     def pause_after_lock(
         _connection: Connection,
-        _cursor: Any,
+        _cursor: object,
         statement: str,
-        _parameters: Any,
-        _context: Any,
+        _parameters: object,
+        _context: object,
         _executemany: bool,
     ) -> None:
         if "torghut_lock_submission_identities" in statement:
