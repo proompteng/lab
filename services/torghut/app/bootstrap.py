@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -13,11 +14,86 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from .api.build_metadata import BUILD_COMMIT, BUILD_VERSION
 from .config import settings
-from .db import ensure_schema
+from .db import SessionLocal, ensure_schema
 from .observability import capture_posthog_event, shutdown_posthog_telemetry
+from .trading.autonomy import assert_runtime_gate_policy_contract
 from .trading.scheduler import TradingScheduler
+from .trading.scheduler.leadership import (
+    DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME,
+    SchedulerLeadershipError,
+)
+from .whitepapers import WhitepaperKafkaWorker, whitepaper_workflow_enabled
 
 logger = logging.getLogger(__name__)
+
+_MAIN_PROCESS_ROLES = frozenset({"api", "simulation"})
+
+
+def _assert_main_process_role_contract() -> bool:
+    """Return whether this main process owns an isolated embedded scheduler."""
+
+    process_role = settings.process_role
+    if process_role not in _MAIN_PROCESS_ROLES:
+        raise RuntimeError(
+            "torghut_api_process_role_mismatch:expected=api|simulation:"
+            f"actual={process_role}"
+        )
+    if process_role != "simulation":
+        return False
+    if settings.trading_mode != "paper":
+        raise RuntimeError(
+            "torghut_simulation_process_mode_mismatch:expected=paper:"
+            f"actual={settings.trading_mode}"
+        )
+    if settings.trading_enabled and not settings.trading_scheduler_leadership_required:
+        raise RuntimeError("torghut_simulation_scheduler_leadership_required")
+    if (
+        settings.trading_enabled
+        and settings.trading_scheduler_leadership_lock_name
+        == DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME
+    ):
+        raise RuntimeError("torghut_simulation_scheduler_lock_must_be_isolated")
+    return True
+
+
+async def _supervise_embedded_scheduler(scheduler: TradingScheduler) -> None:
+    """Retry only expected leadership contention during a Knative handoff."""
+
+    retry_seconds = settings.trading_scheduler_leadership_check_seconds
+    while True:
+        try:
+            await scheduler.start()
+            return
+        except SchedulerLeadershipError as exc:
+            logger.info(
+                "Simulation scheduler standing by for writer leadership retry_seconds=%s error=%s",
+                retry_seconds,
+                exc,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # pragma: no cover - defensive supervisor boundary
+            scheduler.state.last_error = (
+                f"scheduler_startup_supervisor_failed:{type(exc).__name__}"
+            )
+            logger.exception(
+                "Simulation scheduler supervisor stopped after non-retryable startup failure"
+            )
+            return
+        await asyncio.sleep(retry_seconds)
+
+
+async def _stop_embedded_scheduler_supervisor(
+    supervisor: asyncio.Task[None] | None,
+) -> None:
+    if supervisor is None:
+        return
+    if not supervisor.done():
+        supervisor.cancel()
+    try:
+        await supervisor
+    except asyncio.CancelledError:
+        pass
 
 
 def _evaluate_scheduler_status(
@@ -83,16 +159,20 @@ def _assert_dspy_cutover_migration_guard() -> None:
 async def lifespan(app: FastAPI):
     """Run startup/shutdown tasks using FastAPI lifespan hooks."""
 
-    if settings.process_role != "api":
-        raise RuntimeError(
-            "torghut_api_process_role_mismatch:expected=api:"
-            f"actual={settings.process_role}"
-        )
+    owns_embedded_scheduler = _assert_main_process_role_contract()
 
     scheduler = TradingScheduler()
+    whitepaper_worker = (
+        WhitepaperKafkaWorker(session_factory=SessionLocal)
+        if owns_embedded_scheduler
+        else None
+    )
     app.state.trading_scheduler = scheduler
+    if whitepaper_worker is not None:
+        app.state.whitepaper_worker = whitepaper_worker
+    scheduler_supervisor: asyncio.Task[None] | None = None
     logger.info(
-        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s process_role=%s log_level=%s log_format=%s trading_enabled=%s",
+        "Torghut startup initiated build_version=%s build_commit=%s app_env=%s process_role=%s log_level=%s log_format=%s trading_enabled=%s background_worker_owner=%s",
         BUILD_VERSION,
         BUILD_COMMIT,
         settings.app_env,
@@ -100,19 +180,46 @@ async def lifespan(app: FastAPI):
         settings.log_level,
         settings.log_format,
         settings.trading_enabled,
+        "local" if owns_embedded_scheduler else "external",
     )
 
     try:
-        ensure_schema()
-    except SQLAlchemyError as exc:  # pragma: no cover - defensive for startup only
-        logger.warning("Database not reachable during startup: %s", exc)
+        if owns_embedded_scheduler:
+            ensure_schema()
+            if settings.trading_autonomy_enabled:
+                assert_runtime_gate_policy_contract(
+                    settings.trading_autonomy_gate_policy_path
+                )
+            if settings.trading_enabled:
+                _assert_dspy_cutover_migration_guard()
+                scheduler_supervisor = asyncio.create_task(
+                    _supervise_embedded_scheduler(scheduler),
+                    name="torghut-simulation-scheduler-supervisor",
+                )
+                app.state.trading_scheduler_supervisor = scheduler_supervisor
+            if whitepaper_worker is not None and whitepaper_workflow_enabled():
+                await whitepaper_worker.start()
+        else:
+            try:
+                ensure_schema()
+            except SQLAlchemyError as exc:  # pragma: no cover - startup defense only
+                logger.warning("Database not reachable during startup: %s", exc)
 
-    logger.info("Torghut startup complete background_worker_owner=external")
-
-    try:
+        logger.info(
+            "Torghut startup complete trading_scheduler_started=%s whitepaper_worker_started=%s background_worker_owner=%s",
+            bool(getattr(scheduler, "_task", None)),
+            bool(
+                whitepaper_worker is not None
+                and getattr(whitepaper_worker, "_task", None)
+            ),
+            "local" if owns_embedded_scheduler else "external",
+        )
         yield
     finally:
         logger.info("Torghut shutdown initiated")
+        await _stop_embedded_scheduler_supervisor(scheduler_supervisor)
+        if whitepaper_worker is not None:
+            await whitepaper_worker.stop()
         await scheduler.stop()
         shutdown_posthog_telemetry()
         logger.info("Torghut shutdown complete")
@@ -164,6 +271,9 @@ evaluate_scheduler_status = _evaluate_scheduler_status
 
 __all__ = [
     "_assert_dspy_cutover_migration_guard",
+    "_assert_main_process_role_contract",
+    "_stop_embedded_scheduler_supervisor",
+    "_supervise_embedded_scheduler",
     "_evaluate_scheduler_status",
     "assert_dspy_cutover_migration_guard",
     "create_app",

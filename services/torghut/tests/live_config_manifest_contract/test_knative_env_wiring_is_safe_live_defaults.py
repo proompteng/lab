@@ -317,13 +317,18 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
             "Replace=true",
         )
 
-    def test_sim_manifest_runs_paper_live_signal_profile(self) -> None:
+    def test_sim_manifest_contains_paper_live_signal_profile_for_safe_migration(
+        self,
+    ) -> None:
         sim_env = _load_knative_env(
             "argocd/applications/torghut/knative-service-sim.yaml"
         )
         live_env = _load_torghut_knative_env()
 
-        self.assertTrue(_manifest_bool(sim_env, "TRADING_ENABLED"))
+        self.assertFalse(
+            _manifest_bool(sim_env, "TRADING_ENABLED"),
+            "the old unfenced image must stop before the simulation role is promoted",
+        )
         self.assertEqual(
             sim_env.get("SIM_DB_DSN"),
             sim_env.get("DB_DSN"),

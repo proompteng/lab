@@ -8,12 +8,13 @@ from fastapi.responses import Response
 from app.config import settings
 from app.metrics import render_trading_metrics
 
+from .application import runtime_owner_for_role
 from .trading_scheduler_state import get_trading_scheduler
 
 router = APIRouter()
 
 
-def _process_owner_metrics(*, role: str) -> str:
+def _process_owner_metrics(*, role: str, owner: str) -> str:
     return "\n".join(
         (
             "# HELP torghut_process_role_info Process-local Torghut runtime role.",
@@ -21,7 +22,7 @@ def _process_owner_metrics(*, role: str) -> str:
             f'torghut_process_role_info{{role="{role}"}} 1',
             "# HELP torghut_trading_runtime_owner_info Declared owner of the trading runtime.",
             "# TYPE torghut_trading_runtime_owner_info gauge",
-            'torghut_trading_runtime_owner_info{owner="torghut-scheduler"} 1',
+            f'torghut_trading_runtime_owner_info{{owner="{owner}"}} 1',
             "",
         )
     )
@@ -36,7 +37,10 @@ def prometheus_metrics() -> Response:
                     "# HELP torghut_api_process_ready Whether the stateless API process is serving.",
                     "# TYPE torghut_api_process_ready gauge",
                     "torghut_api_process_ready 1",
-                    _process_owner_metrics(role="api"),
+                    _process_owner_metrics(
+                        role="api",
+                        owner=runtime_owner_for_role("api"),
+                    ),
                 )
             ),
             media_type="text/plain; version=0.0.4",
@@ -57,7 +61,10 @@ def prometheus_metrics() -> Response:
     }
     return Response(
         content=render_trading_metrics(payload)
-        + _process_owner_metrics(role="scheduler"),
+        + _process_owner_metrics(
+            role=settings.process_role,
+            owner=runtime_owner_for_role(settings.process_role),
+        ),
         media_type="text/plain; version=0.0.4",
     )
 

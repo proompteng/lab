@@ -139,6 +139,39 @@ class SingleWriterSchedulerManifestTests(TestCase):
 
         self.assertEqual(scheduler_env, api_env)
 
+    def test_simulation_keeps_an_isolated_local_scheduler_role(self) -> None:
+        live_env = _env_by_name(
+            _container(_load("argocd/applications/torghut/knative-service.yaml"))
+        )
+        scheduler_env = _env_by_name(
+            _container(_load("argocd/applications/torghut/scheduler-deployment.yaml"))
+        )
+        simulation_env = _env_by_name(
+            _container(_load("argocd/applications/torghut/knative-service-sim.yaml"))
+        )
+
+        self.assertEqual(live_env["TORGHUT_PROCESS_ROLE"].get("value"), "api")
+        self.assertEqual(
+            scheduler_env["TORGHUT_PROCESS_ROLE"].get("value"), "scheduler"
+        )
+        self.assertEqual(
+            simulation_env["TORGHUT_PROCESS_ROLE"].get("value"), "simulation"
+        )
+        self.assertEqual(simulation_env["TRADING_MODE"].get("value"), "paper")
+        self.assertEqual(simulation_env["TRADING_ENABLED"].get("value"), "false")
+        self.assertEqual(
+            simulation_env["TRADING_SCHEDULER_LEADERSHIP_REQUIRED"].get("value"),
+            "true",
+        )
+        self.assertEqual(
+            simulation_env["TRADING_SCHEDULER_LEADERSHIP_LOCK_NAME"].get("value"),
+            "torghut:simulation-scheduler",
+        )
+        self.assertNotEqual(
+            simulation_env["TRADING_SCHEDULER_LEADERSHIP_LOCK_NAME"].get("value"),
+            "torghut:trading-scheduler",
+        )
+
     def test_scheduler_metrics_service_is_discoverable_by_alloy(self) -> None:
         service = _load("argocd/applications/torghut/scheduler-service.yaml")
         metadata = cast(Mapping[str, object], service["metadata"])

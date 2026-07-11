@@ -11,12 +11,16 @@ export type PostDeployEvidenceInput = {
   schedulerReplicas: string
   schedulerReadyzHttpStatus?: string
   schedulerReadyz?: unknown
+  simTradingEnabled: string
+  simStatusHttpStatus: string
+  simStatus: unknown
   tradingStatusHttpStatus: string
   tradingStatus: unknown
 }
 
 export type PostDeployEvidenceResult = {
   readinessContract: 'active_session_ready' | 'api_containment' | 'market_closed'
+  simulationContract: 'simulation_active' | 'simulation_containment'
   apiReadyzStatusCode: number
   schedulerReadyzStatusCode?: number
   summaryLines: string[]
@@ -246,10 +250,47 @@ const requireApiReadiness = (apiReadyzStatusCode: number, apiReadyz: JsonObject)
   }
 }
 
+const requireSimulationRuntime = (
+  desiredTradingEnabled: string,
+  simStatusCode: number,
+  simStatus: JsonObject,
+): PostDeployEvidenceResult['simulationContract'] => {
+  if (simStatusCode < 200 || simStatusCode >= 300) {
+    throw new Error(`torghut-sim /trading/status must return HTTP 2xx, got ${simStatusCode}`)
+  }
+  if (
+    simStatus.service !== 'torghut' ||
+    simStatus.mode !== 'paper' ||
+    simStatus.process_role !== 'simulation' ||
+    simStatus.runtime_owner !== 'torghut-sim'
+  ) {
+    throw new Error('torghut-sim status must describe the local paper simulation runtime')
+  }
+  if (desiredTradingEnabled === 'false') {
+    if (simStatus.enabled !== false || simStatus.running !== false) {
+      throw new Error('torghut-sim desired disabled state requires enabled=false and running=false')
+    }
+    return 'simulation_containment'
+  }
+  if (desiredTradingEnabled === 'true') {
+    if (simStatus.enabled !== true || simStatus.running !== true) {
+      throw new Error('torghut-sim desired enabled state requires enabled=true and running=true')
+    }
+    return 'simulation_active'
+  }
+  throw new Error(`TORGHUT_SIM_TRADING_ENABLED must be exactly true or false, got ${desiredTradingEnabled || 'unset'}`)
+}
+
+const simulationSummaryLine = (contract: PostDeployEvidenceResult['simulationContract']): string =>
+  contract === 'simulation_active'
+    ? '- Simulation runtime: `simulation_active` (local paper, running)'
+    : '- Simulation runtime: `simulation_containment` (local paper, disabled)'
+
 const validateApiContainment = (
   apiReadyzStatusCode: number,
   tradingStatusCode: number,
   status: JsonObject,
+  simulationContract: PostDeployEvidenceResult['simulationContract'],
 ): PostDeployEvidenceResult => {
   if (tradingStatusCode !== 503) {
     throw new Error(`scheduler replicas=0 requires /trading/status HTTP 503, got ${tradingStatusCode}`)
@@ -265,6 +306,7 @@ const validateApiContainment = (
 
   return {
     readinessContract: 'api_containment',
+    simulationContract,
     apiReadyzStatusCode,
     summaryLines: [
       '## Torghut Runtime Contract',
@@ -273,6 +315,7 @@ const validateApiContainment = (
       '- Scheduler replicas: `0`',
       '- Runtime owner: `torghut-scheduler` (external)',
       '- Trading status: `scheduler_runtime_unavailable` (HTTP 503)',
+      simulationSummaryLine(simulationContract),
     ],
   }
 }
@@ -280,13 +323,16 @@ const validateApiContainment = (
 export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): PostDeployEvidenceResult => {
   const schedulerReplicas = requireSchedulerReplicas(input.schedulerReplicas)
   const apiReadyzStatusCode = requireHttpStatus(input.apiReadyzHttpStatus, 'TORGHUT_API_READYZ_HTTP_STATUS')
+  const simStatusCode = requireHttpStatus(input.simStatusHttpStatus, 'TORGHUT_SIM_STATUS_HTTP_STATUS')
   const tradingStatusCode = requireHttpStatus(input.tradingStatusHttpStatus, 'TORGHUT_STATUS_HTTP_STATUS')
   const apiReadyz = requireObject(input.apiReadyz, 'Torghut stable API readyz payload')
+  const simStatus = requireObject(input.simStatus, 'torghut-sim trading status payload')
   const status = requireObject(input.tradingStatus, 'torghut trading status payload')
   requireApiReadiness(apiReadyzStatusCode, apiReadyz)
+  const simulationContract = requireSimulationRuntime(input.simTradingEnabled, simStatusCode, simStatus)
 
   if (schedulerReplicas === 0) {
-    return validateApiContainment(apiReadyzStatusCode, tradingStatusCode, status)
+    return validateApiContainment(apiReadyzStatusCode, tradingStatusCode, status, simulationContract)
   }
 
   if (tradingStatusCode < 200 || tradingStatusCode >= 300) {
@@ -313,6 +359,7 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
 
   return {
     readinessContract,
+    simulationContract,
     apiReadyzStatusCode,
     schedulerReadyzStatusCode,
     summaryLines: [
@@ -324,6 +371,7 @@ export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): Post
       `- Execution route: \`${statusGate.route}\``,
       '- Capital limits: `4x gross`, `0.5x net`, `0.5x symbol`, `10% buying-power reserve`',
       '- TigerBeetle reconciliation: `current`',
+      simulationSummaryLine(simulationContract),
     ],
   }
 }
@@ -342,6 +390,9 @@ export const runPostDeployEvidenceCli = (env: NodeJS.ProcessEnv = process.env): 
     schedulerReadyz: env.TORGHUT_SCHEDULER_READYZ_PAYLOAD?.trim()
       ? loadJsonFile(env.TORGHUT_SCHEDULER_READYZ_PAYLOAD, 'TORGHUT_SCHEDULER_READYZ_PAYLOAD')
       : undefined,
+    simTradingEnabled: env.TORGHUT_SIM_TRADING_ENABLED ?? '',
+    simStatusHttpStatus: env.TORGHUT_SIM_STATUS_HTTP_STATUS ?? '',
+    simStatus: loadJsonFile(env.TORGHUT_SIM_STATUS_PAYLOAD ?? '', 'TORGHUT_SIM_STATUS_PAYLOAD'),
     tradingStatusHttpStatus: env.TORGHUT_STATUS_HTTP_STATUS ?? '',
     tradingStatus: loadJsonFile(env.TORGHUT_STATUS_PAYLOAD ?? '', 'TORGHUT_STATUS_PAYLOAD'),
   })

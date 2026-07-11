@@ -8,8 +8,18 @@ from fastapi import APIRouter, FastAPI
 
 from app.config import settings
 
-RuntimeRole = Literal["api", "scheduler"]
+RuntimeRole = Literal["api", "scheduler", "simulation"]
 _apps_by_runtime_role: dict[RuntimeRole, FastAPI] = {}
+
+
+def runtime_owner_for_role(runtime_role: RuntimeRole) -> str:
+    """Return the service that owns trading state for a process role."""
+
+    if runtime_role == "simulation":
+        return "torghut-sim"
+    if runtime_role in {"api", "scheduler"}:
+        return "torghut-scheduler"
+    raise RuntimeError(f"unsupported Torghut runtime role: {runtime_role}")
 
 
 def register_app(app: FastAPI, *, runtime_role: RuntimeRole = "api") -> FastAPI:
@@ -71,5 +81,6 @@ __all__ = (
     "get_app",
     "mount_api_routes",
     "register_app",
+    "runtime_owner_for_role",
     "RuntimeRole",
 )

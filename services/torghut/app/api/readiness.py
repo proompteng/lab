@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 
 from . import readiness_helpers
+from .application import runtime_owner_for_role
 
 router = APIRouter()
 
@@ -37,6 +38,11 @@ def readyz() -> JSONResponse:
         include_database_contract=True,
         allow_stale_dependency_cache=True,
     )
+    payload = {
+        **payload,
+        "process_role": settings.process_role,
+        "runtime_owner": runtime_owner_for_role(settings.process_role),
+    }
     return JSONResponse(
         status_code=status_code,
         content=jsonable_encoder(payload),

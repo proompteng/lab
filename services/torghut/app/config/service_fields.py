@@ -11,12 +11,13 @@ from pydantic_settings import BaseSettings
 class CoreSettingsFields(BaseSettings):
     """Environment-backed settings."""
 
-    process_role: Literal["api", "scheduler"] = Field(
+    process_role: Literal["api", "scheduler", "simulation"] = Field(
         default="api",
         alias="TORGHUT_PROCESS_ROLE",
         description=(
             "Exclusive runtime role for this process. API processes remain stateless; "
-            "only scheduler processes may own trading background loops."
+            "dedicated scheduler processes own live trading background loops, while "
+            "the isolated simulation service may own its paper scheduler locally."
         ),
     )
 
@@ -24,6 +25,17 @@ class CoreSettingsFields(BaseSettings):
         default=False,
         alias="TRADING_SCHEDULER_LEADERSHIP_REQUIRED",
         description="Require durable PostgreSQL leadership before scheduler work starts.",
+    )
+
+    trading_scheduler_leadership_lock_name: str = Field(
+        default="torghut:trading-scheduler",
+        min_length=1,
+        max_length=128,
+        alias="TRADING_SCHEDULER_LEADERSHIP_LOCK_NAME",
+        description=(
+            "Stable namespace hashed into the PostgreSQL scheduler advisory-lock ID. "
+            "Independent trading runtimes must use distinct names."
+        ),
     )
 
     trading_scheduler_leadership_check_seconds: float = Field(
@@ -416,7 +428,15 @@ class CoreSettingsFields(BaseSettings):
 
     trading_poll_ms: int = Field(default=5000, alias="TRADING_POLL_MS")
 
-    trading_reconcile_ms: int = Field(default=15000, alias="TRADING_RECONCILE_MS")
+    trading_reconcile_ms: int = Field(
+        default=15000,
+        gt=0,
+        alias="TRADING_RECONCILE_MS",
+        description=(
+            "Interval between reconciliation cycles. Must remain below the scheduler "
+            "success freshness window so a healthy scheduler can stay ready."
+        ),
+    )
 
     trading_order_feed_enabled: bool = Field(
         default=False, alias="TRADING_ORDER_FEED_ENABLED"

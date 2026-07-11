@@ -47,6 +47,7 @@ from .leadership import (
     SchedulerLeadership,
     SchedulerLeadershipError,
     SchedulerLeadershipStatus,
+    scheduler_advisory_lock_id,
 )
 from .pipeline import TradingPipeline
 from .pipeline_helpers import build_llm_policy_resolution
@@ -78,6 +79,9 @@ class TradingScheduler(
         self._leadership = leadership or PostgresSchedulerLeadership(
             engine=database_engine,
             required=settings.trading_scheduler_leadership_required,
+            lock_id=scheduler_advisory_lock_id(
+                settings.trading_scheduler_leadership_lock_name
+            ),
         )
         self._fatal_exit = fatal_exit or os._exit
 
@@ -479,6 +483,8 @@ class TradingScheduler(
             self.state.running = False
             self.state.last_error = f"scheduler_startup_failed:{type(exc).__name__}"
             raise
+        if str(self.state.last_error or "").startswith("scheduler_startup_failed:"):
+            self.state.last_error = None
         with ExitStack() as startup_cleanup:
             startup_cleanup.callback(self._leadership.release)
             self._assert_trading_shorts_startup_policy()

@@ -69,9 +69,12 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('TORGHUT_SCHEDULER_REPLICAS')
     expect(workflow).toContain('TORGHUT_API_READYZ_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS')
+    expect(workflow).toContain('TORGHUT_SIM_TRADING_ENABLED')
+    expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS')
     expect(workflow).toContain('TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"')
     expect(workflow).toContain('TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"')
+    expect(workflow).toContain('TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
     expect(workflow).toContain('TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"')
     expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
     expect(workflow).not.toContain('/trading/revenue-repair')
@@ -92,6 +95,20 @@ describe('torghut post-deploy verifier workflow', () => {
     )
     expect(workflow).toContain('if [ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]; then')
     expect(workflow).toContain('kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m')
+  })
+
+  it('reads and exports the desired torghut-sim trading state from the live Knative Service', () => {
+    const desiredStateRead = workflow.indexOf('kubectl get ksvc torghut-sim -n torghut -o json')
+    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+
+    expect(desiredStateRead).toBeGreaterThan(argoWait)
+    expect(workflow).toContain('select(.name == "TRADING_ENABLED")')
+    expect(workflow).toContain('case "${TORGHUT_SIM_TRADING_ENABLED}" in')
+    expect(workflow).toContain('true | false)')
+    expect(workflow).toContain(
+      'torghut-sim desired TRADING_ENABLED must be exactly true or false; got ${TORGHUT_SIM_TRADING_ENABLED:-unset}',
+    )
+    expect(workflow).toContain('export TORGHUT_SIM_TRADING_ENABLED')
   })
 
   it('runs market-data freshness verification after deploy evidence is accepted', () => {
@@ -157,7 +174,10 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(loopBody).toContain('rm -f \\')
     expect(loopBody).toContain('TORGHUT_API_READYZ_HTTP_STATUS="$(')
     expect(loopBody).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
+    expect(loopBody).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
     expect(loopBody).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
+    expect(loopBody).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/status')
+    expect(loopBody).toContain('"${EVIDENCE_DIR}/torghut-sim-status.json"')
     expect(loopBody).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1')
     expect(loopBody).toContain('[ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]')
     expect(loopBody).not.toContain('contract_mismatch_accepted')
@@ -184,8 +204,12 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).not.toContain('--max-time 90')
   })
 
-  it('keeps simulation rollout readiness without obsolete paper-route evidence', () => {
+  it('keeps simulation rollout readiness and adds strict local-runtime evidence', () => {
     expect(workflow).toContain('wait_knative_service_ready torghut-sim')
+    expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
+    expect(workflow).toContain('export TORGHUT_SIM_STATUS_HTTP_STATUS')
+    expect(workflow).toContain('export TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
+    expect(workflow).toContain('simulation trading status capture failed')
     expect(workflow).not.toContain('PAPER_ROUTE_EVIDENCE')
     expect(workflow).not.toContain('SIM_MIRROR')
   })

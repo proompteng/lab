@@ -44,3 +44,20 @@ def test_build_registered_app_mounts_operational_routes(
 
     assert core_response.status_code == 200
     assert core_response.json() == {"surface": "core"}
+
+
+def test_build_registered_app_supports_simulation_runtime_role(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    app = FastAPI(title="torghut-simulation-contract-test")
+
+    monkeypatch.setattr(application, "_apps_by_runtime_role", {})
+    monkeypatch.setattr(application, "api_routers", lambda: (_contract_router(),))
+
+    registered_app = application.build_registered_app(
+        app,
+        runtime_role="simulation",
+    )
+
+    assert registered_app is app
+    assert application.get_app("simulation") is app

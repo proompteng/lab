@@ -83,12 +83,30 @@ const tradingStatus = (gate: typeof activeGate | typeof marketClosedGate = activ
   },
 })
 
+const simulationStatus = {
+  enabled: true,
+  mode: 'paper',
+  process_role: 'simulation',
+  running: true,
+  runtime_owner: 'torghut-sim',
+  service: 'torghut',
+}
+
+const simulationContainedStatus = {
+  ...simulationStatus,
+  enabled: false,
+  running: false,
+}
+
 const activeEvidence = (overrides: Partial<EvidenceInput> = {}): EvidenceInput => ({
   apiReadyz: containmentReadyz,
   apiReadyzHttpStatus: '200',
   schedulerReplicas: '1',
   schedulerReadyz: readyz(),
   schedulerReadyzHttpStatus: '200',
+  simTradingEnabled: 'true',
+  simStatus: simulationStatus,
+  simStatusHttpStatus: '200',
   tradingStatus: tradingStatus(),
   tradingStatusHttpStatus: '200',
   ...overrides,
@@ -117,6 +135,9 @@ const containmentEvidence = (overrides: Partial<EvidenceInput> = {}): EvidenceIn
   apiReadyz: containmentReadyz,
   apiReadyzHttpStatus: '200',
   schedulerReplicas: '0',
+  simTradingEnabled: 'false',
+  simStatus: simulationContainedStatus,
+  simStatusHttpStatus: '200',
   tradingStatus: containmentStatus,
   tradingStatusHttpStatus: '503',
   ...overrides,
@@ -127,9 +148,11 @@ describe('Torghut post-deploy evidence', () => {
     const result = validatePostDeployEvidence(activeEvidence())
 
     expect(result.readinessContract).toBe('active_session_ready')
+    expect(result.simulationContract).toBe('simulation_active')
     expect(result.apiReadyzStatusCode).toBe(200)
     expect(result.schedulerReadyzStatusCode).toBe(200)
     expect(result.summaryLines.join('\n')).toContain('4x gross')
+    expect(result.summaryLines.join('\n')).toContain('Simulation runtime: `simulation_active`')
   })
 
   it('accepts a healthy runtime whose only blocker is a closed regular session', () => {
@@ -236,7 +259,71 @@ describe('Torghut post-deploy evidence', () => {
     const result = validatePostDeployEvidence(containmentEvidence())
 
     expect(result.readinessContract).toBe('api_containment')
+    expect(result.simulationContract).toBe('simulation_containment')
     expect(result.summaryLines.join('\n')).toContain('Scheduler replicas: `0`')
+    expect(result.summaryLines.join('\n')).toContain('Simulation runtime: `simulation_containment`')
+  })
+
+  it('rejects non-2xx torghut-sim trading status', () => {
+    expect(() => validatePostDeployEvidence(containmentEvidence({ simStatusHttpStatus: '503' }))).toThrow(
+      'torghut-sim /trading/status must return HTTP 2xx, got 503',
+    )
+  })
+
+  for (const [field, invalidValue] of [
+    ['service', 'torghut-sim'],
+    ['mode', 'live'],
+    ['process_role', 'api'],
+    ['runtime_owner', 'torghut-scheduler'],
+  ] as const) {
+    it(`rejects torghut-sim status with invalid ${field}`, () => {
+      expect(() =>
+        validatePostDeployEvidence(
+          containmentEvidence({
+            simStatus: { ...simulationContainedStatus, [field]: invalidValue },
+          }),
+        ),
+      ).toThrow('must describe the local paper simulation runtime')
+    })
+  }
+
+  it('rejects state mismatches when torghut-sim is desired active', () => {
+    expect(() =>
+      validatePostDeployEvidence(activeEvidence({ simStatus: { ...simulationStatus, enabled: false } })),
+    ).toThrow('desired enabled state requires enabled=true and running=true')
+    expect(() =>
+      validatePostDeployEvidence(activeEvidence({ simStatus: { ...simulationStatus, running: false } })),
+    ).toThrow('desired enabled state requires enabled=true and running=true')
+  })
+
+  it('rejects state mismatches when torghut-sim is desired contained', () => {
+    expect(() =>
+      validatePostDeployEvidence(containmentEvidence({ simStatus: { ...simulationContainedStatus, enabled: true } })),
+    ).toThrow('desired disabled state requires enabled=false and running=false')
+    expect(() =>
+      validatePostDeployEvidence(containmentEvidence({ simStatus: { ...simulationContainedStatus, running: true } })),
+    ).toThrow('desired disabled state requires enabled=false and running=false')
+  })
+
+  it('rejects an invalid torghut-sim desired TRADING_ENABLED value', () => {
+    expect(() => validatePostDeployEvidence(activeEvidence({ simTradingEnabled: 'enabled' }))).toThrow(
+      'TORGHUT_SIM_TRADING_ENABLED must be exactly true or false, got enabled',
+    )
+  })
+
+  it('rejects legacy torghut-sim status without local-role ownership fields', () => {
+    expect(() =>
+      validatePostDeployEvidence(
+        containmentEvidence({
+          simStatus: {
+            enabled: true,
+            mode: 'paper',
+            running: false,
+            service: 'torghut',
+          },
+        }),
+      ),
+    ).toThrow('must describe the local paper simulation runtime')
   })
 
   it('rejects a scheduler-zero trading status that is not HTTP 503', () => {

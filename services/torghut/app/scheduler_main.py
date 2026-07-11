@@ -37,7 +37,9 @@ def _scheduler_readiness_detail(
     *,
     running: bool,
     last_run_at: object,
-    success_is_fresh: bool,
+    trading_success_is_fresh: bool,
+    last_reconcile_at: object,
+    reconcile_success_is_fresh: bool,
     cycle_failed: bool,
     leadership_ok: bool,
 ) -> str:
@@ -47,19 +49,24 @@ def _scheduler_readiness_detail(
         return "scheduler_cycle_failed"
     if last_run_at is None:
         return "scheduler_success_missing"
-    if not success_is_fresh:
+    if not trading_success_is_fresh:
         return "scheduler_success_stale"
+    if last_reconcile_at is None:
+        return "scheduler_reconcile_success_missing"
+    if not reconcile_success_is_fresh:
+        return "scheduler_reconcile_success_stale"
     if not leadership_ok:
         return "scheduler_leadership_unhealthy"
     return "ok"
 
 
 def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object]:
-    """Require a fresh, fully successful cycle and healthy writer leadership."""
+    """Require fresh trading and reconciliation success plus healthy leadership."""
 
     state = scheduler.state
     running = bool(getattr(state, "running", False))
     last_run_at = getattr(state, "last_run_at", None)
+    last_reconcile_at = getattr(state, "last_reconcile_at", None)
     loop_errors = {
         "last_error": getattr(state, "last_error", None),
         "last_trading_error": getattr(state, "last_trading_error", None),
@@ -67,17 +74,30 @@ def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object
         "last_autonomy_error": getattr(state, "last_autonomy_error", None),
         "last_evidence_error": getattr(state, "last_evidence_error", None),
     }
-    success_age_seconds = _scheduler_success_age_seconds(last_run_at)
-    success_is_fresh = (
-        success_age_seconds is not None
+    trading_success_age_seconds = _scheduler_success_age_seconds(last_run_at)
+    trading_success_is_fresh = (
+        trading_success_age_seconds is not None
         and 0
-        <= success_age_seconds
+        <= trading_success_age_seconds
+        <= settings.trading_scheduler_success_max_age_seconds
+    )
+    reconcile_success_age_seconds = _scheduler_success_age_seconds(last_reconcile_at)
+    reconcile_success_is_fresh = (
+        reconcile_success_age_seconds is not None
+        and 0
+        <= reconcile_success_age_seconds
         <= settings.trading_scheduler_success_max_age_seconds
     )
     leadership = scheduler_liveness_payload(scheduler)
     leadership_ok = bool(leadership["ok"])
     cycle_failed = any(error is not None for error in loop_errors.values())
-    ready = running and success_is_fresh and not cycle_failed and leadership_ok
+    ready = (
+        running
+        and trading_success_is_fresh
+        and reconcile_success_is_fresh
+        and not cycle_failed
+        and leadership_ok
+    )
     payload: dict[str, object] = {
         "ok": ready,
         "process_role": settings.process_role,
@@ -85,17 +105,26 @@ def scheduler_readiness_payload(scheduler: TradingScheduler) -> dict[str, object
         "detail": _scheduler_readiness_detail(
             running=running,
             last_run_at=last_run_at,
-            success_is_fresh=success_is_fresh,
+            trading_success_is_fresh=trading_success_is_fresh,
+            last_reconcile_at=last_reconcile_at,
+            reconcile_success_is_fresh=reconcile_success_is_fresh,
             cycle_failed=cycle_failed,
             leadership_ok=leadership_ok,
         ),
         "success_max_age_seconds": settings.trading_scheduler_success_max_age_seconds,
+        "trading_success_is_fresh": trading_success_is_fresh,
+        "reconcile_success_is_fresh": reconcile_success_is_fresh,
         "leadership": leadership.get("leadership"),
     }
-    if last_run_at is not None:
+    if isinstance(last_run_at, datetime):
         payload["last_run_at"] = last_run_at.isoformat()
-    if success_age_seconds is not None:
-        payload["success_age_seconds"] = success_age_seconds
+    if trading_success_age_seconds is not None:
+        payload["success_age_seconds"] = trading_success_age_seconds
+        payload["trading_success_age_seconds"] = trading_success_age_seconds
+    if isinstance(last_reconcile_at, datetime):
+        payload["last_reconcile_at"] = last_reconcile_at.isoformat()
+    if reconcile_success_age_seconds is not None:
+        payload["reconcile_success_age_seconds"] = reconcile_success_age_seconds
     for key, error in loop_errors.items():
         if error is not None:
             payload[key] = str(error)
@@ -141,7 +170,7 @@ async def scheduler_healthz(request: Request) -> JSONResponse:
 
 
 async def scheduler_readyz(request: Request) -> JSONResponse:
-    """Fail closed until the scheduler is running and has completed one cycle."""
+    """Fail closed until fresh trading and reconciliation cycles have succeeded."""
 
     scheduler = cast(TradingScheduler, request.app.state.trading_scheduler)
     payload = scheduler_readiness_payload(scheduler)

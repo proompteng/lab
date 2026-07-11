@@ -117,6 +117,28 @@ class TradingSchedulerLeadershipTests(IsolatedAsyncioTestCase):
             "scheduler_startup_failed:SchedulerLeadershipError",
         )
 
+    async def test_successful_leadership_retry_clears_only_startup_failure(
+        self,
+    ) -> None:
+        leadership = _FakeLeadership(
+            acquire_error=SchedulerLeadershipError("leadership contended")
+        )
+        scheduler = self._prepared_scheduler(leadership)
+        scheduler.state.last_trading_error = "preserve-latest-trading-error"
+
+        with self.assertRaisesRegex(SchedulerLeadershipError, "contended"):
+            await scheduler.start()
+
+        leadership.acquire_error = None
+        await scheduler.start()
+
+        self.assertIsNone(scheduler.state.last_error)
+        self.assertEqual(
+            scheduler.state.last_trading_error,
+            "preserve-latest-trading-error",
+        )
+        await scheduler.stop()
+
     async def test_post_acquire_startup_failure_releases_writer_fence(self) -> None:
         leadership = _FakeLeadership()
         scheduler = self._prepared_scheduler(leadership)

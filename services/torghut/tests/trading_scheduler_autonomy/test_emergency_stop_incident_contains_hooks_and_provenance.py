@@ -298,6 +298,40 @@ class TestEmergencyStopIncidentContainsHooksAndProvenance(
         self.assertEqual(failing_lane.reconcile_last_error, "reconcile_failed")
         self.assertEqual(healthy_lane.reconcile_last_error, None)
 
+    def test_reconcile_success_timestamp_advances_only_after_all_lanes_succeed(
+        self,
+    ) -> None:
+        scheduler = TradingScheduler()
+        previous_success = datetime(2000, 1, 1, tzinfo=timezone.utc)
+        failing_lane = _PipelineIterationStub(
+            account_label="paper-a",
+            reconcile_fail=True,
+        )
+        healthy_lane = _PipelineIterationStub(
+            account_label="paper-b",
+            reconcile_return=2,
+        )
+        scheduler._pipelines = [failing_lane, healthy_lane]
+        scheduler._pipeline = failing_lane
+        scheduler.state.last_reconcile_at = previous_success
+        scheduler._evaluate_safety_controls = lambda: None
+
+        asyncio.run(scheduler._run_reconcile_iteration())
+
+        self.assertEqual(scheduler.state.last_reconcile_at, previous_success)
+        self.assertEqual(
+            scheduler.state.last_reconcile_error,
+            "reconcile_lane_failures:paper-a",
+        )
+
+        failing_lane.reconcile_fail = False
+        asyncio.run(scheduler._run_reconcile_iteration())
+
+        self.assertIsNotNone(scheduler.state.last_reconcile_at)
+        assert scheduler.state.last_reconcile_at is not None
+        self.assertGreater(scheduler.state.last_reconcile_at, previous_success)
+        self.assertIsNone(scheduler.state.last_reconcile_error)
+
     def test_run_autonomy_iteration_triggers_rollback_when_failure_streak_exceeds_limit(
         self,
     ) -> None:

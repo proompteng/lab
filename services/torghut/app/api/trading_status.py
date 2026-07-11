@@ -18,7 +18,7 @@ from app.db import SessionLocal
 from app.trading.execution_runtime import build_execution_status_payload
 from app.trading.scheduler import TradingScheduler
 
-from .application import get_app
+from .application import get_app, runtime_owner_for_role
 from .health_checks import (
     build_api_live_submission_gate_payload,
     build_tigerbeetle_ledger_status,
@@ -150,6 +150,8 @@ def trading_status() -> dict[str, object] | Response:
     )
     return {
         "service": "torghut",
+        "process_role": settings.process_role,
+        "runtime_owner": runtime_owner_for_role(settings.process_role),
         "build": {
             "version": BUILD_VERSION,
             "commit": BUILD_COMMIT,

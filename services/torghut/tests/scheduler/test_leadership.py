@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from sqlalchemy.exc import OperationalError
 
+from app.config import settings
+from app.trading.scheduler import runtime
 from app.trading.scheduler.leadership import (
     DEFAULT_SCHEDULER_ADVISORY_LOCK_ID,
+    DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME,
     PostgresSchedulerLeadership,
     SchedulerLeadershipError,
     scheduler_advisory_lock_id,
@@ -31,6 +34,25 @@ def test_lock_identifier_is_stable_signed_bigint() -> None:
     assert scheduler_advisory_lock_id() == DEFAULT_SCHEDULER_ADVISORY_LOCK_ID
     assert scheduler_advisory_lock_id() == scheduler_advisory_lock_id()
     assert -(2**63) <= DEFAULT_SCHEDULER_ADVISORY_LOCK_ID < 2**63
+    assert scheduler_advisory_lock_id(
+        "torghut:simulation-scheduler"
+    ) != scheduler_advisory_lock_id(DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME)
+
+
+def test_scheduler_uses_configured_advisory_lock_namespace() -> None:
+    lock_name = "torghut:simulation-scheduler"
+    with (
+        patch.object(settings, "trading_scheduler_leadership_required", True),
+        patch.object(settings, "trading_scheduler_leadership_lock_name", lock_name),
+        patch.object(runtime, "PostgresSchedulerLeadership") as leadership_class,
+    ):
+        runtime.TradingScheduler()
+
+    leadership_class.assert_called_once_with(
+        engine=runtime.database_engine,
+        required=True,
+        lock_id=scheduler_advisory_lock_id(lock_name),
+    )
 
 
 def test_disabled_leadership_never_opens_database_connection() -> None:

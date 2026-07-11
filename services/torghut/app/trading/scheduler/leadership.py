@@ -13,7 +13,12 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.exc import SQLAlchemyError
 
 
-def scheduler_advisory_lock_id(name: str = "torghut:trading-scheduler") -> int:
+DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME = "torghut:trading-scheduler"
+
+
+def scheduler_advisory_lock_id(
+    name: str = DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME,
+) -> int:
     """Return a stable signed 64-bit advisory-lock identifier."""
 
     digest = hashlib.sha256(name.encode("utf-8")).digest()
@@ -215,6 +220,7 @@ class PostgresSchedulerLeadership:
 
 __all__ = [
     "DEFAULT_SCHEDULER_ADVISORY_LOCK_ID",
+    "DEFAULT_SCHEDULER_ADVISORY_LOCK_NAME",
     "PostgresSchedulerLeadership",
     "SchedulerLeadership",
     "SchedulerLeadershipError",
