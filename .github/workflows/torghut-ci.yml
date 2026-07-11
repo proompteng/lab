@@ -667,17 +667,31 @@ jobs:
         working-directory: services/torghut
         shell: bash
         env:
+          COVERAGE_FILE: .coverage.postgres-cas
           TORGHUT_TEST_POSTGRES_DSN: postgresql+psycopg://torghut:torghut@127.0.0.1:5432/torghut_test
         run: |
           set -euo pipefail
           : "${TORGHUT_TEST_POSTGRES_DSN:?TORGHUT_TEST_POSTGRES_DSN is required}"
           uv run --frozen pytest -q \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
             tests/execution/test_decision_submission_claims_postgres.py \
             tests/execution/test_decision_submission_claim_identity_races_postgres.py \
             tests/execution/test_broker_mutation_receipts_postgres.py \
             tests/execution/test_broker_mutation_linked_receipts_postgres.py \
             tests/execution/test_broker_mutation_receipt_boundaries_postgres.py \
             tests/execution/test_linked_submission_terminal_postgres.py
+
+      - name: Upload PostgreSQL coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-postgres-cas
+          path: services/torghut/.coverage.postgres-cas
+          if-no-files-found: error
+          include-hidden-files: true
 
   pytest-shards:
     name: Pytest shard ${{ matrix.shard }}

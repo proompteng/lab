@@ -388,7 +388,7 @@ describe('torghut build-push workflow', () => {
     expect(autoresearchJobBody).not.toContain('name: torghut-coverage-autoresearch-runner\n')
   })
 
-  it('requires the PostgreSQL mutation-fencing CAS gate before the aggregate passes', () => {
+  it('requires mutation-fencing tests and coverage before the aggregate passes', () => {
     const postgresJobStart = ciWorkflow.indexOf('\n  postgres-cas:')
     const postgresJobEnd = ciWorkflow.indexOf('\n  pytest-shards:', postgresJobStart)
     const postgresJobBody = ciWorkflow.slice(postgresJobStart, postgresJobEnd)
@@ -403,11 +403,15 @@ describe('torghut build-push workflow', () => {
     )
     expect(postgresJobBody).toContain('${TORGHUT_TEST_POSTGRES_DSN:?')
     expect(postgresJobBody).toContain('uv run --frozen pytest -q')
+    expect(postgresJobBody).toContain('COVERAGE_FILE: .coverage.postgres-cas')
+    expect(postgresJobBody).toContain('--cov-branch')
+    expect(postgresJobBody).toContain('name: torghut-coverage-postgres-cas')
     expect(postgresJobBody).toContain('tests/execution/test_decision_submission_claims_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_decision_submission_claim_identity_races_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_broker_mutation_receipts_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_broker_mutation_linked_receipts_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_broker_mutation_receipt_boundaries_postgres.py')
+    expect(postgresJobBody).toContain('tests/execution/test_linked_submission_terminal_postgres.py')
     expect(postgresJobBody).not.toContain('-n auto')
 
     const aggregateStart = ciWorkflow.indexOf('\n  lint-and-tests:')
