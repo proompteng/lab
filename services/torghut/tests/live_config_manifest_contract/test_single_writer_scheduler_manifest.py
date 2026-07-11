@@ -90,6 +90,8 @@ class SingleWriterSchedulerManifestTests(TestCase):
         )
         self.assertEqual(env["TORGHUT_PROCESS_ROLE"].get("value"), "scheduler")
         self.assertEqual(env["TRADING_ENABLED"].get("value"), "true")
+        self.assertEqual(env["TRADING_ORDER_MAX_ATTEMPTS"].get("value"), "1")
+        self.assertEqual(env["TRADING_EXECUTION_MAX_RETRIES"].get("value"), "0")
         self.assertEqual(
             env["TRADING_SCHEDULER_LEADERSHIP_REQUIRED"].get("value"), "true"
         )

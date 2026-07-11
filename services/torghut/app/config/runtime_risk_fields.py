@@ -280,9 +280,12 @@ class RuntimeRiskSettingsFields(BaseSettings):
     )
 
     trading_order_max_attempts: int = Field(
-        default=3,
+        default=1,
         alias="TRADING_ORDER_MAX_ATTEMPTS",
-        description="Maximum live marketable-limit submissions for one decision.",
+        description=(
+            "Maximum live marketable-limit submissions for one decision. "
+            "Keep at one until every submit/cancel mutation has a durable receipt."
+        ),
     )
 
     trading_order_slippage_bps: float = Field(

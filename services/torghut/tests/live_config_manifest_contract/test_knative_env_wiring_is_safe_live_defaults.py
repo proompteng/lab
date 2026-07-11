@@ -48,7 +48,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertEqual(settings.trading_daily_loss_stop_pct_equity, 0.01)
         self.assertEqual(settings.trading_persistent_drawdown_stop_pct_equity, 0.05)
         self.assertEqual(settings.trading_order_reprice_seconds, 2.0)
-        self.assertEqual(settings.trading_order_max_attempts, 3)
+        self.assertEqual(settings.trading_order_max_attempts, 1)
+        self.assertEqual(settings.trading_execution_max_retries, 0)
         self.assertEqual(settings.trading_order_slippage_bps, 8.0)
         self.assertFalse(settings.trading_feature_flags_enabled)
         self.assertFalse(settings.trading_execution_advisor_enabled)
@@ -336,6 +337,8 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         )
         self.assertEqual(sim_env.get("TRADING_MODE"), "paper")
         self.assertEqual(sim_env.get("TRADING_PIPELINE_MODE"), "simple")
+        self.assertEqual(sim_env.get("TRADING_ORDER_MAX_ATTEMPTS"), "1")
+        self.assertEqual(sim_env.get("TRADING_EXECUTION_MAX_RETRIES"), "0")
         self.assertTrue(_manifest_bool(sim_env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
         self.assertTrue(_manifest_bool(sim_env, "TRADING_ORDER_FEED_ENABLED"))
         self.assertTrue(

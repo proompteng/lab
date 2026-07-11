@@ -3,10 +3,13 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 from unittest import TestCase
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from alpaca.common.exceptions import APIError
 from alpaca.data.requests import StockBarsRequest
 from alpaca.trading.requests import GetOrdersRequest
+from requests import Response
+from requests.exceptions import HTTPError
 
 from app.alpaca_client import OrderFirewallViolation, TorghutAlpacaClient
 from app.alpaca_client import OrderFirewallToken
@@ -243,6 +246,115 @@ class TestAlpacaClient(TestCase):
         with self.assertRaises(AttributeError):
             getattr(client.trading, "cancel_orders")
 
+    def test_service_created_trading_client_makes_one_broker_mutation_attempt(
+        self,
+    ) -> None:
+        for status_code in (429, 504):
+            with self.subTest(status_code=status_code):
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                    data_client=DummyDataClient(),
+                )
+                response = Mock(spec=Response)
+                response.status_code = status_code
+                response.text = (
+                    f'{{"code": {status_code}, "message": "retryable failure"}}'
+                )
+                response.raise_for_status.side_effect = HTTPError(response=response)
+
+                with (
+                    patch(
+                        "alpaca.common.rest.Session.request", return_value=response
+                    ) as mock_request,
+                    patch("alpaca.common.rest.time.sleep") as mock_sleep,
+                    self.assertRaises(APIError) as raised,
+                ):
+                    OrderFirewall(client).submit_order(
+                        symbol="AAPL",
+                        side="buy",
+                        qty=1,
+                        order_type="market",
+                        time_in_force="day",
+                    )
+
+                self.assertEqual(raised.exception.status_code, status_code)
+                mock_request.assert_called_once()
+                self.assertEqual(mock_request.call_args.args[0], "POST")
+                mock_sleep.assert_not_called()
+
+    def test_service_created_read_client_keeps_sdk_retry_behavior(self) -> None:
+        for status_code in (429, 504):
+            with self.subTest(status_code=status_code):
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                    data_client=DummyDataClient(),
+                )
+                response = Mock(spec=Response)
+                response.status_code = status_code
+                response.text = (
+                    f'{{"code": {status_code}, "message": "retryable failure"}}'
+                )
+                response.raise_for_status.side_effect = HTTPError(response=response)
+
+                with (
+                    patch(
+                        "alpaca.common.rest.Session.request", return_value=response
+                    ) as mock_request,
+                    patch("alpaca.common.rest.time.sleep") as mock_sleep,
+                    self.assertRaises(APIError) as raised,
+                ):
+                    client.get_account()
+
+                self.assertEqual(raised.exception.status_code, status_code)
+                self.assertEqual(mock_request.call_count, 4)
+                self.assertEqual(
+                    [request.args[0] for request in mock_request.call_args_list],
+                    ["GET"] * 4,
+                )
+                self.assertEqual(mock_sleep.call_count, 3)
+
+    def test_service_created_trading_client_fails_closed_without_retry_control(
+        self,
+    ) -> None:
+        with (
+            patch("alpaca.trading.client.TradingClient.__init__", return_value=None),
+            self.assertRaisesRegex(
+                RuntimeError, "alpaca_sdk_retry_control_unavailable"
+            ),
+        ):
+            TorghutAlpacaClient(
+                api_key="k",
+                secret_key="s",
+                base_url="https://paper-api.alpaca.markets",
+                data_client=DummyDataClient(),
+            )
+
+    def test_injected_trading_client_retry_configuration_is_untouched(self) -> None:
+        class RetryConfiguredTradingClient(DummyTradingClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self._retry = 7
+
+            @property
+            def configured_retry_attempts(self) -> int:
+                return self._retry
+
+        trading_client = RetryConfiguredTradingClient()
+
+        TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=trading_client,
+            data_client=DummyDataClient(),
+        )
+
+        self.assertEqual(trading_client.configured_retry_attempts, 7)
+
     def test_market_data_uses_data_endpoint_by_default(self) -> None:
         with patch("app.alpaca_client.StockHistoricalDataClient") as mock_data_client:
             TorghutAlpacaClient(
@@ -264,7 +376,10 @@ class TestAlpacaClient(TestCase):
 
         try:
             with (
-                patch("app.alpaca_client.TradingClient") as mock_trading_client,
+                patch("app.alpaca_client.TradingClient") as mock_read_trading_client,
+                patch(
+                    "app.alpaca_client._SingleAttemptTradingClient"
+                ) as mock_mutation_trading_client,
                 patch(
                     "app.alpaca_client.StockHistoricalDataClient"
                 ) as mock_data_client,
@@ -275,10 +390,12 @@ class TestAlpacaClient(TestCase):
                     base_url="https://api.alpaca.markets",
                 )
 
-                trading_kwargs = mock_trading_client.call_args.kwargs
+                read_trading_kwargs = mock_read_trading_client.call_args.kwargs
+                mutation_trading_kwargs = mock_mutation_trading_client.call_args.kwargs
                 data_kwargs = mock_data_client.call_args.kwargs
 
-                self.assertFalse(trading_kwargs.get("paper"))
+                self.assertFalse(read_trading_kwargs.get("paper"))
+                self.assertFalse(mutation_trading_kwargs.get("paper"))
                 self.assertFalse(data_kwargs.get("sandbox"))
         finally:
             config.settings.trading_mode = original
@@ -291,7 +408,10 @@ class TestAlpacaClient(TestCase):
 
         try:
             with (
-                patch("app.alpaca_client.TradingClient") as mock_trading_client,
+                patch("app.alpaca_client.TradingClient") as mock_read_trading_client,
+                patch(
+                    "app.alpaca_client._SingleAttemptTradingClient"
+                ) as mock_mutation_trading_client,
                 patch(
                     "app.alpaca_client.StockHistoricalDataClient"
                 ) as mock_data_client,
@@ -303,24 +423,37 @@ class TestAlpacaClient(TestCase):
                     paper=True,
                 )
 
-                trading_kwargs = mock_trading_client.call_args.kwargs
+                read_trading_kwargs = mock_read_trading_client.call_args.kwargs
+                mutation_trading_kwargs = mock_mutation_trading_client.call_args.kwargs
                 data_kwargs = mock_data_client.call_args.kwargs
 
-                self.assertTrue(trading_kwargs.get("paper"))
+                self.assertTrue(read_trading_kwargs.get("paper"))
+                self.assertTrue(mutation_trading_kwargs.get("paper"))
                 self.assertTrue(data_kwargs.get("sandbox"))
                 self.assertEqual(client.endpoint_class, "paper")
         finally:
             config.settings.trading_mode = original
 
     def test_alpaca_base_url_strips_v2_suffix(self) -> None:
-        with patch("app.alpaca_client.TradingClient") as mock_trading_client:
+        with (
+            patch("app.alpaca_client.TradingClient") as mock_read_trading_client,
+            patch(
+                "app.alpaca_client._SingleAttemptTradingClient"
+            ) as mock_mutation_trading_client,
+        ):
             TorghutAlpacaClient(
                 api_key="k",
                 secret_key="s",
                 base_url="https://paper-api.alpaca.markets/v2",
             )
 
-            trading_kwargs = mock_trading_client.call_args.kwargs
+            read_trading_kwargs = mock_read_trading_client.call_args.kwargs
+            mutation_trading_kwargs = mock_mutation_trading_client.call_args.kwargs
             self.assertEqual(
-                trading_kwargs.get("url_override"), "https://paper-api.alpaca.markets"
+                read_trading_kwargs.get("url_override"),
+                "https://paper-api.alpaca.markets",
+            )
+            self.assertEqual(
+                mutation_trading_kwargs.get("url_override"),
+                "https://paper-api.alpaca.markets",
             )

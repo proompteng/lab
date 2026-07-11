@@ -431,7 +431,9 @@ spec:
             - name: TRADING_ORDER_REPRICE_SECONDS
               value: "2"
             - name: TRADING_ORDER_MAX_ATTEMPTS
-              value: "3"
+              value: "1"
+            - name: TRADING_EXECUTION_MAX_RETRIES
+              value: "0"
             - name: TRADING_ORDER_SLIPPAGE_BPS
               value: "8"
             - name: TRADING_CLOSEOUT_REPRICE_SECONDS
