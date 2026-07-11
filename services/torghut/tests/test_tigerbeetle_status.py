@@ -360,6 +360,30 @@ class TestTigerBeetleStatus(TestCase):
         self.assertFalse(payload["protocol_probe_skipped"])
         self.assertIn("tigerbeetle_protocol_unhealthy", payload["blockers"])
 
+    def test_required_protocol_does_not_require_periodic_reconciliation(self) -> None:
+        settings.tigerbeetle_enabled = True
+        settings.tigerbeetle_required = True
+        settings.tigerbeetle_reconcile_required = False
+        health = TigerBeetleHealth(
+            enabled=True,
+            required=True,
+            ok=True,
+            cluster_id=2001,
+            replica_addresses=["tb:3000"],
+            last_error=None,
+        )
+
+        with Session(self.engine) as session:
+            with patch.object(
+                health_checks_context, "check_tigerbeetle_health", return_value=health
+            ):
+                payload = build_tigerbeetle_ledger_status(session)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["protocol_ok"])
+        self.assertFalse(payload["reconciliation_required"])
+        self.assertNotIn("tigerbeetle_reconciliation_missing", payload["blockers"])
+
     def test_missing_reconciliation_blocks_only_when_required(self) -> None:
         settings.tigerbeetle_reconcile_required = True
 

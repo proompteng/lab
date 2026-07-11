@@ -161,9 +161,7 @@ def _budget_unavailable_tca_summary_payload(reason: str) -> dict[str, object]:
 
 
 def _budget_unavailable_tigerbeetle_ledger_payload(reason: str) -> dict[str, object]:
-    reconciliation_required = bool(
-        settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required
-    )
+    reconciliation_required = bool(settings.tigerbeetle_reconcile_required)
     latest_reconciliation = _unavailable_tigerbeetle_reconciliation_payload(
         reason_codes=[reason],
         last_error=reason,

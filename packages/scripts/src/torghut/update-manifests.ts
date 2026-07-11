@@ -20,8 +20,6 @@ const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysi
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultZeroNotionalDriftRepairManifestPath = 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml'
-const defaultTigerBeetleJournalOrderEventsManifestPath =
-  'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml'
 const defaultGeneratedResourceRetentionManifestPath =
   'argocd/applications/torghut/generated-resource-retention-cronjob.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
@@ -49,7 +47,6 @@ type UpdateManifestsOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
-  tigerBeetleJournalOrderEventsManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
@@ -76,7 +73,6 @@ type CliOptions = {
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
-  tigerBeetleJournalOrderEventsManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
@@ -312,11 +308,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options.zeroNotionalDriftRepairManifestPath ?? defaultZeroNotionalDriftRepairManifestPath,
     'torghut-zero-notional-drift-repair image reference',
   )
-  const tigerBeetleJournalOrderEvents = updateImageOnlyManifest(
-    options,
-    options.tigerBeetleJournalOrderEventsManifestPath ?? defaultTigerBeetleJournalOrderEventsManifestPath,
-    'torghut-tigerbeetle-journal-order-events image reference',
-  )
   const generatedResourceRetention = updateImageOnlyManifest(
     options,
     options.generatedResourceRetentionManifestPath ?? defaultGeneratedResourceRetentionManifestPath,
@@ -368,7 +359,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     analysisTeardown,
     analysisArtifact,
     zeroNotionalDriftRepair,
-    tigerBeetleJournalOrderEvents,
     generatedResourceRetention,
     tigerBeetleSmoke,
     hyperliquidRuntime,
@@ -409,7 +399,6 @@ Options:
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --zero-notional-drift-repair-manifest-path <path>
-  --tigerbeetle-journal-order-events-manifest-path <path>
   --generated-resource-retention-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
@@ -486,9 +475,6 @@ Options:
         break
       case '--zero-notional-drift-repair-manifest-path':
         options.zeroNotionalDriftRepairManifestPath = value
-        break
-      case '--tigerbeetle-journal-order-events-manifest-path':
-        options.tigerBeetleJournalOrderEventsManifestPath = value
         break
       case '--generated-resource-retention-manifest-path':
         options.generatedResourceRetentionManifestPath = value

@@ -18,10 +18,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
   { path: 'argocd/applications/torghut/knative-service-sim.yaml', selectorPath: ['spec', 'template', 'spec'] },
   { path: 'argocd/applications/torghut/db-migrations-job.yaml', selectorPath: ['spec', 'template', 'spec'] },
   {
-    path: 'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml',
-    selectorPath: ['spec', 'jobTemplate', 'spec', 'template', 'spec'],
-  },
-  {
     path: 'argocd/applications/torghut/analysis-template-runtime-ready.yaml',
     selectorPath: ['spec', 'metrics', 0, 'provider', 'job', 'spec', 'template', 'spec'],
   },
@@ -125,7 +121,6 @@ describe('Torghut manifest scheduling', () => {
   it('retains Torghut scheduled failure logs for same-day debugging', () => {
     const cronJobPaths = [
       'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
-      'argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml',
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
     ]
 
@@ -146,12 +141,12 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(3)
+    expect(checkedCronJobs).toBe(2)
 
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources
     expect(Array.isArray(resources)).toBe(true)
-    expect(resources).toContain('tigerbeetle-journal-order-events-cronjob.yaml')
+    expect(resources).not.toContain('tigerbeetle-journal-order-events-cronjob.yaml')
     expect(resources).not.toContain('whitepaper-autoresearch-replay-materialization-cronworkflow.yaml')
   })
 

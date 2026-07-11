@@ -211,9 +211,7 @@ class CapitalSafetyController:
         return None
 
     def _ledger_stop_reason(self, session: Session, *, now: datetime) -> str | None:
-        required = bool(
-            settings.tigerbeetle_required or settings.tigerbeetle_reconcile_required
-        )
+        required = bool(settings.tigerbeetle_reconcile_required)
         if not required:
             self.state.capital_ledger_state = "not_required"
             self.state.capital_ledger_reason = None
