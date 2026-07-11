@@ -193,6 +193,18 @@ def test_primary_acquisition_renew_release_and_reacquire(tmp_path: Path) -> None
         same = _acquire(session, "cancel-1", token=token_a)
     assert same.outcome == "already_owned"
     with sessions() as session:
+        with pytest.raises(
+            BrokerMutationReceiptConflictError,
+            match="primary_identity_conflict",
+        ):
+            _acquire(
+                session,
+                "cancel-1",
+                owner="writer-b",
+                generation=2,
+                token=token_a,
+            )
+    with sessions() as session:
         busy = _acquire(
             session,
             "cancel-1",
@@ -228,6 +240,12 @@ def test_primary_acquisition_renew_release_and_reacquire(tmp_path: Path) -> None
         with pytest.raises(BrokerMutationReceiptFenceError):
             renew_broker_mutation_receipt(session, handle=handle_a)
     with sessions() as session:
+        with pytest.raises(
+            BrokerMutationReceiptConflictError,
+            match="primary_token_reuse",
+        ):
+            _acquire(session, "cancel-1", token=token_a)
+    with sessions() as session:
         reacquired = _acquire(
             session,
             "cancel-1",
@@ -238,6 +256,12 @@ def test_primary_acquisition_renew_release_and_reacquire(tmp_path: Path) -> None
     assert reacquired.outcome == "acquired"
     assert reacquired.receipt.primary_handle.primary_epoch == 2
     assert reacquired.receipt.primary_handle.primary_token == token_b
+    assert reacquired.receipt.primary_handle.primary_owner == "writer-b"
+    assert reacquired.receipt.primary_handle.primary_writer_generation == 2
+    assert reacquired.receipt.lifecycle.event_type == "primary_claimed"
+    assert reacquired.receipt.lifecycle.event_writer_generation == 2
+    assert reacquired.receipt.lifecycle.released_at is None
+    assert reacquired.receipt.lifecycle.release_reason is None
 
     with sessions() as session:
         history = get_broker_mutation_receipt_history(
@@ -306,6 +330,25 @@ def test_broker_io_is_irreversible_and_primary_settlement_is_idempotent(
         == broker_io.lifecycle.sequence_no
     )
     with sessions() as session:
+        active = _acquire(
+            session,
+            "cancel-terminal",
+            owner="writer-b",
+            generation=2,
+            token=uuid.uuid4(),
+        )
+    assert active.outcome == "busy"
+    _force_recovery_due(sessions, broker_io.receipt_id)
+    with sessions() as session:
+        recovery_due = _acquire(
+            session,
+            "cancel-terminal",
+            owner="writer-b",
+            generation=2,
+            token=uuid.uuid4(),
+        )
+    assert recovery_due.outcome == "recovery_required"
+    with sessions() as session:
         with pytest.raises(BrokerMutationReceiptFenceError):
             release_broker_mutation_receipt(
                 session,
@@ -336,6 +379,16 @@ def test_broker_io_is_irreversible_and_primary_settlement_is_idempotent(
             settlement=acknowledged,
         )
     assert idempotent.lifecycle.sequence_no == settled.lifecycle.sequence_no
+    with sessions() as session:
+        terminal = _acquire(
+            session,
+            "cancel-terminal",
+            owner="writer-b",
+            generation=2,
+            token=uuid.uuid4(),
+        )
+    assert terminal.outcome == "settled"
+    assert terminal.receipt.lifecycle.sequence_no == settled.lifecycle.sequence_no
 
     rejected = build_broker_mutation_settlement(
         BrokerMutationSettlementRequest(
