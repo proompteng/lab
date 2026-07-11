@@ -343,13 +343,24 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
     completed_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    terminal_receipt_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey(
+            "broker_mutation_receipt_events.id",
+            name="fk_td_submission_claim_terminal_receipt_event",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
 
     trade_decision: Mapped[TradeDecision] = relationship(
         back_populates="submission_claim"
     )
     __table_args__ = (
         CheckConstraint(
-            "state IN ('claimed', 'broker_io', 'submitted')",
+            "state IN ('claimed', 'broker_io', 'submitted', 'rejected')",
             name="state",
         ),
         CheckConstraint("fencing_epoch > 0", name="fencing_epoch_positive"),
@@ -358,7 +369,7 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
             name="recovery_fencing_epoch_nonnegative",
         ),
         CheckConstraint(
-            "state NOT IN ('broker_io', 'submitted') OR "
+            "state NOT IN ('broker_io', 'submitted', 'rejected') OR "
             "(broker_io_started_at IS NOT NULL AND recovery_after IS NOT NULL)",
             name="broker_io_metadata",
         ),
@@ -373,13 +384,14 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
             "AND recovery_outcome IS NULL AND recovery_evidence IS NULL "
             "AND broker_order_id IS NULL "
             "AND broker_client_order_id IS NULL AND execution_id IS NULL "
-            "AND completed_at IS NULL)",
+            "AND completed_at IS NULL AND terminal_receipt_event_id IS NULL)",
             name="claimed_metadata",
         ),
         CheckConstraint(
             "state <> 'broker_io' OR "
             "(broker_order_id IS NULL AND broker_client_order_id IS NULL "
-            "AND execution_id IS NULL AND completed_at IS NULL)",
+            "AND execution_id IS NULL AND completed_at IS NULL "
+            "AND terminal_receipt_event_id IS NULL)",
             name="broker_io_terminal_metadata",
         ),
         CheckConstraint(
@@ -391,13 +403,24 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
             name="submitted_metadata",
         ),
         CheckConstraint(
+            "state <> 'rejected' OR "
+            "(broker_order_id IS NULL AND broker_client_order_id IS NULL "
+            "AND execution_id IS NULL AND completed_at IS NOT NULL "
+            "AND terminal_receipt_event_id IS NOT NULL)",
+            name="rejected_metadata",
+        ),
+        CheckConstraint(
+            "terminal_receipt_event_id IS NULL OR state IN ('submitted', 'rejected')",
+            name="terminal_receipt_state",
+        ),
+        CheckConstraint(
             "(recovery_fencing_epoch = 0 AND recovery_token IS NULL "
             "AND recovery_owner IS NULL AND recovery_lease_started_at IS NULL "
             "AND recovery_lease_expires_at IS NULL) OR "
             "(recovery_fencing_epoch > 0 AND recovery_token IS NOT NULL "
             "AND recovery_owner IS NOT NULL AND recovery_lease_started_at IS NOT NULL "
             "AND recovery_lease_expires_at IS NOT NULL "
-            "AND state IN ('broker_io', 'submitted'))",
+            "AND state IN ('broker_io', 'submitted', 'rejected'))",
             name="recovery_lease_metadata_all_or_none",
         ),
         CheckConstraint(
@@ -415,7 +438,7 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
             "recovery_outcome IS NULL "
             "OR (recovery_outcome = 'found' AND state = 'submitted') "
             "OR (recovery_outcome IN ('not_found', 'indeterminate') "
-            "AND state IN ('broker_io', 'submitted'))",
+            "AND state IN ('broker_io', 'submitted', 'rejected'))",
             name="recovery_outcome",
         ),
         CheckConstraint(
@@ -446,6 +469,11 @@ class TradeDecisionSubmissionClaim(Base, TimestampMixin):
         Index(
             "uq_trade_decision_submission_claim_token",
             "claim_token",
+            unique=True,
+        ),
+        Index(
+            "uq_trade_decision_submission_terminal_receipt_event",
+            "terminal_receipt_event_id",
             unique=True,
         ),
         Index(

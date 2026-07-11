@@ -64,7 +64,7 @@ def test_postgres_recovery_cas_and_transition_guards(
         )
         alembic = AlembicConfig(str(_SERVICE_ROOT / "alembic.ini"))
         command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0058_decision_submission_claims")
+        command.upgrade(alembic, "0061_linked_submission_terminal")
 
         inspector = inspect(schema_engine)
         index_names = {

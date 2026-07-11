@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Mapping, TypeAlias
 
-from ..decision_submission_claims.types import DecisionSubmissionClaimHandle
+from ..decision_submission_claims.types import (
+    DecisionSubmissionClaimHandle,
+    DecisionSubmissionClaimSnapshot,
+)
 from .validation import (
     RECEIPT_DEFAULT_LEASE_SECONDS,
     BrokerMutationReceiptValidationError,
@@ -238,6 +241,31 @@ class BrokerMutationReceiptEventSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionTerminalResult:
+    """One atomically committed claim and receipt terminal pair."""
+
+    receipt: BrokerMutationReceiptSnapshot
+    submission_claim: DecisionSubmissionClaimSnapshot
+
+    @property
+    def runtime_result(self) -> BrokerMutationRuntimeResult:
+        return broker_mutation_runtime_result(self.receipt)
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionSettlementRequest:
+    """Untrusted broker terminal fields bound to one submission claim."""
+
+    source: str
+    outcome: str
+    claim_handle: DecisionSubmissionClaimHandle
+    broker_status: str
+    rejection_code: str | None
+    broker_reference: str | None
+    execution_id: uuid.UUID | str | None
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerMutationReceiptAcquireResult:
     outcome: BrokerMutationReceiptAcquireOutcome
     receipt: BrokerMutationReceiptSnapshot
@@ -356,6 +384,8 @@ __all__ = [
     "BrokerMutationIoPermit",
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
+    "BrokerMutationLinkedSubmissionSettlementRequest",
+    "BrokerMutationLinkedSubmissionTerminalResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",
     "BrokerMutationReceiptAcquireOptions",

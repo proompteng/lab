@@ -314,6 +314,89 @@ def _assert_duplicate_settlement_evidence_is_rejected(
         session.rollback()
 
 
+def _assert_unlinked_settlement_rejects_claim_identity(
+    harness: _PostgresHarness,
+) -> None:
+    intent = _cancel_intent(
+        workflow_id="unlinked-terminal",
+        client_request_id="u" * 64,
+    )
+    with harness.sessions() as session:
+        acquired = acquire_broker_mutation_receipt(
+            session,
+            intent=intent,
+            primary_owner="writer-a",
+            writer_generation=1,
+            options=BrokerMutationReceiptAcquireOptions(primary_token=uuid.uuid4()),
+        )
+    with harness.sessions() as session:
+        started = mark_broker_mutation_io_started(
+            session,
+            handle=acquired.receipt.primary_handle,
+        )
+    assert started.authorized
+    settlement = build_broker_mutation_settlement(
+        BrokerMutationSettlementRequest(
+            source="primary",
+            outcome="acknowledged",
+            broker_reference="broker-order-unlinked",
+            execution_id=None,
+            evidence_payload={"broker_status": "accepted"},
+        )
+    )
+    # The legacy full-state transition trigger also rejects this mutation. Disable
+    # only that trigger in this test's disposable schema so this regression proves
+    # the independent 0061 linked-terminal guard, then restore it unconditionally.
+    with harness.schema_engine.begin() as connection:
+        connection.execute(
+            text(
+                "ALTER TABLE broker_mutation_receipt_events "
+                "DISABLE TRIGGER trg_guard_bm_receipt_event"
+            )
+        )
+    try:
+        with harness.sessions() as session:
+            event = load_receipt_event_models(
+                session,
+                acquired.receipt.receipt_id,
+            )[-1]
+            values = _copied_event_values(event)
+            values.update(
+                sequence_no=event.sequence_no + 1,
+                event_type="settled",
+                state="settled",
+                event_writer_generation=event.primary_writer_generation,
+                submission_claim_token=uuid.uuid4(),
+                submission_claim_fencing_epoch=1,
+                submission_claim_owner="bogus-owner",
+                settlement_source=settlement.source,
+                settlement_outcome=settlement.outcome,
+                broker_reference=settlement.broker_reference,
+                execution_id=settlement.execution_id,
+                settlement_evidence_json=settlement.evidence_json,
+                settlement_evidence_sha256=settlement.evidence_sha256,
+                settled_at=database_now(session),
+            )
+            with pytest.raises(
+                DBAPIError,
+                match="unlinked broker mutation event has claim identity",
+            ):
+                append_full_state_event(
+                    session,
+                    receipt_id=acquired.receipt.receipt_id,
+                    values=values,
+                )
+            session.rollback()
+    finally:
+        with harness.schema_engine.begin() as connection:
+            connection.execute(
+                text(
+                    "ALTER TABLE broker_mutation_receipt_events "
+                    "ENABLE TRIGGER trg_guard_bm_receipt_event"
+                )
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class _LinkedFixture:
     intent: BrokerMutationIntent
@@ -420,7 +503,13 @@ def _assert_expired_claim_cannot_reserve_header(harness: _PostgresHarness) -> No
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim"
+                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -434,7 +523,13 @@ def _assert_expired_claim_cannot_reserve_header(harness: _PostgresHarness) -> No
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim"
+                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
     with harness.sessions() as session:
@@ -539,7 +634,13 @@ def _take_over_linked_claim_only(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim"
+                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -553,7 +654,13 @@ def _take_over_linked_claim_only(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim"
+                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -679,11 +786,11 @@ def _insert_0059_parent_state(harness: _PostgresHarness) -> None:
     not POSTGRES_DSN,
     reason="set TORGHUT_TEST_POSTGRES_DSN for PostgreSQL boundary tests",
 )
-def test_postgres_0060_enforces_canonical_and_linked_boundaries(
+def test_postgres_0061_preserves_canonical_and_linked_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _postgres_harness(
-        monkeypatch, revision="0060_bm_evidence_envelopes"
+        monkeypatch, revision="0061_linked_submission_terminal"
     ) as harness:
         _assert_sql_canonicalizer_matches_python(harness)
         _assert_sql_canonicalizer_rejects_ambiguous_json(harness)
@@ -691,6 +798,7 @@ def test_postgres_0060_enforces_canonical_and_linked_boundaries(
         intent, receipt_id = _acquire_unlinked_broker_io(harness)
         _assert_duplicate_recovery_evidence_is_rejected(harness, intent, receipt_id)
         _assert_duplicate_settlement_evidence_is_rejected(harness, receipt_id)
+        _assert_unlinked_settlement_rejects_claim_identity(harness)
         _assert_linked_initial_lease_is_bounded(harness)
         _assert_expired_claim_cannot_reserve_header(harness)
         _assert_header_serializes_concurrent_release(harness)

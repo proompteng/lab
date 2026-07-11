@@ -175,7 +175,13 @@ def _take_over_expired_linked_submit(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim"
+                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -189,7 +195,13 @@ def _take_over_expired_linked_submit(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim"
+                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -240,13 +252,13 @@ def _take_over_expired_linked_submit(
 
 
 @dataclass(frozen=True, slots=True)
-class _LinkedSubmitFixture:
+class LinkedSubmitFixture:
     decision_id: uuid.UUID
     intent: BrokerMutationIntent
     claim_handle: DecisionSubmissionClaimHandle
 
 
-def _create_linked_submit_fixture(schema_engine: Engine) -> _LinkedSubmitFixture:
+def create_linked_submit_fixture(schema_engine: Engine) -> LinkedSubmitFixture:
     decision_id = uuid.uuid4()
     client_request_id = "c" * 64
     claim_token = uuid.uuid4()
@@ -277,7 +289,7 @@ def _create_linked_submit_fixture(schema_engine: Engine) -> _LinkedSubmitFixture
             submission_claim_id=decision_id,
         )
     )
-    return _LinkedSubmitFixture(
+    return LinkedSubmitFixture(
         decision_id=decision_id,
         intent=intent,
         claim_handle=DecisionSubmissionClaimHandle(
@@ -294,7 +306,7 @@ def _create_linked_submit_fixture(schema_engine: Engine) -> _LinkedSubmitFixture
 def _assert_linked_lease_bounds_and_takeover(
     schema_engine: Engine,
     sessions: sessionmaker[Session],
-    fixture: _LinkedSubmitFixture,
+    fixture: LinkedSubmitFixture,
     winner: BrokerMutationReceiptAcquireResult,
 ) -> tuple[BrokerMutationReceiptAcquireResult, DecisionSubmissionClaimHandle]:
     with sessions() as session:
@@ -332,7 +344,7 @@ def _assert_linked_lease_bounds_and_takeover(
 def _assert_linked_post_io_contract(
     schema_engine: Engine,
     sessions: sessionmaker[Session],
-    fixture: _LinkedSubmitFixture,
+    fixture: LinkedSubmitFixture,
     winner: BrokerMutationReceiptAcquireResult,
     claim_handle: DecisionSubmissionClaimHandle,
 ) -> None:
@@ -395,7 +407,13 @@ def _assert_linked_post_io_contract(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim"
+                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -410,7 +428,13 @@ def _assert_linked_post_io_contract(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim"
+                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
     with sessions() as session:
@@ -433,7 +457,7 @@ def _assert_linked_submit_boundary_is_atomic(
     schema_engine: Engine,
     sessions: sessionmaker[Session],
 ) -> None:
-    fixture = _create_linked_submit_fixture(schema_engine)
+    fixture = create_linked_submit_fixture(schema_engine)
     _assert_stale_linked_claim_is_fenced(
         sessions,
         fixture.intent,
@@ -505,7 +529,7 @@ def test_postgres_linked_submit_uses_one_atomic_bounded_permit(
         )
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
         command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0060_bm_evidence_envelopes")
+        command.upgrade(alembic, "0061_linked_submission_terminal")
         _assert_linked_submit_boundary_is_atomic(schema_engine, sessions)
     finally:
         schema_engine.dispose()

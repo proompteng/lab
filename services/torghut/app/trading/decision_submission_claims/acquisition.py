@@ -163,8 +163,11 @@ def _existing_claim_outcome(
         raise DecisionSubmissionClaimValidationError(
             "submission_claim_identity_mismatch"
         )
-    if current.state == "submitted":
-        return _read_result(session, "submitted", current)
+    if current.state in {"submitted", "rejected"}:
+        terminal_outcome: ClaimAcquisitionOutcome = (
+            "submitted" if current.state == "submitted" else "rejected"
+        )
+        return _read_result(session, terminal_outcome, current)
     if current.state == "broker_io":
         outcome: ClaimAcquisitionOutcome = (
             "recovery_required"
@@ -271,8 +274,10 @@ def _contention_result(
     if snapshot is None:
         close_read_transaction(session)
         raise DecisionSubmissionClaimError("claim_identity_conflict")
-    if snapshot.state == "submitted":
-        outcome: ClaimAcquisitionOutcome = "submitted"
+    if snapshot.state in {"submitted", "rejected"}:
+        outcome: ClaimAcquisitionOutcome = (
+            "submitted" if snapshot.state == "submitted" else "rejected"
+        )
     elif snapshot.state == "broker_io":
         outcome = (
             "recovery_required"
