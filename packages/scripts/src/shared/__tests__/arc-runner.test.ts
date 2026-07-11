@@ -177,12 +177,16 @@ describe('ARC Nix runner toolchain', () => {
         toolchainScriptPath,
       )
     }
-    for (const arcImageInputPath of [...arcRunnerBuildTriggerPaths, ...arcRunnerToolchainScriptPaths]) {
+    for (const arcImageInputPath of [
+      ...arcRunnerBuildTriggerPaths,
+      ...arcRunnerToolchainScriptPaths.filter((path) => !arcRunnerReleaseOnlyScriptPaths.has(path)),
+    ]) {
       expect(arcRunnerReleaseWorkflow, `${arcImageInputPath} must block stale ARC runner promotion`).toContain(
         releaseGuardFragmentForPath(arcImageInputPath),
       )
     }
-    expect(arcRunnerReleaseWorkflow).toContain('flake\\.nix')
+    expect(arcRunnerReleaseWorkflow).not.toContain('nix/oci-release-contract\\.sh')
+    expect(arcRunnerReleaseWorkflow).not.toContain('flake\\.nix')
     expect(arcRunnerReleaseWorkflow).not.toContain('\\.github/workflows/arc-runner-release\\.yml')
     expect(arcRunnerReleaseWorkflow).toContain('nix run .#assert-oci-platforms')
     expect(arcRunnerReleaseWorkflow).not.toContain('docker buildx')

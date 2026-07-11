@@ -143,22 +143,35 @@ describe('torghut build-push workflow', () => {
   })
 
   it('keeps core Torghut stale workflow promotions aligned with build trigger inputs', () => {
+    const staleDiffBlock = staleDiffBlockFor(releaseWorkflow, 'services/torghut')
     const freshnessPaths = [
       'services/torghut',
       'packages/scripts/src/torghut',
       'packages/scripts/src/shared/cli.ts',
       'packages/scripts/src/shared/git.ts',
       'nix/images/torghut.nix',
-      '.github/workflows/torghut-build-push.yaml',
-      '.github/workflows/torghut-release.yml',
-      '.github/workflows/nix-oci-build-common.yml',
-      '.github/actions/setup-nix-toolchain',
+      'nix/cache-push.sh',
+      'nix/ci-nix-oci-summary.sh',
+      'nix/ci-run-timed.sh',
+      'nix/oci-inspect-archive.sh',
+      'nix/oci-push.sh',
+      'flake.lock',
+      'services/torghut/uv.lock',
     ]
 
     expect(releaseWorkflow).toContain('git merge-base --is-ancestor "${SOURCE_SHA}" "${MAIN_HEAD}"')
     expect(releaseWorkflow).toContain('git diff --name-only "${SOURCE_SHA}..${MAIN_HEAD}" --')
     for (const path of freshnessPaths) {
-      expect(releaseWorkflow).toContain(path)
+      expect(staleDiffBlock).toContain(path)
+    }
+    for (const releaseOnlyPath of [
+      'nix/oci-release-contract.sh',
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-release.yml',
+      '.github/workflows/nix-oci-build-common.yml',
+      '.github/actions/setup-nix-toolchain',
+    ]) {
+      expect(staleDiffBlock).not.toContain(releaseOnlyPath)
     }
     expect(releaseWorkflow).toContain("':(glob,exclude)packages/scripts/src/torghut/__tests__/**'")
     expect(releaseWorkflow).toContain("':(glob,exclude)packages/scripts/src/torghut/**/*.test.ts'")
@@ -479,7 +492,7 @@ describe('torghut build-push workflow', () => {
       expect(staleDiffBlock).toContain('nix/ci-run-timed.sh')
       expect(staleDiffBlock).toContain('nix/oci-inspect-archive.sh')
       expect(staleDiffBlock).toContain('nix/oci-push.sh')
-      expect(staleDiffBlock).toContain('nix/oci-release-contract.sh')
+      expect(staleDiffBlock).not.toContain('nix/oci-release-contract.sh')
       expect(staleDiffBlock).toContain('flake.lock')
       expect(staleDiffBlock).not.toContain('.github/workflows/')
       expect(staleDiffBlock).not.toContain('packages/scripts/src/torghut/release-contract.ts')
@@ -502,7 +515,7 @@ describe('torghut build-push workflow', () => {
     expect(staleDiffBlock).toContain('nix/ci-run-timed.sh')
     expect(staleDiffBlock).toContain('nix/oci-inspect-archive.sh')
     expect(staleDiffBlock).toContain('nix/oci-push.sh')
-    expect(staleDiffBlock).toContain('nix/oci-release-contract.sh')
+    expect(staleDiffBlock).not.toContain('nix/oci-release-contract.sh')
     expect(staleDiffBlock).toContain('flake.lock')
     expect(staleDiffBlock).not.toContain('.github/workflows/')
     expect(staleDiffBlock).not.toContain('packages/scripts/src/torghut/release-contract.ts')
