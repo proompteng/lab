@@ -317,9 +317,10 @@ def _assert_duplicate_settlement_evidence_is_rejected(
 def _assert_unlinked_settlement_rejects_claim_identity(
     harness: _PostgresHarness,
 ) -> None:
+    nonce = uuid.uuid4().hex
     intent = _cancel_intent(
-        workflow_id="unlinked-terminal",
-        client_request_id="u" * 64,
+        workflow_id=f"unlinked-terminal-{nonce}",
+        client_request_id=hashlib.sha256(nonce.encode()).hexdigest(),
     )
     with harness.sessions() as session:
         acquired = acquire_broker_mutation_receipt(
@@ -355,38 +356,41 @@ def _assert_unlinked_settlement_rejects_claim_identity(
             )
         )
     try:
-        with harness.sessions() as session:
-            event = load_receipt_event_models(
-                session,
-                acquired.receipt.receipt_id,
-            )[-1]
-            values = _copied_event_values(event)
-            values.update(
-                sequence_no=event.sequence_no + 1,
-                event_type="settled",
-                state="settled",
-                event_writer_generation=event.primary_writer_generation,
-                submission_claim_token=uuid.uuid4(),
-                submission_claim_fencing_epoch=1,
-                submission_claim_owner="bogus-owner",
-                settlement_source=settlement.source,
-                settlement_outcome=settlement.outcome,
-                broker_reference=settlement.broker_reference,
-                execution_id=settlement.execution_id,
-                settlement_evidence_json=settlement.evidence_json,
-                settlement_evidence_sha256=settlement.evidence_sha256,
-                settled_at=database_now(session),
-            )
-            with pytest.raises(
-                DBAPIError,
-                match="unlinked broker mutation event has claim identity",
-            ):
-                append_full_state_event(
+        for claim_identity in (
+            {"submission_claim_token": uuid.uuid4()},
+            {"submission_claim_fencing_epoch": 1},
+            {"submission_claim_owner": "bogus-owner"},
+        ):
+            with harness.sessions() as session:
+                event = load_receipt_event_models(
                     session,
-                    receipt_id=acquired.receipt.receipt_id,
-                    values=values,
+                    acquired.receipt.receipt_id,
+                )[-1]
+                values = _copied_event_values(event)
+                values.update(
+                    sequence_no=event.sequence_no + 1,
+                    event_type="settled",
+                    state="settled",
+                    event_writer_generation=event.primary_writer_generation,
+                    settlement_source=settlement.source,
+                    settlement_outcome=settlement.outcome,
+                    broker_reference=settlement.broker_reference,
+                    execution_id=settlement.execution_id,
+                    settlement_evidence_json=settlement.evidence_json,
+                    settlement_evidence_sha256=settlement.evidence_sha256,
+                    settled_at=database_now(session),
                 )
-            session.rollback()
+                values.update(claim_identity)
+                with pytest.raises(
+                    DBAPIError,
+                    match="unlinked broker mutation event has claim identity",
+                ):
+                    append_full_state_event(
+                        session,
+                        receipt_id=acquired.receipt.receipt_id,
+                        values=values,
+                    )
+                session.rollback()
     finally:
         with harness.schema_engine.begin() as connection:
             connection.execute(
@@ -804,6 +808,28 @@ def test_postgres_0061_preserves_canonical_and_linked_boundaries(
         _assert_header_serializes_concurrent_release(harness)
         _assert_linked_raw_events_follow_claim_lifecycle(harness)
         _assert_linked_takeover_binds_primary_owner(harness)
+
+
+@pytest.mark.skipif(
+    not POSTGRES_DSN,
+    reason="set TORGHUT_TEST_POSTGRES_DSN for PostgreSQL boundary tests",
+)
+def test_postgres_0062_upgrade_and_downgrade_preserve_unlinked_claim_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with _postgres_harness(
+        monkeypatch, revision="0062_linked_submission_recovery"
+    ) as harness:
+        _assert_unlinked_settlement_rejects_claim_identity(harness)
+        command.downgrade(harness.alembic, "0061_linked_submission_terminal")
+        with harness.schema_engine.connect() as connection:
+            assert (
+                connection.execute(
+                    text("SELECT version_num FROM alembic_version")
+                ).scalar_one()
+                == "0061_linked_submission_terminal"
+            )
+        _assert_unlinked_settlement_rejects_claim_identity(harness)
 
 
 @pytest.mark.skipif(

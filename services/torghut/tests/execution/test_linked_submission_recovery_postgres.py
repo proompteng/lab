@@ -58,6 +58,7 @@ from tests.execution.test_broker_mutation_linked_receipts_postgres import (
 class _RecoveryHarness:
     engine: Engine
     sessions: sessionmaker[Session]
+    alembic: AlembicConfig
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +105,7 @@ def recovery_harness(
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
         command.stamp(alembic, "0057_generic_multifactor_machine")
         command.upgrade(alembic, "0062_linked_submission_recovery")
-        yield _RecoveryHarness(engine=schema_engine, sessions=sessions)
+        yield _RecoveryHarness(engine=schema_engine, sessions=sessions, alembic=alembic)
     finally:
         schema_engine.dispose()
         with admin_engine.begin() as connection:
@@ -592,6 +593,21 @@ def test_recovery_reconciled_terminal_commits_exactly_once(
         "recovery_claimed",
         "settled",
     ]
+    with pytest.raises(
+        DBAPIError,
+        match="refusing to downgrade linked recovery terminal state",
+    ):
+        command.downgrade(
+            recovery_harness.alembic,
+            "0061_linked_submission_terminal",
+        )
+    with recovery_harness.engine.connect() as connection:
+        assert (
+            connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one()
+            == "0062_linked_submission_recovery"
+        )
 
 
 def test_recovery_acknowledged_and_rejected_terminals_fail_closed(
