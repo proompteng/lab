@@ -6,14 +6,19 @@ import process from 'node:process'
 type JsonObject = Record<string, unknown>
 
 export type PostDeployEvidenceInput = {
-  readyzHttpStatus: string
-  readyz: unknown
+  apiReadyzHttpStatus: string
+  apiReadyz: unknown
+  schedulerReplicas: string
+  schedulerReadyzHttpStatus?: string
+  schedulerReadyz?: unknown
+  tradingStatusHttpStatus: string
   tradingStatus: unknown
 }
 
 export type PostDeployEvidenceResult = {
-  readinessContract: 'active_session_ready' | 'market_closed'
-  readyzStatusCode: number
+  readinessContract: 'active_session_ready' | 'api_containment' | 'market_closed'
+  apiReadyzStatusCode: number
+  schedulerReadyzStatusCode?: number
   summaryLines: string[]
 }
 
@@ -67,11 +72,25 @@ const requireStringList = (value: unknown, label: string): string[] => {
   return [...value]
 }
 
-const requireHttpStatus = (value: string): number => {
+const requireHttpStatus = (value: string, label: string): number => {
   if (!/^\d{3}$/.test(value)) {
-    throw new Error(`TORGHUT_READYZ_HTTP_STATUS must be a three-digit status, got ${value || 'unset'}`)
+    throw new Error(`${label} must be a three-digit status, got ${value || 'unset'}`)
   }
   return Number(value)
+}
+
+const requireSchedulerReplicas = (value: string): 0 | 1 => {
+  if (value === '0') return 0
+  if (value === '1') return 1
+  throw new Error(`Torghut scheduler replicas must be exactly 0 or 1, got ${value || 'unset'}`)
+}
+
+const requireExactKeys = (value: JsonObject, label: string, expectedKeys: string[]) => {
+  const actual = Object.keys(value).sort()
+  const expected = [...expectedKeys].sort()
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+    throw new Error(`${label} must contain exactly: ${expected.join(', ')}`)
+  }
 }
 
 const gateSnapshot = (value: unknown, label: string): GateSnapshot => {
@@ -194,31 +213,113 @@ const validateReadinessContract = (
   return 'market_closed'
 }
 
+const requireApiReadiness = (apiReadyzStatusCode: number, apiReadyz: JsonObject) => {
+  if (apiReadyzStatusCode < 200 || apiReadyzStatusCode >= 300) {
+    throw new Error(`stable API /readyz must return HTTP 2xx, got ${apiReadyzStatusCode}`)
+  }
+
+  requireExactKeys(apiReadyz, 'stable API readyz payload', [
+    'process_role',
+    'reason_codes',
+    'runtime_owner',
+    'scheduler',
+    'status',
+  ])
+  if (
+    apiReadyz.status !== 'ok' ||
+    apiReadyz.process_role !== 'api' ||
+    apiReadyz.runtime_owner !== 'torghut-scheduler' ||
+    !Array.isArray(apiReadyz.reason_codes) ||
+    apiReadyz.reason_codes.length !== 0
+  ) {
+    throw new Error('stable API readyz must report the process-local API role and external scheduler owner')
+  }
+
+  const scheduler = requireObject(apiReadyz.scheduler, 'stable API readyz scheduler')
+  requireExactKeys(scheduler, 'stable API readyz scheduler', ['availability', 'owner', 'ownership'])
+  if (
+    scheduler.ownership !== 'external' ||
+    scheduler.owner !== 'torghut-scheduler' ||
+    scheduler.availability !== 'not_evaluated'
+  ) {
+    throw new Error('stable API readyz scheduler ownership contract is invalid')
+  }
+}
+
+const validateApiContainment = (
+  apiReadyzStatusCode: number,
+  tradingStatusCode: number,
+  status: JsonObject,
+): PostDeployEvidenceResult => {
+  if (tradingStatusCode !== 503) {
+    throw new Error(`scheduler replicas=0 requires /trading/status HTTP 503, got ${tradingStatusCode}`)
+  }
+  if (
+    status.ok !== false ||
+    status.detail !== 'scheduler_runtime_unavailable' ||
+    status.owner !== 'torghut-scheduler' ||
+    !requireString(status.error_class, 'API containment trading status error_class')
+  ) {
+    throw new Error('API containment trading status must report the unavailable torghut-scheduler runtime')
+  }
+
+  return {
+    readinessContract: 'api_containment',
+    apiReadyzStatusCode,
+    summaryLines: [
+      '## Torghut Runtime Contract',
+      '',
+      '- Readiness: `api_containment`',
+      '- Scheduler replicas: `0`',
+      '- Runtime owner: `torghut-scheduler` (external)',
+      '- Trading status: `scheduler_runtime_unavailable` (HTTP 503)',
+    ],
+  }
+}
+
 export const validatePostDeployEvidence = (input: PostDeployEvidenceInput): PostDeployEvidenceResult => {
-  const readyzStatusCode = requireHttpStatus(input.readyzHttpStatus)
-  const readyz = requireObject(input.readyz, 'torghut readyz payload')
+  const schedulerReplicas = requireSchedulerReplicas(input.schedulerReplicas)
+  const apiReadyzStatusCode = requireHttpStatus(input.apiReadyzHttpStatus, 'TORGHUT_API_READYZ_HTTP_STATUS')
+  const tradingStatusCode = requireHttpStatus(input.tradingStatusHttpStatus, 'TORGHUT_STATUS_HTTP_STATUS')
+  const apiReadyz = requireObject(input.apiReadyz, 'Torghut stable API readyz payload')
   const status = requireObject(input.tradingStatus, 'torghut trading status payload')
+  requireApiReadiness(apiReadyzStatusCode, apiReadyz)
+
+  if (schedulerReplicas === 0) {
+    return validateApiContainment(apiReadyzStatusCode, tradingStatusCode, status)
+  }
+
+  if (tradingStatusCode < 200 || tradingStatusCode >= 300) {
+    throw new Error(`scheduler replicas=1 requires /trading/status HTTP 2xx, got ${tradingStatusCode}`)
+  }
+  const schedulerReadyzStatusCode = requireHttpStatus(
+    input.schedulerReadyzHttpStatus ?? '',
+    'TORGHUT_SCHEDULER_READYZ_HTTP_STATUS',
+  )
+  const schedulerReadyz = requireObject(input.schedulerReadyz, 'Torghut scheduler readyz payload')
   if (status.service !== 'torghut' || status.mode !== 'live' || status.enabled !== true) {
     throw new Error('trading status must describe the enabled live Torghut runtime')
   }
 
-  const readyzGate = gateSnapshot(readyz.live_submission_gate, 'readyz.live_submission_gate')
+  const readyzGate = gateSnapshot(schedulerReadyz.live_submission_gate, 'scheduler readyz.live_submission_gate')
   const statusGate = gateSnapshot(status.live_submission_gate, 'trading status live_submission_gate')
   requireSameGate(readyzGate, statusGate)
-  requireSameBuild(readyz, status)
-  requireHealthyDependencies(readyz)
+  requireSameBuild(schedulerReadyz, status)
+  requireHealthyDependencies(schedulerReadyz)
   requireCapitalLimits(status)
   requireExecutionProjection(status, statusGate)
   requireLedgerHealth(status)
-  const readinessContract = validateReadinessContract(readyzStatusCode, readyz, readyzGate)
+  const readinessContract = validateReadinessContract(schedulerReadyzStatusCode, schedulerReadyz, readyzGate)
 
   return {
     readinessContract,
-    readyzStatusCode,
+    apiReadyzStatusCode,
+    schedulerReadyzStatusCode,
     summaryLines: [
       '## Torghut Runtime Contract',
       '',
       `- Readiness: \`${readinessContract}\``,
+      '- API readiness: `process-local` (external scheduler owner)',
       `- Live gate: \`${statusGate.reason}\``,
       `- Execution route: \`${statusGate.route}\``,
       '- Capital limits: `4x gross`, `0.5x net`, `0.5x symbol`, `10% buying-power reserve`',
@@ -234,14 +335,24 @@ const loadJsonFile = (path: string, label: string): unknown => {
 
 export const runPostDeployEvidenceCli = (env: NodeJS.ProcessEnv = process.env): PostDeployEvidenceResult => {
   const result = validatePostDeployEvidence({
-    readyzHttpStatus: env.TORGHUT_READYZ_HTTP_STATUS ?? '',
-    readyz: loadJsonFile(env.TORGHUT_READYZ_PAYLOAD ?? '', 'TORGHUT_READYZ_PAYLOAD'),
+    apiReadyzHttpStatus: env.TORGHUT_API_READYZ_HTTP_STATUS ?? '',
+    apiReadyz: loadJsonFile(env.TORGHUT_API_READYZ_PAYLOAD ?? '', 'TORGHUT_API_READYZ_PAYLOAD'),
+    schedulerReplicas: env.TORGHUT_SCHEDULER_REPLICAS ?? '',
+    schedulerReadyzHttpStatus: env.TORGHUT_SCHEDULER_READYZ_HTTP_STATUS,
+    schedulerReadyz: env.TORGHUT_SCHEDULER_READYZ_PAYLOAD?.trim()
+      ? loadJsonFile(env.TORGHUT_SCHEDULER_READYZ_PAYLOAD, 'TORGHUT_SCHEDULER_READYZ_PAYLOAD')
+      : undefined,
+    tradingStatusHttpStatus: env.TORGHUT_STATUS_HTTP_STATUS ?? '',
     tradingStatus: loadJsonFile(env.TORGHUT_STATUS_PAYLOAD ?? '', 'TORGHUT_STATUS_PAYLOAD'),
   })
   if (env.GITHUB_STEP_SUMMARY?.trim()) {
     appendFileSync(env.GITHUB_STEP_SUMMARY, `${result.summaryLines.join('\n')}\n`, 'utf8')
   }
-  console.log(`Torghut post-deploy contract: ${result.readinessContract} (HTTP ${result.readyzStatusCode})`)
+  const schedulerReadyzSummary =
+    result.schedulerReadyzStatusCode === undefined ? '' : `, scheduler readyz HTTP ${result.schedulerReadyzStatusCode}`
+  console.log(
+    `Torghut post-deploy contract: ${result.readinessContract} (API readyz HTTP ${result.apiReadyzStatusCode}${schedulerReadyzSummary})`,
+  )
   return result
 }
 

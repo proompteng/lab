@@ -233,6 +233,22 @@ jobs:
             done
           done
 
+          TORGHUT_SCHEDULER_REPLICAS="$(
+            kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'
+          )"
+          case "${TORGHUT_SCHEDULER_REPLICAS}" in
+            0 | 1)
+              ;;
+            *)
+              echo "Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}"
+              exit 1
+              ;;
+          esac
+          echo "Torghut scheduler desired replicas: ${TORGHUT_SCHEDULER_REPLICAS}"
+          if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+            kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m
+          fi
+
           KNSVC_READY_ATTEMPTS=60
           KNSVC_READY_INTERVAL_SECONDS=2
 
@@ -419,69 +435,63 @@ jobs:
             done
           }
 
-          fetch_json_2xx() {
-            local url="$1"
-            local output_path="$2"
-            local label="$3"
-            local status
-
-            for attempt in $(seq 1 "${JSON_EVIDENCE_ATTEMPTS}"); do
-              status="$(
-                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
-                  -o "${output_path}" -w '%{http_code}' "${url}" || true
-              )"
-              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                return 0
-              fi
-
-              if [ "${attempt}" -eq "${JSON_EVIDENCE_ATTEMPTS}" ]; then
-                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                  [ "${status}" != '000' ] &&
-                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                  echo "${label} returned HTTP ${status}; expected 2xx" >&2
-                else
-                  echo "${label} did not return a parseable JSON HTTP 2xx response; status=${status:-empty}" >&2
-                fi
-                head -c 1000 "${output_path}" >&2 || true
-                echo >&2
-                return 1
-              fi
-
-              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                [ "${status}" != '000' ] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                echo "Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying" >&2
-              else
-                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON 2xx yet; retrying" >&2
-              fi
-              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
-            done
-          }
-
-          TORGHUT_READYZ_HTTP_STATUS="$(
-            fetch_readyz_json \
+          TORGHUT_API_READYZ_HTTP_STATUS="$(
+            fetch_json \
               http://torghut.torghut.svc.cluster.local/readyz \
-              "${EVIDENCE_DIR}/torghut-readyz.json" \
-              "Torghut /readyz"
+              "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+              "Torghut stable API /readyz"
           )"
-          if [ -z "${TORGHUT_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_READYZ_HTTP_STATUS}" = '000' ]; then
-            echo "Torghut /readyz did not return an HTTP response"
+          if [ -z "${TORGHUT_API_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_API_READYZ_HTTP_STATUS}" = '000' ]; then
+            echo "Torghut stable API /readyz did not return an HTTP response"
             exit 1
           fi
-          if ! [[ "${TORGHUT_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]]; then
-            echo "Torghut /readyz returned invalid HTTP status ${TORGHUT_READYZ_HTTP_STATUS}"
+          if ! [[ "${TORGHUT_API_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]]; then
+            echo "Torghut stable API /readyz returned invalid HTTP status ${TORGHUT_API_READYZ_HTTP_STATUS}"
             exit 1
           fi
-          echo "Torghut /readyz HTTP ${TORGHUT_READYZ_HTTP_STATUS}"
+          echo "Torghut stable API /readyz HTTP ${TORGHUT_API_READYZ_HTTP_STATUS}"
 
-          fetch_json_2xx \
-            http://torghut.torghut.svc.cluster.local/trading/status \
-            "${EVIDENCE_DIR}/torghut-status.json" \
-            "Torghut /trading/status"
+          if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+            TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(
+              fetch_readyz_json \
+                http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz \
+                "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+                "Torghut scheduler /readyz"
+            )"
+            if [ -z "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" = '000' ]; then
+              echo "Torghut scheduler /readyz did not return an HTTP response"
+              exit 1
+            fi
+            if ! [[ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]]; then
+              echo "Torghut scheduler /readyz returned invalid HTTP status ${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}"
+              exit 1
+            fi
+            echo "Torghut scheduler /readyz HTTP ${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}"
+            export TORGHUT_SCHEDULER_READYZ_HTTP_STATUS
+            export TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"
+          fi
+
+          TORGHUT_STATUS_HTTP_STATUS="$(
+            fetch_json \
+              http://torghut.torghut.svc.cluster.local/trading/status \
+              "${EVIDENCE_DIR}/torghut-status.json" \
+              "Torghut /trading/status"
+          )"
+          if [ -z "${TORGHUT_STATUS_HTTP_STATUS}" ] || [ "${TORGHUT_STATUS_HTTP_STATUS}" = '000' ]; then
+            echo "Torghut /trading/status did not return an HTTP response"
+            exit 1
+          fi
+          if ! [[ "${TORGHUT_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]]; then
+            echo "Torghut /trading/status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS}"
+            exit 1
+          fi
+          echo "Torghut /trading/status HTTP ${TORGHUT_STATUS_HTTP_STATUS}"
+
+          export TORGHUT_SCHEDULER_REPLICAS
+          export TORGHUT_STATUS_HTTP_STATUS
           export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
-          export TORGHUT_READYZ_HTTP_STATUS
-          export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
+          export TORGHUT_API_READYZ_HTTP_STATUS
+          export TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"
           bun run packages/scripts/src/torghut/post-deploy-evidence.ts
 
       - name: Verify market-data freshness
