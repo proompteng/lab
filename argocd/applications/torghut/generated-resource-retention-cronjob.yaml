@@ -24,7 +24,7 @@ spec:
           serviceAccountName: torghut-generated-resource-retention
           containers:
             - name: prune-generated-residue
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:dd448af877a1f48c202d2cfa90146b1250675ba5f6fd372909cac87bff5c4495
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:22619863222589c61a7d0b5a3730dd74fe35a7636477ba10dd1b2370b9bb84ed
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
