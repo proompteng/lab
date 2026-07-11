@@ -147,7 +147,9 @@ class TestCapitalSafetyController(TestCase):
         self.assertEqual(controller.state.capital_ledger_state, "blocked")
         self.assertEqual(adapter.cancel_calls, 1)
 
-    def test_required_protocol_without_reconciliation_does_not_read_stale_audit(self) -> None:
+    def test_required_protocol_without_reconciliation_does_not_read_stale_audit(
+        self,
+    ) -> None:
         controller = self._controller()
 
         with (
@@ -155,7 +157,9 @@ class TestCapitalSafetyController(TestCase):
             patch.object(settings, "tigerbeetle_reconcile_required", False),
             patch(
                 "app.trading.scheduler.capital_controls.latest_tigerbeetle_reconciliation_status_payload",
-                side_effect=AssertionError("periodic reconciliation should not be read"),
+                side_effect=AssertionError(
+                    "periodic reconciliation should not be read"
+                ),
             ),
         ):
             reason = controller._ledger_stop_reason(

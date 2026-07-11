@@ -47,9 +47,7 @@ def _migration_job_context() -> tuple[
     )
 
 
-class TestTorghutScheduledMaintenance(
-    _TestLiveConfigManifestContractBase
-):
+class TestTorghutScheduledMaintenance(_TestLiveConfigManifestContractBase):
     def test_tigerbeetle_journal_order_events_cronjob_is_removed(self) -> None:
         relative_path = (
             "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
