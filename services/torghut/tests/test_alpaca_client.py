@@ -138,6 +138,122 @@ class TestAlpacaClient(TestCase):
         cancelled = firewall.cancel_all_orders()
         self.assertEqual(len(cancelled), 2)
 
+    def test_order_extra_params_cannot_override_wrapper_owned_fields(self) -> None:
+        trading_client = DummyTradingClient()
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=trading_client,
+            data_client=DummyDataClient(),
+        )
+        firewall = OrderFirewall(client)
+
+        with patch.object(
+            trading_client,
+            "submit_order",
+            wraps=trading_client.submit_order,
+        ) as submit_order:
+            reserved_values: dict[str, object] = {
+                "limit_price": "200",
+                "notional": "100",
+                "order_type": "limit",
+                "qty": "100",
+                "side": "sell",
+                "stop_price": "90",
+                "symbol": "MSFT",
+                "time_in_force": "gtc",
+                "type": "limit",
+            }
+            for reserved_key, reserved_value in reserved_values.items():
+                with (
+                    self.subTest(reserved_key=reserved_key),
+                    self.assertRaisesRegex(
+                        ValueError,
+                        rf"alpaca_order_extra_params_reserved:{reserved_key}",
+                    ),
+                ):
+                    firewall.submit_order(
+                        symbol="AAPL",
+                        side="buy",
+                        qty=1,
+                        order_type="market",
+                        time_in_force="day",
+                        extra_params={reserved_key: reserved_value},
+                    )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "alpaca_order_extra_params_reserved:side,symbol,time_in_force",
+            ):
+                OrderFirewall(client).submit_order(
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1,
+                    order_type="market",
+                    time_in_force="day",
+                    extra_params={
+                        "side": "sell",
+                        "symbol": "MSFT",
+                        "time_in_force": "gtc",
+                    },
+                )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "alpaca_order_extra_params_unsupported:simulation_context",
+            ):
+                OrderFirewall(client).submit_order(
+                    symbol="AAPL",
+                    side="buy",
+                    qty=1,
+                    order_type="market",
+                    time_in_force="day",
+                    extra_params={"simulation_context": {"source": "simulation"}},
+                )
+
+            submit_order.assert_not_called()
+
+    def test_order_extra_params_preserve_supported_sdk_fields(self) -> None:
+        class RecordingTradingClient(DummyTradingClient):
+            def __init__(self) -> None:
+                super().__init__()
+                self.submitted_order: Any | None = None
+
+            def submit_order(self, order_data: Any) -> DummyModel:
+                self.submitted_order = order_data
+                return super().submit_order(order_data)
+
+        trading_client = RecordingTradingClient()
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=trading_client,
+            data_client=DummyDataClient(),
+        )
+
+        submitted = OrderFirewall(client).submit_order(
+            symbol="AAPL",
+            side="buy",
+            qty=1,
+            order_type="market",
+            time_in_force="day",
+            extra_params={
+                "client_order_id": "client-123",
+                "extended_hours": False,
+            },
+        )
+
+        self.assertEqual(submitted["status"], "accepted")
+        submitted_order = trading_client.submitted_order
+        assert submitted_order is not None
+        self.assertEqual(
+            submitted_order.client_order_id,
+            "client-123",
+        )
+        self.assertFalse(submitted_order.extended_hours)
+
     def test_attribute_only_model_payload_uses_public_vars(self) -> None:
         class AttributeOnlyTradingClient(DummyTradingClient):
             def get_account(self) -> AttributeOnlyModel:
