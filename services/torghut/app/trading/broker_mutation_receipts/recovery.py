@@ -11,7 +11,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ...models import BrokerMutationReceiptEvent
-from .linked_submission import validate_linked_claim_lifecycle
 from .lifecycle_helpers import (
     LockedReceipt,
     append_and_commit,
@@ -22,7 +21,7 @@ from .lifecycle_helpers import (
     read_and_close,
     require_compatible_terminal,
     require_recovery_handle,
-    require_unlinked_terminal,
+    require_unlinked_recovery_lifecycle,
 )
 from .persistence import (
     close_read_transaction,
@@ -182,12 +181,7 @@ def _acquire_recovery(
     current = lock_current_receipt(session, request.receipt_id)
     if current is None:
         return _recovery_result(session, "not_required", None)
-    validate_linked_claim_lifecycle(
-        session,
-        intent=current.snapshot.intent,
-        receipt_state=current.snapshot.state,
-        stored_handle=current.snapshot.submission_claim_handle,
-    )
+    require_unlinked_recovery_lifecycle(current.snapshot)
     existing = _existing_recovery_result(session, current, request)
     if existing is not None:
         return existing
@@ -388,7 +382,6 @@ def settle_broker_mutation_recovery(
             expected_source="recovery",
         )
         current = _locked_recovery(session, normalized_handle)
-        require_unlinked_terminal(current.snapshot)
         if current.snapshot.state == "settled":
             compatible = require_compatible_terminal(
                 current.snapshot,
@@ -429,13 +422,8 @@ def _locked_recovery(
         raise BrokerMutationReceiptFenceError(
             f"broker_mutation_receipt_not_found:{handle.receipt_id}"
         )
+    require_unlinked_recovery_lifecycle(current.snapshot)
     require_recovery_handle(current.snapshot, handle)
-    validate_linked_claim_lifecycle(
-        session,
-        intent=current.snapshot.intent,
-        receipt_state=current.snapshot.state,
-        stored_handle=current.snapshot.submission_claim_handle,
-    )
     return current
 
 

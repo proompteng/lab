@@ -10,6 +10,7 @@ from typing import Literal, Mapping, TypeAlias
 from ..decision_submission_claims.types import (
     DecisionSubmissionClaimHandle,
     DecisionSubmissionClaimSnapshot,
+    DecisionSubmissionRecoveryHandle,
 )
 from .validation import (
     RECEIPT_DEFAULT_LEASE_SECONDS,
@@ -266,6 +267,79 @@ class BrokerMutationLinkedSubmissionSettlementRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionRecoveryHandle:
+    """The exact paired receipt and submission-claim recovery fences."""
+
+    receipt: BrokerMutationRecoveryHandle
+    submission_claim: DecisionSubmissionRecoveryHandle
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionRecoveryResult:
+    """One atomically committed linked recovery state pair."""
+
+    receipt: BrokerMutationReceiptSnapshot
+    submission_claim: DecisionSubmissionClaimSnapshot
+
+    @property
+    def handle(self) -> BrokerMutationLinkedSubmissionRecoveryHandle:
+        return _linked_submission_recovery_handle(
+            receipt=self.receipt,
+            submission_claim=self.submission_claim,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationLinkedSubmissionRecoveryAcquireResult:
+    outcome: BrokerMutationRecoveryAcquireOutcome
+    receipt: BrokerMutationReceiptSnapshot | None
+    submission_claim: DecisionSubmissionClaimSnapshot | None
+
+    @property
+    def acquired(self) -> bool:
+        return self.outcome in {"acquired", "already_owned"}
+
+    @property
+    def handle(self) -> BrokerMutationLinkedSubmissionRecoveryHandle | None:
+        if not self.acquired:
+            return None
+        if self.receipt is None or self.submission_claim is None:
+            raise BrokerMutationReceiptValidationError(
+                "linked_submission_recovery_acquisition_state_missing"
+            )
+        return _linked_submission_recovery_handle(
+            receipt=self.receipt,
+            submission_claim=self.submission_claim,
+        )
+
+
+def _linked_submission_recovery_handle(
+    *,
+    receipt: BrokerMutationReceiptSnapshot,
+    submission_claim: DecisionSubmissionClaimSnapshot,
+) -> BrokerMutationLinkedSubmissionRecoveryHandle:
+    receipt_handle = receipt.recovery_handle
+    claim_handle = submission_claim.recovery_handle
+    if receipt_handle is None or claim_handle is None:
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_recovery_handle_missing"
+        )
+    if (
+        receipt_handle.recovery_token != claim_handle.recovery_token
+        or receipt_handle.recovery_epoch != claim_handle.recovery_fencing_epoch
+        or receipt_handle.recovery_owner != claim_handle.recovery_owner
+        or receipt_handle.recovery_lease_expires_at != claim_handle.lease_expires_at
+    ):
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_recovery_handle_mismatch"
+        )
+    return BrokerMutationLinkedSubmissionRecoveryHandle(
+        receipt=receipt_handle,
+        submission_claim=claim_handle,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerMutationReceiptAcquireResult:
     outcome: BrokerMutationReceiptAcquireOutcome
     receipt: BrokerMutationReceiptSnapshot
@@ -385,6 +459,9 @@ __all__ = [
     "BrokerMutationIoStartOutcome",
     "BrokerMutationIoStartResult",
     "BrokerMutationLinkedSubmissionSettlementRequest",
+    "BrokerMutationLinkedSubmissionRecoveryAcquireResult",
+    "BrokerMutationLinkedSubmissionRecoveryHandle",
+    "BrokerMutationLinkedSubmissionRecoveryResult",
     "BrokerMutationLinkedSubmissionTerminalResult",
     "BrokerMutationOperation",
     "BrokerMutationPurpose",

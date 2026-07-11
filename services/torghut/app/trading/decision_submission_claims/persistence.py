@@ -244,7 +244,38 @@ def transition_recovery(
     values: dict[str, object],
 ) -> DecisionSubmissionClaimSnapshot:
     now = database_now(session)
-    predicates = [
+    return _commit_transition(
+        session,
+        decision_id=handle.decision_id,
+        fencing_error=_recovery_fencing_error(handle),
+        predicates=_recovery_predicates(handle, now),
+        values={**values, "updated_at": now},
+    )
+
+
+def transition_recovery_uncommitted(
+    session: Session,
+    *,
+    handle: DecisionSubmissionRecoveryHandle,
+    values: dict[str, object],
+) -> DecisionSubmissionClaimSnapshot:
+    """Apply a fenced recovery CAS without committing the caller's transaction."""
+
+    now = database_now(session)
+    return _transition_uncommitted(
+        session,
+        decision_id=handle.decision_id,
+        fencing_error=_recovery_fencing_error(handle),
+        predicates=_recovery_predicates(handle, now),
+        values={**values, "updated_at": now},
+    )
+
+
+def _recovery_predicates(
+    handle: DecisionSubmissionRecoveryHandle,
+    now: datetime,
+) -> list[ColumnElement[bool]]:
+    return [
         TradeDecisionSubmissionClaim.trade_decision_id == handle.decision_id,
         TradeDecisionSubmissionClaim.account_label == handle.account_label,
         TradeDecisionSubmissionClaim.client_order_id == handle.client_order_id,
@@ -256,15 +287,12 @@ def transition_recovery(
         TradeDecisionSubmissionClaim.recovery_lease_expires_at.is_not(None),
         TradeDecisionSubmissionClaim.recovery_lease_expires_at > now,
     ]
-    return _commit_transition(
-        session,
-        decision_id=handle.decision_id,
-        fencing_error=(
-            "decision_submission_recovery_fenced:"
-            f"{handle.decision_id}:{handle.recovery_fencing_epoch}"
-        ),
-        predicates=predicates,
-        values={**values, "updated_at": now},
+
+
+def _recovery_fencing_error(handle: DecisionSubmissionRecoveryHandle) -> str:
+    return (
+        "decision_submission_recovery_fenced:"
+        f"{handle.decision_id}:{handle.recovery_fencing_epoch}"
     )
 
 

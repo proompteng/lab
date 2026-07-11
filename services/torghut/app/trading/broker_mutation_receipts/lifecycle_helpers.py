@@ -324,6 +324,17 @@ def require_unlinked_terminal(
         )
 
 
+def require_unlinked_recovery_lifecycle(
+    snapshot: BrokerMutationReceiptSnapshot,
+) -> None:
+    """Force every linked recovery mutation through the paired coordinator."""
+
+    if snapshot.intent.submission_claim_id is not None:
+        raise BrokerMutationReceiptValidationError(
+            "linked_submission_requires_atomic_recovery_coordinator"
+        )
+
+
 __all__ = [
     "LockedReceipt",
     "append_and_commit",
@@ -340,6 +351,7 @@ __all__ = [
     "require_compatible_terminal",
     "require_primary_handle",
     "require_recovery_handle",
+    "require_unlinked_recovery_lifecycle",
     "require_unlinked_terminal",
     "settlement_is_compatible",
 ]
