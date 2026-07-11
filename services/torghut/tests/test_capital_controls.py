@@ -218,6 +218,24 @@ class TestCapitalSafetyController(TestCase):
         self.assertEqual(controller.state.capital_ledger_state, "blocked")
         self.assertEqual(adapter.cancel_calls, 1)
 
+    def test_required_protocol_check_error_fails_closed(self) -> None:
+        controller = self._controller()
+        now = datetime(2026, 7, 10, 15, 0, tzinfo=ZoneInfo("America/New_York"))
+
+        with (
+            patch.object(settings, "tigerbeetle_required", True),
+            patch.object(settings, "tigerbeetle_reconcile_required", False),
+            patch(
+                "app.trading.scheduler.capital_controls.check_tigerbeetle_health",
+                side_effect=RuntimeError("protocol probe failed"),
+            ),
+        ):
+            reason = controller._ledger_stop_reason(SimpleNamespace(), now=now)
+
+        self.assertEqual(reason, "tigerbeetle_protocol_unavailable:RuntimeError")
+        self.assertEqual(controller.state.capital_ledger_state, "blocked")
+        self.assertEqual(controller.state.capital_ledger_reason, reason)
+
     def test_new_exposure_is_blocked_at_1530_et(self) -> None:
         controller = self._controller()
         now = datetime(2026, 7, 10, 15, 30, tzinfo=ZoneInfo("America/New_York"))
