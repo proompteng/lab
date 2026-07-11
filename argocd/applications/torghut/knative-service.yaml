@@ -133,7 +133,9 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
-              value: "true"
+              # The GitOps manifest can land before the matching image promotion.
+              # Keep even the previous image scheduler-free during that window.
+              value: "false"
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED

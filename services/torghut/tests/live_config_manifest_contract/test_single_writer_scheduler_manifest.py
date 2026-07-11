@@ -65,6 +65,7 @@ class SingleWriterSchedulerManifestTests(TestCase):
         self.assertEqual(annotations["argocd.argoproj.io/sync-wave"], "0")
         self.assertNotIn("autoscaling.knative.dev/minScale", template_annotations)
         self.assertEqual(env["TORGHUT_PROCESS_ROLE"].get("value"), "api")
+        self.assertEqual(env["TRADING_ENABLED"].get("value"), "false")
 
     def test_scheduler_is_contained_recreate_and_has_dedicated_probes(self) -> None:
         manifest = _load("argocd/applications/torghut/scheduler-deployment.yaml")
@@ -88,6 +89,7 @@ class SingleWriterSchedulerManifestTests(TestCase):
             ["app.scheduler_main:app", "--host", "0.0.0.0", "--port", "8183"],
         )
         self.assertEqual(env["TORGHUT_PROCESS_ROLE"].get("value"), "scheduler")
+        self.assertEqual(env["TRADING_ENABLED"].get("value"), "true")
         self.assertEqual(
             env["TRADING_SCHEDULER_LEADERSHIP_REQUIRED"].get("value"), "true"
         )
@@ -123,6 +125,10 @@ class SingleWriterSchedulerManifestTests(TestCase):
         )
         api_env.pop("TORGHUT_PROCESS_ROLE")
         scheduler_env.pop("TORGHUT_PROCESS_ROLE")
+        api_trading_enabled = api_env.pop("TRADING_ENABLED")
+        scheduler_trading_enabled = scheduler_env.pop("TRADING_ENABLED")
+        self.assertEqual(api_trading_enabled.get("value"), "false")
+        self.assertEqual(scheduler_trading_enabled.get("value"), "true")
         scheduler_only = {
             "TRADING_SCHEDULER_LEADERSHIP_REQUIRED",
             "TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS",
