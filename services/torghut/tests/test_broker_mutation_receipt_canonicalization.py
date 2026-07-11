@@ -1,19 +1,30 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
 
 from app.trading.broker_mutation_receipts.canonicalization import (
     build_broker_mutation_intent,
+    build_broker_mutation_recovery_observation,
+    build_broker_mutation_settlement,
     canonicalize_broker_mutation_evidence,
     fingerprint_broker_endpoint,
+    verify_canonical_broker_mutation_evidence,
+    verify_broker_mutation_intent,
 )
 from app.trading.broker_mutation_receipts.types import (
     BrokerMutationIntentRequest,
+    BrokerMutationRecoveryObservationRequest,
+    BrokerMutationSettlementRequest,
+    BrokerMutationSettlementOutcome,
     BrokerMutationTarget,
+    BrokerMutationRuntimeResult,
+    broker_mutation_runtime_result,
 )
 from app.trading.broker_mutation_receipts.validation import (
     BrokerMutationReceiptValidationError,
@@ -79,6 +90,12 @@ def test_intent_is_stable_and_uses_exact_decimal_strings() -> None:
     payload = json.loads(first.canonical_intent_json)
     assert payload["request"]["qty"] == "1.23"
     assert payload["request"]["limit_price"] == "100.5"
+    verify_broker_mutation_intent(first)
+    with pytest.raises(
+        BrokerMutationReceiptValidationError,
+        match="intent_mismatch",
+    ):
+        verify_broker_mutation_intent(replace(first, purpose="operator"))
 
 
 def test_canonicalization_rejects_floats_controls_and_changed_semantics() -> None:
@@ -202,3 +219,84 @@ def test_evidence_is_canonical_hashed_and_rejects_floats() -> None:
     assert len(fingerprint) == 64
     with pytest.raises(BrokerMutationReceiptValidationError):
         canonicalize_broker_mutation_evidence({"latency_seconds": 0.5})
+    with pytest.raises(BrokerMutationReceiptValidationError, match="must_be_object"):
+        canonicalize_broker_mutation_evidence("unstructured")
+
+
+def test_evidence_builders_enforce_source_and_outcome_contracts() -> None:
+    observation = build_broker_mutation_recovery_observation(
+        BrokerMutationRecoveryObservationRequest(
+            checked_client_request_id="request-1",
+            checked_target_key="order-1",
+            outcome="not_found",
+            evidence_payload={"broker_status": "not_found"},
+        )
+    )
+    verify_canonical_broker_mutation_evidence(
+        observation.evidence_json,
+        observation.evidence_sha256,
+    )
+
+    settlement = build_broker_mutation_settlement(
+        BrokerMutationSettlementRequest(
+            source="primary",
+            outcome="acknowledged",
+            broker_reference="broker-order-1",
+            execution_id=None,
+            evidence_payload={"broker_status": "accepted"},
+        )
+    )
+    assert settlement.broker_reference == "broker-order-1"
+    verify_canonical_broker_mutation_evidence(
+        settlement.evidence_json,
+        settlement.evidence_sha256,
+    )
+
+    invalid_pairs = (
+        ("preflight", "rejected", None),
+        ("primary", "already_satisfied", None),
+        ("recovery", "acknowledged", "broker-order-1"),
+        ("primary", "acknowledged", None),
+    )
+    for source, outcome, broker_reference in invalid_pairs:
+        with pytest.raises(BrokerMutationReceiptValidationError):
+            build_broker_mutation_settlement(
+                BrokerMutationSettlementRequest(
+                    source=source,
+                    outcome=outcome,
+                    broker_reference=broker_reference,
+                    execution_id=None,
+                    evidence_payload={"source": source, "outcome": outcome},
+                )
+            )
+
+
+def test_evidence_verifier_rejects_hash_and_encoding_drift() -> None:
+    evidence_json, evidence_sha256 = canonicalize_broker_mutation_evidence(
+        {"status": "accepted", "quantity": Decimal("1.25")}
+    )
+
+    with pytest.raises(BrokerMutationReceiptValidationError, match="hash_mismatch"):
+        verify_canonical_broker_mutation_evidence(evidence_json, "0" * 64)
+    with pytest.raises(BrokerMutationReceiptValidationError, match="encoding_mismatch"):
+        verify_canonical_broker_mutation_evidence(
+            evidence_json.replace(":", ": ", 1),
+            hashlib.sha256(evidence_json.replace(":", ": ", 1).encode()).hexdigest(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("settlement_outcome", "runtime_result"),
+    [
+        (None, "deferred"),
+        ("acknowledged", "submitted"),
+        ("reconciled", "reconciled"),
+        ("already_satisfied", "already_processed"),
+        ("rejected", "rejected"),
+    ],
+)
+def test_runtime_mapping_never_treats_unsettled_as_submitted(
+    settlement_outcome: BrokerMutationSettlementOutcome | None,
+    runtime_result: BrokerMutationRuntimeResult,
+) -> None:
+    assert broker_mutation_runtime_result(settlement_outcome) == runtime_result

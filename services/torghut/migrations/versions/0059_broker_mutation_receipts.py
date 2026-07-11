@@ -235,7 +235,7 @@ def _create_receipt_events() -> None:
             name="ck_bm_event_type_state",
         ),
         sa.CheckConstraint(
-            "primary_lease_expires_at > primary_claimed_at",
+            "primary_lease_expires_at >= primary_claimed_at",
             name="ck_bm_event_primary_lease",
         ),
         sa.CheckConstraint(

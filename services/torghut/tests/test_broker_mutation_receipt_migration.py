@@ -111,6 +111,7 @@ class TestBrokerMutationReceiptMigration(TestCase):
         self.assertIn("uq_broker_mutation_receipt_client", index_names)
         self.assertIn("uq_broker_mutation_receipt_intent", index_names)
         self.assertIn("uq_broker_mutation_receipt_event_seq", index_names)
+        self.assertIn("ix_broker_mutation_receipt_latest", index_names)
         self.assertIn("ix_broker_mutation_receipt_recovery_due", index_names)
         for call_args in (*create_table.call_args_list, *create_index.call_args_list):
             name = call_args.args[0]

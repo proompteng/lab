@@ -45,6 +45,7 @@ def test_receipt_header_encodes_the_exact_broker_mutation_contract() -> None:
 def test_event_model_keeps_recovery_and_settlement_evidence_separate() -> None:
     table = BrokerMutationReceiptEvent.__table__
     checks = _checks(BrokerMutationReceiptEvent)
+    index_names = {index.name for index in table.indexes}
 
     assert {
         "released_at",
@@ -59,6 +60,10 @@ def test_event_model_keeps_recovery_and_settlement_evidence_separate() -> None:
     assert "settlement_source = 'preflight'" in checks
     assert "state <> 'broker_io'" in checks
     assert "state <> 'settled'" in checks
+    assert {
+        "ix_broker_mutation_receipt_latest",
+        "ix_broker_mutation_receipt_recovery_due",
+    }.issubset(index_names)
 
 
 def test_receipt_foreign_keys_are_restrictive_audit_edges() -> None:

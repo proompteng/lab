@@ -137,6 +137,12 @@ class BrokerMutationReceiptAcquireOptions:
 
 
 @dataclass(frozen=True, slots=True)
+class BrokerMutationRecoveryAcquireOptions:
+    recovery_token: uuid.UUID | str | None = None
+    lease_seconds: int = RECEIPT_DEFAULT_LEASE_SECONDS
+
+
+@dataclass(frozen=True, slots=True)
 class BrokerMutationReceiptHandle:
     receipt_id: uuid.UUID
     primary_token: uuid.UUID
@@ -245,9 +251,19 @@ class BrokerMutationRecoveryAcquireResult:
 
 @dataclass(frozen=True, slots=True)
 class BrokerMutationRecoveryObservation:
+    checked_client_request_id: str
+    checked_target_key: str
     outcome: BrokerMutationRecoveryObservationOutcome
     evidence_json: str
     evidence_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationRecoveryObservationRequest:
+    checked_client_request_id: str
+    checked_target_key: str
+    outcome: str
+    evidence_payload: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,9 +271,18 @@ class BrokerMutationSettlement:
     source: BrokerMutationSettlementSource
     outcome: BrokerMutationSettlementOutcome
     broker_reference: str | None
-    execution_id: uuid.UUID | str | None
+    execution_id: uuid.UUID | None
     evidence_json: str
     evidence_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class BrokerMutationSettlementRequest:
+    source: str
+    outcome: str
+    broker_reference: str | None
+    execution_id: uuid.UUID | str | None
+    evidence_payload: object
 
 
 def broker_mutation_runtime_result(
@@ -295,15 +320,18 @@ __all__ = [
     "BrokerMutationReceiptSnapshot",
     "BrokerMutationReceiptState",
     "BrokerMutationRecoveryAcquireOutcome",
+    "BrokerMutationRecoveryAcquireOptions",
     "BrokerMutationRecoveryAcquireResult",
     "BrokerMutationRecoveryAudit",
     "BrokerMutationRecoveryHandle",
     "BrokerMutationRecoveryObservation",
+    "BrokerMutationRecoveryObservationRequest",
     "BrokerMutationRecoveryObservationOutcome",
     "BrokerMutationRiskClass",
     "BrokerMutationRoute",
     "BrokerMutationRuntimeResult",
     "BrokerMutationSettlement",
+    "BrokerMutationSettlementRequest",
     "BrokerMutationSettlementAudit",
     "BrokerMutationSettlementOutcome",
     "BrokerMutationSettlementSource",

@@ -20,8 +20,15 @@ from .types import (
     BrokerMutationIntentRequest,
     BrokerMutationOperation,
     BrokerMutationPurpose,
+    BrokerMutationRecoveryObservation,
+    BrokerMutationRecoveryObservationOutcome,
+    BrokerMutationRecoveryObservationRequest,
     BrokerMutationRiskClass,
     BrokerMutationRoute,
+    BrokerMutationSettlement,
+    BrokerMutationSettlementOutcome,
+    BrokerMutationSettlementRequest,
+    BrokerMutationSettlementSource,
     BrokerMutationTarget,
     BrokerMutationTargetKind,
     CanonicalJsonValue,
@@ -33,6 +40,7 @@ from .validation import (
     BrokerMutationReceiptValidationError,
     enum_value,
     optional_uuid,
+    optional_text,
     reject_control_characters,
     required_text,
     sha256_hex,
@@ -71,6 +79,21 @@ _TARGET_KINDS: tuple[BrokerMutationTargetKind, ...] = (
     "order",
     "position",
     "account",
+)
+_RECOVERY_OUTCOMES: tuple[BrokerMutationRecoveryObservationOutcome, ...] = (
+    "not_found",
+    "indeterminate",
+)
+_SETTLEMENT_SOURCES: tuple[BrokerMutationSettlementSource, ...] = (
+    "primary",
+    "recovery",
+    "preflight",
+)
+_SETTLEMENT_OUTCOMES: tuple[BrokerMutationSettlementOutcome, ...] = (
+    "acknowledged",
+    "reconciled",
+    "rejected",
+    "already_satisfied",
 )
 
 
@@ -278,10 +301,62 @@ def _encode_canonical_intent(
     return canonical_json, hashlib.sha256(encoded).hexdigest()
 
 
+def verify_broker_mutation_intent(intent: object) -> None:
+    """Rebuild a caller-supplied intent and reject any manual identity drift."""
+
+    if not isinstance(intent, BrokerMutationIntent):
+        raise BrokerMutationReceiptValidationError("broker_mutation_intent_invalid")
+    try:
+        raw_document = json.loads(intent.canonical_intent_json, parse_float=Decimal)
+    except (TypeError, ValueError) as exc:
+        raise BrokerMutationReceiptValidationError(
+            "canonical_intent_json_invalid"
+        ) from exc
+    if not isinstance(raw_document, Mapping):
+        raise BrokerMutationReceiptValidationError("canonical_intent_document_invalid")
+    document = cast(Mapping[str, object], raw_document)
+    request_payload = document.get("request")
+    if not isinstance(request_payload, Mapping):
+        raise BrokerMutationReceiptValidationError("canonical_intent_document_invalid")
+    try:
+        rebuilt = build_broker_mutation_intent(
+            BrokerMutationIntentRequest(
+                broker_route=intent.broker_route,
+                account_label=intent.account_label,
+                endpoint_fingerprint=intent.endpoint_fingerprint,
+                operation=intent.operation,
+                risk_class=intent.risk_class,
+                purpose=intent.purpose,
+                workflow_id=intent.workflow_id,
+                client_request_id=intent.client_request_id,
+                target=intent.target,
+                request_payload=cast(
+                    Mapping[str, object],
+                    request_payload,
+                ),
+                submission_claim_id=intent.submission_claim_id,
+            )
+        )
+    except (AttributeError, TypeError) as exc:
+        raise BrokerMutationReceiptValidationError(
+            "broker_mutation_intent_invalid"
+        ) from exc
+    if rebuilt != intent:
+        raise BrokerMutationReceiptValidationError(
+            "canonical_broker_mutation_intent_mismatch"
+        )
+
+
 def canonicalize_broker_mutation_evidence(payload: object) -> tuple[str, str]:
     """Return bounded canonical evidence JSON and its SHA-256 fingerprint."""
 
-    normalized = _canonical_json_value(payload, path="evidence", depth=0)
+    if not isinstance(payload, Mapping):
+        raise BrokerMutationReceiptValidationError("evidence_must_be_object")
+    normalized = _canonical_json_value(
+        cast(Mapping[object, object], payload),
+        path="evidence",
+        depth=0,
+    )
     canonical_json = json.dumps(
         normalized,
         sort_keys=True,
@@ -295,6 +370,137 @@ def canonicalize_broker_mutation_evidence(payload: object) -> tuple[str, str]:
             f"canonical_evidence_too_large:{MAX_CANONICAL_EVIDENCE_BYTES}"
         )
     return canonical_json, hashlib.sha256(encoded).hexdigest()
+
+
+def verify_canonical_broker_mutation_evidence(
+    evidence_json: object,
+    evidence_sha256: str,
+) -> None:
+    """Reject non-canonical or mismatched evidence supplied to a transition."""
+
+    if not isinstance(evidence_json, str):
+        raise BrokerMutationReceiptValidationError("evidence_json_must_be_string")
+    normalized_hash = sha256_hex(evidence_sha256, field="evidence_sha256")
+    encoded = evidence_json.encode("utf-8")
+    if not encoded or len(encoded) > MAX_CANONICAL_EVIDENCE_BYTES:
+        raise BrokerMutationReceiptValidationError(
+            f"canonical_evidence_too_large:{MAX_CANONICAL_EVIDENCE_BYTES}"
+        )
+    if hashlib.sha256(encoded).hexdigest() != normalized_hash:
+        raise BrokerMutationReceiptValidationError("canonical_evidence_hash_mismatch")
+    try:
+        payload = json.loads(evidence_json, parse_float=Decimal)
+    except (TypeError, ValueError) as exc:
+        raise BrokerMutationReceiptValidationError(
+            "canonical_evidence_json_invalid"
+        ) from exc
+    canonical_json, canonical_hash = canonicalize_broker_mutation_evidence(payload)
+    if canonical_json != evidence_json or canonical_hash != normalized_hash:
+        raise BrokerMutationReceiptValidationError(
+            "canonical_evidence_encoding_mismatch"
+        )
+
+
+def build_broker_mutation_recovery_observation(
+    request: BrokerMutationRecoveryObservationRequest,
+) -> BrokerMutationRecoveryObservation:
+    outcome = cast(
+        BrokerMutationRecoveryObservationOutcome,
+        enum_value(
+            request.outcome,
+            field="recovery_outcome",
+            allowed=_RECOVERY_OUTCOMES,
+        ),
+    )
+    checked_client_request_id = required_text(
+        request.checked_client_request_id,
+        field="checked_client_request_id",
+        maximum=128,
+    )
+    checked_target_key = required_text(
+        request.checked_target_key,
+        field="checked_target_key",
+        maximum=256,
+    )
+    raw_evidence: object = request.evidence_payload
+    if not isinstance(raw_evidence, Mapping):
+        raise BrokerMutationReceiptValidationError("recovery_evidence_must_be_object")
+    evidence_payload = cast(Mapping[str, object], raw_evidence)
+    evidence_json, evidence_sha256 = canonicalize_broker_mutation_evidence(
+        {
+            "checked_client_request_id": checked_client_request_id,
+            "checked_target_key": checked_target_key,
+            "observation": evidence_payload,
+        }
+    )
+    return BrokerMutationRecoveryObservation(
+        checked_client_request_id=checked_client_request_id,
+        checked_target_key=checked_target_key,
+        outcome=outcome,
+        evidence_json=evidence_json,
+        evidence_sha256=evidence_sha256,
+    )
+
+
+def build_broker_mutation_settlement(
+    request: BrokerMutationSettlementRequest,
+) -> BrokerMutationSettlement:
+    source = cast(
+        BrokerMutationSettlementSource,
+        enum_value(
+            request.source,
+            field="settlement_source",
+            allowed=_SETTLEMENT_SOURCES,
+        ),
+    )
+    outcome = cast(
+        BrokerMutationSettlementOutcome,
+        enum_value(
+            request.outcome,
+            field="settlement_outcome",
+            allowed=_SETTLEMENT_OUTCOMES,
+        ),
+    )
+    _validate_settlement_contract(source=source, outcome=outcome)
+    broker_reference = optional_text(
+        request.broker_reference,
+        field="broker_reference",
+        maximum=256,
+    )
+    if outcome in {"acknowledged", "reconciled"} and broker_reference is None:
+        raise BrokerMutationReceiptValidationError(
+            f"{outcome}_requires_broker_reference"
+        )
+    evidence_json, evidence_sha256 = canonicalize_broker_mutation_evidence(
+        request.evidence_payload
+    )
+    return BrokerMutationSettlement(
+        source=source,
+        outcome=outcome,
+        broker_reference=broker_reference,
+        execution_id=optional_uuid(request.execution_id, field="execution_id"),
+        evidence_json=evidence_json,
+        evidence_sha256=evidence_sha256,
+    )
+
+
+def _validate_settlement_contract(
+    *,
+    source: BrokerMutationSettlementSource,
+    outcome: BrokerMutationSettlementOutcome,
+) -> None:
+    if source == "preflight" and outcome != "already_satisfied":
+        raise BrokerMutationReceiptValidationError(
+            "preflight_requires_already_satisfied"
+        )
+    if source != "preflight" and outcome == "already_satisfied":
+        raise BrokerMutationReceiptValidationError(
+            "already_satisfied_requires_preflight"
+        )
+    if source == "recovery" and outcome == "acknowledged":
+        raise BrokerMutationReceiptValidationError(
+            "recovery_cannot_acknowledge_new_broker_io"
+        )
 
 
 def _normalize_target(target: BrokerMutationTarget) -> BrokerMutationTarget:
@@ -457,6 +663,10 @@ def _canonical_decimal(value: Decimal, *, path: str) -> str:
 __all__ = [
     "BROKER_MUTATION_INTENT_SCHEMA_VERSION",
     "build_broker_mutation_intent",
+    "build_broker_mutation_recovery_observation",
+    "build_broker_mutation_settlement",
     "canonicalize_broker_mutation_evidence",
     "fingerprint_broker_endpoint",
+    "verify_broker_mutation_intent",
+    "verify_canonical_broker_mutation_evidence",
 ]

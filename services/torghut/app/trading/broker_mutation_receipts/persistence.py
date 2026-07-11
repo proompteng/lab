@@ -42,42 +42,41 @@ from .validation import (
 )
 
 
-_EVENT_FULL_STATE_FIELDS = frozenset(
-    {
-        "sequence_no",
-        "event_type",
-        "state",
-        "event_writer_generation",
-        "primary_token",
-        "primary_epoch",
-        "primary_owner",
-        "primary_writer_generation",
-        "primary_claimed_at",
-        "primary_lease_expires_at",
-        "released_at",
-        "release_reason",
-        "broker_io_started_at",
-        "recovery_after",
-        "recovery_token",
-        "recovery_epoch",
-        "recovery_owner",
-        "recovery_writer_generation",
-        "recovery_lease_started_at",
-        "recovery_lease_expires_at",
-        "recovery_checked_at",
-        "recovery_observation_epoch",
-        "recovery_outcome",
-        "settlement_source",
-        "settlement_outcome",
-        "broker_reference",
-        "execution_id",
-        "recovery_evidence_json",
-        "recovery_evidence_sha256",
-        "settlement_evidence_json",
-        "settlement_evidence_sha256",
-        "settled_at",
-    }
+_EVENT_FULL_STATE_FIELDS: tuple[str, ...] = (
+    "sequence_no",
+    "event_type",
+    "state",
+    "event_writer_generation",
+    "primary_token",
+    "primary_epoch",
+    "primary_owner",
+    "primary_writer_generation",
+    "primary_claimed_at",
+    "primary_lease_expires_at",
+    "released_at",
+    "release_reason",
+    "broker_io_started_at",
+    "recovery_after",
+    "recovery_token",
+    "recovery_epoch",
+    "recovery_owner",
+    "recovery_writer_generation",
+    "recovery_lease_started_at",
+    "recovery_lease_expires_at",
+    "recovery_checked_at",
+    "recovery_observation_epoch",
+    "recovery_outcome",
+    "settlement_source",
+    "settlement_outcome",
+    "broker_reference",
+    "execution_id",
+    "recovery_evidence_json",
+    "recovery_evidence_sha256",
+    "settlement_evidence_json",
+    "settlement_evidence_sha256",
+    "settled_at",
 )
+_EVENT_FULL_STATE_FIELD_SET: frozenset[str] = frozenset(_EVENT_FULL_STATE_FIELDS)
 
 
 def as_database_utc_datetime(value: object, *, field: str) -> datetime:
@@ -611,10 +610,10 @@ def append_full_state_event(
     normalized_event_id = (
         uuid.uuid4() if event_id is None else as_uuid(event_id, field="event_id")
     )
-    provided_fields = frozenset(values)
-    if provided_fields != _EVENT_FULL_STATE_FIELDS:
-        missing = sorted(_EVENT_FULL_STATE_FIELDS - provided_fields)
-        unexpected = sorted(provided_fields - _EVENT_FULL_STATE_FIELDS)
+    provided_fields: frozenset[str] = frozenset(values)
+    if provided_fields != _EVENT_FULL_STATE_FIELD_SET:
+        missing = sorted(_EVENT_FULL_STATE_FIELD_SET - provided_fields)
+        unexpected = sorted(provided_fields - _EVENT_FULL_STATE_FIELD_SET)
         raise BrokerMutationReceiptError(
             "broker_mutation_receipt_event_not_full_state:"
             f"missing={','.join(missing)}:unexpected={','.join(unexpected)}"
@@ -644,6 +643,14 @@ def append_full_state_event(
     if event is None:  # pragma: no cover - INSERT RETURNING proved the row exists
         raise BrokerMutationReceiptError("inserted_broker_mutation_event_not_found")
     return event
+
+
+def full_state_values_from_event(
+    event: BrokerMutationReceiptEvent,
+) -> dict[str, object]:
+    """Copy every state field while excluding event identity and DB audit time."""
+
+    return {field: getattr(event, field) for field in _EVENT_FULL_STATE_FIELDS}
 
 
 def close_read_transaction(session: Session) -> None:
@@ -676,6 +683,7 @@ __all__ = [
     "commit_or_rollback",
     "database_now",
     "event_snapshot_from_models",
+    "full_state_values_from_event",
     "insert_receipt_header_if_absent",
     "load_latest_receipt_event",
     "load_receipt_event_history",

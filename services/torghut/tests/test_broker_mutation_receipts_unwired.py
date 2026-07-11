@@ -33,3 +33,12 @@ def test_receipt_slice_does_not_change_scheduler_replica_contract() -> None:
     ).read_text(encoding="utf-8")
 
     assert "replicas: 0" in manifest
+
+
+def test_receipt_postgres_races_are_a_required_ci_gate() -> None:
+    workflow = (SERVICE_ROOT.parents[1] / ".github/workflows/torghut-ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "name: PostgreSQL mutation fencing CAS" in workflow
+    assert "tests/execution/test_broker_mutation_receipts_postgres.py" in workflow

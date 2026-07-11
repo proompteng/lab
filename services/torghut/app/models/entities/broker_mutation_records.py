@@ -288,7 +288,7 @@ class BrokerMutationReceiptEvent(Base):
         CheckConstraint("sequence_no > 0", name="sequence_no_positive"),
         CheckConstraint("primary_epoch > 0", name="primary_epoch_positive"),
         CheckConstraint(
-            "primary_lease_expires_at > primary_claimed_at",
+            "primary_lease_expires_at >= primary_claimed_at",
             name="primary_lease",
         ),
         CheckConstraint(
@@ -464,7 +464,7 @@ class BrokerMutationReceiptEvent(Base):
             name="settlement_evidence_size",
         ),
         Index(
-            "ix_broker_mutation_receipt_events_latest",
+            "ix_broker_mutation_receipt_latest",
             "receipt_id",
             "sequence_no",
         ),
