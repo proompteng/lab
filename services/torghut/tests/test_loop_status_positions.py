@@ -1,5 +1,13 @@
 """Regression coverage for scoped and durable loop-status position ownership."""
 
+from datetime import datetime, timezone
+
+from app.trading.loop_status import (
+    LoopStatusOptions,
+    LoopStatusRows,
+    _blockers,
+    _proof_summary,
+)
 from app.trading.loop_status_positions import (
     managed_exchange_positions,
     position_coin_set,
@@ -50,3 +58,51 @@ def test_unconfigured_unpersisted_coin_is_not_claimed() -> None:
     raw = ({"coin": "xyz:UNMANAGED", "size": "1"},)
 
     assert managed_exchange_positions((), raw, (), ("xyz:MU",)) == []
+
+
+def test_unmanaged_scoped_position_blocks_reconciliation() -> None:
+    generated_at = datetime(2026, 7, 11, 17, 0, tzinfo=timezone.utc)
+    rows = LoopStatusRows(
+        latest_cycle={},
+        latest_signal={},
+        latest_order={},
+        counts_24h={},
+        fill_summary={},
+        latest_fill={},
+        latest_account={
+            "observed_at": generated_at,
+            "raw_payload": {
+                "dexStates": {
+                    "xyz": {
+                        "assetPositions": [
+                            {"position": {"coin": "xyz:NVDA", "szi": "1"}}
+                        ]
+                    },
+                    "abc": {
+                        "assetPositions": [
+                            {"position": {"coin": "abc:NVDA", "szi": "1"}}
+                        ]
+                    },
+                }
+            },
+        },
+        positions=({"coin": "NVDA"},),
+        performance={},
+        stale_open_orders=(),
+        unexpected_live_alpaca={},
+        query_errors=(),
+    )
+    summary = _proof_summary(
+        rows,
+        LoopStatusOptions(
+            generated_at=generated_at,
+            configured_symbols=("xyz:NVDA",),
+        ),
+    )
+
+    assert [row["coin"] for row in summary.managed_exchange_positions] == ["xyz:NVDA"]
+    assert [row["coin"] for row in summary.unmanaged_exchange_positions] == ["abc:NVDA"]
+    assert summary.positions_reconciled is False
+    assert "hyperliquid_position_reconciliation_missing" in _blockers(
+        summary, min_recent_fills=0
+    )

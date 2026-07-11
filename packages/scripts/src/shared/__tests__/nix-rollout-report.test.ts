@@ -125,6 +125,36 @@ describe('Nix rollout report', () => {
     expect(report.releaseContracts.missingForNixImages).toEqual([])
   })
 
+  it('requires a digest-pinned manifest ref to match the release contract digest', () => {
+    const deployedDigest = 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const staleContractDigest = 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    const report = buildNixRolloutReport({
+      inventory: inventory([
+        entry({
+          name: 'torghut',
+          repoImages: [`registry.ide-newton.ts.net/lab/torghut@${deployedDigest}`],
+          nixImageAttr: 'torghut-image',
+          buildScriptPath: 'packages/scripts/src/torghut/build-image.ts',
+          deployScriptPath: 'packages/scripts/src/torghut/deploy-service.ts',
+          workflowPaths: ['.github/workflows/torghut-build-push.yaml'],
+        }),
+      ]),
+      releaseContracts: [
+        validContract({
+          service: 'torghut',
+          image: 'registry.ide-newton.ts.net/lab/torghut',
+          digest: staleContractDigest,
+          reference: `registry.ide-newton.ts.net/lab/torghut@${staleContractDigest}`,
+          packageAttr: 'torghut-image',
+        }),
+      ],
+      requireContracts: true,
+    })
+
+    expect(report.releaseContracts.valid).toBe(1)
+    expect(report.releaseContracts.missingForNixImages).toEqual(['torghut'])
+  })
+
   it('flags invalid release contracts and missing required contract coverage', () => {
     const report = buildNixRolloutReport({
       inventory: inventory([

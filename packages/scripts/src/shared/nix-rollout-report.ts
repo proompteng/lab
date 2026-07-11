@@ -115,9 +115,21 @@ const imageRepository = (reference: string): string => {
   return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
 }
 
+const imageDigest = (reference: string): string | undefined => {
+  const separator = reference.lastIndexOf('@')
+  if (separator < 0) return undefined
+  const digest = reference.slice(separator + 1)
+  return sha256DigestPattern.test(digest) ? digest : undefined
+}
+
 const contractCoversImage = (contract: NixRolloutReleaseContract, image: string): boolean => {
   const repository = imageRepository(image)
-  return imageRepository(contract.image) === repository && contract.reference === `${contract.image}@${contract.digest}`
+  const deployedDigest = imageDigest(image)
+  return (
+    imageRepository(contract.image) === repository &&
+    contract.reference === `${contract.image}@${contract.digest}` &&
+    (deployedDigest === undefined || deployedDigest === contract.digest)
+  )
 }
 
 const countByClass = (entries: EnabledAppInventoryEntry[]): Record<string, number> =>

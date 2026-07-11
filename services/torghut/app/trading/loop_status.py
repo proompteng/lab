@@ -300,6 +300,9 @@ def _proof_summary(
         _selected_symbols(rows),
         options.configured_symbols,
     )
+    unmanaged_raw_positions = unmanaged_exchange_positions(
+        raw_exchange_positions, managed_raw_positions
+    )
     return LoopProofSummary(
         query_errors=tuple(rows.query_errors),
         market_feature_at=latest_feature_at,
@@ -318,10 +321,9 @@ def _proof_summary(
         position_count=len(rows.positions),
         raw_exchange_positions=tuple(raw_exchange_positions),
         managed_exchange_positions=tuple(managed_raw_positions),
-        unmanaged_exchange_positions=tuple(
-            unmanaged_exchange_positions(raw_exchange_positions, managed_raw_positions)
-        ),
+        unmanaged_exchange_positions=tuple(unmanaged_raw_positions),
         positions_reconciled=account_fresh
+        and not unmanaged_raw_positions
         and position_coin_set(rows.positions)
         == position_coin_set(managed_raw_positions),
         stale_open_order_count=len(rows.stale_open_orders),
