@@ -57,11 +57,14 @@ def _assert_main_process_role_contract() -> bool:
     return True
 
 
-async def _supervise_embedded_scheduler(scheduler: TradingScheduler) -> None:
+async def _supervise_embedded_scheduler(
+    scheduler: TradingScheduler,
+    stop_event: asyncio.Event,
+) -> None:
     """Retry only expected leadership contention during a Knative handoff."""
 
     retry_seconds = settings.trading_scheduler_leadership_check_seconds
-    while True:
+    while not stop_event.is_set():
         try:
             await scheduler.start()
             return
@@ -71,7 +74,10 @@ async def _supervise_embedded_scheduler(scheduler: TradingScheduler) -> None:
                 retry_seconds,
                 exc,
             )
-        await asyncio.sleep(retry_seconds)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=retry_seconds)
+        except TimeoutError:
+            pass
 
 
 def _embedded_scheduler_supervisor_completed(
@@ -96,14 +102,12 @@ def _embedded_scheduler_supervisor_completed(
 
 async def _stop_embedded_scheduler_supervisor(
     supervisor: asyncio.Task[None] | None,
+    stop_event: asyncio.Event,
 ) -> None:
     if supervisor is None or supervisor.done():
         return
-    supervisor.cancel()
-    try:
-        await supervisor
-    except asyncio.CancelledError:
-        pass
+    stop_event.set()
+    await supervisor
 
 
 def _evaluate_scheduler_status(
@@ -181,6 +185,7 @@ async def lifespan(app: FastAPI):
     if whitepaper_worker is not None:
         app.state.whitepaper_worker = whitepaper_worker
     scheduler_supervisor: asyncio.Task[None] | None = None
+    scheduler_supervisor_stop = asyncio.Event()
     logger.info(
         "Torghut startup initiated build_version=%s build_commit=%s app_env=%s process_role=%s log_level=%s log_format=%s trading_enabled=%s background_worker_owner=%s",
         BUILD_VERSION,
@@ -203,7 +208,10 @@ async def lifespan(app: FastAPI):
             if settings.trading_enabled:
                 _assert_dspy_cutover_migration_guard()
                 scheduler_supervisor = asyncio.create_task(
-                    _supervise_embedded_scheduler(scheduler),
+                    _supervise_embedded_scheduler(
+                        scheduler,
+                        scheduler_supervisor_stop,
+                    ),
                     name="torghut-simulation-scheduler-supervisor",
                 )
                 scheduler_supervisor.add_done_callback(
@@ -230,7 +238,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("Torghut shutdown initiated")
-        await _stop_embedded_scheduler_supervisor(scheduler_supervisor)
+        await _stop_embedded_scheduler_supervisor(
+            scheduler_supervisor,
+            scheduler_supervisor_stop,
+        )
         if whitepaper_worker is not None:
             await whitepaper_worker.stop()
         await scheduler.stop()
