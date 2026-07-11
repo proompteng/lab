@@ -459,6 +459,25 @@ describe('agents-shell MCP tools', () => {
     await server.close()
   })
 
+  it('rejects manual Codex review comments before starting a shell job', async () => {
+    const config = makeConfig()
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    for (const name of ['shell_run', 'shell_start']) {
+      const result = await client.callTool({
+        name,
+        arguments: { command: "gh pr comment 12234 -R proompteng/lab --body '@codex review'" },
+      })
+      expect(result.isError).toBe(true)
+      expect(JSON.stringify(result.content)).toContain('manual Codex review comments are disabled')
+    }
+
+    await clientTransport.close()
+    await serverTransport.close()
+    await client.close()
+    await server.close()
+  })
+
   it('finishes process tools when a git descendant keeps stdio open after child exit', async () => {
     const config = makeConfig()
     mkdirSync(join(config.workspaceRoot, 'lab'), { recursive: true })

@@ -7,6 +7,7 @@ import { Effect } from 'effect'
 
 import { writeAuditLog } from './audit'
 import type { AuthContext } from './auth'
+import { requireAllowedShellCommand } from './cli-policy'
 import type { AgentsShellConfig } from './config'
 import { ShellJobStore, appendTail, tail, type CommandInput, type ShellJob } from './jobs'
 import { asPositiveInteger } from './limits'
@@ -56,6 +57,17 @@ export class AgentsShellRunner {
   }
 
   start(input: CommandInput, auth: AuthContext): ShellJob {
+    try {
+      requireAllowedShellCommand(input.command)
+    } catch (error) {
+      this.audit('shell_command_rejected', auth, {
+        command: input.command,
+        cwd: input.cwd,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+
     if (this.runningJobs().length >= this.config.maxConcurrentJobs) {
       throw new Error(`max concurrent jobs reached: ${this.config.maxConcurrentJobs}`)
     }
