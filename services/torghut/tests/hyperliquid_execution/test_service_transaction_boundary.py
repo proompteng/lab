@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Never
+from typing import Never, cast
 
 from pytest import MonkeyPatch, raises
 from sqlalchemy.exc import SQLAlchemyError
@@ -19,6 +19,7 @@ from app.hyperliquid_execution.models import (
     RuntimeDependencyStatus,
 )
 from app.hyperliquid_execution.metrics import HyperliquidExecutionMetrics
+from app.hyperliquid_execution.repository import HyperliquidExecutionRepository
 from app.hyperliquid_execution.service import HyperliquidExecutionService
 
 
@@ -36,7 +37,7 @@ def test_dependency_reads_finish_before_cycle_database_transaction() -> None:
     repository = _RecordingRepository(events)
 
     context = service._load_context(  # pylint: disable=protected-access
-        repository,  # type: ignore[arg-type]
+        cast(HyperliquidExecutionRepository, repository),
         observed_at,
     )
 
