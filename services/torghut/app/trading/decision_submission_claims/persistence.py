@@ -61,6 +61,7 @@ def snapshot_from_model(
             broker_client_order_id=row.broker_client_order_id,
             execution_id=row.execution_id,
             completed_at=_optional_datetime(row.completed_at),
+            receipt_event_id=row.terminal_receipt_event_id,
         ),
     )
 

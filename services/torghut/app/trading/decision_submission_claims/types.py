@@ -15,13 +15,14 @@ CLAIM_MIN_RECOVERY_SECONDS = 30
 CLAIM_MAX_RECOVERY_SECONDS = 3600
 CLAIM_DEFAULT_RECOVERY_SECONDS = 120
 
-ClaimState = Literal["claimed", "broker_io", "submitted"]
+ClaimState = Literal["claimed", "broker_io", "submitted", "rejected"]
 ClaimAcquisitionOutcome = Literal[
     "acquired",
     "already_owned",
     "busy",
     "recovery_required",
     "submitted",
+    "rejected",
     "execution_exists",
     "not_claimable",
 ]
@@ -29,6 +30,7 @@ SubmissionBoundaryOutcome = Literal[
     "transitioned",
     "already_started",
     "submitted",
+    "rejected",
 ]
 RecoveryClaimAcquisitionOutcome = Literal[
     "acquired",
@@ -118,6 +120,7 @@ class DecisionSubmissionTerminalAudit:
     broker_client_order_id: str | None
     execution_id: uuid.UUID | None
     completed_at: datetime | None
+    receipt_event_id: uuid.UUID | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,6 +190,10 @@ class DecisionSubmissionClaimSnapshot:
     @property
     def completed_at(self) -> datetime | None:
         return self.terminal.completed_at
+
+    @property
+    def terminal_receipt_event_id(self) -> uuid.UUID | None:
+        return self.terminal.receipt_event_id
 
 
 @dataclass(frozen=True, slots=True)

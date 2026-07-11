@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
-from datetime import datetime, timedelta, timezone
 from threading import Barrier, Event
 
 import pytest
@@ -46,15 +45,13 @@ def test_postgres_submission_claim_identity_races(
         monkeypatch.setattr(settings, "db_dsn", schema_dsn)
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
         command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0058_decision_submission_claims")
+        command.upgrade(alembic, "0061_linked_submission_terminal")
         _assert_app_acquire_locks_before_parent(schema_engine)
         _assert_app_boundary_locks_before_parent(schema_engine)
         _assert_partial_identity_guards(schema_engine)
         _assert_preclaim_advisory_lock_orderings(schema_engine)
         _assert_cross_decision_identity_race(schema_engine)
-        _assert_parent_and_execution_lock_races(schema_engine)
-        _assert_late_primary_recovery_no_deadlock(schema_engine)
-        _assert_execution_status_update_terminal_no_deadlock(schema_engine)
+        _assert_parent_lock_race(schema_engine)
     finally:
         drop_schema(schema, admin_engine, schema_engine)
 
@@ -204,7 +201,11 @@ def _assert_app_boundary_locks_before_parent(engine: Engine) -> None:
                 release_boundary.set()
                 boundary = boundary_future.result(timeout=10)
                 assert boundary.state == "broker_io"
-                execution_future.result(timeout=10)
+                with pytest.raises(DBAPIError) as rejected_execution:
+                    execution_future.result(timeout=10)
+                assert (
+                    getattr(rejected_execution.value.orig, "sqlstate", None) == "23514"
+                )
             finally:
                 release_boundary.set()
     finally:
@@ -214,7 +215,7 @@ def _assert_app_boundary_locks_before_parent(engine: Engine) -> None:
             text("SELECT count(*) FROM executions WHERE id = :id"),
             {"id": execution_id},
         ).scalar_one()
-    assert execution_count == 1
+    assert execution_count == 0
 
 
 def _insert_exact_execution(
@@ -628,7 +629,7 @@ def _assert_cross_decision_identity_race(engine: Engine) -> None:
     assert claim_state == "broker_io"
 
 
-def _assert_parent_and_execution_lock_races(engine: Engine) -> None:
+def _assert_parent_lock_race(engine: Engine) -> None:
     decision_id = uuid.uuid4()
     client_order_id = "f" * 64
     with engine.begin() as connection:
@@ -669,255 +670,3 @@ def _assert_parent_and_execution_lock_races(engine: Engine) -> None:
         if claim_transaction.is_active:
             claim_transaction.rollback()
         claim_connection.close()
-
-    execution_id = uuid.uuid4()
-    with engine.begin() as connection:
-        _enter_broker_io(connection, decision_id=decision_id)
-        connection.execute(
-            text(
-                """
-                INSERT INTO executions (
-                    id, trade_decision_id, alpaca_account_label,
-                    client_order_id, alpaca_order_id
-                ) VALUES (:execution_id, :decision_id, 'paper', :client_order_id, 'race-order')
-                """
-            ),
-            {
-                "execution_id": execution_id,
-                "decision_id": decision_id,
-                "client_order_id": client_order_id,
-            },
-        )
-    terminal_connection = engine.connect()
-    terminal_transaction = terminal_connection.begin()
-    started.clear()
-    try:
-        terminal_connection.execute(
-            text(
-                """
-                UPDATE trade_decision_submission_claims
-                   SET state = 'submitted', broker_order_id = 'race-order',
-                       broker_client_order_id = :client_order_id,
-                       execution_id = :execution_id, completed_at = now(),
-                       updated_at = now()
-                 WHERE trade_decision_id = :decision_id
-                """
-            ),
-            {
-                "decision_id": decision_id,
-                "client_order_id": client_order_id,
-                "execution_id": execution_id,
-            },
-        )
-
-        def update_execution() -> None:
-            started.set()
-            with engine.begin() as connection:
-                connection.execute(
-                    text(
-                        "UPDATE executions SET client_order_id = :client WHERE id = :id"
-                    ),
-                    {"client": "wrong", "id": execution_id},
-                )
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(update_execution)
-            assert started.wait(timeout=10)
-            terminal_transaction.commit()
-            with pytest.raises(DBAPIError):
-                future.result(timeout=10)
-    finally:
-        if terminal_transaction.is_active:
-            terminal_transaction.rollback()
-        terminal_connection.close()
-
-
-def _assert_late_primary_recovery_no_deadlock(engine: Engine) -> None:
-    decision_id = uuid.uuid4()
-    execution_id = uuid.uuid4()
-    client_order_id = "i" * 64
-    with engine.begin() as connection:
-        _insert_decision(
-            connection,
-            decision_id=decision_id,
-            client_order_id=client_order_id,
-        )
-        _insert_claimed(
-            connection,
-            decision_id=decision_id,
-            client_order_id=client_order_id,
-            claim_token=uuid.uuid4(),
-        )
-        _enter_broker_io(connection, decision_id=decision_id)
-
-    late_connection = engine.connect()
-    late_transaction = late_connection.begin()
-    recovery_updated = Event()
-    terminal_started = Event()
-    try:
-        late_connection.execute(
-            text(
-                """
-                INSERT INTO executions (
-                    id, trade_decision_id, alpaca_account_label,
-                    client_order_id, alpaca_order_id
-                ) VALUES (:execution_id, :decision_id, 'paper', :client_order_id, 'late-order')
-                """
-            ),
-            {
-                "execution_id": execution_id,
-                "decision_id": decision_id,
-                "client_order_id": client_order_id,
-            },
-        )
-
-        def recovery_update() -> None:
-            with engine.begin() as connection:
-                now = datetime.now(timezone.utc)
-                connection.execute(
-                    text(
-                        """
-                        UPDATE trade_decision_submission_claims
-                           SET recovery_token = :token,
-                               recovery_fencing_epoch = 1,
-                               recovery_owner = 'reader-race',
-                               recovery_lease_started_at = :now,
-                               recovery_lease_expires_at = :expires,
-                               updated_at = :now
-                         WHERE trade_decision_id = :decision_id
-                        """
-                    ),
-                    {
-                        "token": uuid.uuid4(),
-                        "now": now,
-                        "expires": now + timedelta(minutes=1),
-                        "decision_id": decision_id,
-                    },
-                )
-                recovery_updated.set()
-                assert terminal_started.wait(timeout=10)
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(recovery_update)
-            if not recovery_updated.wait(timeout=10):
-                terminal_started.set()
-                late_transaction.rollback()
-                future.result(timeout=10)
-                pytest.fail("recovery update blocked behind Execution parent FK lock")
-            terminal_started.set()
-            late_connection.execute(
-                text(
-                    """
-                    UPDATE trade_decision_submission_claims
-                       SET state = 'submitted', broker_order_id = 'late-order',
-                           broker_client_order_id = :client_order_id,
-                           execution_id = :execution_id, completed_at = now(),
-                           updated_at = now()
-                     WHERE trade_decision_id = :decision_id
-                    """
-                ),
-                {
-                    "decision_id": decision_id,
-                    "client_order_id": client_order_id,
-                    "execution_id": execution_id,
-                },
-            )
-            late_transaction.commit()
-            future.result(timeout=10)
-    finally:
-        terminal_started.set()
-        if late_transaction.is_active:
-            late_transaction.rollback()
-        late_connection.close()
-
-
-def _assert_execution_status_update_terminal_no_deadlock(engine: Engine) -> None:
-    decision_id = uuid.uuid4()
-    execution_id = uuid.uuid4()
-    client_order_id = "k" * 64
-    with engine.begin() as connection:
-        _insert_decision(
-            connection,
-            decision_id=decision_id,
-            client_order_id=client_order_id,
-        )
-        _insert_claimed(
-            connection,
-            decision_id=decision_id,
-            client_order_id=client_order_id,
-            claim_token=uuid.uuid4(),
-        )
-        _enter_broker_io(connection, decision_id=decision_id)
-        connection.execute(
-            text(
-                """
-                INSERT INTO executions (
-                    id, trade_decision_id, alpaca_account_label,
-                    client_order_id, alpaca_order_id, status
-                ) VALUES (
-                    :execution_id, :decision_id, 'paper',
-                    :client_order_id, 'status-race-order', 'accepted'
-                )
-                """
-            ),
-            {
-                "execution_id": execution_id,
-                "decision_id": decision_id,
-                "client_order_id": client_order_id,
-            },
-        )
-
-    status_connection = engine.connect()
-    status_transaction = status_connection.begin()
-    try:
-        status_connection.execute(
-            text("UPDATE executions SET status = 'filled' WHERE id = :id"),
-            {"id": execution_id},
-        )
-
-        def terminalize() -> None:
-            with engine.begin() as connection:
-                connection.execute(
-                    text(
-                        """
-                        UPDATE trade_decision_submission_claims
-                           SET state = 'submitted',
-                               broker_order_id = 'status-race-order',
-                               broker_client_order_id = :client_order_id,
-                               execution_id = :execution_id,
-                               completed_at = now(), updated_at = now()
-                         WHERE trade_decision_id = :decision_id
-                        """
-                    ),
-                    {
-                        "decision_id": decision_id,
-                        "client_order_id": client_order_id,
-                        "execution_id": execution_id,
-                    },
-                )
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(terminalize)
-            try:
-                future.result(timeout=10)
-            except FutureTimeoutError:
-                status_transaction.rollback()
-                future.result(timeout=10)
-                pytest.fail("terminal claim blocked on a non-identity Execution update")
-        with pytest.raises(DBAPIError) as stale_terminal:
-            status_connection.execute(
-                text(
-                    """
-                    UPDATE trade_decision_submission_claims
-                       SET completed_at = now()
-                     WHERE trade_decision_id = :decision_id
-                    """
-                ),
-                {"decision_id": decision_id},
-            )
-        assert getattr(stale_terminal.value.orig, "sqlstate", None) == "23514"
-        status_transaction.rollback()
-    finally:
-        if status_transaction.is_active:
-            status_transaction.rollback()
-        status_connection.close()

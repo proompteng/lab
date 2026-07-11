@@ -420,7 +420,13 @@ def _assert_expired_claim_cannot_reserve_header(harness: _PostgresHarness) -> No
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim"
+                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -434,7 +440,13 @@ def _assert_expired_claim_cannot_reserve_header(harness: _PostgresHarness) -> No
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim"
+                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
     with harness.sessions() as session:
@@ -539,7 +551,13 @@ def _take_over_linked_claim_only(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim"
+                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "DISABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -553,7 +571,13 @@ def _take_over_linked_claim_only(
         connection.execute(
             text(
                 "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim"
+                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
+            )
+        )
+        connection.execute(
+            text(
+                "ALTER TABLE trade_decision_submission_claims "
+                "ENABLE TRIGGER trg_check_submission_claim_terminal_0061"
             )
         )
         connection.execute(
@@ -679,11 +703,11 @@ def _insert_0059_parent_state(harness: _PostgresHarness) -> None:
     not POSTGRES_DSN,
     reason="set TORGHUT_TEST_POSTGRES_DSN for PostgreSQL boundary tests",
 )
-def test_postgres_0060_enforces_canonical_and_linked_boundaries(
+def test_postgres_0061_preserves_canonical_and_linked_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _postgres_harness(
-        monkeypatch, revision="0060_bm_evidence_envelopes"
+        monkeypatch, revision="0061_linked_submission_terminal"
     ) as harness:
         _assert_sql_canonicalizer_matches_python(harness)
         _assert_sql_canonicalizer_rejects_ambiguous_json(harness)

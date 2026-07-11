@@ -176,7 +176,7 @@ def validate_linked_receipt_state(
         expected_states = frozenset({"broker_io"})
         require_unexpired = False
     else:
-        expected_states = frozenset({"submitted"})
+        expected_states = frozenset({"submitted", "rejected"})
         require_unexpired = False
     lock_linked_submission_claim(
         session,
@@ -260,7 +260,7 @@ def validate_linked_claim_lifecycle(
     elif receipt_state == "broker_io":
         expected_states = frozenset({"broker_io"})
     else:
-        expected_states = frozenset({"submitted"})
+        expected_states = frozenset({"submitted", "rejected"})
     if row.state not in expected_states:
         raise BrokerMutationReceiptConflictError(
             f"linked_submission_lifecycle_mismatch:{receipt_state}:{row.state}"

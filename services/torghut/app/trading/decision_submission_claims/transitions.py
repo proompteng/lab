@@ -121,10 +121,15 @@ def _boundary_replay_result(
     if (
         not primary_handle_matches(snapshot, handle)
         or snapshot is None
-        or snapshot.state not in {"broker_io", "submitted"}
+        or snapshot.state not in {"broker_io", "submitted", "rejected"}
     ):
         return None
-    outcome = "already_started" if snapshot.state == "broker_io" else "submitted"
+    if snapshot.state == "broker_io":
+        outcome = "already_started"
+    elif snapshot.state == "submitted":
+        outcome = "submitted"
+    else:
+        outcome = "rejected"
     return DecisionSubmissionBoundaryResult(outcome=outcome, claim=snapshot)
 
 
