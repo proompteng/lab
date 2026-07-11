@@ -149,7 +149,7 @@ def create_scheduler_app() -> FastAPI:
     return app
 
 
-app = build_registered_app(create_scheduler_app())
+app = build_registered_app(create_scheduler_app(), runtime_role="scheduler")
 
 __all__ = (
     "app",

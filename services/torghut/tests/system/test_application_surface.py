@@ -27,7 +27,7 @@ def test_build_registered_app_mounts_operational_routes(
         events.append(("api_routers", application.get_app() is app))
         return (_contract_router(),)
 
-    monkeypatch.setattr(application, "_current_app", None)
+    monkeypatch.setattr(application, "_apps_by_runtime_role", {})
     monkeypatch.setattr(application, "api_routers", api_routers)
 
     registered_app = application.build_registered_app(app)

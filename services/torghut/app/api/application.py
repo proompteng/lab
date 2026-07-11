@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import APIRouter, FastAPI
 
-_current_app: FastAPI | None = None
+from app.config import settings
+
+RuntimeRole = Literal["api", "scheduler"]
+_apps_by_runtime_role: dict[RuntimeRole, FastAPI] = {}
 
 
-def register_app(app: FastAPI) -> FastAPI:
+def register_app(app: FastAPI, *, runtime_role: RuntimeRole = "api") -> FastAPI:
     """Register the process-local FastAPI app used by route helpers."""
 
-    global _current_app
-
-    _current_app = app
+    _apps_by_runtime_role[runtime_role] = app
     return app
 
 
@@ -40,20 +43,26 @@ def mount_api_routes(app: FastAPI) -> FastAPI:
 
 def build_registered_app(
     app: FastAPI,
+    *,
+    runtime_role: RuntimeRole = "api",
 ) -> FastAPI:
     """Register the process app and mount its operational routes."""
 
-    register_app(app)
+    register_app(app, runtime_role=runtime_role)
     mount_api_routes(app)
     return app
 
 
-def get_app() -> FastAPI:
+def get_app(runtime_role: RuntimeRole | None = None) -> FastAPI:
     """Return the registered FastAPI app."""
 
-    if _current_app is None:
-        raise RuntimeError("torghut FastAPI app is not registered")
-    return _current_app
+    resolved_role: RuntimeRole = runtime_role or settings.process_role
+    app = _apps_by_runtime_role.get(resolved_role)
+    if app is None:
+        raise RuntimeError(
+            f"torghut FastAPI app is not registered for role={resolved_role}"
+        )
+    return app
 
 
 __all__ = (
@@ -62,4 +71,5 @@ __all__ = (
     "get_app",
     "mount_api_routes",
     "register_app",
+    "RuntimeRole",
 )
