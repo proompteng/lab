@@ -434,6 +434,8 @@ describe('torghut build-push workflow', () => {
     expect(postgresJobBody).toContain('tests/execution/test_linked_submission_terminal_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_loop_status_read_indexes_postgres.py')
     expect(postgresJobBody).toContain('tests/execution/test_linked_submission_recovery_postgres.py')
+    expect(postgresJobBody).toContain('tests/execution/test_linked_submission_recovery_dispatch_postgres.py')
+    expect(postgresJobBody).toContain('tests/execution/test_linked_submission_recovery_migration_postgres.py')
     expect(postgresJobBody).not.toContain('-n auto')
 
     const aggregateStart = ciWorkflow.indexOf('\n  lint-and-tests:')
