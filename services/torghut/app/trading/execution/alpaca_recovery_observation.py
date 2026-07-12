@@ -400,7 +400,7 @@ def _parse_terms(
         return None
     order_type = _lower_text(payload.get(type_key), maximum=32)
     time_in_force = _lower_text(payload.get("time_in_force"), maximum=16)
-    order_class = _lower_text(payload.get("order_class"), maximum=32)
+    order_class = _normalized_order_class(payload.get("order_class"), broker=broker)
     position_intent = _optional_lower_text(payload.get("position_intent"), maximum=32)
     extended_hours = payload.get("extended_hours")
     if (
@@ -453,6 +453,12 @@ def _request_type_key(payload: Mapping[str, object]) -> str | None:
     return present[0] if len(present) == 1 else None
 
 
+def _normalized_order_class(value: object, *, broker: bool) -> str | None:
+    if broker and isinstance(value, str) and value == "":
+        return "simple"
+    return _lower_text(value, maximum=32)
+
+
 def _validate_broker_account(
     payload: Mapping[str, object],
     *,
@@ -484,9 +490,11 @@ def _parse_fill(
     raw_avg = payload.get("filled_avg_price")
     if raw_avg is None:
         return filled_qty, None
-    avg_price = _decimal(raw_avg, positive=True, allow_zero=False)
+    avg_price = _decimal(raw_avg, positive=False, allow_zero=True)
     if avg_price is None:
         return None
+    if filled_qty == 0 and avg_price == 0:
+        return filled_qty, None
     return filled_qty, avg_price
 
 
@@ -497,7 +505,9 @@ def _lifecycle_is_valid(
     filled_qty: Decimal,
     filled_avg_price: Decimal | None,
 ) -> bool:
-    if filled_qty > submitted_qty:
+    if filled_qty > submitted_qty or (
+        filled_avg_price is not None and filled_avg_price <= 0
+    ):
         return False
     if (filled_qty == 0) != (filled_avg_price is None):
         return False

@@ -144,6 +144,34 @@ def test_valid_quantity_observation_preserves_exact_broker_truth() -> None:
     assert result.order.terms.position_intent == "buy_to_open"
 
 
+def test_blank_broker_order_class_normalizes_to_explicit_simple_intent() -> None:
+    result = _observe(broker_order=_broker_order(order_class=""))
+
+    assert result.validated
+    assert result.order is not None
+    assert result.order.terms.order_class == "simple"
+
+
+def test_blank_canonical_order_class_remains_indeterminate() -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
+        result=_observe(
+            intent=_intent(order_class=""),
+            broker_order=_broker_order(order_class=""),
+        ),
+    )
+
+
+@pytest.mark.parametrize("broker_order_class", [" ", None, False, 0])
+def test_only_exact_broker_blank_class_normalizes_to_simple(
+    broker_order_class: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.ORDER_IDENTITY_MISMATCH,
+        result=_observe(broker_order=_broker_order(order_class=broker_order_class)),
+    )
+
+
 def test_notional_intent_cannot_be_recovered_from_computed_broker_qty() -> None:
     result = _observe(
         intent=_intent(qty=None, notional=Decimal("100")),
@@ -342,6 +370,7 @@ def test_twelve_integer_digit_scientific_values_remain_in_bounds() -> None:
         {"limit_price": Decimal("190.25"), "stop_price": Decimal("180")},
         {"trail_price": Decimal("1")},
         {"order_class": None},
+        {"order_class": ""},
         {"position_intent": 1},
         {"extended_hours": "false"},
         {"type": "limit"},
@@ -507,7 +536,6 @@ def test_broker_status_is_explicit_and_recognized(status: object) -> None:
         {"filled_qty": "1000000000000"},
         {"filled_avg_price": 190.0},
         {"filled_avg_price": "NaN"},
-        {"filled_avg_price": "0"},
         {"filled_avg_price": "0.000000001"},
     ],
 )
@@ -528,6 +556,91 @@ def test_fill_fields_cannot_be_defaulted_when_missing(missing: str) -> None:
     _assert_indeterminate(
         AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
         result=_observe(broker_order=broker_order),
+    )
+
+
+@pytest.mark.parametrize(
+    "zero_avg_price",
+    ["0", "0.00000000", "0e13", Decimal("0"), Decimal("-0")],
+)
+def test_numeric_zero_average_normalizes_to_none_for_zero_fill(
+    zero_avg_price: object,
+) -> None:
+    result = _observe(
+        broker_order=_broker_order(
+            status="accepted",
+            filled_qty="0",
+            filled_avg_price=zero_avg_price,
+        )
+    )
+
+    assert result.validated
+    assert result.order is not None
+    assert result.order.filled_qty == Decimal("0")
+    assert result.order.filled_avg_price is None
+
+
+@pytest.mark.parametrize(
+    "invalid_avg_price",
+    ["", "not-a-number", 0.0, False, True],
+)
+def test_malformed_float_and_boolean_zero_fill_averages_remain_invalid(
+    invalid_avg_price: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
+        result=_observe(
+            broker_order=_broker_order(
+                filled_qty="0",
+                filled_avg_price=invalid_avg_price,
+            )
+        ),
+    )
+
+
+@pytest.mark.parametrize("invalid_filled_qty", ["", "not-a-number", 0.0, False, True])
+def test_malformed_float_and_boolean_filled_quantities_remain_invalid(
+    invalid_filled_qty: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
+        result=_observe(
+            broker_order=_broker_order(
+                filled_qty=invalid_filled_qty,
+                filled_avg_price=None,
+            )
+        ),
+    )
+
+
+@pytest.mark.parametrize("zero_avg_price", ["0", Decimal("0")])
+def test_zero_average_with_positive_fill_remains_lifecycle_invalid(
+    zero_avg_price: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.BROKER_LIFECYCLE_INVALID,
+        result=_observe(
+            broker_order=_broker_order(
+                status="partially_filled",
+                filled_qty="1",
+                filled_avg_price=zero_avg_price,
+            )
+        ),
+    )
+
+
+@pytest.mark.parametrize("nonzero_avg_price", ["190", Decimal("190")])
+def test_nonzero_average_with_zero_fill_remains_lifecycle_invalid(
+    nonzero_avg_price: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.BROKER_LIFECYCLE_INVALID,
+        result=_observe(
+            broker_order=_broker_order(
+                filled_qty="0",
+                filled_avg_price=nonzero_avg_price,
+            )
+        ),
     )
 
 
