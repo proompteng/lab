@@ -2,11 +2,12 @@
 
 ## Operating Contract
 
-- Complete the requested outcome before yielding. For complex work, keep a short plan, update it at meaningful milestones, and verify that every requested item is finished.
-- For review, explanation, diagnosis, or planning requests, inspect and report without changing state. For build, fix, or change requests, make the in-scope edits and run relevant non-destructive validation without asking first.
+- Work from the requested outcome. Infer ordinary implementation details from context, preserve explicit constraints, required evidence, success criteria, and output format, and ask only when a material ambiguity could change the outcome, risk, or approval boundary.
+- For review, explanation, diagnosis, or planning requests, inspect and report without changing state. For build, fix, or change requests, make in-scope local edits and run relevant non-destructive validation. Reading, searching, inspecting logs, editing in-scope code, and running local tests are pre-approved.
 - Require confirmation for destructive actions, external writes not inherent to the requested workflow, purchases, credential or permission changes, and material scope expansion.
-- Start from concrete evidence: current files, exact identifiers, failing commands, logs, tests, or live readback. Reproduce defects before fixing them when practical.
-- Keep prompts, plans, progress updates, and final responses lean. State each instruction or fact once. Explain notable tool decisions, not routine calls.
+- Complete the requested outcome before yielding. For multi-step work, keep a short plan, update it only at meaningful milestones, and avoid narrating routine tool use.
+- Start from concrete evidence and reproduce defects when practical. Gather context until you can name the files or resources to change and the validation path, then act without repeating equivalent searches or reads.
+- Lead final responses with the result, evidence, validation commands and outcomes, material caveats or blockers, and the next required action. Omit repeated background and generic reassurance.
 - Check the nearest `README` or nested `AGENTS.md` for component-specific rules.
 
 ## Repository Map
@@ -39,7 +40,15 @@
 - Infrastructure: `bun run tf:plan`, `bun run tf:apply`, `bun run lint:argocd`, `bun run ansible`.
 - Scope workspace commands with `bun run --filter <workspace> <script>`.
 - Focused tests: `bun run --filter <workspace> test -- <file> -t "<name>"`, `bun test -t "<name>" <file>`, `go test ./services/prt -run <TestName>`, `./gradlew test --tests "<class>"`, `bundle exec rails test <file>:<line>`, or `pytest <file> -k "<pattern>"`.
-- Memories service, when the task uses it: `bun run --filter memories retrieve-memory --query … --limit <n>` and `bun run --filter memories save-memory --task-name … --content … --summary … --tags …`.
+
+## Memory Workflow
+
+- Before substantial investigation or implementation, retrieve relevant prior context from the repository root with `bun run --filter memories retrieve-memory --query "<task, service, and relevant identifiers>" --limit 10`.
+- Retrieval searches all namespaces by default. Add `--task-name "<namespace>"` only when intentionally restricting the search to one stable namespace.
+- Treat retrieved memories as leads, not authority. Verify important claims against the current branch, current documentation, or live state before acting.
+- After completing work, save a memory only when it contains durable context that will materially help future tasks, such as architectural decisions, discovered constraints, operational facts, or important identifiers. Use `bun run --filter memories save-memory --task-name "<stable-namespace>" --content "<durable context>" --summary "<short summary>" --tags "<comma-separated-tags>"`.
+- Do not save secrets, credentials, access tokens, private user data, raw logs, transient CI or rollout status, speculative conclusions, or facts that are easily rediscovered without added context.
+- In agents-shell and other Kubernetes workloads, the scripts auto-detect the in-cluster Agents endpoint. Memory unavailability is non-blocking unless the task explicitly depends on it.
 
 ## Code Standards
 
