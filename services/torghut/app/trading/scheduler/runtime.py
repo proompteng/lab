@@ -968,9 +968,7 @@ class TradingScheduler(
             self.state.last_error = self._runtime_iteration_error()
 
     async def _run_autonomy_iteration(self) -> None:
-        # Clear only the previous iteration's error before starting. The
-        # autonomous cycle may handle an internal failure by setting a fresh
-        # error and returning normally; that new error must survive this loop.
+        # Clear only the prior iteration's error; preserve fresh handled failures.
         self._set_autonomy_iteration_error(None)
         try:
             if self._pipeline is None:
