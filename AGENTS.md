@@ -86,12 +86,12 @@
 
 ## Codex Reviews
 
-- Treat Codex review as a required PR completion gate in addition to CI. Codex feedback can arrive after status checks pass, so do not merge or report a PR ready immediately after `gh pr checks` succeeds.
-- Let the automatic Codex review run while CI is active. After CI completes, inspect the current head SHA, review submissions, unresolved threads, and PR reactions once; do not trigger or poll for Codex review.
-- Treat a `+1` reaction from `chatgpt-codex-connector[bot]` on the PR as Codex approval when the reaction was created after the current head commit and there are no unresolved actionable Codex threads. GitHub reactions do not carry a reviewed commit SHA, so a later head commit makes the reaction stale and requires a new Codex review signal.
-- Address actionable findings in severity order, with P0/P1 correctness, security, data-loss, and rollout issues blocking all lower-priority work. Add regression coverage or exact live validation appropriate to the finding.
-- Push the fix before replying. Reply with the commit and validation evidence, and resolve the thread only after the fix is present on the PR branch.
-- Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review signal targets or predates the current head commit.
+- Treat automatic Codex review as a merge gate alongside CI. Do not request `@codex review` or poll for completion.
+- After CI finishes, inspect the PR once for the current head SHA, Codex reactions, submitted reviews, and inline findings from `chatgpt-codex-connector[bot]`.
+- Interpret an `eyes` reaction as review in progress. Interpret a `+1` reaction created after the current head commit as review complete with no blocking findings unless Codex also posted an actionable finding. A reaction or review that predates the current head is stale.
+- Evaluate only actionable issues introduced by the PR that affect correctness, security, performance, maintainability, or developer experience. Prioritize severe findings and skip nits unless they block understanding or verification of the change.
+- For each actionable finding, verify the cited code and line range, fix the issue, and add focused regression coverage or exact validation. Push the fix before replying with the commit and evidence; resolve the finding only after the fix is on the branch.
+- Merge only when the current head is mergeable, required CI is green, Codex review is complete for that head, and no blocking finding remains. Any new push resets the Codex gate.
 
 ## UI/UX
 
