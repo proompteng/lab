@@ -37,6 +37,8 @@ type JsonRecord = Record<string, unknown>
 const labRepoURL = 'https://github.com/proompteng/lab.git'
 const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
 const labImageRegistry = 'registry.ide-newton.ts.net'
+const sha256HexPattern = /^[0-9a-f]{64}$/
+const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
 
 const earlyNixImageApps = new Set([
   'agents',
@@ -245,22 +247,61 @@ const collectRepoImages = (yamlPath: string, document: unknown): string[] => {
 
     const registry = asString(record.registry)
     const repository = asString(record.repository)
-    if (repository?.startsWith(labImagePrefix)) images.add(repository)
-    if (registry === labImageRegistry && repository?.startsWith('lab/')) {
-      images.add(`${registry}/${repository}`)
+    const tag = asString(record.tag)
+    const digest = asString(record.digest)
+    const qualifiedRepository = repository?.startsWith(labImagePrefix)
+      ? repository
+      : registry === labImageRegistry && repository?.startsWith('lab/')
+        ? `${registry}/${repository}`
+        : undefined
+    if (qualifiedRepository) {
+      images.add(imageReferenceWithSiblingDigest(qualifiedRepository, digest, tag))
     }
 
     if (basename(yamlPath) === 'kustomization.yaml' && Array.isArray(record.images)) {
       for (const entry of record.images) {
         if (!isRecord(entry)) continue
-        for (const key of ['name', 'newName']) {
-          const value = asString(entry[key])
-          if (value?.startsWith(labImagePrefix)) images.add(value)
+        const value = asString(entry.newName) ?? asString(entry.name)
+        if (value?.startsWith(labImagePrefix)) {
+          images.add(imageReferenceWithSiblingDigest(value, asString(entry.digest), asString(entry.newTag)))
         }
       }
     }
   })
   return [...images]
+}
+
+const imageReferenceWithSiblingDigest = (
+  repository: string,
+  digest: string | undefined,
+  tag: string | undefined,
+): string => {
+  if (repository.endsWith('@sha256') && tag && sha256HexPattern.test(tag)) {
+    return `${repository}:${tag}`
+  }
+  if (!repository.includes('@') && digest && sha256DigestPattern.test(digest)) {
+    return `${repository}@${digest}`
+  }
+  return repository
+}
+
+const imageRepository = (reference: string): string => {
+  const withoutDigest = reference.split('@', 1)[0] ?? reference
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
+}
+
+const normalizeRepoImages = (images: Iterable<string>): string[] => {
+  const values = uniqueSorted(images)
+  const digestPinnedRepositories = new Set(
+    values
+      .filter((reference) => /@sha256:[0-9a-f]{64}$/.test(reference))
+      .map((reference) => imageRepository(reference)),
+  )
+  return values.filter(
+    (reference) => /@sha256:[0-9a-f]{64}$/.test(reference) || !digestPinnedRepositories.has(imageRepository(reference)),
+  )
 }
 
 const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
@@ -302,7 +343,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
   return {
     ...entry,
     hasHelmChart,
-    repoImages: uniqueSorted(repoImages),
+    repoImages: normalizeRepoImages(repoImages),
     buildScriptPath: existsSync(resolve(root, buildScriptPath)) ? buildScriptPath : undefined,
     deployScriptPath: existsSync(resolve(root, deployScriptPath)) ? deployScriptPath : undefined,
     workflowPaths,

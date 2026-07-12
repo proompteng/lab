@@ -141,6 +141,7 @@ def trading_loop_status() -> JSONResponse:
                 generated_at=datetime.now(timezone.utc),
                 trading_mode=_loop_status_trading_mode(runtime_state.config),
                 trading_enabled=runtime_state.config.trading_enabled,
+                configured_symbols=runtime_state.config.trade_coins,
             ),
         )
     finally:

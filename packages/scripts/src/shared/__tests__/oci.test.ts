@@ -152,7 +152,6 @@ const nixImageHelperInputs = [
   'nix/ci-run-timed.sh',
   'nix/oci-inspect-archive.sh',
   'nix/oci-push.sh',
-  'nix/oci-release-contract.sh',
 ]
 
 afterEach(() => {
@@ -522,7 +521,21 @@ describe('native OCI build workflows', () => {
     expect(ciNixOciSummaryScript).toContain('Existing image archive bytes')
     expect(ciNixOciSummaryScript).toContain('Image archive Attic warm successes')
     expect(ciNixOciSummaryScript).toContain('Image archive Attic warm failures')
+    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm size skips')
+    expect(ciNixOciSummaryScript).toContain('Image archive Attic warm skipped bytes')
+    expect(ciNixOciSummaryScript).toContain('count_image_cache_status_rows skipped-size')
     expect(ciNixOciSummaryScript).toContain('GITHUB_STEP_SUMMARY')
+  })
+
+  it('proves Nix store writes and preserves the sudo wrapper for later composite steps', () => {
+    const setupNixToolchain = readRepoFile('.github/actions/setup-nix-toolchain/action.yml')
+
+    expect(setupNixToolchain).toContain('nix store add-file "${write_probe}"')
+    expect(setupNixToolchain).toContain('LAB_NIX_WRAPPER_DIR=${wrapper_dir}')
+    expect(setupNixToolchain).toContain('wrapper_prefix="${LAB_NIX_WRAPPER_DIR:+${LAB_NIX_WRAPPER_DIR}:}"')
+    expect(setupNixToolchain).toContain(
+      'export PATH="${wrapper_prefix}${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"',
+    )
   })
 
   it('keeps Nix image derivations deterministic and dockerTools-backed', () => {
@@ -627,6 +640,7 @@ describe('native OCI build workflows', () => {
     ]) {
       expect(workflow).not.toContain('.github/workflows/')
       expect(workflow).not.toContain('packages/scripts/src/shared/nix-oci-deploy.ts')
+      expect(workflow).not.toContain('nix/oci-release-contract.sh')
       for (const helperInput of nixImageHelperInputs) {
         expect(workflow).toContain(helperInput)
       }
@@ -634,6 +648,7 @@ describe('native OCI build workflows', () => {
 
     expect(symphonyReleaseMetadataScript).not.toContain('.github\\/workflows\\/')
     expect(symphonyReleaseMetadataScript).not.toContain('setup-nix-toolchain')
+    expect(symphonyReleaseMetadataScript).not.toContain('nix\\/oci-release-contract\\.sh')
     for (const helperInput of nixImageHelperInputs) {
       expect(symphonyReleaseMetadataScript).toContain(helperInput.replaceAll('/', '\\/').replaceAll('.', '\\.'))
     }
@@ -642,10 +657,29 @@ describe('native OCI build workflows', () => {
     expect(jangarReleaseMetadataScript).not.toContain('setup-nix-toolchain')
     expect(jangarReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/jangar')
     expect(jangarReleaseMetadataScript).not.toContain('packages\\/scripts\\/src\\/shared')
+    expect(jangarReleaseMetadataScript).not.toContain('nix\\/oci-release-contract\\.sh')
     expect(jangarReleaseMetadataScript).toContain('images\\/jangar\\.nix')
     for (const helperInput of nixImageHelperInputs) {
       expect(jangarReleaseMetadataScript).toContain(helperInput.replaceAll('/', '\\/').replaceAll('.', '\\.'))
     }
+  })
+
+  it('uses the published full-SHA tag for manual Nix image promotions', () => {
+    expect(jangarReleaseMetadataScript).toContain('`sha-${sourceSha}`')
+    expect(jangarReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
+    expect(symphonyReleaseMetadataScript).toContain('`sha-${sourceSha}`')
+    expect(symphonyReleaseMetadataScript).not.toContain('sourceSha.slice(0, 8)')
+    for (const workflow of [
+      torghutReleaseWorkflow,
+      torghutTaReleaseWorkflow,
+      torghutWsReleaseWorkflow,
+      torghutHyperliquidFeedReleaseWorkflow,
+    ]) {
+      expect(workflow).toContain('TAG="sha-${SOURCE_SHA}"')
+      expect(workflow).not.toContain('git rev-parse --short=8')
+    }
+    expect(atticReleaseMetadataScript).toContain('tag="sha-${source_sha}"')
+    expect(atticReleaseMetadataScript).not.toContain('git rev-parse --short=12')
   })
 
   it('does not fan out migrated image builds on workflow-only changes', () => {
@@ -1429,7 +1463,18 @@ describe('native OCI build workflows', () => {
     )
     expect(releasePrAutomergeWorkflow).toContain('[[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]')
     expect(releasePrAutomergeWorkflow).toContain('for required_label in automated-pr nix-oci')
-    expect(releasePrAutomergeWorkflow).toContain('"gregkonush"')
+    expect(releasePrAutomergeWorkflow).toContain('[[ "$PR_AUTHOR" != "gregkonush" ]]')
+    expect(releasePrAutomergeWorkflow).toContain('commit_committer_login')
+    expect(releasePrAutomergeWorkflow).toContain('commit_committer_email')
+    expect(releasePrAutomergeWorkflow).toContain('reason=human-authored-release-pr')
+    expect(releasePrAutomergeWorkflow).not.toContain(
+      'allowed_authors=("app/github-actions" "github-actions[bot]" "gregkonush")',
+    )
+    expect(releasePrAutomergeWorkflow).toContain('echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"')
+    expect(releasePrAutomergeWorkflow).toContain('PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}')
+    expect(releasePrAutomergeWorkflow).toContain('--match-head-commit "$PR_HEAD_SHA"')
+    expect(releasePrAutomergeWorkflow).not.toContain('current_head_sha="$(gh pr view')
+    expect(torghutDeployAutomergeWorkflow).toContain('--match-head-commit "${PR_HEAD_SHA}"')
     expect(releasePrAutomergeWorkflow).toContain('reason=eligible:${release_kind}')
   })
 

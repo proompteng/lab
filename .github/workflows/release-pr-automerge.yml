@@ -85,7 +85,7 @@ jobs:
             exit 0
           fi
 
-          allowed_authors=("app/github-actions" "github-actions[bot]" "gregkonush")
+          bot_authors=("app/github-actions" "github-actions[bot]")
           legacy_release_paths=(
             "argocd/applications/khoshut/kustomization.yaml"
             "argocd/applications/analysis/kustomization.yaml"
@@ -126,6 +126,7 @@ jobs:
           PR_STATE="$(jq -r '.state // ""' <<< "$pr_json")"
           PR_AUTHOR="$(jq -r '.user.login // ""' <<< "$pr_json")"
           PR_HEAD_REF="$(jq -r '.head.ref // ""' <<< "$pr_json")"
+          PR_HEAD_SHA="$(jq -r '.head.sha // ""' <<< "$pr_json")"
           PR_BASE_REF="$(jq -r '.base.ref // ""' <<< "$pr_json")"
           PR_HEAD_REPO="$(jq -r '.head.repo.full_name // ""' <<< "$pr_json")"
           PR_IS_DRAFT="$(jq -r '.draft // false' <<< "$pr_json")"
@@ -162,9 +163,25 @@ jobs:
             exit 0
           fi
 
-          if ! contains "$PR_AUTHOR" "${allowed_authors[@]}"; then
-            echo "reason=author-not-allowlisted" >> "$GITHUB_OUTPUT"
+          if ! [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "reason=invalid-head-sha" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          if ! contains "$PR_AUTHOR" "${bot_authors[@]}"; then
+            if [[ "$PR_AUTHOR" != "gregkonush" ]]; then
+              echo "reason=author-not-allowlisted" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            commit_json="$(gh api "repos/$GH_REPO/commits/$PR_HEAD_SHA")"
+            commit_committer_login="$(jq -r '.committer.login // ""' <<< "$commit_json")"
+            commit_committer_email="$(jq -r '.commit.committer.email // ""' <<< "$commit_json")"
+            if [[ "$commit_committer_login" != "github-actions[bot]" ]] ||
+              [[ "$commit_committer_email" != "41898282+github-actions[bot]@users.noreply.github.com" ]]; then
+              echo "reason=human-authored-release-pr" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
 
           has_opt_out_label=$(
@@ -230,6 +247,7 @@ jobs:
           done
 
           echo "eligible=true" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"
           echo "reason=eligible:${release_kind}" >> "$GITHUB_OUTPUT"
 
       - name: Eligibility summary
@@ -246,6 +264,7 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}
         run: |
           set -euo pipefail
 
@@ -261,4 +280,4 @@ jobs:
             exit 0
           fi
 
-          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash
+          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash --match-head-commit "$PR_HEAD_SHA"

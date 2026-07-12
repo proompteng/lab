@@ -10,14 +10,15 @@ from typing import cast
 def raw_account_positions(account_row: Mapping[str, object]) -> list[dict[str, object]]:
     payload = _mapping_payload(account_row.get("raw_payload"))
     positions: list[dict[str, object]] = []
-    for raw_position in _account_position_rows(payload):
+    for dex_scope, raw_position in _account_position_rows(payload):
         position = _mapping_payload(raw_position.get("position"))
         coin = _optional_text(position.get("coin"))
         if coin is None:
             continue
+        scoped_coin = _position_coin_for_scope(coin, dex_scope)
         positions.append(
             {
-                "coin": coin,
+                "coin": scoped_coin,
                 "size": _optional_text(position.get("szi")) or "0",
                 "entry_price": _optional_text(position.get("entryPx")),
                 "notional_usd": _optional_text(position.get("positionValue")) or "0",
@@ -32,13 +33,40 @@ def managed_exchange_positions(
     persisted_positions: Sequence[Mapping[str, object]],
     raw_exchange_positions: Sequence[Mapping[str, object]],
     selected_symbols: Sequence[str],
+    configured_symbols: Sequence[str] = (),
 ) -> list[Mapping[str, object]]:
-    managed_coins = position_coin_set(persisted_positions)
-    managed_coins.update(selected_symbols)
+    configured_keys = {_coin_key(symbol) for symbol in configured_symbols}
+    configured_scoped_bases = {
+        _base_coin(key) for key in configured_keys if _is_scoped_coin(key)
+    }
+    exact_scoped_keys = {key for key in configured_keys if _is_scoped_coin(key)}
+    unscoped_bases = {
+        _base_coin(key) for key in configured_keys if not _is_scoped_coin(key)
+    }
+    for symbol in [
+        *(
+            coin
+            for row in persisted_positions
+            if (coin := _optional_text(row.get("coin"))) is not None
+        ),
+        *selected_symbols,
+    ]:
+        key = _coin_key(symbol)
+        if _is_scoped_coin(key):
+            exact_scoped_keys.add(key)
+        elif _base_coin(key) not in configured_scoped_bases:
+            unscoped_bases.add(_base_coin(key))
     return [
         position
         for position in raw_exchange_positions
-        if _optional_text(position.get("coin")) in managed_coins
+        if (
+            (coin := _optional_text(position.get("coin"))) is not None
+            and _matches_managed_coin(
+                coin,
+                exact_scoped_keys=exact_scoped_keys,
+                unscoped_bases=unscoped_bases,
+            )
+        )
     ]
 
 
@@ -56,32 +84,85 @@ def unmanaged_exchange_positions(
 
 def position_coin_set(rows: Sequence[Mapping[str, object]]) -> set[str]:
     return {
-        coin for row in rows if (coin := _optional_text(row.get("coin"))) is not None
+        _canonical_coin(coin)
+        for row in rows
+        if (coin := _optional_text(row.get("coin"))) is not None
     }
+
+
+def _canonical_coin(value: str) -> str:
+    return _base_coin(_coin_key(value))
+
+
+def _coin_key(value: str) -> str:
+    parts = [part.strip() for part in value.split(":") if part.strip()]
+    if len(parts) <= 1:
+        return (parts[0] if parts else "").upper()
+    return f"{parts[0].lower()}:{parts[-1].upper()}"
+
+
+def _base_coin(value: str) -> str:
+    return value.split(":")[-1].upper()
+
+
+def _is_scoped_coin(value: str) -> bool:
+    return ":" in value
+
+
+def _matches_managed_coin(
+    value: str,
+    *,
+    exact_scoped_keys: set[str],
+    unscoped_bases: set[str],
+) -> bool:
+    key = _coin_key(value)
+    if _is_scoped_coin(key):
+        return key in exact_scoped_keys or _base_coin(key) in unscoped_bases
+    return _base_coin(key) in unscoped_bases
 
 
 def _account_position_rows(
     payload: Mapping[str, object],
-) -> list[Mapping[str, object]]:
-    rows: list[Mapping[str, object]] = []
-    _extend_position_rows(rows, payload.get("assetPositions"))
+) -> list[tuple[str | None, Mapping[str, object]]]:
+    rows: list[tuple[str | None, Mapping[str, object]]] = []
+    _extend_position_rows(rows, payload.get("assetPositions"), dex_scope=None)
     dex_states = payload.get("dexStates")
     if isinstance(dex_states, Mapping):
-        for raw_state in cast(Mapping[object, object], dex_states).values():
+        for raw_dex, raw_state in cast(Mapping[object, object], dex_states).items():
             state = _mapping_payload(raw_state)
-            _extend_position_rows(rows, state.get("assetPositions"))
+            _extend_position_rows(
+                rows,
+                state.get("assetPositions"),
+                dex_scope=_optional_text(raw_dex),
+            )
     clearinghouse_state = _mapping_payload(payload.get("clearinghouseState"))
-    _extend_position_rows(rows, clearinghouse_state.get("assetPositions"))
+    _extend_position_rows(
+        rows,
+        clearinghouse_state.get("assetPositions"),
+        dex_scope=None,
+    )
     return rows
 
 
-def _extend_position_rows(rows: list[Mapping[str, object]], value: object) -> None:
+def _position_coin_for_scope(coin: str, dex_scope: str | None) -> str:
+    key = _coin_key(coin)
+    if dex_scope is None or _is_scoped_coin(key):
+        return key
+    return _coin_key(f"{dex_scope}:{coin}")
+
+
+def _extend_position_rows(
+    rows: list[tuple[str | None, Mapping[str, object]]],
+    value: object,
+    *,
+    dex_scope: str | None,
+) -> None:
     if not isinstance(value, list):
         return
     for raw_position in cast(list[object], value):
         if not isinstance(raw_position, Mapping):
             continue
-        rows.append(cast(Mapping[str, object], raw_position))
+        rows.append((dex_scope, cast(Mapping[str, object], raw_position)))
 
 
 def _mapping_payload(value: object) -> Mapping[str, object]:

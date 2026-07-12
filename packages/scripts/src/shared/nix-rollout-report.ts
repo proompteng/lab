@@ -43,6 +43,7 @@ export type NixRolloutReport = {
 }
 
 const requiredPlatforms: NixOciPlatform[] = ['linux/amd64', 'linux/arm64']
+const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
 
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -96,7 +97,10 @@ const validateReleaseContract = (contract: NixRolloutReleaseContract): string[] 
   for (const field of ['service', 'image', 'tag', 'digest', 'reference', 'sourceSha', 'packageAttr'] as const) {
     if (!contract[field]) errors.push(`${field} is missing`)
   }
-  if (!contract.digest.startsWith('sha256:')) errors.push(`digest is not sha256: ${contract.digest}`)
+  if (!sha256DigestPattern.test(contract.digest)) errors.push(`digest is not a full sha256 digest: ${contract.digest}`)
+  if (contract.image && contract.digest && contract.reference !== `${contract.image}@${contract.digest}`) {
+    errors.push(`reference does not match image and digest: ${contract.reference}`)
+  }
   if (contract.builder !== 'nix-dockerTools-skopeo') errors.push(`builder is not nix-dockerTools-skopeo`)
   for (const platform of requiredPlatforms) {
     if (!contract.platforms.includes(platform)) errors.push(`missing platform ${platform}`)
@@ -104,10 +108,31 @@ const validateReleaseContract = (contract: NixRolloutReleaseContract): string[] 
   return errors
 }
 
-const contractCoversEntry = (contract: NixRolloutReleaseContract, entry: EnabledAppInventoryEntry): boolean =>
-  contract.service === entry.name ||
-  contract.packageAttr === entry.nixImageAttr ||
-  entry.repoImages.some((image) => contract.image === image || contract.reference.startsWith(`${image}@`))
+const imageRepository = (reference: string): string => {
+  const withoutDigest = reference.split('@', 1)[0] ?? reference
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
+}
+
+const imageDigest = (reference: string): string | undefined => {
+  const separator = reference.lastIndexOf('@')
+  if (separator < 0) return undefined
+  const digest = reference.slice(separator + 1)
+  return sha256DigestPattern.test(digest) ? digest : undefined
+}
+
+const contractCoversImage = (contract: NixRolloutReleaseContract, image: string): boolean => {
+  const repository = imageRepository(image)
+  const deployedDigest = imageDigest(image)
+  const malformedDigestReference = image.includes('@') && deployedDigest === undefined
+  return (
+    !malformedDigestReference &&
+    imageRepository(contract.image) === repository &&
+    contract.reference === `${contract.image}@${contract.digest}` &&
+    (deployedDigest === undefined || deployedDigest === contract.digest)
+  )
+}
 
 const countByClass = (entries: EnabledAppInventoryEntry[]): Record<string, number> =>
   entries.reduce<Record<string, number>>((counts, entry) => {
@@ -135,14 +160,23 @@ export const buildNixRolloutReport = (input: {
     if (entry.workflowPaths.length === 0) missing.push('workflow')
     return missing.length > 0 ? [`${entry.name}: missing ${missing.join(', ')}`] : []
   })
-  const invalidContracts = releaseContracts.flatMap((contract) => {
-    const errors = validateReleaseContract(contract)
-    return errors.length > 0 ? [`${contract.path}: ${errors.join('; ')}`] : []
-  })
+  const evaluatedContracts = releaseContracts.map((contract) => ({
+    contract,
+    errors: validateReleaseContract(contract),
+  }))
+  const invalidContracts = evaluatedContracts.flatMap(({ contract, errors }) =>
+    errors.length > 0 ? [`${contract.path}: ${errors.join('; ')}`] : [],
+  )
+  const validContracts = evaluatedContracts.filter(({ errors }) => errors.length === 0).map(({ contract }) => contract)
   const missingForNixImages = input.requireContracts
-    ? nixImages
-        .filter((entry) => !releaseContracts.some((contract) => contractCoversEntry(contract, entry)))
-        .map((entry) => entry.name)
+    ? nixImages.flatMap((entry) => {
+        const missingImages = entry.repoImages.filter(
+          (image) => !validContracts.some((contract) => contractCoversImage(contract, image)),
+        )
+        if (missingImages.length === 0) return []
+        if (entry.repoImages.length === 1) return [entry.name]
+        return missingImages.map((image) => `${entry.name}:${image}`)
+      })
     : []
 
   return {
@@ -158,7 +192,7 @@ export const buildNixRolloutReport = (input: {
     missingBuildContracts,
     releaseContracts: {
       provided: releaseContracts.length,
-      valid: releaseContracts.length - invalidContracts.length,
+      valid: validContracts.length,
       invalid: invalidContracts,
       missingForNixImages,
     },

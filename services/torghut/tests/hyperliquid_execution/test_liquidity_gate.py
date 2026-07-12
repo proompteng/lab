@@ -187,10 +187,28 @@ def test_exchange_reports_mid_lookup_failure_as_unavailable_liquidity() -> None:
     assert status.details["skipped"] == {"NVDA": "book_unavailable:RuntimeError"}
 
 
+def test_exchange_reports_malformed_mid_as_unavailable_liquidity() -> None:
+    exchange = _Exchange(
+        HyperliquidExecutionConfig.from_env({}),
+        sdk=_Sdk(),
+        info=_Info(
+            {"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "101"}]]}},
+            mids={"NVDA": "not-a-number"},
+        ),
+    )
+
+    selected, status = exchange.filter_crossable_markets((_market("NVDA", "xyz"),))
+
+    assert selected == ()
+    assert status.ready is False
+    assert status.details["skipped"] == {"NVDA": "book_unavailable:InvalidOperation"}
+
+
 def test_exchange_info_client_reloads_with_known_builder_dexes(
     monkeypatch: MonkeyPatch,
 ) -> None:
     constructed_dexes: list[tuple[str, ...]] = []
+    constructed_timeouts: list[float] = []
 
     class _FakeInfo:
         def __init__(
@@ -199,9 +217,11 @@ def test_exchange_info_client_reloads_with_known_builder_dexes(
             *,
             skip_ws: bool,
             perp_dexs: list[str],
+            timeout: float,
         ) -> None:
             assert skip_ws is True
             constructed_dexes.append(tuple(perp_dexs))
+            constructed_timeouts.append(timeout)
 
     class _FakeInfoModule:
         Info = _FakeInfo
@@ -222,6 +242,7 @@ def test_exchange_info_client_reloads_with_known_builder_dexes(
     exchange._info()
 
     assert constructed_dexes == [("",), ("", "xyz")]
+    assert constructed_timeouts == [120.0, 120.0]
 
 
 def test_service_skips_uncrossable_testnet_markets_before_signals() -> None:

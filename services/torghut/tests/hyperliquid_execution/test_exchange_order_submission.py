@@ -48,7 +48,8 @@ def test_exchange_submits_ioc_order() -> None:
 
     assert result.status == "filled"
     assert result.exchange_order_id == "123"
-    assert sdk.info.name_to_coin["xyz:NVDA"] == sdk.info.name_to_coin["NVDA"]
+    assert sdk.info.name_to_coin["xyz:NVDA"] == "xyz:NVDA"
+    assert sdk.info.coin_to_asset["xyz:NVDA"] == sdk.info.coin_to_asset[0]
     assert sdk.market_opens == [
         {
             "name": "xyz:NVDA",
@@ -115,5 +116,6 @@ def test_exchange_cancels_by_oid() -> None:
     result = exchange.cancel_order(order)
 
     assert result.status == "cancelled"
-    assert sdk.info.name_to_coin["xyz:NVDA"] == sdk.info.name_to_coin["NVDA"]
+    assert sdk.info.name_to_coin["xyz:NVDA"] == "xyz:NVDA"
+    assert sdk.info.coin_to_asset["xyz:NVDA"] == sdk.info.coin_to_asset[0]
     assert sdk.cancels == [("xyz:NVDA", 123)]

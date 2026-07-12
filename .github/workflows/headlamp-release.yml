@@ -117,8 +117,6 @@ jobs:
             nix/ci-run-timed.sh
             nix/oci-inspect-archive.sh
             nix/oci-push.sh
-            nix/oci-release-contract.sh
-            flake.nix
             flake.lock
           )
 
