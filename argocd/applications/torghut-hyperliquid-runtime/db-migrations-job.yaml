@@ -22,15 +22,16 @@ spec:
         kubernetes.io/arch: arm64
       containers:
         - name: migrate
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
           imagePullPolicy: Always
+          workingDir: /app
           command:
             - /bin/sh
             - -ec
           args:
             - |
               deadline=$((SECONDS + 300))
-              until /opt/venv/bin/python - <<'PY'
+              until python - <<'PY'
               import os
               from sqlalchemy import create_engine, text
 
@@ -48,12 +49,14 @@ spec:
                 fi
                 sleep 5
               done
-              /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads
+              alembic -c /app/alembic.ini upgrade heads
           env:
             - name: TORGHUT_COMMIT
-              value: 8e1ae9a8c668c206afc6885ca817039da226810b
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+              value: sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
+            - name: PYTHONPATH
+              value: /app
             - name: DB_DSN
               valueFrom:
                 secretKeyRef:

@@ -1,21 +1,21 @@
 # 119. Torghut Evidence Renewal Batches And Capital Quiescence Gates (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut quant profitability, stale proof repair, market-context renewal, capital readmission, and Jangar watch
-quiescence consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/115-jangar-watch-quiescence-and-evidence-renewal-arbiter-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
-- `118-torghut-proof-route-parity-and-options-informed-repair-scheduler-2026-05-06.md`
-- `116-torghut-session-scoped-alpha-ledger-and-replay-capital-scheduler-2026-05-06.md`
-- `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 
 ## Decision
 

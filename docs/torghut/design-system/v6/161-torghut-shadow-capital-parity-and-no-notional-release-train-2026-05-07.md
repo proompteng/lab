@@ -1,20 +1,20 @@
 # 161. Torghut Shadow Capital Parity And No-Notional Release Train (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, shadow capital parity, zero-notional release safety, routeability repair, Jangar
-enforcement release train consumption, validation, rollback, and implementation acceptance gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/157-jangar-shadow-parity-ledger-and-enforcement-release-train-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
-- `158-torghut-capital-proof-provenance-and-routeable-edge-repair-ledger-2026-05-07.md`
-- `157-torghut-profit-contract-actuation-and-capital-surface-truth-2026-05-07.md`
 
 ## Decision
 
@@ -83,7 +83,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Schema lineage had one branch, no duplicate revisions, no orphan parents, and known parent-fork warnings at
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live submission gate was closed: `allowed=false`, reason `simple_submit_disabled`, capital stage `shadow`.
 - Live alpha readiness had three shadow hypotheses, zero promotion-eligible hypotheses, and three rollback-required
@@ -101,7 +101,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Simulation `/readyz` returned HTTP `200`.
 - Simulation proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and
   `max_notional=0`.
-- Simulation blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Simulation blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, and `market_context_stale`.
 - Simulation live-submission equivalent gate was pass for non-live mode, but capital remained zero-notional.
 - Simulation TCA had four orders, five filled executions, one unsettled execution, latest TCA at

@@ -1,0 +1,511 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: torghut-scheduler
+  namespace: torghut
+  labels:
+    app.kubernetes.io/name: torghut
+    app.kubernetes.io/component: trading-scheduler
+    app.kubernetes.io/part-of: lab
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # P0a containment: keep the dedicated writer disabled until the scheduler-free
+  # API revision is live and every legacy Knative revision has been removed.
+  replicas: 0
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: torghut
+      app.kubernetes.io/component: trading-scheduler
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: torghut
+        app.kubernetes.io/component: trading-scheduler
+        app.kubernetes.io/part-of: lab
+    spec:
+      serviceAccountName: torghut-runtime
+      nodeSelector:
+        kubernetes.io/arch: arm64
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: torghut-scheduler
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            seccompProfile:
+              type: Unconfined
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
+          command:
+            - uvicorn
+          args:
+            - app.scheduler_main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8183"
+          ports:
+            - name: metrics
+              containerPort: 8183
+          env:
+            - name: TORGHUT_PROCESS_ROLE
+              value: scheduler
+            - name: TRADING_SCHEDULER_RUNTIME_BASE_URL
+              value: http://torghut-scheduler.torghut.svc.cluster.local:8183
+            - name: TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS
+              value: "2"
+            - name: TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS
+              value: "45"
+            - name: TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS
+              value: "30"
+            - name: TRADING_SCHEDULER_LEADERSHIP_REQUIRED
+              value: "true"
+            - name: TRADING_SCHEDULER_LEADERSHIP_CHECK_SECONDS
+              value: "5"
+            - name: APP_ENV
+              value: prod
+            - name: LOG_LEVEL
+              value: INFO
+            - name: LOG_FORMAT
+              value: json
+            - name: LOG_ACCESS_LOG
+              value: "true"
+            - name: DB_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: uri
+            - name: TORGHUT_SIM_DB_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: host
+            - name: TORGHUT_SIM_DB_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: port
+            - name: TORGHUT_SIM_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: username
+            - name: TORGHUT_SIM_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-db-app
+                  key: password
+            - name: SIM_DB_DSN
+              value: postgresql://$(TORGHUT_SIM_DB_USER):$(TORGHUT_SIM_DB_PASSWORD)@$(TORGHUT_SIM_DB_HOST):$(TORGHUT_SIM_DB_PORT)/torghut_sim_default
+            - name: TORGHUT_TIGERBEETLE_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_REQUIRED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
+              value: "2001"
+            - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
+              value: torghut-tigerbeetle.torghut.svc.cluster.local:3000
+            - name: TORGHUT_TIGERBEETLE_HEALTH_TIMEOUT_SECONDS
+              value: "5"
+            - name: TORGHUT_TIGERBEETLE_RPC_TIMEOUT_SECONDS
+              value: "10"
+            - name: TORGHUT_TIGERBEETLE_JOURNAL_ENABLED
+              value: "true"
+            - name: TORGHUT_TIGERBEETLE_RECONCILE_REQUIRED
+              value: "false"
+            - name: APCA_API_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_KEY_ID
+                  optional: true
+            - name: APCA_API_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_SECRET_KEY
+                  optional: true
+            - name: APCA_API_BASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-alpaca
+                  key: APCA_API_BASE_URL
+                  optional: true
+            - name: CLICKHOUSE_HOST
+              value: torghut-clickhouse.torghut.svc.cluster.local
+            - name: CLICKHOUSE_PORT
+              value: "8123"
+            - name: CLICKHOUSE_DATABASE
+              value: torghut
+            - name: CLICKHOUSE_USERNAME
+              value: torghut
+            - name: CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: CLICKHOUSE_SECURE
+              value: "false"
+            - name: CLICKHOUSE_TIMEOUT_SECONDS
+              value: "10"
+            - name: TRADING_ENABLED
+              value: "true"
+            - name: TRADING_PIPELINE_MODE
+              value: simple
+            - name: TRADING_SIMPLE_SUBMIT_ENABLED
+              value: "true"
+            - name: TRADING_LIVE_SUBMIT_ENABLED
+              value: "true"
+            - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
+              value: "true"
+            - name: TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
+              value: "4.0"
+            - name: TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS
+              value: "1000"
+            - name: TRADING_ALLOCATOR_ENABLED
+              value: "true"
+            - name: TRADING_ALLOCATOR_MAX_SYMBOL_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_PORTFOLIO_MAX_GROSS_EXPOSURE_PCT_EQUITY
+              value: "4.0"
+            - name: TRADING_PORTFOLIO_MAX_NET_EXPOSURE_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_MARKET_CONTEXT_URL
+              value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
+            - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
+              value: "5"
+            - name: TRADING_MARKET_CONTEXT_REQUIRED
+              value: "false"
+            - name: TRADING_MARKET_CONTEXT_FAIL_MODE
+              value: shadow_only
+            - name: TRADING_KILL_SWITCH_ENABLED
+              value: "false"
+            - name: TRADING_FEATURE_FLAGS_ENABLED
+              value: "false"
+            - name: TRADING_MULTI_ACCOUNT_ENABLED
+              value: "false"
+            - name: TRADING_MODE
+              value: live
+            - name: TRADING_STRATEGY_RUNTIME_MODE
+              value: scheduler_v3
+            - name: TRADING_AUTONOMY_ENABLED
+              value: "false"
+            - name: TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION
+              value: "false"
+            - name: TRADING_EVIDENCE_CONTINUITY_ENABLED
+              value: "false"
+            - name: TRADING_ACCOUNT_LABEL
+              value: PA3SX7FYNUTF
+            - name: TRADING_ACCOUNTS_JSON
+              value: |
+                [{"label":"PA3SX7FYNUTF","mode":"live","enabled":true}]
+            - name: TRADING_ALLOW_SHORTS
+              value: "true"
+            - name: TRADING_FRACTIONAL_EQUITIES_ENABLED
+              value: "true"
+            - name: TRADING_SIGNAL_SOURCE
+              value: clickhouse
+            - name: TRADING_SIGNAL_TABLE
+              value: torghut.ta_signals
+            - name: TRADING_PRICE_TABLE
+              value: torghut.ta_microbars
+            - name: TRADING_EXECUTABLE_QUOTE_LOOKBACK_SECONDS
+              value: "300"
+            - name: TRADING_EXECUTABLE_QUOTE_FORWARD_SECONDS
+              value: "60"
+            - name: TRADING_ALPACA_QUOTE_FALLBACK_ENABLED
+              value: "true"
+            - name: TRADING_ALPACA_QUOTE_FEED
+              value: sip
+            - name: TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS
+              value: "20"
+            - name: TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED
+              value: "true"
+            - name: TRADING_ALPACA_QUOTE_FALLBACK_BACKOFF_SECONDS
+              value: "60"
+            - name: TRADING_OPTIONS_CATALOG_FRESHNESS_CACHE_SECONDS
+              value: "30"
+            - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SECONDS
+              value: "300"
+            - name: TRADING_SESSION_CONTEXT_WARMUP_MAX_SIGNALS
+              value: "1000"
+            - name: TRADING_SIGNAL_ALLOWED_SOURCES
+              value: ta
+            - name: TRADING_SIGNAL_LOOKBACK_MINUTES
+              value: "15"
+            - name: TRADING_PLANNED_DECISION_TIMEOUT_SECONDS
+              value: "600"
+            - name: TRADING_POLL_MS
+              value: "5000"
+            - name: TRADING_RECONCILE_MS
+              value: "15000"
+            - name: TRADING_ORDER_FEED_ENABLED
+              value: "true"
+            - name: TRADING_ORDER_FEED_BOOTSTRAP_SERVERS
+              value: kafka-kafka-bootstrap.kafka:9092
+            - name: TRADING_ORDER_FEED_SECURITY_PROTOCOL
+              value: SASL_PLAINTEXT
+            - name: TRADING_ORDER_FEED_SASL_MECHANISM
+              value: SCRAM-SHA-512
+            - name: TRADING_ORDER_FEED_SASL_USERNAME
+              value: torghut-ws
+            - name: TRADING_ORDER_FEED_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: TRADING_ORDER_FEED_TOPIC
+              value: torghut.trade-updates.v2
+            - name: TRADING_ORDER_FEED_GROUP_ID
+              value: torghut-order-feed-live-default
+            - name: TRADING_ORDER_FEED_ASSIGNMENT_MODE
+              value: manual
+            - name: TRADING_ORDER_FEED_AUTO_OFFSET_RESET
+              value: earliest
+            - name: TRADING_EXECUTION_PREFER_LIMIT
+              value: "true"
+            - name: TRADING_EXECUTION_ADVISOR_LIVE_APPLY_ENABLED
+              value: "false"
+            - name: TRADING_EXECUTION_ADVISOR_ENABLED
+              value: "false"
+            - name: TRADING_CRYPTO_ENABLED
+              value: "false"
+            - name: TRADING_CRYPTO_LIVE_ENABLED
+              value: "false"
+            - name: TRADING_STRATEGY_CONFIG_PATH
+              value: /etc/torghut/strategies.yaml
+            - name: TRADING_STRATEGY_CONFIG_MODE
+              value: sync
+            - name: TRADING_STRATEGY_RELOAD_SECONDS
+              value: "10"
+            - name: TRADING_UNIVERSE_SOURCE
+              value: static
+            - name: TRADING_UNIVERSE_REQUIRE_NON_EMPTY_JANGAR
+              value: "false"
+            - name: TRADING_UNIVERSE_STATIC_FALLBACK_ENABLED
+              value: "false"
+            - name: TRADING_STATIC_SYMBOLS
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC
+            - name: TRADING_UNIVERSE_STATIC_FALLBACK_SYMBOLS
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC
+            - name: TRADING_UNIVERSE_SYMBOL_ALLOWLIST
+              value: NVDA,AVGO,AMD,MU,MRVL,CRDO,COHR,LITE,SNDK,WDC
+            - name: TRADING_UNIVERSE_MAX_STALE_SECONDS
+              value: "900"
+            - name: POSTHOG_ENABLED
+              value: "false"
+            - name: WHITEPAPER_WORKFLOW_ENABLED
+              value: "false"
+            - name: WHITEPAPER_KAFKA_ENABLED
+              value: "false"
+            - name: WHITEPAPER_KAFKA_BOOTSTRAP_SERVERS
+              value: kafka-kafka-bootstrap.kafka:9092
+            - name: WHITEPAPER_KAFKA_TOPIC
+              value: github.webhook.events
+            - name: WHITEPAPER_KAFKA_GROUP_ID
+              value: torghut-whitepaper-v1
+            - name: WHITEPAPER_KAFKA_CLIENT_ID
+              value: torghut-whitepaper
+            - name: WHITEPAPER_KAFKA_SECURITY_PROTOCOL
+              value: SASL_PLAINTEXT
+            - name: WHITEPAPER_KAFKA_SASL_MECHANISM
+              value: SCRAM-SHA-512
+            - name: WHITEPAPER_KAFKA_SASL_USERNAME
+              value: torghut-ws
+            - name: WHITEPAPER_KAFKA_SASL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-ws
+                  key: password
+            - name: WHITEPAPER_CEPH_BUCKET
+              valueFrom:
+                configMapKeyRef:
+                  name: torghut-whitepapers
+                  key: BUCKET_NAME
+            - name: WHITEPAPER_CEPH_BUCKET_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: torghut-whitepapers
+                  key: BUCKET_HOST
+            - name: WHITEPAPER_CEPH_BUCKET_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: torghut-whitepapers
+                  key: BUCKET_PORT
+            - name: WHITEPAPER_CEPH_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-whitepapers
+                  key: AWS_ACCESS_KEY_ID
+            - name: WHITEPAPER_CEPH_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-whitepapers
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: WHITEPAPER_CEPH_CONFIG_DIR
+              value: /etc/torghut/whitepapers-config
+            - name: WHITEPAPER_CEPH_SECRET_DIR
+              value: /etc/torghut/whitepapers-secret
+            - name: WHITEPAPER_AGENTRUN_AUTO_DISPATCH
+              value: "false"
+            - name: WHITEPAPER_AGENTRUN_NAMESPACE
+              value: agents
+            - name: WHITEPAPER_AGENT_NAME
+              value: codex-whitepaper-agent
+            - name: WHITEPAPER_AGENTRUN_VCS_REF
+              value: github
+            - name: WHITEPAPER_AGENTRUN_SECRET_BINDING
+              value: codex-whitepaper-github-token
+            - name: WHITEPAPER_AGENTRUN_SUBMIT_URL
+              value: http://agents.agents.svc.cluster.local/v1/agent-runs
+            - name: AGENTS_BASE_URL
+              value: http://agents.agents.svc.cluster.local
+            - name: TRADING_JANGAR_CONTROL_PLANE_STATUS_URL
+              value: http://agents.agents.svc.cluster.local/ready
+            - name: TRADING_JANGAR_CONTROL_PLANE_TIMEOUT_SECONDS
+              value: "30"
+            - name: INNGEST_APP_ID
+              value: torghut
+            - name: INNGEST_BASE_URL
+              value: http://inngest.inngest.svc.cluster.local:8288
+            - name: INNGEST_EVENT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inngest
+                  key: INNGEST_EVENT_KEY
+                  optional: true
+            - name: INNGEST_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: inngest
+                  key: INNGEST_SIGNING_KEY
+                  optional: true
+            - name: WHITEPAPER_INNGEST_EVENT_NAME
+              value: torghut/whitepaper.analysis.requested
+            - name: WHITEPAPER_INNGEST_FUNCTION_ID
+              value: torghut-whitepaper-analysis-v1
+            - name: WHITEPAPER_INNGEST_ENABLED
+              value: "false"
+            - name: WHITEPAPER_INNGEST_FINALIZED_EVENT_NAME
+              value: torghut/whitepaper.analysis.finalized
+            - name: WHITEPAPER_INNGEST_FINALIZE_FUNCTION_ID
+              value: torghut-whitepaper-synthesis-index-v1
+            - name: WHITEPAPER_SEMANTIC_INDEXING_ENABLED
+              value: "false"
+            - name: WHITEPAPER_SEMANTIC_REQUIRED
+              value: "false"
+            - name: WHITEPAPER_EMBEDDING_API_BASE_URL
+              value: http://saigak.saigak.svc.cluster.local:11434/v1
+            - name: WHITEPAPER_EMBEDDING_MODEL
+              value: qwen3-embedding-saigak:8b
+            - name: WHITEPAPER_EMBEDDING_DIMENSION
+              value: "4096"
+            - name: WHITEPAPER_EMBEDDING_TIMEOUT_MS
+              value: "120000"
+            - name: WHITEPAPER_CHUNK_SIZE_CHARS
+              value: "2400"
+            - name: WHITEPAPER_CHUNK_OVERLAP_CHARS
+              value: "300"
+            - name: WHITEPAPER_EMBEDDING_BATCH_SIZE
+              value: "32"
+            - name: TRADING_EMERGENCY_STOP_ENABLED
+              value: "true"
+            - name: TRADING_DAILY_LOSS_STOP_PCT_EQUITY
+              value: "0.01"
+            - name: TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY
+              value: "0.05"
+            - name: TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET
+              value: "15:30:00"
+            - name: TRADING_FLATTEN_START_TIME_ET
+              value: "15:45:00"
+            - name: TRADING_FLAT_CONFIRMATION_TIME_ET
+              value: "15:50:00"
+            - name: TRADING_ORDER_REPRICE_SECONDS
+              value: "2"
+            - name: TRADING_ORDER_MAX_ATTEMPTS
+              value: "1"
+            - name: TRADING_EXECUTION_MAX_RETRIES
+              value: "0"
+            - name: TRADING_ORDER_SLIPPAGE_BPS
+              value: "8"
+            - name: TRADING_CLOSEOUT_REPRICE_SECONDS
+              value: "2"
+            - name: TRADING_CLOSEOUT_MAX_ATTEMPTS
+              value: "3"
+            - name: TRADING_CLOSEOUT_SLIPPAGE_BPS
+              value: "8"
+            - name: TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT
+              value: "0.05"
+            - name: LLM_ENABLED
+              value: "false"
+            - name: LLM_ROLLOUT_STAGE
+              value: stage1_shadow_pilot
+            - name: LLM_SHADOW_MODE
+              value: "true"
+            - name: LLM_DSPY_RUNTIME_MODE
+              value: disabled
+            - name: TA_CLICKHOUSE_URL
+              value: http://torghut-clickhouse.torghut.svc.cluster.local:8123
+            - name: TA_CLICKHOUSE_USERNAME
+              value: torghut
+            - name: TA_CLICKHOUSE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: torghut-clickhouse-auth
+                  key: torghut_password
+            - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
+              value: "10"
+            - name: TORGHUT_VERSION
+              value: v0.596.0-1720-gccfdd9e0a
+            - name: TORGHUT_COMMIT
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
+            - name: TORGHUT_IMAGE_DIGEST
+              value: sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
+            - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
+              value: linux/amd64,linux/arm64
+            - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS
+              value: linux/amd64,linux/arm64
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: 8183
+            failureThreshold: 60
+            periodSeconds: 5
+            timeoutSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8183
+            failureThreshold: 6
+            periodSeconds: 10
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /scheduler/readyz
+              port: 8183
+            failureThreshold: 3
+            periodSeconds: 5
+            timeoutSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          volumeMounts:
+            - name: strategy-config
+              mountPath: /etc/torghut
+              readOnly: true
+      volumes:
+        - name: strategy-config
+          configMap:
+            name: torghut-strategy-config

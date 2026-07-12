@@ -25,6 +25,10 @@ def _empty_payload() -> dict[str, object]:
     return {}
 
 
+def _empty_decimal_map() -> dict[str, Decimal]:
+    return {}
+
+
 @dataclass(frozen=True)
 class RuntimeDependencyStatus:
     """Readiness state for one runtime dependency."""
@@ -61,6 +65,7 @@ class ExecutionMarket:
     day_notional_volume_usd: Decimal
     mark_price: Decimal | None = None
     mid_price: Decimal | None = None
+    max_leverage: Decimal | None = None
     payload: dict[str, object] = field(default_factory=_empty_payload)
 
     @property
@@ -115,6 +120,10 @@ class RiskState:
     open_order_coins: frozenset[str]
     symbol_exposure_usd_by_coin: dict[str, Decimal]
     cooldown_reason_by_coin: dict[str, str]
+    position_exposure_usd_by_coin: dict[str, Decimal] | None = None
+    account_value_usd: Decimal = Decimal("0")
+    withdrawable_usd: Decimal = Decimal("0")
+    max_leverage_by_coin: dict[str, Decimal] = field(default_factory=_empty_decimal_map)
 
 
 @dataclass(frozen=True)
@@ -134,7 +143,7 @@ class RiskVerdict:
 
 @dataclass(frozen=True)
 class OrderIntent:
-    """Maker-first Hyperliquid limit order intent."""
+    """Hyperliquid limit order intent."""
 
     market_id: str
     coin: str
@@ -203,6 +212,7 @@ class PositionSnapshot:
     unrealized_pnl_usd: Decimal
     observed_at: datetime
     raw_payload: dict[str, object]
+    sdk_coin: str | None = None
 
 
 @dataclass(frozen=True)

@@ -131,7 +131,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
   `controller_heartbeat_not_current`, `controller_process_heartbeat_authoritative`, `controller_witness_allow_with_split`,
   `route_stability_hold`, `source_rollout_truth_hold`, and `stage_credit_insufficient`.
 - The repair stage clearance packet was `repair_only`, not broad dispatch. It carried the Torghut repair reasons
-  `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, `expected_shortfall_coverage_low`,
+  `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, `expected_shortfall_coverage_low`,
   `market_context_freshness_missing`, `route_warrant_repair_only`, and `ta_signal_lag_exceeded`.
 - Source-serving contract verdict was `block`: source SHA `1a37a432e7c2d06e0cfc2d90ffd9a09a6551ffc3`, serving build
   commit `9292518f9a313af097a24f7fd50f912676740a9e`, and reasons `source_ci_retention_receipt_missing`,
@@ -164,7 +164,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
 ### Torghut Closure Evidence
 
 - `/trading/revenue-repair` top queue item was `repair_alpha_readiness`, reason
-  `alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`, expected unblock value `4`,
+  `hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`, expected unblock value `4`,
   required output receipt `torghut.executable-alpha-receipts.v1`, max notional `0`, and capital rule
   `zero_notional_repair_only`.
 - Torghut emitted `alpha_repair_closure_board.status=selected` with board id

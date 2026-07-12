@@ -6,7 +6,6 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { ensureCli, fatal, repoRoot, run } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
 import { buildImage } from './build-image'
 import { updateJangarManifests } from './update-manifests'
@@ -163,6 +162,10 @@ const resolveDeploymentNames = () => {
 }
 
 export const main = async (options: DeployOptions = {}) => {
+  const args = new Set(process.argv.slice(2))
+  const dryRun = args.has('--dry-run')
+  const noApply = dryRun || args.has('--no-apply')
+
   ensureCli('kubectl')
   ensureCli('curl')
   ensureCli('tar')
@@ -172,13 +175,15 @@ export const main = async (options: DeployOptions = {}) => {
   const sourceHeadSha = execGit(['rev-parse', 'HEAD'])
   const tag = options.tag ?? process.env.JANGAR_IMAGE_TAG ?? defaultTag
   const imageName = `${registry}/${repository}`
-  const image = `${registry}/${repository}:${tag}`
 
-  await buildImage({ registry, repository, tag })
+  const imageResult = await buildImage({ registry, repository, tag, dryRun })
+  const digest = imageResult.digest
+  console.log(`Image digest: ${digest}`)
 
-  const repoDigest = inspectImageDigest(image)
-  const digest = repoDigest.includes('@') ? repoDigest.split('@')[1] : repoDigest
-  console.log(`Image digest: ${repoDigest}`)
+  if (dryRun) {
+    console.log('Dry run complete; manifests and cluster state were not changed.')
+    return
+  }
 
   const kustomizePath = resolve(
     repoRoot,
@@ -203,6 +208,11 @@ export const main = async (options: DeployOptions = {}) => {
     serviceManifestPath: serviceManifest,
     workerManifestPath: workerManifest,
   })
+
+  if (noApply) {
+    console.log('Skipping kubectl apply because --no-apply was requested.')
+    return
+  }
 
   const { helmDir, helmBinary, cleanup } = writeHelmShim()
   const kubectl = Bun.which('kubectl')

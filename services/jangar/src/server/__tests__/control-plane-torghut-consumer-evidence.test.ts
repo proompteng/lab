@@ -191,7 +191,7 @@ describe('control-plane Torghut consumer evidence', () => {
             revenue_repair_digest_ref: 'torghut-revenue-repair-digest:test',
             selected_business_blocker: {
               code: 'repair_alpha_readiness',
-              reason: 'alpha_readiness_not_promotion_eligible',
+              reason: 'hypothesis_not_promotion_eligible',
               value_gate: 'routeable_candidate_count',
               required_output_receipt: 'torghut.executable-alpha-receipts.v1',
             },
@@ -452,7 +452,7 @@ describe('control-plane Torghut consumer evidence', () => {
           repair_queue: [
             {
               code: 'repair_alpha_readiness',
-              reason: 'alpha_readiness_not_promotion_eligible',
+              reason: 'hypothesis_not_promotion_eligible',
               dimension: 'alpha_readiness',
               action: 'clear_hypothesis_blockers_before_capital',
               priority: 70,
@@ -592,7 +592,7 @@ describe('control-plane Torghut consumer evidence', () => {
           repair_queue: [
             {
               code: 'repair_alpha_readiness',
-              reason: 'alpha_readiness_not_promotion_eligible',
+              reason: 'hypothesis_not_promotion_eligible',
               value_gate: 'routeable_candidate_count',
               required_output_receipt: 'torghut.executable-alpha-receipts.v1',
               max_notional: '0',
@@ -606,7 +606,7 @@ describe('control-plane Torghut consumer evidence', () => {
             warrant_state: 'repair_only',
             accepted_routeable_candidate_count: 0,
             max_notional: '0',
-            blocking_reason_codes: ['alpha_readiness_not_promotion_eligible'],
+            blocking_reason_codes: ['hypothesis_not_promotion_eligible'],
           },
           repair_bid_settlement_ledger: {
             schema_version: 'torghut.repair-bid-settlement-ledger.v1',
@@ -639,7 +639,7 @@ describe('control-plane Torghut consumer evidence', () => {
       observed_contracts: expect.arrayContaining(['route_warrant_exchange', 'repair_bid_settlement_ledger']),
       route_warrant_id: 'route-warrant-exchange:full',
       route_warrant_state: 'repair_only',
-      route_warrant_blocking_reason_codes: ['alpha_readiness_not_promotion_eligible'],
+      route_warrant_blocking_reason_codes: ['hypothesis_not_promotion_eligible'],
       repair_bid_settlement_ledger_id: 'repair-bid-settlement-ledger:full',
       repair_bid_settlement_status: 'current',
       repair_bid_settlement_selected_lot_ids: ['compacted-repair-lot:promotion'],
@@ -1227,7 +1227,7 @@ describe('control-plane Torghut consumer evidence', () => {
           revenue_ready: false,
           top_repair_queue_item: {
             code: 'repair_alpha_readiness',
-            reason: 'alpha_readiness_not_promotion_eligible',
+            reason: 'hypothesis_not_promotion_eligible',
             value_gate: 'routeable_candidate_count',
           },
           alpha_readiness_settlement_conveyor: {
@@ -1280,7 +1280,7 @@ describe('control-plane Torghut consumer evidence', () => {
     expect(result.status.observed_contracts).toEqual(expect.arrayContaining(['alpha_readiness_settlement_conveyor']))
     expect(result.status.revenue_repair_queue?.[0]).toMatchObject({
       code: 'repair_alpha_readiness',
-      reason: 'alpha_readiness_not_promotion_eligible',
+      reason: 'hypothesis_not_promotion_eligible',
       value_gate: 'routeable_candidate_count',
     })
     expect(result.status.contract_schema_mismatches).not.toEqual(
@@ -1507,12 +1507,12 @@ describe('control-plane Torghut consumer evidence', () => {
     expect(result.negativeEvidence).toBeUndefined()
   })
 
-  it('keeps Torghut consumer evidence configured in Jangar and out of Agents runtime values', () => {
+  it('keeps retired Torghut consumer evidence out of runtime manifests', () => {
     const jangarManifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/jangar/deployment.yaml'), 'utf8')
     const agentsManifest = readFileSync(resolve(REPO_ROOT, 'argocd/applications/agents/values.yaml'), 'utf8')
 
-    expect(jangarManifest).toContain('value: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence')
-    expect(jangarManifest).not.toContain('value: http://torghut.torghut.svc.cluster.local/trading/autonomy')
+    expect(jangarManifest).not.toContain('JANGAR_TORGHUT_STATUS_URL')
+    expect(jangarManifest).not.toContain('http://torghut.torghut.svc.cluster.local/trading/consumer-evidence')
     expect(agentsManifest).not.toContain('AGENTS_TORGHUT_STATUS_URL')
     expect(agentsManifest).not.toContain('http://torghut.torghut.svc.cluster.local/trading/autonomy')
   })

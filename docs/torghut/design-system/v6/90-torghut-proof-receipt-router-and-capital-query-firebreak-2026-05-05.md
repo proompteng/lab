@@ -1,21 +1,21 @@
 # 90. Torghut Proof Receipt Router and Capital Query Firebreak (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, database route pressure, proof production, options readiness, zero-notional work, and
-Jangar platform receipt consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/86-jangar-query-budgeted-evidence-receipts-and-admission-firebreaks-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `89-torghut-zero-notional-proof-runway-and-profit-debt-exchange-2026-05-05.md`
-- `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
-- `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
-- `72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
 
 ## Decision
 

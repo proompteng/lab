@@ -9,6 +9,7 @@ metadata:
     app.kubernetes.io/part-of: lab
     networking.knative.dev/visibility: cluster-local
   annotations:
+    argocd.argoproj.io/sync-wave: "0"
     serving.knative.dev/creator: system:serviceaccount:argocd:argocd-application-controller
     serving.knative.dev/rollout-duration: 10s
     argocd.argoproj.io/tracking-id: torghut:serving.knative.dev/Service:torghut/torghut
@@ -16,8 +17,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-07-01T01:13:29Z"
-        autoscaling.knative.dev/minScale: "1"
+        client.knative.dev/updateTimestamp: "2026-07-12T00:48:09Z"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
     spec:
@@ -31,11 +31,21 @@ spec:
           securityContext:
             seccompProfile:
               type: Unconfined
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
           ports:
             - name: http1
               containerPort: 8181
           env:
+            - name: TORGHUT_PROCESS_ROLE
+              value: api
+            - name: TRADING_SCHEDULER_RUNTIME_BASE_URL
+              value: http://torghut-scheduler.torghut.svc.cluster.local:8183
+            - name: TRADING_SCHEDULER_RUNTIME_TIMEOUT_SECONDS
+              value: "2"
+            - name: TRADING_SCHEDULER_SHUTDOWN_DRAIN_SECONDS
+              value: "45"
+            - name: TRADING_SCHEDULER_SUCCESS_MAX_AGE_SECONDS
+              value: "30"
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL
@@ -74,7 +84,7 @@ spec:
             - name: TORGHUT_TIGERBEETLE_ENABLED
               value: "true"
             - name: TORGHUT_TIGERBEETLE_REQUIRED
-              value: "false"
+              value: "true"
             - name: TORGHUT_TIGERBEETLE_CLUSTER_ID
               value: "2001"
             - name: TORGHUT_TIGERBEETLE_REPLICA_ADDRESSES
@@ -123,35 +133,35 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
-              value: "true"
+              # The GitOps manifest can land before the matching image promotion.
+              # Keep even the previous image scheduler-free during that window.
+              value: "false"
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "true"
+            - name: TRADING_LIVE_SUBMIT_ENABLED
+              value: "true"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "true"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
-              value: "true"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE
-              value: "true"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "100"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_BATCH_LIMIT
-              value: "0"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_SCAN_LIMIT
-              value: "0"
-            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER
-              value: "100"
-            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL
-              value: "250"
             - name: TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY
-              value: "0.25"
+              value: "0.50"
+            - name: TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY
+              value: "0.50"
             - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
-              value: "0.05"
-            - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
-              value: http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20
-            - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
-              value: "10"
+              value: "4.0"
+            - name: TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS
+              value: "1000"
+            - name: TRADING_ALLOCATOR_ENABLED
+              value: "true"
+            - name: TRADING_ALLOCATOR_MAX_SYMBOL_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_PORTFOLIO_MAX_GROSS_EXPOSURE_PCT_EQUITY
+              value: "4.0"
+            - name: TRADING_PORTFOLIO_MAX_NET_EXPOSURE_PCT_EQUITY
+              value: "0.50"
             - name: TRADING_MARKET_CONTEXT_URL
               value: http://jangar.jangar.svc.cluster.local/api/torghut/market-context
             - name: TRADING_MARKET_CONTEXT_TIMEOUT_SECONDS
@@ -176,8 +186,6 @@ spec:
               value: "false"
             - name: TRADING_EVIDENCE_CONTINUITY_ENABLED
               value: "false"
-            - name: TRADING_EMPIRICAL_JOBS_HEALTH_REQUIRED
-              value: "false"
             - name: TRADING_ACCOUNT_LABEL
               value: PA3SX7FYNUTF
             - name: TRADING_ACCOUNTS_JSON
@@ -200,7 +208,7 @@ spec:
             - name: TRADING_ALPACA_QUOTE_FALLBACK_ENABLED
               value: "true"
             - name: TRADING_ALPACA_QUOTE_FEED
-              value: iex
+              value: sip
             - name: TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS
               value: "20"
             - name: TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED
@@ -393,9 +401,39 @@ spec:
             - name: WHITEPAPER_EMBEDDING_BATCH_SIZE
               value: "32"
             - name: TRADING_EMERGENCY_STOP_ENABLED
-              value: "false"
+              value: "true"
+            - name: TRADING_DAILY_LOSS_STOP_PCT_EQUITY
+              value: "0.01"
+            - name: TRADING_PERSISTENT_DRAWDOWN_STOP_PCT_EQUITY
+              value: "0.05"
+            - name: TRADING_NEW_EXPOSURE_CUTOFF_TIME_ET
+              value: "15:30:00"
+            - name: TRADING_FLATTEN_START_TIME_ET
+              value: "15:45:00"
+            - name: TRADING_FLAT_CONFIRMATION_TIME_ET
+              value: "15:50:00"
+            - name: TRADING_ORDER_REPRICE_SECONDS
+              value: "2"
+            - name: TRADING_ORDER_MAX_ATTEMPTS
+              value: "1"
+            - name: TRADING_EXECUTION_MAX_RETRIES
+              value: "0"
+            - name: TRADING_ORDER_SLIPPAGE_BPS
+              value: "8"
+            - name: TRADING_CLOSEOUT_REPRICE_SECONDS
+              value: "2"
+            - name: TRADING_CLOSEOUT_MAX_ATTEMPTS
+              value: "3"
+            - name: TRADING_CLOSEOUT_SLIPPAGE_BPS
+              value: "8"
+            - name: TRADING_ROLLBACK_MAX_DRAWDOWN_LIMIT
+              value: "0.05"
             - name: LLM_ENABLED
               value: "false"
+            - name: LLM_ROLLOUT_STAGE
+              value: stage1_shadow_pilot
+            - name: LLM_SHADOW_MODE
+              value: "true"
             - name: LLM_DSPY_RUNTIME_MODE
               value: disabled
             - name: TA_CLICKHOUSE_URL
@@ -410,11 +448,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.596.0-1247-gc1e630bf5
+              value: v0.596.0-1720-gccfdd9e0a
             - name: TORGHUT_COMMIT
-              value: 8e1ae9a8c668c206afc6885ca817039da226810b
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+              value: sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
               value: linux/amd64,linux/arm64
             - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS

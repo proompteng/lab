@@ -5,7 +5,9 @@ import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.Metrics
 import ai.proompteng.dorvud.platform.SeqTracker
 import ai.proompteng.dorvud.platform.buildProducer
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.POJONode
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
@@ -33,7 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
@@ -55,10 +57,14 @@ import kotlinx.serialization.json.put
 import mu.KotlinLogging
 import org.apache.kafka.clients.producer.KafkaProducer
 import org.apache.kafka.clients.producer.ProducerRecord
+import org.msgpack.jackson.dataformat.MessagePackExtensionType
 import org.msgpack.jackson.dataformat.MessagePackFactory
+import org.msgpack.jackson.dataformat.TimestampExtensionModule
+import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -70,6 +76,10 @@ private val logger = KotlinLogging.logger {}
 private val marketSessionZoneId: ZoneId = ZoneId.of("America/New_York")
 private const val DEFAULT_ALPACA_BARS_BACKFILL_LOOKBACK_HOURS = 12L
 private const val ALPACA_BARS_BACKFILL_LIMIT = 10_000
+private const val ALPACA_TRADES_BACKFILL_LIMIT = 10_000
+private const val MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK = 0xffffffffL
+private const val MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT = 34
+private const val MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK = 0x00000003ffffffffL
 
 internal fun alpacaMarketDataStreamUrl(config: ForwarderConfig): String =
   when (config.alpacaMarketType) {
@@ -85,6 +95,13 @@ internal fun alpacaBarsBackfillUrl(config: ForwarderConfig): String =
     AlpacaMarketType.CRYPTO ->
       "${config.alpacaBaseUrl.trimEnd('/')}/v1beta3/crypto/${config.alpacaCryptoLocation}/bars"
     AlpacaMarketType.OPTIONS -> error("options bars backfill is not supported on the websocket lane")
+  }
+
+internal fun alpacaTradesBackfillUrl(config: ForwarderConfig): String =
+  when (config.alpacaMarketType) {
+    AlpacaMarketType.EQUITY -> "${config.alpacaBaseUrl.trimEnd('/')}/v2/stocks/trades"
+    AlpacaMarketType.CRYPTO -> error("crypto trades backfill is not supported on the websocket lane")
+    AlpacaMarketType.OPTIONS -> error("options trades backfill is not supported on the websocket lane")
   }
 
 internal fun alpacaBarsBackfillNeedsFeed(config: ForwarderConfig): Boolean = config.alpacaMarketType != AlpacaMarketType.CRYPTO
@@ -140,6 +157,32 @@ internal fun alpacaBarsBackfillQuery(
   )
 }
 
+internal data class AlpacaTradesBackfillQuery(
+  val symbols: String,
+  val start: String,
+  val end: String,
+  val limit: String,
+  val sort: String,
+  val feed: String?,
+  val pageToken: String?,
+)
+
+internal fun alpacaTradesBackfillQuery(
+  config: ForwarderConfig,
+  symbols: List<String>,
+  now: Instant,
+  pageToken: String? = null,
+): AlpacaTradesBackfillQuery =
+  AlpacaTradesBackfillQuery(
+    symbols = symbols.joinToString(","),
+    start = now.minus(Duration.ofHours(config.tradesBackfillLookbackHours)).toString(),
+    end = now.toString(),
+    limit = ALPACA_TRADES_BACKFILL_LIMIT.toString(),
+    sort = "desc",
+    feed = config.alpacaFeed,
+    pageToken = pageToken,
+  )
+
 internal fun alpacaMarketDataChannels(config: ForwarderConfig): List<String> = config.alpacaMarketDataChannels
 
 @Serializable
@@ -150,10 +193,23 @@ internal data class AlpacaBarsResponse(
   val nextPageToken: String? = null,
 )
 
+@Serializable
+internal data class AlpacaTradesResponse(
+  val trades: JsonElement? = null,
+  val symbol: String? = null,
+  @SerialName("next_page_token")
+  val nextPageToken: String? = null,
+)
+
 internal fun decodeAlpacaBarsResponse(
   payload: String,
   json: Json,
 ): AlpacaBarsResponse = json.decodeFromString(payload)
+
+internal fun decodeAlpacaTradesResponse(
+  payload: String,
+  json: Json,
+): AlpacaTradesResponse = json.decodeFromString(payload)
 
 class ForwarderApp(
   private val config: ForwarderConfig,
@@ -174,12 +230,15 @@ class ForwarderApp(
   private val tradeUpdatesReady = AtomicBoolean(false)
   private val kafkaReady = AtomicBoolean(false)
   private val readinessErrorClass = AtomicReference<ReadinessErrorClass?>(null)
+  private val marketDataWsStatus = AtomicReference(AlpacaMarketDataWebsocketStatus())
   private val alpacaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val tradeUpdatesErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaErrorClass = AtomicReference<ReadinessErrorClass?>(null)
   private val reportedNotReadyClass = AtomicReference<ReadinessErrorClass?>(null)
   private val kafkaFailureCount = AtomicInteger(0)
+  private val envelopeDropLogged = AtomicBoolean(false)
   private val backfillDone = AtomicBoolean(false)
+  private val tradesBackfillDone = AtomicBoolean(false)
   private val notReadyLivenessGate = NotReadyLivenessGate(config.healthNotReadyKillAfterMs, nowMs)
   private val notReadyLivenessLogged = AtomicBoolean(false)
   private val tradeUpdatesEnabled =
@@ -190,6 +249,15 @@ class ForwarderApp(
       install(ContentNegotiation) { json(this@ForwarderApp.json) }
     }
   private val metrics = ForwarderMetrics(Metrics.registry)
+  private val marketDataChannelFreshness =
+    MarketDataChannelFreshnessTracker(
+      requiredChannels = config.alpacaMarketDataChannels,
+      maxLagMs = config.marketDataChannelFreshnessMaxMs,
+      warmupMs = config.marketDataChannelFreshnessWarmupMs,
+      nowMs = nowMs,
+      marketType = config.alpacaMarketType,
+      marketHolidays = config.optionsMarketHolidays,
+    )
   private val reconnectBackoff = ReconnectBackoff(config.reconnectBaseMs, config.reconnectMaxMs)
 
   fun start(): Job {
@@ -285,17 +353,24 @@ class ForwarderApp(
     scope.cancel()
   }
 
-  fun isReady(): Boolean = ready.get()
+  fun isReady(): Boolean {
+    refreshReadinessFromMarketDataChannels()
+    return ready.get()
+  }
 
   fun readinessInfo(): ReadinessInfo {
+    refreshReadinessFromMarketDataChannels()
     val readyNow = ready.get()
     val gates = currentReadinessGates()
     val errorClassId = currentReadinessErrorClass(readyNow, gates)?.id
+    val channelSnapshot = marketDataChannelSnapshot()
     return ReadinessInfo(
       status = if (readyNow) "ready" else "not_ready",
       ready = readyNow,
       errorClass = errorClassId,
       gates = gates,
+      alpacaMarketDataWs = marketDataWsStatus.get(),
+      marketDataChannels = channelSnapshot,
     )
   }
 
@@ -308,7 +383,7 @@ class ForwarderApp(
       logger.error {
         "liveness failing after readiness remained false for >=${config.healthNotReadyKillAfterMs}ms " +
           "error_class=$errorClass gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} " +
-          "trade_updates:${gates.tradeUpdates}"
+          "trade_updates:${gates.tradeUpdates} market_data_channels:${gates.marketDataChannels}"
       }
     }
     return !staleNotReady
@@ -403,7 +478,12 @@ class ForwarderApp(
       }
     }) {
       suspend fun decodeNextMessages(): List<AlpacaMessage> {
-        val frame = incoming.receive()
+        val frame =
+          withTimeoutOrNull(config.marketDataReadIdleTimeoutMs) {
+            incoming.receive()
+          } ?: error(
+            "alpaca market-data websocket idle for ${config.marketDataReadIdleTimeoutMs}ms; reconnecting",
+          )
         val elements = decodeMarketDataFrame(frame) ?: return emptyList()
         val messages: List<JsonElement> =
           if (elements is JsonArray) elements.toList() else listOf(elements)
@@ -424,6 +504,7 @@ class ForwarderApp(
           put("secret", config.alpacaSecretKey)
         }
       sendSerialized(auth)
+      markMarketDataWsSessionStarting()
 
       val subscribedSymbols = mutableSetOf<String>()
       val subscribedLock = Mutex()
@@ -442,6 +523,7 @@ class ForwarderApp(
             subscribedSince = subscribedSince.get(),
             subscribedCount = if (subscribedOk) 1 else 0,
             marketType = config.alpacaMarketType,
+            marketHolidays = config.optionsMarketHolidays,
           )
         if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
           metrics.setOptionsEventStarvation(eventStarved)
@@ -460,41 +542,48 @@ class ForwarderApp(
       suspend fun awaitAuthOrThrow() {
         // Alpaca rejects subscribe requests before a successful auth handshake; if we get an error,
         // restart the session so the outer loop can apply backoff.
-        withTimeout(10_000) {
-          while (isActive && !authOk) {
-            decodeNextMessages().forEach { msg ->
-              when (msg) {
-                is AlpacaSuccess -> {
-                  if (msg.msg.contains("auth", ignoreCase = true)) {
-                    authOk = true
-                    updateWsReady()
+        val authed =
+          withTimeoutOrNull(10_000) {
+            while (isActive && !authOk) {
+              decodeNextMessages().forEach { msg ->
+                when (msg) {
+                  is AlpacaSuccess -> {
+                    if (msg.msg.contains("auth", ignoreCase = true)) {
+                      authOk = true
+                      recordMarketDataAuthSuccess()
+                      updateWsReady()
+                    }
                   }
+                  is AlpacaError -> {
+                    authOk = false
+                    subscribedOk = false
+                    val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                    recordMarketDataWsDisconnected(errorClass)
+                    updateWsReady()
+                    metrics.recordWsConnectError(errorClass)
+                    recordAlpacaError(errorClass)
+                    publishOptionsWsStatus(
+                      producer = producer,
+                      seq = seq,
+                      subscribedCount = 0,
+                      statusValue = optionsStatusForCode(msg.code),
+                      errorCode = msg.code?.toString(),
+                      errorDetail = msg.msg,
+                      authOk = false,
+                      subscriptionOk = false,
+                      eventStarved = false,
+                    )
+                    logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
+                    throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
+                  }
+                  else -> {}
                 }
-                is AlpacaError -> {
-                  authOk = false
-                  subscribedOk = false
-                  updateWsReady()
-                  val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
-                  metrics.recordWsConnectError(errorClass)
-                  recordAlpacaError(errorClass)
-                  publishOptionsWsStatus(
-                    producer = producer,
-                    seq = seq,
-                    subscribedCount = 0,
-                    statusValue = optionsStatusForCode(msg.code),
-                    errorCode = msg.code?.toString(),
-                    errorDetail = msg.msg,
-                    authOk = false,
-                    subscriptionOk = false,
-                    eventStarved = false,
-                  )
-                  logger.error { "alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}" }
-                  throw RuntimeException("alpaca auth error code=${msg.code} msg=${msg.msg} error_class=${errorClass.id}")
-                }
-                else -> {}
               }
             }
-          }
+            authOk
+          } ?: false
+        if (!authed) {
+          throw RuntimeException("alpaca auth timed out after 10000ms")
         }
       }
 
@@ -548,6 +637,7 @@ class ForwarderApp(
 
       awaitAuthOrThrow()
       applySubscribe(initial)
+      maybeBackfillTrades(producer, seq, initial)
       maybeBackfillBars(producer, seq, initial)
 
       val poller =
@@ -582,6 +672,7 @@ class ForwarderApp(
                   lastEventTs = lastOptionsMarketDataEventAt.get(),
                 )
               }
+              maybeBackfillTrades(producer, seq, desired)
               maybeBackfillBars(producer, seq, desired)
             }
           }
@@ -602,6 +693,7 @@ class ForwarderApp(
                   subscribedSince = subscribedSince.get(),
                   subscribedCount = subscribedCount,
                   marketType = config.alpacaMarketType,
+                  marketHolidays = config.optionsMarketHolidays,
                 )
               metrics.setOptionsEventStarvation(eventStarved)
               if (eventStarved) {
@@ -635,29 +727,46 @@ class ForwarderApp(
               is AlpacaSuccess -> {
                 if (msg.msg.contains("auth", ignoreCase = true)) {
                   authOk = true
+                  recordMarketDataAuthSuccess()
                   updateWsReady()
                 }
                 return@forEach
               }
               is AlpacaSubscription -> {
-                val actualSubscribed = msg.subscribedSymbolsForChannels(alpacaMarketDataChannels(config))
-                val missing = missingDesiredSymbols(symbolsTracker.current(), actualSubscribed)
+                val channels = alpacaMarketDataChannels(config)
+                val actualSubscribedByChannel = msg.subscribedSymbolsByChannel(channels)
+                val actualSubscribed = actualSubscribedByChannel.values.flatten().toSet()
+                val missingByChannel = missingDesiredSymbolsByChannel(symbolsTracker.current(), actualSubscribedByChannel, channels)
+                val missing = missingByChannel.values.flatten().distinct()
+                val wsStatus =
+                  msg.toMarketDataWebsocketStatus(
+                    previous = marketDataWsStatus.get(),
+                    channels = channels,
+                    desiredSymbols = symbolsTracker.current(),
+                    authOk = authOk,
+                    nowMs = nowMs(),
+                  )
+                marketDataWsStatus.set(wsStatus)
                 subscribedLock.withLock {
                   subscribedSymbols.clear()
                   subscribedSymbols.addAll(actualSubscribed)
                 }
                 if (actualSubscribed.isNotEmpty()) {
                   subscribedSince.compareAndSet(null, Instant.ofEpochMilli(nowMs()))
+                  marketDataChannelFreshness.recordSubscriptionByChannel(actualSubscribedByChannel)
                 } else {
                   subscribedSince.set(null)
                   lastOptionsMarketDataEventAt.set(null)
+                  marketDataChannelFreshness.clearSubscription()
                 }
-                subscribedOk = actualSubscribed.isNotEmpty() && missing.isEmpty()
+                subscribedOk = wsStatus.subscriptionOk
                 updateWsReady()
-                if (missing.isNotEmpty()) {
+                if (missingByChannel.isNotEmpty()) {
                   logger.warn {
-                    "alpaca subscription missing desired symbols count=${missing.size} symbols=$missing " +
-                      "subscribed_count=${actualSubscribed.size}"
+                    val missingSummary = missingByChannel.mapValues { (_, symbols) -> symbols.size }
+                    val subscribedSummary = actualSubscribedByChannel.mapValues { (_, symbols) -> symbols.size }
+                    "alpaca subscription missing desired symbols channels=$missingSummary symbols=$missing " +
+                      "subscribed_channels=$subscribedSummary subscribed_count=${actualSubscribed.size}"
                   }
                   applySubscribe(missing)
                 }
@@ -679,8 +788,9 @@ class ForwarderApp(
               is AlpacaError -> {
                 authOk = false
                 subscribedOk = false
-                updateWsReady()
                 val errorClass = ReadinessClassifier.classifyAlpacaError(msg.code, msg.msg)
+                recordMarketDataWsDisconnected(errorClass)
+                updateWsReady()
                 metrics.recordWsConnectError(errorClass)
                 recordAlpacaError(errorClass)
                 publishOptionsWsStatus(
@@ -702,6 +812,17 @@ class ForwarderApp(
                 throw RuntimeException("alpaca error code=${msg.code} msg=${msg.msg}")
               }
               else -> {
+                val observed = observedMarketDataMessage(msg)
+                if (observed != null) {
+                  metrics.recordProviderMessage(config.alpacaMarketType, observed.channel)
+                  marketDataChannelFreshness.recordProviderEvent(observed.channel, observed.symbol)
+                  if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && observed.isQuoteOrTrade) {
+                    lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
+                    starvationStatusPublished.set(false)
+                    metrics.setOptionsEventStarvation(false)
+                    updateWsReady()
+                  }
+                }
                 val channel = handleMessage(msg, producer, seq, tradesDedup, quotesDedup, barsDedup)
                 if (config.alpacaMarketType == AlpacaMarketType.OPTIONS && channel in setOf("trade", "trades", "quote", "quotes")) {
                   lastOptionsMarketDataEventAt.set(Instant.ofEpochMilli(nowMs()))
@@ -716,6 +837,7 @@ class ForwarderApp(
       } finally {
         poller?.cancel()
         starvationMonitor?.cancel()
+        recordMarketDataWsDisconnected()
         if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
           publishOptionsWsStatus(
             producer = producer,
@@ -777,7 +899,13 @@ class ForwarderApp(
         }
       }
 
-      for (frame in incoming) {
+      while (isActive) {
+        val frame =
+          withTimeoutOrNull(config.tradeUpdatesReadIdleTimeoutMs) {
+            incoming.receive()
+          } ?: error(
+            "alpaca trade_updates websocket idle for ${config.tradeUpdatesReadIdleTimeoutMs}ms; reconnecting",
+          )
         val text =
           when (frame) {
             is Frame.Text -> frame.readText()
@@ -985,6 +1113,113 @@ class ForwarderApp(
     }
   }
 
+  private suspend fun maybeBackfillTrades(
+    producer: KafkaProducer<String, String>,
+    seq: SeqTracker,
+    symbols: List<String>,
+  ) {
+    if (!config.enableTradesBackfill) return
+    if (symbols.isEmpty()) return
+    if (!tradesBackfillDone.compareAndSet(false, true)) return
+
+    try {
+      val requestNow = Instant.ofEpochMilli(nowMs())
+      val trades = fetchBackfillTrades(symbols)
+      if (trades.isEmpty()) {
+        logger.warn {
+          "trades backfill returned 0 records lookback_hours=${config.tradesBackfillLookbackHours} " +
+            "feed=${config.alpacaFeed} end=$requestNow"
+        }
+        return
+      }
+
+      logger.info {
+        "trades backfill sending ${trades.size} records lookback_hours=${config.tradesBackfillLookbackHours} " +
+          "feed=${config.alpacaFeed} end=$requestNow"
+      }
+      trades
+        .sortedBy { it.timestamp }
+        .forEach { trade ->
+          val env =
+            Envelope(
+              ingestTs = Instant.now(),
+              eventTs = Instant.parse(trade.timestamp),
+              feed = config.alpacaFeed,
+              channel = "trades",
+              symbol = trade.symbol,
+              seq = seq.next(trade.symbol),
+              payload = json.encodeToJsonElement(AlpacaTrade.serializer(), trade),
+              isFinal = true,
+              source = "rest",
+            )
+          recordLag(env)
+          sendKafka(producer, config.topics.trades, env)
+        }
+    } catch (e: Exception) {
+      tradesBackfillDone.set(false)
+      logger.warn(e) { "trades backfill failed; will retry when symbols refresh" }
+    }
+  }
+
+  private suspend fun fetchBackfillTrades(symbols: List<String>): List<AlpacaTrade> {
+    if (symbols.isEmpty()) return emptyList()
+    val trades = mutableListOf<AlpacaTrade>()
+    for (chunk in symbols.chunked(config.subscribeBatchSize)) {
+      if (trades.size >= config.tradesBackfillMaxRecords) break
+      val remaining = config.tradesBackfillMaxRecords - trades.size
+      trades += fetchBackfillTradesChunk(chunk, remaining)
+    }
+    return trades
+  }
+
+  private suspend fun fetchBackfillTradesChunk(
+    symbols: List<String>,
+    maxRecords: Int,
+  ): List<AlpacaTrade> {
+    if (symbols.isEmpty() || maxRecords <= 0) return emptyList()
+    val url = alpacaTradesBackfillUrl(config)
+    val requestNow = Instant.ofEpochMilli(nowMs())
+    val trades = mutableListOf<AlpacaTrade>()
+    var pageToken: String? = null
+
+    do {
+      val query = alpacaTradesBackfillQuery(config, symbols, requestNow, pageToken)
+      val response =
+        decodeAlpacaTradesResponse(
+          httpClient
+            .get(url) {
+              parameter("symbols", query.symbols)
+              parameter("start", query.start)
+              parameter("end", query.end)
+              parameter("limit", query.limit)
+              parameter("sort", query.sort)
+              query.feed?.let { parameter("feed", it) }
+              query.pageToken?.let { parameter("page_token", it) }
+              header("APCA-API-KEY-ID", config.alpacaKeyId)
+              header("APCA-API-SECRET-KEY", config.alpacaSecretKey)
+            }.body(),
+          json,
+        )
+
+      val pageTrades =
+        when (val tradesElement = response.trades) {
+          null -> emptyList()
+          is JsonArray -> decodeTradesArray(tradesElement, response.symbol)
+          is JsonObject ->
+            tradesElement.entries.flatMap { (symbol, entry) ->
+              val arr = entry as? JsonArray ?: return@flatMap emptyList()
+              decodeTradesArray(arr, symbol)
+            }
+          else -> emptyList()
+        }
+      val remaining = maxRecords - trades.size
+      trades += pageTrades.take(remaining)
+      pageToken = response.nextPageToken
+    } while (pageToken != null && trades.size < maxRecords)
+
+    return trades
+  }
+
   private suspend fun fetchBackfillBars(symbols: List<String>): List<AlpacaBar> {
     if (symbols.isEmpty()) return emptyList()
     return symbols.chunked(config.subscribeBatchSize).flatMap { chunk ->
@@ -1054,6 +1289,26 @@ class ForwarderApp(
         }
 
       runCatching { json.decodeFromJsonElement(AlpacaBar.serializer(), withSymbol) }.getOrNull()
+    }
+  }
+
+  private fun decodeTradesArray(
+    trades: JsonArray,
+    symbolFallback: String?,
+  ): List<AlpacaTrade> {
+    return trades.mapNotNull { tradeEl ->
+      val obj = tradeEl as? JsonObject ?: return@mapNotNull null
+      val symbol = obj["S"]?.jsonPrimitive?.contentOrNull ?: symbolFallback
+      if (symbol.isNullOrBlank()) return@mapNotNull null
+
+      val withSymbol =
+        if (obj.containsKey("S")) {
+          obj
+        } else {
+          JsonObject(obj + ("S" to JsonPrimitive(symbol)))
+        }
+
+      runCatching { json.decodeFromJsonElement(AlpacaTrade.serializer(), withSymbol) }.getOrNull()
     }
   }
 
@@ -1150,9 +1405,13 @@ class ForwarderApp(
       else -> {}
     }
 
-    val env = AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) } ?: return null
+    val env =
+      AlpacaMapper.toEnvelope(msg, config.alpacaMarketType, config.alpacaFeed) { symbol -> seq.next(symbol) }
+        ?: run {
+          recordMarketDataEnvelopeDrop(msg)
+          return null
+        }
     recordLag(env)
-    metrics.recordProviderMessage(config.alpacaMarketType, env.channel)
 
     val topic =
       when (env.channel) {
@@ -1163,7 +1422,8 @@ class ForwarderApp(
         else -> null
       } ?: return null
 
-    sendKafka(producer, topic, env)
+    marketDataChannelFreshness.recordSerializedEvent(env.channel, env.symbol)
+    sendKafka(producer, topic, env, env.channel)
     return env.channel
   }
 
@@ -1171,6 +1431,7 @@ class ForwarderApp(
     producer: KafkaProducer<String, String>,
     topic: String,
     env: Envelope<JsonElement>,
+    marketDataChannel: String? = null,
   ) {
     val payload = json.encodeToString(env)
     val record = ProducerRecord(topic, env.symbol, payload)
@@ -1184,6 +1445,7 @@ class ForwarderApp(
           recordKafkaFailure(exception, topic)
         } else {
           metrics.recordKafkaProduceSuccess(topic)
+          marketDataChannelFreshness.recordKafkaSuccess(marketDataFreshnessChannelFor(env, marketDataChannel), env.symbol)
           recordKafkaSuccess()
         }
       }
@@ -1198,6 +1460,19 @@ class ForwarderApp(
   private fun recordLag(env: Envelope<*>) {
     val lagMs = Duration.between(env.eventTs, env.ingestTs).toMillis()
     metrics.recordLagMs(lagMs)
+  }
+
+  private fun recordMarketDataEnvelopeDrop(msg: AlpacaMessage) {
+    val observed = observedMarketDataMessage(msg) ?: return
+    val reason = marketDataEnvelopeDropReason(msg)
+    metrics.recordMarketDataDrop(config.alpacaMarketType, observed.channel, reason)
+    if (envelopeDropLogged.compareAndSet(false, true)) {
+      logger.warn {
+        "alpaca market-data frame dropped before envelope " +
+          "market_type=${config.alpacaMarketType.name.lowercase()} channel=${observed.channel} " +
+          "reason=$reason timestamp_shape=${timestampShape(alpacaEventTimestamp(msg))}"
+      }
+    }
   }
 
   private fun recordKafkaFailure(
@@ -1223,7 +1498,9 @@ class ForwarderApp(
     kafkaFailureCount.set(0)
     if (!kafkaReady.get()) {
       setKafkaReady(true)
+      return
     }
+    refreshReadinessFromMarketDataChannels()
   }
 
   private fun setKafkaReady(value: Boolean) {
@@ -1231,7 +1508,7 @@ class ForwarderApp(
       kafkaErrorClass.set(null)
     }
     kafkaReady.set(value)
-    markReady(value && wsReady.get() && tradeUpdatesGate())
+    markReady(value && wsReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
   private fun setWsReady(value: Boolean) {
@@ -1242,7 +1519,45 @@ class ForwarderApp(
     if (value && !previous) {
       metrics.wsConnectSuccess.increment()
     }
-    markReady(value && kafkaReady.get() && tradeUpdatesGate())
+    markReady(value && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
+  }
+
+  private fun markMarketDataWsSessionStarting() {
+    marketDataChannelFreshness.clearSubscription()
+    marketDataWsStatus.updateAndGet {
+      it.copy(
+        authOk = false,
+        subscriptionOk = false,
+        latestSubscriptionAckAtMs = null,
+        subscribedSymbolCount = 0,
+        subscribedSymbols = emptyList(),
+        subscribedSymbolsByChannel = emptyMap(),
+        missingSubscriptionSymbolsByChannel = emptyMap(),
+        errorClass = null,
+      )
+    }
+  }
+
+  private fun recordMarketDataAuthSuccess() {
+    marketDataWsStatus.updateAndGet {
+      it.copy(authOk = true, latestAuthSuccessAtMs = nowMs(), errorClass = null)
+    }
+  }
+
+  private fun recordMarketDataWsDisconnected(errorClass: ReadinessErrorClass? = null) {
+    marketDataChannelFreshness.clearSubscription()
+    marketDataWsStatus.updateAndGet {
+      it.copy(
+        authOk = false,
+        subscriptionOk = false,
+        latestSubscriptionAckAtMs = null,
+        subscribedSymbolCount = 0,
+        subscribedSymbols = emptyList(),
+        subscribedSymbolsByChannel = emptyMap(),
+        missingSubscriptionSymbolsByChannel = emptyMap(),
+        errorClass = errorClass?.id ?: it.errorClass,
+      )
+    }
   }
 
   private fun setTradeUpdatesReady(value: Boolean) {
@@ -1250,10 +1565,28 @@ class ForwarderApp(
       tradeUpdatesErrorClass.set(null)
     }
     tradeUpdatesReady.set(value)
-    markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate())
+    markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate() && marketDataChannelsGate())
   }
 
   private fun tradeUpdatesGate(): Boolean = if (tradeUpdatesEnabled) tradeUpdatesReady.get() else true
+
+  private fun marketDataChannelsGate(): Boolean = marketDataChannelSnapshot().all { it.ready }
+
+  private fun marketDataChannelSnapshot(): List<MarketDataChannelReadiness> {
+    val snapshot = marketDataChannelFreshness.snapshot()
+    metrics.setMarketDataChannelReadiness(snapshot)
+    return snapshot
+  }
+
+  private fun refreshReadinessFromMarketDataChannels() {
+    val marketDataReady = marketDataChannelsGate()
+    if (!marketDataReady) {
+      readinessErrorClass.set(ReadinessErrorClass.MarketDataChannelStarvation)
+    } else if (readinessErrorClass.get() == ReadinessErrorClass.MarketDataChannelStarvation) {
+      readinessErrorClass.set(null)
+    }
+    markReady(wsReady.get() && kafkaReady.get() && tradeUpdatesGate() && marketDataReady)
+  }
 
   private fun markReady(value: Boolean) {
     val previous = ready.getAndSet(value)
@@ -1278,7 +1611,8 @@ class ForwarderApp(
     if (previous) {
       logger.warn {
         "readiness changed to not_ready error_class=${errorClass.id} " +
-          "gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} trade_updates:${gates.tradeUpdates}"
+          "gates=alpaca_ws:${gates.alpacaWs} kafka:${gates.kafka} " +
+          "trade_updates:${gates.tradeUpdates} market_data_channels:${gates.marketDataChannels}"
       }
       reportedNotReadyClass.set(errorClass)
       metrics.recordReadinessError(errorClass)
@@ -1322,6 +1656,7 @@ class ForwarderApp(
       alpacaWs = wsReady.get(),
       kafka = kafkaReady.get(),
       tradeUpdates = tradeUpdatesGate(),
+      marketDataChannels = marketDataChannelsGate(),
     )
 
   private fun currentReadinessErrorClass(
@@ -1335,6 +1670,7 @@ class ForwarderApp(
       kafkaErrorClass = kafkaErrorClass.get(),
       tradeUpdatesErrorClass = tradeUpdatesErrorClass.get(),
       fallbackErrorClass = readinessErrorClass.get(),
+      marketDataChannelErrorClass = readinessErrorClass.get(),
     )
 
   private suspend fun DefaultClientWebSocketSession.sendSerialized(payload: JsonObject) {
@@ -1348,30 +1684,31 @@ class ForwarderApp(
   }
 
   private fun decodeMarketDataFrame(frame: Frame): JsonElement? {
-    val text =
-      try {
-        when (frame) {
-          is Frame.Text -> frame.readText()
-          is Frame.Binary ->
-            if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
-              msgPackMapper.readTree(frame.readBytes()).toString()
-            } else {
-              frame.readBytes().decodeToString()
-            }
-          else -> return null
+    try {
+      when (frame) {
+        is Frame.Text -> return parseMarketDataJson(frame.readText())
+        is Frame.Binary -> {
+          val bytes = frame.readBytes()
+          if (config.alpacaMarketType == AlpacaMarketType.OPTIONS) {
+            return jsonElementFromJacksonNode(msgPackMapper.readTree(bytes))
+          }
+          return parseMarketDataJson(bytes.decodeToString())
         }
-      } catch (e: Exception) {
-        logger.warn(e) { "failed to decode alpaca frame; dropping" }
-        return null
+        else -> return null
       }
+    } catch (e: Exception) {
+      logger.warn(e) { "failed to decode alpaca frame; dropping" }
+      return null
+    }
+  }
 
-    return try {
+  private fun parseMarketDataJson(text: String): JsonElement? =
+    try {
       json.parseToJsonElement(text)
     } catch (e: SerializationException) {
       logger.warn(e) { "failed to parse alpaca frame as JSON; dropping" }
       null
     }
-  }
 
   private fun extractSymbols(element: JsonElement?): List<String> =
     when (element) {
@@ -1447,6 +1784,7 @@ class ForwarderApp(
 
   private fun currentSessionState(now: Instant): String {
     val marketNow = now.atZone(marketSessionZoneId)
+    if (marketNow.toLocalDate() in config.optionsMarketHolidays) return "holiday"
     if (marketNow.dayOfWeek.value >= 6) return "weekend"
     val minuteOfDay = (marketNow.hour * 60) + marketNow.minute
     return when {
@@ -1458,68 +1796,136 @@ class ForwarderApp(
   }
 }
 
-internal fun AlpacaSubscription.subscribedSymbolsForChannels(channels: Collection<String>): Set<String> {
-  val normalizedChannels = channels.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
-  val subscribed = mutableSetOf<String>()
-  if ("trades" in normalizedChannels) subscribed.addAll(trades)
-  if ("quotes" in normalizedChannels) subscribed.addAll(quotes)
-  if ("bars" in normalizedChannels) subscribed.addAll(bars1m)
-  if ("updatedBars" in normalizedChannels) subscribed.addAll(updatedBars)
-  if ("dailyBars" in normalizedChannels) subscribed.addAll(dailyBars)
-  return subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
-}
-
-internal fun missingDesiredSymbols(
-  desired: Collection<String>,
-  subscribed: Set<String>,
-): List<String> {
-  val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.toSet()
-  return desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() && it !in normalizedSubscribed }.distinct()
-}
-
-internal enum class SubscriptionAction {
-  Unsubscribe,
-  Subscribe,
-}
-
-internal data class SubscriptionUpdate(
-  val action: SubscriptionAction,
-  val symbols: List<String>,
-)
-
-internal fun subscriptionUpdates(
-  desired: Collection<String>,
-  subscribed: Collection<String>,
-): List<SubscriptionUpdate> {
-  val normalizedDesired = desired.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
-  val normalizedSubscribed = subscribed.map { it.trim().uppercase() }.filter { it.isNotEmpty() }.distinct()
-  val desiredSet = normalizedDesired.toSet()
-  val subscribedSet = normalizedSubscribed.toSet()
-  val toRemove = normalizedSubscribed.filter { it !in desiredSet }
-  val toAdd = normalizedDesired.filter { it !in subscribedSet }
-  return buildList {
-    if (toRemove.isNotEmpty()) add(SubscriptionUpdate(SubscriptionAction.Unsubscribe, toRemove))
-    if (toAdd.isNotEmpty()) add(SubscriptionUpdate(SubscriptionAction.Subscribe, toAdd))
-  }
-}
-
 internal fun optionsEventStarved(
   now: Instant,
   lastEventAt: Instant?,
   subscribedSince: Instant?,
   subscribedCount: Int,
   marketType: AlpacaMarketType,
+  marketHolidays: Set<LocalDate> = emptySet(),
   grace: Duration = Duration.ofSeconds(90),
 ): Boolean {
-  if (marketType != AlpacaMarketType.OPTIONS || subscribedCount <= 0 || !isRegularMarketSession(now)) {
+  if (marketType != AlpacaMarketType.OPTIONS || subscribedCount <= 0 || !isRegularMarketSession(now, marketHolidays)) {
     return false
   }
   val lastHealthyEvent = lastEventAt ?: subscribedSince ?: return false
   return Duration.between(lastHealthyEvent, now) >= grace
 }
 
-private fun isRegularMarketSession(now: Instant): Boolean {
+internal data class ObservedMarketDataMessage(
+  val channel: String,
+  val symbol: String,
+) {
+  val isQuoteOrTrade: Boolean
+    get() = channel == "trade" || channel == "trades" || channel == "quote" || channel == "quotes"
+}
+
+internal fun observedMarketDataMessage(message: AlpacaMessage): ObservedMarketDataMessage? =
+  when (message) {
+    is AlpacaTrade -> ObservedMarketDataMessage("trade", message.symbol)
+    is AlpacaQuote -> ObservedMarketDataMessage("quote", message.symbol)
+    is AlpacaBar -> ObservedMarketDataMessage("bars", message.symbol)
+    is AlpacaUpdatedBar -> ObservedMarketDataMessage("updatedBars", message.symbol)
+    else -> null
+  }
+
+internal fun jsonElementFromJacksonNode(node: JsonNode): JsonElement =
+  when {
+    node.isObject -> {
+      buildJsonObject {
+        val fields = node.fields()
+        while (fields.hasNext()) {
+          val entry = fields.next()
+          put(entry.key, jsonElementFromJacksonNode(entry.value))
+        }
+      }
+    }
+    node.isArray -> {
+      buildJsonArray {
+        val elements = node.elements()
+        while (elements.hasNext()) {
+          add(jsonElementFromJacksonNode(elements.next()))
+        }
+      }
+    }
+    node.isTextual -> JsonPrimitive(node.textValue())
+    node.isNumber -> JsonPrimitive(node.numberValue())
+    node.isBoolean -> JsonPrimitive(node.booleanValue())
+    node.isNull || node.isMissingNode -> JsonNull
+    node is POJONode -> jsonElementFromPojo(node.pojo)
+    node.isBinary -> JsonPrimitive(node.asText())
+    else -> JsonPrimitive(node.asText())
+  }
+
+private fun jsonElementFromPojo(pojo: Any?): JsonElement =
+  when (pojo) {
+    null -> JsonNull
+    is Instant -> JsonPrimitive(pojo.toString())
+    is MessagePackExtensionType -> messagePackTimestampInstant(pojo)?.toString()?.let(::JsonPrimitive) ?: JsonPrimitive(pojo.toString())
+    else -> JsonPrimitive(pojo.toString())
+  }
+
+private fun messagePackTimestampInstant(extension: MessagePackExtensionType): Instant? {
+  if (extension.type != TimestampExtensionModule.EXT_TYPE) return null
+  val data = extension.data
+  return runCatching {
+    when (data.size) {
+      4 -> Instant.ofEpochSecond(ByteBuffer.wrap(data).int.toLong() and MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK)
+      8 -> {
+        val packed = ByteBuffer.wrap(data).long
+        val nanos = packed ushr MESSAGE_PACK_TIMESTAMP_64_NANO_SHIFT
+        val seconds = packed and MESSAGE_PACK_TIMESTAMP_64_SECONDS_MASK
+        Instant.ofEpochSecond(seconds, nanos)
+      }
+      12 -> {
+        val buffer = ByteBuffer.wrap(data)
+        val nanos = buffer.int.toLong() and MESSAGE_PACK_TIMESTAMP_32_UNSIGNED_MASK
+        val seconds = buffer.long
+        Instant.ofEpochSecond(seconds, nanos)
+      }
+      else -> null
+    }
+  }.getOrNull()
+}
+
+internal fun marketDataEnvelopeDropReason(message: AlpacaMessage): String {
+  val timestamp = alpacaEventTimestamp(message) ?: return "unsupported_message"
+  return if (parseAlpacaEventInstant(timestamp) == null) {
+    "invalid_event_ts"
+  } else {
+    "envelope_mapping_failed"
+  }
+}
+
+internal fun alpacaEventTimestamp(message: AlpacaMessage): String? =
+  when (message) {
+    is AlpacaTrade -> message.timestamp
+    is AlpacaQuote -> message.timestamp
+    is AlpacaBar -> message.timestamp
+    is AlpacaUpdatedBar -> message.timestamp
+    is AlpacaStatus -> message.timestamp
+    else -> null
+  }
+
+private fun timestampShape(timestamp: String?): String {
+  val value = timestamp?.trim()?.takeIf { it.isNotEmpty() } ?: return "missing"
+  return listOf(
+    "len=${value.length}",
+    "has_t=${value.contains('T')}",
+    "has_space=${value.contains(' ')}",
+    "has_z=${value.endsWith('Z')}",
+    "has_dot=${value.contains('.')}",
+    "has_offset=${Regex("[+-]\\d{2}:?\\d{2}$").containsMatchIn(value)}",
+    "numeric=${value.all { it.isDigit() || it == '.' }}",
+  ).joinToString(",")
+}
+
+internal fun isRegularMarketSession(
+  now: Instant,
+  marketHolidays: Set<LocalDate> = emptySet(),
+): Boolean {
   val marketNow = now.atZone(marketSessionZoneId)
+  if (marketNow.toLocalDate() in marketHolidays) return false
   if (marketNow.dayOfWeek.value >= 6) return false
   val minuteOfDay = (marketNow.hour * 60) + marketNow.minute
   return minuteOfDay in (9 * 60 + 30) until (16 * 60)

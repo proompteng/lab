@@ -1,20 +1,20 @@
 # 71. Torghut Whitepaper Autoresearch Profit-Target Strategy Factory (2026-04-21)
 
 Status: Ready for implementation
-Date: `2026-04-21`
-Owner: Torghut research and runtime lane
-Scope: Implement a production autoresearch system that reads whitepapers, extracts typed trading
-hypotheses, generates families/sleeves/algorithms/configurations, prioritizes them with MLX, proves
-them through runtime-native replay, and assembles a portfolio candidate targeting at least `$500`
-post-cost net PnL per trading day.
 
-Extends:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/torghut/design-system/v6/69-torghut-harness-v2-strategy-discovery-and-whitepaper-research-factory-2026-04-07.md`
-- `docs/torghut/design-system/v6/70-torghut-mlx-autoresearch-and-apple-silicon-research-lane-2026-04-10.md`
-- `docs/torghut/design-system/v6/68-torghut-strategy-factory-formal-validity-and-sequential-promotion-2026-04-04.md`
-- `docs/torghut/design-system/v6/54-torghut-research-backed-sleeves-and-this-week-holdout-proof-2026-03-27.md`
-- `docs/torghut/design-system/v6/51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: whitepaper ingestion, claim compilation, dispatch, finalization, and Jangar library/API surfaces exist.
+- Matched implementation area: Whitepaper/autoresearch workflow.
+- Current source evidence:
+  - `services/torghut/app/api/whitepaper.py`
+  - `services/torghut/app/whitepapers/workflow`
+  - `services/torghut/scripts/run_whitepaper_autoresearch_profit_target.py`
+  - `services/jangar/src/routes/api/whitepapers/index.ts`
+  - `services/jangar/src/routes/library/whitepapers/index.tsx`
+- Design drift note: Old workflow-template assumptions are stale; current authority is service-owned workflow plus Jangar routes.
+
 
 ## Executive Summary
 

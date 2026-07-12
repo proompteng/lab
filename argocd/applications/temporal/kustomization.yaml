@@ -6,6 +6,50 @@ resources:
   - load-balancer-frontend.yaml
   - ingressroute-temporal-k8s-private.yaml
 
+patches:
+  - target:
+      kind: Secret
+      name: temporal-default-store
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: Secret
+      name: temporal-visibility-store
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-2"
+  - target:
+      kind: Job
+      name: temporal-schema
+    patch: |-
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-delete-policy
+      - op: remove
+        path: /metadata/annotations/helm.sh~1hook-weight
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-options
+        value: Force=true,Replace=true
+      - op: add
+        path: /metadata/annotations/argocd.argoproj.io~1sync-wave
+        value: "-1"
+
 helmCharts:
   - name: cassandra
     repo: https://charts.helm.sh/incubator
@@ -55,7 +99,7 @@ helmCharts:
         storageClassName: rook-ceph-block
   - name: temporal
     repo: https://go.temporal.io/helm-charts
-    version: 1.2.0
+    version: 1.5.0
     releaseName: temporal
     namespace: temporal
     includeCRDs: true
@@ -105,3 +149,6 @@ helmCharts:
       admintools:
         image:
           repository: mirror.gcr.io/temporalio/admin-tools
+      shims:
+        dockerize: false
+        elasticsearchTool: false

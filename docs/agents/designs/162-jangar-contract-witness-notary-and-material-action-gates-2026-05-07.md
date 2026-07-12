@@ -129,7 +129,7 @@ database records, ClickHouse data, broker state, GitOps resources, AgentRun obje
   `janus_hgrm_reward` were stale from `2026-05-06T16:27:32Z`.
 - Live proof floor was `repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and
   `max_notional=0`.
-- Live proof floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live routeability had zero routeable symbols; `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA` were blocked, while
   `AMZN`, `GOOGL`, and `ORCL` were missing.

@@ -13,7 +13,7 @@ on:
         required: false
         type: string
       image_tag:
-        description: Image tag to promote (defaults to source short SHA)
+        description: Image tag to promote (defaults to sha-<full commit SHA>)
         required: false
         type: string
       image_digest:
@@ -57,6 +57,7 @@ jobs:
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
           install-ci-toolchain: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes
@@ -92,6 +93,7 @@ jobs:
           export IMAGE_REF="${IMAGE}@${DIGEST}"
           for path in argocd/applications/attic/deployment.yaml argocd/applications/attic/gc-cronjob.yaml; do
             perl -0pi -e 's#image:\s+registry\.ide-newton\.ts\.net/lab/attic(?::latest|@sha256:[0-9a-f]{64})#image: $ENV{IMAGE_REF}#g' "${path}"
+            perl -0pi -e 's#\n([ ]*)nodeSelector:\n\1  kubernetes\.io/arch: (?:amd64|arm64)\n#\n#g' "${path}"
             grep -F "image: ${IMAGE_REF}" "${path}" >/dev/null
           done
 
@@ -99,6 +101,7 @@ jobs:
         if: steps.meta.outputs.promote == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/attic-release-${{ steps.meta.outputs.tag }}
           title: 'chore(attic): promote image ${{ steps.meta.outputs.tag }}'
           commit-message: 'chore(attic): promote image ${{ steps.meta.outputs.tag }}'
@@ -132,6 +135,7 @@ jobs:
             - [x] Documentation, release notes, and follow-ups are updated or tracked.
           labels: |
             automated-pr
+            nix-oci
             attic
           add-paths: |
             argocd/applications/attic/deployment.yaml

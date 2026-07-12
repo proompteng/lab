@@ -1,4 +1,4 @@
-"""Simple deterministic edge gate for Hyperliquid execution v2."""
+"""Deterministic direction signal for Hyperliquid execution v2."""
 
 from __future__ import annotations
 
@@ -7,8 +7,6 @@ from decimal import Decimal
 
 from app.trading.multifactor.adapters.hyperliquid import factor_vector_from_feature
 from app.trading.multifactor.alpha_model import build_alpha_forecast
-from app.trading.multifactor.cost_model import estimate_transaction_cost
-from app.trading.multifactor.factor_registry import DEFAULT_RISK_BUFFER_BPS
 
 from .config import HyperliquidExecutionConfig
 from .models import FeatureSnapshot, Signal
@@ -26,7 +24,11 @@ def generate_signal(
     now: datetime | None = None,
     run_id: str = "runtime-pending",
 ) -> Signal:
-    """Emit buy/sell only when edge exceeds spread plus cost buffer."""
+    """Emit buy/sell for fresh directional forecasts.
+
+    Expected edge and transaction-cost estimates are diagnostics in the
+    multifactor rows. They are not submission gates for the testnet executor.
+    """
 
     generated_at = now or datetime.now(timezone.utc)
     factor_vector = factor_vector_from_feature(
@@ -54,34 +56,25 @@ def generate_signal(
             alpha_forecast,
         )
     edge_bps = alpha_forecast.expected_return_bps
-    expected_cost_bps = estimate_transaction_cost(
-        factor_vector,
-        cost_buffer_bps=config.cost_buffer_bps,
-        participation_rate=Decimal("0.001"),
-    )
-    required_edge_bps = max(
-        config.min_edge_bps, expected_cost_bps + DEFAULT_RISK_BUFFER_BPS
-    )
-    if abs(edge_bps) <= required_edge_bps:
+    if alpha_forecast.direction == "hold":
         return Signal(
             feature.market_id,
             feature.coin,
             generated_at,
             "hold",
             edge_bps,
-            "no_edge",
+            alpha_forecast.blocker or "zero_expected_return",
             feature,
             factor_vector,
             alpha_forecast,
         )
-    action = "buy" if edge_bps > Decimal("0") else "sell"
     return Signal(
         feature.market_id,
         feature.coin,
         generated_at,
-        action,
+        alpha_forecast.direction,
         edge_bps,
-        "edge_exceeds_cost",
+        "alpha_direction",
         feature,
         factor_vector,
         alpha_forecast,

@@ -7,9 +7,11 @@ import os
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Optional, cast
 
+from alpaca.common.exceptions import APIError
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from ....config import settings
@@ -19,22 +21,23 @@ from ....models import (
     TradeDecision,
     coerce_json_payload,
 )
-from ...empirical_jobs import build_empirical_jobs_status
 from ...ingest import SignalBatch
+from ...execution_policy import ExecutionPolicyOutcome
 from ...llm.dspy_programs.runtime import (
     DSPyReviewRuntime,
     DSPyRuntimeUnsupportedStateError,
 )
 from ...models import StrategyDecision
+from ...broker_risk_snapshot import (
+    normalize_live_open_order_rows,
+    normalize_live_position_rows,
+)
 from ...portfolio import (
     AllocationResult,
 )
 from ...time_source import trading_now
 from ...submission_council import (
-    build_hypothesis_runtime_summary,
     build_live_submission_gate_payload,
-    build_submission_gate_market_context_status,
-    load_quant_evidence_status,
 )
 from ..safety import (
     FRESH_TAIL_NO_SIGNAL_REASONS,
@@ -53,23 +56,24 @@ from .contexts import (
     DecisionSubmissionContext,
     DomainTelemetryEvent,
     ExecutionPolicyRequest,
-    LiveSubmissionGateInputs,
     RiskVerdictRequest,
 )
-from .shared import TradingPipelineBase
+from .shared import TradingPipelineRuntime
 from .support import (
     apply_projected_position_decision,
     coerce_json,
     coerce_strategy_symbols,
+    is_runtime_risk_increasing_entry,
+    project_open_orders_onto_positions,
 )
 
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
+class TradingPipelineDecisionLifecycleMixin(TradingPipelineRuntime):
     def _position_qty_for_symbol(
         self,
-        positions: list[dict[str, Any]],
+        positions: list[dict[str, object]],
         symbol: str,
     ) -> Decimal:
         current_qty = Decimal("0")
@@ -94,7 +98,7 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
         self,
         *,
         decision: StrategyDecision,
-        positions: list[dict[str, Any]],
+        positions: list[dict[str, object]],
         projected: bool,
     ) -> str:
         if decision.action != "sell":
@@ -136,6 +140,66 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
                 self.state.metrics.record_decision_rejection_reasons(
                     ["decision_handling_failed"]
                 )
+
+    def _apply_pair_allocation_results(
+        self,
+        *,
+        context: AllocationDecisionContext,
+        allocation_results: list[AllocationResult],
+    ) -> None:
+        if not allocation_results:
+            return
+        if any(not result.approved for result in allocation_results):
+            self._apply_allocation_results(
+                context=context,
+                allocation_results=allocation_results,
+            )
+            return
+        symbols = {result.decision.symbol for result in allocation_results}
+        try:
+            before = self.capital_safety.position_market_values(symbols)
+        except (APIError, OSError, RuntimeError, TypeError, ValueError):
+            self.capital_safety.trigger_flatten("pair_balance_snapshot_unavailable")
+            return
+        submitted: list[StrategyDecision] = []
+        for allocation_result in allocation_results:
+            self.state.metrics.record_allocator_result(allocation_result)
+            self.state.metrics.decisions_total += 1
+            decision = allocation_result.decision
+            submitted_decision = self._handle_decision(context, decision)
+            if submitted_decision is None:
+                if submitted:
+                    self.capital_safety.trigger_flatten("unhedged_pair_submission")
+                return
+            submitted.append(submitted_decision)
+            apply_projected_position_decision(context.positions, submitted_decision)
+
+        submitted_notionals = {
+            self._pair_submitted_notional(decision) for decision in submitted
+        }
+        if len(submitted_notionals) > 1:
+            self.capital_safety.trigger_flatten("unhedged_pair_notional_mismatch")
+            return
+        try:
+            after = self.capital_safety.position_market_values(symbols)
+        except (APIError, OSError, RuntimeError, TypeError, ValueError):
+            self.capital_safety.trigger_flatten("pair_balance_snapshot_unavailable")
+            return
+        if not self.capital_safety.pair_delta_is_balanced(
+            submitted,
+            before=before,
+            after=after,
+        ):
+            self.capital_safety.trigger_flatten("unhedged_pair_fill")
+
+    @staticmethod
+    def _pair_submitted_notional(decision: StrategyDecision) -> Decimal:
+        price = TradingPipelineDecisionLifecycleMixin._positive_decimal(
+            decision.params.get("price") or decision.limit_price
+        )
+        return (
+            (decision.qty * price).quantize(Decimal("0.01")) if price else Decimal("0")
+        )
 
     def _ingest_order_feed(self, session: Session) -> None:
         counters = self.order_feed_ingestor.ingest_once(session)
@@ -305,6 +369,24 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
             )
             if decision_row is None:
                 return
+            self._refresh_live_submission_context(context)
+            if (
+                not self.state.capital_new_exposure_allowed
+                and is_runtime_risk_increasing_entry(decision, context.positions)
+            ):
+                reason = "new_exposure_cutoff_active"
+                self.state.metrics.orders_rejected_total += 1
+                self.state.metrics.record_decision_rejection_reasons([reason])
+                self.state.metrics.record_decision_state("rejected")
+                self.executor.mark_rejected(
+                    context.session,
+                    decision_row,
+                    reason,
+                    metadata_update=self._decision_lifecycle_metadata(
+                        submission_stage="blocked_capital_control"
+                    ),
+                )
+                return None
 
             submission_context = DecisionSubmissionContext(
                 session=context.session,
@@ -373,12 +455,64 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
                 )
             return None
 
+    def _refresh_live_submission_context(
+        self,
+        context: AllocationDecisionContext,
+    ) -> None:
+        if settings.trading_mode != "live":
+            return
+        account = self.order_firewall.get_account()
+        positions = self.order_firewall.list_positions()
+        open_orders = self.order_firewall.list_orders(status="open")
+        if not isinstance(account, Mapping):
+            raise RuntimeError("live_risk_account_snapshot_unavailable")
+        account_values = cast(Mapping[object, object], account)
+        refreshed_account: dict[str, str] = {}
+        for key in ("equity", "cash", "buying_power"):
+            value = account_values.get(key)
+            if value is not None:
+                refreshed_account[key] = str(value)
+        equity = self._positive_decimal(refreshed_account.get("equity"))
+        buying_power = self._nonnegative_decimal(refreshed_account.get("buying_power"))
+        if equity is None or buying_power is None:
+            raise RuntimeError("live_risk_account_values_invalid")
+
+        refreshed_positions = normalize_live_position_rows(positions)
+        normalized_orders = normalize_live_open_order_rows(open_orders)
+        projected_count = project_open_orders_onto_positions(
+            refreshed_positions, normalized_orders
+        )
+        if projected_count != len(normalized_orders):
+            raise RuntimeError("live_risk_open_order_projection_incomplete")
+        refreshed_positions = self._attach_current_session_strategy_position_tags(
+            context.session,
+            refreshed_positions,
+        )
+        context.account.clear()
+        context.account.update(refreshed_account)
+        context.positions[:] = refreshed_positions
+
+    @staticmethod
+    def _positive_decimal(value: object) -> Decimal | None:
+        parsed = TradingPipelineDecisionLifecycleMixin._nonnegative_decimal(value)
+        if parsed is None or parsed <= 0:
+            return None
+        return parsed
+
+    @staticmethod
+    def _nonnegative_decimal(value: object) -> Decimal | None:
+        try:
+            parsed = Decimal(str(value))
+        except (ArithmeticError, ValueError):
+            return None
+        return parsed if parsed.is_finite() and parsed >= 0 else None
+
     def _prepare_decision_policy_stage(
         self,
         *,
         context: DecisionSubmissionContext,
         decision: StrategyDecision,
-    ) -> tuple[StrategyDecision, Any] | None:
+    ) -> tuple[StrategyDecision, ExecutionPolicyOutcome] | None:
         prepared = self._prepare_decision_for_submission(
             context=context,
             decision=decision,
@@ -450,72 +584,39 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
             ]
         return dspy_runtime_status
 
-    def _live_submission_gate(
-        self,
-        *,
-        inputs: LiveSubmissionGateInputs | None = None,
-    ) -> dict[str, object]:
-        inputs = inputs or LiveSubmissionGateInputs()
-        if (
-            inputs.session is None
-            and inputs.hypothesis_summary is None
-            and inputs.empirical_jobs_status is None
-            and inputs.dspy_runtime_status is None
-            and inputs.quant_health_status is None
-            and self._last_live_submission_gate is not None
-        ):
-            return dict(self._last_live_submission_gate)
-
-        summary = inputs.hypothesis_summary
-        if summary is None and inputs.session is not None:
-            try:
-                summary = build_hypothesis_runtime_summary(
-                    inputs.session,
-                    state=self.state,
-                    market_context_status=build_submission_gate_market_context_status(
-                        self.state
-                    ),
-                )
-            except Exception as exc:  # pragma: no cover - additive runtime safety
-                summary = {
-                    "promotion_eligible_total": 0,
-                    "capital_stage_totals": {},
-                    "dependency_quorum": {
-                        "decision": "unknown",
-                        "reasons": ["alpha_readiness_unavailable"],
-                        "message": str(exc),
-                    },
-                }
-
-        empirical_status = inputs.empirical_jobs_status
-        if empirical_status is None and inputs.session is not None:
-            try:
-                empirical_status = build_empirical_jobs_status(
-                    session=inputs.session,
-                    stale_after_seconds=settings.trading_empirical_job_stale_after_seconds,
-                )
-            except Exception as exc:  # pragma: no cover - additive runtime safety
-                empirical_status = {
-                    "ready": False,
-                    "status": "degraded",
-                    "message": f"empirical job status unavailable: {type(exc).__name__}",
-                }
-
-        quant_status = inputs.quant_health_status
-        if quant_status is None:
-            quant_status = load_quant_evidence_status(account_label=self.account_label)
-
+    def _live_submission_gate(self) -> dict[str, object]:
+        clickhouse_ta_status = self._submission_signal_freshness()
         gate = build_live_submission_gate_payload(
             self.state,
-            hypothesis_summary=summary,
-            empirical_jobs_status=empirical_status,
-            dspy_runtime_status=inputs.dspy_runtime_status,
-            quant_health_status=quant_status,
-            quant_account_label=self.account_label,
-            session=inputs.session,
+            clickhouse_ta_status=clickhouse_ta_status,
         )
         self._last_live_submission_gate = dict(gate)
         return gate
+
+    def _submission_signal_freshness(self) -> Mapping[str, object]:
+        latest_signal_status = getattr(self.ingestor, "latest_signal_status", None)
+        if not callable(latest_signal_status):
+            return {
+                "state": "unavailable",
+                "accepted_source_state": "unavailable",
+                "blocking_reason": "accepted_ta_signal_unavailable",
+            }
+        try:
+            status = latest_signal_status()
+        except (SQLAlchemyError, OSError, RuntimeError, TypeError, ValueError):
+            logger.exception("Accepted-source freshness read failed before submission")
+            return {
+                "state": "unavailable",
+                "accepted_source_state": "unavailable",
+                "blocking_reason": "accepted_ta_signal_unavailable",
+            }
+        if not isinstance(status, Mapping):
+            return {
+                "state": "unavailable",
+                "accepted_source_state": "unavailable",
+                "blocking_reason": "accepted_ta_signal_unavailable",
+            }
+        return cast(Mapping[str, object], status)
 
     def _submission_capital_stage(self) -> str:
         gate = self._live_submission_gate()
@@ -546,9 +647,9 @@ class TradingPipelineDecisionLifecycleMixin(TradingPipelineBase):
         *,
         submission_stage: str,
         capital_stage: str | None = None,
-        extra: Mapping[str, Any] | None = None,
-    ) -> dict[str, Any]:
-        metadata: dict[str, Any] = {
+        extra: Mapping[str, object] | None = None,
+    ) -> dict[str, object]:
+        metadata: dict[str, object] = {
             "submission_stage": submission_stage,
             "control_plane_snapshot": self._submission_control_plane_snapshot(
                 capital_stage=capital_stage

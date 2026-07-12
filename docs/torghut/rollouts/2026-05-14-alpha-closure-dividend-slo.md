@@ -17,7 +17,7 @@ Live revenue-repair selected the top actionable item:
 - `business_state=repair_only`
 - `revenue_ready=false`
 - top queue item `repair_alpha_readiness`
-- reason `alpha_readiness_not_promotion_eligible`
+- reason `hypothesis_not_promotion_eligible`
 - value gate `routeable_candidate_count`
 - `max_notional=0`
 - `no_delta_repair_reentry_auction.reentry_decision=deny`
@@ -53,7 +53,7 @@ After local validation, live Torghut is still pre-deploy and unchanged. Sample f
 - `business_state=repair_only`
 - `revenue_ready=false`
 - top queue item `repair_alpha_readiness`
-- reason `alpha_readiness_not_promotion_eligible`
+- reason `hypothesis_not_promotion_eligible`
 - value gate `routeable_candidate_count`
 - `capital.live_submission_allowed=false`
 - `routeability_acceptance.accepted_routeable_candidate_count=0`

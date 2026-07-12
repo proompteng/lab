@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import time
+
 from typing import Literal
 
 from tests.pipeline.trading_pipeline_support import (
     AdaptiveExecutionPolicyDecision,
     Any,
-    BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     Base,
     Callable,
     CountingAlpacaClient,
@@ -43,7 +44,6 @@ from tests.pipeline.trading_pipeline_support import (
     PositionedAlpacaClient,
     PriceFetcher,
     QuoteQualityStatus,
-    ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
     RaisingObserveDecisionEngine,
     RecentDecisionSummary,
     Reconciler,
@@ -52,7 +52,6 @@ from tests.pipeline.trading_pipeline_support import (
     RejectingAlpacaClient,
     RiskEngine,
     SQLAlchemyError,
-    STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
     SellInventoryConflictAlpacaClient,
     SellInventoryConflictRetryClient,
     Sequence,
@@ -60,7 +59,6 @@ from tests.pipeline.trading_pipeline_support import (
     SignalBatch,
     SignalEnvelope,
     SimpleNamespace,
-    SimpleTradingPipeline,
     SimulationExecutionAdapter,
     Strategy,
     StrategyDecision,
@@ -78,31 +76,15 @@ from tests.pipeline.trading_pipeline_support import (
     VNextDatasetSnapshot,
     WarmupIngestor,
     _apply_projected_position_decision,
-    _bounded_paper_route_collection_entry_metadata,
-    _bounded_sim_collection_blockers,
-    _bounded_sim_collection_metadata_from_decision,
-    _bounded_sim_collection_target_with_runtime_account_audit,
     _build_dspy_lineage,
     _committee_trace_has_veto,
     _default_probabilities,
-    _executable_bid_ask_present,
     is_entry_action_for_strategies,
     is_exit_action_for_strategies,
     _market_context_bundle,
-    _paper_route_probe_entry_metadata,
-    _paper_route_probe_lineage_from_params,
-    _parse_target_datetime,
     _project_open_orders_onto_positions,
-    _safe_int,
     _set_llm_guardrails,
-    _strategy_signal_paper_entry_metadata,
     strategy_uses_position_isolation,
-    _target_notional_sizing_audit_from_params,
-    _target_price_snapshots,
-    _target_probe_action,
-    _target_probe_symbol_notional_budget,
-    _target_probe_window,
-    _target_truthy,
     _with_default_executable_quote,
     build_hypothesis_runtime_summary,
     cast,
@@ -110,9 +92,7 @@ from tests.pipeline.trading_pipeline_support import (
     date,
     datetime,
     json,
-    materialize_bounded_paper_route_target_plan,
     os,
-    paper_route_target_plan_from_payload,
     patch,
     select,
     sessionmaker,
@@ -151,8 +131,6 @@ class TradingPipelineTestCaseBase(TestCase):
                 "trading_fractional_equities_enabled",
                 "trading_pipeline_mode",
                 "trading_simple_submit_enabled",
-                "trading_simple_max_notional_per_order",
-                "trading_simple_max_notional_per_symbol",
                 "trading_simple_order_feed_telemetry_enabled",
                 "trading_order_feed_enabled",
                 "trading_order_feed_bootstrap_servers",
@@ -160,14 +138,9 @@ class TradingPipelineTestCaseBase(TestCase):
                 "trading_order_feed_topic_v2",
                 "trading_order_feed_assignment_mode",
                 "trading_order_feed_auto_offset_reset",
-                "trading_simple_paper_route_probe_enabled",
-                "trading_simple_paper_route_probe_max_notional",
-                "trading_simple_paper_route_probe_retry_attempt_limit",
-                "trading_simple_paper_route_probe_retry_batch_limit",
-                "trading_simple_paper_route_probe_retry_scan_limit",
-                "trading_simple_paper_route_probe_exit_lookback_hours",
-                "trading_paper_route_target_plan_url",
-                "trading_paper_route_target_plan_timeout_seconds",
+                "trading_new_exposure_cutoff_time_et",
+                "trading_flatten_start_time_et",
+                "trading_flat_confirmation_time_et",
                 "trading_universe_static_fallback_enabled",
                 "trading_universe_static_fallback_symbols_raw",
                 "trading_market_context_url",
@@ -204,258 +177,15 @@ class TradingPipelineTestCaseBase(TestCase):
         }
         config.settings.llm_enabled = False
         config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_new_exposure_cutoff_time_et = time(23, 57)
+        config.settings.trading_flatten_start_time_et = time(23, 58)
+        config.settings.trading_flat_confirmation_time_et = time(23, 59)
 
     def tearDown(self) -> None:
         from app import config
 
         for name, value in self._settings_snapshot.items():
             setattr(config.settings, name, value)
-
-    @staticmethod
-    def _paper_route_target_account_audit_state(
-        symbols: Sequence[str],
-    ) -> dict[str, object]:
-        return {
-            "schema_version": "torghut.paper-route-target-account-audit.v1",
-            "scope": "local_torghut_sim_paper_runtime_account_state",
-            "state": "available",
-            "account_label": "TORGHUT_SIM",
-            "required_account_label": "TORGHUT_SIM",
-            "symbols": list(symbols),
-            "audit_available": True,
-            "blockers": [],
-        }
-
-    def _seed_filled_paper_route_probe_entry(
-        self,
-        *,
-        symbol: str = "AAPL",
-        side: Literal["buy", "sell"] = "buy",
-        qty: Decimal = Decimal("2"),
-        avg_fill_price: Decimal = Decimal("100"),
-        entry_ts: datetime = datetime(2026, 3, 26, 14, 0, tzinfo=timezone.utc),
-        exit_minute_after_open: str = "120",
-        include_decision_exit_minute: bool = True,
-        source_candidate_ids: Sequence[str] | None = None,
-        source_hypothesis_ids: Sequence[str] | None = None,
-        source_strategy_names: Sequence[str] | None = None,
-        source_decision_mode: str | None = None,
-        profit_proof_eligible: bool | None = None,
-    ) -> None:
-        with self.session_local() as session:
-            strategy = Strategy(
-                name=f"paper-route-exit-{symbol.lower()}",
-                description=(
-                    "paper route exit fixture\n[catalog_metadata]\n"
-                    + json.dumps(
-                        {
-                            "params": {
-                                "entry_minute_after_open": "30",
-                                "exit_minute_after_open": exit_minute_after_open,
-                            }
-                        }
-                    )
-                ),
-                enabled=True,
-                base_timeframe="1Min",
-                universe_type="static",
-                universe_symbols=[symbol],
-                max_notional_per_trade=Decimal("1000"),
-            )
-            session.add(strategy)
-            session.commit()
-            session.refresh(strategy)
-
-            params: dict[str, Any] = {
-                "price": avg_fill_price,
-                "paper_route_probe": {
-                    "mode": "paper_route_acquisition",
-                    "source": "test",
-                    "symbol": symbol,
-                },
-            }
-            paper_route_probe = cast(dict[str, Any], params["paper_route_probe"])
-            if source_candidate_ids:
-                paper_route_probe["source_candidate_ids"] = list(source_candidate_ids)
-            if source_hypothesis_ids:
-                paper_route_probe["source_hypothesis_ids"] = list(source_hypothesis_ids)
-            if source_strategy_names:
-                paper_route_probe["source_strategy_names"] = list(source_strategy_names)
-            if source_candidate_ids or source_hypothesis_ids or source_strategy_names:
-                paper_route_probe["paper_route_probe_lineage_targets"] = [
-                    {
-                        key: value
-                        for key, value in {
-                            "candidate_id": (
-                                list(source_candidate_ids or []) or [None]
-                            )[0],
-                            "hypothesis_id": (
-                                list(source_hypothesis_ids or []) or [None]
-                            )[0],
-                            "strategy_name": (
-                                list(source_strategy_names or []) or [None]
-                            )[0],
-                        }.items()
-                        if value is not None
-                    }
-                ]
-            if include_decision_exit_minute:
-                params["exit_minute_after_open"] = exit_minute_after_open
-            if source_decision_mode is not None:
-                params["source_decision_mode"] = source_decision_mode
-                paper_route_probe["source_decision_mode"] = source_decision_mode
-            if profit_proof_eligible is not None:
-                params["profit_proof_eligible"] = profit_proof_eligible
-                paper_route_probe["profit_proof_eligible"] = profit_proof_eligible
-            if source_decision_mode == STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE:
-                strategy_signal_paper: dict[str, Any] = {
-                    "mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-                    "source": "test",
-                    "symbol": symbol,
-                    "strategy_id": str(strategy.id),
-                    "strategy_name": strategy.name,
-                    "source_decision_mode": STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE,
-                    "profit_proof_eligible": (
-                        profit_proof_eligible
-                        if profit_proof_eligible is not None
-                        else True
-                    ),
-                    "exit_minute_after_open": exit_minute_after_open,
-                }
-                if source_candidate_ids:
-                    strategy_signal_paper["source_candidate_ids"] = list(
-                        source_candidate_ids
-                    )
-                if source_hypothesis_ids:
-                    strategy_signal_paper["source_hypothesis_ids"] = list(
-                        source_hypothesis_ids
-                    )
-                if source_strategy_names:
-                    strategy_signal_paper["source_strategy_names"] = list(
-                        source_strategy_names
-                    )
-                if (
-                    source_candidate_ids
-                    or source_hypothesis_ids
-                    or source_strategy_names
-                ):
-                    strategy_signal_paper["paper_route_probe_lineage_targets"] = [
-                        dict(item)
-                        for item in paper_route_probe.get(
-                            "paper_route_probe_lineage_targets",
-                            [],
-                        )
-                    ]
-                params["strategy_signal_paper"] = strategy_signal_paper
-            decision = StrategyDecision(
-                strategy_id=str(strategy.id),
-                symbol=symbol,
-                event_ts=entry_ts,
-                timeframe="1Min",
-                action=side,
-                qty=qty,
-                rationale="paper-route-entry",
-                params=params,
-            )
-            executor = OrderExecutor()
-            decision_row = executor.ensure_decision(
-                session,
-                decision,
-                strategy,
-                "paper",
-            )
-            decision_row.status = "submitted"
-            session.add(decision_row)
-            session.commit()
-            session.refresh(decision_row)
-            session.add(
-                Execution(
-                    trade_decision_id=decision_row.id,
-                    alpaca_account_label="paper",
-                    alpaca_order_id=f"filled-entry-{symbol.lower()}",
-                    client_order_id=decision_row.decision_hash,
-                    symbol=symbol,
-                    side=side,
-                    order_type="market",
-                    time_in_force="day",
-                    submitted_qty=qty,
-                    filled_qty=qty,
-                    avg_fill_price=avg_fill_price,
-                    status="filled",
-                    raw_order={},
-                    created_at=entry_ts + timedelta(seconds=1),
-                )
-            )
-            session.commit()
-
-    def _run_simple_paper_pipeline(
-        self,
-        *,
-        alpaca_client: FakeAlpacaClient,
-        now: datetime,
-        execution_adapter: Any | None = None,
-        proof_floor: Mapping[str, object] | None = None,
-        signals: list[SignalEnvelope] | None = None,
-    ) -> FakeIngestor:
-        from app import config
-
-        config.settings.trading_enabled = True
-        config.settings.trading_mode = "paper"
-        config.settings.trading_mode = "paper"
-        config.settings.trading_pipeline_mode = "simple"
-        config.settings.trading_simple_submit_enabled = True
-        config.settings.trading_fractional_equities_enabled = True
-        config.settings.trading_simple_paper_route_probe_enabled = True
-        config.settings.trading_simple_paper_route_probe_max_notional = 25.0
-        config.settings.trading_paper_route_target_plan_url = ""
-        config.settings.trading_universe_source = "static"
-        config.settings.trading_static_symbols_raw = "AAPL"
-        config.settings.trading_universe_static_fallback_enabled = True
-        config.settings.trading_universe_static_fallback_symbols_raw = "AAPL"
-
-        floor = proof_floor or {
-            "route_state": "repair_only",
-            "capital_state": "paper",
-            "max_notional": "25",
-            "market_window": {"session_open": True},
-            "blocking_reasons": ["execution_tca_route_universe_empty"],
-            "route_reacquisition_book": {
-                "summary": {"paper_route_probe_eligible_symbols": ["AAPL"]}
-            },
-        }
-        ingestor = FakeIngestor(signals or [])
-        pipeline = SimpleTradingPipeline(
-            alpaca_client=alpaca_client,
-            order_firewall=OrderFirewall(alpaca_client),
-            ingestor=ingestor,
-            decision_engine=DecisionEngine(),
-            risk_engine=RiskEngine(),
-            executor=OrderExecutor(),
-            execution_adapter=execution_adapter or alpaca_client,
-            reconciler=Reconciler(),
-            universe_resolver=UniverseResolver(),
-            state=TradingState(),
-            account_label="paper",
-            session_factory=self.session_local,
-        )
-        with (
-            patch.object(
-                SimpleTradingPipeline,
-                "_profitability_proof_floor",
-                return_value=floor,
-            ),
-            patch.object(
-                SimpleTradingPipeline,
-                "_is_market_session_open",
-                return_value=True,
-            ),
-            patch(
-                "app.trading.scheduler.simple_pipeline.trading_now",
-                return_value=now,
-            ),
-        ):
-            pipeline.run_once()
-        return ingestor
 
     def _build_rejected_outcome_pipeline(
         self,
@@ -680,7 +410,6 @@ __all__ = (
     "Literal",
     "AdaptiveExecutionPolicyDecision",
     "Any",
-    "BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
     "Base",
     "Callable",
     "CountingAlpacaClient",
@@ -718,7 +447,6 @@ __all__ = (
     "PositionedAlpacaClient",
     "PriceFetcher",
     "QuoteQualityStatus",
-    "ROUTE_ACQUISITION_SOURCE_DECISION_MODE",
     "RaisingObserveDecisionEngine",
     "RecentDecisionSummary",
     "Reconciler",
@@ -727,7 +455,6 @@ __all__ = (
     "RejectingAlpacaClient",
     "RiskEngine",
     "SQLAlchemyError",
-    "STRATEGY_SIGNAL_PAPER_SOURCE_DECISION_MODE",
     "SellInventoryConflictAlpacaClient",
     "SellInventoryConflictRetryClient",
     "Sequence",
@@ -735,7 +462,6 @@ __all__ = (
     "SignalBatch",
     "SignalEnvelope",
     "SimpleNamespace",
-    "SimpleTradingPipeline",
     "SimulationExecutionAdapter",
     "Strategy",
     "StrategyDecision",
@@ -753,31 +479,15 @@ __all__ = (
     "VNextDatasetSnapshot",
     "WarmupIngestor",
     "_apply_projected_position_decision",
-    "_bounded_paper_route_collection_entry_metadata",
-    "_bounded_sim_collection_blockers",
-    "_bounded_sim_collection_metadata_from_decision",
-    "_bounded_sim_collection_target_with_runtime_account_audit",
     "_build_dspy_lineage",
     "_committee_trace_has_veto",
     "_default_probabilities",
-    "_executable_bid_ask_present",
     "is_entry_action_for_strategies",
     "is_exit_action_for_strategies",
     "_market_context_bundle",
-    "_paper_route_probe_entry_metadata",
-    "_paper_route_probe_lineage_from_params",
-    "_parse_target_datetime",
     "_project_open_orders_onto_positions",
-    "_safe_int",
     "_set_llm_guardrails",
-    "_strategy_signal_paper_entry_metadata",
     "strategy_uses_position_isolation",
-    "_target_notional_sizing_audit_from_params",
-    "_target_price_snapshots",
-    "_target_probe_action",
-    "_target_probe_symbol_notional_budget",
-    "_target_probe_window",
-    "_target_truthy",
     "_with_default_executable_quote",
     "build_hypothesis_runtime_summary",
     "cast",
@@ -785,9 +495,7 @@ __all__ = (
     "date",
     "datetime",
     "json",
-    "materialize_bounded_paper_route_target_plan",
     "os",
-    "paper_route_target_plan_from_payload",
     "patch",
     "select",
     "sessionmaker",

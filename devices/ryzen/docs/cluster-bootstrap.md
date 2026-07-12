@@ -17,11 +17,14 @@ Node-level patches:
 - `devices/ryzen/manifests/allow-scheduling-controlplane.patch.yaml` (allow workloads on single-node controlplane)
 - `devices/ryzen/manifests/hostname.patch.yaml` (set Talos hostname to `ryzen`, optional if the generated config already sets it)
 - `devices/ryzen/manifests/node-labels.patch.yaml` (labels for KubeVirt scheduling)
-- `devices/ryzen/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 200)
+- `devices/ryzen/manifests/kubelet-maxpods.patch.yaml` (set kubelet `maxPods` to 500)
 - `devices/ryzen/manifests/tailscale-extension-service.template.yaml` (Tailscale extension service template)
 - `devices/ryzen/manifests/tailscale-extension-service.yaml` (generated from template; gitignored)
 - `devices/ryzen/manifests/tailscale-dns.patch.yaml` (prefer MagicDNS for tailnet hostnames)
 - `devices/ryzen/manifests/ryzen-tailscale-schematic.yaml` (Image Factory schematic: Kata, glibc, Tailscale, AMD GPU, and kernel args)
+
+The 500-pod kubelet cap is a deliberate high-density exception; validate `/23`
+PodCIDR allocation and node pressure before increasing ARC runner concurrency.
 
 Related docs:
 

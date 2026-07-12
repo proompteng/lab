@@ -23,6 +23,14 @@ on:
         required: false
         type: string
         default: ''
+      image_build_timeout:
+        required: false
+        type: string
+        default: 8m
+      publish_on_dispatch:
+        required: false
+        type: boolean
+        default: false
     outputs:
       image:
         value: ${{ jobs.publish-index.outputs.image }}
@@ -55,37 +63,62 @@ jobs:
     env:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       ATTIC_PUBLIC_KEY: ${{ vars.ATTIC_PUBLIC_KEY }}
+      NIX_IMAGE_BUILD_ATTIC_TIMEOUT: ${{ inputs.image_build_timeout }}
+      NIX_IMAGE_CACHE_WARM_TIMEOUT: 2m
+      NIX_IMAGE_CACHE_WARM_MAX_BYTES: 268435456
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.arch }}
     steps:
+      - name: Start checkout timer
+        run: |
+          set -euo pipefail
+          mkdir -p "${NIX_OCI_LOG_DIR}"
+          date +%s > "${NIX_OCI_LOG_DIR}/checkout-start"
+
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Record checkout timing
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          start="$(cat "${NIX_OCI_LOG_DIR}/checkout-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "checkout-${ARCH}" 0 "$((end - start))" "actions/checkout@v5" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
+
       - name: Require Attic public key
         run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Start Nix setup timer
+        run: |
+          set -euo pipefail
+          date +%s > "${NIX_OCI_LOG_DIR}/nix-setup-start"
 
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          install-ci-toolchain: 'true'
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 1
 
-      - name: Prime OCI helper closures
+      - name: Record Nix setup timing
+        if: always()
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          mkdir -p "${NIX_OCI_LOG_DIR}"
-          helper_attrs=(.#inspectOciArchive)
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF}" == "refs/heads/main" ]]; then
-            helper_attrs+=(.#ociPush .#cachePush)
-          fi
-          bash nix/ci-run-timed.sh "prime-build-platform-helpers-${ARCH}" "${NIX_OCI_LOG_DIR}/prime-helpers-${ARCH}.log" \
-            bash -lc 'set -euo pipefail; output_file="${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"; nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${output_file}"; test -s "${output_file}"' \
-            bash "${helper_attrs[@]}"
+          start="$(cat "${NIX_OCI_LOG_DIR}/nix-setup-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "nix-setup-${ARCH}" 0 "$((end - start))" ".github/actions/setup-nix-toolchain" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
       - name: Build Nix image archive
         id: build
@@ -95,13 +128,35 @@ jobs:
         run: |
           set -euo pipefail
           out_link="result-${ARCH}"
+          build_args=(
+            nix build ".#${PACKAGE_ATTR}"
+            --print-build-logs
+            --out-link "${out_link}"
+            --option fallback true
+            --option connect-timeout 10
+            --option stalled-download-timeout 60
+            --option download-attempts 1
+          )
+          set +e
           bash nix/ci-run-timed.sh "build-image-${ARCH}" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}.log" \
-            nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+            timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" "${build_args[@]}"
+          build_status="$?"
+          set -e
+          if [[ "${build_status}" -ne 0 ]]; then
+            rm -f "${out_link}"
+            echo "::warning title=Nix image archive build retried without Attic::Attic substitution or build timed out/failed for ${PACKAGE_ATTR} on ${ARCH}; retrying with cache.nixos.org only so the runner does not hang on a final image archive copy."
+            fallback_nix_config=$'experimental-features = nix-command flakes\nsubstituters = https://cache.nixos.org/\nfallback = true\nconnect-timeout = 10\nstalled-download-timeout = 60\ndownload-attempts = 1'
+            env NIX_CONFIG="${fallback_nix_config}" \
+              bash nix/ci-run-timed.sh "build-image-${ARCH}-cache-nixos-fallback" "${NIX_OCI_LOG_DIR}/build-image-${ARCH}-cache-nixos-fallback.log" \
+              timeout --kill-after=30s "${NIX_IMAGE_BUILD_ATTIC_TIMEOUT}" \
+              nix build ".#${PACKAGE_ATTR}" --print-build-logs --out-link "${out_link}"
+          fi
           image_tar="$(readlink -f "${out_link}")"
           if [ ! -f "${image_tar}" ]; then
             echo "Nix image output is not a tar file: ${image_tar}" >&2
             exit 1
           fi
+          printf '%s\n' "${image_tar}" > "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
           echo "image_tar=${image_tar}" >> "${GITHUB_OUTPUT}"
           echo "Built ${PACKAGE_ATTR} for ${{ matrix.platform }} at ${image_tar}."
 
@@ -112,10 +167,17 @@ jobs:
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "inspect-image-${ARCH}" "${NIX_OCI_LOG_DIR}/inspect-image-${ARCH}.log" \
-            nix run .#inspect-oci-archive -- "${IMAGE_TAR}"
+            bash nix/oci-inspect-archive.sh "${IMAGE_TAR}"
 
       - name: Push platform image without Docker
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: >-
+          ${{
+            (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+            (
+              github.event_name == 'workflow_dispatch' &&
+              (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+            )
+          }}
         id: push
         env:
           IMAGE: registry.ide-newton.ts.net/lab/${{ inputs.image_name }}
@@ -126,7 +188,7 @@ jobs:
         run: |
           set -euo pipefail
           args=(
-            nix run .#oci-push --
+            bash nix/oci-push.sh
             --image "${IMAGE}"
             --tag "${TAG}-${ARCH}"
             --tar "${IMAGE_TAR}"
@@ -136,29 +198,78 @@ jobs:
           fi
           bash nix/ci-run-timed.sh "push-platform-image-${ARCH}" "${NIX_OCI_LOG_DIR}/oci-push-${ARCH}.log" "${args[@]}"
 
-      - name: Push reusable helper closures to Attic
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Warm Nix image archive output in Attic
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         env:
           ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
           ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
+          ATTIC_PUSH_NO_CLOSURE: 'true'
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
           test -n "${ATTIC_TOKEN}"
-          mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/helper-paths-${ARCH}.txt"
-          if [[ "${#helper_paths[@]}" -eq 0 ]]; then
-            echo "No build-platform helper closure paths were captured." >&2
+          mapfile -t image_paths < "${NIX_OCI_LOG_DIR}/image-paths-${ARCH}.txt"
+          if [[ "${#image_paths[@]}" -eq 0 ]]; then
+            echo "No Nix image output paths were captured." >&2
             exit 2
           fi
-          bash nix/ci-run-timed.sh "push-build-platform-closures-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-${ARCH}.log" \
-            nix run .#cache-push -- "${helper_paths[@]}"
+          status_file="${NIX_OCI_LOG_DIR}/image-cache-push-status-${ARCH}.txt"
+          : > "${status_file}"
+
+          if ! [[ "${NIX_IMAGE_CACHE_WARM_MAX_BYTES}" =~ ^[0-9]+$ ]]; then
+            echo "NIX_IMAGE_CACHE_WARM_MAX_BYTES must be an integer byte limit." >&2
+            exit 2
+          fi
+
+          cache_paths=()
+          for image_path in "${image_paths[@]}"; do
+            image_bytes="$(wc -c < "${image_path}")"
+            if (( image_bytes > NIX_IMAGE_CACHE_WARM_MAX_BYTES )); then
+              printf 'skipped-size\t%s\t%s\n' "${image_bytes}" "${image_path}" >> "${status_file}"
+              echo "::notice title=Attic image output warm skipped::Skipping Attic image output push for ${ARCH}; ${image_bytes} bytes exceeds ${NIX_IMAGE_CACHE_WARM_MAX_BYTES}. Registry image push remains authoritative."
+              continue
+            fi
+            cache_paths+=("${image_path}")
+          done
+
+          if [[ "${#cache_paths[@]}" -eq 0 ]]; then
+            exit 0
+          fi
+
+          set +e
+          bash nix/ci-run-timed.sh "push-image-archive-output-${ARCH}" "${NIX_OCI_LOG_DIR}/cache-push-image-${ARCH}.log" \
+            timeout --kill-after=30s "${NIX_IMAGE_CACHE_WARM_TIMEOUT}" bash nix/cache-push.sh "${cache_paths[@]}"
+          status="$?"
+          set -e
+          if [[ "${status}" -ne 0 ]]; then
+            printf 'failed\t%s\n' "${status}" >> "${status_file}"
+            echo "::warning title=Attic image output warm failed::Attic image output push failed for ${ARCH}; registry image push remains authoritative. See cache-push-image-${ARCH}.log."
+            exit 0
+          fi
+          printf 'succeeded\t0\n' >> "${status_file}"
 
       - name: Summarize Nix OCI cache use
         if: always()
         run: bash nix/ci-nix-oci-summary.sh
 
+      - name: Upload Nix OCI log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nix-oci-logs-${{ inputs.image_name }}-${{ matrix.arch }}
+          path: ${{ env.NIX_OCI_LOG_DIR }}/
+          if-no-files-found: ignore
+          retention-days: 7
+
   publish-index:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: >-
+      ${{
+        (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          (github.ref == 'refs/heads/main' || inputs.publish_on_dispatch)
+        )
+      }}
     needs: build-platform
     runs-on: arc-arm64
     outputs:
@@ -172,30 +283,53 @@ jobs:
       ATTIC_CACHE_ENDPOINT: http://attic.attic.svc.cluster.local
       NIX_OCI_LOG_DIR: /tmp/nix-oci-logs-${{ github.run_id }}-${{ github.run_attempt }}-publish-index
     steps:
+      - name: Start checkout timer
+        run: |
+          set -euo pipefail
+          mkdir -p "${NIX_OCI_LOG_DIR}"
+          date +%s > "${NIX_OCI_LOG_DIR}/checkout-start"
+
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Record checkout timing
+        if: always()
+        run: |
+          set -euo pipefail
+          start="$(cat "${NIX_OCI_LOG_DIR}/checkout-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "checkout-publish-index" 0 "$((end - start))" "actions/checkout@v5" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
+
       - name: Require Attic public key
         run: test -n "${ATTIC_PUBLIC_KEY}"
+
+      - name: Start Nix setup timer
+        run: |
+          set -euo pipefail
+          date +%s > "${NIX_OCI_LOG_DIR}/nix-setup-start"
 
       - name: Set up Nix toolchain
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          install-ci-toolchain: 'true'
+          require-preinstalled: 'true'
+          install-ci-toolchain: 'false'
           extra-nix-config: |
             experimental-features = nix-command flakes
             substituters = http://attic.attic.svc.cluster.local/lab https://cache.nixos.org/
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
+            fallback = true
+            connect-timeout = 10
+            stalled-download-timeout = 60
+            download-attempts = 1
 
-      - name: Prime OCI index helper closures
+      - name: Record Nix setup timing
+        if: always()
         run: |
           set -euo pipefail
-          mkdir -p "${NIX_OCI_LOG_DIR}"
-          helper_attrs=(.#createOciIndex .#assertOciPlatforms .#writeOciReleaseContract .#cachePush)
-          bash nix/ci-run-timed.sh "prime-index-helpers" "${NIX_OCI_LOG_DIR}/prime-index-helpers.log" \
-            bash -lc 'set -euo pipefail; output_file="${NIX_OCI_LOG_DIR}/index-helper-paths.txt"; nix build --print-build-logs --no-link --print-out-paths "$@" | tee "${output_file}"; test -s "${output_file}"' \
-            bash "${helper_attrs[@]}"
+          start="$(cat "${NIX_OCI_LOG_DIR}/nix-setup-start")"
+          end="$(date +%s)"
+          printf '%s\t%s\t%s\t%s\n' "nix-setup-publish-index" 0 "$((end - start))" ".github/actions/setup-nix-toolchain" >> "${NIX_OCI_LOG_DIR}/timings.tsv"
 
       - name: Create OCI image index
         id: oci
@@ -206,7 +340,7 @@ jobs:
         run: |
           set -euo pipefail
           args=(
-            nix run .#create-oci-index --
+            bun run packages/scripts/src/shared/oci.ts create-index
             --image "${IMAGE}"
             --tag "${TAG}"
             --arch-tag "linux/amd64=${TAG}-amd64"
@@ -224,7 +358,15 @@ jobs:
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "assert-oci-platforms" "${NIX_OCI_LOG_DIR}/assert-oci-platforms.log" \
-            nix run .#assert-oci-platforms -- "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+            bun run packages/scripts/src/shared/oci.ts assert "${IMAGE}:${TAG}" linux/amd64 linux/arm64
+
+      - name: Download build-platform Nix OCI logs
+        if: inputs.release_artifact_name != ''
+        uses: actions/download-artifact@v5
+        with:
+          pattern: nix-oci-logs-${{ inputs.image_name }}-*
+          path: .artifacts/${{ inputs.image_name }}/nix-oci-logs
+          merge-multiple: false
 
       - name: Write release contract
         if: inputs.release_artifact_name != ''
@@ -236,24 +378,13 @@ jobs:
           REFERENCE: ${{ steps.oci.outputs.reference }}
           PACKAGE_ATTR: ${{ inputs.package_attr }}
           PLATFORMS: linux/amd64,linux/arm64
+          PLATFORM_DIGEST_AMD64: ${{ steps.oci.outputs.platform_digest_amd64 }}
+          PLATFORM_DIGEST_ARM64: ${{ steps.oci.outputs.platform_digest_arm64 }}
+          NIX_OCI_CONTRACT_LOG_DIRS: .artifacts/${{ inputs.image_name }}/nix-oci-logs
         run: |
           set -euo pipefail
           bash nix/ci-run-timed.sh "write-release-contract" "${NIX_OCI_LOG_DIR}/write-release-contract.log" \
-            nix run .#write-oci-release-contract -- .artifacts/${{ inputs.image_name }}/release-contract.json
-
-      - name: Push OCI index helper closures to Attic
-        env:
-          ATTIC_TOKEN: ${{ secrets.ATTIC_TOKEN }}
-        run: |
-          set -euo pipefail
-          test -n "${ATTIC_TOKEN}"
-          mapfile -t helper_paths < "${NIX_OCI_LOG_DIR}/index-helper-paths.txt"
-          if [[ "${#helper_paths[@]}" -eq 0 ]]; then
-            echo "No index helper closure paths were captured." >&2
-            exit 2
-          fi
-          bash nix/ci-run-timed.sh "push-index-helper-closures" "${NIX_OCI_LOG_DIR}/cache-push-index-helpers.log" \
-            nix run .#cache-push -- "${helper_paths[@]}"
+            bash nix/oci-release-contract.sh .artifacts/${{ inputs.image_name }}/release-contract.json
 
       - name: Upload release contract
         if: inputs.release_artifact_name != ''

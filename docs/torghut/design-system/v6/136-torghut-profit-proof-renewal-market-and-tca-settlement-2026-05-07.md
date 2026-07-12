@@ -1,21 +1,20 @@
 # 136. Torghut Profit-Proof Renewal Market And TCA Settlement (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability proof renewal, execution TCA settlement, market-context freshness, quant ingestion repair,
-Jangar proof-floor actuation, paper/live capital reentry, validation, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/132-jangar-renewable-passport-ledger-and-proof-floor-actuation-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `135-torghut-forecast-evidence-bonds-and-capital-reentry-escrow-2026-05-06.md`
-- `135-torghut-capital-qualified-alpha-router-and-execution-repair-ladder-2026-05-06.md`
-- `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
-- `132-torghut-forecast-profit-tournament-and-capital-reentry-guardrails-2026-05-06.md`
 
 ## Decision
 
@@ -70,7 +69,7 @@ GitOps manifests, ClickHouse tables, or empirical artifacts.
 ### Data And Profitability Evidence
 
 - Profitability proof floor returned `route_state=repair_only`, `capital_state=zero_notional`, and max notional `0`.
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Repair ladder entries included live submit gate closure, alpha readiness repair, execution TCA repair, feature
   coverage, drift governance, and closed-session signal hold.
 - Alpha readiness had `3` hypotheses, with `1` blocked, `2` shadow, `0` promotion eligible, and `3` rollback required.

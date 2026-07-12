@@ -1,22 +1,20 @@
 # 193. Torghut Account-Scoped Quant Witness Bridge And Route Reentry (2026-05-13)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-13
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant evidence intake, route warrants, consumer evidence, account-scoped Jangar quant witnesses,
-profit evidence, capital safety, rollout, rollback, and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/189-jangar-account-scoped-quant-witness-custody-and-route-reentry-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
-- `192-torghut-repair-receipt-frontier-and-profit-cutover-2026-05-13.md`
-- `190-torghut-route-warrant-exchange-and-ingestion-proof-reentry-2026-05-13.md`
-- `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
-- `docs/agents/designs/189-jangar-account-scoped-quant-witness-custody-and-route-reentry-2026-05-13.md`
 
 ## Decision
 

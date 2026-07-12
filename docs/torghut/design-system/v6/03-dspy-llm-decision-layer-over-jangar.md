@@ -20,6 +20,20 @@
 - `argocd/applications/feature-flags/gitops/default/features.yaml`
 - Cutover status: live runtime now enforces stage3 DSPy active posture with strict-veto fail-closed controls; runtime feature-flag overrides are disabled to prevent `feature-flags-state` drift from reintroducing legacy posture.
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
+
+
 ## Objective
 
 Standardize all live Torghut LLM decision reasoning on:

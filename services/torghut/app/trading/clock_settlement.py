@@ -8,6 +8,10 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from app.trading.evidence_clock_market_session import (
+    clickhouse_ta_session_staleness_gate,
+)
+
 
 CLOCK_SETTLEMENT_RECEIPT_SCHEMA_VERSION = "torghut.clock-settlement-receipt.v1"
 
@@ -263,12 +267,13 @@ def _clickhouse_ta_witness(
         *_strings(status.get("blocking_reasons")),
     ]
     state = _state_from(status)
+    gate = clickhouse_ta_session_staleness_gate(status)
     if state in _BAD_STATES:
         reasons.append(f"clickhouse_ta_{state}")
     age = _age_seconds(observed_at, now)
     if observed_at is None:
         reasons.append("clickhouse_ta_timestamp_missing")
-    elif age is not None and age > max_age_seconds:
+    elif age is not None and age > max_age_seconds and not gate.suppress_stale:
         reasons.append("clickhouse_ta_stale")
     row_count = _int(status.get("row_count") or status.get("signal_count"), -1)
     freshness_state = "current" if not reasons else "stale"
@@ -286,6 +291,8 @@ def _clickhouse_ta_witness(
         details={
             "time_column": status.get("time_column"),
             "symbol_count": status.get("symbol_count"),
+            "accepted_source_state": gate.accepted_source_state or None,
+            "regular_session_open": gate.regular_session_open,
         },
     )
 

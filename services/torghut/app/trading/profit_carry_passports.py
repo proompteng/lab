@@ -427,7 +427,7 @@ def _alpha_passport(
         ]
     )
     if not current_blockers and not bool(micro.get("promotion_eligible")):
-        current_blockers = ["alpha_readiness_not_promotion_eligible"]
+        current_blockers = ["hypothesis_not_promotion_eligible"]
     repair_class = "alpha_window_evidence_refill"
     no_delta_downgraded = _no_delta_matches(
         repair_class=repair_class,
@@ -629,7 +629,6 @@ def build_profit_carry_passport_ledger(
             ),
             "proof_floor_ref": proof_floor.get("receipt_id")
             or proof_floor.get("schema_version"),
-            "revenue_repair_digest_ref": "/trading/revenue-repair",
             "repair_outcome_dividend_ledger_ref": _mapping(
                 repair_outcome_dividend_ledger
             ).get("ledger_id"),

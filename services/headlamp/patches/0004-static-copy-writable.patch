@@ -1,0 +1,61 @@
+diff --git a/backend/cmd/headlamp.go b/backend/cmd/headlamp.go
+index 811495890..ae21b1b85 100644
+--- a/backend/cmd/headlamp.go
++++ b/backend/cmd/headlamp.go
+@@ -160,6 +160,20 @@ func mustWriteFile(path string, data []byte) {
+ 	}
+ }
+ 
++func makeStaticIndexWritable(staticDir string) error {
++	indexPath := filepath.Join(staticDir, "index.html")
++	data, err := os.ReadFile(indexPath)
++	if err != nil {
++		return err
++	}
++	if err = os.Remove(indexPath); err != nil {
++		if !errors.Is(err, os.ErrNotExist) {
++			return err
++		}
++	}
++	return os.WriteFile(indexPath, data, fs.FileMode(0o600))
++}
++
+ func makeBaseURLReplacements(data []byte, baseURL string) []byte {
+ 	replaceURL := baseURL
+ 	if baseURL == "" {
+@@ -1158,6 +1172,12 @@ func startServer(config *HeadlampConfig) {
+ 			return
+ 		}
+ 
++		err = makeStaticIndexWritable(dir)
++		if err != nil {
++			logger.Log(logger.LevelError, nil, err, "Failed to make copied static index writable")
++			return
++		}
++
+ 		config.StaticDir = dir
+ 	}
+ 
+diff --git a/backend/cmd/headlamp_test.go b/backend/cmd/headlamp_test.go
+index 637501f..6d4eacb 100644
+--- a/backend/cmd/headlamp_test.go
++++ b/backend/cmd/headlamp_test.go
+@@ -1754,0 +1755,18 @@ func TestHandleClusterServiceProxy(t *testing.T) {
++
++func TestMakeStaticIndexWritable(t *testing.T) {
++	staticDir := t.TempDir()
++	indexPath := filepath.Join(staticDir, "index.html")
++	original := []byte("<html>original</html>")
++
++	require.NoError(t, os.WriteFile(indexPath, original, 0o444))
++	require.NoError(t, makeStaticIndexWritable(staticDir))
++
++	contents, err := os.ReadFile(indexPath)
++	require.NoError(t, err)
++	require.Equal(t, original, contents)
++
++	info, err := os.Stat(indexPath)
++	require.NoError(t, err)
++	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
++	require.NoError(t, os.WriteFile(indexPath, []byte("<html>updated</html>"), 0o600))
++}

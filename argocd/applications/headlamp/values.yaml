@@ -5,11 +5,17 @@ deploymentAnnotations:
 image:
   registry: registry.ide-newton.ts.net
   repository: lab/headlamp@sha256
-  tag: 8eb9e769d8793e6a8880c8006f46a3235cb8e68f22eefbab8350f5dc04999b39
+  tag: c1c9c59aba9b118c36c36baed3bd90b977fcec6c255408b955be3650c1a84af3
 persistentVolumeClaim:
   enabled: false
 podSecurityContext:
   fsGroup: 101
+volumeMounts:
+  - name: headlamp-tmp
+    mountPath: /tmp
+volumes:
+  - name: headlamp-tmp
+    emptyDir: {}
 config:
   oidc:
     secret:

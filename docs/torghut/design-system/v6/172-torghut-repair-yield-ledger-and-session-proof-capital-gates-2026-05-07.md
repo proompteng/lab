@@ -1,21 +1,21 @@
 # 172. Torghut Repair Yield Ledger And Session Proof Capital Gates (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, repair-yield measurement, market-context freshness, route repair, session-bound
-proof, capital promotion gates, validation, rollout, rollback, and Jangar material-action handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/168-jangar-source-heartbeat-witness-settlement-and-material-action-bonds-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
-- `170-torghut-capital-surface-repair-cadence-and-route-edge-market-2026-05-07.md`
-- `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
-- `docs/agents/designs/168-jangar-source-heartbeat-witness-settlement-and-material-action-bonds-2026-05-07.md`
 
 ## Decision
 
@@ -30,7 +30,7 @@ fresh maintenance on `execution_tca_metrics`, and a large options contract catal
 
 The profitable interpretation is still conservative. The proof floor is `repair_only`, route state is `repair_only`,
 capital state is `zero_notional`, and max notional is `0`. The blocking reasons are stable:
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
 `simple_submit_disabled`. Provider health is not enough to clear the market-context blocker: fundamentals and news
 providers succeeded at 23:11Z, but the bundle remained stale, with technicals/regime about 9,482 seconds old, news
 about 19,713 seconds old, and fundamentals about 4,872,481 seconds old. Route repair also remains debt, with AAPL only
@@ -104,7 +104,7 @@ database records, ClickHouse tables, GitOps resources, broker state, empirical a
 
 ### Trading Evidence
 
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Market context last checked at `2026-05-07T23:11:40.093641Z`, but last bundle `as_of` was
   `2026-05-07T20:33:02Z`, freshness was 9,482 seconds, and all domains were stale.

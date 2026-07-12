@@ -23,6 +23,7 @@ class HyperliquidConfigTest {
     assertTrue(config.includePerps)
     assertTrue(config.includeSpot)
     assertEquals(100, config.topMarketCount)
+    assertEquals(180_000, config.wsReadIdleTimeoutMs)
     assertFalse(config.wsChannels.any { it.startsWith("user", ignoreCase = true) })
   }
 
@@ -57,6 +58,7 @@ class HyperliquidConfigTest {
           "CLICKHOUSE_FRESHNESS_CHECK_MS" to "5000",
           "HYPERLIQUID_READY_REQUIRED_CHANNELS" to "raw,candle",
           "HYPERLIQUID_READY_EVENT_MAX_AGE_MS" to "120000",
+          "HYPERLIQUID_WS_READ_IDLE_TIMEOUT_MS" to "240000",
           "KAFKA_READY_MAX_AGE_MS" to "180000",
         ),
       )
@@ -71,7 +73,22 @@ class HyperliquidConfigTest {
     assertEquals(5_000, config.clickHouse.freshnessCheckMs)
     assertEquals(setOf("raw", "candle"), config.readyRequiredChannels)
     assertEquals(120_000, config.readyEventMaxAgeMs)
+    assertEquals(240_000, config.wsReadIdleTimeoutMs)
     assertEquals(180_000, config.kafkaReadyMaxAgeMs)
+  }
+
+  @Test
+  fun `websocket read idle timeout cannot be shorter than two heartbeats`() {
+    val config =
+      HyperliquidConfig.fromEnv(
+        mapOf(
+          "KAFKA_SASL_PASSWORD" to "secret",
+          "HYPERLIQUID_HEARTBEAT_INTERVAL_MS" to "30000",
+          "HYPERLIQUID_WS_READ_IDLE_TIMEOUT_MS" to "45000",
+        ),
+      )
+
+    assertEquals(60_000, config.wsReadIdleTimeoutMs)
   }
 
   @Test

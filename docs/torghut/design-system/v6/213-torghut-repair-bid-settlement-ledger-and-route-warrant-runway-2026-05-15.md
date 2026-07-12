@@ -1,22 +1,20 @@
 # 213. Torghut Repair-Bid Settlement Ledger And Route Warrant Runway (2026-05-15)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-15
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut revenue repair, repair-bid settlement ledger, route-warrant exchange, alpha-readiness no-delta custody,
-Jangar source-contract debt import, validation, rollout, rollback, and zero-notional capital safety.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/207-jangar-source-contract-debt-exchange-and-repair-bid-custody-2026-05-15.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `212-torghut-revenue-repair-topline-contract-and-alpha-evidence-budget-2026-05-14.md`
-- `211-torghut-controller-ingestion-carry-and-alpha-no-delta-release-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
 
 ## Decision
 
@@ -91,7 +89,7 @@ flags, broker state, AgentRuns, GitOps resources, or market data.
 
 - `/trading/revenue-repair` reported `business_state=repair_only` and `revenue_ready=false`.
 - Top queue item: `repair_alpha_readiness`.
-- Top reason: `alpha_readiness_not_promotion_eligible`.
+- Top reason: `hypothesis_not_promotion_eligible`.
 - Value gate: `routeable_candidate_count`.
 - Required output receipt: `torghut.executable-alpha-receipts.v1`.
 - Capital rule: `zero_notional_repair_only`, with `max_notional=0`.

@@ -17,5 +17,5 @@ if grep -R -n -E "handleClusterAuthError|navigate\\(createRouteURL\\('login'" "$
 fi
 
 cd "$WORK_DIR/backend"
-go test ./cmd -run 'Test(GetOrCreateConnection|EstablishClusterConnection|GetOrCreateConnection_HTTPWatchStream|Reconnect|Reconnect_WithToken|OIDCTokenRefreshMiddleware)'
+go test ./cmd -run 'Test(GetOrCreateConnection|EstablishClusterConnection|GetOrCreateConnection_HTTPWatchStream|Reconnect|Reconnect_WithToken|OIDCTokenRefreshMiddleware|MakeStaticIndexWritable)'
 go test ./pkg/auth -run 'Test(GetCookiePath|GetWebSocketCookiePath|GetBaseCookiePath|SetAndGetAuthCookie|GetAuthCookieChunked|ClearAuthCookie|SetTokenCookieClearsLegacyRootPathChunks|SetTokenCookie_UsesTokenExpiryForMaxAge|GetNewToken_PreHTTPFailures)'

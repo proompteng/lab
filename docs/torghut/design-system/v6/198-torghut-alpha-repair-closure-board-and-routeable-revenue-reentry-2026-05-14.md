@@ -1,22 +1,20 @@
 # 198. Torghut Alpha Repair Closure Board And Routeable Revenue Reentry (2026-05-14)
 
 Status: Accepted for Jangar engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut revenue-repair queue closure, alpha-readiness repair receipts, routeable candidate reentry, zero-notional
-capital safety, validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
-- `197-torghut-alpha-readiness-strike-ledger-and-routeable-candidate-ladder-2026-05-13.md`
-- `197-torghut-serving-promotion-closure-and-no-delta-repair-value-2026-05-13.md`
-- `196-torghut-profit-carry-passports-and-repair-capacity-futures-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
 
 ## Decision
 
@@ -25,7 +23,7 @@ board.
 
 The live business surface is still repair-only. On 2026-05-14, `GET /trading/revenue-repair` returned
 `revenue_ready=false`, `business_state=repair_only`, and top queue item `repair_alpha_readiness`. The top item targets
-`routeable_candidate_count`, has reason `alpha_readiness_not_promotion_eligible`, expected unblock value `4`, max
+`routeable_candidate_count`, has reason `hypothesis_not_promotion_eligible`, expected unblock value `4`, max
 notional `0`, capital rule `zero_notional_repair_only`, and required output receipt
 `torghut.executable-alpha-receipts.v1`.
 
@@ -78,7 +76,7 @@ All evidence was collected read-only on 2026-05-14.
   `business_state=repair_only`.
 - The top queue item was:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `dimension=alpha_readiness`
   - `action=clear_hypothesis_blockers_before_capital`
   - `priority=70`

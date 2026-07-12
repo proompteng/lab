@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from typing import Protocol, cast
 
 from .config import HyperliquidExecutionConfig
+from .entry_processing import process_features
 from .exchange import HyperliquidExecutionExchange
 from .feed_reader import FeedStatus
+from .maintenance import close_largest_positions_over_cap, risk_state_over_cap
 from .models import (
     CycleRecord,
     CycleResult,
@@ -19,38 +21,25 @@ from .models import (
     RiskState,
     RuntimeDependencyStatus,
 )
-from .order_policy import build_order_intent
 from .repository import HyperliquidExecutionRepository
-from .risk import evaluate_signal_risk
-from .strategy import generate_signal
+from .reconciliation_keys import market_id_by_reconciliation_coin
+from .runtime_details import risk_state_details, universe_details
 from .universe import UniverseSelectionConfig, select_configured_markets
 
 
 class HyperliquidExecutionFeed(Protocol):
-    """ClickHouse read surface used by one v2 cycle."""
+    def status(self) -> FeedStatus: ...
 
-    def status(self) -> FeedStatus:
-        """Return feed freshness."""
-        ...
+    def load_catalog_rows(self) -> list[dict[str, object]]: ...
 
-    def load_catalog_rows(self) -> list[dict[str, object]]:
-        """Load candidate market catalog rows."""
-        ...
-
-    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]:
-        """Load latest feature rows."""
-        ...
+    def load_feature_rows(self, market_ids: list[str]) -> list[FeatureSnapshot]: ...
 
 
 class _Session(Protocol):
-    def commit(self) -> None:
-        """Commit one runtime cycle."""
-        ...
+    def commit(self) -> None: ...
 
 
 class HyperliquidExecutionService:
-    """One-cycle v2 orchestrator."""
-
     def __init__(
         self,
         *,
@@ -90,17 +79,28 @@ class HyperliquidExecutionService:
         risk_state = repository.risk_state(
             trading_enabled=self._config.order_submission_enabled(),
             dependencies=context.dependencies,
+            max_leverage_by_coin={
+                market.coin: market.max_leverage
+                for market in context.markets
+                if market.max_leverage is not None
+            },
         )
-        self._process_features(
-            repository=repository,
-            context=_FeatureProcessingContext(
-                cycle_id=cycle_id,
-                started_at=started_at,
-                features=context.features,
-                risk_state=risk_state,
-            ),
-            counts=counts,
+        context.universe_details["risk_state"] = risk_state_details(
+            risk_state, self._config
         )
+        maintenance_reduce_only = self._reduce_over_cap_exposure(risk_state)
+        counts.record_maintenance_reduce_only(maintenance_reduce_only)
+        if not _maintenance_reduce_only_ran(maintenance_reduce_only):
+            self._process_features(
+                repository=repository,
+                context=_FeatureProcessingContext(
+                    cycle_id=cycle_id,
+                    started_at=started_at,
+                    features=context.features,
+                    risk_state=risk_state,
+                ),
+                counts=counts,
+            )
 
         repository.insert_performance_snapshot(observed_at=started_at)
         repository.insert_multifactor_attribution_snapshot(
@@ -142,6 +142,23 @@ class HyperliquidExecutionService:
         result = self._exchange.cancel_order(expired)
         repository.mark_order_cancelled(expired, result)
 
+    def _reduce_over_cap_exposure(self, risk_state: RiskState) -> dict[str, object]:
+        if not risk_state_over_cap(risk_state, self._config):
+            return {
+                "schema_version": "torghut.hyperliquid-execution-over-cap-maintenance.v1",
+                "over_cap": False,
+                "gross_over_cap": False,
+                "symbol_over_cap": False,
+                "symbol_over_cap_coins": [],
+                "actions": [],
+            }
+        return close_largest_positions_over_cap(
+            config=self._config,
+            exchange=self._exchange,
+            execute=True,
+            max_actions=1,
+        )
+
     def _process_features(
         self,
         *,
@@ -149,51 +166,13 @@ class HyperliquidExecutionService:
         context: "_FeatureProcessingContext",
         counts: "_CycleCounts",
     ) -> None:
-        for feature in context.features:
-            signal = generate_signal(
-                feature,
-                self._config,
-                now=context.started_at,
-                run_id=context.cycle_id,
-            )
-            signal_id = repository.insert_signal(
-                cycle_id=context.cycle_id, signal=signal
-            )
-            counts.signals_written += 1
-            verdict = evaluate_signal_risk(signal, context.risk_state, self._config)
-            repository.insert_multifactor_risk_and_target(
-                run_id=context.cycle_id,
-                verdict=verdict,
-            )
-            if not verdict.allowed:
-                counts.record_risk_block(signal.coin, verdict.reason)
-                continue
-            try:
-                intent = build_order_intent(
-                    signal=signal,
-                    verdict=verdict,
-                    config=self._config,
-                    signal_id=signal_id,
-                    now=context.started_at,
-                )
-                result = self._exchange.submit_order(intent)
-            except Exception as exc:
-                counts.record_order_error(type(exc).__name__)
-                continue
-            repository.insert_order(intent, result)
-            repository.insert_multifactor_execution_intent(
-                run_id=context.cycle_id,
-                intent=intent,
-                result=result,
-                verdict=verdict,
-            )
-            repository.update_reject_cooldown(
-                coin=intent.coin,
-                rejection_reason=result.rejection_reason,
-                config=self._config,
-            )
-            counts.orders_submitted += 1
-            break
+        process_features(
+            repository=repository,
+            config=self._config,
+            exchange=self._exchange,
+            context=context,
+            counts=counts,
+        )
 
     def _cycle_record(
         self,
@@ -234,11 +213,14 @@ class HyperliquidExecutionService:
         execution_markets, execution_status = self._exchange.filter_supported_markets(
             feed_markets
         )
-        fresh_features = self._fresh_features(execution_markets)
-        selected_markets, selected_features = _select_markets_with_fresh_features(
-            execution_markets, fresh_features
+        liquid_markets, liquidity_status = self._exchange.filter_crossable_markets(
+            execution_markets
         )
-        feature_status = _feature_status(execution_markets, fresh_features)
+        fresh_features = self._fresh_features(liquid_markets)
+        selected_markets, selected_features = _select_markets_with_fresh_features(
+            liquid_markets, fresh_features
+        )
+        feature_status = _feature_status(liquid_markets, fresh_features)
         open_order_status = self._reconcile_exchange_state(
             repository, selected_markets, observed_at
         )
@@ -247,12 +229,19 @@ class HyperliquidExecutionService:
             markets=selected_markets,
             features=selected_features,
             dependencies=feed_status.statuses
-            + (execution_status, feature_status, open_order_status, exchange_status),
-            universe_details=self._universe_details(
-                feed_details,
+            + (
                 execution_status,
+                liquidity_status,
+                feature_status,
+                open_order_status,
+                exchange_status,
+            ),
+            universe_details=universe_details(
+                feed_details,
+                (execution_status, liquidity_status),
                 feature_status,
                 selected_markets,
+                self._exchange.execution_metadata_details(),
             ),
         )
 
@@ -274,9 +263,7 @@ class HyperliquidExecutionService:
         execution_markets: tuple[ExecutionMarket, ...],
         observed_at: datetime,
     ) -> RuntimeDependencyStatus:
-        market_id_by_coin = {
-            market.coin: market.market_id for market in execution_markets
-        }
+        market_id_by_coin = market_id_by_reconciliation_coin(execution_markets)
         repository.upsert_fills(self._exchange.reconcile_fills(market_id_by_coin))
         repository.upsert_account_state(
             self._exchange.reconcile_account(market_id_by_coin)
@@ -291,28 +278,6 @@ class HyperliquidExecutionService:
             details={"open_order_coins": sorted(open_coins)},
         )
 
-    def _universe_details(
-        self,
-        feed_details: dict[str, object],
-        execution_status: RuntimeDependencyStatus,
-        feature_status: RuntimeDependencyStatus,
-        selected_markets: tuple[ExecutionMarket, ...],
-    ) -> dict[str, object]:
-        details = dict(feed_details)
-        details.update(execution_status.details)
-        details.update(self._exchange.execution_metadata_details())
-        details["selected_execution_metadata"] = _string_list_detail(
-            details.get("selected")
-        )
-        details["selected"] = [market.coin for market in selected_markets]
-        details["fresh_features"] = _string_list_detail(
-            feature_status.details.get("features")
-        )
-        details["missing_fresh_features"] = _string_list_detail(
-            feature_status.details.get("missing")
-        )
-        return details
-
 
 def runtime_readiness(
     *,
@@ -320,8 +285,6 @@ def runtime_readiness(
     latest_cycle: CycleResult | None,
     latest_error: str | None,
 ) -> tuple[bool, list[str], tuple[RuntimeDependencyStatus, ...]]:
-    """Return API readiness for the v2 runtime."""
-
     reasons = config.validation_errors()
     if latest_error is not None:
         reasons.append(f"latest_cycle_error:{latest_error}")
@@ -361,6 +324,10 @@ def _empty_nested_counts() -> dict[str, dict[str, int]]:
     return {}
 
 
+def _empty_gate_details() -> dict[str, dict[str, object]]:
+    return {}
+
+
 @dataclass
 class _CycleCounts:
     signals_written: int = 0
@@ -371,6 +338,12 @@ class _CycleCounts:
         default_factory=_empty_nested_counts
     )
     order_errors_by_type: dict[str, int] = field(default_factory=_empty_counts)
+    maintenance_reduce_only: dict[str, object] | None = None
+    position_reduce_only: dict[str, object] | None = None
+    profitability_gates: dict[str, dict[str, object]] = field(
+        default_factory=_empty_gate_details
+    )
+    latest_profitability_gate: dict[str, object] | None = None
 
     def record_risk_block(self, coin: str, reason: str) -> None:
         self.risk_blocks_by_reason[reason] = (
@@ -383,6 +356,34 @@ class _CycleCounts:
         self.order_errors_by_type[error_type] = (
             self.order_errors_by_type.get(error_type, 0) + 1
         )
+
+    def record_maintenance_reduce_only(self, report: dict[str, object]) -> None:
+        self.maintenance_reduce_only = report
+        actions = report.get("actions")
+        if not isinstance(actions, list):
+            return
+        action_items = cast(list[object], actions)
+        submitted_statuses = {"accepted", "filled", "submitted"}
+        self.orders_submitted += sum(
+            1
+            for action in action_items
+            if isinstance(action, dict)
+            and cast(dict[str, object], action).get("status") in submitted_statuses
+        )
+
+    def record_position_reduce_only(self, action: dict[str, object]) -> None:
+        self.position_reduce_only = action
+        if action.get("status") in {"accepted", "filled", "submitted"}:
+            self.orders_submitted += 1
+
+    def record_profitability_gate(
+        self,
+        coin: str,
+        gate: dict[str, object],
+    ) -> None:
+        details = {"coin": coin, **gate}
+        self.profitability_gates[coin] = details
+        self.latest_profitability_gate = details
 
 
 def _select_markets_with_fresh_features(
@@ -401,17 +402,22 @@ def _select_markets_with_fresh_features(
     return selected_markets, selected_features
 
 
-def _string_list_detail(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [str(item) for item in cast(list[object], value)]
-
-
 def _cycle_universe_details(
     universe_details: dict[str, object],
     counts: _CycleCounts,
 ) -> dict[str, object]:
     details = dict(universe_details)
+    if counts.maintenance_reduce_only is not None:
+        details["maintenance_reduce_only"] = counts.maintenance_reduce_only
+    if counts.position_reduce_only is not None:
+        details["position_reduce_only"] = counts.position_reduce_only
+    if counts.profitability_gates:
+        details["profitability_gates"] = {
+            coin: dict(gate)
+            for coin, gate in sorted(counts.profitability_gates.items())
+        }
+    if counts.latest_profitability_gate is not None:
+        details["profitability_gate"] = dict(counts.latest_profitability_gate)
     if counts.risk_blocks_by_reason:
         details["risk_blocks_by_reason"] = dict(
             sorted(counts.risk_blocks_by_reason.items())
@@ -426,6 +432,11 @@ def _cycle_universe_details(
             sorted(counts.order_errors_by_type.items())
         )
     return details
+
+
+def _maintenance_reduce_only_ran(report: dict[str, object]) -> bool:
+    actions = report.get("actions")
+    return isinstance(actions, list) and bool(cast(list[object], actions))
 
 
 def _feature_status(

@@ -103,7 +103,7 @@ GitOps resources, AgentRuns, or market data.
   - `execution_tca`, priority `90`, held by `dispatch_limit_exceeded`;
   - `rollout_image`, priority `80`, held by `dispatch_limit_exceeded`;
   - `empirical_replay`, priority `70`, held by `selection_limit_exceeded`.
-- Evidence clock state was `split`; blocking reasons included `alpha_readiness_not_promotion_eligible`,
+- Evidence clock state was `split`; blocking reasons included `hypothesis_not_promotion_eligible`,
   `drift_checks_missing`, `feature_rows_missing`, `required_feature_set_unavailable`,
   `execution_tca_slippage_guardrail_exceeded`, `execution_tca_symbol_missing`, `simple_submit_disabled`, and
   `max_notional_zero`.
@@ -114,7 +114,7 @@ GitOps resources, AgentRuns, or market data.
   `torghut-00371`.
 - Capital stayed closed: `live_submission_allowed=false`, `capital_stage=shadow`, `capital_state=zero_notional`, and
   `max_notional=0`.
-- The top queue item was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, selected gate
+- The top queue item was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, selected gate
   `routeable_candidate_count`, expected unblock value `4`, required receipt `torghut.executable-alpha-receipts.v1`.
 - `/db-check` was schema-current at `0031_autoresearch_candidate_spec_epoch_uniqueness`.
 - `/readyz` was degraded because `simple_submit_disabled` and proof-floor `repair_only` were true. Postgres,

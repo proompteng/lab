@@ -1,24 +1,20 @@
 # 212. Torghut Consumer-Evidence Parity And Alpha Release Freshness (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut consumer-evidence parity, alpha-release freshness, zero-notional repair selection, Jangar admission
-handoff, validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/206-jangar-consumer-evidence-parity-settlement-and-alpha-release-custody-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `211-torghut-controller-ingestion-carry-and-alpha-no-delta-release-2026-05-14.md`
-- `210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
-- `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `204-torghut-alpha-repair-dividend-ledger-and-custody-flight-recorder-2026-05-14.md`
-- `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
-- `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
 
 ## Decision
 
@@ -95,7 +91,7 @@ trading flags, broker state, market data, or AgentRuns.
 - `/trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`, active revision
   `torghut-00415`, and `readyz_status=degraded`.
 - The repair queue had five items. The top item was `repair_alpha_readiness`, reason
-  `alpha_readiness_not_promotion_eligible`, priority `70`, value gate `routeable_candidate_count`, required output
+  `hypothesis_not_promotion_eligible`, priority `70`, value gate `routeable_candidate_count`, required output
   `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - Lower-priority items were live submit disabled, empirical jobs degraded, generic degraded state, and empirical jobs
   not ready.

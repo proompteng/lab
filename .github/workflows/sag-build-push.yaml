@@ -8,11 +8,6 @@ on:
     paths:
       - 'services/sag/**'
       - 'packages/codex/**'
-      - 'packages/scripts/src/sag/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
-      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
-      - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
       - 'flake.lock'
@@ -25,23 +20,12 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
-      - '.github/workflows/sag-build-push.yaml'
-      - '.github/workflows/sag-release.yml'
-      - '.github/workflows/sag-post-deploy-verify.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   push:
     branches:
       - main
     paths:
       - 'services/sag/**'
       - 'packages/codex/**'
-      - 'packages/scripts/src/sag/**'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/git.ts'
-      - 'packages/scripts/src/shared/nix-oci-deploy.ts'
-      - 'package.json'
       - 'bun.lock'
       - 'tsconfig.base.json'
       - 'flake.lock'
@@ -54,12 +38,6 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
-      - '.github/workflows/sag-build-push.yaml'
-      - '.github/workflows/sag-release.yml'
-      - '.github/workflows/sag-post-deploy-verify.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/actions/setup-nix-toolchain/**'
   workflow_dispatch:
 
 concurrency:
@@ -74,6 +52,6 @@ jobs:
       image_name: sag
       package_attr: sag-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'sag-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'sag-release-contract' || '' }}
     secrets: inherit

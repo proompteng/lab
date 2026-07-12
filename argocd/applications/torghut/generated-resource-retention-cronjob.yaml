@@ -24,7 +24,7 @@ spec:
           serviceAccountName: torghut-generated-resource-retention
           containers:
             - name: prune-generated-residue
-              image: registry.ide-newton.ts.net/lab/torghut@sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+              image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
               imagePullPolicy: IfNotPresent
               resources:
                 requests:
@@ -45,7 +45,7 @@ spec:
                 - |
                   set -euo pipefail
                   cd /app
-                  /opt/venv/bin/python scripts/prune_kubernetes_residue.py \
+                  python scripts/prune_kubernetes_residue.py \
                     --namespace torghut \
                     --analysis-run-prefix torghut-sim- \
                     --analysis-run-max-age-hours 168 \

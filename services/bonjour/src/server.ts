@@ -26,7 +26,7 @@ app.use('*', async (c, next) => {
 
 app.get('/healthz', (c) => c.json({ status: 'ok' }))
 
-app.get('/', (c) => c.json({ message: 'bonjour from the cdk8s + Argo CD sample server' }))
+app.get('/', (c) => c.json({ message: 'bonjour from the cdk8s compiler canary' }))
 
 const server = serve(
   {

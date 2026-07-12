@@ -1,5 +1,9 @@
 """Domain modules for Torghut ORM entity definitions."""
 
+from .broker_mutation_records import (
+    BrokerMutationReceipt,
+    BrokerMutationReceiptEvent,
+)
 from .research_records import (
     ResearchAttempt,
     ResearchCandidate,
@@ -54,6 +58,7 @@ from .trading_records import (
     TigerBeetleTransferRef,
     TimestampMixin,
     TradeDecision,
+    TradeDecisionSubmissionClaim,
 )
 from .whitepaper_content import (
     WhitepaperAnalysisRun,
@@ -92,6 +97,8 @@ __all__ = [
     "AutoresearchEpoch",
     "AutoresearchPortfolioCandidate",
     "AutoresearchProposalScore",
+    "BrokerMutationReceipt",
+    "BrokerMutationReceiptEvent",
     "CreatedAtMixin",
     "EvidenceEpochRecord",
     "EvidenceReceiptRecord",
@@ -133,6 +140,7 @@ __all__ = [
     "ToolRunLog",
     "TradeCursor",
     "TradeDecision",
+    "TradeDecisionSubmissionClaim",
     "VNextCompletionGateResult",
     "VNextDatasetSnapshot",
     "VNextEmpiricalJobRun",

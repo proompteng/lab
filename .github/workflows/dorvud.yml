@@ -36,6 +36,6 @@ jobs:
         run: ./gradlew ktlintCheck
         working-directory: services/dorvud
 
-      - name: Run tests (platform, websockets, technical-analysis)
-        run: ./gradlew :platform:test :websockets:test :technical-analysis:test
+      - name: Run tests (platform, websockets, technical-analysis, hyperliquid-feed)
+        run: ./gradlew :platform:test :websockets:test :technical-analysis:test :hyperliquid-feed:test
         working-directory: services/dorvud

@@ -73,7 +73,7 @@ dig +short @127.0.0.1 openwebui.k8s.proompteng.ai
 
 ## Verify from another tailnet client
 
-After the Tailscale split DNS rule is applied from [tofu/tailscale/main.tf](/Users/gregkonush/.codex/worktrees/630f/lab/tofu/tailscale/main.tf#L30):
+After the Tailscale split DNS rule is applied from [tofu/tailscale/main.tf](../../../tofu/tailscale/main.tf):
 
 ```bash
 dig +short kubernetes.default.svc.cluster.local

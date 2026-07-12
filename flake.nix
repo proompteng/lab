@@ -210,13 +210,16 @@
 
           linuxPackages = lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux ({
             "atticd-image" = import ./nix/images/attic.nix { inherit pkgs lib; };
+            "arc-runner-image" = import ./nix/images/arc-runner.nix {
+              inherit pkgs lib ciToolchain;
+            };
             "oirat-image" = import ./nix/images/oirat.nix {
               inherit pkgs lib nodejs;
               repoRoot = ./.;
               bun = exact.bun;
             };
             "bumba-image" = import ./nix/images/bumba.nix {
-              inherit pkgs lib nodejs repoRevision;
+              inherit pkgs lib nodejs;
               repoRoot = ./.;
               bun = exact.bun;
             };
@@ -259,6 +262,36 @@
               inherit pkgs lib nodejs;
               repoRoot = ./.;
               bun = exact.bun;
+            };
+            "jangar-image" = import ./nix/images/jangar.nix {
+              inherit
+                pkgs
+                lib
+                nodejs
+                exact
+                repoRevision
+                ;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "headlamp-image" = import ./nix/images/headlamp.nix {
+              inherit pkgs lib repoRevision;
+            };
+            "torghut-image" = import ./nix/images/torghut.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-ws-image" = import ./nix/images/torghut-ws.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-ta-image" = import ./nix/images/torghut-ta.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
+            };
+            "torghut-hyperliquid-feed-image" = import ./nix/images/torghut-hyperliquid-feed.nix {
+              inherit pkgs lib;
+              repoRoot = ./.;
             };
           } // (import ./nix/images/agents.nix {
             inherit

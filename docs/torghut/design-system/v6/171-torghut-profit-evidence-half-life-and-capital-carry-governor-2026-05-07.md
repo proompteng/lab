@@ -1,21 +1,21 @@
 # 171. Torghut Profit Evidence Half-Life And Capital Carry Governor (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability evidence decay, capital carry, route repair ranking, Jangar terminal evidence handoff,
-validation, rollout, rollback, and measurable trading hypotheses.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
-- `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
-- `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
-- `docs/agents/designs/167-jangar-terminal-evidence-half-life-and-debris-retirement-2026-05-07.md`
 
 ## Decision
 
@@ -82,7 +82,7 @@ All evidence in this pass was collected read-only on 2026-05-07.
   `live_submit_enabled=false` behavior through the simple-submit disabled reason.
 - `/trading/health` returned HTTP 503 with `status=degraded`.
 - The proof floor was `repair_only`, capital state `zero_notional`, max notional `0`, and blocking reasons:
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Alpha readiness had three hypotheses, zero promotion-eligible, and three rollback-required.
 - Quant evidence was informational rather than required. Latest metrics were fresh, but pipeline health remained

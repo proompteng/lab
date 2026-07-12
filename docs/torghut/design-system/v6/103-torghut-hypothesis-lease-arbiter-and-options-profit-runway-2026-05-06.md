@@ -1,21 +1,20 @@
 # 103. Torghut Hypothesis Lease Arbiter And Options Profit Runway (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability architecture, measurable hypothesis leases, options data bootstrapping, capital
-guardrails, rejection-drag repair, and Jangar evidence-lease consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/99-jangar-evidence-lease-cells-and-rollout-admission-arbiter-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `102-torghut-profit-proof-exchange-and-capital-slo-budget-2026-05-06.md`
-- `101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`
-- `100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
-- `84-torghut-capital-warrant-adoption-and-profitability-experiment-ladder-2026-05-05.md`
 
 ## Decision
 

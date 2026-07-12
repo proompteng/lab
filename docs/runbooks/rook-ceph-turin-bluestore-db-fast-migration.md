@@ -203,6 +203,35 @@ done
 '
 ```
 
+This is maintenance-only tuning. After recovery is clean, return the cluster to
+the steady-state client-performance profile documented in
+`docs/runbooks/rook-ceph-on-talos.md`: `osd_mclock_profile=high_client_ops`,
+no recovery/backfill override gate, no custom mClock reservations, and no
+recovery-only limit overrides.
+
+```bash
+kubectl -n rook-ceph exec deploy/rook-ceph-tools -- sh -lc '
+ceph config set osd osd_mclock_profile high_client_ops
+for key in \
+  osd_mclock_override_recovery_settings \
+  osd_max_backfills \
+  osd_recovery_max_active \
+  osd_recovery_max_active_hdd \
+  osd_recovery_max_single_start \
+  osd_recovery_op_priority \
+  osd_recovery_sleep_hdd \
+  osd_mclock_scheduler_background_recovery_res \
+  osd_mclock_scheduler_client_res \
+  osd_mclock_scheduler_background_best_effort_res \
+  osd_mclock_scheduler_background_recovery_wgt \
+  osd_mclock_scheduler_client_wgt \
+  osd_mclock_scheduler_background_best_effort_wgt
+do
+  ceph config rm osd "${key}" || true
+done
+'
+```
+
 ## Create a Turin Maintenance Pod
 
 The target OSD must be stopped while `ceph-bluestore-tool` edits its BlueStore

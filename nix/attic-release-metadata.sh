@@ -48,7 +48,7 @@ else
     source_sha="$(git rev-parse "${source_sha}^{commit}")"
   fi
   if [[ -z "${tag}" ]]; then
-    tag="sha-$(git rev-parse --short=12 "${source_sha}")"
+    tag="sha-${source_sha}"
   fi
   if [[ -z "${digest}" ]]; then
     digest="$(crane digest "${image}:${tag}")"

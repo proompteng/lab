@@ -1,5 +1,19 @@
 # 25. Knative Probe Port Configuration Safety Fix for `torghut` (2026-03-04)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
+
+
 ## Summary
 
 Recent cluster rollout traces for `torghut` showed repeated startup/readiness instability with multiple `LatestCreatedFailed` and revision update retries. The most direct contributor identified in this run is a probe configuration drift: Knative startup probe currently points at `http1` rather than a numeric port, causing parse/type errors in the kubelet probe setup path.

@@ -1,21 +1,20 @@
 # 133. Torghut Consumer Evidence Return Path And Shadow Settlement (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders architecture
-Scope: Torghut live and sim runtime evidence, Jangar material-action receipts, shadow and paper settlement,
-forecast readiness, empirical proof, ClickHouse freshness, Postgres schema/data quality, rollout and rollback gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/129-jangar-consumer-evidence-return-ledger-and-rollout-settlement-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `132-torghut-dependency-quorum-rehydration-and-profit-inventory-handoff-2026-05-06.md`
-- `132-torghut-forecast-profit-tournament-and-capital-reentry-guardrails-2026-05-06.md`
-- `docs/agents/designs/128-jangar-runtime-convergence-ledger-and-capital-gate-receipts-2026-05-06.md`
-- `docs/agents/designs/128-jangar-terminal-run-settlement-and-forecast-reentry-admission-2026-05-06.md`
 
 ## Decision
 

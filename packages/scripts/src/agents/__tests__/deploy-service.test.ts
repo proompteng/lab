@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import { __private } from '../deploy-service'
 
-const envKeys = ['AGENTS_BUILD_RUNNER', 'AGENTS_DRY_RUN', 'AGENTS_IMAGE_TAG', 'AGENTS_IMAGE_PLATFORMS']
+const envKeys = ['AGENTS_DRY_RUN', 'AGENTS_IMAGE_TAG', 'AGENTS_IMAGE_PLATFORMS']
 
 afterEach(() => {
   for (const key of envKeys) {
@@ -14,9 +14,8 @@ afterEach(() => {
 })
 
 describe('agents deploy-service helpers', () => {
-  it('parses runner, apply, and dry-run rollout flags', () => {
-    expect(__private.parseArgs(['--skip-runner', '--no-apply', '--dry-run'])).toMatchObject({
-      buildRunner: false,
+  it('parses apply and dry-run rollout flags', () => {
+    expect(__private.parseArgs(['--no-apply', '--dry-run'])).toMatchObject({
       apply: false,
       dryRun: true,
     })
@@ -29,6 +28,7 @@ describe('agents deploy-service helpers', () => {
         repository: 'lab/agents-controller',
         controlPlaneRepository: 'lab/agents-control-plane',
         agentsShellRepository: 'lab/agents-shell',
+        runnerRepository: 'lab/agents-codex-runner',
         tag: 'abc1234',
         platforms: ['linux/arm64'],
       }),
@@ -54,17 +54,23 @@ describe('agents deploy-service helpers', () => {
         repository: 'lab/agents-shell',
         tag: 'abc1234',
       },
+      {
+        service: 'agents-codex-runner',
+        imageName: 'agents-codex-runner',
+        packageAttr: 'agents-codex-runner-image',
+        repository: 'lab/agents-codex-runner',
+        tag: 'abc1234',
+      },
     ])
   })
 
-  it('defaults to preserving the currently pinned runner image', () => {
+  it('defaults to building the Codex runner image through Nix', () => {
     process.env.AGENTS_IMAGE_TAG = 'abc123-amd64'
     process.env.AGENTS_IMAGE_PLATFORMS = 'native'
 
     const options = __private.resolveOptions()
 
     expect(options.platforms).toEqual([])
-    expect(options.buildRunner).toBeFalse()
     expect(__private.buildAgentsServiceImagePlans(options)).toEqual([
       {
         service: 'agents-controller',
@@ -85,6 +91,13 @@ describe('agents deploy-service helpers', () => {
         imageName: 'agents-shell',
         packageAttr: 'agents-shell-image',
         repository: 'lab/agents-shell',
+        tag: 'abc123-amd64',
+      },
+      {
+        service: 'agents-codex-runner',
+        imageName: 'agents-codex-runner',
+        packageAttr: 'agents-codex-runner-image',
+        repository: 'lab/agents-codex-runner',
         tag: 'abc123-amd64',
       },
     ])

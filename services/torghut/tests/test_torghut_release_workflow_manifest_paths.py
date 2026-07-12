@@ -8,6 +8,7 @@ REMOVED_CRONJOBS = (
     "argocd/applications/torghut/empirical-promotion-renewal-cronjob.yaml",
     "argocd/applications/torghut/execution-tca-refresh-cronjob.yaml",
     "argocd/applications/torghut/order-feed-source-window-repair-cronjob.yaml",
+    "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml",
     "argocd/applications/torghut-hyperliquid-runtime/proof-verifier-cronjob.yaml",
 )
 ZERO_NOTIONAL_DRIFT_REPAIR_CRONJOB = (
@@ -25,7 +26,6 @@ def test_release_workflow_tracks_only_active_torghut_job_manifests() -> None:
         assert removed_cronjob not in workflow
     assert workflow.count(ZERO_NOTIONAL_DRIFT_REPAIR_CRONJOB) == 3
     assert workflow.count(TIGERBEETLE_SMOKE_JOB) == 3
-    assert "tigerbeetle-journal-order-events-cronjob.yaml" not in workflow
 
 
 def test_deploy_automerge_allows_only_active_torghut_job_manifests() -> None:
@@ -37,4 +37,3 @@ def test_deploy_automerge_allows_only_active_torghut_job_manifests() -> None:
         assert removed_cronjob not in workflow
     assert ZERO_NOTIONAL_DRIFT_REPAIR_CRONJOB in workflow
     assert TIGERBEETLE_SMOKE_JOB in workflow
-    assert "tigerbeetle-journal-order-events-cronjob.yaml" not in workflow

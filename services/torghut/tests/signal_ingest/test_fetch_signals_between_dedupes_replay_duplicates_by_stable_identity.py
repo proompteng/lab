@@ -312,6 +312,19 @@ class TestFetchSignalsBetweenDedupesReplayDuplicatesByStableIdentity(
         self.assertEqual(first, latest)
         self.assertEqual(second, latest)
 
+    def test_latest_signal_timestamp_raises_refresh_failure_when_required(
+        self,
+    ) -> None:
+        ingestor = FlakyLatestIngestor(
+            schema="envelope",
+            table="torghut.ta_signals",
+            url="http://example",
+            responses=[RuntimeError("clickhouse unavailable")],
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "clickhouse unavailable"):
+            ingestor._latest_signal_timestamp("event_ts", fail_on_query_error=True)
+
     def test_parse_window_size_timeframe(self) -> None:
         ingestor = ClickHouseSignalIngestor(
             schema="envelope", fast_forward_stale_cursor=False

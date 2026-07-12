@@ -1,23 +1,21 @@
 # 64. Torghut Profit Window Cutover and Escrow Enforcement Contract (2026-03-21)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-03-21`
-Owner: Victor Chen (Jangar Engineering)
-Mission: `codex/swarm-jangar-control-plane-plan`
-Swarm impacts:
 
-- `torghut-quant`
-- `jangar-control-plane`
+## Source Implementation Audit (2026-07-04)
 
-Companion doc:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-- `docs/agents/designs/65-jangar-recovery-epoch-cutover-and-backlog-seat-enforcement-contract-2026-03-21.md`
-
-Extends:
-
-- `63-torghut-profit-windows-and-evidence-escrow-contract-2026-03-21.md`
-- `62-torghut-lane-books-and-bounded-query-firebreak-contract-2026-03-20.md`
-- `docs/agents/designs/64-jangar-recovery-epochs-and-backlog-seats-contract-2026-03-21.md`
 
 ## Executive summary
 
@@ -30,7 +28,7 @@ The evidence is explicit:
 - `GET http://torghut.torghut.svc.cluster.local/trading/status` at `2026-03-21T00:31:44Z`
   - reports `running=true` and `mode="live"`;
   - reports `live_submission_gate.allowed=false` with blocked reasons
-    `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, `dependency_quorum_block`,
+    `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, `dependency_quorum_block`,
     `quant_health_fetch_failed`, and `live_promotion_disabled`;
   - still projects `quant_evidence.source_url="http://jangar.jangar.svc.cluster.local/api/agents/control-plane/status?account=PA3SX7FYNUTF&window=15m"`
     even though manifests now declare the typed quant-health route.

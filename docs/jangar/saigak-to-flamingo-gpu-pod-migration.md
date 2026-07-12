@@ -6,9 +6,14 @@ This runbook records the hard migration where completion traffic moves to the
 
 ## Current Roles
 
-`saigak` is a Kubernetes `StatefulSet` pinned to `talos-192-168-1-85`. It serves
-Ollama through an embeddings-only proxy on port `11434` and must not expose chat
-completion endpoints.
+`saigak` is a Kubernetes `StatefulSet` serving Ollama through an embeddings-only
+proxy on port `11434`; it must not expose chat completion endpoints. Its current
+active PVC is `saigak-altra-data`, a local-path cache that binds on first
+consumer to the ARM64 Altra node (`talos-192-168-1-85`) so the old Turin-bound
+`saigak-data` cache cannot pin the pod away from the RTX 3090. The pod must use
+`runtimeClassName: nvidia`, request and limit `nvidia.com/gpu: "1"`, and keep
+`SAIGAK_REQUIRE_GPU_RESIDENCY=true` so readiness fails unless the 4096-dimensional
+embedding model is resident in GPU VRAM.
 
 `flamingo` is a normal Kubernetes Deployment pinned to Turin's Blackwell GPU. It
 serves a vLLM OpenAI-compatible API on:
@@ -150,5 +155,7 @@ Do not treat completion migration as complete until all of these are true:
 - No completion consumer depends on Saigak's Ollama model store.
 - OpenWebUI, Jangar, Bumba, Agents, Torghut, and Synthesis configs have been audited.
 - Saigak rejects `/v1/chat/completions` and `/api/generate`.
-- Saigak `/v1/embeddings` returns 4096 dimensions and `/api/ps` shows GPU VRAM residency.
+- Saigak `/v1/embeddings` returns 4096 dimensions, and `/api/ps` shows the
+  embedding model with non-zero `size_vram` on the Altra RTX 3090. CPU-only
+  residency is not an acceptable steady state.
 - A stability window has passed with Flamingo stable under normal agent load.

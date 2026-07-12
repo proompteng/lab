@@ -87,6 +87,7 @@ jobs:
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
           install-ci-toolchain: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes
@@ -122,23 +123,23 @@ jobs:
             case "${service}" in
               proompteng)
                 manifest_path="argocd/applications/proompteng/kustomization.yaml"
-                input_paths=(apps/landing packages/backend packages/design packages/scripts/src/proompteng packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/landing packages/backend packages/design nix/images/proompteng.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
               app)
                 manifest_path="argocd/applications/app/kustomization.yaml"
-                input_paths=(apps/app packages/design packages/scripts/src/app packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/app.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/app packages/design nix/images/app.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
               synthesis)
                 manifest_path="argocd/applications/synthesis/kustomization.yaml"
-                input_paths=(apps/synthesis packages/design packages/scripts/src/synthesis packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/synthesis.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/synthesis packages/design nix/images/synthesis.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
               docs)
                 manifest_path="argocd/applications/docs/kustomization.yaml"
-                input_paths=(apps/docs packages/design packages/scripts/src/docs packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/docs packages/design nix/images/docs.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
               olden)
                 manifest_path="argocd/applications/olden/kustomization.yaml"
-                input_paths=(apps/olden packages/design packages/scripts/src/olden packages/scripts/src/shared/cli.ts packages/scripts/src/shared/git.ts packages/scripts/src/shared/nix-oci-deploy.ts nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/product-nix-images.yml .github/workflows/nix-oci-build-common.yml)
+                input_paths=(apps/olden packages/design nix/images/olden.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock)
                 ;;
               *)
                 echo "Unsupported service in release contract: ${service}" >&2
@@ -193,6 +194,7 @@ jobs:
         if: steps.promote.outputs.promoted == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/product-nix-release-${{ github.event.workflow_run.head_sha || inputs.commit_sha }}
           title: 'chore(product): promote nix product images'
           commit-message: 'chore(product): promote nix product images'

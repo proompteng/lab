@@ -10,6 +10,19 @@ from app.trading.strategy_runtime import RuntimeObservation
 
 
 class TestTradingMetrics(TestCase):
+    def test_scheduler_leadership_metrics_are_direct_gauges(self) -> None:
+        payload = render_trading_metrics(
+            {
+                "scheduler_leadership_acquired": 1,
+                "scheduler_leadership_healthy": 0,
+            }
+        )
+
+        self.assertIn("# TYPE torghut_scheduler_leadership_acquired gauge", payload)
+        self.assertIn("torghut_scheduler_leadership_acquired 1", payload)
+        self.assertIn("# TYPE torghut_scheduler_leadership_healthy gauge", payload)
+        self.assertIn("torghut_scheduler_leadership_healthy 0", payload)
+
     def test_metrics_payload_is_detached_from_mutable_state(self) -> None:
         metrics = TradingMetrics()
         metrics.no_signal_reason_total["cursor_ahead_of_stream"] = 1

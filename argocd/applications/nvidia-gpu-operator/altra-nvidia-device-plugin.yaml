@@ -4,6 +4,15 @@ metadata:
   name: altra-nvidia-device-plugin
   namespace: gpu-operator
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: altra-nvidia-device-plugin-config
+  namespace: gpu-operator
+data:
+  config.yaml: |
+    version: v1
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -45,7 +54,7 @@ spec:
   template:
     metadata:
       annotations:
-        platform.proompteng.ai/gpu-sharing-config-version: altra-exclusive-3090
+        platform.proompteng.ai/gpu-sharing-config-version: altra-exclusive-1
       labels:
         app: altra-nvidia-device-plugin
     spec:
@@ -55,6 +64,7 @@ spec:
       nodeSelector:
         kubernetes.io/hostname: talos-192-168-1-85
         nvidia.com/gpu.present: "true"
+        platform.proompteng.ai/altra-gpu-container-ready: "true"
       tolerations:
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
@@ -85,14 +95,19 @@ spec:
             - name: NVIDIA_DEV_ROOT
               value: /
             - name: MIG_STRATEGY
-              value: none
+              value: single
             - name: CDI_ENABLED
               value: "true"
             - name: CDI_ANNOTATION_PREFIX
               value: cdi.k8s.io/
+            - name: CONFIG_FILE
+              value: /config/config.yaml
           securityContext:
             privileged: true
           volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
             - name: device-plugin
               mountPath: /var/lib/kubelet/device-plugins
             - name: driver-install-dir
@@ -105,6 +120,9 @@ spec:
             - name: cdi-root
               mountPath: /var/run/cdi
       volumes:
+        - name: config
+          configMap:
+            name: altra-nvidia-device-plugin-config
         - name: device-plugin
           hostPath:
             path: /var/lib/kubelet/device-plugins

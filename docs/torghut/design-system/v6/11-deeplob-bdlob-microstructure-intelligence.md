@@ -16,6 +16,20 @@
   - `services/torghut/tests/test_policy_checks.py`
 - Rollout gap: Closed for full Wave 5 scope, including advisor timeout/staleness fallback SLO closure (`2026-03-03`).
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented/prototyped: LLM review, DSPy scripts, discovery stress modules, and Jangar OpenAI-compatible routes exist; many ML/LOB designs remain research/prototype.
+- Matched implementation area: LLM, DSPy, AI review, and model governance.
+- Current source evidence:
+  - `services/torghut/app/trading/llm`
+  - `services/torghut/scripts/run_dspy_workflow.py`
+  - `services/torghut/scripts/compile_dspy_program.py`
+  - `services/jangar/src/routes/openai/v1/chat/completions.ts`
+  - `services/torghut/app/trading/discovery/order_flow_features.py`
+- Design drift note: Distinguish production review gates from research/prototype model ideas.
+
+
 ## Objective
 
 Add high-quality order-book intelligence with strict freshness, quality, and execution-safety constraints so short-horizon alpha is measured after realistic costs.

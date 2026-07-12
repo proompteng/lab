@@ -1,23 +1,20 @@
 # 60. Torghut Hypothesis Passports and Profit Guardrail Admission Contract (2026-03-20)
 
 Status: Approved for implementation (`plan`)
-Date: `2026-03-20`
-Owner: Victor Chen (Jangar Engineering)
-Mission: `codex/swarm-jangar-control-plane-plan`
-Swarm impacts:
 
-- `jangar-control-plane`
-- `torghut-quant`
+## Source Implementation Audit (2026-07-04)
 
-Companion doc:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-- `docs/agents/designs/61-jangar-runtime-kit-ledger-and-execution-class-admission-contract-2026-03-20.md`
-
-Extends:
-
-- `59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
-- `58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
-- `55-torghut-hypothesis-settlement-exchange-and-lane-capability-leases-2026-03-20.md`
 
 ## Executive summary
 

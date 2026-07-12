@@ -1,22 +1,20 @@
 # 191. Torghut Source-Serving Proof And Repair-Receipt Promotion (2026-05-13)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-13
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant source-serving proof, repair-receipt promotion, route-warrant contract canaries, image
-provenance, capital safety, validation, rollout, rollback, and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
 
-Extends:
-
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `190-torghut-route-warrant-exchange-and-ingestion-proof-reentry-2026-05-13.md`
-- `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
-- `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
-- `docs/agents/designs/187-jangar-main-source-ci-retention-and-source-serving-verdicts-2026-05-13.md`
 
 ## Decision
 

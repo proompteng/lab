@@ -6,10 +6,7 @@ on:
       - main
     paths:
       - 'services/oirat/**'
-      - 'packages/scripts/src/oirat/**'
-      - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'packages/discord/**'
       - 'flake.lock'
       - 'nix/images/oirat.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -19,16 +16,12 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
-      - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'services/oirat/**'
-      - 'packages/scripts/src/oirat/**'
-      - '.github/workflows/oirat-ci.yml'
-      - '.github/workflows/nix-oci-build-common.yml'
-      - '.github/workflows/enabled-simple-nix-release.yml'
+      - 'packages/discord/**'
       - 'flake.lock'
       - 'nix/images/oirat.nix'
       - 'nix/images/bun-workspace-service.nix'
@@ -38,9 +31,8 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/oci-inspect-archive.sh'
       - 'nix/oci-push.sh'
-      - 'nix/oci-release-contract.sh'
-      - 'package.json'
       - 'bun.lock'
+      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:
@@ -68,6 +60,6 @@ jobs:
       image_name: oirat
       package_attr: oirat-image
       tag: sha-${{ github.sha }}
-      latest: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-      release_artifact_name: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
+      latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
+      release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
     secrets: inherit

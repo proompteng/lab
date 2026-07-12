@@ -1,20 +1,20 @@
 # 158. Torghut Route Reacquisition And Market Context Repair Cells (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, route reacquisition, market-context freshness, quant pipeline scoped health, paper
-capital guardrails, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/154-jangar-repair-cell-admission-and-market-context-trust-gates-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `157-torghut-profit-contract-actuation-and-capital-surface-truth-2026-05-07.md`
-- `156-torghut-repair-closure-yield-ledger-and-capital-unlock-receipts-2026-05-07.md`
-- `152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
 
 ## Decision
 

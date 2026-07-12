@@ -17,7 +17,21 @@ type Args = {
   passwordSecretKey: string
   kafkaNamespace: string
   kafkaPod?: string
-  format: 'raw' | 'summary' | 'json'
+  format: 'raw' | 'summary' | 'json' | 'base64' | 'partitions'
+}
+
+type KafkaPodListItem = {
+  metadata: {
+    name: string
+    labels?: Record<string, string>
+  }
+  status?: {
+    phase?: string
+    conditions?: Array<{
+      type?: string
+      status?: string
+    }>
+  }
 }
 
 const usage = () =>
@@ -44,7 +58,8 @@ Options:
   --kafka-namespace <ns>              Namespace that contains the Kafka broker pod (default: kafka)
   --kafka-pod <pod>                   Kafka broker pod to exec into (default: auto-detect)
 
-  --format raw|summary|json           Output format (default: summary)
+  --format raw|summary|json|base64|partitions
+                                      Output format (default: summary)
 
 Examples:
   KAFKA_USERNAME=torghut-ws KAFKA_PASSWORD=$(kubectl -n torghut get secret torghut-ws -o jsonpath='{.data.password}' | base64 -d) \\
@@ -130,8 +145,10 @@ const execCapture = async (
   })
 
   if (options.stdin !== undefined) {
-    void subprocess.stdin.write(options.stdin)
-    void subprocess.stdin.end()
+    const stdin = subprocess.stdin
+    if (stdin === undefined) return fatal('Subprocess stdin pipe was not created')
+    void stdin.write(options.stdin)
+    void stdin.end()
   }
 
   const stdout = await new Response(subprocess.stdout).text()
@@ -148,15 +165,31 @@ const kubectlJson = async <T>(args: string[]): Promise<T> => {
   return JSON.parse(stdout) as T
 }
 
-const pickKafkaPod = async (namespace: string) => {
-  const data = await kubectlJson<{ items: Array<{ metadata: { name: string } }> }>(['-n', namespace, 'get', 'pods'])
-  const candidates = data.items
-    .map((item) => item.metadata.name)
-    .filter((name) => name.startsWith('kafka-pool-'))
-    .sort()
+const podIsReady = (pod: KafkaPodListItem) =>
+  pod.status?.phase === 'Running' &&
+  pod.status.conditions?.some((condition) => condition.type === 'Ready' && condition.status === 'True')
+
+export const selectKafkaPodName = (items: KafkaPodListItem[]) => {
+  const candidates = items
+    .filter((item) => item.metadata.name.startsWith('kafka-pool-'))
+    .sort((left, right) => left.metadata.name.localeCompare(right.metadata.name))
+
+  const brokerCandidates = candidates.filter((item) => item.metadata.labels?.['strimzi.io/broker-role'] === 'true')
+  const brokerReadyCandidates = brokerCandidates.filter(podIsReady)
+  const readyCandidates = candidates.filter(podIsReady)
+
   return (
-    candidates[0] ?? fatal(`No Kafka broker pod found in namespace '${namespace}' (expected name like kafka-pool-*)`)
+    brokerReadyCandidates[0]?.metadata.name ??
+    readyCandidates[0]?.metadata.name ??
+    brokerCandidates[0]?.metadata.name ??
+    candidates[0]?.metadata.name
   )
+}
+
+const pickKafkaPod = async (namespace: string) => {
+  const data = await kubectlJson<{ items: KafkaPodListItem[] }>(['-n', namespace, 'get', 'pods'])
+  const selected = selectKafkaPodName(data.items)
+  return selected ?? fatal(`No Kafka broker pod found in namespace '${namespace}' (expected name like kafka-pool-*)`)
 }
 
 const toSummary = (line: string) => {
@@ -246,7 +279,7 @@ const main = async () => {
   }
 
   args.format = args.format ?? 'summary'
-  if (!['raw', 'summary', 'json'].includes(args.format)) {
+  if (!['raw', 'summary', 'json', 'base64', 'partitions'].includes(args.format)) {
     fatal(`Invalid --format: ${String(args.format)}`)
   }
 
@@ -254,15 +287,16 @@ const main = async () => {
   if (!args.username) fatal('Missing --username (or env KAFKA_USERNAME)')
 
   if (!args.password) {
-    if (!args.passwordSecretName) {
-      fatal('Missing --password (or env KAFKA_PASSWORD), or provide --password-secret-name/namespace/key')
+    const passwordSecretName = args.passwordSecretName
+    if (!passwordSecretName) {
+      return fatal('Missing --password (or env KAFKA_PASSWORD), or provide --password-secret-name/namespace/key')
     }
     const encoded = await execCapture('kubectl', [
       '-n',
       args.passwordSecretNamespace,
       'get',
       'secret',
-      args.passwordSecretName,
+      passwordSecretName,
       '-o',
       `jsonpath={.data.${args.passwordSecretKey}}`,
     ])
@@ -280,11 +314,22 @@ const main = async () => {
     'sasl.mechanism=$SASL_MECHANISM',
     'sasl.jaas.config=org.apache.kafka.common.security.scram.ScramLoginModule required username="$KAFKA_USERNAME" password="$PASS";',
     'PROPS',
-    'end_offset=$(/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CLIENT" --topic "$TOPIC" --time latest | awk -F: -v p="$PARTITION" \'$2==p{print $3}\' | tail -n 1)',
+    'offsets=$(/opt/kafka/bin/kafka-get-offsets.sh --bootstrap-server "$BOOTSTRAP" --command-config "$CLIENT" --topic "$TOPIC" --time latest)',
+    'if [ "$FORMAT" = "partitions" ]; then',
+    '  printf "%s\n" "$offsets" | awk -F: \'NF>=3 {printf "{\\\"topic\\\":\\\"%s\\\",\\\"partition\\\":%s,\\\"endOffset\\\":%s}\\n", $1, $2, $3}\'',
+    '  exit 0',
+    'fi',
+    'end_offset=$(printf "%s\n" "$offsets" | awk -F: -v p="$PARTITION" \'$2==p{print $3}\' | tail -n 1)',
     'if [ -z "$end_offset" ]; then end_offset=0; fi',
     'start_offset=$(( end_offset - TAIL ))',
     'if [ "$start_offset" -lt 0 ]; then start_offset=0; fi',
-    '/opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server "$BOOTSTRAP" --consumer.config "$CLIENT" --topic "$TOPIC" --partition "$PARTITION" --offset "$start_offset" --max-messages "$TAIL" --timeout-ms "$TIMEOUT_MS"',
+    'consumer_args=(--bootstrap-server "$BOOTSTRAP" --command-config "$CLIENT" --topic "$TOPIC" --partition "$PARTITION" --offset "$start_offset" --max-messages "$TAIL" --timeout-ms "$TIMEOUT_MS")',
+    'if [ "$FORMAT" = "base64" ]; then',
+    '  /opt/kafka/bin/kafka-console-consumer.sh "${consumer_args[@]}" | base64 | tr -d "\\n"',
+    '  printf "\\n"',
+    'else',
+    '  /opt/kafka/bin/kafka-console-consumer.sh "${consumer_args[@]}"',
+    'fi',
   ].join('\n')
 
   const stdout = await execCapture(
@@ -305,6 +350,7 @@ const main = async () => {
       `SECURITY_PROTOCOL=${args.securityProtocol}`,
       `SASL_MECHANISM=${args.saslMechanism}`,
       `KAFKA_USERNAME=${args.username}`,
+      `FORMAT=${args.format}`,
       'bash',
       '-lc',
       remoteScript,
@@ -312,10 +358,22 @@ const main = async () => {
     { stdin: `${args.password}\n` },
   )
 
+  if (args.format === 'base64') {
+    const encoded = stdout.trim()
+    process.stdout.write(encoded.length > 0 ? `${encoded}\n` : '')
+    return
+  }
+
   const lines = stdout
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
+
+  if (args.format === 'partitions') {
+    const partitions = lines.map((line) => JSON.parse(line))
+    process.stdout.write(`${JSON.stringify(partitions, null, 2)}\n`)
+    return
+  }
 
   if (args.format === 'raw') {
     process.stdout.write(lines.join('\n') + (lines.length ? '\n' : ''))

@@ -22,11 +22,27 @@ const arcKubeModeServiceAccount = readFileSync(
 describe('torghut post-deploy verifier workflow', () => {
   it('does not skip Knative Service readiness when the runner lacks RBAC', () => {
     expect(workflow).not.toContain('Skipping Knative Service readiness check')
-    expect(workflow).toContain('Failed to read Knative Service torghut')
+    expect(workflow).toContain('Failed to read Knative Service ${service}')
+  })
+
+  it('polls Knative Service readiness after Argo applies a new revision', () => {
+    expect(workflow).toContain('wait_knative_service_ready()')
+    expect(workflow).toContain('KNSVC_READY_ATTEMPTS=60')
+    expect(workflow).toContain('KNSVC_READY_INTERVAL_SECONDS=2')
+    expect(workflow).toContain('wait_knative_service_ready torghut')
+    expect(workflow).toContain('wait_knative_service_ready torghut-sim')
+    expect(workflow).toContain(
+      'Attempt ${attempt}: Knative Service ${service} ready=${ready:-empty} latestReady=${latest_ready:-empty} latestCreated=${latest_created:-empty}',
+    )
+    expect(workflow).toContain('Knative Service ${service} did not become Ready after bounded retry window')
+    expect(workflow).not.toContain('KNSVC_READY_STATUS=$?')
+    expect(workflow).not.toContain('SIM_KNSVC_READY_STATUS=$?')
   })
 
   it('uses a shell-safe jsonpath for Knative Service readiness', () => {
-    expect(workflow).toContain(`jsonpath='{.status.conditions[?(@.type=="Ready")].status}'`)
+    expect(workflow).toContain(
+      `jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.latestReadyRevisionName} {.status.latestCreatedRevisionName}'`,
+    )
     expect(workflow).not.toContain(`jsonpath='{.status.conditions[?(@.type==\\"Ready\\")].status}'`)
   })
 
@@ -49,11 +65,63 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('torghut-ws-options')
   })
 
-  it('delegates readyz acceptance to the revenue repair evidence validator', () => {
-    expect(workflow).toContain('TORGHUT_READYZ_HTTP_STATUS')
-    expect(workflow).toContain('TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"')
+  it('delegates distinct API, scheduler, and status evidence to the runtime contract validator', () => {
+    expect(workflow).toContain('TORGHUT_SCHEDULER_REPLICAS')
+    expect(workflow).toContain('TORGHUT_API_READYZ_HTTP_STATUS')
+    expect(workflow).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS')
+    expect(workflow).toContain('TORGHUT_SIM_TRADING_ENABLED')
+    expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS')
+    expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS')
+    expect(workflow).toContain('TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"')
+    expect(workflow).toContain('TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"')
+    expect(workflow).toContain('TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
+    expect(workflow).toContain('TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"')
     expect(workflow).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts')
-    expect(workflow).not.toContain('Torghut /readyz returned HTTP')
+    expect(workflow).not.toContain('/trading/revenue-repair')
+    expect(workflow).not.toContain('/trading/proofs')
+  })
+
+  it('reads and bounds the live scheduler replica count after Argo convergence', () => {
+    const replicaRead = workflow.indexOf(
+      "kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'",
+    )
+    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+
+    expect(replicaRead).toBeGreaterThan(argoWait)
+    expect(workflow).toContain('case "${TORGHUT_SCHEDULER_REPLICAS}" in')
+    expect(workflow).toContain('0 | 1)')
+    expect(workflow).toContain(
+      'Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}',
+    )
+    expect(workflow).toContain('if [ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]; then')
+    expect(workflow).toContain('kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m')
+  })
+
+  it('reads and exports the desired torghut-sim trading state from the live Knative Service', () => {
+    const desiredStateRead = workflow.indexOf('kubectl get ksvc torghut-sim -n torghut -o json')
+    const argoWait = workflow.indexOf('for app in torghut torghut-options; do')
+
+    expect(desiredStateRead).toBeGreaterThan(argoWait)
+    expect(workflow).toContain('select(.name == "TRADING_ENABLED")')
+    expect(workflow).toContain('case "${TORGHUT_SIM_TRADING_ENABLED}" in')
+    expect(workflow).toContain('true | false)')
+    expect(workflow).toContain(
+      'torghut-sim desired TRADING_ENABLED must be exactly true or false; got ${TORGHUT_SIM_TRADING_ENABLED:-unset}',
+    )
+    expect(workflow).toContain('export TORGHUT_SIM_TRADING_ENABLED')
+  })
+
+  it('runs market-data freshness verification after deploy evidence is accepted', () => {
+    expect(workflow).toContain('Verify market-data freshness')
+    expect(workflow).toContain('MARKET_DATA_FRESHNESS_MODE: auto')
+    expect(workflow).toContain("MARKET_DATA_MAX_LAG_SECONDS: '300'")
+    expect(workflow).toContain("MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'")
+    expect(workflow).toContain(
+      "MARKET_DATA_HOLIDAYS: '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25,2027-01-01,2027-01-18,2027-02-15,2027-03-26,2027-05-31,2027-06-18,2027-07-05,2027-09-06,2027-11-25,2027-12-24,2027-12-31,2028-01-17,2028-02-21,2028-04-14,2028-05-29,2028-06-19,2028-07-04,2028-09-04,2028-11-23,2028-12-25'",
+    )
+    expect(workflow).toContain("MARKET_DATA_PRINT_SUMMARIES: 'false'")
+    expect(workflow).not.toContain("KAFKA_TOPIC_PARTITIONS: '0,1,2'")
+    expect(workflow).toContain('bun run smoke:torghut-market-data')
   })
 
   it('retries database-timeout readyz 503 payloads until they match an accepted readyz contract', () => {
@@ -64,66 +132,86 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(workflow).toContain('without an acceptable readyz contract')
     expect(workflow).toContain('READYZ_EVIDENCE_ATTEMPTS=12')
     expect(workflow).toContain('fetch_readyz_json \\')
+    expect(workflow).toContain('http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz')
   })
 
-  it('retries Knative service JSON evidence capture before invoking the validator', () => {
+  it('always captures stable API readiness and conditionally captures scheduler readiness', () => {
+    const apiCapture = workflow.indexOf('TORGHUT_API_READYZ_HTTP_STATUS="$(')
+    const schedulerCondition = workflow.indexOf('if [ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]; then', apiCapture)
+    const schedulerCapture = workflow.indexOf('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
+    const schedulerPayloadExport = workflow.indexOf('export TORGHUT_SCHEDULER_READYZ_PAYLOAD', schedulerCapture)
+
+    expect(apiCapture).toBeGreaterThan(-1)
+    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/readyz')
+    expect(schedulerCondition).toBeGreaterThan(apiCapture)
+    expect(schedulerCapture).toBeGreaterThan(schedulerCondition)
+    expect(schedulerPayloadExport).toBeGreaterThan(schedulerCapture)
+    expect(workflow).not.toContain('touch "${EVIDENCE_DIR}/torghut-scheduler-readyz.json"')
+  })
+
+  it('bounds full-contract convergence and fails after the final attempt', () => {
+    const finalFailure = workflow.indexOf(
+      'Torghut full post-deploy contract did not converge after ${FULL_CONTRACT_ATTEMPTS} attempts',
+    )
+    const finalExit = workflow.indexOf('exit 1', finalFailure)
+
+    expect(workflow).toContain('FULL_CONTRACT_ATTEMPTS=120')
+    expect(workflow).toContain('FULL_CONTRACT_INTERVAL_SECONDS=10')
+    expect(workflow).toContain('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
+    expect(workflow).toContain('sleep "${FULL_CONTRACT_INTERVAL_SECONDS}"')
+    expect(workflow).toContain('[ "${contract_attempt}" -eq "${FULL_CONTRACT_ATTEMPTS}" ]')
+    expect(finalFailure).toBeGreaterThan(-1)
+    expect(finalExit).toBeGreaterThan(finalFailure)
+  })
+
+  it('refetches every evidence surface and invokes the strict validator inside each convergence attempt', () => {
+    const loopStart = workflow.indexOf('for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do')
+    const loopEnd = workflow.indexOf('\n          done', loopStart)
+    const loopBody = workflow.slice(loopStart, loopEnd)
+
+    expect(loopStart).toBeGreaterThan(-1)
+    expect(loopEnd).toBeGreaterThan(loopStart)
+    expect(loopBody).toContain('rm -f \\')
+    expect(loopBody).toContain('TORGHUT_API_READYZ_HTTP_STATUS="$(')
+    expect(loopBody).toContain('TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(')
+    expect(loopBody).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
+    expect(loopBody).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
+    expect(loopBody).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/status')
+    expect(loopBody).toContain('"${EVIDENCE_DIR}/torghut-sim-status.json"')
+    expect(loopBody).toContain('bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1')
+    expect(loopBody).toContain('[ "${TORGHUT_SCHEDULER_REPLICAS}" = \'1\' ]')
+    expect(loopBody).not.toContain('contract_mismatch_accepted')
+  })
+
+  it('retries parseable JSON evidence capture before invoking the validator', () => {
     expect(workflow).toContain('fetch_json()')
     expect(workflow).toContain('python3 -m json.tool "${output_path}"')
     expect(workflow).toContain('not usable JSON yet; retrying')
-    expect(workflow).toContain('fetch_json_2xx')
-    expect(workflow).toContain('fetch_json_2xx_optional')
-    expect(workflow).toContain('Torghut sim /trading/proofs')
+    expect(workflow).not.toContain('fetch_json_2xx')
     expect(workflow).not.toContain('curl -fsS http://torghut.torghut.svc.cluster.local/trading/status')
   })
 
-  it('retries parseable non-2xx deploy evidence before failing', () => {
-    expect(workflow).toContain('Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying')
-    expect(workflow).toContain('did not return a parseable JSON HTTP 2xx response')
+  it('captures the trading status HTTP code for mode-aware validation without requiring 2xx', () => {
+    expect(workflow).toContain('TORGHUT_STATUS_HTTP_STATUS="$(')
+    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/status')
+    expect(workflow).toContain('export TORGHUT_STATUS_HTTP_STATUS')
+    expect(workflow).toContain('trading status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS:-unset}')
     expect(workflow).toContain('HTTP_MAX_TIME_SECONDS=15')
     expect(workflow).toContain('JSON_EVIDENCE_ATTEMPTS=3')
     expect(workflow).toContain('--max-time "${HTTP_MAX_TIME_SECONDS}"')
-    expect(workflow).not.toContain('status="$(fetch_json "${url}" "${output_path}" "${label}")"')
+    expect(workflow).not.toContain('fetch_json_2xx')
+    expect(workflow).not.toContain('expected 2xx')
     expect(workflow).not.toContain('--max-time 90')
   })
 
-  it('verifies torghut-sim paper-route target mirroring after deploy', () => {
-    expect(workflow).toContain('Knative Service torghut-sim is not Ready')
-    expect(workflow).toContain('http://torghut.torghut.svc.cluster.local/trading/proofs')
-    expect(workflow).toContain('http://torghut-sim.torghut.svc.cluster.local/trading/proofs')
-    expect(workflow).toContain('TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
-    expect(workflow).toContain('capture_paper_route_mirror_evidence()')
-    expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry')
-  })
-
-  it('keeps slow paper-route proof endpoints from failing otherwise healthy rollouts', () => {
-    expect(workflow).toContain('Torghut /trading/revenue-repair')
-    expect(workflow).toContain('fetch_json_2xx \\')
-    expect(workflow).toContain('fetch_json_2xx_optional()')
-    expect(workflow).toContain('PAPER_ROUTE_EVIDENCE_ATTEMPTS=1')
-    expect(workflow).toContain('PAPER_ROUTE_HTTP_MAX_TIME_SECONDS=8')
-    expect(workflow).toContain('--max-time "${PAPER_ROUTE_HTTP_MAX_TIME_SECONDS}"')
-    expect(workflow).toContain(
-      'Paper-route mirror evidence unavailable; hard rollout, image-pull, readyz, status, and revenue-repair gates passed',
-    )
-    expect(workflow).toContain('unavailable after bounded optional evidence retry')
-    expect(workflow).toContain('unset TORGHUT_PAPER_ROUTE_EVIDENCE')
-    expect(workflow).toContain('unset TORGHUT_SIM_PAPER_ROUTE_EVIDENCE')
-    expect(workflow).toContain('run_post_deploy_evidence_validator')
-  })
-
-  it('retries transient sim paper-route target mirror gaps before rollback', () => {
-    expect(workflow).toContain('validate_post_deploy_evidence_with_mirror_retry()')
-    expect(workflow).toContain('post-deploy-evidence-validator.out')
-    expect(workflow).toContain(
-      'torghut-sim paper-route target plan (is empty while live torghut exposes targets|missing live target)',
-    )
-    expect(workflow).toContain(
-      'Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads',
-    )
-    expect(workflow).toContain('Torghut sim paper-route target mirror did not materialize after bounded retry window')
-    expect(workflow).toContain('SIM_MIRROR_ATTEMPTS=12')
-    expect(workflow).toContain('SIM_MIRROR_RETRY_INTERVAL_SECONDS=5')
-    expect(workflow).not.toContain('sleep 10')
+  it('keeps simulation rollout readiness and adds strict local-runtime evidence', () => {
+    expect(workflow).toContain('wait_knative_service_ready torghut-sim')
+    expect(workflow).toContain('TORGHUT_SIM_STATUS_HTTP_STATUS="$(')
+    expect(workflow).toContain('export TORGHUT_SIM_STATUS_HTTP_STATUS')
+    expect(workflow).toContain('export TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"')
+    expect(workflow).toContain('simulation trading status capture failed')
+    expect(workflow).not.toContain('PAPER_ROUTE_EVIDENCE')
+    expect(workflow).not.toContain('SIM_MIRROR')
   })
 
   it('requests explicit Argo sync before polling deployed revisions', () => {
@@ -160,6 +248,30 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('arc-arm64-gha-rs-kube-mode')
   })
 
+  it('grants the ARC runner only the extra Kubernetes access needed for market-data smoke', () => {
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-torghut-market-data-read')
+    expect(agentsCiClusterRbac).toContain('kind: Role')
+    expect(agentsCiClusterRbac).toContain('kind: RoleBinding')
+    expect(agentsCiClusterRbac).toContain('namespace: torghut')
+    expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ws')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - configmaps')
+    expect(agentsCiClusterRbac).toContain('resourceNames:\n      - torghut-ta-config')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - pods')
+    expect(agentsCiClusterRbac).toContain('resources:\n      - pods/exec')
+    expect(agentsCiClusterRbac).toContain('agents-ci-runner-kafka-tail')
+    expect(agentsCiClusterRbac).toContain('namespace: kafka')
+    expect(agentsCiClusterRbac).not.toContain('kind: ClusterRole\nmetadata:\n  name: agents-ci-runner-kafka-tail')
+    expect(agentsCiClusterRbac).not.toContain(
+      'kind: ClusterRoleBinding\nmetadata:\n  name: agents-ci-runner-kafka-tail',
+    )
+    expect(agentsCiClusterRbac).not.toContain(
+      'kind: ClusterRole\nmetadata:\n  name: agents-ci-runner-torghut-market-data-read',
+    )
+    expect(agentsCiClusterRbac).not.toContain(
+      'kind: ClusterRoleBinding\nmetadata:\n  name: agents-ci-runner-torghut-market-data-read',
+    )
+  })
+
   it('runs arm64 workflows with the kube-mode service account that receives post-deploy RBAC', () => {
     expect(arcApplication).toContain('runnerScaleSetName: arc-arm64')
     expect(arcApplication).toContain('serviceAccountName: arc-arm64-gha-rs-kube-mode')
@@ -172,34 +284,5 @@ describe('torghut post-deploy verifier workflow', () => {
     expect(agentsCiClusterRbac).toContain('agents-ci-runner-argocd-application-refresh')
     expect(agentsCiClusterRbac).toContain('argoproj.io')
     expect(agentsCiClusterRbac).toContain('patch')
-  })
-
-  it('closes superseded automatic rollback pull requests after successful verification', () => {
-    expect(workflow).toContain('Close superseded Torghut rollback pull requests')
-    expect(workflow).toContain("success() && github.event_name == 'push' && github.ref == 'refs/heads/main'")
-    expect(workflow).toContain('uses: actions/github-script@v8')
-    expect(workflow).toContain('codex/torghut-rollback-')
-    expect(workflow).toContain('revert(torghut): rollback failed promotion ')
-    expect(workflow).toContain('github.paginate(github.rest.pulls.list')
-    expect(workflow).toContain('github.rest.pulls.update')
-    expect(workflow).toContain('github.rest.git.deleteRef')
-    expect(workflow).not.toContain('gh pr close')
-  })
-
-  it('closes older automatic rollback pull requests before opening a new failed-promotion rollback', () => {
-    expect(workflow).toContain('Close older failed-promotion rollback pull requests')
-    expect(workflow).toContain("failure() && steps.rollback.outputs.should_rollback == 'true'")
-    expect(workflow).toContain(
-      'CURRENT_ROLLBACK_BRANCH: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}',
-    )
-    expect(workflow).toContain('pr.head.ref !== currentBranch')
-    expect(workflow).toContain('because a newer failed promotion rollback is being opened')
-    expect(workflow).not.toContain('gh pr list -R "${GH_REPO}"')
-  })
-
-  it('does not open rollback pull requests for stale main push verifiers', () => {
-    expect(workflow).toContain('MAIN_HEAD="$(git rev-parse origin/main)"')
-    expect(workflow).toContain('Skipping rollback PR because main advanced from ${GITHUB_SHA} to ${MAIN_HEAD}')
-    expect(workflow).toContain('echo "should_rollback=false" >> "$GITHUB_OUTPUT"')
   })
 })

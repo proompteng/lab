@@ -1,12 +1,12 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to Claude Code when working in this repository.
 
 ## Project Overview
 
-This is a comprehensive home cloud laboratory monorepo containing:
+This is a comprehensive Proompteng laboratory monorepo containing:
 
-- Multiple applications (Next.js, React, TypeScript, Python, Go)
+- Applications and services across Next.js, React, TypeScript, Python, Go, Kotlin, and Ruby
 - Infrastructure as Code (OpenTofu/Terraform)
 - GitOps deployment configurations (ArgoCD)
 - Configuration management (Ansible)
@@ -31,17 +31,17 @@ bun run format
 
 ```bash
 # Start development servers
-bun run dev:proompteng
+bun run dev:landing
 
 # Build applications
 bun run build:proompteng
 bun run build:reviseur
 
 # Start production servers
-bun run start:proompteng
+bun run start:landing
 
 # Lint applications
-bun run lint:proompteng
+bun run lint:landing
 ```
 
 ### Individual App Commands
@@ -75,7 +75,7 @@ bun run tf:apply    # Apply infrastructure changes
 bun run tf:destroy  # Destroy infrastructure
 
 # Ansible configuration management
-bun run ansible     # Run Rancher installation playbook
+bun run ansible     # Run the configured Ansible playbook
 
 # Kubernetes operations
 bun run k:install   # Install K3s cluster
@@ -91,7 +91,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 ### Monorepo Layout
 
 - `/apps/` - Independent applications with their own package.json
-- `/services/` - Go backend services
+- `/services/` - Backend services across TypeScript, Go, Python, Ruby, and Kotlin
 - `/argocd/` - GitOps deployment manifests and ApplicationSets
 - `/tofu/` - Infrastructure as Code (OpenTofu/Terraform)
 - `/ansible/` - Configuration management playbooks
@@ -101,14 +101,14 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 ### Key Technologies
 
 - **Frontend**: Next.js 15, React 19, TanStack Router, tRPC, Tailwind CSS
-- **Backend**: Go 1.24, Node.js 22.20, Python 3.9-3.13
+- **Backend**: Go 1.25.5 for repo parity, Node.js 24.11.1, Python 3.9-3.12 for alchimie, Python 3.11-3.12 for Torghut, Ruby 3.4.7, and Kotlin services under Dorvud
 - **Data**: Dagster, Temporal, PostgreSQL, Kafka, Milvus
-- **Infrastructure**: Kubernetes (K3s), ArgoCD, Harvester, Ansible
-- **Tooling**: Bun 1.3.14, Oxfmt, Oxlint, Turbo, Docker, UV
+- **Infrastructure**: Kubernetes, Argo CD, OpenTofu, Ansible, Talos/device manifests, and GitOps ApplicationSets
+- **Tooling**: Nix dev shell, Node 24.11.1, Bun 1.3.14, Oxfmt, Oxlint, Turbo, Docker, UV
 
 ### Application Patterns
 
-- **Next.js apps** (proompteng): Use App Router, TypeScript, Tailwind CSS, @proompteng/design components
+- **Next.js apps** such as `landing`, `docs`, and `cms`: use TypeScript, Tailwind CSS, and shared Proompteng packages as applicable
 - **React apps** (kitty-krew): TanStack Start with TanStack Router and tRPC for type-safe APIs
 - **Python apps** (alchimie): Dagster for data pipelines, UV for dependency management
 - **Go services** (prt): Temporal workflows, PostgreSQL integration, database migrations
@@ -158,8 +158,7 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 
 ## Kubernetes Context
 
-- Harvester cluster config: `~/.kube/altra.yaml`
-- Use `kubectl --kubeconfig ~/.kube/altra.yaml` for cluster operations
+- Use the current/default kube context unless a task explicitly provides a kubeconfig.
 - ArgoCD UI available after bootstrap
 
 ### ArgoCD, kubectl, and git preferences
@@ -167,3 +166,9 @@ kubectl --kubeconfig ~/.kube/altra.yaml apply -f ./tofu/harvester/templates
 - Use the current/default kube context by default; do not pass a kubeconfig path unless explicitly requested.
 - Scope kubectl to the target namespace with `-n`; prefer read-only queries (get/describe/logs) and short-lived actions (rollout restart). Avoid `kubectl apply` for desired state unless asked.
 - Manage apps declaratively via Git under `argocd/`; pin chart versions and avoid ad-hoc Helm installs.
+
+## Documentation Hygiene
+
+- Use repo-relative paths in documentation links.
+- For stale or dated design docs, update the document authority/status directly instead of adding mechanical link-only checks.
+- Keep this file synchronized with `README.md`, `AGENTS.md`, root `package.json`, and nearby service READMEs.

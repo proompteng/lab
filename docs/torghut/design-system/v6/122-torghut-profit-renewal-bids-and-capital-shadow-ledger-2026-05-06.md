@@ -1,21 +1,20 @@
 # 122. Torghut Profit Renewal Bids And Capital Shadow Ledger (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability renewal, stale empirical jobs, quant freshness, market-context rehydration, capital
-readmission, and Jangar repair admission consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/118-jangar-repair-admission-governor-and-profit-renewal-bids-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `121-torghut-evidence-debt-tranches-and-profit-unblock-ladder-2026-05-06.md`
-- `120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
-- `119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
-- `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 
 ## Decision
 

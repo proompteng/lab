@@ -10,7 +10,6 @@ from tests.submission_council.support import (
     StrategyPromotionDecision,
     SubmissionCouncilTestCase,
     build_hypothesis_runtime_summary,
-    build_live_submission_gate_payload,
     create_engine,
     datetime,
     patch,
@@ -121,31 +120,6 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
                     market_context_status={"last_freshness_seconds": 10},
                 )
 
-            gate = build_live_submission_gate_payload(
-                SimpleNamespace(
-                    last_autonomy_promotion_eligible=True,
-                    last_autonomy_promotion_action="promote",
-                    drift_live_promotion_eligible=False,
-                    last_market_context_freshness_seconds=45,
-                ),
-                hypothesis_summary=summary,
-                empirical_jobs_status={"ready": True, "status": "healthy"},
-                quant_health_status=self._healthy_quant_status(),
-                promotion_certificate_evidence=[
-                    {
-                        "hypothesis_id": "H-CONT-01",
-                        "metric_window": self._metric_window(
-                            capital_stage="shadow",
-                            observed_stage="paper",
-                        ),
-                        "promotion_decision": self._promotion_decision(
-                            capital_stage="shadow"
-                        ),
-                    }
-                ],
-                session=session,
-            )
-
         self.assertEqual(summary["promotion_eligible_total"], 0)
         self.assertEqual(summary["paper_probation_eligible_total"], 1)
         item = summary["items"][0]
@@ -167,96 +141,6 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
         self.assertEqual(
             item["observed"]["runtime_window_prior_reasons"],
             ["drift_checks_missing"],
-        )
-        self.assertFalse(gate["allowed"])
-        self.assertIn(
-            "alpha_readiness_not_promotion_eligible",
-            gate["blocked_reasons"],
-        )
-        self.assertIn("promotion_certificate_shadow_only", gate["blocked_reasons"])
-        self.assertIn("alpha_hypothesis_shadow_only", gate["blocked_reasons"])
-
-        stale_summary = dict(summary)
-        stale_summary.update(
-            {
-                "items": runtime_items,
-                "promotion_eligible_total": 0,
-                "capital_stage_totals": {"shadow": 1},
-                "reason_totals": {"drift_checks_missing": 1},
-                "informational_reason_totals": {},
-            }
-        )
-        stale_gate = build_live_submission_gate_payload(
-            SimpleNamespace(
-                last_autonomy_promotion_eligible=True,
-                last_autonomy_promotion_action="promote",
-                drift_live_promotion_eligible=False,
-                last_market_context_freshness_seconds=45,
-            ),
-            hypothesis_summary=stale_summary,
-            empirical_jobs_status={"ready": True, "status": "healthy"},
-            quant_health_status=self._healthy_quant_status(),
-            promotion_certificate_evidence=[
-                {
-                    "hypothesis_id": "H-CONT-01",
-                    "metric_window": self._metric_window(
-                        capital_stage="shadow",
-                        observed_stage="paper",
-                    ),
-                    "promotion_decision": self._promotion_decision(
-                        capital_stage="shadow"
-                    ),
-                }
-            ],
-            session=session,
-        )
-
-        self.assertEqual(stale_gate["promotion_eligible_total"], 0)
-        self.assertEqual(stale_gate["paper_probation_eligible_total"], 1)
-        self.assertIn(
-            "alpha_readiness_not_promotion_eligible",
-            stale_gate["blocked_reasons"],
-        )
-        self.assertIn(
-            "promotion_certificate_shadow_only",
-            stale_gate["blocked_reasons"],
-        )
-        self.assertIn("alpha_hypothesis_shadow_only", stale_gate["blocked_reasons"])
-
-        non_shadow_paper_gate = build_live_submission_gate_payload(
-            SimpleNamespace(
-                last_autonomy_promotion_eligible=True,
-                last_autonomy_promotion_action="promote",
-                drift_live_promotion_eligible=False,
-                last_market_context_freshness_seconds=45,
-            ),
-            hypothesis_summary=stale_summary,
-            empirical_jobs_status={"ready": True, "status": "healthy"},
-            quant_health_status=self._healthy_quant_status(),
-            promotion_certificate_evidence=[
-                {
-                    "hypothesis_id": "H-CONT-01",
-                    "metric_window": self._metric_window(
-                        capital_stage="0.10x canary",
-                        observed_stage="paper",
-                    ),
-                    "promotion_decision": self._promotion_decision(
-                        capital_stage="0.10x canary"
-                    ),
-                }
-            ],
-            session=session,
-        )
-
-        self.assertEqual(non_shadow_paper_gate["promotion_eligible_total"], 0)
-        self.assertEqual(non_shadow_paper_gate["paper_probation_eligible_total"], 1)
-        self.assertIn(
-            "alpha_readiness_not_promotion_eligible",
-            non_shadow_paper_gate["blocked_reasons"],
-        )
-        self.assertIn(
-            "promotion_certificate_not_live_runtime",
-            non_shadow_paper_gate["blocked_reasons"],
         )
 
     def test_hypothesis_runtime_summary_rejects_unmatched_promotion_decision(
@@ -371,22 +255,12 @@ class TestSubmissionCouncilHypothesisRuntimeSummaryB(SubmissionCouncilTestCase):
             forced_summary = dict(result)
             forced_summary["promotion_eligible_total"] = 1
             forced_summary["items"] = [forced_item]
-            gate = build_live_submission_gate_payload(
-                SimpleNamespace(market_session_open=True),
-                hypothesis_summary=forced_summary,
-                empirical_jobs_status={"ready": True},
-                dspy_runtime_status={"mode": "inactive"},
-                quant_health_status={"required": False, "ok": True},
-                session=session,
-            )
 
         self.assertEqual(result["promotion_eligible_total"], 0)
         item = result["items"][0]
         self.assertFalse(item["promotion_eligible"])
         self.assertEqual(item["capital_stage"], "shadow")
         self.assertEqual(item["reasons"], ["drift_checks_missing"])
-        self.assertIn("promotion_decision_evidence_missing", gate["blocked_reasons"])
-        self.assertIn("promotion_certificate_missing", gate["blocked_reasons"])
 
     def test_hypothesis_runtime_summary_rejects_failed_runtime_proof(self) -> None:
         engine = create_engine(

@@ -3,6 +3,9 @@ package ai.proompteng.dorvud.ta.flink
 import org.apache.flink.connector.base.DeliveryGuarantee
 import java.io.Serializable
 import java.time.Duration
+import java.time.LocalDate
+
+internal const val DEFAULT_TA_SOURCE_LAG_DEGRADED_AFTER_MS: Long = 300_000
 
 data class FlinkTaConfig(
   val bootstrapServers: String,
@@ -26,6 +29,8 @@ data class FlinkTaConfig(
   val minPauseBetweenCheckpointsMs: Long,
   val maxOutOfOrderMs: Long,
   val quoteStaleAfterMs: Long,
+  val sourceLagDegradedAfterMs: Long,
+  val marketHolidays: Set<LocalDate>,
   val parallelism: Int,
   val vwapWindow: Duration,
   val realizedVolWindow: Int,
@@ -47,6 +52,7 @@ data class FlinkTaConfig(
   val clickhouseSchemaInitMaxRetries: Int,
   val clickhouseSchemaInitRetryDelayMs: Long,
   val clickhouseSchemaInitStrict: Boolean,
+  val clickhouseRequireReplicatedTables: Boolean,
 ) : Serializable {
   companion object {
     private const val serialVersionUID: Long = 1L
@@ -86,6 +92,16 @@ data class FlinkTaConfig(
           else -> default
         }
 
+      fun envDateSet(vararg keys: String): Set<LocalDate> =
+        keys
+          .asSequence()
+          .mapNotNull { env(it) }
+          .flatMap { it.split(',').asSequence() }
+          .map { it.trim() }
+          .filter { it.isNotEmpty() }
+          .mapNotNull { runCatching { LocalDate.parse(it) }.getOrNull() }
+          .toSet()
+
       val checkpointBase = env("TA_CHECKPOINT_DIR", "s3a://flink-checkpoints/torghut/technical-analysis")
       val clickhouseUrl = env("TA_CLICKHOUSE_URL")?.takeIf { it.isNotBlank() }
 
@@ -94,6 +110,10 @@ data class FlinkTaConfig(
         env("TA_QUOTE_STALE_AFTER_MS")?.toLongOrNull()
           ?: env("TA_QUOTE_STALE_AFTER_SEC")?.toLongOrNull()?.times(1_000)
           ?: 2_000
+      val sourceLagDegradedAfterMs =
+        env("TA_SOURCE_LAG_DEGRADED_AFTER_MS")?.toLongOrNull()
+          ?: env("TA_SOURCE_LAG_DEGRADED_AFTER_SEC")?.toLongOrNull()?.times(1_000)
+          ?: DEFAULT_TA_SOURCE_LAG_DEGRADED_AFTER_MS
 
       return FlinkTaConfig(
         bootstrapServers = env("TA_KAFKA_BOOTSTRAP", "kafka-kafka-bootstrap.kafka:9092"),
@@ -117,6 +137,14 @@ data class FlinkTaConfig(
         minPauseBetweenCheckpointsMs = envLong("TA_CHECKPOINT_PAUSE_MS", 5_000),
         maxOutOfOrderMs = envLong("TA_MAX_OUT_OF_ORDER_MS", 2_000),
         quoteStaleAfterMs = quoteStaleAfterMs,
+        sourceLagDegradedAfterMs = sourceLagDegradedAfterMs,
+        marketHolidays =
+          DEFAULT_US_EQUITY_MARKET_HOLIDAYS +
+            envDateSet(
+              "TA_MARKET_HOLIDAYS",
+              "MARKET_DATA_HOLIDAYS",
+              "OPTIONS_MARKET_HOLIDAYS",
+            ),
         parallelism = parallelism,
         vwapWindow = Duration.ofSeconds(envLong("TA_VWAP_WINDOW_SECONDS", 300)),
         realizedVolWindow = envInt("TA_REALIZED_VOL_WINDOW", 60),
@@ -148,7 +176,42 @@ data class FlinkTaConfig(
         clickhouseSchemaInitMaxRetries = envInt("TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES", 180),
         clickhouseSchemaInitRetryDelayMs = envLong("TA_CLICKHOUSE_SCHEMA_INIT_RETRY_DELAY_MS", 2_000),
         clickhouseSchemaInitStrict = envBool("TA_CLICKHOUSE_SCHEMA_INIT_STRICT", true),
+        clickhouseRequireReplicatedTables = envBool("TA_CLICKHOUSE_REQUIRE_REPLICATED_TABLES", true),
       )
     }
   }
 }
+
+private val DEFAULT_US_EQUITY_MARKET_HOLIDAYS: Set<LocalDate> =
+  setOf(
+    LocalDate.parse("2026-01-01"),
+    LocalDate.parse("2026-01-19"),
+    LocalDate.parse("2026-02-16"),
+    LocalDate.parse("2026-04-03"),
+    LocalDate.parse("2026-05-25"),
+    LocalDate.parse("2026-06-19"),
+    LocalDate.parse("2026-07-03"),
+    LocalDate.parse("2026-09-07"),
+    LocalDate.parse("2026-11-26"),
+    LocalDate.parse("2026-12-25"),
+    LocalDate.parse("2027-01-01"),
+    LocalDate.parse("2027-01-18"),
+    LocalDate.parse("2027-02-15"),
+    LocalDate.parse("2027-03-26"),
+    LocalDate.parse("2027-05-31"),
+    LocalDate.parse("2027-06-18"),
+    LocalDate.parse("2027-07-05"),
+    LocalDate.parse("2027-09-06"),
+    LocalDate.parse("2027-11-25"),
+    LocalDate.parse("2027-12-24"),
+    LocalDate.parse("2027-12-31"),
+    LocalDate.parse("2028-01-17"),
+    LocalDate.parse("2028-02-21"),
+    LocalDate.parse("2028-04-14"),
+    LocalDate.parse("2028-05-29"),
+    LocalDate.parse("2028-06-19"),
+    LocalDate.parse("2028-07-04"),
+    LocalDate.parse("2028-09-04"),
+    LocalDate.parse("2028-11-23"),
+    LocalDate.parse("2028-12-25"),
+  )

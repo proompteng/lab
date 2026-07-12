@@ -104,7 +104,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
      `quant_latest_metrics_empty`, `quant_latest_store_alarm`, `quant_metrics_update_missing`,
      `quant_pipeline_stages_missing`, or `quant_health_fetch_failed`.
    - If `live_submission_gate.reason = "critical_toggle_parity_diverged"` or
-     `alpha_readiness_not_promotion_eligible` or a `quant_*` blocker, treat the gate as fail-closed and resolve the underlying config or
+     `hypothesis_not_promotion_eligible` or a `quant_*` blocker, treat the gate as fail-closed and resolve the underlying config or
      evidence gap before retrying canary progression.
    - Per-lane blockers are now scoped via each hypothesis manifest dependency capabilities, so a degraded dependency (for example
      `jangar_dependency_delay`) should only affect hypotheses that explicitly require that capability.

@@ -6,6 +6,8 @@ from .entities import (
     AutoresearchEpoch,
     AutoresearchPortfolioCandidate,
     AutoresearchProposalScore,
+    BrokerMutationReceipt,
+    BrokerMutationReceiptEvent,
     CreatedAtMixin,
     EvidenceEpochRecord,
     EvidenceReceiptRecord,
@@ -73,6 +75,7 @@ from .entities import (
     TimestampMixin,
     ToolRunLog,
     TradeDecision,
+    TradeDecisionSubmissionClaim,
     TradeCursor,
 )
 
@@ -86,6 +89,8 @@ __all__ = [
     "AutoresearchEpoch",
     "AutoresearchPortfolioCandidate",
     "AutoresearchProposalScore",
+    "BrokerMutationReceipt",
+    "BrokerMutationReceiptEvent",
     "CreatedAtMixin",
     "EvidenceEpochRecord",
     "EvidenceReceiptRecord",
@@ -153,6 +158,7 @@ __all__ = [
     "TimestampMixin",
     "ToolRunLog",
     "TradeDecision",
+    "TradeDecisionSubmissionClaim",
     "TradeCursor",
 ]
 

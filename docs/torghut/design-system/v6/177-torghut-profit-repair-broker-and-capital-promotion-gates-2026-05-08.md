@@ -1,21 +1,20 @@
 # 177. Torghut Profit Repair Broker And Capital Promotion Gates (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut route repair profitability, proof-floor promotion, zero-notional repair, paper and live capital
-admission, Jangar action-broker consumption, rollout, rollback, and measurable guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `176-torghut-revision-priced-route-frontier-and-capital-carry-2026-05-08.md`
-- `175-torghut-failure-costed-context-repair-and-route-custody-2026-05-08.md`
-- `174-torghut-continuity-priced-route-repair-market-and-capital-holds-2026-05-08.md`
-- `docs/agents/designs/172-jangar-revision-carry-ledger-and-source-to-serving-action-bonds-2026-05-08.md`
 
 ## Decision
 

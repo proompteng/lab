@@ -90,6 +90,7 @@ jobs:
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
           install-ci-toolchain: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes
@@ -135,13 +136,13 @@ jobs:
 
           case "${SERVICE}" in
             oirat)
-              paths=(services/oirat packages/discord packages/scripts/src/oirat nix/images/oirat.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/oirat-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/oirat packages/discord nix/images/oirat.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock tsconfig.base.json)
               ;;
             bumba)
-              paths=(services/bumba packages/temporal-bun-sdk packages/scripts/src/bumba nix/images/bumba.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/bumba-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(services/bumba packages/temporal-bun-sdk nix/images/bumba.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/ci-run-timed.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock tsconfig.base.json)
               ;;
             froussard)
-              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel packages/scripts/src/froussard nix/images/froussard.nix nix/images/bun-workspace-service.nix nix/packages.nix flake.lock bun.lock package.json .github/workflows/froussard-ci.yml .github/workflows/nix-oci-build-common.yml)
+              paths=(apps/froussard packages/agent-contracts packages/codex packages/discord packages/otel nix/images/froussard.nix nix/images/bun-workspace-service.nix nix/packages.nix nix/cache-push.sh nix/ci-nix-oci-summary.sh nix/oci-inspect-archive.sh nix/oci-push.sh flake.lock bun.lock tsconfig.base.json)
               ;;
           esac
 
@@ -188,6 +189,10 @@ jobs:
               path="argocd/applications/bumba/kustomization.yaml"
               perl -0pi -e 's#(-\s*name:\s+registry\.ide-newton\.ts\.net/lab/bumba\s*\n\s*)(?:newTag|digest):\s*.*#$1digest: $ENV{DIGEST}#g' "${path}"
               grep -F "digest: ${DIGEST}" "${path}"
+              deployment_path="argocd/applications/bumba/deployment.yaml"
+              build_id="bumba@${SOURCE_SHA}"
+              BUILD_ID="${build_id}" perl -0pi -e 's#(-\s*name:\s+TEMPORAL_WORKER_BUILD_ID\s*\n\s*value:\s*).*#$1$ENV{BUILD_ID}#g' "${deployment_path}"
+              grep -F "value: ${build_id}" "${deployment_path}"
               ;;
             froussard)
               image_ref="${IMAGE}@${DIGEST}"
@@ -202,6 +207,7 @@ jobs:
         if: steps.meta.outputs.promote == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
+          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           branch: codex/${{ steps.meta.outputs.service }}-nix-release-${{ steps.meta.outputs.tag }}
           title: 'chore(${{ steps.meta.outputs.service }}): promote nix image ${{ steps.meta.outputs.tag }}'
           commit-message: 'chore(${{ steps.meta.outputs.service }}): promote nix image ${{ steps.meta.outputs.tag }}'

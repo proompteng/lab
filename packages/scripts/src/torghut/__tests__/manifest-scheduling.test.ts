@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
 import YAML from 'yaml'
@@ -37,10 +37,6 @@ const torghutArm64ImageChecks: ManifestCheck[] = [
     path: 'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml',
     selectorPath: ['spec', 'templates', 0],
   },
-  {
-    path: 'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml',
-    selectorPath: ['spec', 'templates', 0],
-  },
 ]
 
 const getAtPath = (root: unknown, selectorPath: Array<string | number>): JsonRecord => {
@@ -62,7 +58,28 @@ const parseManifest = (path: string): JsonRecord => YAML.parse(readFileSync(join
 const parseManifestDocuments = (path: string): JsonRecord[] =>
   YAML.parseAllDocuments(readFileSync(join(repoRoot, path), 'utf8')).map((document) => document.toJSON() as JsonRecord)
 
+const collectYamlFiles = (path: string): string[] => {
+  const absolutePath = join(repoRoot, path)
+  const stat = statSync(absolutePath)
+  if (stat.isFile()) {
+    return /\.(ya?ml)$/.test(path) ? [path] : []
+  }
+  return readdirSync(absolutePath).flatMap((entry) => collectYamlFiles(join(path, entry)))
+}
+
 describe('Torghut manifest scheduling', () => {
+  it('uses PATH-resolved Python entrypoints for Nix-built Torghut images', () => {
+    const manifestPaths = [
+      ...collectYamlFiles('argocd/applications/torghut'),
+      ...collectYamlFiles('argocd/applications/torghut-hyperliquid-runtime'),
+    ]
+
+    for (const path of manifestPaths) {
+      const manifest = readFileSync(join(repoRoot, path), 'utf8')
+      expect(manifest, path).not.toContain('/opt/venv/bin/')
+    }
+  })
+
   it('caps revision history for high-churn Torghut deployments', () => {
     const deploymentPaths = [
       'argocd/applications/symphony-torghut/deployment.patch.yaml',
@@ -103,9 +120,7 @@ describe('Torghut manifest scheduling', () => {
 
   it('retains Torghut scheduled failure logs for same-day debugging', () => {
     const cronJobPaths = [
-      'argocd/applications/torghut/empirical-artifacts-retention-cronjob.yaml',
       'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
-      'argocd/applications/torghut/paper-account-flatten-cronjob.yaml',
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
     ]
 
@@ -126,12 +141,85 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(4)
+    expect(checkedCronJobs).toBe(2)
 
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources
     expect(Array.isArray(resources)).toBe(true)
+    expect(resources).not.toContain('tigerbeetle-journal-order-events-cronjob.yaml')
     expect(resources).not.toContain('whitepaper-autoresearch-replay-materialization-cronworkflow.yaml')
+  })
+
+  it('protects the CNPG-managed Torghut CA secret from Argo prune without creating it', () => {
+    const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
+    const resources = kustomization.resources
+    expect(Array.isArray(resources)).toBe(true)
+    expect(resources).toContain('torghut-db-ca-prune-tombstone.yaml')
+    expect(resources).toContain('torghut-db-ca-reflector-rbac.yaml')
+    expect(resources).toContain('torghut-db-ca-prune-guard-job.yaml')
+    expect(resources).toContain('torghut-db-ca-reflector-job.yaml')
+    expect(resources).not.toContain('torghut-db-ca-reflector-source.yaml')
+
+    const tombstone = parseManifest('argocd/applications/torghut/torghut-db-ca-prune-tombstone.yaml')
+    expect(tombstone.kind).toBe('Secret')
+    expect(getAtPath(tombstone, ['metadata']).name).toBe('torghut-db-ca')
+    expect(getAtPath(tombstone, ['metadata', 'annotations'])).toMatchObject({
+      'argocd.argoproj.io/hook': 'Skip',
+      'argocd.argoproj.io/sync-options': 'Prune=false,Delete=false',
+      'argocd.argoproj.io/compare-options': 'IgnoreExtraneous',
+    })
+    expect('data' in tombstone).toBe(false)
+    expect('stringData' in tombstone).toBe(false)
+
+    for (const path of collectYamlFiles('argocd/applications/torghut')) {
+      for (const manifest of parseManifestDocuments(path)) {
+        if (!manifest) {
+          continue
+        }
+        if (manifest.kind === 'Secret' && getAtPath(manifest, ['metadata']).name === 'torghut-db-ca') {
+          expect(getAtPath(manifest, ['metadata', 'annotations'])['argocd.argoproj.io/hook'], path).toBe('Skip')
+          expect('data' in manifest, path).toBe(false)
+          expect('stringData' in manifest, path).toBe(false)
+        }
+      }
+    }
+
+    const rbac = parseManifestDocuments('argocd/applications/torghut/torghut-db-ca-reflector-rbac.yaml')
+    for (const manifest of rbac) {
+      expect(getAtPath(manifest, ['metadata', 'annotations'])['argocd.argoproj.io/sync-wave']).toBe('-20')
+    }
+    const role = rbac.find((manifest) => manifest.kind === 'Role')
+    expect(role).toBeDefined()
+    expect(getAtPath(role, ['rules', 0])).toMatchObject({
+      apiGroups: [''],
+      resources: ['secrets'],
+      resourceNames: ['torghut-db-ca'],
+      verbs: ['get', 'patch'],
+    })
+
+    const pruneGuard = parseManifest('argocd/applications/torghut/torghut-db-ca-prune-guard-job.yaml')
+    expect(getAtPath(pruneGuard, ['metadata', 'annotations'])).toMatchObject({
+      'argocd.argoproj.io/hook': 'Sync',
+      'argocd.argoproj.io/hook-delete-policy': 'BeforeHookCreation,HookSucceeded',
+      'argocd.argoproj.io/sync-wave': '-10',
+    })
+    expect(getAtPath(pruneGuard, ['spec'])).toMatchObject({
+      backoffLimit: 2,
+      activeDeadlineSeconds: 120,
+      ttlSecondsAfterFinished: 300,
+    })
+    expect(getAtPath(pruneGuard, ['spec', 'template', 'spec']).serviceAccountName).toBe('torghut-db-ca-reflector')
+    const pruneCommand = String(getAtPath(pruneGuard, ['spec', 'template', 'spec', 'containers', 0]).command)
+    expect(pruneCommand).toContain('argocd.argoproj.io/sync-options=Prune=false')
+    expect(pruneCommand).toContain('argocd.argoproj.io/tracking-id-')
+    expect(pruneCommand).toContain('existing torghut-db-ca lacks CNPG CA data; leaving it pruneable')
+    expect(pruneCommand).toContain('protected existing CNPG-managed torghut-db-ca from Argo prune')
+
+    const reflector = parseManifest('argocd/applications/torghut/torghut-db-ca-reflector-job.yaml')
+    const reflectorCommand = String(getAtPath(reflector, ['spec', 'template', 'spec', 'containers', 0]).command)
+    expect(reflectorCommand).toContain('argocd.argoproj.io/sync-options=Prune=false')
+    expect(reflectorCommand).toContain('argocd.argoproj.io/tracking-id-')
+    expect(reflectorCommand).toContain('reflector.v1.k8s.emberstack.com/reflection-allowed=true')
   })
 
   it('bounds Hyperliquid ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
@@ -210,6 +298,8 @@ describe('Torghut manifest scheduling', () => {
     expect(data.KAFKA_READY_MAX_AGE_MS).toBe('120000')
     expect(data.CLICKHOUSE_READY_MAX_AGE_MS).toBe('300000')
     expect(data.CLICKHOUSE_TABLE_READY_MAX_AGE_MS).toBe('300000')
+    expect(data.HYPERLIQUID_TOP_MARKET_COUNT).toBe('12')
+    expect(data.HYPERLIQUID_PINNED_PERP_COINS).toBe('BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD')
 
     const deployment = parseManifest('argocd/applications/torghut-hyperliquid-feed/deployment.yaml')
     const feedContainer = getAtPath(deployment, ['spec', 'template', 'spec', 'containers', 0])
@@ -230,9 +320,15 @@ describe('Torghut manifest scheduling', () => {
         value: expect.stringMatching(/^sha256:[0-9a-f]{64}$/),
       }),
     )
+    expect(feedEnv).toContainEqual(
+      expect.objectContaining({
+        name: 'HYPERLIQUID_PINNED_PERP_COINS',
+        value: 'BTC,ETH,HYPE,SOL,SKHX,MU,XYZ100,CL,SNDK,MSTR,SILVER,GOLD',
+      }),
+    )
     expect(
       getAtPath(deployment, ['spec', 'template', 'metadata', 'annotations'])['proompteng.ai/config-revision'],
-    ).toBe('hyperliquid-feed-clickhouse-catchup-window-20260620a')
+    ).toBe('hyperliquid-feed-pinned-runtime-universe-20260704a')
   })
 
   it('bounds Hyperliquid runtime ClickHouse schema hooks so Argo syncs cannot hang on distributed DDL', () => {
@@ -269,30 +365,48 @@ describe('Torghut manifest scheduling', () => {
     expect(data['schema.sql']).not.toContain('INSERT INTO torghut.hyperliquid_ta_features')
   })
 
-  it('runs the Hyperliquid v2 hard-reset runtime with capped testnet trading enabled', () => {
+  it('runs the Hyperliquid v2 hard-reset runtime with profitability-gated testnet entries frozen', () => {
     const runtimeConfig = parseManifest('argocd/applications/torghut-hyperliquid-runtime/configmap.yaml')
     const runtimeData = getAtPath(runtimeConfig, ['data'])
     expect(Object.keys(runtimeData).some((key) => key.startsWith('HYPERLIQUID_RUNTIME_'))).toBe(false)
-    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADING_ENABLED).toBe('true')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADING_ENABLED).toBe('false')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_MARKET_DATA_NETWORK).toBe('mainnet')
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXECUTION_NETWORK).toBe('testnet')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe('BNB,ZRO,PAXG,AERO,XMR')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TRADE_COINS).toBe(
+      'BTC,ETH,HYPE,SOL,xyz:SKHX,xyz:MU,xyz:XYZ100,xyz:CL,xyz:SNDK,xyz:MSTR,xyz:SILVER,xyz:GOLD',
+    )
     expect(runtimeData.HYPERLIQUID_EXECUTION_EXCLUDED_COINS).toBe('SPX')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBe('10')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('10')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBe('25')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBe('100')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD).toBe('12')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION).toBe('0.35')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION).toBe('0.08')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION).toBe('0.02')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_DAILY_LOSS_USD).toBe('100')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS).toBe('1000')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_AFTER_COST_EDGE_BPS).toBe('4')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_EDGE_COST_RATIO).toBe('2')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_SYMBOL_TURNOVER_EQUITY_MULTIPLE_1H).toBe('1')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SYMBOL_ENTRIES).toBe('300')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SIDE_FLIP).toBe('900')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED).toBe('true')
     expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_POLICY).toBe('marketable_ioc')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TIF).toBe('Ioc')
-    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS).toBe('10')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_ORDER_TTL_SECONDS).toBe('10')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TIF).toBeUndefined()
+    expect(runtimeData.HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS).toBeUndefined()
     expect(runtimeData.HYPERLIQUID_EXECUTION_MAX_OPEN_ORDERS_PER_SYMBOL).toBe('1')
+    expect(runtimeData.HYPERLIQUID_EXECUTION_FEED_READINESS_URL).toBe(
+      'http://torghut-hyperliquid-feed.torghut.svc.cluster.local/readyz',
+    )
+    expect(runtimeData.HYPERLIQUID_EXECUTION_FEED_READINESS_TIMEOUT_SECONDS).toBe('3')
 
     const runtimeDeployment = parseManifest('argocd/applications/torghut-hyperliquid-runtime/deployment.yaml')
     expect(getAtPath(runtimeDeployment, ['spec']).replicas).toBe(1)
     expect(getAtPath(runtimeDeployment, ['spec']).revisionHistoryLimit).toBe(2)
     expect(getAtPath(runtimeDeployment, ['spec', 'template', 'metadata', 'annotations'])).toMatchObject({
-      'proompteng.ai/config-revision': 'hyperliquid-execution-v2-testnet-short-proof-20260625',
+      'proompteng.ai/config-revision': 'hyperliquid-testnet-loss-cap-20260705a',
     })
     const runtimeContainer = getAtPath(runtimeDeployment, ['spec', 'template', 'spec', 'containers', 0])
     expect(runtimeContainer.command).toContain('app.hyperliquid_execution.api:app')
@@ -374,9 +488,12 @@ describe('Torghut manifest scheduling', () => {
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh check')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh create')
     expect(readme).toContain('bootstrap-hyperliquid-testnet-1password.sh reconcile')
-    expect(readme).toContain('HYPERLIQUID_EXECUTION_TRADING_ENABLED=true')
+    expect(readme).toContain('HYPERLIQUID_EXECUTION_TRADING_ENABLED=false')
+    expect(readme).toContain('after-cost profitability gate')
+    expect(readme).toContain('release image promotion')
     expect(readme).toContain('ORDER_POLICY=marketable_ioc')
-    expect(readme).toContain('MAKER_TIF=Ioc')
+    expect(readme).toContain('ORDER_TTL_SECONDS=10')
+    expect(readme).toContain('TARGET_MARGIN_UTILIZATION=0.35')
     expect(readme).toContain('SPX')
     expect(bootstrapScript).toContain('$0 check')
     expect(bootstrapScript).toContain('check_item()')
@@ -393,5 +510,30 @@ describe('Torghut manifest scheduling', () => {
     expect(spec.restartNonce).toBeGreaterThanOrEqual(16)
     expect(flinkConfiguration['restart-strategy.fixed-delay.attempts']).toBe('60')
     expect(flinkConfiguration['restart-strategy.fixed-delay.delay']).toBe('10 s')
+  })
+
+  it('keeps production TA in live consumer mode', () => {
+    const config = parseManifest('argocd/applications/torghut/ta/configmap.yaml')
+    const data = getAtPath(config, ['data'])
+    expect(data.TA_GROUP_ID).toBe('torghut-ta-live')
+    expect(String(data.TA_GROUP_ID)).not.toContain('replay')
+    expect(data.TA_AUTO_OFFSET_RESET).toBe('latest')
+
+    const deployment = parseManifest('argocd/applications/torghut/ta/flinkdeployment.yaml')
+    const spec = getAtPath(deployment, ['spec'])
+    expect(spec.restartNonce).toBeGreaterThanOrEqual(20)
+  })
+
+  it('configures 2026 US market holidays for Torghut market-data freshness gates', () => {
+    const expectedHolidays =
+      '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25'
+
+    for (const path of [
+      'argocd/applications/torghut/ws/configmap.yaml',
+      'argocd/applications/torghut-options/ws/configmap.yaml',
+    ]) {
+      const config = parseManifest(path)
+      expect(getAtPath(config, ['data']).OPTIONS_MARKET_HOLIDAYS, path).toBe(expectedHolidays)
+    }
   })
 })

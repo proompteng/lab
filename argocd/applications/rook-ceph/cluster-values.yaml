@@ -9,7 +9,7 @@ monitoring:
 
 cephImage:
   repository: quay.io/ceph/ceph
-  tag: v19.2.3
+  tag: v19.2.4
   allowUnsupported: false
 
 toolbox:
@@ -30,12 +30,41 @@ cephClusterSpec:
       osd_pool_default_size: "2"
       osd_pool_default_min_size: "1"
       mon_data_avail_warn: "15"
+      # Prefer msgr2 CRC mode on the trusted in-cluster storage path. This avoids
+      # secure-mode CPU cost while keeping msgr2 and wire CRCs.
+      rbd_default_map_options: "ms_mode=prefer-crc"
     osd:
       bluestore_cache_autotune: "true"
-      osd_mclock_profile: "high_recovery_ops"
-      osd_memory_target: "6442450944"
-      osd_max_backfills: "32"
-      osd_recovery_max_active: "64"
+      # Steady-state client-ops posture. Temporary recovery-surge overrides belong
+      # only in an active maintenance window and must be removed after recovery is clean.
+      osd_mclock_profile: "high_client_ops"
+      # Fallback for future HDD OSDs. Current OSDs have per-daemon measured overrides below.
+      osd_mclock_max_capacity_iops_hdd: "275"
+      # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
+      # Keep the mClock HDD bandwidth model explicit so client/recovery QoS is not based on the conservative default.
+      osd_mclock_max_sequential_bandwidth_hdd: "285212672"
+      osd_memory_target: "8589934592"
+      # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
+      osd_scrub_auto_repair: "true"
+      osd_scrub_auto_repair_num_errors: "5"
+    # Per-OSD mClock HDD IOPS capacity, measured with Ceph's documented 4 KiB OSD bench path on 2026-07-07.
+    osd.0:
+      osd_mclock_max_capacity_iops_hdd: "210"
+    osd.1:
+      osd_mclock_max_capacity_iops_hdd: "250"
+    osd.2:
+      osd_mclock_max_capacity_iops_hdd: "260"
+    osd.3:
+      osd_mclock_max_capacity_iops_hdd: "200"
+    osd.4:
+      osd_mclock_max_capacity_iops_hdd: "220"
+    osd.5:
+      osd_mclock_max_capacity_iops_hdd: "240"
+    mgr:
+      # Keep PG movement conservative during normal client operations and keep PG
+      # shard deviation tight without enabling read-primary balancing while pre-Reef clients exist.
+      target_max_misplaced_ratio: "0.03"
+      mgr/balancer/upmap_max_deviation: "1"
 
   dataDirHostPath: /var/lib/rook
 
@@ -81,6 +110,12 @@ cephClusterSpec:
     modules:
       - name: stats
         enabled: true
+      - name: balancer
+        enabled: true
+        settings:
+          # Keep capacity balancing active without pg-upmap-primary while kernel
+          # RBD clients still advertise pre-Reef/luminous feature bits.
+          balancerMode: upmap
 
   dashboard:
     enabled: true
@@ -102,10 +137,10 @@ cephClusterSpec:
   resources:
     osd:
       limits:
-        memory: 8Gi
+        memory: 12Gi
       requests:
         cpu: 1000m
-        memory: 6Gi
+        memory: 8Gi
 
   csi:
     readAffinity:
@@ -157,6 +192,7 @@ cephClusterSpec:
 # Disable chart-managed default block/filesystem classes to avoid duplicates.
 # Canonical classes are managed in storageclasses.yaml as:
 # - rook-ceph-block (RWO)
+# - rook-ceph-block-nbd-canary (RWO, non-default rbd-nbd proof lane)
 # - rook-cephfs (RWX, kernel-capable nodes only)
 # - rook-cephfs-fuse (RWX on Talos-compatible nodes)
 # - CephFilesystem details such as MDS resources
@@ -176,6 +212,7 @@ cephObjectStores:
           size: 2
         parameters:
           bulk: "true"
+          pg_num_min: "128"
       preservePoolsOnDelete: true
       gateway:
         port: 80

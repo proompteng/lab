@@ -1,24 +1,20 @@
 # 183. Torghut Forecast-Registry Repair And Route-Rehearsal Profit Gates (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, forecast registry repair, route rehearsal, Jangar controller-witness consumption,
-capital guardrails, validation, rollout, rollback, and measurable trading hypotheses.
 
-Governing requirement:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Companion Jangar contract:
-
-- `docs/agents/designs/179-jangar-controller-witness-reconciliation-and-failure-debt-retirement-2026-05-08.md`
-
-Extends:
-
-- `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
-- `181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
-- `180-torghut-dependency-priced-capital-frontier-and-session-reentry-2026-05-08.md`
 
 ## Decision
 
@@ -28,7 +24,7 @@ architecture step.
 The route boundary improved since the previous plan document. On 2026-05-08 around 08:27Z, both live Torghut and
 Torghut sim returned HTTP 200 from `/trading/consumer-evidence`. Live emitted a fresh
 `torghut-consumer-evidence:*` receipt with empirical jobs healthy, TCA pass, forecast registry degraded,
-`simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `max_notional=0`. Sim also emitted a fresh
+`simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `max_notional=0`. Sim also emitted a fresh
 receipt, but its TCA state failed because the route universe was empty. Route parity is no longer the blocker. Profit
 quality is.
 
@@ -112,11 +108,11 @@ GitOps manifests.
 - Live consumer evidence receipt was current, with empirical jobs healthy and candidate
   `chip-paper-microbar-composite@execution-proof` on dataset `torghut-chip-full-day-20260505-4c330ce9-r1`.
 - Live receipt reason codes were `forecast_registry_degraded`, `simple_submit_disabled`, and
-  `alpha_readiness_not_promotion_eligible`.
+  `hypothesis_not_promotion_eligible`.
 - Live proof floor kept `capital_state=zero_notional`, `route_state=repair_only`, and `max_notional=0`.
 - Live route reacquisition board had 8 rows, with 4 blocked symbols, 3 missing symbols, 1 probing symbol, zero
   capital-eligible symbols, and expected unblock value 14.
-- Sim receipt reason codes were `forecast_registry_degraded`, `alpha_readiness_not_promotion_eligible`, and
+- Sim receipt reason codes were `forecast_registry_degraded`, `hypothesis_not_promotion_eligible`, and
   `execution_tca_route_universe_empty`.
 - Sim route reacquisition book had one blocked NVDA route and seven missing symbols, all with paper probe notional
   limit `0`.

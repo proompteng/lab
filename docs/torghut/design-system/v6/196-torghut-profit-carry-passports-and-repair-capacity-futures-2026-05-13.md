@@ -1,23 +1,20 @@
 # 196. Torghut Profit-Carry Passports And Repair Capacity Futures (2026-05-13)
 
 Status: Accepted for Jangar engineer and deployer handoff
-Date: 2026-05-13
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut zero-notional profit repair, measurable hypothesis passports, repair capacity futures, Jangar rollout
-proof integration, route custody, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
 
-Extends:
-
-- `136-torghut-profit-proof-renewal-market-and-tca-settlement-2026-05-07.md`
-- `195-torghut-stale-projection-foreclosure-and-route-custody-2026-05-13.md`
-- `193-torghut-route-repair-yield-board-and-hypothesis-reentry-guardrails-2026-05-13.md`
-- `192-torghut-repair-receipt-frontier-and-profit-cutover-2026-05-13.md`
-- `188-torghut-profit-repair-clearance-packets-and-market-context-slos-2026-05-12.md`
-- `docs/agents/designs/190-jangar-projection-foreclosure-notary-and-stage-custody-repair-2026-05-13.md`
 
 ## Decision
 
@@ -113,7 +110,7 @@ trading flags, GitOps resources, AgentRuns, or market data.
   - `H-MEGACAP-BREADTH-PROBE` for `AMZN`, `GOOGL`, and `ORCL`, with expected blocker delta `1` and missing route
     symbol evidence.
 - The proof-floor blockers included `market_context_stale`, `market_context_state_unknown`,
-  `quant_health_not_configured`, `alpha_readiness_not_promotion_eligible`, and `simple_submit_disabled`.
+  `quant_health_not_configured`, `hypothesis_not_promotion_eligible`, and `simple_submit_disabled`.
 - The profit window contract had three windows: two `quarantined` and one `underfunded`. All windows were blocking.
 - The route repair board summarized eight zero-notional route rows, with state counts `blocked=4`, `missing=3`, and
   `probing=1`. It named expected unblock value `14`, top repair symbols `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA`,

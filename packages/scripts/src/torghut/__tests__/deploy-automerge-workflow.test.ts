@@ -27,10 +27,15 @@ const countOccurrences = (haystack: string, needle: string): number => haystack.
 
 describe('torghut-deploy-automerge workflow', () => {
   test('runs registry digest validation where the private registry is reachable', () => {
-    expect(deployAutomergeWorkflow).toContain('runs-on: arc-arm64')
+    expect(deployAutomergeWorkflow).toContain('runs-on: arc-amd64')
+    expect(deployAutomergeWorkflow).not.toContain('runs-on: arc-arm64')
     expect(deployAutomergeWorkflow).not.toContain('runs-on: ubuntu-latest')
-    expect(deployAutomergeWorkflow).toContain('This pull_request_target job does not check out pull request code.')
-    expect(deployAutomergeWorkflow).not.toContain('uses: actions/checkout')
+    expect(deployAutomergeWorkflow).toContain(
+      'This pull_request_target job checks out trusted base code only, never pull request code.',
+    )
+    expect(deployAutomergeWorkflow).toContain('uses: actions/checkout@v4')
+    expect(deployAutomergeWorkflow).toContain('ref: ${{ github.event.pull_request.base.sha }}')
+    expect(deployAutomergeWorkflow).not.toContain('ref: ${{ github.event.pull_request.head.sha }}')
   })
 
   test('allowlists every hyperliquid runtime manifest promoted by torghut-release', () => {
@@ -43,6 +48,26 @@ describe('torghut-deploy-automerge workflow', () => {
       expect(releaseWorkflow).toContain(manifestPath)
       expect(countOccurrences(deployAutomergeWorkflow, `'${manifestPath}'`)).toBeGreaterThanOrEqual(2)
     }
+  })
+
+  test('allowlists every Torghut maintenance manifest promoted by torghut-release', () => {
+    const promotedMaintenanceManifests = [
+      'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
+      'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
+      'argocd/applications/torghut/tigerbeetle-smoke-job.yaml',
+    ]
+
+    for (const manifestPath of promotedMaintenanceManifests) {
+      expect(releaseWorkflow).toContain(manifestPath)
+      expect(countOccurrences(deployAutomergeWorkflow, `'${manifestPath}'`)).toBeGreaterThanOrEqual(2)
+    }
+  })
+
+  test('carries the scheduler image through release and automatic deploy merge allowlists', () => {
+    const schedulerManifest = 'argocd/applications/torghut/scheduler-deployment.yaml'
+
+    expect(countOccurrences(releaseWorkflow, schedulerManifest)).toBe(3)
+    expect(countOccurrences(deployAutomergeWorkflow, `'${schedulerManifest}'`)).toBe(2)
   })
 
   test('allowlists TA and WS promotion manifests for automatic release PR merges', () => {
@@ -83,8 +108,11 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_COMMIT'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_TA_COMMIT'")
     expect(deployAutomergeWorkflow).toContain("source_env_name='TORGHUT_WS_COMMIT'")
-    expect(deployAutomergeWorkflow).toContain('docker buildx imagetools inspect')
-    expect(deployAutomergeWorkflow).toContain('for platform in linux/amd64 linux/arm64; do')
+    expect(deployAutomergeWorkflow).toContain('uses: ./.github/actions/setup-nix-toolchain')
+    expect(deployAutomergeWorkflow).toContain(
+      'nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64',
+    )
+    expect(deployAutomergeWorkflow).not.toContain('docker buildx')
     expect(deployAutomergeWorkflow).toContain('release manifest pins a multi-arch image digest')
     expect(deployAutomergeWorkflow).not.toContain('gh run list')
     expect(deployAutomergeWorkflow).not.toContain('gh run view')
@@ -96,6 +124,14 @@ describe('torghut-deploy-automerge workflow', () => {
     expect(deployAutomergeWorkflow).toContain('deadline=$((SECONDS + 600))')
     expect(deployAutomergeWorkflow).toContain('sleep 10')
     expect(deployAutomergeWorkflow).not.toContain('deadline=$((SECONDS + 2700))')
+  })
+
+  test('squash-merges generated release PRs after explicit gates instead of enabling brittle automerge', () => {
+    expect(deployAutomergeWorkflow).toContain('name: Squash merge release PR')
+    expect(deployAutomergeWorkflow).toContain('--json state,mergeStateStatus,isDraft')
+    expect(deployAutomergeWorkflow).toContain('CLEAN | UNSTABLE)')
+    expect(deployAutomergeWorkflow).toContain('gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --squash')
+    expect(deployAutomergeWorkflow).not.toContain('gh pr merge "${PR_NUMBER}" -R "${GH_REPO}" --auto --squash')
   })
 
   test('allowlists hyperliquid feed image promotion PRs with a feed digest gate', () => {

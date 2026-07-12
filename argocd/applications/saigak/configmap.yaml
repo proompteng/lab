@@ -20,6 +20,7 @@ data:
     embedding_model = os.environ.get('SAIGAK_EMBEDDING_MODEL', 'qwen3-embedding-saigak:8b')
     embedding_dimension = int(os.environ.get('SAIGAK_EMBEDDING_DIMENSION', '4096'))
     timeout_seconds = float(os.environ.get('SAIGAK_PROXY_TIMEOUT_SECONDS', '60'))
+    require_gpu_residency = os.environ.get('SAIGAK_REQUIRE_GPU_RESIDENCY', 'false').lower() == 'true'
 
     blocked_prefixes = (
       '/api/chat',
@@ -93,9 +94,10 @@ data:
         vector = embedding_vector(payload)
         if not isinstance(vector, list) or len(vector) != embedding_dimension:
           return False, 'embedding dimension mismatch'
-        ps_payload = json.loads(upstream_request('GET', '/api/ps').read().decode())
-        if not model_has_vram(ps_payload):
-          return False, 'embedding model is not resident in GPU VRAM'
+        if require_gpu_residency:
+          ps_payload = json.loads(upstream_request('GET', '/api/ps').read().decode())
+          if not model_has_vram(ps_payload):
+            return False, 'embedding model is not resident in GPU VRAM'
         return True, 'ok'
       except Exception as error:
         return False, str(error)

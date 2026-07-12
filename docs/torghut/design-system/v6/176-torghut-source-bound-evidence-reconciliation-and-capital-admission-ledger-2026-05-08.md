@@ -1,20 +1,20 @@
 # 176. Torghut Source-Bound Evidence Reconciliation And Capital Admission Ledger (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant proof reconciliation, durable evidence rows, route-local capital admission, Jangar custody,
-zero-notional repair, rollout, rollback, and engineer/deployer acceptance gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/172-jangar-evidence-reconciliation-broker-and-capital-action-firewall-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: TigerBeetle journal/reconcile modules and GitOps resources exist, but financial-ledger docs need current runtime verification.
+- Matched implementation area: TigerBeetle ledger and reconciliation.
+- Current source evidence:
+  - `services/torghut/app/trading/tigerbeetle_journal`
+  - `services/torghut/app/trading/tigerbeetle_reconcile`
+  - `services/torghut/scripts/journal_tigerbeetle_order_events.py`
+  - `services/torghut/scripts/verify_tigerbeetle_ledger.py`
+  - `argocd/applications/torghut/tigerbeetle-cluster.yaml`
+- Design drift note: Ledger designs are partial until checked against journal/reconcile scripts and cluster state.
 
-Extends:
-
-- `175-torghut-failure-costed-context-repair-and-route-custody-2026-05-08.md`
-- `174-torghut-route-local-profit-lab-and-capital-frontier-2026-05-08.md`
-- `docs/agents/designs/171-jangar-terminal-debt-exchange-and-retry-custody-2026-05-08.md`
 
 ## Decision
 
@@ -86,7 +86,7 @@ records, secrets, GitOps resources, AgentRuns, or trading flags.
   `0`.
 - Live submission gate was blocked by `simple_submit_disabled`.
 - Alpha readiness reported 3 total hypotheses, 1 blocked, 2 shadow, 0 promotion eligible, and 2 rollback required.
-- Proof blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+- Proof blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `simple_submit_disabled`.
 - Live route TCA covered eight scoped symbols. `AAPL` was probing, `AMD`, `AVGO`, `INTC`, and `NVDA` were blocked by
   route TCA, and `AMZN`, `GOOGL`, and `ORCL` had missing route evidence.

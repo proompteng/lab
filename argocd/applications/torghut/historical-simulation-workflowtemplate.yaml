@@ -41,7 +41,7 @@ spec:
         - name: allowMissingState
         - name: outputRoot
     container:
-      image: registry.ide-newton.ts.net/lab/torghut@sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+      image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
       imagePullPolicy: Always
       env:
         - name: DB_DSN
@@ -119,7 +119,7 @@ spec:
           printf '%s' "{{inputs.parameters.datasetManifestB64}}" | base64 -d > "${MANIFEST_PATH}"
           echo "RUN_LOG manifest_written path=${MANIFEST_PATH}"
           echo "RUN_LOG runtime_secret_present name=TORGHUT_SIM_KAFKA_PASSWORD present=${TORGHUT_SIM_KAFKA_PASSWORD:+1}"
-          /opt/venv/bin/python - <<'PY'
+          python - <<'PY'
           import os
           import yaml
 
@@ -226,7 +226,7 @@ spec:
 
           mkdir -p "$OUTPUT_ROOT"
           echo "RUN_LOG invoking_python"
-          /opt/venv/bin/python -u -m scripts.historical_simulation_startup "${SCRIPT_ARGS[@]}"
+          python -u -m scripts.historical_simulation_startup "${SCRIPT_ARGS[@]}"
     outputs:
       artifacts:
         - name: simulation-output

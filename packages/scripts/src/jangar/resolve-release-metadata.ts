@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import process from 'node:process'
 
@@ -8,11 +8,11 @@ import { fatal, repoRoot } from '../shared/cli'
 import { execGit } from '../shared/git'
 import { readReleaseContract } from './release-contract'
 
-const defaultContractPath = '.artifacts/jangar/jangar-release-contract.json'
+const defaultContractPath = '.artifacts/jangar/release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/jangar'
 
 const buildTriggerPathRegex =
-  /^(services\/jangar\/|packages\/scripts\/src\/jangar\/|packages\/scripts\/src\/shared\/|packages\/otel\/|packages\/temporal-bun-sdk\/|package\.json$|bun\.lock$|\.github\/workflows\/jangar-build-push\.yaml$)/
+  /^(services\/jangar\/|services\/bumba\/|packages\/(agent-contracts|codex|cx-tools|design|discord|otel|temporal-bun-sdk)\/|nix\/images\/jangar\.nix$|nix\/images\/openai-codex-cli\.nix$|nix\/images\/bun-workspace-service\.nix$|nix\/packages\.nix$|nix\/cache-push\.sh$|nix\/ci-nix-oci-summary\.sh$|nix\/ci-run-timed\.sh$|nix\/oci-inspect-archive\.sh$|nix\/oci-push\.sh$|flake\.lock$|bun\.lock$|tsconfig\.base\.json$)/
 
 type CliOptions = {
   eventName?: string
@@ -108,6 +108,19 @@ const commitExists = (sha: string): boolean => {
   return result.exitCode === 0
 }
 
+const assertReleaseContractIdentity = (path: string) => {
+  const parsed = JSON.parse(readFileSync(resolvePath(path), 'utf8')) as {
+    service?: unknown
+    packageAttr?: unknown
+  }
+  if (typeof parsed.service === 'string' && parsed.service !== 'jangar') {
+    throw new Error(`Release contract service mismatch: expected jangar, got ${parsed.service}`)
+  }
+  if (typeof parsed.packageAttr === 'string' && parsed.packageAttr !== 'jangar-image') {
+    throw new Error(`Release contract packageAttr mismatch: expected jangar-image, got ${parsed.packageAttr}`)
+  }
+}
+
 const evaluateWorkflowRunStaleness = (input: WorkflowRunStalenessInput): WorkflowRunStalenessDecision => {
   if (input.sourceSha === input.mainHead) {
     return { promote: true, reason: 'head-current' }
@@ -201,6 +214,7 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
   let reason = 'eligible'
 
   if (eventName === 'workflow_run') {
+    assertReleaseContractIdentity(options.contractPath)
     const contract = readReleaseContract(options.contractPath)
     sourceSha = contract.sourceSha
     tag = contract.tag
@@ -229,7 +243,7 @@ const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): Release
     reason = stalenessDecision.reason
   } else {
     sourceSha = options.commitShaInput?.trim() || mainHead
-    tag = options.imageTagInput?.trim() || sourceSha.slice(0, 8)
+    tag = options.imageTagInput?.trim() || `sha-${sourceSha}`
     reason = 'manual-or-dispatch'
   }
 
@@ -301,6 +315,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  assertReleaseContractIdentity,
   buildTriggerPathRegex,
   commitExists,
   evaluateWorkflowRunStaleness,

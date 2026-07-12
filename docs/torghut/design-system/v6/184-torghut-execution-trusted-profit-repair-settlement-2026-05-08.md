@@ -1,21 +1,20 @@
 # 184. Torghut Execution-Trusted Profit-Repair Settlement (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Gideon Park, Torghut Traders Architecture Lead
-Scope: Torghut quant profitability, routeable post-cost evidence, evidence freshness, forecast repair, TCA quality,
-Jangar execution-trust admission, capital safety, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/180-jangar-execution-trust-debt-retirement-and-profit-repair-settlement-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `183-torghut-forecast-registry-repair-and-route-rehearsal-profit-gates-2026-05-08.md`
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
-- `183-torghut-session-open-route-microcanaries-and-profit-evidence-notary-2026-05-08.md`
-- `181-torghut-quality-adjusted-profit-frontier-and-hypothesis-escrow-2026-05-08.md`
 
 ## Decision
 
@@ -29,10 +28,10 @@ running. `/db-check` is current at Alembic head `0030_evidence_epochs`.
 
 The profit and action gates are still closed for good reasons. Live `/readyz` returns `status=degraded`.
 `proof_floor.floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
-Live submission is blocked by `simple_submit_disabled` and `alpha_readiness_not_promotion_eligible`. The current
+Live submission is blocked by `simple_submit_disabled` and `hypothesis_not_promotion_eligible`. The current
 consumer-evidence receipt is live and current, but it still reports `paper=blocked`, `live=blocked`, `max_notional=0`,
 and reason codes `forecast_registry_degraded`, `simple_submit_disabled`, and
-`alpha_readiness_not_promotion_eligible`.
+`hypothesis_not_promotion_eligible`.
 
 The market evidence names the next scarce repair. Live execution TCA has 7,334 orders and 7,245 filled executions, with
 average absolute slippage around `13.82` bps against an 8 bps guardrail. AAPL is probing, not capital-ready. AMD, AVGO,

@@ -322,7 +322,14 @@ class AccountMetadataUnavailableClientWithLongPosition(
     AccountMetadataUnavailableClient
 ):
     def list_positions(self) -> list[dict[str, str]]:
-        return [{"symbol": "AAPL", "qty": "2", "side": "long"}]
+        return [
+            {
+                "symbol": "AAPL",
+                "qty": "2",
+                "side": "long",
+                "market_value": "200",
+            }
+        ]
 
 
 class _TestOrderIdempotencyBase(TestCase):

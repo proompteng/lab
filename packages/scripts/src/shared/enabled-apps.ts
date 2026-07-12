@@ -36,53 +36,98 @@ type JsonRecord = Record<string, unknown>
 
 const labRepoURL = 'https://github.com/proompteng/lab.git'
 const labImagePrefix = 'registry.ide-newton.ts.net/lab/'
+const labImageRegistry = 'registry.ide-newton.ts.net'
+const sha256HexPattern = /^[0-9a-f]{64}$/
+const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
 
 const earlyNixImageApps = new Set([
+  'agents',
   'app',
+  'arc',
   'attic',
   'bumba',
   'docs',
   'froussard',
+  'headlamp',
+  'jangar',
   'oirat',
   'olden',
   'proompteng',
   'sag',
   'symphony',
+  'symphony-jangar',
+  'symphony-torghut',
   'synthesis',
-])
-
-const deferredApps = new Map<string, string>([
-  [
-    'agents',
-    'service images are Nix OCI migrated; app remains deferred until the separate agents-codex-runner Python/Codex runtime image is migrated',
-  ],
-  ['jangar', 'complex service plus OpenWebUI chart; requires a dedicated derivation and rollout proof'],
-  ['symphony-jangar', 'derived deployment using the symphony image; migrate with symphony'],
-  ['symphony-torghut', 'derived deployment using the symphony image; migrate with symphony'],
-  ['tigresse', 'chart-rendered app references a lab image but has no supported build/deploy path yet'],
-  ['torghut', 'deferred until live GitOps/app health is clean'],
-  ['torghut-hyperliquid-feed', 'Torghut-family image; deferred until live app health is clean'],
-  ['torghut-hyperliquid-runtime', 'Torghut-family image; deferred until live app health is clean'],
-  ['torghut-options', 'Torghut-family image; deferred until live app health is clean'],
+  'torghut',
+  'torghut-hyperliquid-feed',
+  'torghut-hyperliquid-runtime',
+  'torghut-options',
 ])
 
 const appToNixAttr = new Map<string, string>([
   ['app', 'app-image'],
+  ['arc', 'arc-runner-image'],
   ['attic', 'atticd-image'],
   ['bumba', 'bumba-image'],
   ['docs', 'docs-image'],
   ['froussard', 'froussard-image'],
+  ['headlamp', 'headlamp-image'],
+  ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],
   ['proompteng', 'proompteng-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
+  ['symphony-jangar', 'symphony-image'],
+  ['symphony-torghut', 'symphony-image'],
   ['synthesis', 'synthesis-image'],
+  ['agents', 'agents-codex-runner-image'],
+  ['torghut', 'torghut-image'],
+  ['torghut-hyperliquid-feed', 'torghut-hyperliquid-feed-image'],
+  ['torghut-hyperliquid-runtime', 'torghut-image'],
+  ['torghut-options', 'torghut-image'],
+])
+
+const appToBuildScriptPath = new Map<string, string>([
+  ['arc', 'packages/scripts/src/arc-runner/build-image.ts'],
+  ['symphony-jangar', 'packages/scripts/src/symphony/build-image.ts'],
+  ['symphony-torghut', 'packages/scripts/src/symphony/build-image.ts'],
+  ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/build-hyperliquid-feed-image.ts'],
+  ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/build-image.ts'],
+  ['torghut-options', 'packages/scripts/src/torghut/build-image.ts'],
+])
+
+const appToDeployScriptPath = new Map<string, string>([
+  ['arc', 'packages/scripts/src/arc-runner/deploy-service.ts'],
+  ['symphony-jangar', 'packages/scripts/src/symphony/deploy-service.ts'],
+  ['symphony-torghut', 'packages/scripts/src/symphony/deploy-service.ts'],
+  ['torghut-hyperliquid-feed', 'packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'],
+  ['torghut-hyperliquid-runtime', 'packages/scripts/src/torghut/update-manifests.ts'],
+  ['torghut-options', 'packages/scripts/src/torghut/update-manifests.ts'],
+])
+
+const appToWorkflowPaths = new Map<string, string[]>([
+  ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
+  ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
+  ['torghut-hyperliquid-feed', ['.github/workflows/torghut-hyperliquid-feed-build-push.yaml']],
+  ['torghut-hyperliquid-runtime', ['.github/workflows/torghut-build-push.yaml']],
+  [
+    'torghut-options',
+    [
+      '.github/workflows/torghut-build-push.yaml',
+      '.github/workflows/torghut-ta-build-push.yaml',
+      '.github/workflows/torghut-ws-build-push.yaml',
+    ],
+  ],
 ])
 
 const manifestOnlyRepoImageApps = new Map<string, string>([
   ['analysis', 'repo image is tracked by image updater, but no local source build/deploy path exists in this repo'],
   ['bilig', 'repo image is produced outside this checkout; this app is GitOps/image-updater managed here'],
+  [
+    'tigresse',
+    'operator source lives in the private proompteng/tigresse repository; lab only vendors the chart and pins its image digest',
+  ],
 ])
 
 const uniqueSorted = (values: Iterable<string>): string[] => [...new Set(values)].sort()
@@ -200,20 +245,63 @@ const collectRepoImages = (yamlPath: string, document: unknown): string[] => {
     const image = asString(record.image)
     if (image?.startsWith(labImagePrefix)) images.add(image)
 
+    const registry = asString(record.registry)
     const repository = asString(record.repository)
-    if (repository?.startsWith(labImagePrefix)) images.add(repository)
+    const tag = asString(record.tag)
+    const digest = asString(record.digest)
+    const qualifiedRepository = repository?.startsWith(labImagePrefix)
+      ? repository
+      : registry === labImageRegistry && repository?.startsWith('lab/')
+        ? `${registry}/${repository}`
+        : undefined
+    if (qualifiedRepository) {
+      images.add(imageReferenceWithSiblingDigest(qualifiedRepository, digest, tag))
+    }
 
     if (basename(yamlPath) === 'kustomization.yaml' && Array.isArray(record.images)) {
       for (const entry of record.images) {
         if (!isRecord(entry)) continue
-        for (const key of ['name', 'newName']) {
-          const value = asString(entry[key])
-          if (value?.startsWith(labImagePrefix)) images.add(value)
+        const value = asString(entry.newName) ?? asString(entry.name)
+        if (value?.startsWith(labImagePrefix)) {
+          images.add(imageReferenceWithSiblingDigest(value, asString(entry.digest), asString(entry.newTag)))
         }
       }
     }
   })
   return [...images]
+}
+
+const imageReferenceWithSiblingDigest = (
+  repository: string,
+  digest: string | undefined,
+  tag: string | undefined,
+): string => {
+  if (repository.endsWith('@sha256') && tag && sha256HexPattern.test(tag)) {
+    return `${repository}:${tag}`
+  }
+  if (!repository.includes('@') && digest && sha256DigestPattern.test(digest)) {
+    return `${repository}@${digest}`
+  }
+  return repository
+}
+
+const imageRepository = (reference: string): string => {
+  const withoutDigest = reference.split('@', 1)[0] ?? reference
+  const lastSlash = withoutDigest.lastIndexOf('/')
+  const lastColon = withoutDigest.lastIndexOf(':')
+  return lastColon > lastSlash ? withoutDigest.slice(0, lastColon) : withoutDigest
+}
+
+const normalizeRepoImages = (images: Iterable<string>): string[] => {
+  const values = uniqueSorted(images)
+  const digestPinnedRepositories = new Set(
+    values
+      .filter((reference) => /@sha256:[0-9a-f]{64}$/.test(reference))
+      .map((reference) => imageRepository(reference)),
+  )
+  return values.filter(
+    (reference) => /@sha256:[0-9a-f]{64}$/.test(reference) || !digestPinnedRepositories.has(imageRepository(reference)),
+  )
 }
 
 const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => {
@@ -237,23 +325,28 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
     }
   }
 
-  const buildScriptPath = `packages/scripts/src/${entry.name}/build-image.ts`
-  const deployScriptPath = `packages/scripts/src/${entry.name}/deploy-service.ts`
-  const workflowPaths = listYamlFiles(resolve(root, '.github/workflows')).filter((path) => {
+  const buildScriptPath = appToBuildScriptPath.get(entry.name) ?? `packages/scripts/src/${entry.name}/build-image.ts`
+  const deployScriptPath =
+    appToDeployScriptPath.get(entry.name) ?? `packages/scripts/src/${entry.name}/deploy-service.ts`
+  const detectedWorkflowPaths = listYamlFiles(resolve(root, '.github/workflows')).filter((path) => {
     const workflow = readFileSync(path, 'utf8')
     return (
       workflow.includes(`image_name: ${entry.name}`) ||
       workflow.includes(`registry.ide-newton.ts.net/lab/${entry.name}`)
     )
   })
+  const workflowPaths = uniqueSorted([
+    ...detectedWorkflowPaths.map((path) => relative(root, path)),
+    ...(appToWorkflowPaths.get(entry.name) ?? []).filter((path) => existsSync(resolve(root, path))),
+  ])
 
   return {
     ...entry,
     hasHelmChart,
-    repoImages: uniqueSorted(repoImages),
+    repoImages: normalizeRepoImages(repoImages),
     buildScriptPath: existsSync(resolve(root, buildScriptPath)) ? buildScriptPath : undefined,
     deployScriptPath: existsSync(resolve(root, deployScriptPath)) ? deployScriptPath : undefined,
-    workflowPaths: workflowPaths.map((path) => relative(root, path)).sort(),
+    workflowPaths,
     nixImageAttr: appToNixAttr.get(entry.name),
   }
 }
@@ -266,11 +359,6 @@ const classify = (entry: EnabledAppInventoryEntry): EnabledAppInventoryEntry => 
   const manifestOnlyReason = manifestOnlyRepoImageApps.get(entry.name)
   if (manifestOnlyReason) {
     return { ...entry, class: 'vendor-manifest', deferredReason: manifestOnlyReason }
-  }
-
-  const deferredReason = deferredApps.get(entry.name)
-  if (deferredReason) {
-    return { ...entry, class: 'deferred', deferredReason }
   }
 
   if (entry.repoImages.length > 0) {

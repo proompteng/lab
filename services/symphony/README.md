@@ -60,5 +60,5 @@ bun run --cwd services/symphony lint:oxlint:type
 
 ## Operational docs
 
-- [Safety model](/Users/gregkonush/.codex/worktrees/88a8/lab/docs/symphony/safety-model.md)
-- [Workflow authoring guide](/Users/gregkonush/.codex/worktrees/88a8/lab/docs/symphony/workflow-authoring.md)
+- [Safety model](../../docs/symphony/safety-model.md)
+- [Workflow authoring guide](../../docs/symphony/workflow-authoring.md)

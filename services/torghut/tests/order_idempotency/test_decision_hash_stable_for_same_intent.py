@@ -408,6 +408,75 @@ class TestDecisionHashStableForSameIntent(_TestOrderIdempotencyBase):
             self.assertEqual(len(executions), 1)
             self.assertEqual(len(alpaca_client.submitted), 1)
 
+    def test_legacy_retry_attempt_client_id_is_recovered_without_duplicate_submit(
+        self,
+    ) -> None:
+        settings.trading_mode = "live"
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="retry-recovery",
+                description="retry recovery",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("1.0"),
+                order_type="limit",
+                limit_price=Decimal("100"),
+                params={"price": Decimal("100")},
+            )
+            executor = OrderExecutor()
+            decision_row = executor.ensure_decision(
+                session,
+                decision,
+                strategy,
+                "paper",
+            )
+            assert decision_row.decision_hash is not None
+
+            retry_client_order_id = f"{decision_row.decision_hash}-r3"
+            alpaca_client = FakeAlpacaClient()
+            alpaca_client.submitted.append(
+                {
+                    "id": "order-retry-3",
+                    "client_order_id": retry_client_order_id,
+                    "symbol": "AAPL",
+                    "side": "buy",
+                    "type": "limit",
+                    "time_in_force": "day",
+                    "limit_price": "100.04",
+                    "qty": "1",
+                    "filled_qty": "0",
+                    "status": "accepted",
+                }
+            )
+
+            execution = executor.submit_order(
+                session,
+                alpaca_client,
+                decision,
+                decision_row,
+                "paper",
+            )
+
+            self.assertIsNone(execution)
+            self.assertEqual(len(alpaca_client.submitted), 1)
+            persisted = session.execute(select(Execution)).scalars().all()
+            self.assertEqual(len(persisted), 1)
+            self.assertEqual(persisted[0].client_order_id, retry_client_order_id)
+            self.assertEqual(persisted[0].alpaca_order_id, "order-retry-3")
+
     def test_submit_order_records_tca_row_with_null_safe_defaults(self) -> None:
         with self.session_local() as session:
             strategy = Strategy(

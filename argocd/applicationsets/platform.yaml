@@ -156,6 +156,35 @@ spec:
                 namespace: saigak
                 annotations:
                   argocd.argoproj.io/sync-wave: "2"
+                ignoreDifferences:
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
+                  - group: ""
+                    kind: PersistentVolumeClaim
+                    name: saigak-altra-data
+                    jsonPointers:
+                      - /metadata/annotations
+                      - /spec/volumeMode
+                      - /spec/volumeName
+                  - group: apps
+                    kind: StatefulSet
+                    name: saigak
+                    jqPathExpressions:
+                      - .metadata.annotations
+                      - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+                      - .spec.template.spec.containers[].livenessProbe.successThreshold
+                      - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+                      - .spec.template.spec.containers[].readinessProbe.successThreshold
+                      - .spec.template.spec.containers[].startupProbe.httpGet.scheme
+                      - .spec.template.spec.containers[].startupProbe.successThreshold
+                      - .spec.template.spec.containers[].terminationMessagePath
+                      - .spec.template.spec.containers[].terminationMessagePolicy
+                      - .spec.template.spec.volumes[].configMap.defaultMode
                 automation: manual
                 enabled: "true"
                 managedNamespaceMetadata:

@@ -81,7 +81,7 @@ Runtime and value-gate evidence:
 - Quant metrics are current enough to report 180 latest metrics with single-digit pipeline lag at the last check, but
   the quant pipeline is still degraded because ingestion/materialization stages are stale.
 - `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `degraded`, `market_context_stale`, `simple_submit_disabled`,
+  `hypothesis_not_promotion_eligible`, `degraded`, `market_context_stale`, `simple_submit_disabled`,
   `empirical_jobs_not_ready`, and `quant_pipeline_degraded`.
 
 Business metric and revenue impact:
@@ -171,7 +171,7 @@ Current runtime and value-gate evidence:
 - Consumer evidence has empirical jobs healthy, quant evidence degraded with reason `quant_metrics_update_missing`, and
   no routeability acceptance ledger because #6127 is unmerged.
 - Revenue repair reports `business_state=repair_only`, `revenue_ready=false`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `simple_submit_disabled`, and `quant_metrics_update_missing`.
+  `hypothesis_not_promotion_eligible`, `simple_submit_disabled`, and `quant_metrics_update_missing`.
 
 Owner update message - 2026-05-08T17:36Z:
 
@@ -268,7 +268,7 @@ Runtime and value-gate evidence:
   `chip-paper-microbar-composite@execution-proof`, dataset `torghut-chip-full-day-20260505-4c330ce9-r1`,
   quant evidence degraded with 180 latest metrics, and `routeability_acceptance_ledger_present=false`.
 - `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `hypothesis_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
   `quant_pipeline_degraded`.
 - Route reacquisition evidence shows 0 routeable symbols, 1 probing symbol (`AAPL`), 4 blocked symbols, 3 missing
   symbols, and 7 repair candidates. Paper probe notional remains 0 for repair candidates.
@@ -369,7 +369,7 @@ Runtime and GitOps baseline evidence:
   evidence degraded, 5 zero-notional capital cohorts, 7 zero-notional repair lots, and `routeable_candidate_count=0`.
 - `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`,
   `capital_state=zero_notional`, `max_notional=0`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `hypothesis_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
   `quant_metrics_update_missing`.
 
 Value-gate decision:
@@ -478,7 +478,7 @@ Runtime evidence:
   latest metrics count `180`, and metrics pipeline lag about `32` seconds at verification time.
 - `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`,
   `capital_state=zero_notional`, `max_notional=0`, 7 repair queue items, and blockers
-  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `hypothesis_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
   `quant_pipeline_degraded`.
 - `/trading/consumer-evidence` exposes `torghut.consumer-evidence-status.v1` and
   `torghut.profit-repair-settlement-ledger.v1` with aggregate state `repair`.
@@ -590,7 +590,7 @@ Runtime evidence:
   `fa3d104cb600392d0cc6a91eb6e8d6a08df5b74a`, active revision `torghut-00310`, `enabled=true`, `running=true`,
   mode `live`, and autonomy disabled.
 - Live submission remains blocked as intended: `allowed=false`, reason `simple_submit_disabled`, blockers
-  `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`, capital stage `shadow`, and
+  `hypothesis_not_promotion_eligible` and `simple_submit_disabled`, capital stage `shadow`, and
   `promotion_eligible_total=0`.
 - Quant evidence is non-blocking but degraded: `required=false`, `ok=true`, latest metrics count `144`, latest
   metrics at `2026-05-08T13:39:46.497Z`, and `metrics_pipeline_lag_seconds=67`.
@@ -692,7 +692,7 @@ Value-gate evidence after rollout:
 - `fill_tca_or_slippage_quality`: TCA is fresh enough to pass as evidence, but route-universe exclusions remain
   enforced; aggregate average absolute slippage is about `13.82` bps versus the 8 bps guardrail.
 - `capital_gate_safety`: live submission is not allowed, capital remains zero-notional, and blockers include
-  `alpha_readiness_not_promotion_eligible`, `simple_submit_disabled`, and quant/forecast evidence gaps.
+  `hypothesis_not_promotion_eligible`, `simple_submit_disabled`, and quant/forecast evidence gaps.
 
 Profit-evidence surfaces are live on `torghut-00306`: profit lease projection has three repair-only leases,
 route-proven profit receipt decision is `repair`, renewal bond profit escrow verdict is `repair_only`, and the
@@ -887,7 +887,7 @@ live-submission gates to clear before non-zero notional.
 - `fill_tca_or_slippage_quality`: execution TCA reports 7,334 orders, 7,245 filled executions, average absolute
   slippage `13.8203637593029676` bps versus the 8 bps guardrail, and route-universe exclusions enforced.
 - `capital_gate_safety`: live submission is not allowed; blockers are `simple_submit_disabled` and
-  `alpha_readiness_not_promotion_eligible`.
+  `hypothesis_not_promotion_eligible`.
 
 ## Risk
 

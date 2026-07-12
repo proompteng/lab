@@ -17,7 +17,7 @@ Before implementation, 2026-05-14T10:03:24Z:
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top queue item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top queue item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - affected value gate: `routeable_candidate_count`
 - `routeable_candidate_count=0`
 - `zero_notional_or_stale_evidence_rate=1.0`
@@ -28,7 +28,7 @@ After local implementation, live pre-deploy evidence at 2026-05-14T10:16:25Z sti
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top queue item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top queue item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - affected value gate: `routeable_candidate_count`
 - `routeable_candidate_count=0`
 - `zero_notional_or_stale_evidence_rate=1.0`
@@ -84,5 +84,5 @@ the fallback surfaces. Capital stays `max_notional=0`.
 ## Owner Status
 
 The revenue metric targeted is `routeable_candidate_count`. The current smallest revenue blocker remains
-`alpha_readiness_not_promotion_eligible`; this PR makes the H-MICRO-01 no-delta/reentry key explicit so repeated
+`hypothesis_not_promotion_eligible`; this PR makes the H-MICRO-01 no-delta/reentry key explicit so repeated
 zero-notional repair work can be denied until source, blocker, evidence-window, or required-receipt inputs change.

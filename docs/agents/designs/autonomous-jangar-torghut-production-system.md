@@ -1,9 +1,13 @@
 # Autonomous Jangar + Torghut Production System
 
-Status: Proposed (2026-03-03)
+Status: Historical proposal snapshot (2026-03-03); not current implementation authority.
+
+Current-truth notice: this design is retained for rationale. Verify autonomous delivery behavior against live
+`services/jangar/**`, `argocd/applications/agents/**`, current CRDs, and `docs/agents/README.md` before using any
+specific status, gate, or rollout claim below.
 
 Docs index: [README](../README.md)
-Execution runbook baseline: [swarm-end-to-end-runbook](../swarm-end-to-end-runbook.md)
+Execution runbook baseline: [swarm-end-to-end-runbook](../../jangar/runbooks/swarm-end-to-end-runbook.md)
 
 ## Objective
 

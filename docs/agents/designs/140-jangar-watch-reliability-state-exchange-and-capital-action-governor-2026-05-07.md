@@ -119,7 +119,7 @@ copying it forward as fresh evidence.
 - Torghut alpha readiness reported three hypotheses, zero promotion eligible, three rollback required, and dependency
   quorum delayed or blocked by Jangar watch reliability.
 - Torghut proof floor was `repair_only`, capital state `zero_notional`, with blocking reasons
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - TCA evidence was stale from `2026-04-02T20:59:45.136640Z`; average absolute slippage was about `568.61` bps against
   an `8` bps guardrail.
 - Quant latest metrics were fresh, but scoped stage evidence was still degraded: `stage_count=3`, compute and

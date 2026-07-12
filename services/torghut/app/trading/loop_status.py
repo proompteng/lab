@@ -26,11 +26,18 @@ from app.trading.multifactor.status_payloads import (
     portfolio_target_payload,
     risk_forecast_payload,
 )
+from app.trading.loop_status_positions import (
+    managed_exchange_positions,
+    position_coin_set,
+    raw_account_positions,
+    unmanaged_exchange_positions,
+)
 
 SCHEMA_VERSION = "torghut.trading-loop-status.v1"
 DEFAULT_FRESHNESS_THRESHOLD_SECONDS = 180
 DEFAULT_ACCOUNT_FRESHNESS_SECONDS = 300
 DEFAULT_MIN_RECENT_FILLS = 3
+LOOP_STATUS_QUERY_TIMEOUT_MS = 1_500
 
 
 def _empty_mapping() -> Mapping[str, object]:
@@ -87,6 +94,7 @@ class LoopStatusOptions:
     min_recent_fills: int = DEFAULT_MIN_RECENT_FILLS
     freshness_threshold_seconds: int = DEFAULT_FRESHNESS_THRESHOLD_SECONDS
     account_freshness_seconds: int = DEFAULT_ACCOUNT_FRESHNESS_SECONDS
+    configured_symbols: Sequence[str] = ()
 
 
 @dataclass(frozen=True)
@@ -107,6 +115,8 @@ class LoopProofSummary:
     recent_fill_count: int
     position_count: int
     raw_exchange_positions: Sequence[Mapping[str, object]]
+    managed_exchange_positions: Sequence[Mapping[str, object]]
+    unmanaged_exchange_positions: Sequence[Mapping[str, object]]
     positions_reconciled: bool
     stale_open_order_count: int
     unexpected_live_orders: int
@@ -251,7 +261,7 @@ def _proof_summary(
     latest_account_at = _datetime_value(rows.latest_account.get("observed_at"))
     market_lag_seconds = _age_seconds(options.generated_at, latest_feature_at)
     account_lag_seconds = _age_seconds(options.generated_at, latest_account_at)
-    raw_exchange_positions = _raw_account_positions(rows.latest_account)
+    raw_exchange_positions = raw_account_positions(rows.latest_account)
     unexpected_live_orders = _int(rows.unexpected_live_alpaca.get("orders_24h"))
     unexpected_live_events = _int(rows.unexpected_live_alpaca.get("events_24h"))
     expected_return_bps = _optional_decimal(
@@ -284,6 +294,15 @@ def _proof_summary(
         account_lag_seconds,
         threshold_seconds=options.account_freshness_seconds,
     )
+    managed_raw_positions = managed_exchange_positions(
+        rows.positions,
+        raw_exchange_positions,
+        _selected_symbols(rows),
+        options.configured_symbols,
+    )
+    unmanaged_raw_positions = unmanaged_exchange_positions(
+        raw_exchange_positions, managed_raw_positions
+    )
     return LoopProofSummary(
         query_errors=tuple(rows.query_errors),
         market_feature_at=latest_feature_at,
@@ -301,9 +320,12 @@ def _proof_summary(
         recent_fill_count=_int(rows.fill_summary.get("fills_24h")),
         position_count=len(rows.positions),
         raw_exchange_positions=tuple(raw_exchange_positions),
+        managed_exchange_positions=tuple(managed_raw_positions),
+        unmanaged_exchange_positions=tuple(unmanaged_raw_positions),
         positions_reconciled=account_fresh
-        and _position_coin_set(rows.positions)
-        == _position_coin_set(raw_exchange_positions),
+        and not unmanaged_raw_positions
+        and position_coin_set(rows.positions)
+        == position_coin_set(managed_raw_positions),
         stale_open_order_count=len(rows.stale_open_orders),
         unexpected_live_orders=unexpected_live_orders,
         unexpected_live_events=unexpected_live_events,
@@ -462,8 +484,16 @@ def _position_payload(
         "reconciled": summary.positions_reconciled,
         "positions_count": summary.position_count,
         "exchange_raw_positions_count": len(summary.raw_exchange_positions),
+        "managed_exchange_positions_count": len(summary.managed_exchange_positions),
+        "unmanaged_exchange_positions_count": len(summary.unmanaged_exchange_positions),
         "positions": [dict(row) for row in rows.positions],
         "exchange_raw_positions": [dict(row) for row in summary.raw_exchange_positions],
+        "managed_exchange_positions": [
+            dict(row) for row in summary.managed_exchange_positions
+        ],
+        "unmanaged_exchange_positions": [
+            dict(row) for row in summary.unmanaged_exchange_positions
+        ],
     }
 
 
@@ -513,8 +543,10 @@ def _safe_one(
     errors: list[str],
 ) -> dict[str, object]:
     try:
+        _apply_query_timeout(session)
         row = session.execute(text(query)).mappings().first()
     except SQLAlchemyError as exc:
+        _recover_failed_query(session)
         errors.append(f"{name}_query_failed:{type(exc).__name__}")
         return {}
     return _json_safe_mapping(row) if row is not None else {}
@@ -527,11 +559,28 @@ def _safe_rows(
     errors: list[str],
 ) -> list[dict[str, object]]:
     try:
+        _apply_query_timeout(session)
         rows = session.execute(text(query)).mappings().all()
     except SQLAlchemyError as exc:
+        _recover_failed_query(session)
         errors.append(f"{name}_query_failed:{type(exc).__name__}")
         return []
     return [_json_safe_mapping(row) for row in rows]
+
+
+def _apply_query_timeout(session: QuerySession) -> None:
+    try:
+        session.execute(
+            text(f"SET LOCAL statement_timeout = '{LOOP_STATUS_QUERY_TIMEOUT_MS}ms'")
+        )
+    except SQLAlchemyError:
+        _recover_failed_query(session)
+
+
+def _recover_failed_query(session: QuerySession) -> None:
+    rollback = getattr(session, "rollback", None)
+    if callable(rollback):
+        rollback()
 
 
 def _json_safe_mapping(row: Mapping[str, object]) -> dict[str, object]:
@@ -617,73 +666,6 @@ def _latest_fill_payload(row: Mapping[str, object]) -> dict[str, object]:
         "fee_usd": _optional_text(row.get("fee_usd")),
         "closed_pnl_usd": _optional_text(row.get("closed_pnl_usd")),
     }
-
-
-def _raw_account_positions(
-    account_row: Mapping[str, object],
-) -> list[dict[str, object]]:
-    payload = _mapping_payload(account_row.get("raw_payload"))
-    raw_positions = _account_position_rows(payload)
-    positions: list[dict[str, object]] = []
-    for raw_position in raw_positions:
-        position = _mapping_payload(raw_position.get("position"))
-        coin = _optional_text(position.get("coin"))
-        if coin is None:
-            continue
-        positions.append(
-            {
-                "coin": coin,
-                "size": _optional_text(position.get("szi")) or "0",
-                "entry_price": _optional_text(position.get("entryPx")),
-                "notional_usd": _optional_text(position.get("positionValue")) or "0",
-                "unrealized_pnl_usd": _optional_text(position.get("unrealizedPnl"))
-                or "0",
-            }
-        )
-    return sorted(positions, key=lambda item: str(item["coin"]))
-
-
-def _account_position_rows(
-    payload: Mapping[str, object],
-) -> list[Mapping[str, object]]:
-    rows: list[Mapping[str, object]] = []
-    _extend_position_rows(rows, payload.get("assetPositions"))
-    dex_states = payload.get("dexStates")
-    if isinstance(dex_states, Mapping):
-        for raw_state in cast(Mapping[object, object], dex_states).values():
-            state = _mapping_payload(raw_state)
-            _extend_position_rows(rows, state.get("assetPositions"))
-    clearinghouse_state = _mapping_payload(payload.get("clearinghouseState"))
-    _extend_position_rows(rows, clearinghouse_state.get("assetPositions"))
-    return rows
-
-
-def _extend_position_rows(rows: list[Mapping[str, object]], value: object) -> None:
-    if not isinstance(value, list):
-        return
-    for raw_position in cast(list[object], value):
-        if not isinstance(raw_position, Mapping):
-            continue
-        rows.append(cast(Mapping[str, object], raw_position))
-
-
-def _position_coin_set(rows: Sequence[Mapping[str, object]]) -> set[str]:
-    return {
-        coin for row in rows if (coin := _optional_text(row.get("coin"))) is not None
-    }
-
-
-def _mapping_payload(value: object) -> Mapping[str, object]:
-    if isinstance(value, Mapping):
-        return cast(Mapping[str, object], value)
-    if isinstance(value, str):
-        try:
-            loaded = json.loads(value)
-        except json.JSONDecodeError:
-            return {}
-        if isinstance(loaded, Mapping):
-            return cast(Mapping[str, object], loaded)
-    return {}
 
 
 def _datetime_value(value: object) -> datetime | None:

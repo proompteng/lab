@@ -78,7 +78,7 @@ describe('resolve-release-metadata', () => {
     expect(dddToBfDocsOnlyFiles.some((filePath) => __private.isBuildTriggerPath(filePath))).toBe(false)
   })
 
-  it('does not block Jangar promotion for Agents Codex runtime-only package changes', () => {
+  it('blocks Jangar promotion when newer main has Codex package image inputs', () => {
     const decision = __private.evaluateWorkflowRunStaleness({
       sourceSha: ddd07d2f,
       mainHead: bf889391,
@@ -91,9 +91,55 @@ describe('resolve-release-metadata', () => {
     })
 
     expect(decision).toEqual({
+      promote: false,
+      reason: 'newer-main-has-jangar-changes',
+    })
+  })
+
+  it('does not treat root package script changes as Jangar build changes', () => {
+    const decision = __private.evaluateWorkflowRunStaleness({
+      sourceSha: ddd07d2f,
+      mainHead: bf889391,
+      isAncestor: true,
+      changedMainFiles: ['package.json'],
+    })
+
+    expect(decision).toEqual({
       promote: true,
       reason: 'newer-main-non-jangar-only',
     })
+    expect(__private.isBuildTriggerPath('package.json')).toBe(false)
+  })
+
+  it('does not treat workflow-only changes as Jangar build changes', () => {
+    const decision = __private.evaluateWorkflowRunStaleness({
+      sourceSha: ddd07d2f,
+      mainHead: bf889391,
+      isAncestor: true,
+      changedMainFiles: ['.github/workflows/jangar-build-push.yaml'],
+    })
+
+    expect(decision).toEqual({
+      promote: true,
+      reason: 'newer-main-non-jangar-only',
+    })
+    expect(__private.isBuildTriggerPath('.github/workflows/jangar-build-push.yaml')).toBe(false)
+  })
+
+  it('does not treat Jangar deploy script changes as image build changes', () => {
+    const decision = __private.evaluateWorkflowRunStaleness({
+      sourceSha: ddd07d2f,
+      mainHead: bf889391,
+      isAncestor: true,
+      changedMainFiles: ['packages/scripts/src/jangar/update-manifests.ts'],
+    })
+
+    expect(decision).toEqual({
+      promote: true,
+      reason: 'newer-main-non-jangar-only',
+    })
+    expect(__private.isBuildTriggerPath('packages/scripts/src/jangar/update-manifests.ts')).toBe(false)
+    expect(__private.isBuildTriggerPath('packages/scripts/src/jangar/deploy-service.ts')).toBe(false)
   })
 
   it('regression from git history fixture: blocks f22a8cbc promotion when newer main has jangar changes', () => {

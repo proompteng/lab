@@ -647,7 +647,7 @@ def build_execution_adapter(
         firewall=order_firewall, read_client=alpaca_client
     )
     simulation_adapter = _build_simulation_execution_adapter()
-    if simulation_adapter is not None:
+    if settings.trading_simulation_enabled and simulation_adapter is not None:
         return simulation_adapter
     return alpaca_adapter
 

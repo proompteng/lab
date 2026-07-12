@@ -22,6 +22,19 @@ Merged PR evidence:
 - PR `#6618`: `docs(jangar): define verify trust foreclosure`, merged as
   `4190b42ea61504130458da8fc49f3dfa1820ff76`.
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `0aee01702 fix(torghut): pin loop status runtime image (#11897)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
+
 ## Decision
 
 I am closing this plan-lane pass on the **no-delta alpha repair reentry direction**, and I am handing the next bounded
@@ -126,7 +139,7 @@ broker state, market data, trading flags, AgentRuns, GitOps resources, or empiri
 - `/trading/revenue-repair` generated at `2026-05-14T12:28:56.470315+00:00`.
 - Revenue state was `repair_only`, `revenue_ready=false`, `capital_stage=shadow`, `capital_state=zero_notional`,
   `live_submission_allowed=false`, and `max_notional=0`.
-- Top queue item was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, priority `70`, action
+- Top queue item was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, priority `70`, action
   `clear_hypothesis_blockers_before_capital`, value gate `routeable_candidate_count`, and required output
   `torghut.executable-alpha-receipts.v1`.
 - Routeability acceptance was blocked with `accepted_routeable_candidate_count=0` and

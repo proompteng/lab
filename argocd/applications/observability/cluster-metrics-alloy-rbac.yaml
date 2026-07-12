@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: observability-cluster-metrics-alloy
+  namespace: observability
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: observability-cluster-metrics-alloy
+rules:
+  - apiGroups: [""]
+    resources:
+      - endpoints
+      - namespaces
+      - nodes
+      - nodes/metrics
+      - nodes/proxy
+      - pods
+      - services
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources:
+      - endpointslices
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs:
+      - /metrics
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: observability-cluster-metrics-alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: observability-cluster-metrics-alloy
+subjects:
+  - kind: ServiceAccount
+    name: observability-cluster-metrics-alloy
+    namespace: observability
+

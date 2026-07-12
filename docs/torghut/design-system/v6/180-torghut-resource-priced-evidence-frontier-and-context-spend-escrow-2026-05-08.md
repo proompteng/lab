@@ -1,21 +1,21 @@
 # 180. Torghut Resource-Priced Evidence Frontier And Context Spend Escrow (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, market-context reliability, route repair economics, Jangar resource-pressure escrow
-consumption, capital gates, measurable hypotheses, validation, rollout, rollback, and guardrails.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/176-jangar-resource-pressure-escrow-and-runner-qos-gates-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `179-torghut-capital-repair-frontier-and-route-yield-clearance-2026-05-08.md`
-- `178-torghut-route-sample-mint-and-capital-proof-ratchet-2026-05-08.md`
-- `177-torghut-profit-repair-broker-and-capital-promotion-gates-2026-05-08.md`
-- `docs/agents/designs/175-jangar-failure-debt-clearance-and-action-reentry-frontier-2026-05-08.md`
 
 ## Decision
 
@@ -25,7 +25,7 @@ Torghut is not capital-ready, but it is producing useful repair evidence. On 202
 returned `status=ok`, `/db-check` returned `ok=true` with Alembic head `0029_whitepaper_embedding_dimension_4096`,
 and live `/readyz` returned `status=degraded` for the right reasons: proof floor `repair_only`, route state
 `repair_only`, capital state `zero_notional`, max notional `0`, and blockers
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 Route evidence covered 8 symbols, with AAPL probing, 4 symbols blocked by route evidence, and 3 missing route
 evidence. Alpha readiness had 3 hypotheses, 0 promotion-eligible, and 3 rollback-required.
 
@@ -85,7 +85,7 @@ All evidence in this pass was collected read-only.
   `0029_whitepaper_embedding_dimension_4096`, `schema_graph_lineage_ready=true`, and known historical parent-fork
   warnings after `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Proof floor blockers were `alpha_readiness_not_promotion_eligible`,
+- Proof floor blockers were `hypothesis_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 - Empirical evidence passed with candidate `chip-paper-microbar-composite@execution-proof`.
 - Quant ingestion was informational because `quant_pipeline_stages_missing`, with latest metrics updated at

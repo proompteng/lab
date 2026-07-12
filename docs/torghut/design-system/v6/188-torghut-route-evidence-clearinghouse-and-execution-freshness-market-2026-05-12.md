@@ -1,22 +1,20 @@
 # 188. Torghut Route-Evidence Clearinghouse And Execution-Freshness Market (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Gideon Park, Torghut Traders Architecture Lead
-Scope: Torghut quant profitability, routeable post-cost evidence, options data freshness, active-session fill/TCA
-quality, rollout image proof, capital safety, validation, rollout, rollback, and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/184-jangar-rollout-evidence-escrow-and-proof-repair-admission-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
-- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
-- `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`
-- `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
-- `docs/agents/designs/182-jangar-routeability-cutover-backpressure-and-proof-run-admission-2026-05-08.md`
 
 ## Decision
 

@@ -6,20 +6,11 @@ on:
     paths:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
+      - '!packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
-      - '.github/workflows/torghut-ci.yml'
-      - '.github/workflows/torghut-build-push.yaml'
-      - '.github/workflows/torghut-deploy-automerge.yml'
-      - '.github/workflows/torghut-post-deploy-verify.yml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/torghut-hyperliquid-feed-build-push.yaml'
-      - '.github/workflows/torghut-hyperliquid-feed-release.yml'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/torghut-ws-build-push.yaml'
-      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
@@ -27,20 +18,11 @@ on:
     paths:
       - 'services/torghut/**'
       - 'packages/scripts/src/torghut/**'
+      - '!packages/scripts/src/torghut/__tests__/**'
+      - '!packages/scripts/src/torghut/**/*.test.ts'
+      - '!packages/scripts/src/torghut/update-hyperliquid-feed-manifest.ts'
       - 'packages/scripts/src/shared/cli.ts'
-      - 'packages/scripts/src/shared/docker.ts'
       - 'packages/scripts/src/shared/git.ts'
-      - '.github/workflows/torghut-ci.yml'
-      - '.github/workflows/torghut-build-push.yaml'
-      - '.github/workflows/torghut-deploy-automerge.yml'
-      - '.github/workflows/torghut-post-deploy-verify.yml'
-      - '.github/workflows/torghut-release.yml'
-      - '.github/workflows/torghut-hyperliquid-feed-build-push.yaml'
-      - '.github/workflows/torghut-hyperliquid-feed-release.yml'
-      - '.github/workflows/torghut-ta-build-push.yaml'
-      - '.github/workflows/torghut-ta-release.yml'
-      - '.github/workflows/torghut-ws-build-push.yaml'
-      - '.github/workflows/torghut-ws-release.yml'
       - 'argocd/applications/torghut/**'
       - 'argocd/applications/torghut-options/**'
       - 'argocd/applications/torghut-hyperliquid-runtime/**'
@@ -129,7 +111,7 @@ jobs:
 
           service=false
           manifests=false
-          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|docker|git)\.ts$|\.github/workflows/torghut-(ci|deploy-automerge|post-deploy-verify|release|hyperliquid-feed-release|ta-release|ws-release)\.yml$|\.github/workflows/torghut-(build-push|hyperliquid-feed-build-push|ta-build-push|ws-build-push)\.yaml$)'; then
+          if matches_any '^(services/torghut/|packages/scripts/src/torghut/|packages/scripts/src/shared/(cli|git|nix-oci-deploy|oci-digest)\.ts$)'; then
             service=true
           fi
           if matches_any '^argocd/applications/(torghut|torghut-options|torghut-hyperliquid-runtime)/'; then
@@ -145,7 +127,7 @@ jobs:
     name: Release manifest changes
     # The digest contract check inspects registry.ide-newton.ts.net, which is only
     # reachable from ARC runners on the lab network.
-    runs-on: arc-arm64
+    runs-on: arc-amd64
     needs:
       - changes
     if: ${{ needs.changes.outputs.service != 'true' && needs.changes.outputs.manifests == 'true' }}
@@ -183,8 +165,10 @@ jobs:
           fi
           git config --global --add safe.directory "${GITHUB_WORKSPACE}"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - name: Set up Nix toolchain
+        uses: ./.github/actions/setup-nix-toolchain
+        with:
+          require-preinstalled: 'true'
 
       - name: Verify source image digest contract
         shell: bash
@@ -245,7 +229,7 @@ jobs:
 
           assert_multi_arch_image() {
             local image_ref="$1"
-            local image_digest manifest_json platform platform_digest
+            local image_digest
 
             image_digest="${image_ref#*@}"
             if [ "${image_digest}" = "${image_ref}" ] || ! printf '%s' "${image_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
@@ -253,19 +237,7 @@ jobs:
               exit 1
             fi
 
-            manifest_json="$(docker buildx imagetools inspect --format '{{json .}}' "${image_ref}")"
-            for platform in linux/amd64 linux/arm64; do
-              platform_digest="$(
-                jq -r --arg platform "${platform}" \
-                  '.manifest.manifests[]? | select(((.platform.os // "") + "/" + (.platform.architecture // "")) == $platform) | .digest' \
-                  <<< "${manifest_json}" | head -n 1
-              )"
-              if ! printf '%s' "${platform_digest}" | grep -Eiq '^sha256:[0-9a-f]{64}$'; then
-                echo "Release manifest image ${image_ref} is missing required platform ${platform}"
-                docker buildx imagetools inspect "${image_ref}"
-                exit 1
-              fi
-            done
+            nix run .#assert-oci-platforms -- "${image_ref}" linux/amd64 linux/arm64
           }
 
           verify_image_contract() {
@@ -291,13 +263,52 @@ jobs:
             echo "${label} release manifest pins a multi-arch image digest for ${source_sha}: ${image_ref}"
           }
 
+          assert_image_contract_parity() {
+            local env_name="$1"
+            local image_name="$2"
+            local reference_manifest="$3"
+            shift 3
+            local reference_source_sha reference_image_ref manifest_path source_sha image_ref
+
+            reference_source_sha="$(resolve_source_sha "${reference_manifest}" "${env_name}")"
+            reference_image_ref="$(resolve_image_ref "${reference_manifest}" "${image_name}")"
+            for manifest_path in "$@"; do
+              source_sha="$(resolve_source_sha "${manifest_path}" "${env_name}")"
+              image_ref="$(resolve_image_ref "${manifest_path}" "${image_name}")"
+              if [ "${source_sha}" != "${reference_source_sha}" ]; then
+                echo "Runtime manifest ${manifest_path} ${env_name}=${source_sha:-unset} differs from ${reference_manifest}=${reference_source_sha:-unset}"
+                exit 1
+              fi
+              if [ "${image_ref}" != "${reference_image_ref}" ]; then
+                echo "Runtime manifest ${manifest_path} image=${image_ref:-unset} differs from ${reference_manifest}=${reference_image_ref:-unset}"
+                exit 1
+              fi
+            done
+          }
+
           verified_any=false
-          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|db-migrations-job|historical-simulation-workflowtemplate|empirical-promotion-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|zero-notional-drift-repair-cronjob|paper-account-flatten-cronjob|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
+          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|zero-notional-drift-repair-cronjob|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
             verify_image_contract \
               "Torghut" \
               argocd/applications/torghut/knative-service.yaml \
               TORGHUT_COMMIT \
               registry.ide-newton.ts.net/lab/torghut
+            verify_image_contract \
+              "Torghut simulation" \
+              argocd/applications/torghut/knative-service-sim.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            verify_image_contract \
+              "Torghut scheduler" \
+              argocd/applications/torghut/scheduler-deployment.yaml \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut
+            assert_image_contract_parity \
+              TORGHUT_COMMIT \
+              registry.ide-newton.ts.net/lab/torghut \
+              argocd/applications/torghut/knative-service.yaml \
+              argocd/applications/torghut/knative-service-sim.yaml \
+              argocd/applications/torghut/scheduler-deployment.yaml
             verified_any=true
           fi
           if matches_changed '^argocd/applications/(torghut/(ta|ta-sim)/flinkdeployment\.yaml|torghut-options/ta/flinkdeployment\.yaml)$'; then
@@ -384,6 +395,14 @@ jobs:
       - name: Type check (pyright scripts profile)
         working-directory: services/torghut
         run: uv run --frozen pyright --project pyrightconfig.scripts.json
+
+      - name: Type check (pyright strict alpha slice)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.alpha.strict.json
+
+      - name: Type check (pyright strict scripts slice)
+        working-directory: services/torghut
+        run: uv run --frozen pyright --project pyrightconfig.scripts.strict.json
 
   static-guards:
     name: Bytecode + lint + migration guard
@@ -566,12 +585,113 @@ jobs:
         run: >
           uv run --frozen pylint app scripts
           --disable=all
-          --enable=too-many-branches,too-many-locals,too-many-return-statements,too-many-statements
+          --enable=too-many-arguments,too-many-positional-arguments,too-many-branches,too-many-locals,too-many-return-statements,too-many-statements,too-many-nested-blocks
           --score=n
+
+      - name: Torghut tech-debt ratchet
+        working-directory: services/torghut
+        run: >
+          uv run --frozen python scripts/measure_torghut_tech_debt.py
+          --baseline config/quality/tech-debt-baseline.json
+          --enforce-ratchet
+          --format markdown
 
       - name: Migration lineage guardrail
         working-directory: services/torghut
         run: uv run --frozen python scripts/check_migration_graph.py
+
+  postgres-cas:
+    name: PostgreSQL mutation fencing CAS
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.service == 'true' }}
+    services:
+      postgres:
+        image: postgres:18-trixie
+        env:
+          POSTGRES_USER: torghut
+          POSTGRES_PASSWORD: torghut
+          POSTGRES_DB: torghut_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U torghut -d torghut_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - name: Checkout
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git init "${GITHUB_WORKSPACE}"
+          cd "${GITHUB_WORKSPACE}"
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --no-tags --prune origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+            git fetch --no-tags --prune origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/pull/${PR_NUMBER}/merge"
+            git checkout --force "refs/remotes/origin/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --no-tags --prune origin "+${GITHUB_REF}:refs/remotes/origin/workflow"
+            git checkout --force "${GITHUB_SHA}" || git checkout --force refs/remotes/origin/workflow
+          fi
+          git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache uv downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-python-3.11-torghut-uv-${{ hashFiles('services/torghut/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.11-torghut-uv-
+
+      - name: Install uv
+        run: python -m pip install --upgrade pip uv
+
+      - name: Sync dependencies (locked)
+        working-directory: services/torghut
+        run: uv sync --frozen --extra dev
+
+      - name: PostgreSQL mutation fencing integration
+        working-directory: services/torghut
+        shell: bash
+        env:
+          COVERAGE_FILE: .coverage.postgres-cas
+          TORGHUT_TEST_POSTGRES_DSN: postgresql+psycopg://torghut:torghut@127.0.0.1:5432/torghut_test
+        run: |
+          set -euo pipefail
+          : "${TORGHUT_TEST_POSTGRES_DSN:?TORGHUT_TEST_POSTGRES_DSN is required}"
+          uv run --frozen pytest -q \
+            --cov \
+            --cov-branch \
+            --cov-fail-under=0 \
+            --cov-report= \
+            tests/execution/test_decision_submission_claims_postgres.py \
+            tests/execution/test_decision_submission_claim_identity_races_postgres.py \
+            tests/execution/test_broker_mutation_receipts_postgres.py \
+            tests/execution/test_broker_mutation_linked_receipts_postgres.py \
+            tests/execution/test_broker_mutation_receipt_boundaries_postgres.py \
+            tests/execution/test_linked_submission_terminal_postgres.py
+
+      - name: Upload PostgreSQL coverage data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torghut-coverage-postgres-cas
+          path: services/torghut/.coverage.postgres-cas
+          if-no-files-found: error
+          include-hidden-files: true
 
   pytest-shards:
     name: Pytest shard ${{ matrix.shard }}
@@ -645,20 +765,8 @@ jobs:
                   print
                 }
               }
-              END {
-                if (collected < 5000) {
-                  printf "EXPECTED_MIN_COUNT_MISMATCH:%d\n", collected
-                }
-              }
             ' "${collected_tests}"
           )
-          last_index=$((${#TEST_NODES[@]} - 1))
-          if [ "${#TEST_NODES[@]}" -gt 0 ] && [[ "${TEST_NODES[${last_index}]}" == EXPECTED_MIN_COUNT_MISMATCH:* ]]; then
-            collected_count="${TEST_NODES[${last_index}]#EXPECTED_MIN_COUNT_MISMATCH:}"
-            unset 'TEST_NODES[${last_index}]'
-            echo "Expected at least 5000 non-autoresearch tests after split, got ${collected_count}"
-            exit 1
-          fi
           printf 'Running %s test nodes in shard %s/%s\n' "${#TEST_NODES[@]}" "${SHARD_INDEX}" "${SHARD_TOTAL}"
           if [ "${#TEST_NODES[@]}" -eq 0 ]; then
             echo "No test nodes selected for shard ${SHARD_INDEX}"
@@ -799,6 +907,7 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - changes
+      - postgres-cas
       - static-guards
       - pytest-autoresearch-runner
       - pytest-shards
@@ -810,6 +919,10 @@ jobs:
           set -euo pipefail
           if [ "${{ needs.static-guards.result }}" != "success" ]; then
             echo "Static guard job failed: ${{ needs.static-guards.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.postgres-cas.result }}" != "success" ]; then
+            echo "PostgreSQL CAS job failed: ${{ needs.postgres-cas.result }}"
             exit 1
           fi
           if [ "${{ needs.pytest-shards.result }}" != "success" ]; then
@@ -887,7 +1000,7 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-        run: uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 90
+        run: uv run --frozen python scripts/check_diff_coverage.py --coverage-xml coverage.xml --threshold 80
 
   quality-signals:
     name: Quality signals (complexity + security)

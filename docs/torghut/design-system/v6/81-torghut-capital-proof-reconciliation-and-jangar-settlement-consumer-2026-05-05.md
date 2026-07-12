@@ -1,18 +1,20 @@
 # 81. Torghut Capital Proof Reconciliation and Jangar Settlement Consumer (2026-05-05)
 
 Status: Approved for implementation (`discover`)
-Date: `2026-05-05`
-Owner: Victor Chen (Jangar Engineering)
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/77-jangar-evidence-settlement-authority-and-data-proof-handoff-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
 
-Extends:
-
-- `80-torghut-capital-proof-reclocking-and-live-submission-fuses-2026-05-05.md`
-- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
-- `docs/agents/designs/76-jangar-rollout-settlement-fuses-and-proof-reclocking-2026-05-05.md`
 
 ## Decision
 

@@ -13,11 +13,14 @@ const LOCAL_IMAGE_PREFIXES = [
 
 const LOCAL_IMAGE_EXACT_PATHS = new Set([
   'bun.lock',
-  'package.json',
-  'packages/scripts/src/agents/build-image.ts',
+  'flake.lock',
+  'nix/images/agents.nix',
+  'nix/images/bun-workspace-service.nix',
+  'nix/images/openai-codex-cli.nix',
+  'nix/packages.nix',
   'packages/scripts/src/agents/deploy-service.ts',
   'packages/scripts/src/agents/smoke-agents.ts',
-  'packages/scripts/src/shared/docker.ts',
+  'packages/scripts/src/shared/nix-oci-deploy.ts',
   'tsconfig.base.json',
 ])
 

@@ -3,6 +3,10 @@ kind: Kustomization
 resources:
   - codex-auth-externalsecret.yaml
   - postgres-cluster.yaml
+  - torghut-db-ca-prune-tombstone.yaml
+  - torghut-db-ca-reflector-rbac.yaml
+  - torghut-db-ca-prune-guard-job.yaml
+  - torghut-db-ca-reflector-job.yaml
   - cnpg-torghut-db-objectbucketclaim.yaml
   - postgres-scheduled-backup.yaml
   - strategy-configmap.yaml
@@ -13,6 +17,8 @@ resources:
   - tigerbeetle-cluster.yaml
   - tigerbeetle-smoke-job.yaml
   - knative-service.yaml
+  - scheduler-deployment.yaml
+  - scheduler-service.yaml
   - knative-service-sim.yaml
   - tailscale-service.yaml
   - ingressroute-flink-k8s-private.yaml
@@ -32,13 +38,9 @@ resources:
   - llm-guardrails-exporter.yaml
   - whitepapers-objectbucketclaim.yaml
   - whitepapers-bucket-bootstrap-job.yaml
-  - empirical-artifacts-objectbucketclaim.yaml
-  - empirical-artifacts-retention-cronjob.yaml
   - zero-notional-drift-repair-cronjob.yaml
-  - paper-account-flatten-cronjob.yaml
   - generated-resource-retention-rbac.yaml
   - generated-resource-retention-cronjob.yaml
-  - empirical-promotion-workflowtemplate.yaml
   - historical-simulation-workflowtemplate.yaml
   - analysis-template-runtime-ready.yaml
   - analysis-template-activity.yaml

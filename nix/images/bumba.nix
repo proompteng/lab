@@ -4,7 +4,6 @@
   repoRoot,
   bun,
   nodejs,
-  repoRevision,
 }:
 
 import ./bun-workspace-service.nix {
@@ -12,8 +11,8 @@ import ./bun-workspace-service.nix {
   serviceName = "bumba";
   packageName = "@proompteng/bumba";
   depsHash = {
-    x86_64-linux = "sha256-ndyiyuCI8lQmM6yPNDhY6q4VWtJohWJbZjrMwGObbe0=";
-    aarch64-linux = "sha256-ndyiyuCI8lQmM6yPNDhY6q4VWtJohWJbZjrMwGObbe0=";
+    x86_64-linux = "sha256-UVf3WOodJj9RCl3H0rGTpo1EOOekzcPN288y3DJ08c0=";
+    aarch64-linux = "sha256-fkdC7RAPgQME79kor3txmeFTXwtmCKGS0nPkDTH1I40=";
   };
   installFilters = [
     "@proompteng/bumba"
@@ -29,9 +28,6 @@ import ./bun-workspace-service.nix {
   command = [
     "bun"
     "services/bumba/src/worker.ts"
-  ];
-  env = [
-    "TEMPORAL_WORKER_BUILD_ID=bumba@${repoRevision}"
   ];
   extraContents = [
     pkgs.git

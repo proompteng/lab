@@ -1,22 +1,21 @@
 # 188. Torghut Profit Freshness Frontier And Zero-Notional Repair Market (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, stale proof retirement, zero-notional repair selection, market-context and signal
-freshness, empirical proof renewal, Jangar reliability settlement consumption, validation, rollout, rollback, and
-handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/184-jangar-reliability-settlement-ledger-and-rollout-slo-escrow-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
-- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
-- `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`
-- `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
 
 ## Decision
 
@@ -24,7 +23,7 @@ I am selecting a **Profit Freshness Frontier with a Zero-Notional Repair Market*
 architecture step.
 
 The current trading service is alive, but it is not profit-ready. `/trading/status` reports the live loop running on
-revision `torghut-00320`, but live submission is blocked by `alpha_readiness_not_promotion_eligible`,
+revision `torghut-00320`, but live submission is blocked by `hypothesis_not_promotion_eligible`,
 `empirical_jobs_not_ready`, and `simple_submit_disabled`. Signal lag is about `328k` seconds, market context is stale
 by about `330k` seconds, all major market-context domains are stale, empirical jobs are stale, and no hypotheses are
 promotion-eligible. Argo reports `torghut=Synced/Degraded` and `torghut-options=Synced/Progressing` while multiple
@@ -62,7 +61,7 @@ records, GitOps resources, AgentRuns, broker state, Torghut flags, or ClickHouse
 
 - `/trading/status` reported `enabled=true`, `running=true`, `mode=live`, `autonomy_enabled=false`, and active revision
   `torghut-00320`.
-- Live submission was not allowed. Blocking reasons were `alpha_readiness_not_promotion_eligible`,
+- Live submission was not allowed. Blocking reasons were `hypothesis_not_promotion_eligible`,
   `empirical_jobs_not_ready`, and `simple_submit_disabled`.
 - Quant evidence was degraded. Latest metrics were current in the hot path, but stage evidence showed ingestion lag up
   to about `956k` seconds, with some materialization rows also failing.

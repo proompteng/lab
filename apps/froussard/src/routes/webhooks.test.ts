@@ -110,7 +110,7 @@ const findAgentRunSubmission = (fetchMock: ReturnType<typeof vi.fn>) =>
 
 const expectAgentRunSubmission = (
   fetchMock: ReturnType<typeof vi.fn>,
-  options: { deliveryId: string; issueNumber: number },
+  options: { deliveryId: string; issueNumber: number; issueTitle: string; issueUrl: string },
 ) => {
   const call = findAgentRunSubmission(fetchMock)
   expect(call).toBeTruthy()
@@ -123,7 +123,19 @@ const expectAgentRunSubmission = (
     'x-agents-client': 'froussard',
   })
 
+  const expectedGoalObjective = [
+    `Implement GitHub issue owner/repo#${options.issueNumber}: ${options.issueTitle}.`,
+    `Issue URL: ${options.issueUrl}.`,
+    'Base branch: main.',
+    'Head branch: codex/issue-1-test.',
+    'Use implementation.text for the full issue body, requirements, and acceptance criteria.',
+  ].join('\n')
+
   const payload = JSON.parse(String(init.body)) as Record<string, unknown>
+  const goal = payload.goal as { objective?: unknown } | undefined
+  expect(goal?.objective).toBe(expectedGoalObjective)
+  expect(goal?.objective).not.toBe('PROMPT')
+
   expect(payload).toMatchObject({
     namespace: 'agents',
     agentRef: { name: 'codex-agent' },
@@ -131,7 +143,10 @@ const expectAgentRunSubmission = (
       text: 'PROMPT',
       source: { provider: 'github', externalId: `owner/repo#${options.issueNumber}` },
     },
-    goal: { objective: 'PROMPT', tokenBudget: 250000 },
+    goal: {
+      objective: expectedGoalObjective,
+      tokenBudget: 250000,
+    },
     runtime: { type: 'job', config: { serviceAccountName: 'agents-sa' } },
     parameters: {
       repository: 'owner/repo',
@@ -397,7 +412,12 @@ describe('createWebhookHandler', () => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
         expect(publishedMessages).toHaveLength(1)
         expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
-        expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-issues-opened', issueNumber: 42 })
+        expectAgentRunSubmission(fetchMock, {
+          deliveryId: 'delivery-issues-opened',
+          issueNumber: 42,
+          issueTitle: 'Implement feature',
+          issueUrl: 'https://github.com/owner/repo/issues/42',
+        })
         expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
           expect.objectContaining({
             repositoryFullName: 'owner/repo',
@@ -436,7 +456,12 @@ describe('createWebhookHandler', () => {
       assert: (body) => {
         expect(body).toMatchObject({ codexStageTriggered: 'implementation' })
         expect(publishedMessages.some((message) => message.topic === 'github.issues.codex.tasks')).toBe(false)
-        expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-issue_comment-created', issueNumber: 99 })
+        expectAgentRunSubmission(fetchMock, {
+          deliveryId: 'delivery-issue_comment-created',
+          issueNumber: 99,
+          issueTitle: 'Ship feature',
+          issueUrl: 'https://github.com/owner/repo/issues/99',
+        })
         expect(githubServiceMock.postIssueCommentReaction).toHaveBeenCalledWith(
           expect.objectContaining({
             repositoryFullName: 'owner/repo',
@@ -701,7 +726,12 @@ describe('createWebhookHandler', () => {
     expect(response.status).toBe(202)
     expect(publishedMessages).toHaveLength(1)
     const [rawJsonMessage] = publishedMessages
-    expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-123', issueNumber: 1 })
+    expectAgentRunSubmission(fetchMock, {
+      deliveryId: 'delivery-123',
+      issueNumber: 1,
+      issueTitle: 'Test issue',
+      issueUrl: 'https://example.com',
+    })
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-123' })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -738,7 +768,12 @@ describe('createWebhookHandler', () => {
     const response = await handler(buildRequest(payload, headers), 'github')
     expect(response.status).toBe(202)
     expect(publishedMessages).toHaveLength(1)
-    expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-dup', issueNumber: 1 })
+    expectAgentRunSubmission(fetchMock, {
+      deliveryId: 'delivery-dup',
+      issueNumber: 1,
+      issueTitle: 'Test issue',
+      issueUrl: 'https://example.com',
+    })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledTimes(1)
 
     const duplicateResponse = await handler(buildRequest(payload, headers), 'github')
@@ -779,7 +814,12 @@ describe('createWebhookHandler', () => {
 
     expect(publishedMessages).toHaveLength(1)
     const [rawJsonMessage] = publishedMessages
-    expectAgentRunSubmission(fetchMock, { deliveryId: 'delivery-999', issueNumber: 2 })
+    expectAgentRunSubmission(fetchMock, {
+      deliveryId: 'delivery-999',
+      issueNumber: 2,
+      issueTitle: 'Implementation issue',
+      issueUrl: 'https://issue',
+    })
     expect(rawJsonMessage).toMatchObject({ topic: 'raw-topic', key: 'delivery-999' })
     expect(githubServiceMock.postIssueReaction).toHaveBeenCalledWith(
       expect.objectContaining({

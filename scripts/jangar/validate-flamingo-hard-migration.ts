@@ -9,8 +9,12 @@ export const requiredTerms = [
   '229376',
   '32768',
   'fp8',
-  'safetensors-load-strategy',
-  'eager',
+  'speculativeAcceptanceLength',
+  'candidate-id',
+  'baseline-result',
+  'fail-on-gate',
+  'mtp-al',
+  'flamingo-pd-shadow',
 ]
 
 export const forbiddenTerms = [
@@ -23,6 +27,7 @@ export const forbiddenTerms = [
 
 export const targetFiles = [
   'argocd/applications/flamingo/deployment.yaml',
+  'argocd/applications/flamingo/candidate-profiles.yaml',
   'argocd/applications/flamingo/README.md',
   'argocd/applications/flamingo/docs/large-model-multigpu.md',
   'argocd/applications/agents/anypi-agentprovider.yaml',
@@ -83,6 +88,86 @@ function hasSaigakCompletionUrl(content: string): boolean {
   return (
     /\bOPENAI_API_BASE_URL:\s*http:\/\/saigak\.saigak\.svc\.cluster\.local:11434\/v1\b/.test(content) ||
     /name:\s*OPENAI_API_BASE_URL\s*\n\s*value:\s*http:\/\/saigak\.saigak\.svc\.cluster\.local:11434\/v1\b/.test(content)
+  )
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function hasYamlEnvVarValue(content: string, name: string, value: string): boolean {
+  const escapedName = escapeRegExp(name)
+  const escapedValue = escapeRegExp(value)
+  const valuePattern = `(?:"${escapedValue}"|'${escapedValue}'|${escapedValue})`
+  return new RegExp(`^\\s*-\\s*name:\\s*${escapedName}\\s*\\n\\s*value:\\s*${valuePattern}\\s*$`, 'm').test(content)
+}
+
+function getYamlSectionBlock(content: string, sectionName: string): string | null {
+  const sectionPattern = new RegExp(`^(?<indent>\\s*)${escapeRegExp(sectionName)}:\\s*$`)
+  const lines = content.split('\n')
+
+  for (let index = 0; index < lines.length; index++) {
+    const match = sectionPattern.exec(lines[index])
+    const sectionIndent = match?.groups?.indent.length
+    if (sectionIndent === undefined) continue
+
+    let endIndex = lines.length
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
+      if (lines[nextIndex].trim() === '') continue
+
+      const nextIndent = lines[nextIndex].match(/^(\s*)\S/)?.[1].length ?? 0
+      if (nextIndent <= sectionIndent) {
+        endIndex = nextIndex
+        break
+      }
+    }
+
+    return lines.slice(index, endIndex).join('\n')
+  }
+
+  return null
+}
+
+function getYamlListItemBlock(content: string, name: string): string | null {
+  const itemPattern = new RegExp(`^(?<indent>\\s*)-\\s*name:\\s*${escapeRegExp(name)}\\s*$`)
+  const lines = content.split('\n')
+
+  for (let index = 0; index < lines.length; index++) {
+    const match = itemPattern.exec(lines[index])
+    const itemIndent = match?.groups?.indent.length
+    if (itemIndent === undefined) continue
+
+    let endIndex = lines.length
+    for (let nextIndex = index + 1; nextIndex < lines.length; nextIndex++) {
+      if (lines[nextIndex].trim() === '') continue
+
+      const nextIndent = lines[nextIndex].match(/^(\s*)\S/)?.[1].length ?? 0
+      if (nextIndent <= itemIndent) {
+        endIndex = nextIndex
+        break
+      }
+    }
+
+    return lines.slice(index, endIndex).join('\n')
+  }
+
+  return null
+}
+
+function hasContainerEnvVarValue(content: string, containerName: string, name: string, value: string): boolean {
+  const containers = getYamlSectionBlock(content, 'containers')
+  const container = containers ? getYamlListItemBlock(containers, containerName) : null
+  return container ? hasYamlEnvVarValue(container, name, value) : false
+}
+
+function hasPvcBoundFieldDiffIgnore(content: string, name: string): boolean {
+  const match = new RegExp(
+    `kind:\\s*PersistentVolumeClaim\\s*\\n\\s*name:\\s*${escapeRegExp(name)}\\s*\\n\\s*jsonPointers:\\s*\\n(?<pointers>(?:\\s*-\\s*/[^\\n]+\\n?)+)`,
+    'm',
+  ).exec(content)
+  const pointers = match?.groups?.pointers ?? ''
+  return ['/metadata/annotations', '/spec/volumeMode', '/spec/volumeName'].every((pointer) =>
+    pointers.includes(`- ${pointer}`),
   )
 }
 
@@ -148,6 +233,11 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
   if (platform?.includes('namespace: saigak\n          name: saigak')) {
     failures.push('argocd/applicationsets/platform.yaml: Saigak must not keep VirtualMachine diff-ignore desired state')
   }
+  if (platform && !hasPvcBoundFieldDiffIgnore(platform, 'saigak-altra-data')) {
+    failures.push(
+      'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-altra-data',
+    )
+  }
 
   const saigakService = byPath.get('argocd/applications/saigak/service.yaml')
   if (saigakService?.includes('kubevirt.io/domain')) {
@@ -161,9 +251,29 @@ export function validateActiveSaigakMigrationContent(files: FileContent[]): stri
     for (const term of ['kubernetes.io/hostname: turin', 'RTX PRO 6000', 'Blackwell']) {
       if (saigakStatefulSet.includes(term)) {
         failures.push(
-          `argocd/applications/saigak/statefulset.yaml: Saigak must stay on the Altra RTX 3090 path, found "${term}"`,
+          `argocd/applications/saigak/statefulset.yaml: Saigak must not consume Turin Blackwell GPU resources, found "${term}"`,
         )
       }
+    }
+    for (const term of [
+      'replicas: 1',
+      'runtimeClassName: nvidia',
+      'kubernetes.io/arch: arm64',
+      'kubernetes.io/hostname: talos-192-168-1-85',
+      'nvidia.com/gpu.present: "true"',
+      'nvidia.com/gpu: "1"',
+      'claimName: saigak-altra-data',
+    ]) {
+      if (!saigakStatefulSet.includes(term)) {
+        failures.push(
+          `argocd/applications/saigak/statefulset.yaml: Saigak must run embeddings on the Altra RTX 3090, missing "${term}"`,
+        )
+      }
+    }
+    if (!hasContainerEnvVarValue(saigakStatefulSet, 'embedding-proxy', 'SAIGAK_REQUIRE_GPU_RESIDENCY', 'true')) {
+      failures.push(
+        'argocd/applications/saigak/statefulset.yaml: Saigak must set SAIGAK_REQUIRE_GPU_RESIDENCY=true on the embedding proxy',
+      )
     }
     for (const term of ['ollama pull qwen3:30b-a3b', 'ollama create qwen3-main-saigak']) {
       if (saigakStatefulSet.includes(term)) {

@@ -1,23 +1,21 @@
 # 77. Torghut Hot-Path Proof Projections and Profit-Cell Settlement (2026-05-05)
 
 Status: Approved for implementation (`discover`)
-Date: `2026-05-05`
-Owner: Gideon Park (Torghut Traders)
-Scope: Torghut quant readiness, profitability authority, data freshness, route budgets, Jangar admission, and
-rollout/rollback gates.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/72-jangar-route-authority-fuses-and-deploy-quarantine-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `75-torghut-cross-plane-evidence-epochs-and-profit-cell-governor-2026-05-05.md`
-- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
-- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
-- `74-torghut-profit-cells-and-evidence-escrow-promotion-veto-2026-05-05.md`
-- `72-torghut-profit-proof-exchange-and-query-firebreak-contract-2026-05-05.md`
-- `71-torghut-whitepaper-autoresearch-profit-target-strategy-factory-2026-04-21.md`
 
 ## Executive Summary
 

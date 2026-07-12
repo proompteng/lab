@@ -133,6 +133,57 @@ data:
                 AgentRun step pods are active while agents-alloy has no available replicas.
                 Logs can be lost once Job pods terminate.
               runbook_url: docs/runbooks/agents-log-observability.md
+      - name: arc-runner-capacity.rules
+        rules:
+          - alert: ArcRunnerResourceMetricsMissing
+            expr: |
+              absent(container_cpu_usage_seconds_total{namespace="arc"}) or
+              absent(kube_pod_container_resource_requests{namespace="arc"})
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: ARC runner resource metrics are missing
+              description: |
+                Mimir is not receiving ARC container CPU metrics or Kubernetes resource request metrics.
+                Check observability-cluster-metrics-alloy and observability-kube-state-metrics in the observability app.
+          - alert: ArcRunnerPodsPending
+            expr: |
+              sum(
+                kube_pod_status_phase{
+                  namespace="arc",
+                  pod=~"arc-(amd64|arm64).*runner.*",
+                  phase="Pending"
+                }
+              ) > 0
+            for: 10m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: ARC runner pods are pending
+              description: |
+                One or more lab ARC runner pods have been Pending for 10 minutes.
+                Compare requested CPU and memory against node allocatable capacity in the ARC Runner Capacity dashboard.
+          - alert: ArcArm64RequestedCpuSaturated
+            expr: |
+              max by (node) (
+                sum by (node) (kube_pod_container_resource_requests{resource="cpu",node!="",node="talos-192-168-1-85"}) /
+                sum by (node) (kube_node_status_allocatable{resource="cpu",node="talos-192-168-1-85"})
+              ) > 0.9
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: arc
+            annotations:
+              summary: Altra requested CPU is saturated
+              description: |
+                Requested CPU on the arm64 runner node is above 90% of allocatable CPU for 15 minutes.
+                ARC arm64 runner scale-out may be blocked even if live CPU usage is low.
       - name: torghut-clickhouse.guardrails.rules
         rules:
           - alert: TorghutClickHouseDiskFreeLowWarning
@@ -383,12 +434,12 @@ data:
                   service="torghut-ws"
                 }[15m]
               ) >= 1
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 15m
             labels:
@@ -423,14 +474,14 @@ data:
                       service="torghut-ws"
                     }[5m]
                   )
-                ) == bool 0
+                ) == 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 8m
             labels:
@@ -480,25 +531,24 @@ data:
               runbook_url: docs/torghut/design-system/v1/operations-ta-replay-and-recovery.md
       - name: torghut-trading.rules
         rules:
-          - alert: TorghutTradingRevisionMetricsMissing
+          - alert: TorghutApiServiceMissing
             expr: |
               absent(
-                up{
-                  job="torghut",
+                kube_service_info{
                   namespace="torghut",
-                  service=~"torghut-[0-9]{5}-private"
+                  service="torghut"
                 }
               ) == 1
             for: 10m
             labels:
               severity: warning
             annotations:
-              summary: Torghut trading revision metrics missing
+              summary: Torghut API service is missing
               description: |
-                No active Knative private revision service metrics are being scraped for torghut.
-                If torghut should be running, this may indicate revision readiness failures or scrape config drift.
+                The stable Knative API Service is absent from Kubernetes inventory.
+                Private revision metrics may be absent normally while the stateless API is scaled to zero.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
-          - alert: TorghutTradingRevisionMetricsDown
+          - alert: TorghutActiveApiRevisionMetricsDown
             expr: |
               max(
                 up{
@@ -511,9 +561,122 @@ data:
             labels:
               severity: critical
             annotations:
-              summary: Torghut trading revision metrics endpoint is down
+              summary: Active Torghut API revision metrics endpoint is down
               description: |
-                The active Knative private revision for torghut is being scraped but up=0 for 5 minutes.
+                A currently active stateless Knative API revision is being scraped but up=0 for 5 minutes.
+                No alert is expected while Knative has intentionally scaled the API to zero.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerMetricsMissing
+            expr: |
+              (
+                kube_deployment_spec_replicas{
+                  namespace="torghut",
+                  deployment="torghut-scheduler"
+                } > 0
+              )
+              unless on (namespace)
+              max by (namespace) (
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }
+              )
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler metrics are missing
+              description: |
+                The scheduler Deployment expects a writer, but no torghut-scheduler metrics target exists.
+                Keep trading contained and inspect the Deployment, Service endpoints, and Alloy discovery.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerMetricsDown
+            expr: |
+              max by (namespace) (
+                up{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-scheduler"
+                }
+              ) == 0
+              and on (namespace)
+              kube_deployment_spec_replicas{
+                namespace="torghut",
+                deployment="torghut-scheduler"
+              } > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler metrics endpoint is down
+              description: |
+                The scheduler writer should be active, but its metrics endpoint has been down for 5 minutes.
+                Keep trading contained until the writer and leadership state are healthy.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerWriterCountInvalid
+            expr: |
+              (
+                (
+                  sum by (namespace) (
+                    torghut_scheduler_leadership_acquired{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }
+                  )
+                  or on (namespace)
+                  0 * kube_deployment_spec_replicas{
+                    namespace="torghut",
+                    deployment="torghut-scheduler"
+                  }
+                ) != 1
+              )
+              and on (namespace)
+              kube_deployment_spec_replicas{
+                namespace="torghut",
+                deployment="torghut-scheduler"
+              } > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler does not have exactly one writer
+              description: |
+                Exactly one scheduler must hold the durable leadership lock whenever the Deployment is enabled.
+                Keep trading contained until the acquired-leadership gauge sums to one.
+              runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
+          - alert: TorghutSchedulerLeadershipUnhealthy
+            expr: |
+              (
+                (
+                  sum by (namespace) (
+                    torghut_scheduler_leadership_healthy{
+                      job="torghut",
+                      namespace="torghut",
+                      service="torghut-scheduler"
+                    }
+                  )
+                  or on (namespace)
+                  0 * kube_deployment_spec_replicas{
+                    namespace="torghut",
+                    deployment="torghut-scheduler"
+                  }
+                ) != 1
+              )
+              and on (namespace)
+              kube_deployment_spec_replicas{
+                namespace="torghut",
+                deployment="torghut-scheduler"
+              } > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: Torghut scheduler leadership is unhealthy
+              description: |
+                The enabled scheduler does not report exactly one healthy durable-leadership holder.
+                Cancel broker-affecting work and restore the database leadership session before resuming.
               runbook_url: docs/torghut/design-system/v1/operations-knative-revision-failures.md
       - name: torghut-llm.rules
         rules:
@@ -644,7 +807,7 @@ data:
             annotations:
               summary: Torghut LLM guardrails scrape failing
               description: |
-                The LLM guardrails exporter cannot reach /trading/metrics or /trading/status.
+                The LLM guardrails exporter cannot read /trading/status.
                 Review torghut service health and network policies.
               runbook_url: docs/torghut/design-system/v1/ai-layer-model-risk-management.md
           - alert: TorghutLLMGuardrailsBlocking
@@ -737,6 +900,14 @@ data:
                   stage=~"stage2|stage3"
                 }
               ) >= 1
+              and
+              max by (job, namespace, service) (
+                torghut_llm_enabled{
+                  job="torghut",
+                  namespace="torghut",
+                  service="torghut-llm-guardrails-exporter"
+                }
+              ) == 1
             for: 10m
             labels:
               severity: critical
@@ -935,20 +1106,22 @@ data:
           - alert: TorghutSignalsStaleDuringMarketHours
             expr: |
               (
-                time()
-                - max(
-                  torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
-                    namespace="torghut",
-                    service="torghut-clickhouse-guardrails-exporter"
-                  }
-                )
-              ) > bool 600
-              * on() group_left()
+                (
+                  time()
+                  - max(
+                    torghut_clickhouse_guardrails_ta_signals_max_event_ts_seconds{
+                      namespace="torghut",
+                      service="torghut-clickhouse-guardrails-exporter"
+                    }
+                  )
+                ) > 600
+              )
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -965,20 +1138,22 @@ data:
           - alert: TorghutMicrobarsStaleDuringMarketHours
             expr: |
               (
-                time()
-                - max(
-                  torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
-                    namespace="torghut",
-                    service="torghut-clickhouse-guardrails-exporter"
-                  }
-                )
-              ) > bool 240
-              * on() group_left()
+                (
+                  time()
+                  - max(
+                    torghut_clickhouse_guardrails_ta_microbars_max_window_end_seconds{
+                      namespace="torghut",
+                      service="torghut-clickhouse-guardrails-exporter"
+                    }
+                  )
+                ) > 240
+              )
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -998,17 +1173,17 @@ data:
                     torghut_trading_decisions_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut"
+                      service="torghut-scheduler"
                     }[5m]
                   )
-                ) == bool 0
+                ) == 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 15m
             labels:
@@ -1026,16 +1201,16 @@ data:
                   torghut_trading_no_signal_windows_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[10m]
                 ) >= 2
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1053,17 +1228,17 @@ data:
                   torghut_trading_no_signal_reason_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut",
+                    service="torghut-scheduler",
                     reason="cursor_ahead_of_stream"
                   }[10m]
                 ) >= 2
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1081,16 +1256,16 @@ data:
                   torghut_trading_signal_continuity_actionable{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[10m]
-                ) >= bool 1
+                ) >= 1
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1108,16 +1283,16 @@ data:
                   torghut_trading_universe_fail_safe_reason_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[10m]
-                ) > bool 0
+                ) > 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -1135,16 +1310,16 @@ data:
                   torghut_trading_signal_staleness_alert_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[15m]
                 ) >= 3
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1162,7 +1337,7 @@ data:
                   torghut_trading_execution_fallback_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut",
+                    service="torghut-scheduler",
                     from="lean",
                     to="alpaca"
                   }[15m]
@@ -1173,7 +1348,7 @@ data:
                     torghut_trading_execution_requests_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut",
+                      service="torghut-scheduler",
                       adapter="lean"
                     }[15m]
                   ),
@@ -1185,7 +1360,7 @@ data:
                 torghut_trading_execution_requests_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut",
+                  service="torghut-scheduler",
                   adapter="lean"
                 }[15m]
               ) > 0.01
@@ -1203,13 +1378,13 @@ data:
               torghut_trading_route_provenance_coverage_ratio{
                 job="torghut",
                 namespace="torghut",
-                service="torghut"
+                service="torghut-scheduler"
               } < 0.98
               and
               torghut_trading_route_provenance_total{
                 job="torghut",
                 namespace="torghut",
-                service="torghut"
+                service="torghut-scheduler"
               } >= 20
             for: 15m
             labels:
@@ -1226,7 +1401,7 @@ data:
                 torghut_trading_evidence_continuity_failures_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[2h]
               ) > 0
             for: 5m
@@ -1246,7 +1421,7 @@ data:
                   torghut_trading_orders_rejected_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[15m]
                 )
                 /
@@ -1255,7 +1430,7 @@ data:
                     torghut_trading_orders_submitted_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut"
+                      service="torghut-scheduler"
                     }[15m]
                   ),
                   1
@@ -1266,7 +1441,7 @@ data:
                 torghut_trading_orders_submitted_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[15m]
               ) > 0
             for: 10m
@@ -1284,7 +1459,7 @@ data:
                 torghut_trading_execution_clean_ratio{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[15m]
               ) < 0.75
               and
@@ -1292,7 +1467,7 @@ data:
                 torghut_trading_decisions_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[15m]
               ) > 20
             for: 10m
@@ -1310,7 +1485,7 @@ data:
                 torghut_trading_signal_batch_order_violation_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[5m]
               ) > 0
             for: 0m
@@ -1328,7 +1503,7 @@ data:
                 torghut_trading_execution_validation_mismatch_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[5m]
               ) > 0
             for: 0m
@@ -1347,7 +1522,7 @@ data:
                   torghut_trading_execution_submit_attempt_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[15m]
                 )
               ) > 0
@@ -1357,7 +1532,7 @@ data:
                   torghut_trading_execution_submit_result_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut",
+                    service="torghut-scheduler",
                     status="accepted"
                   }[15m]
                 )
@@ -1379,7 +1554,7 @@ data:
                     torghut_trading_execution_local_reject_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut"
+                      service="torghut-scheduler"
                     }[5m]
                   )
                 )
@@ -1390,7 +1565,7 @@ data:
                       torghut_trading_execution_submit_attempt_total{
                         job="torghut",
                         namespace="torghut",
-                        service="torghut"
+                        service="torghut-scheduler"
                       }[5m]
                     )
                   ),
@@ -1403,7 +1578,7 @@ data:
                   torghut_trading_execution_submit_attempt_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[5m]
                 )
               ) >= 5
@@ -1422,7 +1597,7 @@ data:
                 torghut_trading_decisions_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[15m]
               ) > 10
               and
@@ -1431,7 +1606,7 @@ data:
                   torghut_trading_execution_submit_attempt_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[15m]
                 )
               ) == 0
@@ -1451,7 +1626,7 @@ data:
                   torghut_trading_decision_reject_reason_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut",
+                    service="torghut-scheduler",
                     reason="qty_below_min"
                   }[30m]
                 )
@@ -1461,7 +1636,7 @@ data:
                     torghut_trading_decisions_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut"
+                      service="torghut-scheduler"
                     }[30m]
                   ),
                   1
@@ -1472,7 +1647,7 @@ data:
                 torghut_trading_decisions_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[30m]
               ) > 25
             for: 10m
@@ -1492,7 +1667,7 @@ data:
                     torghut_trading_decision_reject_reason_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut",
+                      service="torghut-scheduler",
                       reason=~"llm_unavailable_.*"
                     }[30m]
                   )
@@ -1503,7 +1678,7 @@ data:
                     torghut_trading_decisions_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut"
+                      service="torghut-scheduler"
                     }[30m]
                   ),
                   1
@@ -1514,7 +1689,7 @@ data:
                 torghut_trading_decisions_total{
                   job="torghut",
                   namespace="torghut",
-                  service="torghut"
+                  service="torghut-scheduler"
                 }[30m]
               ) > 25
             for: 10m
@@ -1533,7 +1708,7 @@ data:
                   torghut_trading_llm_error_total{
                     job="torghut",
                     namespace="torghut",
-                    service="torghut"
+                    service="torghut-scheduler"
                   }[15m]
                 )
                 /
@@ -1542,7 +1717,7 @@ data:
                     torghut_trading_llm_requests_total{
                       job="torghut",
                       namespace="torghut",
-                      service="torghut"
+                      service="torghut-scheduler"
                     }[15m]
                   ),
                   1
@@ -1574,14 +1749,14 @@ data:
           - alert: JangarTorghutQuantFramesMissingDuringMarketHours
             expr: |
               (
-                sum(increase(jangar_torghut_quant_frames_total{window="1d"}[2m])) == bool 0
+                sum(increase(jangar_torghut_quant_frames_total{window="1d"}[2m])) == 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 5m
             labels:
@@ -1608,12 +1783,12 @@ data:
               (
                 sum(increase(jangar_torghut_quant_stale_frames_total{window="1d"}[5m])) > 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:
@@ -1701,12 +1876,12 @@ data:
               (
                 sum(increase(jangar_torghut_market_context_batch_runs_total{outcome="skipped_market_closed"}[30m])) > 0
               )
-              * on() group_left()
+              and on()
               (
-                (day_of_week(vector(time())) >= bool 1)
-                * (day_of_week(vector(time())) <= bool 5)
-                * (hour(vector(time())) >= bool 14)
-                * (hour(vector(time())) < bool 21)
+                (day_of_week(vector(time())) >= 1)
+                * (day_of_week(vector(time())) <= 5)
+                * (hour(vector(time())) >= 14)
+                * (hour(vector(time())) < 21)
               )
             for: 10m
             labels:

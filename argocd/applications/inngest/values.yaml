@@ -8,7 +8,6 @@ inngest:
   eventKey: ''
   signingKey: ''
   sdkUrl:
-    - 'http://torghut.torghut.svc.cluster.local/api/inngest'
     - 'http://khoshut.khoshut.svc.cluster.local:3000/api/inngest'
   logLevel: info
 

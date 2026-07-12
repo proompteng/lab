@@ -8,6 +8,14 @@
 - Archive note: this file is a historical authority-map snapshot. For current operations, start with
   `docs/torghut/README.md`, live GitOps, service code, and runtime readback.
 
+
+Current authority note: this file is retained as a historical map. It must not be used as the current priority list
+without validating against `docs/torghut/README.md`, live GitOps, service code, runtime endpoints, and CI.
+
+2026-07-04 source-read audit note: each existing design document in this corpus now carries a
+`Source Implementation Audit (2026-07-04)` block. Use that block, plus current source/GitOps, before relying on any
+older priority ordering or handoff claim in this file.
+
 ## Why this document exists
 
 The Torghut design corpus has accumulated several generations of:
@@ -130,9 +138,16 @@ If the question is "what should I trust right now?", start here:
    - `docs/torghut/design-system/v6/58-torghut-profit-cohort-auction-and-freshness-insurance-contract-2026-03-20.md`
    - `docs/torghut/design-system/v6/59-torghut-lane-balance-sheet-and-dataset-seat-auction-contract-2026-03-20.md`
 
-4. options-lane current design source of truth:
+4. options-lane historical design snapshots:
    - `docs/torghut/design-system/v6/33-alpaca-options-market-data-and-technical-analysis-lane-2026-03-08.md`
    - `docs/torghut/design-system/v6/34-alpaca-options-lane-implementation-contract-set-2026-03-08.md`
+   - `docs/torghut/design-system/v6/35-alpaca-options-production-hardening-and-opra-promotion-2026-03-08.md`
+   - `docs/torghut/design-system/v6/36-options-simulation-replay-and-profitability-proof-lane-2026-03-08.md`
+   - `docs/torghut/design-system/v6/37-options-trading-runtime-execution-and-risk-integration-2026-03-08.md`
+
+These March 2026 options-lane files are retained for rationale and archaeology only. They are no longer current
+authority for implementation, promotion, cluster health, or live trading decisions. Use live GitOps, service code,
+runtime status, and the current Torghut index before acting on any options-lane detail.
 
 ## Current priority, not historical priority
 

@@ -13,7 +13,7 @@ on:
         required: false
         type: string
       image_tag:
-        description: Image tag to promote (defaults to source short SHA)
+        description: Image tag to promote (defaults to sha-<full commit SHA>)
         required: false
         type: string
       image_digest:
@@ -48,6 +48,7 @@ jobs:
         uses: ./.github/actions/setup-nix-toolchain
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          require-preinstalled: 'true'
           install-ci-toolchain: 'true'
           extra-nix-config: |
             experimental-features = nix-command flakes

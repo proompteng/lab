@@ -54,7 +54,7 @@ uv run pyright --project pyrightconfig.scripts.json
 uv run ruff check app tests scripts migrations
 uv run python -m unittest tests.test_config
 uv run python -m unittest discover -s tests -p 'test_*.py'
-cd /Users/gregkonush/.codex/worktrees/a115/lab
+cd <repo-root>
 bun run lint:argocd
 ```
 

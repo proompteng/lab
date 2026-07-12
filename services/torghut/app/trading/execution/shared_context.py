@@ -107,99 +107,6 @@ _RUNTIME_COST_BASIS_KEYS = (
     "broker_fee_basis",
 )
 
-_BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = "bounded_paper_route_collection"
-
-_TARGET_PLAN_SOURCE_DECISION_MODE = "paper_route_target_plan_source_decision"
-
-_TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS = (
-    "hypothesis_id",
-    "candidate_id",
-    "runtime_strategy_name",
-    "account_label",
-    "observed_stage",
-)
-
-
-def _mapping_payload(value: object) -> dict[str, Any]:
-    coerced = coerce_json_payload(value)
-    if not isinstance(coerced, Mapping):
-        return {}
-    return {str(key): item for key, item in cast(Mapping[object, Any], coerced).items()}
-
-
-def _target_plan_source_metadata(payload: object) -> dict[str, Any]:
-    payload_mapping = _mapping_payload(payload)
-    params = _mapping_payload(payload_mapping.get("params"))
-    metadata = _mapping_payload(params.get("paper_route_target_plan_source_decision"))
-    if metadata:
-        return metadata
-    return _mapping_payload(params.get("paper_route_target_plan"))
-
-
-def _target_plan_source_decision_mode(payload: object) -> str | None:
-    payload_mapping = _mapping_payload(payload)
-    params = _mapping_payload(payload_mapping.get("params"))
-    metadata = _target_plan_source_metadata(payload_mapping)
-    for item in (
-        params.get("source_decision_mode"),
-        metadata.get("source_decision_mode"),
-        payload_mapping.get("source_decision_mode"),
-    ):
-        text = str(item or "").strip()
-        if text:
-            return text
-    return None
-
-
-def _target_plan_ref_value(payload: object, key: str) -> str | None:
-    payload_mapping = _mapping_payload(payload)
-    params = _mapping_payload(payload_mapping.get("params"))
-    metadata = _target_plan_source_metadata(payload_mapping)
-    for item in (params.get(key), metadata.get(key), payload_mapping.get(key)):
-        text = str(item or "").strip()
-        if text:
-            return text
-    return None
-
-
-def _has_target_plan_source_decision(payload: object) -> bool:
-    metadata = _target_plan_source_metadata(payload)
-    return str(metadata.get("mode") or "").strip() == _TARGET_PLAN_SOURCE_DECISION_MODE
-
-
-def _target_plan_source_decision_needs_refresh(
-    existing_payload: object,
-    new_payload: object,
-) -> bool:
-    """Return true when an idempotent target-plan decision row lacks source refs.
-
-    ``decision_hash`` intentionally ignores telemetry, so a pre-existing planned
-    row can otherwise shadow a newer bounded H-PAIRS target-plan decision that
-    carries the durable hypothesis/candidate/runtime/account/stage refs needed
-    for downstream source evidence.
-    """
-
-    if not _has_target_plan_source_decision(new_payload):
-        return False
-    if (
-        _target_plan_source_decision_mode(new_payload)
-        != _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
-    ):
-        return False
-    if not _has_target_plan_source_decision(existing_payload):
-        return True
-    if (
-        _target_plan_source_decision_mode(existing_payload)
-        != _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
-    ):
-        return True
-    for key in _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS:
-        new_value = _target_plan_ref_value(new_payload, key)
-        existing_value = _target_plan_ref_value(existing_payload, key)
-        if new_value and existing_value != new_value:
-            return True
-    return False
-
 
 class _OrderExecutorFields:
     """Submit orders to a broker adapter with idempotency guards."""
@@ -237,12 +144,16 @@ class _OrderExecutorContract(Protocol):
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        durable_position_qty: Decimal | None = None,
     ) -> QuantityResolution: ...
 
     def _validate_short_sell_constraints(
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        quantity_resolution: QuantityResolution,
     ) -> dict[str, Any] | None: ...
 
     @classmethod
@@ -285,9 +196,6 @@ class _OrderExecutorContract(Protocol):
 
 
 # Public aliases used by split-module consumers.
-BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE = (
-    _BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE
-)
 COST_MODEL_HASH_KEYS = _COST_MODEL_HASH_KEYS
 COST_MODEL_PAYLOAD_KEYS = _COST_MODEL_PAYLOAD_KEYS
 EXECUTION_POLICY_HASH_KEYS = _EXECUTION_POLICY_HASH_KEYS
@@ -299,20 +207,11 @@ RUNTIME_COST_AMOUNT_KEYS = _RUNTIME_COST_AMOUNT_KEYS
 RUNTIME_COST_BASIS_KEYS = _RUNTIME_COST_BASIS_KEYS
 RUNTIME_COST_PAYLOAD_KEYS = _RUNTIME_COST_PAYLOAD_KEYS
 SHORTING_METADATA_CACHE_TTL_SECONDS = _SHORTING_METADATA_CACHE_TTL_SECONDS
-TARGET_PLAN_SOURCE_DECISION_MODE = _TARGET_PLAN_SOURCE_DECISION_MODE
-TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS = _TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS
-has_target_plan_source_decision = _has_target_plan_source_decision
-mapping_payload = _mapping_payload
-target_plan_ref_value = _target_plan_ref_value
-target_plan_source_decision_mode = _target_plan_source_decision_mode
-target_plan_source_decision_needs_refresh = _target_plan_source_decision_needs_refresh
-target_plan_source_metadata = _target_plan_source_metadata
 
 
 # Explicit barrel exports; keeps re-export imports intentional without file-level Ruff ignores.
 __all__: tuple[str, ...] = (
     "Any",
-    "BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
     "COST_MODEL_HASH_KEYS",
     "COST_MODEL_PAYLOAD_KEYS",
     "Decimal",
@@ -336,10 +235,7 @@ __all__: tuple[str, ...] = (
     "Session",
     "Strategy",
     "StrategyDecision",
-    "TARGET_PLAN_SOURCE_DECISION_MODE",
-    "TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS",
     "TradeDecision",
-    "_BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE",
     "_COST_MODEL_HASH_KEYS",
     "_COST_MODEL_PAYLOAD_KEYS",
     "_EXECUTION_POLICY_HASH_KEYS",
@@ -350,25 +246,15 @@ __all__: tuple[str, ...] = (
     "_RUNTIME_COST_BASIS_KEYS",
     "_RUNTIME_COST_PAYLOAD_KEYS",
     "_SHORTING_METADATA_CACHE_TTL_SECONDS",
-    "_TARGET_PLAN_SOURCE_DECISION_MODE",
-    "_TARGET_PLAN_SOURCE_DECISION_REQUIRED_REFS",
-    "_has_target_plan_source_decision",
-    "_mapping_payload",
-    "_target_plan_ref_value",
-    "_target_plan_source_decision_mode",
-    "_target_plan_source_decision_needs_refresh",
-    "_target_plan_source_metadata",
     "annotations",
     "cast",
     "coerce_json_payload",
     "datetime",
     "decision_hash",
-    "has_target_plan_source_decision",
     "hashlib",
     "json",
     "logger",
     "logging",
-    "mapping_payload",
     "min_qty_for_symbol",
     "qty_has_valid_increment",
     "qty_step_for_symbol",
@@ -382,10 +268,6 @@ __all__: tuple[str, ...] = (
     "should_retry_order_error",
     "simulation_context_enabled",
     "sync_order_to_db",
-    "target_plan_ref_value",
-    "target_plan_source_decision_mode",
-    "target_plan_source_decision_needs_refresh",
-    "target_plan_source_metadata",
     "time",
     "timezone",
     "trading_now",

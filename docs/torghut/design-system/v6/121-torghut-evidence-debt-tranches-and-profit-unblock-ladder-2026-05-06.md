@@ -1,20 +1,21 @@
 # 121. Torghut Evidence Debt Tranches And Profit Unblock Ladder (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut empirical proof freshness, quant pipeline freshness, market-context freshness, paper settlement,
-live submission gates, and Jangar material-action unblock receipts.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/117-jangar-evidence-debt-tranches-and-capital-unblock-ledger-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `120-torghut-capital-activation-receipts-and-shadow-profit-proof-queue-2026-05-06.md`
-- `119-torghut-evidence-renewal-batches-and-capital-quiescence-gates-2026-05-06.md`
-- `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
 
 ## Decision
 

@@ -109,7 +109,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
 - `GET http://agents.agents.svc.cluster.local/ready` returned `status=ok`, leader election active, and execution trust
   healthy.
 - The same payload reported `business_state=repair_only`, `revenue_ready=false`, and top repair queue item
-  `repair_alpha_readiness` for `alpha_readiness_not_promotion_eligible`.
+  `repair_alpha_readiness` for `hypothesis_not_promotion_eligible`.
 - The affected value gate was `routeable_candidate_count`; the required output receipt was
   `torghut.executable-alpha-receipts.v1`; capital remained `zero_notional_repair_only`.
 - Jangar repair-bid admission was `mode=observe` and `status=block`, but still produced a launch-allowed

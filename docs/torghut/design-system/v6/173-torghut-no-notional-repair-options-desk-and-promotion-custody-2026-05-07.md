@@ -1,21 +1,20 @@
 # 173. Torghut No-Notional Repair Options Desk And Promotion Custody (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability repair ranking, zero-notional experiment options, promotion evidence custody, Jangar
-ready-action handoff, rollout, rollback, and measurable trading hypotheses.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/169-jangar-ready-action-evidence-exchange-and-deployer-custody-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
-- `171-torghut-profit-evidence-half-life-and-capital-carry-governor-2026-05-07.md`
-- `170-torghut-data-witness-capability-bonds-and-capital-observation-gates-2026-05-07.md`
-- `docs/agents/designs/169-jangar-ready-action-evidence-exchange-and-deployer-custody-2026-05-07.md`
 
 ## Decision
 
@@ -24,7 +23,7 @@ architecture step.
 
 Torghut should not receive paper or live capital from the current state. `/trading/health` reports `status=degraded`,
 proof floor `repair_only`, capital state `zero_notional`, and maximum notional `0`. Blocking reasons are
-`alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
+`hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, `market_context_stale`, and
 `simple_submit_disabled`. The route reacquisition book is still valuable: it shows one probing symbol and seven repair
 candidates, with `NVDA`, `AMD`, `INTC`, and `AVGO` blocked by TCA and `AMZN`, `GOOGL`, and `ORCL` missing route
 evidence. That is not capital evidence, but it is a good repair backlog.
@@ -86,7 +85,7 @@ trading flags, promotion records, or orders.
   - `capital_state=zero_notional`
   - `max_notional=0`
 - Blocking reasons:
-  - `alpha_readiness_not_promotion_eligible`
+  - `hypothesis_not_promotion_eligible`
   - `execution_tca_route_universe_incomplete`
   - `market_context_stale`
   - `simple_submit_disabled`

@@ -1,5 +1,19 @@
 # 24. Knative Probe Port Normalization for Rollout Stability (2026-03-04)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
+
+
 ## Summary
 
 A recurring rollout instability for `torghut` was traced to a control-plane parsing failure in readiness/startup probe handling when probes reference the Knative container port by name (`http1`) instead of numeric port. This proposal standardizes probe target transport to the numeric container port (`8181`) for liveness, startup, and readiness probes in `argocd/applications/torghut/knative-service.yaml` while keeping existing probe paths unchanged.

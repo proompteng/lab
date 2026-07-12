@@ -78,7 +78,7 @@ def test_feature_replay_closure_outranks_drift_for_micro_alpha_blocker() -> None
             "route_state": "repair_only",
             "capital_state": "zero_notional",
             "max_notional": "0",
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "proof_dimensions": [
                 {
                     "dimension": "execution_tca",
@@ -177,7 +177,7 @@ def test_feature_replay_closure_outranks_stale_empirical_when_alpha_readiness_bl
             "route_state": "repair_only",
             "capital_state": "zero_notional",
             "max_notional": "0",
-            "blocking_reasons": ["alpha_readiness_not_promotion_eligible"],
+            "blocking_reasons": ["hypothesis_not_promotion_eligible"],
             "proof_dimensions": [
                 {
                     "dimension": "execution_tca",
@@ -196,7 +196,7 @@ def test_feature_replay_closure_outranks_stale_empirical_when_alpha_readiness_bl
             "aggregate_state": "blocked",
             "accepted_routeable_candidate_count": 0,
             "aggregate_blocking_reason_codes": [
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "alpha_readiness_fail",
                 "empirical_jobs_not_ready",
             ],
@@ -208,7 +208,7 @@ def test_feature_replay_closure_outranks_stale_empirical_when_alpha_readiness_bl
                 {
                     "symbol": "AAPL",
                     "state": "blocked",
-                    "current_blocker": "alpha_readiness_not_promotion_eligible",
+                    "current_blocker": "hypothesis_not_promotion_eligible",
                     "hypothesis_ids": ["H-MICRO-01"],
                 }
             ],

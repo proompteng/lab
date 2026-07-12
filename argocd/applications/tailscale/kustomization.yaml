@@ -4,7 +4,7 @@ kind: Kustomization
 helmCharts:
   - name: tailscale-operator
     repo: https://pkgs.tailscale.com/helmcharts
-    version: 1.96.5
+    version: 1.98.4
     releaseName: tailscale-operator
     namespace: tailscale
     valuesFile: values.yaml

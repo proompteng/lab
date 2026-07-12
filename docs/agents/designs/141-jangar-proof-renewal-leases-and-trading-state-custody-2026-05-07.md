@@ -97,7 +97,7 @@ resources, AgentRun records, trading flags, or empirical artifacts.
 - Torghut live `GET /healthz` returned `ok`, while `GET /trading/health` returned HTTP `503` with overall
   `status=degraded`.
 - Live proof floor was `repair_only`, `capital_state=zero_notional`, and blocked on
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - Live quant evidence was informationally degraded: `latest_metrics_count=144`, latest update
   `2026-05-07T10:10:25Z`, pipeline lag `14` seconds, but ingestion lag `59145` seconds.
 - Sim `GET /trading/health` returned HTTP `200`, but sim proof floor was still `repair_only`: alpha was not promotion

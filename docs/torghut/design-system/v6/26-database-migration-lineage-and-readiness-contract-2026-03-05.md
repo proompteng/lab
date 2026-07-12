@@ -1,5 +1,19 @@
 # 26. Migration Lineage Governance and Readiness Contract for `torghut` Database Evolvability (2026-03-05)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
+
+
 ## Summary
 
 `torghut` currently validates schema freshness as an Alembic head-set check in `/readyz` and `/db-check`, but source control shows a fragmented migration graph: a split at `0010_execution_provenance_and_governance_trace`, another split at `0015_whitepaper_workflow_tables`, and a branch reset at `0012_lean_multilane_foundation` (`down_revision = n/a`). Combined with frequent migration-dependent startup checks and cluster jobs that already show mixed implementation stability, this is a maintainability and rollout reliability risk.

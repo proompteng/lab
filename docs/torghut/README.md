@@ -1,12 +1,14 @@
 # Torghut Documentation
 
 Use this page as the current operator source map. The historical design corpus remains useful context, but live
-decisions must start from GitOps, runtime code, readiness endpoints, and current runbooks.
+decisions must start from GitOps, runtime code, readiness endpoints, and current runbooks. Repository-wide
+documentation authority rules live in `../documentation-authority.md`.
 
 ## Current Truth
 
 Trust these surfaces in order:
 
+- Source-read current state: `docs/torghut/current-source-state.md`
 - Live GitOps: `argocd/applications/torghut/**`, `argocd/applications/torghut-options/**`,
   `argocd/applications/torghut-hyperliquid-feed/**`, and
   `argocd/applications/torghut-hyperliquid-runtime/**`.
@@ -20,6 +22,7 @@ Trust these surfaces in order:
 
 - Torghut app GitOps and TA replay: `argocd/applications/torghut/README.md`
 - Trading service local development: `services/torghut/README.md`
+- Current source-state map: `docs/torghut/current-source-state.md`
 - DB migrations: `services/torghut/migrations/README.md`
 - CI/CD and release commands: `docs/torghut/ci-cd.md`
 - Historical simulation operations: `docs/torghut/rollouts/historical-simulation-playbook.md`
@@ -46,6 +49,10 @@ The design-system tree is an archive and background corpus, not the first source
   until verified against live GitOps, code, and runtime readback.
 - `docs/torghut/design-system/current-source-of-truth-and-priority-guide-2026-03-09.md` is retained as a historical
   authority-map snapshot.
+
+When a design file says `Accepted`, `implementation-ready`, or `current`, read that as the status at the time the file
+was written unless the file explicitly points to current code, GitOps, runtime APIs, and validation evidence. Current
+service behavior wins over dated design text.
 
 ## Legacy And Supporting Notes
 

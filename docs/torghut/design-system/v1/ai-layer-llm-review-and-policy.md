@@ -7,6 +7,33 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: **Implemented in source as DSPy-backed advisory review plus deterministic policy guard; inactive in current deployment.** The code builds sanitized review requests, runs the DSPy review runtime, validates the response schema, and applies deterministic policy controls before any adjustment can survive.
+- Matched implementation area: LLM review and policy guard.
+- Current source evidence:
+  - `services/torghut/app/trading/llm/review_engine.py`
+  - `services/torghut/app/trading/llm/schema.py`
+  - `services/torghut/app/trading/llm/policy.py`
+  - `services/torghut/app/trading/llm/dspy_programs/runtime.py`
+  - `services/torghut/app/models/entities/runtime_cursors.py`
+- What is implemented from the design:
+  - structured request payloads;
+  - schema-validated response payloads;
+  - bounded verdict set including approve/veto/adjust/abstain/escalate;
+  - adjustment clamps and allowed order-type checks;
+  - deterministic fallback behavior;
+  - persisted audit data through `LLMDecisionReview`.
+- What changed from the design:
+  - current runtime path is DSPy artifact/committee based, not direct prompt-to-provider review;
+  - response schema now includes calibrated probabilities, uncertainty, calibration metadata, required checks, risk flags, and committee trace;
+  - deployment currently disables LLM runtime.
+- Remaining gaps / operator caveats:
+  - AI output cannot bypass deterministic policy checks;
+  - activation requires DSPy artifact readiness plus governance evidence, not only `LLM_ENABLED=true`.
+
+
 ## Purpose
 
 Define the LLM review contract, including:
@@ -30,9 +57,11 @@ Define the LLM review contract, including:
 ## Current implementation (pointers)
 
 - Review engine: `services/torghut/app/trading/llm/review_engine.py`
-- Output schemas: `services/torghut/app/trading/llm/schema.py`
+- Request/response schemas: `services/torghut/app/trading/llm/schema.py`
 - Policy enforcement: `services/torghut/app/trading/llm/policy.py`
-- Settings: `services/torghut/app/config.py`
+- DSPy runtime: `services/torghut/app/trading/llm/dspy_programs/runtime.py`
+- Settings: `services/torghut/app/config/llm_fields.py`
+- Audit record: `services/torghut/app/models/entities/runtime_cursors.py::LLMDecisionReview`
 
 ## LLM review flow
 

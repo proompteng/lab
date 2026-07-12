@@ -1,8 +1,11 @@
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 import { ensureCli, repoRoot, run } from './cli'
 import { execGit } from './git'
+import { buildNixOciBuildPlan, type NixOciCacheProvenance, type NixOciTiming } from './nix-oci'
+import { inspectOciPlatforms } from './oci'
 
 export type BuildAndPushNixImageOptions = {
   service: string
@@ -26,6 +29,14 @@ export type BuildAndPushNixImageResult = {
   sourceSha: string
   packageAttr: string
   contractPath: string
+  platforms: string[]
+  platformDigests: Record<string, string>
+  lockfileHashes: Record<string, string>
+  toolVersions: Record<string, string>
+  cacheProvenance: NixOciCacheProvenance
+  timings: NixOciTiming[]
+  imageTarPath?: string
+  dryRun?: boolean
 }
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
@@ -49,6 +60,42 @@ const runCapture = (command: string, args: string[]): string => {
   return stdout
 }
 
+const runVersion = (command: string, args: string[]): string | undefined => {
+  if (!Bun.which(command)) {
+    return undefined
+  }
+  const result = Bun.spawnSync([command, ...args], { cwd: repoRoot })
+  if (result.exitCode !== 0) {
+    return undefined
+  }
+  return result.stdout.toString().trim() || result.stderr.toString().trim() || undefined
+}
+
+const collectLockfileHashes = (): Record<string, string> => {
+  const hashes: Record<string, string> = {}
+  for (const path of ['flake.lock', 'bun.lock']) {
+    const absolutePath = resolve(repoRoot, path)
+    if (!existsSync(absolutePath)) continue
+    hashes[path] = createHash('sha256').update(readFileSync(absolutePath)).digest('hex')
+  }
+  return hashes
+}
+
+const collectToolVersions = (): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries({
+      nix: runVersion('nix', ['--version']),
+      skopeo: runVersion('skopeo', ['--version']),
+      crane: runVersion('crane', ['version']),
+    }).filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].length > 0),
+  )
+
+let collectToolVersionsImpl = collectToolVersions
+
+const manualScriptCacheProvenance: NixOciCacheProvenance = {
+  source: 'manual-script-not-collected',
+}
+
 const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'manual-script') => {
   mkdirSync(dirname(result.contractPath), { recursive: true })
   writeFileSync(
@@ -62,8 +109,16 @@ const writeReleaseContract = (result: BuildAndPushNixImageResult, invocation: 'm
         reference: result.reference,
         sourceSha: result.sourceSha,
         packageAttr: result.packageAttr,
+        platforms: result.platforms,
+        platformDigests: result.platformDigests,
+        lockfileHashes: result.lockfileHashes,
+        toolVersions: result.toolVersions,
+        cacheProvenance: result.cacheProvenance,
+        timings: result.timings,
+        imageTarPath: result.imageTarPath,
         builder: 'nix-dockerTools-skopeo',
         invocation,
+        dryRun: result.dryRun === true ? true : undefined,
       },
       null,
       2,
@@ -78,17 +133,24 @@ export const buildAndPushNixImage = async (
   const repository = requiredValue(options.repository ?? `lab/${options.imageName}`, 'repository')
   const tag = requiredValue(options.tag ?? execGit(['rev-parse', '--short', 'HEAD']), 'tag')
   const sourceSha = requiredValue(options.sourceSha ?? execGit(['rev-parse', 'HEAD']), 'sourceSha')
-  const image = `${registry}/${repository}`
   const service = requiredValue(options.service, 'service')
   const packageAttr = requiredValue(options.packageAttr, 'packageAttr')
+  const plan = buildNixOciBuildPlan({
+    service,
+    imageName: requiredValue(options.imageName, 'imageName'),
+    packageAttr,
+    sourceSha,
+    tag,
+    registry,
+    repository,
+  })
+  const image = plan.image
   const contractPath = resolve(
     repoRoot,
     options.contractPath ?? `.artifacts/${options.service}/manual-release-contract.json`,
   )
-
-  if (registry !== defaultRegistry || !repository.startsWith('lab/')) {
-    throw new Error(`Nix OCI image pushes must stay in ${defaultRegistry}/lab, got ${image}`)
-  }
+  const lockfileHashes = collectLockfileHashes()
+  const toolVersions = collectToolVersionsImpl()
 
   if (options.dryRun) {
     const dryRunDigest = 'sha256:dry-run'
@@ -101,6 +163,13 @@ export const buildAndPushNixImage = async (
       sourceSha,
       packageAttr,
       contractPath,
+      platforms: [],
+      platformDigests: {},
+      lockfileHashes,
+      toolVersions,
+      cacheProvenance: manualScriptCacheProvenance,
+      timings: [],
+      dryRun: true,
     }
     writeReleaseContract(result, 'manual-script')
     return result
@@ -121,6 +190,10 @@ export const buildAndPushNixImage = async (
   await run('nix', pushArgs, { cwd: repoRoot })
 
   const digest = runCapture('crane', ['digest', `${image}:${tag}`])
+  const observedPlatforms = inspectOciPlatforms(`${image}:${tag}`)
+  if (observedPlatforms.length === 0) {
+    throw new Error(`Pushed Nix OCI image has no observable platform metadata: ${image}:${tag}`)
+  }
   const result = {
     service,
     image,
@@ -130,7 +203,20 @@ export const buildAndPushNixImage = async (
     sourceSha,
     packageAttr,
     contractPath,
+    platforms: observedPlatforms.map((entry) => entry.platform),
+    platformDigests: Object.fromEntries(observedPlatforms.map((entry) => [entry.platform, entry.digest])),
+    lockfileHashes,
+    toolVersions,
+    cacheProvenance: manualScriptCacheProvenance,
+    timings: [],
+    imageTarPath: tarPath,
   }
   writeReleaseContract(result, 'manual-script')
   return result
+}
+
+export const __private = {
+  setCollectToolVersions: (impl: (() => Record<string, string>) | undefined = collectToolVersions) => {
+    collectToolVersionsImpl = impl ?? collectToolVersions
+  },
 }

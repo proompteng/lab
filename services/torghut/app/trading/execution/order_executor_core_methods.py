@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from sqlalchemy import select
+from alpaca.common.exceptions import APIError
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -25,6 +27,14 @@ from ..execution_policy import should_retry_order_error
 from ..execution_adapters import OrderSubmission
 from ..firewall import OrderFirewall
 from ..models import ExecutionRequest, StrategyDecision, decision_hash
+from .order_lifecycle import (
+    OrderLifecycleIO,
+    OrderLifecyclePolicy,
+    OrderLifecycleResult,
+    fetch_existing_orders,
+    live_order_recovery_scan_limit,
+    submit_with_bounded_repricing,
+)
 from ..quantity_rules import (
     min_qty_for_symbol,
     quantize_qty_for_symbol,
@@ -38,7 +48,6 @@ from ..tca import upsert_execution_tca_metric
 from .shared_context import (
     OrderExecutorContract as _OrderExecutorContract,
     SHORTING_METADATA_CACHE_TTL_SECONDS as _SHORTING_METADATA_CACHE_TTL_SECONDS,
-    target_plan_source_decision_needs_refresh as _target_plan_source_decision_needs_refresh,
     logger,
 )
 
@@ -71,14 +80,30 @@ from .order_executor_core_support import (
 )
 
 
+_BROKER_DURABLE_POSITION_ADAPTERS = frozenset(
+    {"alpaca", "alpaca_fallback", "alpaca_paper"}
+)
+
+
 if TYPE_CHECKING:
     _OrderExecutorCoreBase = _OrderExecutorContract
 else:
     _OrderExecutorCoreBase = object
 
 
+@dataclass(frozen=True, slots=True)
+class _OrderPreparationInputs:
+    session: Session
+    execution_client: Any
+    decision: StrategyDecision
+    decision_row: TradeDecision
+    account_label: str
+    execution_policy_context: dict[str, Any]
+
+
 class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
     def __init__(self) -> None:
+        self._sleep = time.sleep
         self._account_metadata_cache: dict[str, Any] | None = None
         self._account_metadata_cached_at_monotonic: float | None = None
         self._asset_metadata_cache: dict[str, tuple[dict[str, Any] | None, float]] = {}
@@ -108,19 +133,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         )
         existing = session.execute(stmt).scalar_one_or_none()
         if existing:
-            decision_payload = coerce_json_payload(decision.model_dump(mode="json"))
-            if _target_plan_source_decision_needs_refresh(
-                existing.decision_json,
-                decision_payload,
-            ):
-                existing.decision_json = decision_payload
-                existing.rationale = decision.rationale
-                existing.strategy_id = strategy.id
-                existing.symbol = decision.symbol
-                existing.timeframe = decision.timeframe
-                session.add(existing)
-                session.commit()
-                session.refresh(existing)
             return existing
 
         decision_payload = coerce_json_payload(decision.model_dump(mode="json"))
@@ -211,10 +223,14 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             return None
 
         prepared = self._prepare_order_submission(
-            execution_client=execution_client,
-            decision=decision,
-            decision_row=decision_row,
-            execution_policy_context=execution_policy_context,
+            _OrderPreparationInputs(
+                session=session,
+                execution_client=execution_client,
+                decision=decision,
+                decision_row=decision_row,
+                account_label=account_label,
+                execution_policy_context=execution_policy_context,
+            )
         )
         if retry_delays is None:
             retry_delays = []
@@ -229,13 +245,29 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                 prepared.quantity_resolution.fractional_allowed
             ),
         )
-        order_response = self._submit_order_with_retry(
+        order_lifecycle = self._submit_order_with_retry(
             execution_client=execution_client,
             request=resolved_inventory.request,
             retry_delays=retry_delays,
-            decision_id=str(decision_row.id),
             extra_params=prepared.extra_params,
         )
+        for prior_order in order_lifecycle.prior_orders:
+            prior_payload = _order_payload_with_execution_metadata(
+                prior_order,
+                decision=resolved_inventory.decision,
+                decision_row=decision_row,
+                execution_policy_context=execution_policy_context,
+            )
+            prior_execution = self._sync_execution_payload(
+                session=session,
+                execution_client=execution_client,
+                order_payload=prior_payload,
+                decision_row=decision_row,
+                account_label=account_label,
+                execution_expected_adapter=execution_expected_adapter,
+            )
+            _attach_execution_policy_context(prior_execution, execution_policy_context)
+            upsert_execution_tca_metric(session, prior_execution)
         return self._sync_submitted_order_execution(
             session=session,
             execution_client=execution_client,
@@ -244,24 +276,30 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             account_label=account_label,
             execution_expected_adapter=execution_expected_adapter,
             execution_policy_context=execution_policy_context,
-            order_response=order_response,
+            order_response=order_lifecycle.final_order,
         )
 
     def _prepare_order_submission(
         self,
-        *,
-        execution_client: Any,
-        decision: StrategyDecision,
-        decision_row: TradeDecision,
-        execution_policy_context: dict[str, Any],
+        inputs: _OrderPreparationInputs,
     ) -> _PreparedOrderSubmission:
-        request = _execution_request_from_decision(decision, decision_row)
-        quantity_resolution = self._quantity_resolution_for_request(
-            execution_client,
-            request,
+        request = _execution_request_from_decision(inputs.decision, inputs.decision_row)
+        durable_position_qty = self._durable_position_qty_for_symbol(
+            session=inputs.session,
+            symbol=request.symbol,
+            account_label=inputs.account_label,
         )
+        quantity_resolution = self._quantity_resolution_for_request(
+            inputs.execution_client,
+            request,
+            durable_position_qty=durable_position_qty,
+        )
+        if quantity_resolution.position_qty is not None:
+            request.extra_params["_prechecked_position_qty"] = str(
+                quantity_resolution.position_qty
+            )
         self._raise_order_submission_precheck_errors(
-            execution_client=execution_client,
+            execution_client=inputs.execution_client,
             request=request,
             quantity_resolution=quantity_resolution,
         )
@@ -269,10 +307,10 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request=request,
             quantity_resolution=quantity_resolution,
             extra_params=_submission_extra_params(
-                execution_client=execution_client,
-                decision=decision,
-                decision_row=decision_row,
-                execution_policy_context=execution_policy_context,
+                execution_client=inputs.execution_client,
+                decision=inputs.decision,
+                decision_row=inputs.decision_row,
+                execution_policy_context=inputs.execution_policy_context,
                 request=request,
             ),
         )
@@ -293,9 +331,48 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         short_precheck_error = self._validate_short_sell_constraints(
             execution_client,
             request,
+            quantity_resolution=quantity_resolution,
         )
         if short_precheck_error is not None:
             raise RuntimeError(json.dumps(short_precheck_error))
+
+    @staticmethod
+    def _durable_position_qty_for_symbol(
+        *,
+        session: Session,
+        symbol: str,
+        account_label: str,
+    ) -> Decimal | None:
+        normalized_symbol = symbol.strip().upper()
+        if not normalized_symbol:
+            return None
+        stmt = select(
+            Execution.side,
+            Execution.filled_qty,
+            Execution.execution_actual_adapter,
+        ).where(
+            Execution.alpaca_account_label == account_label,
+            func.upper(func.trim(Execution.symbol)) == normalized_symbol,
+        )
+        total = Decimal("0")
+        observed = False
+        for side, filled_qty, actual_adapter in session.execute(stmt):
+            if (
+                str(actual_adapter or "").strip().lower()
+                not in _BROKER_DURABLE_POSITION_ADAPTERS
+            ):
+                continue
+            qty = _optional_decimal(filled_qty) or Decimal("0")
+            if qty <= 0:
+                continue
+            normalized_side = str(side or "").strip().lower()
+            if normalized_side == "buy":
+                total += qty
+                observed = True
+            elif normalized_side == "sell":
+                total -= qty
+                observed = True
+        return total if observed else None
 
     def _resolve_sell_inventory_before_submission(
         self,
@@ -422,6 +499,11 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         )
         _attach_execution_policy_context(execution, execution_policy_context)
         upsert_execution_tca_metric(session, execution)
+        lifecycle = order_payload.get("_order_lifecycle")
+        lifecycle_exhausted = bool(
+            isinstance(lifecycle, Mapping)
+            and cast(Mapping[str, object], lifecycle).get("exhausted") is True
+        )
         _apply_execution_status(
             decision_row,
             execution,
@@ -430,7 +512,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                 event_ts=decision.event_ts,
                 account_label=account_label,
             ),
-            status_override="submitted",
+            status_override="canceled" if lifecycle_exhausted else "submitted",
         )
         session.add(decision_row)
         session.commit()
@@ -475,32 +557,40 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         execution_expected_adapter: Optional[str],
         execution_policy_context: dict[str, Any],
     ) -> bool:
-        existing_order = self._fetch_existing_order(
-            execution_client, decision_row.decision_hash
+        existing_orders = fetch_existing_orders(
+            execution_client,
+            decision_row.decision_hash,
+            max_attempts=(
+                live_order_recovery_scan_limit(settings.trading_order_max_attempts)
+                if settings.trading_mode == "live"
+                else 1
+            ),
         )
-        if existing_order is None:
+        if not existing_orders:
             return False
-        existing_payload = _order_payload_with_execution_metadata(
-            existing_order,
-            decision,
-            decision_row=decision_row,
-            execution_policy_context=execution_policy_context,
-        )
-        execution = self._sync_execution_payload(
-            session=session,
-            execution_client=execution_client,
-            order_payload=existing_payload,
-            decision_row=decision_row,
-            account_label=account_label,
-            execution_expected_adapter=execution_expected_adapter,
-        )
-        _attach_execution_policy_context(execution, execution_policy_context)
-        upsert_execution_tca_metric(session, execution)
-        _apply_execution_status(decision_row, execution, account_label)
+        for existing_order in existing_orders:
+            existing_payload = _order_payload_with_execution_metadata(
+                existing_order,
+                decision,
+                decision_row=decision_row,
+                execution_policy_context=execution_policy_context,
+            )
+            execution = self._sync_execution_payload(
+                session=session,
+                execution_client=execution_client,
+                order_payload=existing_payload,
+                decision_row=decision_row,
+                account_label=account_label,
+                execution_expected_adapter=execution_expected_adapter,
+            )
+            _attach_execution_policy_context(execution, execution_policy_context)
+            upsert_execution_tca_metric(session, execution)
+            _apply_execution_status(decision_row, execution, account_label)
         session.add(decision_row)
         session.commit()
         logger.info(
-            "Backfilled execution for decision %s from broker state",
+            "Backfilled %s execution attempts for decision %s from broker state",
+            len(existing_orders),
             decision_row.id,
         )
         return True
@@ -542,9 +632,46 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         execution_client: Any,
         request: ExecutionRequest,
         retry_delays: list[float],
-        decision_id: str,
         extra_params: dict[str, Any],
-    ) -> Any:
+    ) -> OrderLifecycleResult:
+        if settings.trading_mode != "live":
+            order = self._submit_order_attempt_with_retry(
+                execution_client=execution_client,
+                request=request,
+                retry_delays=retry_delays,
+                extra_params=extra_params,
+            )
+            return OrderLifecycleResult(dict(order), (), 1, False)
+        return submit_with_bounded_repricing(
+            io=OrderLifecycleIO(
+                execution_client=execution_client,
+                submit=lambda attempt_request, attempt_params: (
+                    self._submit_order_attempt_with_retry(
+                        execution_client=execution_client,
+                        request=attempt_request,
+                        retry_delays=retry_delays,
+                        extra_params=attempt_params,
+                    )
+                ),
+                sleep=self._sleep,
+            ),
+            request=request,
+            extra_params=extra_params,
+            policy=OrderLifecyclePolicy(
+                reprice_seconds=settings.trading_order_reprice_seconds,
+                max_attempts=settings.trading_order_max_attempts,
+                slippage_bps=Decimal(str(settings.trading_order_slippage_bps)),
+            ),
+        )
+
+    def _submit_order_attempt_with_retry(
+        self,
+        *,
+        execution_client: Any,
+        request: ExecutionRequest,
+        retry_delays: list[float],
+        extra_params: dict[str, Any],
+    ) -> Mapping[str, Any]:
         attempt = 0
         while True:
             try:
@@ -559,7 +686,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                     else None
                 )
                 if isinstance(execution_client, OrderFirewall):
-                    return execution_client.submit_order(
+                    response = execution_client.submit_order(
                         symbol=request.symbol,
                         side=request.side,
                         qty=float(request.qty),
@@ -569,19 +696,31 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                         stop_price=stop_price,
                         extra_params=dict(extra_params),
                     )
-                return execution_client.submit_order(
-                    OrderSubmission(
-                        symbol=request.symbol,
-                        side=request.side,
-                        qty=float(request.qty),
-                        order_type=request.order_type,
-                        time_in_force=request.time_in_force,
-                        limit_price=limit_price,
-                        stop_price=stop_price,
-                        extra_params=dict(extra_params),
+                else:
+                    response = execution_client.submit_order(
+                        OrderSubmission(
+                            symbol=request.symbol,
+                            side=request.side,
+                            qty=float(request.qty),
+                            order_type=request.order_type,
+                            time_in_force=request.time_in_force,
+                            limit_price=limit_price,
+                            stop_price=stop_price,
+                            extra_params=dict(extra_params),
+                        )
                     )
-                )
-            except Exception as exc:
+                if not isinstance(response, Mapping):
+                    raise TypeError("order_submission_response_invalid")
+                return cast(Mapping[str, Any], response)
+            except (
+                APIError,
+                ConnectionError,
+                OSError,
+                RuntimeError,
+                TimeoutError,
+                TypeError,
+                ValueError,
+            ) as exc:
                 if attempt >= len(retry_delays) or not should_retry_order_error(exc):
                     raise
                 delay = retry_delays[attempt]
@@ -589,7 +728,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
                 logger.warning(
                     "Retrying order submission attempt=%s decision_id=%s error=%s",
                     attempt,
-                    decision_id,
+                    request.decision_id,
                     exc,
                 )
                 time.sleep(delay)
@@ -717,25 +856,6 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
     ) -> Decimal | None:
         return self._position_qty_for_symbol(execution_client, symbol)
 
-    @staticmethod
-    def _fetch_existing_order(
-        execution_client: Any,
-        decision_hash_value: Optional[str],
-    ) -> Optional[dict[str, Any]]:
-        if not decision_hash_value:
-            return None
-        try:
-            getter = getattr(execution_client, "get_order_by_client_order_id", None)
-            if getter is None:
-                return None
-            order = getter(decision_hash_value)
-        except Exception as exc:  # pragma: no cover - external failure
-            logger.warning("Failed to fetch broker order for client_order_id: %s", exc)
-            return None
-        if not order:
-            return None
-        return order
-
     @classmethod
     def _find_conflicting_open_order(
         cls,
@@ -779,17 +899,23 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
         if reservations.held_qty <= 0:
             return None
 
-        position_qty = cls._position_qty_for_symbol(execution_client, request_symbol)
-        if position_qty is None:
+        resolved_position_qty = _optional_decimal(
+            request.extra_params.get("_prechecked_position_qty")
+        )
+        if resolved_position_qty is None:
+            resolved_position_qty = cls._position_qty_for_symbol(
+                execution_client, request_symbol
+            )
+        if resolved_position_qty is None:
             return _unknown_position_sell_inventory_conflict(
                 request,
                 request_symbol=request_symbol,
                 reservations=reservations,
             )
-        if position_qty <= 0:
+        if resolved_position_qty <= 0:
             return None
 
-        available_qty = position_qty - reservations.held_qty
+        available_qty = resolved_position_qty - reservations.held_qty
         if available_qty < 0:
             available_qty = Decimal("0")
         if request.qty <= available_qty:
@@ -799,7 +925,7 @@ class _OrderExecutorCoreMethods(_OrderExecutorCoreBase):
             request,
             request_symbol=request_symbol,
             reservations=reservations,
-            position_qty=position_qty,
+            position_qty=resolved_position_qty,
             available_qty=available_qty,
         )
 

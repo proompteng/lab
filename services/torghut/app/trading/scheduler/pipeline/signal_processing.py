@@ -23,8 +23,10 @@ from ...features import extract_executable_price, optional_decimal, payload_valu
 from ...ingest import SignalBatch
 from ...models import SignalEnvelope, StrategyDecision
 from ...portfolio import (
+    AllocationResult,
     allocator_from_settings,
 )
+from ..pair_execution import partition_pair_allocations, reserve_pair_allocations
 from ...quote_quality import (
     QuoteQualityStatus,
     assess_signal_quote_quality,
@@ -40,7 +42,7 @@ from .contexts import (
 )
 
 from .shared import (
-    TradingPipelineBase,
+    TradingPipelineRuntime,
     REJECTED_SIGNAL_OUTCOME_FOLLOWUP_HORIZON,
     REJECTED_SIGNAL_OUTCOME_LABEL_LIMIT,
     STRATEGY_POSITION_TAG_LOOKBACK,
@@ -56,7 +58,7 @@ from .support import (
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineSignalProcessingMixin(TradingPipelineBase):
+class TradingPipelineSignalProcessingMixin(TradingPipelineRuntime):
     @staticmethod
     def _attach_strategy_position_tag(
         position: dict[str, Any],
@@ -299,6 +301,14 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineBase):
             strategies=context.strategies,
             allowed_symbols=context.allowed_symbols,
         )
+        pair_allocations: list[AllocationResult] = []
+        allocation_context = AllocationDecisionContext(
+            session=context.session,
+            strategies=context.strategies,
+            account=context.account,
+            positions=context.positions,
+            allowed_symbols=context.allowed_symbols,
+        )
         for signal in context.batch.signals:
             if (
                 relevant_symbols
@@ -319,15 +329,23 @@ class TradingPipelineSignalProcessingMixin(TradingPipelineBase):
                 positions=context.positions,
                 regime_label=resolve_signal_regime(signal),
             )
+            ordinary_allocations, signal_pair_allocations = partition_pair_allocations(
+                allocation_results
+            )
             self._apply_allocation_results(
-                context=AllocationDecisionContext(
-                    session=context.session,
-                    strategies=context.strategies,
-                    account=context.account,
-                    positions=context.positions,
-                    allowed_symbols=context.allowed_symbols,
-                ),
-                allocation_results=allocation_results,
+                context=allocation_context,
+                allocation_results=ordinary_allocations,
+            )
+            pair_allocations.extend(signal_pair_allocations)
+
+        for reserved_group in reserve_pair_allocations(
+            pair_allocations,
+            account=context.account,
+            positions=cast(list[dict[str, object]], context.positions),
+        ):
+            self._apply_pair_allocation_results(
+                context=allocation_context,
+                allocation_results=reserved_group,
             )
 
     def _evaluate_signal_decisions(

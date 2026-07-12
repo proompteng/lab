@@ -6,6 +6,30 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: **Implemented as topic contracts in service/GitOps config, but retention is still mostly an operational contract rather than fully declared beside every topic in this doc.** Current WS/TA code and manifests use the documented equity topics and additional trade-update topics.
+- Current source evidence:
+  - `argocd/applications/torghut/ws/configmap.yaml` currently sets `TOPIC_TRADES=torghut.trades.v1`, `TOPIC_QUOTES=torghut.quotes.v1`, `TOPIC_BARS_1M=torghut.bars.1m.v1`, `TOPIC_STATUS=torghut.status.v1`, `TOPIC_TRADE_UPDATES=torghut.trade-updates.v1`, and `TOPIC_TRADE_UPDATES_V2=torghut.trade-updates.v2`.
+  - `services/dorvud/websockets/src/main/kotlin/ai/proompteng/dorvud/ws/ForwarderConfig.kt::TopicConfig` models trades, quotes, optional bars1m, status, and optional trade-updates topics.
+  - `ForwarderApp.sendKafka` publishes with Kafka key `env.symbol`, preserving per-symbol ordering within partitions.
+  - `argocd/applications/torghut/ta/configmap.yaml` wires `TA_TRADES_TOPIC`, `TA_QUOTES_TOPIC`, `TA_BARS1M_TOPIC`, `TA_MICROBARS_TOPIC`, `TA_SIGNALS_TOPIC`, and `TA_STATUS_TOPIC`.
+  - `FlinkTechnicalAnalysisJob.kt` consumes configured input topics and writes microbars/signals/status through Kafka sinks keyed by symbol.
+- What is implemented from the design:
+  - stable v1 topic names for trades, quotes, bars, TA microbars, TA signals, and status;
+  - symbol-keyed producer records from WS and TA;
+  - separate WS and TA config maps for topic wiring;
+  - Kafka user and secret wiring through `argocd/applications/kafka/torghut-ws-kafkauser.yaml` and `torghut-ws` secret refs;
+  - replay-oriented TA config using `TA_AUTO_OFFSET_RESET=earliest` and a replay-specific `TA_GROUP_ID` in current GitOps.
+- What changed from the design:
+  - trade-update topics now exist and are part of the WS forwarder config;
+  - the current WS forwarder uses a static executable universe and allowlist in GitOps rather than relying on Jangar for live trading symbols;
+  - retention values in this doc remain policy guidance unless verified against actual KafkaTopic resources or broker configuration.
+- Remaining gaps / operator caveats:
+  - Do not treat the retention table as proof of deployed Kafka retention. Verify Strimzi/KafkaTopic resources or broker config before relying on a replay window.
+  - Topic contracts are implemented in config/code, but retention/partitioning is a deployment concern that may live outside this design doc.
+
 ## Purpose
 
 Define Kafka topic semantics, retention/cleanup policies, partitioning expectations, and the operational rationale for

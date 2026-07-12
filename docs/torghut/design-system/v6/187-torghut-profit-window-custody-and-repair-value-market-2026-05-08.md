@@ -1,21 +1,21 @@
 # 187. Torghut Profit-Window Custody And Repair-Value Market (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, profit-window admission, repair-value prioritization, Jangar action custody, zero-notional
-capital safety, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`
-- `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
-- `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
 
 ## Decision
 
@@ -26,7 +26,7 @@ HTTP 503 with `status=degraded`. Postgres, ClickHouse, schema lineage, and empir
 `live_submission_gate.ok=false`, `profitability_proof_floor.ok=false`, `capital_state=zero_notional`, and
 `simple_submit_disabled` remained active. Jangar consumed a current Torghut consumer-evidence receipt, but that receipt
 still reported `decision=repair`, `max_notional=0`, and blockers including `forecast_registry_degraded`,
-`simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and `market_context_stale`.
+`simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and `market_context_stale`.
 
 The profitable opportunity is not to widen notional. It is to spend repair effort where it has measurable expected
 unblock value. The live readiness payload already exposes useful ingredients: profit windows, profit leases, consumer
@@ -68,7 +68,7 @@ flags, GitOps resources, or AgentRun objects.
 ### Data And Profit Signals
 
 - `live_submission_gate.allowed=false`, `reason=simple_submit_disabled`, blocked reasons
-  `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`, `capital_stage=shadow`, and
+  `hypothesis_not_promotion_eligible` and `simple_submit_disabled`, `capital_stage=shadow`, and
   `capital_state=observe`.
 - The proof floor was `repair_only` with `capital_state=zero_notional`.
 - Quant evidence for `PA3SX7FYNUTF/15m` had `180` latest metric rows and a recent update, but also

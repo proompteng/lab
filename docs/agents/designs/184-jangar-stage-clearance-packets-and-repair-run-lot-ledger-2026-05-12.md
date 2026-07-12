@@ -115,7 +115,7 @@ resources, trading flags, broker state, or AgentRun objects.
   `12 Template`, and `1 Unknown`.
 - Torghut `/readyz` returned degraded while Postgres, ClickHouse, broker, database schema, and universe dependencies
   were OK.
-- Torghut live submission was blocked by `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and
+- Torghut live submission was blocked by `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and
   stale empirical jobs.
 - Torghut proof floor was `repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
 - Torghut consumer evidence was current with `route_state=repair_only`, `route_repair_value=14`, and repair decision.

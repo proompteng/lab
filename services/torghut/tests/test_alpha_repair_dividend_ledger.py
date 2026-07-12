@@ -19,7 +19,7 @@ def _repair_queue() -> list[dict[str, object]]:
     return [
         {
             "code": "repair_alpha_readiness",
-            "reason": "alpha_readiness_not_promotion_eligible",
+            "reason": "hypothesis_not_promotion_eligible",
             "value_gate": "routeable_candidate_count",
             "required_output_receipt": "torghut.executable-alpha-receipts.v1",
             "required_receipts": [

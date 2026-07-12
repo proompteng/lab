@@ -10,8 +10,10 @@ from typing import TYPE_CHECKING, Any, List, Optional
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Numeric,
     String,
@@ -122,6 +124,11 @@ class TradeDecision(Base, CreatedAtMixin):
     )
     llm_reviews: Mapped[List["LLMDecisionReview"]] = relationship(
         back_populates="trade_decision", cascade="all, delete-orphan"
+    )
+    submission_claim: Mapped[Optional["TradeDecisionSubmissionClaim"]] = relationship(
+        back_populates="trade_decision",
+        passive_deletes=True,
+        uselist=False,
     )
 
     __table_args__ = (
@@ -241,11 +248,256 @@ class Execution(Base, TimestampMixin):
             "client_order_id",
             unique=True,
         ),
+        Index(
+            "uq_executions_submission_claim_identity",
+            "id",
+            "trade_decision_id",
+            "alpaca_account_label",
+            "client_order_id",
+            "alpaca_order_id",
+            unique=True,
+        ),
         Index("ix_executions_symbol_status", "symbol", "status"),
         Index("ix_executions_expected_adapter", "execution_expected_adapter"),
         Index("ix_executions_actual_adapter", "execution_actual_adapter"),
         Index("ix_executions_execution_correlation_id", "execution_correlation_id"),
         Index("ix_executions_order_feed_last_event_ts", "order_feed_last_event_ts"),
+    )
+
+
+class TradeDecisionSubmissionClaim(Base, TimestampMixin):
+    """Durable audit and fencing record for one broker submission identity."""
+
+    __tablename__ = "trade_decision_submission_claims"
+
+    trade_decision_id: Mapped[uuid.UUID] = mapped_column(
+        GUID(),
+        ForeignKey("trade_decisions.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    account_label: Mapped[str] = mapped_column(String(length=64), nullable=False)
+    client_order_id: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    claim_token: Mapped[uuid.UUID] = mapped_column(GUID(), nullable=False)
+    fencing_epoch: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=1,
+        server_default=text("1"),
+    )
+    state: Mapped[str] = mapped_column(
+        String(length=32),
+        nullable=False,
+        default="claimed",
+        server_default=text("'claimed'"),
+    )
+    claim_owner: Mapped[str] = mapped_column(String(length=128), nullable=False)
+    claimed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    lease_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    broker_io_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recovery_after: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recovery_token: Mapped[Optional[uuid.UUID]] = mapped_column(GUID(), nullable=True)
+    recovery_fencing_epoch: Mapped[int] = mapped_column(
+        BigInteger,
+        nullable=False,
+        default=0,
+        server_default=text("0"),
+    )
+    recovery_owner: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    recovery_lease_started_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recovery_lease_expires_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recovery_checked_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recovery_observation_epoch: Mapped[Optional[int]] = mapped_column(
+        BigInteger, nullable=True
+    )
+    recovery_outcome: Mapped[Optional[str]] = mapped_column(
+        String(length=32), nullable=True
+    )
+    recovery_evidence: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    released_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    release_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    broker_order_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    broker_client_order_id: Mapped[Optional[str]] = mapped_column(
+        String(length=128), nullable=True
+    )
+    execution_id: Mapped[Optional[uuid.UUID]] = mapped_column(GUID(), nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    terminal_receipt_event_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        GUID(),
+        ForeignKey(
+            "broker_mutation_receipt_events.id",
+            name="fk_td_submission_claim_terminal_receipt_event",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+            use_alter=True,
+        ),
+        nullable=True,
+    )
+
+    trade_decision: Mapped[TradeDecision] = relationship(
+        back_populates="submission_claim"
+    )
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('claimed', 'broker_io', 'submitted', 'rejected')",
+            name="state",
+        ),
+        CheckConstraint("fencing_epoch > 0", name="fencing_epoch_positive"),
+        CheckConstraint(
+            "recovery_fencing_epoch >= 0",
+            name="recovery_fencing_epoch_nonnegative",
+        ),
+        CheckConstraint(
+            "state NOT IN ('broker_io', 'submitted', 'rejected') OR "
+            "(broker_io_started_at IS NOT NULL AND recovery_after IS NOT NULL)",
+            name="broker_io_metadata",
+        ),
+        CheckConstraint(
+            "state <> 'claimed' OR "
+            "(broker_io_started_at IS NULL AND recovery_after IS NULL "
+            "AND recovery_fencing_epoch = 0 AND recovery_token IS NULL "
+            "AND recovery_owner IS NULL AND recovery_lease_started_at IS NULL "
+            "AND recovery_lease_expires_at IS NULL "
+            "AND recovery_checked_at IS NULL "
+            "AND recovery_observation_epoch IS NULL "
+            "AND recovery_outcome IS NULL AND recovery_evidence IS NULL "
+            "AND broker_order_id IS NULL "
+            "AND broker_client_order_id IS NULL AND execution_id IS NULL "
+            "AND completed_at IS NULL AND terminal_receipt_event_id IS NULL)",
+            name="claimed_metadata",
+        ),
+        CheckConstraint(
+            "state <> 'broker_io' OR "
+            "(broker_order_id IS NULL AND broker_client_order_id IS NULL "
+            "AND execution_id IS NULL AND completed_at IS NULL "
+            "AND terminal_receipt_event_id IS NULL)",
+            name="broker_io_terminal_metadata",
+        ),
+        CheckConstraint(
+            "state <> 'submitted' OR "
+            "(broker_io_started_at IS NOT NULL AND broker_order_id IS NOT NULL "
+            "AND broker_client_order_id IS NOT NULL "
+            "AND broker_client_order_id = client_order_id "
+            "AND execution_id IS NOT NULL AND completed_at IS NOT NULL)",
+            name="submitted_metadata",
+        ),
+        CheckConstraint(
+            "state <> 'rejected' OR "
+            "(broker_order_id IS NULL AND broker_client_order_id IS NULL "
+            "AND execution_id IS NULL AND completed_at IS NOT NULL "
+            "AND terminal_receipt_event_id IS NOT NULL)",
+            name="rejected_metadata",
+        ),
+        CheckConstraint(
+            "terminal_receipt_event_id IS NULL OR state IN ('submitted', 'rejected')",
+            name="terminal_receipt_state",
+        ),
+        CheckConstraint(
+            "(recovery_fencing_epoch = 0 AND recovery_token IS NULL "
+            "AND recovery_owner IS NULL AND recovery_lease_started_at IS NULL "
+            "AND recovery_lease_expires_at IS NULL) OR "
+            "(recovery_fencing_epoch > 0 AND recovery_token IS NOT NULL "
+            "AND recovery_owner IS NOT NULL AND recovery_lease_started_at IS NOT NULL "
+            "AND recovery_lease_expires_at IS NOT NULL "
+            "AND state IN ('broker_io', 'submitted', 'rejected'))",
+            name="recovery_lease_metadata_all_or_none",
+        ),
+        CheckConstraint(
+            "(recovery_checked_at IS NULL "
+            "AND recovery_observation_epoch IS NULL "
+            "AND recovery_outcome IS NULL AND recovery_evidence IS NULL) OR "
+            "(recovery_checked_at IS NOT NULL AND recovery_outcome IS NOT NULL "
+            "AND recovery_evidence IS NOT NULL "
+            "AND recovery_observation_epoch IS NOT NULL "
+            "AND recovery_observation_epoch > 0 "
+            "AND recovery_observation_epoch <= recovery_fencing_epoch)",
+            name="recovery_observation_all_or_none",
+        ),
+        CheckConstraint(
+            "recovery_outcome IS NULL "
+            "OR (recovery_outcome = 'found' AND state = 'submitted') "
+            "OR (recovery_outcome IN ('not_found', 'indeterminate') "
+            "AND state IN ('broker_io', 'submitted', 'rejected'))",
+            name="recovery_outcome",
+        ),
+        CheckConstraint(
+            "(released_at IS NULL AND release_reason IS NULL) OR "
+            "(released_at IS NOT NULL AND release_reason IS NOT NULL "
+            "AND state = 'claimed' AND lease_expires_at <= released_at)",
+            name="release_metadata",
+        ),
+        ForeignKeyConstraint(
+            [
+                "execution_id",
+                "trade_decision_id",
+                "account_label",
+                "broker_client_order_id",
+                "broker_order_id",
+            ],
+            [
+                "executions.id",
+                "executions.trade_decision_id",
+                "executions.alpaca_account_label",
+                "executions.client_order_id",
+                "executions.alpaca_order_id",
+            ],
+            name="fk_td_submission_claim_execution_identity",
+            ondelete="RESTRICT",
+            onupdate="RESTRICT",
+        ),
+        Index(
+            "uq_trade_decision_submission_claim_token",
+            "claim_token",
+            unique=True,
+        ),
+        Index(
+            "uq_trade_decision_submission_terminal_receipt_event",
+            "terminal_receipt_event_id",
+            unique=True,
+        ),
+        Index(
+            "uq_trade_decision_submission_claim_account_client_order",
+            "account_label",
+            "client_order_id",
+            unique=True,
+        ),
+        Index(
+            "uq_trade_decision_submission_recovery_token",
+            "recovery_token",
+            unique=True,
+        ),
+        Index(
+            "ix_trade_decision_submission_claim_state_lease",
+            "state",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_trade_decision_submission_claim_recovery_due",
+            "state",
+            "recovery_after",
+            "recovery_lease_expires_at",
+        ),
     )
 
 

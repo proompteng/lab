@@ -21,6 +21,8 @@ internal class ForwarderMetrics(
   private val kafkaMetadataErrorCounters = ConcurrentHashMap<String, Counter>()
   private val desiredSymbolsFetchFailureCounters = ConcurrentHashMap<String, Counter>()
   private val providerMessageCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataDropCounters = ConcurrentHashMap<String, Counter>()
+  private val marketDataChannelGaugeValues = ConcurrentHashMap<String, AtomicLong>()
 
   private val readinessStatus = AtomicInteger(0)
   private val desiredSymbolsFetchDegraded = AtomicInteger(0)
@@ -36,6 +38,7 @@ internal class ForwarderMetrics(
       "alpaca_ws" to AtomicInteger(0),
       "kafka" to AtomicInteger(0),
       "trade_updates" to AtomicInteger(0),
+      "market_data_channels" to AtomicInteger(0),
     )
 
   private val lagSummary: DistributionSummary =
@@ -108,6 +111,7 @@ internal class ForwarderMetrics(
     readinessGateStatus["alpaca_ws"]?.set(if (gates.alpacaWs) 1 else 0)
     readinessGateStatus["kafka"]?.set(if (gates.kafka) 1 else 0)
     readinessGateStatus["trade_updates"]?.set(if (gates.tradeUpdates) 1 else 0)
+    readinessGateStatus["market_data_channels"]?.set(if (gates.marketDataChannels) 1 else 0)
   }
 
   fun recordReadinessError(errorClass: ReadinessErrorClass) {
@@ -199,8 +203,108 @@ internal class ForwarderMetrics(
       }.increment()
   }
 
+  fun recordMarketDataDrop(
+    marketType: AlpacaMarketType,
+    channel: String,
+    reason: String,
+  ) {
+    marketDataDropCounters
+      .computeIfAbsent("${marketType.name}|$channel|$reason") { key ->
+        val parts = key.split("|", limit = 3)
+        Counter
+          .builder("torghut_ws_market_data_drops_total")
+          .tag("market_type", parts[0].lowercase())
+          .tag("channel", parts[1])
+          .tag("reason", parts[2])
+          .register(registry)
+      }.increment()
+  }
+
   fun setOptionsEventStarvation(starved: Boolean) {
     optionsEventStarvation.set(if (starved) 1 else 0)
+  }
+
+  fun setMarketDataChannelReadiness(channels: Collection<MarketDataChannelReadiness>) {
+    channels.forEach { channel ->
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "ready",
+        value = if (channel.ready) 1 else 0,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "lag_ms",
+        value = channel.lagMs ?: -1,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "latest_provider_event_at_ms",
+        value = channel.latestProviderEventAtMs ?: 0,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "latest_serialized_at_ms",
+        value = channel.latestSerializedAtMs ?: 0,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "latest_kafka_success_at_ms",
+        value = channel.latestKafkaSuccessAtMs ?: 0,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "latest_subscription_ack_at_ms",
+        value = channel.latestSubscriptionAckAtMs ?: 0,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "subscription_ack_lag_ms",
+        value = channel.subscriptionAckLagMs ?: -1,
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "subscribed_symbol_count",
+        value = channel.subscribedSymbolCount.toLong(),
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "observed_symbol_count",
+        value = channel.observedSymbolCount.toLong(),
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "fresh_symbol_count",
+        value = channel.freshSymbolCount.toLong(),
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "missing_symbol_count",
+        value = channel.missingSymbols.size.toLong(),
+      )
+      setMarketDataChannelGauge(
+        channel = channel.channel,
+        field = "stale_symbol_count",
+        value = channel.staleSymbols.size.toLong(),
+      )
+    }
+  }
+
+  private fun setMarketDataChannelGauge(
+    channel: String,
+    field: String,
+    value: Long,
+  ) {
+    marketDataChannelGaugeValues
+      .computeIfAbsent("$channel|$field") { key ->
+        val parts = key.split("|", limit = 2)
+        val gaugeValue = AtomicLong(0)
+        Gauge
+          .builder("torghut_ws_market_data_channel", gaugeValue) { it.get().toDouble() }
+          .tag("channel", parts[0])
+          .tag("field", parts[1])
+          .register(registry)
+        gaugeValue
+      }.set(value)
   }
 
   fun recordDesiredSymbolsFetchSuccess() {

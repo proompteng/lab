@@ -48,7 +48,7 @@ from .contexts import (
     MarketContextBlockRequest,
 )
 from .shared import (
-    TradingPipelineBase,
+    TradingPipelineRuntime,
     RUNTIME_REGIME_CONFIDENCE_DEFAULT_THRESHOLDS,
 )
 from .support import (
@@ -61,7 +61,7 @@ from .support import (
 logger = logging.getLogger(__name__)
 
 
-class TradingPipelineReviewMixin(TradingPipelineBase):
+class TradingPipelineReviewMixin(TradingPipelineRuntime):
     def _resolve_regime_confidence_thresholds(
         self,
         entropy_band: str,
@@ -166,12 +166,19 @@ class TradingPipelineReviewMixin(TradingPipelineBase):
         symbol: str,
     ) -> Any:
         _ = symbol
-        if getattr(self.execution_adapter, "name", None) == "simulation":
+        if getattr(self.execution_adapter, "name", None) in {
+            "simulation",
+            "session_router",
+        }:
             return self.execution_adapter
         return self.order_firewall
 
-    @staticmethod
-    def _execution_client_name(client: Any) -> str:
+    def _execution_client_name(self, client: Any) -> str:
+        current_route = getattr(client, "current_route", None)
+        if callable(current_route):
+            route = str(current_route() or "").strip()
+            if route:
+                return route
         raw_name = getattr(client, "name", None)
         if raw_name:
             return str(raw_name)
@@ -302,7 +309,7 @@ class TradingPipelineReviewMixin(TradingPipelineBase):
             return guardrail_block
 
         if engine is None:
-            engine = cast(LLMReviewEngine, self.llm_review_engine or LLMReviewEngine())
+            engine = self.llm_review_engine or LLMReviewEngine()
 
         circuit_open = self._handle_llm_circuit_open(
             LLMPolicyReviewRequest(

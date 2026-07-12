@@ -618,10 +618,10 @@ def _append_alpha_readiness_reasons(
                 }
             )
     if not bool(readiness_payload.get("promotion_eligible", False)):
-        reasons.append("alpha_readiness_not_promotion_eligible")
+        reasons.append("hypothesis_not_promotion_eligible")
         reason_details.append(
             {
-                "reason": "alpha_readiness_not_promotion_eligible",
+                "reason": "hypothesis_not_promotion_eligible",
                 "promotion_target": promotion_target,
                 "alpha_readiness": readiness_payload,
             }

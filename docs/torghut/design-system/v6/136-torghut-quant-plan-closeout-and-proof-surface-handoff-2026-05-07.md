@@ -1,30 +1,21 @@
 # 136. Torghut Quant Plan Closeout And Proof Surface Handoff (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant plan closeout, Jangar rollout authority, Torghut capital authority, database proof limits,
-implementation gates, validation gates, rollout, rollback, and cross-stage handoff.
 
-Primary merged contracts:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/67-jangar-runtime-cells-and-rollout-backpressure-contract-2026-05-05.md`
-- `docs/torghut/design-system/v6/72-torghut-proof-exchange-and-data-firebreak-contract-2026-05-05.md`
-- `docs/agents/designs/70-jangar-promotion-authority-ledger-and-rollout-rehearsal-cells-2026-05-05.md`
-- `docs/torghut/design-system/v6/75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
-- `docs/agents/designs/144-jangar-capital-evidence-return-lane-and-paper-gate-witness-quorum-2026-05-07.md`
-- `docs/torghut/design-system/v6/148-torghut-profit-evidence-reactivation-scheduler-and-paper-gate-receipts-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Merged PR evidence:
-
-- PR 5390: `https://github.com/proompteng/lab/pull/5390`, merged as
-  `c8530a79d388ee38ed726af93a544bea9a5779a1`.
-- PR 5408: `https://github.com/proompteng/lab/pull/5408`, merged as
-  `ad00e8e7f2c98bab69a89a30c9d989f65318dcbc`.
-- PR 5777: `https://github.com/proompteng/lab/pull/5777`, merged as
-  `ec1b8e5a9f5d0536489a3878c3c53f353ad2b585`.
-- PR 5854: `https://github.com/proompteng/lab/pull/5854`, merged as
-  `b05380736319cd68b17549615d9602adbc1abc46`.
 
 ## Decision
 
@@ -36,7 +27,7 @@ plane still returns `dependency_quorum.decision=delay` because `execution_trust_
 authority reason. Torghut live serves `/healthz` with HTTP 200, and its scheduler, Postgres, ClickHouse, Alpaca, schema,
 universe, empirical job, and DSPy readiness dimensions all report through the typed `/readyz` payload. The live
 `/readyz` response is still HTTP 503 because capital is intentionally held at zero notional by `simple_submit_disabled`,
-`alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `quant_pipeline_degraded`.
+`hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `quant_pipeline_degraded`.
 
 That evidence supports the merged design rather than a new fork. Jangar must not treat a healthy serving route as
 rollout or capital authority. Torghut must not treat a healthy liveness route, reachable databases, or stale empirical
@@ -271,7 +262,7 @@ fork warnings. `/readyz` still returns HTTP 503, which is the right answer while
 
 Capital remains intentionally closed. Torghut reports `live_submission_gate.allowed=false`,
 `reason=simple_submit_disabled`, `capital_stage=shadow`, proof-floor `capital_state=zero_notional`, and
-`max_notional=0`. Current proof-floor blockers are `alpha_readiness_not_promotion_eligible`, `degraded`,
+`max_notional=0`. Current proof-floor blockers are `hypothesis_not_promotion_eligible`, `degraded`,
 `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`. The route reacquisition
 book has `0` routeable symbols out of `8`: `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA` are blocked by execution TCA,
 while `AMZN`, `GOOGL`, and `ORCL` are missing execution TCA evidence.

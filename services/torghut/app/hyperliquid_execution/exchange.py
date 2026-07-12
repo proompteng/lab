@@ -5,10 +5,13 @@ from __future__ import annotations
 import importlib
 from dataclasses import replace
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN, ROUND_UP
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 from typing import Any, Mapping, Protocol, cast
 
 from .config import HyperliquidExecutionConfig
+from .market_names import sdk_dex as _sdk_dex, sdk_market_name as _sdk_market_name
+from .sdk_aliases import register_sdk_market_alias as _register_sdk_market_alias
+from .slippage import sdk_mid_price, sdk_slippage_limit_price
 from .models import (
     AccountSnapshot,
     AccountState,
@@ -21,11 +24,22 @@ from .models import (
     PositionSnapshot,
     RuntimeDependencyStatus,
 )
+from .reconciliation_keys import ReconciliationCoinMap
 from .universe import execution_universe_status
 
 
 _METADATA_REFRESH_SECONDS = 300
-_SUPPORTED_LIMIT_TIFS = {"Alo", "Ioc"}
+_SUPPORTED_LIMIT_TIFS = {"Ioc"}
+_BPS_DENOMINATOR = Decimal("10000")
+_BOOK_UNAVAILABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    AttributeError,
+    InvalidOperation,
+    LookupError,
+    OSError,
+    RuntimeError,
+    TypeError,
+    ValueError,
+)
 
 
 class HyperliquidExecutionExchange(Protocol):
@@ -34,37 +48,34 @@ class HyperliquidExecutionExchange(Protocol):
     def filter_supported_markets(
         self,
         markets: tuple[ExecutionMarket, ...],
-    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
-        """Return markets active on the testnet execution venue."""
-        ...
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]: ...
 
-    def submit_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit a bounded limit order."""
-        ...
+    def filter_crossable_markets(
+        self,
+        markets: tuple[ExecutionMarket, ...],
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]: ...
 
-    def cancel_order(self, order: OpenOrder) -> OrderResult:
-        """Cancel a resting order by Hyperliquid oid."""
-        ...
+    def submit_order(self, intent: OrderIntent) -> OrderResult: ...
 
-    def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]:
-        """Read fills from the configured testnet account."""
-        ...
+    def cancel_order(self, order: OpenOrder) -> OrderResult: ...
 
-    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState:
-        """Read account and position state from the configured testnet account."""
-        ...
+    def close_position_reduce_only(
+        self,
+        coin: str,
+        *,
+        size: Decimal | None = None,
+        slippage: Decimal = Decimal("0.05"),
+    ) -> OrderResult: ...
 
-    def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]:
-        """Read coins with open exchange orders."""
-        ...
+    def reconcile_fills(self, market_id_by_coin: dict[str, str]) -> list[Fill]: ...
 
-    def dependency_status(self) -> RuntimeDependencyStatus:
-        """Return exchange freshness."""
-        ...
+    def reconcile_account(self, market_id_by_coin: dict[str, str]) -> AccountState: ...
 
-    def execution_metadata_details(self) -> dict[str, object]:
-        """Return active/missing/delisted metadata details for reports."""
-        ...
+    def reconcile_open_order_coins(self, coins: frozenset[str]) -> frozenset[str]: ...
+
+    def dependency_status(self) -> RuntimeDependencyStatus: ...
+
+    def execution_metadata_details(self) -> dict[str, object]: ...
 
 
 class HyperliquidSdkExecutionExchange:
@@ -74,6 +85,7 @@ class HyperliquidSdkExecutionExchange:
         self._config = config
         self._sdk_exchange: Any | None = None
         self._sdk_info: Any | None = None
+        self._sdk_info_perp_dexs: tuple[str, ...] | None = None
         self._sdk_exchange_perp_dexs: tuple[str, ...] | None = None
         self._last_read_at: datetime | None = None
         self._last_metadata_at: datetime | None = None
@@ -81,6 +93,7 @@ class HyperliquidSdkExecutionExchange:
         self._delisted_by_dex: dict[str, frozenset[str]] = {}
         self._halted_by_dex: dict[str, set[str]] = {}
         self._size_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+        self._max_leverage_by_dex_coin: dict[str, dict[str, Decimal]] = {}
         self._latest_metadata_details: dict[str, object] = {}
 
     def filter_supported_markets(
@@ -103,7 +116,7 @@ class HyperliquidSdkExecutionExchange:
                     reason=f"execution_metadata_unavailable:{type(exc).__name__}",
                 )
         selected = tuple(
-            market
+            self._market_with_execution_metadata(market)
             for market in markets
             if market.coin in self._active_symbols(_sdk_dex(market.dex))
         )
@@ -121,10 +134,53 @@ class HyperliquidSdkExecutionExchange:
         )
         details = dict(self._latest_metadata_details)
         details.update(status.details)
+        details["max_leverage_by_coin"] = {
+            coin: str(leverage)
+            for leverage_by_coin in self._max_leverage_by_dex_coin.values()
+            for coin, leverage in sorted(leverage_by_coin.items())
+        }
         self._latest_metadata_details = details
         return selected, replace(
             status, observed_at=self._last_metadata_at, details=details
         )
+
+    def filter_crossable_markets(
+        self,
+        markets: tuple[ExecutionMarket, ...],
+    ) -> tuple[tuple[ExecutionMarket, ...], RuntimeDependencyStatus]:
+        if not markets:
+            return (), RuntimeDependencyStatus(
+                name="hyperliquid_testnet_liquidity",
+                ready=False,
+                reason="no_execution_markets",
+                details={"slippage_bps": str(self._config.marketable_ioc_slippage_bps)},
+            )
+        selected: list[ExecutionMarket] = []
+        skipped: dict[str, str] = {}
+        for market in markets:
+            try:
+                reason = self._uncrossable_reason(market)
+            except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
+                reason = f"book_unavailable:{type(exc).__name__}"
+            if reason is None:
+                selected.append(market)
+                continue
+            skipped[market.coin] = reason
+        ready = bool(selected)
+        return tuple(selected), RuntimeDependencyStatus(
+            name="hyperliquid_testnet_liquidity",
+            ready=ready,
+            observed_at=datetime.now(timezone.utc),
+            reason=None if ready else "no_crossable_testnet_markets",
+            details={
+                "selected": [market.coin for market in selected],
+                "skipped": skipped,
+                "slippage_bps": str(self._config.marketable_ioc_slippage_bps),
+            },
+        )
+
+    def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
+        return self._normalize_order_intent(intent)
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:
         if intent.tif not in _SUPPORTED_LIMIT_TIFS:
@@ -141,16 +197,25 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "api_wallet_private_key_missing"},
                 rejection_reason="api_wallet_private_key_missing",
             )
-        normalized = self._normalize_order_intent(intent)
+        if intent.reduce_only:
+            return OrderResult(
+                status="rejected",
+                exchange_order_id=None,
+                raw_response={"error": "reduce_only_entry_orders_unsupported"},
+                rejection_reason="reduce_only_entry_orders_unsupported",
+            )
+        normalized = self.normalize_order_intent(intent)
+        sdk_name = _sdk_market_name(normalized.coin, normalized.dex)
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, sdk_name, normalized.coin)
         response = cast(
             dict[str, object],
-            self._exchange().order(
-                name=normalized.coin,
+            exchange.market_open(
+                name=sdk_name,
                 is_buy=normalized.side == "buy",
                 sz=float(normalized.size),
-                limit_px=float(normalized.limit_price),
-                order_type={"limit": {"tif": normalized.tif}},
-                reduce_only=normalized.reduce_only,
+                px=float(normalized.limit_price),
+                slippage=0.0,
                 cloid=self._cloid(normalized.cloid),
             ),
         )
@@ -159,11 +224,6 @@ class HyperliquidSdkExecutionExchange:
         if _is_halted(result):
             self._halted_by_dex.setdefault(_sdk_dex(intent.dex), set()).add(intent.coin)
         return result
-
-    def submit_maker_order(self, intent: OrderIntent) -> OrderResult:
-        """Submit an ALO maker limit order for compatibility diagnostics."""
-
-        return self.submit_order(intent)
 
     def cancel_order(self, order: OpenOrder) -> OrderResult:
         if not order.exchange_order_id:
@@ -176,9 +236,12 @@ class HyperliquidSdkExecutionExchange:
                 },
                 rejection_reason="missing_exchange_order_id",
             )
+        sdk_name = _sdk_market_name(order.coin, order.dex)
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, sdk_name, order.coin)
         response = cast(
             dict[str, object],
-            self._exchange().cancel(order.coin, int(order.exchange_order_id)),
+            exchange.cancel(sdk_name, int(order.exchange_order_id)),
         )
         self._last_read_at = datetime.now(timezone.utc)
         return OrderResult(
@@ -201,7 +264,9 @@ class HyperliquidSdkExecutionExchange:
                 raw_response={"error": "api_wallet_private_key_missing"},
                 rejection_reason="api_wallet_private_key_missing",
             )
-        response = self._exchange().market_close(
+        exchange = self._exchange()
+        _register_sdk_market_alias(exchange, coin, coin.split(":", 1)[-1])
+        response = exchange.market_close(
             coin,
             sz=float(size) if size is not None else None,
             slippage=float(slippage),
@@ -302,7 +367,9 @@ class HyperliquidSdkExecutionExchange:
         if size_decimals is not None:
             quant = Decimal("1").scaleb(-size_decimals)
             size = intent.size.quantize(quant, rounding=ROUND_DOWN)
-        price = _normalize_price(intent.limit_price, side=intent.side)
+        price = intent.limit_price
+        if price <= Decimal("0"):
+            raise ValueError("order_price_must_be_positive")
         notional_usd = (price * size).quantize(Decimal("0.000001"))
         if (
             notional_usd < self._config.min_order_notional_usd
@@ -320,38 +387,78 @@ class HyperliquidSdkExecutionExchange:
             raise ValueError("order_notional_below_minimum")
         return replace(intent, size=size, limit_price=price, notional_usd=notional_usd)
 
+    def _uncrossable_reason(self, market: ExecutionMarket) -> str | None:
+        try:
+            info = self._info()
+            sdk_name = _sdk_market_name(market.coin, market.dex)
+            _register_sdk_market_alias(info, sdk_name, market.coin)
+            book = cast(dict[str, object], info.l2_snapshot(sdk_name))
+            self._last_read_at = datetime.now(timezone.utc)
+        except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
+            return f"book_unavailable:{type(exc).__name__}"
+        best_bid = _best_level_price(book, 0)
+        best_ask = _best_level_price(book, 1)
+        if best_bid is None or best_ask is None:
+            return "book_empty"
+        try:
+            mid_price = sdk_mid_price(info, market.coin, _sdk_dex(market.dex))
+            if mid_price is None:
+                return "book_empty"
+            slippage = self._config.marketable_ioc_slippage_bps / _BPS_DENOMINATOR
+            buy_limit = sdk_slippage_limit_price(
+                info, sdk_name, True, mid_price, slippage
+            )
+            sell_limit = sdk_slippage_limit_price(
+                info, sdk_name, False, mid_price, slippage
+            )
+        except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
+            return f"book_unavailable:{type(exc).__name__}"
+        if buy_limit >= best_ask and (
+            not self._config.allow_short_entries or sell_limit <= best_bid
+        ):
+            return None
+        expected_sides = "buy,sell" if self._config.allow_short_entries else "buy"
+        return (
+            f"book_not_crossable:sides={expected_sides}:"
+            f"bid={best_bid}:ask={best_ask}:buy_limit={buy_limit}:sell_limit={sell_limit}"
+        )
+
     def _refresh_metadata(self, markets: tuple[ExecutionMarket, ...]) -> None:
         if self._metadata_fresh():
             return
         active_by_dex: dict[str, frozenset[str]] = {}
         delisted_by_dex: dict[str, frozenset[str]] = {}
         size_decimals_by_dex_coin: dict[str, dict[str, int]] = {}
+        max_leverage_by_dex_coin: dict[str, dict[str, Decimal]] = {}
         for dex in sorted({_sdk_dex(market.dex) for market in markets} | {""}):
-            active, delisted, size_decimals = self._metadata_for_dex(dex)
+            active, delisted, size_decimals, max_leverage = self._metadata_for_dex(dex)
             active_by_dex[dex] = active
             delisted_by_dex[dex] = delisted
             size_decimals_by_dex_coin[dex] = size_decimals
+            max_leverage_by_dex_coin[dex] = max_leverage
         observed_at = datetime.now(timezone.utc)
         self._active_by_dex = active_by_dex
         self._delisted_by_dex = delisted_by_dex
         self._size_decimals_by_dex_coin = size_decimals_by_dex_coin
+        self._max_leverage_by_dex_coin = max_leverage_by_dex_coin
         self._last_metadata_at = observed_at
         self._last_read_at = observed_at
 
     def _metadata_for_dex(
         self, dex: str
-    ) -> tuple[frozenset[str], frozenset[str], dict[str, int]]:
+    ) -> tuple[frozenset[str], frozenset[str], dict[str, int], dict[str, Decimal]]:
         meta = cast(Mapping[str, object], self._info().meta(dex=dex))
         universe = meta.get("universe")
         if not isinstance(universe, list):
-            return frozenset(), frozenset(), {}
+            return frozenset(), frozenset(), {}, {}
         active: set[str] = set()
         delisted: set[str] = set()
         size_decimals_by_coin: dict[str, int] = {}
+        max_leverage_by_coin: dict[str, Decimal] = {}
         for asset in cast(list[object], universe):
             if not isinstance(asset, dict):
                 continue
-            name, is_delisted, size_decimals = _asset_metadata(
+            name, is_delisted, size_decimals, max_leverage = _asset_metadata(
                 cast(Mapping[str, object], asset)
             )
             if not name:
@@ -362,7 +469,24 @@ class HyperliquidSdkExecutionExchange:
             active.add(name)
             if size_decimals is not None:
                 size_decimals_by_coin[name] = size_decimals
-        return frozenset(active), frozenset(delisted), size_decimals_by_coin
+            if max_leverage is not None:
+                max_leverage_by_coin[name] = max_leverage
+        return (
+            frozenset(active),
+            frozenset(delisted),
+            size_decimals_by_coin,
+            max_leverage_by_coin,
+        )
+
+    def _market_with_execution_metadata(
+        self, market: ExecutionMarket
+    ) -> ExecutionMarket:
+        dex = _sdk_dex(market.dex)
+        max_leverage = self._max_leverage_by_dex_coin.get(dex, {}).get(market.coin)
+        payload = dict(market.payload)
+        if max_leverage is not None:
+            payload["execution_max_leverage"] = str(max_leverage)
+        return replace(market, max_leverage=max_leverage, payload=payload)
 
     def _metadata_fresh(self) -> bool:
         if self._last_metadata_at is None:
@@ -402,10 +526,17 @@ class HyperliquidSdkExecutionExchange:
         return self._sdk_exchange
 
     def _info(self) -> Any:
-        if self._sdk_info is None:
+        perp_dexs = self._known_dexes()
+        if self._sdk_info is None or self._sdk_info_perp_dexs != perp_dexs:
             info_module = importlib.import_module("hyperliquid.info")
             info_cls = getattr(info_module, "Info")
-            self._sdk_info = info_cls(self._config.exchange_api_url, skip_ws=True)
+            self._sdk_info = info_cls(
+                self._config.exchange_api_url,
+                skip_ws=True,
+                perp_dexs=list(perp_dexs),
+                timeout=float(self._config.exchange_staleness_seconds),
+            )
+            self._sdk_info_perp_dexs = perp_dexs
         return self._sdk_info
 
     def _cloid(self, raw: str) -> Any:
@@ -453,16 +584,16 @@ def _parse_sdk_status(
 ) -> tuple[OrderStatus, str | None, str | None]:
     if "error" in status_payload:
         return "rejected", None, str(status_payload["error"])
-    for name in ("resting", "filled"):
+    for name, order_status in (("resting", "accepted"), ("filled", "filled")):
         value = status_payload.get(name)
-        if isinstance(value, dict):
-            value_map = cast(Mapping[str, object], value)
-            oid = value_map.get("oid")
-            return (
-                ("accepted" if name == "resting" else "filled"),
-                str(oid) if oid is not None else None,
-                None,
-            )
+        if not isinstance(value, dict):
+            continue
+        oid = cast(Mapping[str, object], value).get("oid")
+        return (
+            cast(OrderStatus, order_status),
+            str(oid) if oid is not None else None,
+            None,
+        )
     return "submitted", None, None
 
 
@@ -473,12 +604,17 @@ def _is_halted(result: OrderResult) -> bool:
 def _fill_from_payload(
     payload: Mapping[str, object], market_id_by_coin: dict[str, str]
 ) -> Fill:
-    coin = _fill_coin(payload)
+    reconciliation_coin = _fill_coin(payload)
+    coin = _canonical_reconciliation_coin(reconciliation_coin, market_id_by_coin)
     price = _decimal(payload.get("px") or payload.get("price"))
     size = _decimal(payload.get("sz") or payload.get("size"))
     return Fill(
-        fill_hash=str(payload.get("hash") or payload.get("tid") or f"{coin}:{payload}"),
-        market_id=market_id_by_coin[coin],
+        fill_hash=str(
+            payload.get("tid")
+            or payload.get("hash")
+            or f"{reconciliation_coin}:{payload}"
+        ),
+        market_id=market_id_by_coin[reconciliation_coin],
         coin=coin,
         side="buy"
         if str(payload.get("side") or "").upper().startswith("B")
@@ -514,15 +650,18 @@ def _account_state_from_payload(
             if not isinstance(position, dict):
                 continue
             position_map = cast(Mapping[str, object], position)
-            coin = str(position_map.get("coin") or "").strip()
-            if coin not in market_id_by_coin:
+            reconciliation_coin = str(position_map.get("coin") or "").strip()
+            if reconciliation_coin not in market_id_by_coin:
                 continue
+            coin = _canonical_reconciliation_coin(
+                reconciliation_coin, market_id_by_coin
+            )
             size = _decimal(position_map.get("szi"))
             entry_price = _optional_decimal(position_map.get("entryPx"))
             notional_usd = _position_exposure_usd(position_map)
             positions.append(
                 PositionSnapshot(
-                    market_id=market_id_by_coin[coin],
+                    market_id=market_id_by_coin[reconciliation_coin],
                     coin=coin,
                     size=size,
                     entry_price=entry_price,
@@ -532,6 +671,7 @@ def _account_state_from_payload(
                     raw_payload={
                         str(key): value for key, value in position_map.items()
                     },
+                    sdk_coin=reconciliation_coin,
                 )
             )
     raw_exposure_usd = _raw_account_exposure_usd(payload, positions)
@@ -545,6 +685,18 @@ def _account_state_from_payload(
         ),
         positions=tuple(positions),
     )
+
+
+def _canonical_reconciliation_coin(coin: str, market_id_by_coin: dict[str, str]) -> str:
+    if isinstance(market_id_by_coin, ReconciliationCoinMap):
+        return market_id_by_coin.canonical_coin_by_coin.get(coin, coin)
+    market_id = market_id_by_coin.get(coin)
+    if market_id is None:
+        return coin
+    for candidate, candidate_market_id in market_id_by_coin.items():
+        if candidate_market_id == market_id:
+            return candidate
+    return coin
 
 
 def _account_state_from_payloads(
@@ -678,18 +830,6 @@ def _spot_usdc_balances(payload: Mapping[str, object]) -> list[Mapping[str, obje
     return usdc_balances
 
 
-def _normalize_price(price: Decimal, *, side: str) -> Decimal:
-    rounding = ROUND_DOWN if side == "buy" else ROUND_UP
-    return price.quantize(Decimal("0.000001"), rounding=rounding)
-
-
-def _sdk_dex(dex: str) -> str:
-    normalized = dex.strip().lower()
-    if normalized in {"", "default"}:
-        return ""
-    return normalized
-
-
 def _fill_coin(payload: Mapping[str, object]) -> str:
     return str(payload.get("coin") or "").strip()
 
@@ -720,6 +860,23 @@ def _optional_decimal(value: object) -> Decimal | None:
     return Decimal(str(value))
 
 
+def _best_level_price(book: Mapping[str, object], side_index: int) -> Decimal | None:
+    raw_levels = book.get("levels")
+    if not isinstance(raw_levels, list):
+        return None
+    levels = cast(list[object], raw_levels)
+    if len(levels) <= side_index:
+        return None
+    side = levels[side_index]
+    if not isinstance(side, list) or not side:
+        return None
+    side_levels = cast(list[object], side)
+    level = side_levels[0]
+    if not isinstance(level, Mapping):
+        return None
+    return _optional_decimal(cast(Mapping[str, object], level).get("px"))
+
+
 def _optional_int(value: object) -> int | None:
     if value is None or value == "":
         return None
@@ -732,10 +889,13 @@ def _truthy(value: object) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y"}
 
 
-def _asset_metadata(asset: Mapping[str, object]) -> tuple[str, bool, int | None]:
+def _asset_metadata(
+    asset: Mapping[str, object],
+) -> tuple[str, bool, int | None, Decimal | None]:
     name = str(asset.get("name") or "").strip()
     return (
         name,
         _truthy(asset.get("isDelisted")),
         _optional_int(asset.get("szDecimals")),
+        _optional_decimal(asset.get("maxLeverage")),
     )

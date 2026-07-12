@@ -1,21 +1,21 @@
 # 137. Torghut Renewal Bond Profit Escrow And Evidence Carry (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, Jangar stage renewal bonds, zero-notional repair, empirical proof carry, market-context
-freshness, quant ingestion, TCA settlement, capital reentry, validation, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/133-jangar-in-flight-stage-renewal-bonds-and-controller-ingestion-settlement-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `136-torghut-capital-repair-escrow-and-freshness-auction-2026-05-07.md`
-- `136-torghut-quant-plan-closeout-and-proof-surface-handoff-2026-05-07.md`
-- `135-torghut-capital-qualified-alpha-router-and-execution-repair-ladder-2026-05-06.md`
-- `134-torghut-profitability-proof-floor-and-evidence-repair-market-2026-05-06.md`
 
 ## Decision
 
@@ -29,7 +29,7 @@ heads. Empirical jobs were fresh and promotion-authority eligible for
 
 Capital still had to remain at zero. `/readyz` was degraded because the live submission gate was closed,
 profitability proof floor was `repair_only`, capital state was `zero_notional`, and blocking reasons were
-`alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Quant latest metrics
+`hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Quant latest metrics
 were fresh, but ingestion lag was `41138` seconds and materialization lag was `20` seconds. The Jangar market-context
 route reported `overallState=down`, with technicals and regime in error, fundamentals and news missing, and ClickHouse
 ingestion unavailable because `CH_HOST` was not configured. TCA was stale from `2026-04-02T20:59:45.136640Z`, with
@@ -79,7 +79,7 @@ flags, GitOps manifests, ClickHouse tables, or empirical artifacts.
 ### Profit And Freshness Evidence
 
 - Proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Empirical proof passed with candidate `chip-paper-microbar-composite@execution-proof` and dataset snapshot
   `torghut-chip-full-day-20260505-5e447b6d-r1`.

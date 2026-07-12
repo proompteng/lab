@@ -1,21 +1,21 @@
 # 139. Torghut Profit Evidence Custody And Capital Reentry Auction (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, Jangar custody receipts, forecast authority, quant ingestion, TCA settlement,
-promotion readiness, capital reentry, validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/135-jangar-rollout-availability-escrow-and-consumer-evidence-custody-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `138-torghut-profit-stats-census-and-tca-reactivation-market-2026-05-07.md`
-- `136-torghut-capital-repair-escrow-and-freshness-auction-2026-05-07.md`
-- `135-torghut-capital-qualified-alpha-router-and-execution-repair-ladder-2026-05-06.md`
-- `129-torghut-bidirectional-quant-proof-receipts-and-profit-reentry-ledger-2026-05-06.md`
 
 ## Decision
 
@@ -33,7 +33,7 @@ It is not enough to spend capital. `GET /readyz` and `GET /trading/health` retur
 submission gate was closed for `simple_submit_disabled` with `capital_stage=shadow`,
 `configured_live_promotion=false`, and `promotion_eligible_total=0`. Quant evidence was degraded: latest metrics were
 fresh, but ingestion lag was `48523` seconds and max stage lag was `48523` seconds. The proof floor was
-`repair_only`, capital state `zero_notional`, and blocking reasons were `alpha_readiness_not_promotion_eligible`,
+`repair_only`, capital state `zero_notional`, and blocking reasons were `hypothesis_not_promotion_eligible`,
 `execution_tca_stale`, and `simple_submit_disabled`. Execution TCA was last computed on
 `2026-04-02T20:59:45.136640Z`, with `13775` orders and average absolute slippage around `568.61` bps against an
 `8` bps guardrail. Jangar also entered a rollout availability gap during the same pass.

@@ -41,7 +41,7 @@ spec:
                   kubernetes.io/arch: arm64
                 containers:
                   - name: analysis
-                    image: registry.ide-newton.ts.net/lab/torghut@sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+                    image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
                     imagePullPolicy: IfNotPresent
                     env:
                       - name: DB_DSN
@@ -61,7 +61,7 @@ spec:
                       - >-
                         set -euo pipefail &&
                         cd /app &&
-                        /opt/venv/bin/python scripts/run_simulation_analysis.py activity
+                        python scripts/run_simulation_analysis.py activity
                         --run-id "{{args.runId}}"
                         --dataset-id "{{args.datasetId}}"
                         --namespace "{{args.namespace}}"

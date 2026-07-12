@@ -5,6 +5,7 @@ import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
 import io.github.cdimascio.dotenv.dotenv
 import java.io.File
+import java.time.LocalDate
 import java.util.Properties
 
 data class TopicConfig(
@@ -39,6 +40,7 @@ data class ForwarderConfig(
   val alpacaBaseUrl: String,
   val alpacaTradeStreamUrl: String?,
   val alpacaMarketDataChannels: List<String>,
+  val optionsMarketHolidays: Set<LocalDate> = emptySet(),
   val jangarSymbolsUrl: String?,
   val staticSymbols: List<String>,
   val symbolAllowlist: Set<String>,
@@ -50,6 +52,9 @@ data class ForwarderConfig(
   val torghutAccountLabel: String?,
   val enableBarsBackfill: Boolean,
   val barsBackfillLookbackHours: Long,
+  val enableTradesBackfill: Boolean = false,
+  val tradesBackfillLookbackHours: Long = 24,
+  val tradesBackfillMaxRecords: Int = 50_000,
   val reconnectBaseMs: Long,
   val reconnectMaxMs: Long,
   val dedupTtlSeconds: Long,
@@ -59,6 +64,10 @@ data class ForwarderConfig(
   val healthPort: Int = 8080,
   val metricsPort: Int = 9090,
   val healthNotReadyKillAfterMs: Long = 180_000,
+  val marketDataChannelFreshnessMaxMs: Long = 180_000,
+  val marketDataChannelFreshnessWarmupMs: Long = 120_000,
+  val marketDataReadIdleTimeoutMs: Long = 180_000,
+  val tradeUpdatesReadIdleTimeoutMs: Long = 300_000,
 ) {
   companion object {
     fun fromEnv(env: Map<String, String>? = null): ForwarderConfig {
@@ -131,6 +140,7 @@ data class ForwarderConfig(
             "for market type ${alpacaMarketType.name.lowercase()} (allowed: $allowed)",
         )
       }
+      val optionsMarketHolidays = parseIsoDateSet(mergedEnv["OPTIONS_MARKET_HOLIDAYS"])
 
       val jangarSymbolsUrl =
         mergedEnv["JANGAR_SYMBOLS_URL"]?.trim()?.takeIf { it.isNotEmpty() }
@@ -161,6 +171,20 @@ data class ForwarderConfig(
         mergedEnv["BARS_BACKFILL_LOOKBACK_HOURS"]?.toLongOrNull() ?: 12L
       if (barsBackfillLookbackHours <= 0) {
         error("BARS_BACKFILL_LOOKBACK_HOURS must be > 0")
+      }
+      val enableTradesBackfill = mergedEnv["ENABLE_TRADES_BACKFILL"]?.toBooleanStrictOrNull() ?: false
+      if (enableTradesBackfill && alpacaMarketType != AlpacaMarketType.EQUITY) {
+        error("ENABLE_TRADES_BACKFILL is only supported when ALPACA_MARKET_TYPE=equity")
+      }
+      val tradesBackfillLookbackHours =
+        mergedEnv["TRADES_BACKFILL_LOOKBACK_HOURS"]?.toLongOrNull() ?: 24L
+      if (tradesBackfillLookbackHours <= 0) {
+        error("TRADES_BACKFILL_LOOKBACK_HOURS must be > 0")
+      }
+      val tradesBackfillMaxRecords =
+        mergedEnv["TRADES_BACKFILL_MAX_RECORDS"]?.toIntOrNull() ?: 50_000
+      if (tradesBackfillMaxRecords <= 0) {
+        error("TRADES_BACKFILL_MAX_RECORDS must be > 0")
       }
 
       val kafka =
@@ -198,6 +222,19 @@ data class ForwarderConfig(
 
       val healthNotReadyKillAfterMs = mergedEnv["HEALTH_NOT_READY_KILL_AFTER_MS"]?.toLongOrNull() ?: 180_000
       if (healthNotReadyKillAfterMs <= 0) error("HEALTH_NOT_READY_KILL_AFTER_MS must be > 0")
+      val marketDataChannelFreshnessMaxMs =
+        mergedEnv["MARKET_DATA_CHANNEL_FRESHNESS_MAX_MS"]?.toLongOrNull() ?: 180_000
+      if (marketDataChannelFreshnessMaxMs <= 0) error("MARKET_DATA_CHANNEL_FRESHNESS_MAX_MS must be > 0")
+      val marketDataChannelFreshnessWarmupMs =
+        mergedEnv["MARKET_DATA_CHANNEL_FRESHNESS_WARMUP_MS"]?.toLongOrNull() ?: 120_000
+      if (marketDataChannelFreshnessWarmupMs < 0) error("MARKET_DATA_CHANNEL_FRESHNESS_WARMUP_MS must be >= 0")
+      val marketDataReadIdleTimeoutMs =
+        mergedEnv["ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS"]?.toLongOrNull()
+          ?: marketDataChannelFreshnessMaxMs
+      if (marketDataReadIdleTimeoutMs <= 0) error("ALPACA_MARKET_DATA_READ_IDLE_TIMEOUT_MS must be > 0")
+      val tradeUpdatesReadIdleTimeoutMs =
+        mergedEnv["ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS"]?.toLongOrNull() ?: 300_000
+      if (tradeUpdatesReadIdleTimeoutMs <= 0) error("ALPACA_TRADE_UPDATES_READ_IDLE_TIMEOUT_MS must be > 0")
 
       return ForwarderConfig(
         alpacaKeyId = mergedEnv.getValue("ALPACA_KEY_ID"),
@@ -209,6 +246,7 @@ data class ForwarderConfig(
         alpacaBaseUrl = mergedEnv["ALPACA_BASE_URL"] ?: "https://data.alpaca.markets",
         alpacaTradeStreamUrl = mergedEnv["ALPACA_TRADE_STREAM_URL"]?.trim()?.takeIf { it.isNotEmpty() },
         alpacaMarketDataChannels = alpacaMarketDataChannels,
+        optionsMarketHolidays = optionsMarketHolidays,
         jangarSymbolsUrl = jangarSymbolsUrl,
         staticSymbols = staticSymbols,
         symbolAllowlist = symbolAllowlist,
@@ -220,6 +258,9 @@ data class ForwarderConfig(
         torghutAccountLabel = mergedEnv["TORGHUT_ACCOUNT_LABEL"]?.trim()?.takeIf { it.isNotEmpty() },
         enableBarsBackfill = enableBarsBackfill,
         barsBackfillLookbackHours = barsBackfillLookbackHours,
+        enableTradesBackfill = enableTradesBackfill,
+        tradesBackfillLookbackHours = tradesBackfillLookbackHours,
+        tradesBackfillMaxRecords = tradesBackfillMaxRecords.coerceAtMost(250_000),
         reconnectBaseMs = mergedEnv["RECONNECT_BASE_MS"]?.toLongOrNull() ?: 500,
         reconnectMaxMs = mergedEnv["RECONNECT_MAX_MS"]?.toLongOrNull() ?: 30_000,
         dedupTtlSeconds = mergedEnv["DEDUP_TTL_SEC"]?.toLongOrNull() ?: 5,
@@ -229,6 +270,10 @@ data class ForwarderConfig(
         healthPort = mergedEnv["HEALTH_PORT"]?.toIntOrNull() ?: 8080,
         metricsPort = mergedEnv["METRICS_PORT"]?.toIntOrNull() ?: 9090,
         healthNotReadyKillAfterMs = healthNotReadyKillAfterMs,
+        marketDataChannelFreshnessMaxMs = marketDataChannelFreshnessMaxMs,
+        marketDataChannelFreshnessWarmupMs = marketDataChannelFreshnessWarmupMs,
+        marketDataReadIdleTimeoutMs = marketDataReadIdleTimeoutMs.coerceAtLeast(30_000),
+        tradeUpdatesReadIdleTimeoutMs = tradeUpdatesReadIdleTimeoutMs.coerceAtLeast(30_000),
       )
     }
 
@@ -237,6 +282,22 @@ data class ForwarderConfig(
       val merged = dotEnvEntries.toMutableMap()
       merged.putAll(System.getenv())
       return merged
+    }
+
+    private fun parseIsoDateSet(raw: String?): Set<LocalDate> {
+      val trimmed = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return emptySet()
+      if (trimmed == "[]") return emptySet()
+      return trimmed
+        .trim('[', ']')
+        .split(",", "\n", ";", " ")
+        .map { it.trim().trim('"', '\'') }
+        .filter { it.isNotEmpty() }
+        .map { token ->
+          runCatching { LocalDate.parse(token) }
+            .getOrElse {
+              error("OPTIONS_MARKET_HOLIDAYS must contain ISO-8601 dates (yyyy-MM-dd): $token")
+            }
+        }.toSet()
     }
 
     private fun loadDotEnv(): Map<String, String> {

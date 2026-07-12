@@ -1,21 +1,20 @@
 # 188. Torghut Evidence-Clock Arbiter And Routeable Profit Candidate Exchange (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, evidence freshness, routeable candidate admission, TCA quality, Jangar rollout
-custody, zero-notional capital safety, validation, rollout, rollback, and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
-- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
-- `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
-- `docs/agents/designs/183-jangar-attested-action-custody-and-profit-window-admission-2026-05-08.md`
 
 ## Decision
 
@@ -76,7 +75,7 @@ trading flags, GitOps resources, or AgentRun objects.
 - Jangar unscoped quant health returned `ok=true`, `latestMetricsCount=4536`, and a one-second latest-store lag.
 - Torghut `/readyz` returned HTTP 503.
 - Torghut `/trading/status` returned `enabled=true`, `mode=live`, `autonomy_enabled=false`, and `running=true`, but
-  live submission stayed blocked by `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and
+  live submission stayed blocked by `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and
   `simple_submit_disabled`.
 - The same status payload reported scoped quant `status=degraded`, `quant_metrics_update_missing`,
   `quant_pipeline_degraded`, ingestion lag over `341,000` seconds for the sampled account/window, and materialization

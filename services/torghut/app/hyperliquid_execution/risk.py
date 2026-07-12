@@ -19,6 +19,7 @@ from app.trading.multifactor.risk_model import (
 )
 
 from .config import HyperliquidExecutionConfig
+from .margin import MarginBudget, resolve_margin_budget
 from .models import RiskState, RiskVerdict, Signal, symbol_key
 
 
@@ -33,13 +34,10 @@ def evaluate_signal_risk(
     reason = _blocked_reason(signal, state, config)
     if reason is not None:
         return _blocked_verdict(reason, multifactor)
-    remaining_gross = config.max_gross_exposure_usd - state.gross_exposure_usd
-    if remaining_gross < config.min_order_notional_usd:
-        return _blocked_verdict("gross_exposure_cap", multifactor)
-    symbol_exposure = state.symbol_exposure_usd_by_coin.get(signal.coin, Decimal("0"))
-    remaining_symbol = config.max_symbol_exposure_usd - symbol_exposure
-    if remaining_symbol < config.min_order_notional_usd:
-        return _blocked_verdict("symbol_exposure_cap", multifactor)
+    margin_budget, margin_blocker = _allowed_margin_budget(signal, state, config)
+    if margin_blocker is not None:
+        return _blocked_verdict(margin_blocker, multifactor)
+    assert margin_budget is not None
     if multifactor is not None:
         risk_forecast, portfolio_target = multifactor
         if not portfolio_target.executable:
@@ -52,9 +50,7 @@ def evaluate_signal_risk(
             )
         order_notional = min(
             portfolio_target.delta_notional_usd,
-            config.max_order_notional_usd,
-            remaining_gross,
-            remaining_symbol,
+            margin_budget.order_notional_capacity_usd,
         )
         if order_notional < config.min_order_notional_usd:
             return RiskVerdict(
@@ -71,10 +67,39 @@ def evaluate_signal_risk(
             risk_forecast,
             portfolio_target,
         )
-    order_notional = min(
-        config.max_order_notional_usd, remaining_gross, remaining_symbol
+    return RiskVerdict(
+        "allowed",
+        "allowed",
+        margin_budget.order_notional_capacity_usd,
     )
-    return RiskVerdict("allowed", "allowed", order_notional)
+
+
+def effective_daily_loss_limit_usd(
+    state: RiskState,
+    config: HyperliquidExecutionConfig,
+) -> Decimal:
+    """Return the active realized-loss stop from the fixed floor and margin budget."""
+
+    equity_basis = max(state.account_value_usd, state.withdrawable_usd, Decimal("0"))
+    margin_budget = equity_basis * config.target_margin_utilization
+    return max(config.max_daily_loss_usd, margin_budget).quantize(Decimal("0.000001"))
+
+
+def _allowed_margin_budget(
+    signal: Signal,
+    state: RiskState,
+    config: HyperliquidExecutionConfig,
+) -> tuple[MarginBudget | None, str | None]:
+    margin_budget, margin_blocker = resolve_margin_budget(
+        coin=signal.coin,
+        state=state,
+        config=config,
+    )
+    if margin_blocker is not None:
+        return None, margin_blocker
+    if margin_budget is None:
+        return None, "margin_budget_unavailable"
+    return margin_budget, None
 
 
 def _multifactor_controls(
@@ -85,6 +110,21 @@ def _multifactor_controls(
     if signal.factor_vector is None or signal.alpha_forecast is None:
         return None
     symbol_exposure = state.symbol_exposure_usd_by_coin.get(signal.coin, Decimal("0"))
+    margin_budget, margin_blocker = resolve_margin_budget(
+        coin=signal.coin,
+        state=state,
+        config=config,
+    )
+    if margin_budget is None:
+        return _blocked_multifactor(signal, state, config, margin_blocker)
+    effective_max_gross_exposure = (
+        state.gross_exposure_usd
+        + margin_budget.remaining_gross_margin_usd * margin_budget.max_leverage
+    )
+    effective_max_symbol_exposure = (
+        symbol_exposure
+        + margin_budget.remaining_symbol_margin_usd * margin_budget.max_leverage
+    )
     risk_forecast = build_risk_forecast(
         vector=signal.factor_vector,
         forecast=signal.alpha_forecast,
@@ -94,9 +134,9 @@ def _multifactor_controls(
             daily_realized_pnl_usd=state.daily_realized_pnl_usd,
         ),
         limits=RiskLimits(
-            max_gross_exposure_usd=config.max_gross_exposure_usd,
-            max_symbol_exposure_usd=config.max_symbol_exposure_usd,
-            max_daily_loss_usd=config.max_daily_loss_usd,
+            max_gross_exposure_usd=effective_max_gross_exposure,
+            max_symbol_exposure_usd=effective_max_symbol_exposure,
+            max_daily_loss_usd=effective_daily_loss_limit_usd(state, config),
         ),
     )
     expected_cost_bps = estimate_transaction_cost(
@@ -109,16 +149,55 @@ def _multifactor_controls(
         risk=risk_forecast,
         costs=PortfolioCostInput(
             expected_cost_bps=expected_cost_bps,
-            min_edge_bps=config.min_edge_bps,
         ),
         limits=PortfolioLimits(
             min_order_notional_usd=config.min_order_notional_usd,
-            max_order_notional_usd=config.max_order_notional_usd,
-            max_gross_exposure_usd=config.max_gross_exposure_usd,
-            max_symbol_exposure_usd=config.max_symbol_exposure_usd,
+            max_order_notional_usd=margin_budget.order_notional_capacity_usd,
+            max_gross_exposure_usd=effective_max_gross_exposure,
+            max_symbol_exposure_usd=effective_max_symbol_exposure,
         ),
     )
     return risk_forecast, portfolio_target
+
+
+def _blocked_multifactor(
+    signal: Signal,
+    state: RiskState,
+    config: HyperliquidExecutionConfig,
+    reason: str | None,
+) -> tuple[RiskForecast, PortfolioTarget]:
+    if signal.factor_vector is None or signal.alpha_forecast is None:
+        raise ValueError("blocked_multifactor_requires_factor_signal")
+    symbol_exposure = state.symbol_exposure_usd_by_coin.get(signal.coin, Decimal("0"))
+    risk_forecast = build_risk_forecast(
+        vector=signal.factor_vector,
+        forecast=signal.alpha_forecast,
+        exposure=RiskExposureState(
+            gross_exposure_usd=state.gross_exposure_usd,
+            symbol_exposure_usd=symbol_exposure,
+            daily_realized_pnl_usd=state.daily_realized_pnl_usd,
+        ),
+        limits=RiskLimits(
+            max_gross_exposure_usd=state.gross_exposure_usd,
+            max_symbol_exposure_usd=symbol_exposure,
+            max_daily_loss_usd=effective_daily_loss_limit_usd(state, config),
+        ),
+    )
+    blocked_risk = replace(risk_forecast, blocker=reason or "margin_budget_unavailable")
+    target = PortfolioTarget(
+        run_id=signal.alpha_forecast.run_id,
+        asset=signal.alpha_forecast.asset,
+        direction=signal.alpha_forecast.direction,
+        current_notional_usd=symbol_exposure,
+        target_notional_usd=Decimal("0"),
+        delta_notional_usd=Decimal("0"),
+        expected_return_bps=signal.alpha_forecast.expected_return_bps,
+        expected_cost_bps=Decimal("0"),
+        active_risk_bps=blocked_risk.active_risk_bps,
+        risk_buffer_bps=Decimal("0"),
+        clip_reason=blocked_risk.blocker,
+    )
+    return blocked_risk, target
 
 
 def _blocked_verdict(
@@ -182,6 +261,5 @@ def _blocked_reason(
             signal.coin in state.cooldown_reason_by_coin,
             state.cooldown_reason_by_coin.get(signal.coin, "symbol_cooldown"),
         ),
-        (state.daily_realized_pnl_usd <= -config.max_daily_loss_usd, "daily_loss_stop"),
     )
     return next((reason for blocked, reason in checks if blocked), None)

@@ -1,21 +1,20 @@
 # 146. Torghut Submission Quorum Handoff And Profit Repair Gates (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, repair dividend consumption, proof-floor repair ranking, paper/live submission quorum,
-validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/142-jangar-repair-dividend-handoff-gates-and-actuation-contracts-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md`
-- `145-torghut-proof-renewal-leases-and-capital-reentry-state-market-2026-05-07.md`
-- `144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
-- `143-torghut-empirical-relay-receipts-and-paper-gate-settlement-2026-05-07.md`
 
 ## Decision
 
@@ -28,7 +27,7 @@ empirical jobs were healthy.
 
 The trading route still returned HTTP `503` with `status=degraded`. The live submission gate was closed by
 `simple_submit_disabled`, proof floor state was `repair_only`, capital state was `zero_notional`, and the blocking
-reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Execution
+reasons were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`. Execution
 TCA was last computed on `2026-04-02T20:59:45.136640Z`; average absolute slippage was about `568.61` bps against an
 `8` bps guardrail; quant ingestion lag was `59,905` seconds; and zero hypotheses were promotion eligible.
 
@@ -84,7 +83,7 @@ state, trading flags, AgentRun records, GitOps resources, or empirical artifacts
   `torghut-chip-full-day-20260505-5e447b6d-r1`.
 - Live submission was `allowed=false`, reason `simple_submit_disabled`, with `capital_stage=shadow`.
 - Proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Quant evidence was informationally degraded: latest metrics count was `144`, metrics pipeline lag was `6` seconds,
   but max stage lag was `59,905` seconds and the ingestion stage was not OK.

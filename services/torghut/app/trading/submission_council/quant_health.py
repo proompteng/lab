@@ -166,26 +166,63 @@ def fresh_clickhouse_signal_continuity(
 ) -> tuple[str, str, str] | None:
     if not isinstance(clickhouse_ta_status, Mapping):
         return None
+    result: tuple[str, str, str] | None = None
+    blocking_reason = _safe_text(clickhouse_ta_status.get("blocking_reason"))
+    accepted_source_state = _safe_text(
+        clickhouse_ta_status.get("accepted_source_state")
+    )
     state = _safe_text(clickhouse_ta_status.get("state"))
-    latest_signal_at = _coerce_aware_datetime(
-        clickhouse_ta_status.get("latest_signal_at")
-        or clickhouse_ta_status.get("readiness_window_end")
-        or clickhouse_ta_status.get("as_of")
-    )
-    if state != "current" or latest_signal_at is None:
-        return None
+    unavailable_reason = ""
+    if bool(clickhouse_ta_status.get("accepted_source_diagnostic_only")):
+        result = (
+            "true",
+            "clickhouse_ta_status",
+            "accepted_ta_signal_diagnostic_only",
+        )
+    elif blocking_reason:
+        unavailable_reason = blocking_reason
+    elif bool(clickhouse_ta_status.get("read_model_unavailable")) or state in {
+        "missing",
+        "unavailable",
+        "deferred",
+    }:
+        unavailable_reason = "accepted_ta_signal_unavailable"
+    elif accepted_source_state == "stale":
+        unavailable_reason = "accepted_ta_signal_stale"
 
-    max_age_seconds = max(
-        1,
-        int(settings.trading_feature_max_staleness_ms) // 1000,
-    )
-    lag_seconds = max(
-        0,
-        int((datetime.now(timezone.utc) - latest_signal_at).total_seconds()),
-    )
-    if lag_seconds <= max_age_seconds:
-        return "true", "clickhouse_ta_status", "signals_present"
-    return "false", "clickhouse_ta_status", "signal_lag_exceeded"
+    if result is not None:
+        return result
+    if accepted_source_state == "outside_regular_session":
+        market_session_state = _safe_text(
+            clickhouse_ta_status.get("market_session_state")
+        )
+        result = (
+            "true",
+            "clickhouse_ta_status",
+            f"accepted_ta_signal_{market_session_state or 'outside_regular_session'}",
+        )
+    elif unavailable_reason:
+        result = ("false", "clickhouse_ta_status", unavailable_reason)
+    else:
+        latest_signal_at = _coerce_aware_datetime(
+            clickhouse_ta_status.get("latest_signal_at")
+            or clickhouse_ta_status.get("readiness_window_end")
+            or clickhouse_ta_status.get("as_of")
+        )
+        if state == "current" and latest_signal_at is not None:
+            max_age_seconds = max(
+                1,
+                int(settings.trading_feature_max_staleness_ms) // 1000,
+            )
+            lag_seconds = max(
+                0,
+                int((datetime.now(timezone.utc) - latest_signal_at).total_seconds()),
+            )
+            if lag_seconds <= max_age_seconds:
+                result = ("true", "clickhouse_ta_status", "signals_present")
+            else:
+                result = ("false", "clickhouse_ta_status", "signal_lag_exceeded")
+    return result
 
 
 def runtime_window_import_continuity_signal(
@@ -194,7 +231,7 @@ def runtime_window_import_continuity_signal(
     clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> tuple[str, str, str]:
     persisted_signal = fresh_clickhouse_signal_continuity(clickhouse_ta_status)
-    if persisted_signal is not None and persisted_signal[0] == "true":
+    if persisted_signal is not None:
         return persisted_signal
 
     state_text = _safe_attr_text(state, "last_signal_continuity_state")
@@ -218,8 +255,6 @@ def runtime_window_import_continuity_signal(
         return "true", "signal_continuity", state_text
     if actionable is False and state_text:
         return "true", "signal_continuity", state_text
-    if persisted_signal is not None:
-        return persisted_signal
     return "false", "missing", "signal_continuity_missing"
 
 
@@ -229,9 +264,11 @@ def runtime_window_import_drift_signal(state: object) -> tuple[str, str, str]:
         return (
             "true" if eligible else "false",
             "drift_live_promotion_eligible",
-            "drift_live_promotion_eligible"
-            if eligible
-            else "drift_live_promotion_ineligible",
+            (
+                "drift_live_promotion_eligible"
+                if eligible
+                else "drift_live_promotion_ineligible"
+            ),
         )
     return "false", "missing", "drift_live_promotion_eligible_missing"
 
@@ -385,9 +422,9 @@ def load_quant_evidence_status(
             "status": "unknown",
             "reason": "quant_health_invalid_endpoint",
             "blocking_reasons": blocking_reasons,
-            "informational_reasons": []
-            if required
-            else ["quant_health_invalid_endpoint"],
+            "informational_reasons": (
+                [] if required else ["quant_health_invalid_endpoint"]
+            ),
             "account": account or None,
             "window": window,
             "source_url": configured_url,
@@ -404,9 +441,9 @@ def load_quant_evidence_status(
             "status": "unknown" if required else "not_required",
             "reason": "quant_health_not_configured",
             "blocking_reasons": blocking_reasons,
-            "informational_reasons": []
-            if required
-            else ["quant_health_not_configured"],
+            "informational_reasons": (
+                [] if required else ["quant_health_not_configured"]
+            ),
             "account": account or None,
             "window": window,
             "source_url": None,

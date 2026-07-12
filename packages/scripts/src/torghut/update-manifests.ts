@@ -5,24 +5,22 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 
 import { fatal, repoRoot } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { inspectOciImageDigest } from '../shared/oci-digest'
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut'
 const defaultManifestPath = 'argocd/applications/torghut/knative-service.yaml'
+const defaultSchedulerManifestPath = 'argocd/applications/torghut/scheduler-deployment.yaml'
 const defaultSimulationManifestPath = 'argocd/applications/torghut/knative-service-sim.yaml'
 const defaultMigrationManifestPath = 'argocd/applications/torghut/db-migrations-job.yaml'
 const defaultHistoricalSimulationWorkflowManifestPath =
   'argocd/applications/torghut/historical-simulation-workflowtemplate.yaml'
-const defaultEmpiricalPromotionWorkflowManifestPath =
-  'argocd/applications/torghut/empirical-promotion-workflowtemplate.yaml'
 const defaultAnalysisRuntimeReadyManifestPath = 'argocd/applications/torghut/analysis-template-runtime-ready.yaml'
 const defaultAnalysisActivityManifestPath = 'argocd/applications/torghut/analysis-template-activity.yaml'
 const defaultAnalysisTeardownManifestPath = 'argocd/applications/torghut/analysis-template-teardown-clean.yaml'
 const defaultAnalysisArtifactManifestPath = 'argocd/applications/torghut/analysis-template-artifact-bundle.yaml'
 const defaultZeroNotionalDriftRepairManifestPath = 'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml'
-const defaultPaperAccountFlattenManifestPath = 'argocd/applications/torghut/paper-account-flatten-cronjob.yaml'
 const defaultGeneratedResourceRetentionManifestPath =
   'argocd/applications/torghut/generated-resource-retention-cronjob.yaml'
 const defaultTigerBeetleSmokeManifestPath = 'argocd/applications/torghut/tigerbeetle-smoke-job.yaml'
@@ -42,16 +40,15 @@ type UpdateManifestsOptions = {
   commit: string
   rolloutTimestamp: string
   manifestPath?: string
+  schedulerManifestPath?: string
   simulationManifestPath?: string
   migrationManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
-  empiricalPromotionWorkflowManifestPath?: string
   analysisRuntimeReadyManifestPath?: string
   analysisActivityManifestPath?: string
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
-  paperAccountFlattenManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
@@ -70,16 +67,15 @@ type CliOptions = {
   commit?: string
   rolloutTimestamp?: string
   manifestPath?: string
+  schedulerManifestPath?: string
   simulationManifestPath?: string
   migrationManifestPath?: string
   historicalSimulationWorkflowManifestPath?: string
-  empiricalPromotionWorkflowManifestPath?: string
   analysisRuntimeReadyManifestPath?: string
   analysisActivityManifestPath?: string
   analysisTeardownManifestPath?: string
   analysisArtifactManifestPath?: string
   zeroNotionalDriftRepairManifestPath?: string
-  paperAccountFlattenManifestPath?: string
   generatedResourceRetentionManifestPath?: string
   tigerBeetleSmokeManifestPath?: string
   hyperliquidRuntimeManifestPath?: string
@@ -220,10 +216,25 @@ const updateImageOnlyManifest = (options: UpdateManifestsOptions, manifestPathVa
   let updated = replaceSingle(source, imagePattern, `$1${imageRef}`, label)
   updated = replaceAllIfPresent(
     updated,
+    /(- name:\s*TORGHUT_VERSION\s*\n\s*value:\s*)([^\n]+)/g,
+    `$1${options.version}`,
+  )
+  updated = replaceAllIfPresent(
+    updated,
     /(- name:\s*TORGHUT_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/g,
     `$1${options.digest}`,
   )
   updated = replaceAllIfPresent(updated, /(- name:\s*TORGHUT_COMMIT\s*\n\s*value:\s*)([^\n]+)/g, `$1${options.commit}`)
+  updated = replaceAllIfPresent(
+    updated,
+    /(- name:\s*TORGHUT_REQUIRED_IMAGE_PLATFORMS\s*\n\s*value:\s*)([^\n]+)/g,
+    `$1${defaultRequiredImagePlatforms}`,
+  )
+  updated = replaceAllIfPresent(
+    updated,
+    /(- name:\s*TORGHUT_OBSERVED_IMAGE_PLATFORMS\s*\n\s*value:\s*)([^\n]+)/g,
+    `$1${defaultRequiredImagePlatforms}`,
+  )
 
   if (updated !== source) {
     writeFileSync(manifestPath, updated, 'utf8')
@@ -280,6 +291,11 @@ const updateVersionedDeploymentManifest = (
 
 const updateTorghutManifests = (options: UpdateManifestsOptions) => {
   const service = updateTorghutManifest(options)
+  const scheduler = updateImageOnlyManifest(
+    options,
+    options.schedulerManifestPath ?? defaultSchedulerManifestPath,
+    'torghut-scheduler image reference',
+  )
   const simulationService = updateTorghutManifest({
     ...options,
     manifestPath: options.simulationManifestPath ?? defaultSimulationManifestPath,
@@ -289,11 +305,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options,
     options.historicalSimulationWorkflowManifestPath ?? defaultHistoricalSimulationWorkflowManifestPath,
     'torghut-historical-simulation image reference',
-  )
-  const empiricalPromotionWorkflow = updateImageOnlyManifest(
-    options,
-    options.empiricalPromotionWorkflowManifestPath ?? defaultEmpiricalPromotionWorkflowManifestPath,
-    'torghut-empirical-promotion image reference',
   )
   const analysisRuntimeReady = updateImageOnlyManifest(
     options,
@@ -319,11 +330,6 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     options,
     options.zeroNotionalDriftRepairManifestPath ?? defaultZeroNotionalDriftRepairManifestPath,
     'torghut-zero-notional-drift-repair image reference',
-  )
-  const paperAccountFlatten = updateImageOnlyManifest(
-    options,
-    options.paperAccountFlattenManifestPath ?? defaultPaperAccountFlattenManifestPath,
-    'torghut-paper-account-flatten image reference',
   )
   const generatedResourceRetention = updateImageOnlyManifest(
     options,
@@ -368,16 +374,15 @@ const updateTorghutManifests = (options: UpdateManifestsOptions) => {
     : []
   const changedPaths = [
     service,
+    scheduler,
     simulationService,
     migration,
     historicalSimulationWorkflow,
-    empiricalPromotionWorkflow,
     analysisRuntimeReady,
     analysisActivity,
     analysisTeardown,
     analysisArtifact,
     zeroNotionalDriftRepair,
-    paperAccountFlatten,
     generatedResourceRetention,
     tigerBeetleSmoke,
     hyperliquidRuntime,
@@ -410,16 +415,15 @@ Options:
   --commit <sha40>
   --rollout-timestamp <ISO8601>
   --manifest-path <path>
+  --scheduler-manifest-path <path>
   --simulation-manifest-path <path>
   --migration-manifest-path <path>
   --historical-simulation-workflow-manifest-path <path>
-  --empirical-promotion-workflow-manifest-path <path>
   --analysis-runtime-ready-manifest-path <path>
   --analysis-activity-manifest-path <path>
   --analysis-teardown-manifest-path <path>
   --analysis-artifact-manifest-path <path>
   --zero-notional-drift-repair-manifest-path <path>
-  --paper-account-flatten-manifest-path <path>
   --generated-resource-retention-manifest-path <path>
   --tigerbeetle-smoke-manifest-path <path>
   --hyperliquid-runtime-manifest-path <path>
@@ -473,6 +477,9 @@ Options:
       case '--manifest-path':
         options.manifestPath = value
         break
+      case '--scheduler-manifest-path':
+        options.schedulerManifestPath = value
+        break
       case '--simulation-manifest-path':
         options.simulationManifestPath = value
         break
@@ -481,9 +488,6 @@ Options:
         break
       case '--historical-simulation-workflow-manifest-path':
         options.historicalSimulationWorkflowManifestPath = value
-        break
-      case '--empirical-promotion-workflow-manifest-path':
-        options.empiricalPromotionWorkflowManifestPath = value
         break
       case '--analysis-runtime-ready-manifest-path':
         options.analysisRuntimeReadyManifestPath = value
@@ -499,9 +503,6 @@ Options:
         break
       case '--zero-notional-drift-repair-manifest-path':
         options.zeroNotionalDriftRepairManifestPath = value
-        break
-      case '--paper-account-flatten-manifest-path':
-        options.paperAccountFlattenManifestPath = value
         break
       case '--generated-resource-retention-manifest-path':
         options.generatedResourceRetentionManifestPath = value
@@ -544,7 +545,7 @@ const main = (cliOptions?: CliOptions) => {
   const tag = parsed.tag ?? process.env.TORGHUT_IMAGE_TAG ?? execGit(['rev-parse', '--short=8', 'HEAD'])
   const imageName = `${registry}/${repository}`
   const digest = normalizeDigest(
-    parsed.digest ?? process.env.TORGHUT_IMAGE_DIGEST ?? inspectImageDigest(`${imageName}:${tag}`),
+    parsed.digest ?? process.env.TORGHUT_IMAGE_DIGEST ?? inspectOciImageDigest(`${imageName}:${tag}`),
   )
 
   if (!digestPattern.test(digest)) {
@@ -562,12 +563,11 @@ const main = (cliOptions?: CliOptions) => {
     commit,
     rolloutTimestamp,
     manifestPath: parsed.manifestPath ?? process.env.TORGHUT_MANIFEST_PATH,
+    schedulerManifestPath: parsed.schedulerManifestPath ?? process.env.TORGHUT_SCHEDULER_MANIFEST_PATH,
     simulationManifestPath: parsed.simulationManifestPath ?? process.env.TORGHUT_SIMULATION_MANIFEST_PATH,
     migrationManifestPath: parsed.migrationManifestPath ?? process.env.TORGHUT_MIGRATION_MANIFEST_PATH,
     historicalSimulationWorkflowManifestPath:
       parsed.historicalSimulationWorkflowManifestPath ?? process.env.TORGHUT_HISTORICAL_SIMULATION_WORKFLOW_PATH,
-    empiricalPromotionWorkflowManifestPath:
-      parsed.empiricalPromotionWorkflowManifestPath ?? process.env.TORGHUT_EMPIRICAL_PROMOTION_WORKFLOW_PATH,
     analysisRuntimeReadyManifestPath:
       parsed.analysisRuntimeReadyManifestPath ?? process.env.TORGHUT_ANALYSIS_RUNTIME_READY_MANIFEST_PATH,
     analysisActivityManifestPath:
@@ -578,8 +578,6 @@ const main = (cliOptions?: CliOptions) => {
       parsed.analysisArtifactManifestPath ?? process.env.TORGHUT_ANALYSIS_ARTIFACT_MANIFEST_PATH,
     zeroNotionalDriftRepairManifestPath:
       parsed.zeroNotionalDriftRepairManifestPath ?? process.env.TORGHUT_ZERO_NOTIONAL_DRIFT_REPAIR_MANIFEST_PATH,
-    paperAccountFlattenManifestPath:
-      parsed.paperAccountFlattenManifestPath ?? process.env.TORGHUT_PAPER_ACCOUNT_FLATTEN_MANIFEST_PATH,
     generatedResourceRetentionManifestPath:
       parsed.generatedResourceRetentionManifestPath ?? process.env.TORGHUT_GENERATED_RESOURCE_RETENTION_MANIFEST_PATH,
     tigerBeetleSmokeManifestPath:

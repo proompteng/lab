@@ -1,21 +1,20 @@
 # 93. Torghut Recovery Budget Profit Ladder and Session Cost Ledger (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, capital reentry, proof cost, empirical freshness, options catalog recovery, and Jangar
-settlement authority consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/89-jangar-action-settlement-windows-and-recovery-budget-governor-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`
-- `91-torghut-causal-replay-exchange-and-capital-reentry-governor-2026-05-05.md`
-- `90-torghut-proof-receipt-router-and-capital-query-firebreak-2026-05-05.md`
-- `88-torghut-session-proof-budget-consumer-and-capital-reentry-contract-2026-05-05.md`
 
 ## Decision
 

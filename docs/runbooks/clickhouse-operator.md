@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.27.1 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `argocd/applications/clickhouse-operator/values.yaml`.
+The Altinity ClickHouse Operator implements a Kubernetes-native control plane for ClickHouse workloads. We deploy version 0.26.3 through Argo CD using the upstream Helm chart (`altinity/altinity-clickhouse-operator`). The GitOps application lives at `argocd/applications/clickhouse-operator/`, and Helm overrides are centralized in `argocd/applications/clickhouse-operator/values.yaml`.
 
 ## Namespace & Access
 
@@ -145,9 +145,9 @@ Notes:
 Do not blindly copy one cluster's logging profile into another. Start from the baseline above, then adapt:
 
 - PostHog-compatible baseline:
-  Keep `query_views_log` because PostHog makes heavy use of materialized views and migration/view diagnostics are useful during self-hosted recovery. On 4-8Gi pods, prefer the stricter profile: disable `trace_log`, `metric_log`, and `processors_profile_log`, disable the sampling profilers in `users.d`, and leave `query_views_log` as the only extra retained system log beyond `text_log`, `query_log`, and `part_log`. See [clickhouse-cluster.yaml](/Users/gregkonush/.codex/worktrees/e1b4/lab/argocd/applications/posthog/clickhouse-cluster.yaml).
+  Keep `query_views_log` because PostHog makes heavy use of materialized views and migration/view diagnostics are useful during self-hosted recovery. On 4-8Gi pods, prefer the stricter profile: disable `trace_log`, `metric_log`, and `processors_profile_log`, disable the sampling profilers in `users.d`, and leave `query_views_log` as the only extra retained system log beyond `text_log`, `query_log`, and `part_log`. See [argocd/applications/posthog/clickhouse-cluster.yaml](../../argocd/applications/posthog/clickhouse-cluster.yaml).
 - Torghut baseline:
-  Prefer the stricter profile: disable `trace_log`, `metric_log`, `asynchronous_metric_log`, and `processors_profile_log`, keep `text_log` and `query_log` bounded, and keep `part_log` short. See [clickhouse-cluster.yaml](/Users/gregkonush/.codex/worktrees/4467/lab/argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml).
+  Prefer the stricter profile: disable `trace_log`, `metric_log`, `asynchronous_metric_log`, and `processors_profile_log`, keep `text_log` and `query_log` bounded, and keep `part_log` short. See [argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml](../../argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml).
 
 Rule:
 
@@ -223,7 +223,7 @@ This is an emergency-only path, but it is now a known one. Waiting for the clust
 
 - Helm chart rollback: `argocd app rollback clickhouse-operator <ID>` reverts to a previous revision while keeping the namespace intact.
 - Namespace recovery: if a change introduces broken CRDs or controllers, disable auto-sync, delete the `clickhouse-operator` namespace, and re-sync the application after values are corrected.
-- Keeper & cluster CRDs: versioned CRDs are pinned to chart v0.27.1. Regenerate schemas via `scripts/download_crd_schema.py` before upgrading to maintain kubeconform coverage.
+- Keeper & cluster CRDs: versioned CRDs are pinned to chart v0.26.3. Regenerate schemas via `scripts/download_crd_schema.py` before upgrading to maintain kubeconform coverage.
 
 ## References
 

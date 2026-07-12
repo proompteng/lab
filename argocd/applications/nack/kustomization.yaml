@@ -4,7 +4,7 @@ namespace: nack
 helmCharts:
   - name: nack
     repo: https://nats-io.github.io/k8s/helm/charts
-    version: 0.33.2
+    version: 0.34.0
     releaseName: nack
     namespace: nack
     includeCRDs: true
@@ -13,4 +13,4 @@ helmCharts:
 images:
   - name: natsio/jetstream-controller
     newName: mirror.gcr.io/natsio/jetstream-controller
-    newTag: 0.22.2
+    newTag: 0.23.0

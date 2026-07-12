@@ -57,6 +57,9 @@ export type TorghutQuantRuntimeStatus = {
   computeIntervalMs: number
   heavyComputeIntervalMs: number
   streamHeartbeatMs: number
+  lastErrorAt: string | null
+  lastErrorStage: string | null
+  lastErrorMessage: string | null
 }
 
 class TorghutQuantMaterializationNotFoundError extends Error {
@@ -84,6 +87,9 @@ const globalState = globalThis as typeof globalThis & {
     lastSeriesAppendAtMs: Map<FrameKey, number>
     openAlertsByFrame: Map<FrameKey, Map<string, QuantAlert>>
     alertBreachStreakByFrame: Map<FrameKey, Map<string, number>>
+    lastErrorAt: string | null
+    lastErrorStage: string | null
+    lastErrorMessage: string | null
   }
 }
 
@@ -412,6 +418,9 @@ const ensureGlobal = () => {
     lastSeriesAppendAtMs: new Map(),
     openAlertsByFrame: new Map(),
     alertBreachStreakByFrame: new Map(),
+    lastErrorAt: null,
+    lastErrorStage: null,
+    lastErrorMessage: null,
   }
   return globalState.__torghutQuantRuntime
 }
@@ -429,7 +438,26 @@ export const getTorghutQuantRuntimeStatus = (): TorghutQuantRuntimeStatus => {
     computeIntervalMs: state.config.computeIntervalMs,
     heavyComputeIntervalMs: state.config.heavyComputeIntervalMs,
     streamHeartbeatMs: state.config.streamHeartbeatMs,
+    lastErrorAt: state.lastErrorAt,
+    lastErrorStage: state.lastErrorStage,
+    lastErrorMessage: state.lastErrorMessage,
   }
+}
+
+const describeComputeError = (error: unknown) => {
+  if (error instanceof Error) return `${error.name}: ${error.message}`
+  return String(error)
+}
+
+const recordRuntimeComputeError = (stage: string, error: unknown) => {
+  const state = ensureGlobal()
+  const message = describeComputeError(error)
+  state.lastErrorAt = new Date().toISOString()
+  state.lastErrorStage = stage
+  state.lastErrorMessage = message
+  recordTorghutQuantComputeError(stage)
+  console.error(`[torghut-quant-runtime] compute error stage=${stage}: ${message}`, error)
+  state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
 }
 
 const resolveStrategyAccountsForCompute = (accounts: string[]) => {
@@ -582,8 +610,7 @@ const runComputeCycle = async (windows: QuantWindow[]) => {
 
   const torghut = resolveTorghutDb()
   if (!torghut.ok) {
-    recordTorghutQuantComputeError('torghut-db-disabled')
-    state.emitter.emit('event', { type: 'error', message: torghut.message } satisfies QuantStreamErrorEvent)
+    recordRuntimeComputeError('torghut-db-disabled', new Error(torghut.message))
     return
   }
 
@@ -778,9 +805,7 @@ export const startTorghutQuantRuntime = () => {
       lightInFlight = true
       void runComputeCycle(state.config.windowsLight)
         .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error)
-          recordTorghutQuantComputeError('light-cycle')
-          state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
+          recordRuntimeComputeError('light-cycle', error)
         })
         .finally(() => {
           lightInFlight = false
@@ -795,9 +820,7 @@ export const startTorghutQuantRuntime = () => {
       heavyInFlight = true
       void runComputeCycle(state.config.windowsHeavy)
         .catch((error) => {
-          const message = error instanceof Error ? error.message : String(error)
-          recordTorghutQuantComputeError('heavy-cycle')
-          state.emitter.emit('event', { type: 'error', message } satisfies QuantStreamErrorEvent)
+          recordRuntimeComputeError('heavy-cycle', error)
         })
         .finally(() => {
           heavyInFlight = false

@@ -55,7 +55,7 @@ class TestDirectScriptExecutionSupportsHelp(_TestBuildRevenueRepairDigestBase):
         self.assertGreaterEqual(
             blockers,
             {
-                "alpha_readiness_not_promotion_eligible",
+                "hypothesis_not_promotion_eligible",
                 "execution_tca_stale",
                 "quant_pipeline_degraded",
                 "simple_submit_disabled",
@@ -437,7 +437,7 @@ class TestDirectScriptExecutionSupportsHelp(_TestBuildRevenueRepairDigestBase):
         self.assertIsInstance(live_gate, dict)
         live_gate["blocked_reasons"] = [
             "simple_submit_disabled",
-            "runtime_ledger_source_collection_pending",
+            "runtime_window_import_required",
         ]
         live_gate["runtime_ledger_paper_probation_import_plan"] = {
             "schema_version": "torghut.runtime-ledger-paper-probation-import-plan.v1",
@@ -594,7 +594,7 @@ class TestDirectScriptExecutionSupportsHelp(_TestBuildRevenueRepairDigestBase):
 
         skipped_summary = _summarize_runtime_window_import_repair(
             {
-                "blocked_reasons": ["runtime_ledger_source_collection_pending"],
+                "blocked_reasons": ["runtime_window_import_required"],
                 "runtime_ledger_paper_probation_import_plan": {
                     "target_count": 0,
                     "skipped_target_count": 1,

@@ -1,21 +1,20 @@
 # 147. Torghut Stale-Proof Repair Exchange And Route-Stable Capital Quorum (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, stale proof repair ranking, Jangar route-stability consumption, paper/live capital quorum,
-validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/143-jangar-route-stable-status-snapshot-escrow-and-repair-actuation-windows-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `146-torghut-submission-quorum-handoff-and-profit-repair-gates-2026-05-07.md`
-- `145-torghut-repair-dividend-ledger-and-submission-quorum-2026-05-07.md`
-- `144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
-- `139-torghut-profit-data-witness-and-forecast-repair-exchange-2026-05-07.md`
 
 ## Decision
 
@@ -29,7 +28,7 @@ fresh with `12` symbols, and empirical jobs were healthy.
 
 The profit evidence still says no. Live submission was closed by `simple_submit_disabled` with
 `capital_stage=shadow`. The proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`,
-and max notional `0`. Blocking reasons included `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`,
+and max notional `0`. Blocking reasons included `hypothesis_not_promotion_eligible`, `execution_tca_stale`,
 `market_context_stale`, and `simple_submit_disabled`. Execution TCA was last computed on
 `2026-04-02T20:59:45.136640Z`, average absolute slippage was about `568.61` bps against an `8` bps guardrail, quant
 ingestion lag was `62,654` seconds, forecast authority was degraded with `registry_empty`, and zero hypotheses were
@@ -102,7 +101,7 @@ state, trading flags, AgentRun objects, GitOps resources, or empirical artifacts
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, with `capital_stage=shadow`.
 - Profitability proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max
   notional `0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`,
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Execution TCA had `13,775` orders, last computed `2026-04-02T20:59:45.136640Z`, average absolute slippage about
   `568.61` bps, and slippage guardrail `8` bps.

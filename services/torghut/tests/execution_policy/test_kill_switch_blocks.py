@@ -7,7 +7,7 @@ from tests.execution_policy.support import (
     _TestExecutionPolicyBase,
     _config,
     _decision,
-    _with_simple_lane_quantity_resolution,
+    _with_execution_quantity_resolution,
     config,
 )
 
@@ -95,7 +95,7 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
             qty=Decimal("184.0000"),
             price=Decimal("273.97"),
         )
-        decision = _with_simple_lane_quantity_resolution(
+        decision = _with_execution_quantity_resolution(
             decision,
             short_increasing="off",
         )
@@ -120,10 +120,41 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
             qty=Decimal("184.0000"),
             price=Decimal("273.97"),
         )
-        decision = _with_simple_lane_quantity_resolution(decision, symbol="MSFT")
+        decision = _with_execution_quantity_resolution(decision, symbol="MSFT")
 
         outcome = policy.evaluate(
             decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+        )
+
+        self.assertFalse(outcome.approved)
+        self.assertIn("max_notional_exceeded", outcome.reasons)
+
+    def test_max_notional_ignores_removed_simple_lane_quantity_resolution(
+        self,
+    ) -> None:
+        policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
+        decision = _decision(
+            action="sell",
+            qty=Decimal("184.0000"),
+            price=Decimal("273.97"),
+        )
+        params = dict(decision.params)
+        params["simple_lane"] = {
+            "quantity_resolution": {
+                "action": "sell",
+                "reason": "sell_reducing_long_fractional_allowed",
+                "symbol": "AAPL",
+                "position_qty": "184",
+                "requested_qty": "184.0000",
+                "short_increasing": False,
+            }
+        }
+
+        outcome = policy.evaluate(
+            decision.model_copy(update={"params": params}),
             strategy=None,
             positions=[],
             market_snapshot=None,
@@ -152,7 +183,7 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
         for overrides in cases:
             with self.subTest(overrides=overrides):
                 outcome = policy.evaluate(
-                    _with_simple_lane_quantity_resolution(base_decision, **overrides),
+                    _with_execution_quantity_resolution(base_decision, **overrides),
                     strategy=None,
                     positions=[],
                     market_snapshot=None,
@@ -171,7 +202,7 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
             price=Decimal("273.97"),
         )
         params = dict(decision.params)
-        params["simple_lane"] = {"quantity_resolution": "not-a-resolution"}
+        params["execution"] = {"quantity_resolution": "not-a-resolution"}
 
         outcome = policy.evaluate(
             decision.model_copy(update={"params": params}),
@@ -187,7 +218,7 @@ class TestKillSwitchBlocks(_TestExecutionPolicyBase):
         self,
     ) -> None:
         policy = ExecutionPolicy(config=_config(max_notional=Decimal("100")))
-        decision = _with_simple_lane_quantity_resolution(
+        decision = _with_execution_quantity_resolution(
             _decision(action="sell", qty=Decimal("0"), price=Decimal("273.97")),
             requested_qty="0",
         )

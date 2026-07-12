@@ -1,155 +1,120 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { expect, test } from 'bun:test'
 
-import { describe, expect, it } from 'vitest'
+import { type FileContent, validateActiveSaigakMigrationContent } from './validate-flamingo-hard-migration'
 
-import {
-  validateActiveSaigakMigrationContent,
-  validateFiles,
-  requiredTerms,
-  forbiddenTerms,
-} from './validate-flamingo-hard-migration'
+const validSaigakStatefulSet = `
+apiVersion: apps/v1
+kind: StatefulSet
+spec:
+  replicas: 1
+  template:
+    spec:
+      runtimeClassName: nvidia
+      nodeSelector:
+        kubernetes.io/arch: arm64
+        kubernetes.io/hostname: talos-192-168-1-85
+        nvidia.com/gpu.present: "true"
+      containers:
+        - name: ollama
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+        - name: embedding-proxy
+          env:
+            - name: SAIGAK_REQUIRE_GPU_RESIDENCY
+              value: "true"
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: saigak-altra-data
+`
 
-async function mkfile(content: string): Promise<string> {
-  const id = Math.random().toString(36).slice(2)
-  const dir = join('/tmp', 'flamingo-test-' + id)
-  await mkdir(dir, { recursive: true })
-  const path = join(dir, 'file.txt')
-  await writeFile(path, content)
-  return path
+const validPlatform = `
+ignoreDifferences:
+  - group: ""
+    kind: PersistentVolumeClaim
+    name: saigak-data
+    jsonPointers:
+      - /metadata/annotations
+      - /spec/volumeMode
+      - /spec/volumeName
+  - group: ""
+    kind: PersistentVolumeClaim
+    name: saigak-altra-data
+    jsonPointers:
+      - /metadata/annotations
+      - /spec/volumeMode
+      - /spec/volumeName
+`
+
+function filesWith(contentByPath: Partial<Record<string, string>> = {}): FileContent[] {
+  return [
+    {
+      path: 'argocd/applications/saigak/statefulset.yaml',
+      content: contentByPath['argocd/applications/saigak/statefulset.yaml'] ?? validSaigakStatefulSet,
+    },
+    {
+      path: 'argocd/applicationsets/platform.yaml',
+      content: contentByPath['argocd/applicationsets/platform.yaml'] ?? validPlatform,
+    },
+  ]
 }
 
-describe('validateFiles', () => {
-  it('import safety: exports are defined without side effects', () => {
-    expect(typeof validateFiles).toBe('function')
-    expect(Array.isArray(requiredTerms)).toBe(true)
-    expect(Array.isArray(forbiddenTerms)).toBe(true)
-    expect(requiredTerms.length).toBeGreaterThan(0)
-    expect(forbiddenTerms.length).toBeGreaterThan(0)
-  })
+test('accepts the valid Saigak migration fixture', () => {
+  expect(validateActiveSaigakMigrationContent(filesWith())).toEqual([])
+})
 
-  it('detects missing required term', async () => {
-    const path = await mkfile('some content without any terms')
-    const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    expect(failures).toContain('active Flamingo surfaces do not contain required term "unsloth/Qwen3.6-35B-A3B-NVFP4"')
-    expect(failures.length).toBeGreaterThan(0)
-  })
-
-  it('detects stale forbidden term', async () => {
-    const path = await mkfile('contains Qwen/Qwen3-Coder-Next-FP8 here')
-    const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "Qwen/Qwen3-Coder-Next-FP8"`)
-  })
-
-  it('passes when all terms are satisfied', async () => {
-    const path = await mkfile(requiredTerms.join('\n'))
-    const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    expect(failures).toEqual([])
-  })
-
-  it('detects multiple forbidden terms in one file', async () => {
-    const content = [forbiddenTerms[0], forbiddenTerms[1], forbiddenTerms[2]].join('\n')
-    const path = await mkfile(content)
-    const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    const missingRequiredTerms = requiredTerms.filter((term) => !content.includes(term))
-    expect(failures.length).toBe(3 + missingRequiredTerms.length)
-    expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "${forbiddenTerms[0]}"`)
-    expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "${forbiddenTerms[1]}"`)
-    expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "${forbiddenTerms[2]}"`)
-  })
-
-  it('reports all missing required terms', async () => {
-    const content = requiredTerms[0] + '\n' + forbiddenTerms[0]
-    const path = await mkfile(content)
-    const failures = await validateFiles([path], requiredTerms, forbiddenTerms)
-    for (const term of requiredTerms.filter((requiredTerm) => !content.includes(requiredTerm))) {
-      expect(failures).toContain(`active Flamingo surfaces do not contain required term "${term}"`)
-    }
-    expect(failures).toContain(`${path}: still contains forbidden Flamingo migration term "Qwen/Qwen3-Coder-Next-FP8"`)
-    expect(failures.length).toBe(1 + requiredTerms.filter((requiredTerm) => !content.includes(requiredTerm)).length)
-  })
-
-  it('detects Saigak completion routing in active consumers', () => {
-    const failures = validateActiveSaigakMigrationContent([
-      {
-        path: 'argocd/applications/bumba/deployment.yaml',
-        content: [
-          '- name: OPENAI_API_BASE_URL',
-          '  value: http://saigak.saigak.svc.cluster.local:11434/v1',
-          '- name: OPENAI_COMPLETION_MODEL',
-          '  value: qwen3-main-saigak:30b-a3b',
-        ].join('\n'),
-      },
-    ])
-
-    expect(failures).toContain(
-      'argocd/applications/bumba/deployment.yaml: active completion base URL must point to Flamingo, not Saigak',
-    )
-    expect(failures).toContain(
-      'argocd/applications/bumba/deployment.yaml: active completion surface still references disabled Saigak model "qwen3-main-saigak:30b-a3b"',
-    )
-  })
-
-  it('detects OpenWebUI Saigak chat backend exposure', () => {
-    const failures = validateActiveSaigakMigrationContent([
-      {
-        path: 'argocd/applications/jangar/openwebui-values.yaml',
-        content: ['ENABLE_OLLAMA_API: "true"', 'OLLAMA_BASE_URLS=http://saigak.saigak.svc.cluster.local:11434'].join(
-          '\n',
+test('requires SAIGAK_REQUIRE_GPU_RESIDENCY value to be true on the same env var entry', () => {
+  const failures = validateActiveSaigakMigrationContent(
+    filesWith({
+      'argocd/applications/saigak/statefulset.yaml': validSaigakStatefulSet
+        .replace(
+          'name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "true"',
+          'name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "false"',
+        )
+        .replace(
+          'name: embedding-proxy\n          env:',
+          'name: embedding-proxy\n          env:\n            - name: UNRELATED_FLAG\n              value: "true"',
         ),
-      },
-    ])
+    }),
+  )
 
-    expect(failures).toContain(
-      'argocd/applications/jangar/openwebui-values.yaml: OpenWebUI must not expose Saigak as a chat backend via "OLLAMA_BASE_URLS"',
-    )
-    expect(failures.some((failure) => failure.includes('ENABLE_OLLAMA_API: "true"'))).toBe(true)
-  })
+  expect(failures).toContain(
+    'argocd/applications/saigak/statefulset.yaml: Saigak must set SAIGAK_REQUIRE_GPU_RESIDENCY=true on the embedding proxy',
+  )
+})
 
-  it('allows Saigak to remove old completion models without provisioning them', () => {
-    const failures = validateActiveSaigakMigrationContent([
-      {
-        path: 'argocd/applications/saigak/statefulset.yaml',
-        content: [
-          'kubernetes.io/hostname: talos-192-168-1-85',
-          'ollama pull qwen3-embedding:8b',
-          'ollama create qwen3-embedding-saigak:8b -f /config/qwen3-embedding-8b.modelfile',
-          'for model in qwen3-main-saigak:30b-a3b qwen3:30b-a3b; do',
-          '  ollama rm "$model"',
-          'done',
-        ].join('\n'),
-      },
-    ])
+test('does not accept SAIGAK_REQUIRE_GPU_RESIDENCY from a non-proxy container', () => {
+  const failures = validateActiveSaigakMigrationContent(
+    filesWith({
+      'argocd/applications/saigak/statefulset.yaml': validSaigakStatefulSet
+        .replace(
+          'name: embedding-proxy\n          env:\n            - name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "true"',
+          'name: embedding-proxy\n          env:\n            - name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "false"',
+        )
+        .replace(
+          'name: ollama\n          resources:',
+          'name: ollama\n          env:\n            - name: SAIGAK_REQUIRE_GPU_RESIDENCY\n              value: "true"\n          resources:',
+        ),
+    }),
+  )
 
-    expect(failures).toEqual([])
-  })
+  expect(failures).toContain(
+    'argocd/applications/saigak/statefulset.yaml: Saigak must set SAIGAK_REQUIRE_GPU_RESIDENCY=true on the embedding proxy',
+  )
+})
 
-  it('detects Saigak scheduling on the Blackwell node', () => {
-    const failures = validateActiveSaigakMigrationContent([
-      {
-        path: 'argocd/applications/saigak/statefulset.yaml',
-        content: 'kubernetes.io/hostname: turin\n',
-      },
-    ])
+test('requires saigak-altra-data PVC bound-field diff ignore', () => {
+  const failures = validateActiveSaigakMigrationContent(
+    filesWith({
+      'argocd/applicationsets/platform.yaml': validPlatform.replace(
+        /\n  - group: ""\n    kind: PersistentVolumeClaim\n    name: saigak-altra-data\n    jsonPointers:\n      - \/metadata\/annotations\n      - \/spec\/volumeMode\n      - \/spec\/volumeName\n/,
+        '\n',
+      ),
+    }),
+  )
 
-    expect(failures).toContain(
-      'argocd/applications/saigak/statefulset.yaml: Saigak must stay on the Altra RTX 3090 path, found "kubernetes.io/hostname: turin"',
-    )
-  })
-
-  it('detects active KubeVirt 3090 passthrough desired state', () => {
-    const failures = validateActiveSaigakMigrationContent([
-      {
-        path: 'argocd/applications/kubevirt/kustomization.yaml',
-        content: 'permittedHostDevices:\n  pciHostDevices:\n    - resourceName: nvidia.com/GA102_GEFORCE_RTX_3090\n',
-      },
-    ])
-
-    expect(failures).toContain(
-      'argocd/applications/kubevirt/kustomization.yaml: 3090 passthrough must not remain active via "nvidia.com/GA102_GEFORCE_RTX_3090"',
-    )
-    expect(failures).toContain(
-      'argocd/applications/kubevirt/kustomization.yaml: 3090 passthrough must not remain active via "permittedHostDevices"',
-    )
-  })
+  expect(failures).toContain(
+    'argocd/applicationsets/platform.yaml: Saigak must ignore bound local-path PVC drift for saigak-altra-data',
+  )
 })

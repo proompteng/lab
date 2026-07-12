@@ -1,21 +1,21 @@
 # 93. Torghut Evidence-Priced Hypothesis Market and Capital Ladder (2026-05-05)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-05
-Owner: Gideon Park, Torghut Traders
-Scope: Torghut profitability, hypothesis capital allocation, empirical proof freshness, data-quality pricing,
-options-lane bootstrap, and Jangar brownout consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/89-jangar-brownout-adoption-ladder-and-quant-capital-contract-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `92-torghut-proof-cost-market-and-options-catalog-firebreak-2026-05-05.md`
-- `91-torghut-causal-replay-exchange-and-capital-reentry-governor-2026-05-05.md`
-- `89-torghut-hypothesis-warrant-ledger-and-profit-runway-2026-05-05.md`
-- `81-torghut-capital-proof-reconciliation-and-jangar-settlement-consumer-2026-05-05.md`
 
 ## Decision
 

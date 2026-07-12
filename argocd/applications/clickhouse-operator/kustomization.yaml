@@ -9,5 +9,61 @@ helmCharts:
     namespace: clickhouse-operator
     includeCRDs: true
     valuesFile: ./values.yaml
+# CRDs are rendered directly; drop the Helm hook installer so Argo does not wait on non-Job hooks.
+patches:
+  - target:
+      kind: ServiceAccount
+      name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ServiceAccount
+      metadata:
+        name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+  - target:
+      kind: ClusterRole
+      name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRole
+      metadata:
+        name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+  - target:
+      kind: ClusterRoleBinding
+      name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+    patch: |-
+      $patch: delete
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: ClusterRoleBinding
+      metadata:
+        name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+  - target:
+      kind: ConfigMap
+      name: clickhouse-operator-altinity-clickhouse-operator-crds-1
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: clickhouse-operator-altinity-clickhouse-operator-crds-1
+  - target:
+      kind: ConfigMap
+      name: clickhouse-operator-altinity-clickhouse-operator-crds-2
+    patch: |-
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: clickhouse-operator-altinity-clickhouse-operator-crds-2
+  - target:
+      kind: Job
+      name: clickhouse-operator-altinity-clickhouse-operator-crd-install
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: clickhouse-operator-altinity-clickhouse-operator-crd-install
 commonAnnotations:
   argocd.argoproj.io/sync-options: ServerSideApply=true

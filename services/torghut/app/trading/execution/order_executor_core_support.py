@@ -235,6 +235,14 @@ def _order_payload_with_execution_metadata(
     execution_policy_context: dict[str, Any],
 ) -> dict[str, Any]:
     order_payload = dict(order_response)
+    order_payload.setdefault("symbol", decision.symbol)
+    order_payload.setdefault("side", decision.action)
+    order_payload.setdefault("type", decision.order_type)
+    order_payload.setdefault("order_type", decision.order_type)
+    order_payload.setdefault("time_in_force", decision.time_in_force)
+    order_payload.setdefault("qty", str(decision.qty))
+    order_payload.setdefault("submitted_qty", str(decision.qty))
+    order_payload.setdefault("client_order_id", decision_row.decision_hash)
     advice_provenance = _extract_execution_advice_provenance(
         decision,
         decision_row=decision_row,

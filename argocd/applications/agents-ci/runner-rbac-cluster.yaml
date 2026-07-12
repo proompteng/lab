@@ -163,3 +163,89 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
   name: agents-ci-runner-torghut-post-deploy-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agents-ci-runner-torghut-market-data-read
+  namespace: torghut
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - secrets
+    resourceNames:
+      - torghut-ws
+    verbs:
+      - get
+  - apiGroups:
+      - ''
+    resources:
+      - configmaps
+    resourceNames:
+      - torghut-ta-config
+    verbs:
+      - get
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - pods/exec
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agents-ci-runner-torghut-market-data-read
+  namespace: torghut
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agents-ci-runner-torghut-market-data-read
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agents-ci-runner-kafka-tail
+  namespace: kafka
+rules:
+  - apiGroups:
+      - ''
+    resources:
+      - pods
+    verbs:
+      - get
+      - list
+      - watch
+  - apiGroups:
+      - ''
+    resources:
+      - pods/exec
+    verbs:
+      - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agents-ci-runner-kafka-tail
+  namespace: kafka
+subjects:
+  - kind: ServiceAccount
+    name: arc-arm64-gha-rs-kube-mode
+    namespace: arc
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: agents-ci-runner-kafka-tail

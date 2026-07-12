@@ -42,6 +42,13 @@ const arrayIncludes = (value: unknown, expected: string): boolean => {
   return value.some((item) => stringAt({ item }, 'item') === expected)
 }
 
+const numberAt = (value: unknown, key: string): number | undefined => {
+  if (!isObject(value)) return undefined
+  const nested = value[key]
+  const parsed = typeof nested === 'number' ? nested : Number(nested)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
 const parseHttpStatus = (value: string): number | undefined => {
   if (!/^[0-9]{3}$/.test(value)) return undefined
   return Number(value)
@@ -85,6 +92,61 @@ const hasRepairOnlyReadyzContract = (readyz: JsonObject): boolean => {
     stringAt(proofFloor, 'detail') !== 'repair_only' ||
     stringAt(proofFloor, 'capital_state') !== 'zero_notional'
   ) {
+    return false
+  }
+
+  return true
+}
+
+const hasAcceptedSourceStaleReadyzContract = (readyz: JsonObject): boolean => {
+  if (readyz.status !== 'degraded') return false
+
+  const dependencies = objectAt(readyz, 'dependencies')
+  if (!dependencies) return false
+  if (!dependencyOk(dependencies, 'postgres')) return false
+  if (!dependencyOk(dependencies, 'clickhouse')) return false
+  if (!dependencyOk(dependencies, 'database')) return false
+
+  const scheduler = objectAt(readyz, 'scheduler')
+  if (!scheduler || scheduler.ok !== true || scheduler.running !== true) return false
+
+  const dependencyGate = objectAt(dependencies, 'live_submission_gate')
+  if (!dependencyGate || stringAt(dependencyGate, 'detail') !== 'accepted_ta_signal_stale') return false
+
+  const proofFloor = objectAt(dependencies, 'profitability_proof_floor')
+  if (
+    !proofFloor ||
+    stringAt(proofFloor, 'detail') !== 'repair_only' ||
+    stringAt(proofFloor, 'capital_state') !== 'zero_notional'
+  ) {
+    return false
+  }
+
+  const liveSubmissionGate = objectAt(readyz, 'live_submission_gate')
+  if (!liveSubmissionGate) return false
+  if (booleanAt(liveSubmissionGate, 'allowed') !== false) return false
+  if (stringAt(liveSubmissionGate, 'reason') !== 'accepted_ta_signal_stale') return false
+  if (!arrayIncludes(liveSubmissionGate.blocked_reasons, 'accepted_ta_signal_stale')) return false
+  const freshness = objectAt(liveSubmissionGate, 'clickhouse_ta_freshness')
+  if (!freshness) return false
+  if (stringAt(liveSubmissionGate, 'accepted_source_state') !== 'stale') return false
+  if (stringAt(freshness, 'accepted_source_state') !== 'stale') return false
+  if (stringAt(liveSubmissionGate, 'blocking_reason') !== 'accepted_ta_signal_stale') return false
+  if (stringAt(freshness, 'blocking_reason') !== 'accepted_ta_signal_stale') return false
+  if (!arrayIncludes(liveSubmissionGate.accepted_sources, 'ta')) return false
+  if (!arrayIncludes(freshness.accepted_sources, 'ta')) return false
+  if (!stringAt(liveSubmissionGate, 'latest_accepted_event_at')) return false
+  if (stringAt(liveSubmissionGate, 'latest_accepted_event_at') !== stringAt(freshness, 'latest_accepted_event_at')) {
+    return false
+  }
+  const topLevelLagSeconds = numberAt(liveSubmissionGate, 'accepted_lag_seconds')
+  const nestedLagSeconds = numberAt(freshness, 'accepted_lag_seconds')
+  if (topLevelLagSeconds === undefined || topLevelLagSeconds !== nestedLagSeconds) {
+    return false
+  }
+  const topLevelMaxLagSeconds = numberAt(liveSubmissionGate, 'accepted_max_lag_seconds')
+  const nestedMaxLagSeconds = numberAt(freshness, 'accepted_max_lag_seconds')
+  if (topLevelMaxLagSeconds === undefined || topLevelMaxLagSeconds !== nestedMaxLagSeconds) {
     return false
   }
 
@@ -140,6 +202,7 @@ export const classifyReadyzForPostDeployRetry = ({
   if (statusCode >= 200 && statusCode < 300) return 'acceptable'
   if (statusCode !== 503 || readyz.status !== 'degraded') return 'unacceptable'
   if (hasRepairOnlyReadyzContract(readyz)) return 'acceptable'
+  if (hasAcceptedSourceStaleReadyzContract(readyz)) return 'acceptable'
   if (hasCoreDependenciesOnlyReadyzContract(readyz)) return 'acceptable'
 
   const database = objectAt(objectAt(readyz, 'dependencies'), 'database')

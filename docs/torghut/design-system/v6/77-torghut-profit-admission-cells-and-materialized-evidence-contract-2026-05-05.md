@@ -1,21 +1,21 @@
 # 77. Torghut Profit Admission Cells and Materialized Evidence Contract (2026-05-05)
 
 Status: Ready for implementation
-Date: `2026-05-05`
-Owner: Victor Chen (Jangar Engineering)
-Scope: Torghut profitability, capital admission, hypothesis-local guardrails, route parity, and consumption of Jangar
-materialized run proof.
 
-Companion doc:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/72-jangar-materialized-run-proof-and-storage-backed-admission-contract-2026-05-05.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
-- `75-torghut-profit-authority-ledger-and-rehearsal-cells-2026-05-05.md`
-- `75-torghut-profit-actuation-cells-and-capital-guardrail-marketplace-2026-05-05.md`
-- `73-torghut-profit-evidence-clock-and-capital-veto-contract-2026-05-05.md`
 
 ## Executive Summary
 

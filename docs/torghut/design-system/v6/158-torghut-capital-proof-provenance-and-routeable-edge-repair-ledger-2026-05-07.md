@@ -1,20 +1,20 @@
 # 158. Torghut Capital Proof Provenance And Routeable Edge Repair Ledger (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut capital proof provenance, routeable edge repair, Jangar source provenance consumption, profit
-hypotheses, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/154-jangar-source-provenance-leases-and-material-action-escrow-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `157-torghut-profit-contract-actuation-and-capital-surface-truth-2026-05-07.md`
-- `156-torghut-repair-closure-yield-ledger-and-capital-unlock-receipts-2026-05-07.md`
-- `152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
 
 ## Decision
 
@@ -80,7 +80,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Schema lineage had one branch, no duplicate revisions, no orphan parents, and known parent-fork warnings at
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_empty`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_empty`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live execution TCA had 7334 orders, 7245 filled executions, latest TCA at `2026-05-07T14:23:43.480686+00:00`,
   average absolute slippage `13.8203637593029676` bps, and guardrail `8` bps.
@@ -95,7 +95,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Simulation `/readyz` returned HTTP `200` in paper mode.
 - Simulation proof floor remained `repair_only`, route state `repair_only`, capital state `zero_notional`, and
   `max_notional=0`.
-- Simulation blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
+- Simulation blockers were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`, and
   `market_context_stale`.
 - Simulation TCA had four orders, five filled executions, latest TCA at `2026-05-06T18:00:43.661339+00:00`, average
   absolute slippage `5.577112285` bps, one routeable symbol (`NVDA`), and seven missing symbols.

@@ -1,22 +1,20 @@
 # 204. Torghut Alpha Repair Dividend Ledger And Custody Flight Recorder (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut alpha readiness repair, routeable candidate dividend accounting, zero-notional guardrails,
-consumer-evidence carry, Jangar material action custody, validation, rollout, rollback, and business handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/199-jangar-material-action-custody-flight-recorder-and-merge-reentry-slo-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `203-torghut-alpha-closure-dividend-slo-and-consumer-evidence-carry-2026-05-14.md`
-- `202-torghut-compact-alpha-closure-export-and-no-delta-lease-2026-05-14.md`
-- `201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md`
-- `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
-- `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
 
 ## Decision
 
@@ -110,7 +108,7 @@ flags, broker state, GitOps resources, AgentRuns, or market data.
 ### Revenue Repair Evidence
 
 - Top queue item: `repair_alpha_readiness`.
-- Reason: `alpha_readiness_not_promotion_eligible`.
+- Reason: `hypothesis_not_promotion_eligible`.
 - Dimension: `alpha_readiness`.
 - Action: `clear_hypothesis_blockers_before_capital`.
 - Priority: `70`.

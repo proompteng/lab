@@ -167,7 +167,7 @@ const lotForAlphaStrike = (
   lot_class: 'promotion_custody',
   target_value_gate: 'routeable_candidate_count',
   priority: 98,
-  expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+  expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
   raw_reason_codes: uniqueStrings([
     ledger.selected_business_blocker?.reason,
     ...ledger.reason_codes,

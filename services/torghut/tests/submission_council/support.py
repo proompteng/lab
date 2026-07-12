@@ -31,10 +31,6 @@ from app.models import (
     TradeDecision,
 )
 from app.trading.hypotheses import JangarDependencyQuorumStatus
-from app.trading.paper_route_target_summaries import _next_paper_route_target_summaries
-from app.trading.paper_route_target_plan import (
-    materialize_bounded_paper_route_target_plan,
-)
 from app.trading.runtime_decision_authority import (
     BOUNDED_PAPER_ROUTE_COLLECTION_SOURCE_DECISION_MODE,
     ROUTE_ACQUISITION_SOURCE_DECISION_MODE,
@@ -156,10 +152,7 @@ class SubmissionCouncilTestCase(TestCase):
             "trading_autonomy_enabled": settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": settings.trading_kill_switch_enabled,
-            "trading_live_submit_activation_expires_at": settings.trading_live_submit_activation_expires_at,
-            "trading_simple_paper_route_probe_enabled": settings.trading_simple_paper_route_probe_enabled,
-            "trading_simple_paper_route_probe_allow_live_mode": settings.trading_simple_paper_route_probe_allow_live_mode,
-            "trading_simple_paper_route_probe_max_notional": settings.trading_simple_paper_route_probe_max_notional,
+            "trading_live_submit_enabled": settings.trading_live_submit_enabled,
             "trading_simple_submit_enabled": settings.trading_simple_submit_enabled,
             "trading_jangar_quant_health_url": settings.trading_jangar_quant_health_url,
             "trading_jangar_quant_health_required": settings.trading_jangar_quant_health_required,
@@ -170,14 +163,21 @@ class SubmissionCouncilTestCase(TestCase):
             "trading_drift_live_promotion_max_evidence_age_seconds": settings.trading_drift_live_promotion_max_evidence_age_seconds,
         }
         _QUANT_HEALTH_CACHE.clear()
+        self._alpaca_broker_available_patcher = patch(
+            "app.trading.submission_council._alpaca_broker_available",
+            return_value=True,
+        )
+        self._alpaca_broker_available_patcher.start()
         settings.trading_enabled = True
         settings.trading_mode = "live"
         settings.trading_autonomy_enabled = False
         settings.trading_autonomy_allow_live_promotion = False
         settings.trading_kill_switch_enabled = False
-        settings.trading_live_submit_activation_expires_at = None
+        settings.trading_live_submit_enabled = True
+        settings.trading_simple_submit_enabled = True
 
     def tearDown(self) -> None:
+        self._alpaca_broker_available_patcher.stop()
         settings.trading_enabled = self._settings_snapshot["trading_enabled"]
         settings.trading_mode = self._settings_snapshot["trading_mode"]
         settings.trading_autonomy_enabled = self._settings_snapshot[
@@ -189,18 +189,9 @@ class SubmissionCouncilTestCase(TestCase):
         settings.trading_kill_switch_enabled = self._settings_snapshot[
             "trading_kill_switch_enabled"
         ]
-        settings.trading_live_submit_activation_expires_at = self._settings_snapshot[
-            "trading_live_submit_activation_expires_at"
+        settings.trading_live_submit_enabled = self._settings_snapshot[
+            "trading_live_submit_enabled"
         ]
-        settings.trading_simple_paper_route_probe_enabled = self._settings_snapshot[
-            "trading_simple_paper_route_probe_enabled"
-        ]
-        settings.trading_simple_paper_route_probe_allow_live_mode = (
-            self._settings_snapshot["trading_simple_paper_route_probe_allow_live_mode"]
-        )
-        settings.trading_simple_paper_route_probe_max_notional = (
-            self._settings_snapshot["trading_simple_paper_route_probe_max_notional"]
-        )
         settings.trading_simple_submit_enabled = self._settings_snapshot[
             "trading_simple_submit_enabled"
         ]
@@ -592,7 +583,6 @@ __all__: tuple[str, ...] = (
     "_maybe_set_runtime_ledger_status_statement_timeout",
     "_merge_runtime_certificate_evidence",
     "_metric_window_activity_reason_codes",
-    "_next_paper_route_target_summaries",
     "_refresh_runtime_summary_totals",
     "_rollback_runtime_ledger_status_session",
     "_runtime_ledger_aggregate_candidate_payloads",
@@ -615,7 +605,6 @@ __all__: tuple[str, ...] = (
     "func",
     "json",
     "load_quant_evidence_status",
-    "materialize_bounded_paper_route_target_plan",
     "os",
     "patch",
     "resolve_quant_health_url",

@@ -1,20 +1,21 @@
 # 160. Torghut Proof Surface Activation Ledger And Capital Receipt Firewall (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, proof-surface activation, source/runtime drift, capital receipt firewall, measurable
-trading hypotheses, validation, rollout, rollback, and implementation acceptance gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/156-jangar-runtime-activation-receipts-and-source-drift-quarantine-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `159-torghut-capital-cohort-frontier-and-routeability-repair-board-2026-05-07.md`
-- `158-torghut-route-reacquisition-and-market-context-repair-cells-2026-05-07.md`
-- `158-torghut-capital-proof-provenance-and-routeable-edge-repair-ledger-2026-05-07.md`
 
 ## Decision
 
@@ -89,7 +90,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, trading fla
 - Live scheduler was running, startup grace was inactive, Postgres and ClickHouse were healthy, Alpaca live account
   `PA3SX7FYNUTF` was active, and Jangar universe was fresh with eight symbols.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, capital stage `shadow`.
 - Live alpha readiness showed three hypotheses, all `shadow`, zero promotion eligible, and three rollback-required.

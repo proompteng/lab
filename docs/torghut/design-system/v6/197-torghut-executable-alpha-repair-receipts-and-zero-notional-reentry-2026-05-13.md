@@ -1,23 +1,20 @@
 # 197. Torghut Executable Alpha Repair Receipts And Zero-Notional Reentry (2026-05-13)
 
 Status: Accepted for Jangar engineer and deployer handoff
-Date: 2026-05-13
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut executable alpha repair, revenue-repair queue clearing, zero-notional capital safety, repair receipts,
-Jangar material reentry, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/192-jangar-material-readiness-reentry-clearinghouse-and-source-rollout-receipts-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `196-torghut-profit-carry-passports-and-repair-capacity-futures-2026-05-13.md`
-- `193-torghut-route-repair-yield-board-and-hypothesis-reentry-guardrails-2026-05-13.md`
-- `192-torghut-repair-receipt-frontier-and-profit-cutover-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
-- `docs/agents/designs/192-jangar-material-readiness-reentry-clearinghouse-and-source-rollout-receipts-2026-05-13.md`
 
 ## Decision
 
@@ -28,7 +25,7 @@ The current business evidence is unambiguous. `GET /trading/revenue-repair` retu
 `schema_version=torghut.revenue-repair-digest.v1`, `revenue_ready=false`, `business_state=repair_only`, and
 `operating_rule=keep_live_submit_disabled_until_repair_queue_clears`. Capital stayed at `max_notional=0`,
 `capital_stage=shadow`, and `capital_state=zero_notional`. The top repair queue item was
-`repair_alpha_readiness`, with reason `alpha_readiness_not_promotion_eligible`, value gate
+`repair_alpha_readiness`, with reason `hypothesis_not_promotion_eligible`, value gate
 `routeable_candidate_count`, and required output receipt `torghut.executable-alpha-receipts.v1`. The second queue
 item was `live_submit_gate_closed`, but it correctly remains downstream of alpha readiness and proof-floor repair.
 
@@ -110,7 +107,7 @@ trading flags, GitOps resources, AgentRuns, or market data.
   `capital_state=zero_notional`, and `max_notional=0`.
 - The top repair queue item was:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `dimension=alpha_readiness`
   - `action=clear_hypothesis_blockers_before_capital`
   - `priority=70`
@@ -251,7 +248,7 @@ executable_alpha_repair_receipt
 
 The first production version should cover the reason codes observed in this assessment:
 
-- `alpha_readiness_not_promotion_eligible`
+- `hypothesis_not_promotion_eligible`
 - `hypothesis_window_evidence_missing`
 - `hypothesis_window_evidence_stale`
 - `strategy_hypothesis_missing`
@@ -375,7 +372,7 @@ material reentry receipt but must not enable capital.
 
 Acceptance gates:
 
-- A receipt that does not retire `alpha_readiness_not_promotion_eligible` emits `no_delta`.
+- A receipt that does not retire `hypothesis_not_promotion_eligible` emits `no_delta`.
 - A receipt that makes one hypothesis promotion-eligible emits `retired` or `improved`.
 - The settlement carries before and after reason codes and value gate measurements.
 

@@ -248,31 +248,8 @@ class TestTradingPipelineDspyGateA(TradingPipelineTestCaseBase):
                     session_factory=self.session_local,
                     llm_review_engine=engine,
                 )
-                eligible_summary = {
-                    "promotion_eligible_total": 1,
-                    "capital_stage_totals": {"shadow": 1},
-                    "dependency_quorum": {
-                        "decision": "allow",
-                        "reasons": [],
-                        "message": "ready",
-                    },
-                }
                 self._seed_promotion_certificate_evidence()
-                with (
-                    patch(
-                        "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                        return_value=eligible_summary,
-                    ),
-                    patch(
-                        "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                        return_value={"ready": True, "status": "healthy"},
-                    ),
-                    patch(
-                        "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                        return_value=self._healthy_live_quant_status(),
-                    ),
-                ):
-                    pipeline.run_once()
+                pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()
@@ -429,31 +406,8 @@ class TestTradingPipelineDspyGateA(TradingPipelineTestCaseBase):
                     session_factory=self.session_local,
                     llm_review_engine=engine,
                 )
-                eligible_summary = {
-                    "promotion_eligible_total": 1,
-                    "capital_stage_totals": {"shadow": 1},
-                    "dependency_quorum": {
-                        "decision": "allow",
-                        "reasons": [],
-                        "message": "ready",
-                    },
-                }
             self._seed_promotion_certificate_evidence()
-            with (
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=eligible_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value=self._healthy_live_quant_status(),
-                ),
-            ):
-                pipeline.run_once()
+            pipeline.run_once()
 
             with self.session_local() as session:
                 reviews = session.execute(select(LLMDecisionReview)).scalars().all()

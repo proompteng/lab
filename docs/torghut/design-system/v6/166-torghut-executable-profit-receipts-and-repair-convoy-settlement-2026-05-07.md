@@ -1,21 +1,21 @@
 # 166. Torghut Executable Profit Receipts And Repair Convoy Settlement (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, executable profit receipts, repair convoy settlement, zero-notional repair economics,
-Jangar capital receipt convergence, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/162-jangar-capital-receipt-convergence-and-repair-convoy-admission-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `165-torghut-outcome-priced-repair-market-and-capital-shadow-swaps-2026-05-07.md`
-- `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
-- `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
-- `163-torghut-quant-stage-cohort-and-evidence-repair-settlement-2026-05-07.md`
 
 ## Decision
 
@@ -109,7 +109,7 @@ records, ClickHouse tables, broker state, GitOps resources, AgentRun objects, or
   Jangar universe fresh with eight symbols, readiness cache fresh, and quant evidence informational.
 - Live submission gate was closed by `simple_submit_disabled`; capital stage was `shadow`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live alpha readiness had three shadow hypotheses, zero promotion eligible, and three rollback required.
 - Live routeability had zero routeable symbols, five blocked symbols, and three missing symbols.
@@ -127,7 +127,7 @@ records, ClickHouse tables, broker state, GitOps resources, AgentRun objects, or
 - Simulation `/trading/health` returned operational `status=ok`.
 - Simulation proof floor still reported `repair_only`, `capital_state=zero_notional`, and max notional `0`.
 - Simulation alpha readiness had three shadow hypotheses, zero promotion eligible, and three rollback required.
-- Simulation blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Simulation blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, and `market_context_stale`.
 - Simulation routeability had one probing symbol, `NVDA`, seven missing symbols, and zero routeable symbols.
 - Simulation TCA was stale at about 94266 seconds versus an 86400 second threshold, and there was one unsettled

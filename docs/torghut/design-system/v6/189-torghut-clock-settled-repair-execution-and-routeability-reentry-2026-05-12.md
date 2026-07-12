@@ -1,29 +1,27 @@
 # 189. Torghut Clock-Settled Repair Execution And Routeability Reentry (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant routeability, evidence-clock settlement, repair execution, Jangar dispatch custody, active-session
-TCA quality, empirical replay freshness, rollout proof, zero-notional capital safety, validation, rollout, rollback,
-and cross-stage handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/185-jangar-clock-settled-repair-dispatch-and-rollout-custody-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
-- `188-torghut-stage-clearance-consumer-and-repair-lot-broker-2026-05-12.md`
-- `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
-- `docs/agents/designs/184-jangar-rollout-custody-and-evidence-clock-dispatch-2026-05-12.md`
 
 ## Decision
 
 I am selecting **clock-settled repair execution with routeability reentry gates** as the next Torghut architecture
 step.
 
-The current live system is safer than it is useful. Torghut `/healthz` returns HTTP 200, but `/readyz` returns HTTP 503. Live submission is held by `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and
+The current live system is safer than it is useful. Torghut `/healthz` returns HTTP 200, but `/readyz` returns HTTP 503. Live submission is held by `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and
 `empirical_jobs_not_ready`. The live `evidence_clock_arbiter` reports `routeable_candidate_count=0`,
 `zero_notional_or_stale_evidence_rate=0.9`, one current clock, and nine non-current clocks. Capital remains
 `repair_only` with `max_notional=0`.

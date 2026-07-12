@@ -5,8 +5,8 @@ import { resolve } from 'node:path'
 import process from 'node:process'
 
 import { fatal, repoRoot } from '../shared/cli'
-import { inspectImageDigest } from '../shared/docker'
 import { execGit } from '../shared/git'
+import { inspectOciImageDigest } from '../shared/oci-digest'
 
 const defaultRegistry = 'registry.ide-newton.ts.net'
 const defaultRepository = 'lab/torghut-hyperliquid-feed'
@@ -44,6 +44,15 @@ const replaceSingle = (source: string, pattern: RegExp, replacement: string, lab
   return source.replace(pattern, replacement)
 }
 
+const extractSingle = (source: string, pattern: RegExp, label: string): string => {
+  const match = source.match(pattern)
+  const value = match?.[1]
+  if (!value) {
+    throw new Error(`Unable to locate ${label} in hyperliquid feed manifest`)
+  }
+  return value.trim()
+}
+
 const updateHyperliquidFeedManifest = (
   imageName: string,
   digest: string,
@@ -56,6 +65,21 @@ const updateHyperliquidFeedManifest = (
   const source = readFileSync(manifestPath, 'utf8')
   const imageRef = `${imageName}@${digest}`
   const containerPattern = escapeRegExp(containerName)
+  const currentImageRef = extractSingle(
+    source,
+    new RegExp(`- name:\\s*${containerPattern}[\\s\\S]*?\\n\\s*image:\\s*([^\\n]+)`),
+    `${containerName} image reference`,
+  )
+  const currentImageDigest = normalizeDigest(currentImageRef)
+  const currentEnvDigest = normalizeDigest(
+    extractSingle(
+      source,
+      /- name:\s*TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST\s*\n\s*value:\s*([^\n]+)/,
+      'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
+    ),
+  )
+  const sourceMetadataOnlyChange =
+    currentImageRef === imageRef && currentImageDigest === digest && currentEnvDigest === digest
 
   let updated = replaceSingle(
     source,
@@ -63,6 +87,21 @@ const updateHyperliquidFeedManifest = (
     `$1${imageRef}`,
     `${containerName} image reference`,
   )
+  updated = replaceSingle(
+    updated,
+    /(- name:\s*TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/,
+    `$1${digest}`,
+    'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
+  )
+
+  if (sourceMetadataOnlyChange) {
+    return {
+      manifestPath,
+      imageRef,
+      changed: false,
+    }
+  }
+
   updated = replaceSingle(
     updated,
     /(- name:\s*TORGHUT_HYPERLIQUID_FEED_VERSION\s*\n\s*value:\s*)([^\n]+)/,
@@ -74,12 +113,6 @@ const updateHyperliquidFeedManifest = (
     /(- name:\s*TORGHUT_HYPERLIQUID_FEED_COMMIT\s*\n\s*value:\s*)([^\n]+)/,
     `$1${commit}`,
     'TORGHUT_HYPERLIQUID_FEED_COMMIT',
-  )
-  updated = replaceSingle(
-    updated,
-    /(- name:\s*TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST\s*\n\s*value:\s*)([^\n]+)/,
-    `$1${digest}`,
-    'TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST',
   )
 
   if (updated !== source) {
@@ -167,7 +200,7 @@ const main = (cliOptions?: CliOptions) => {
     parsed.tag ?? process.env.TORGHUT_HYPERLIQUID_FEED_IMAGE_TAG ?? execGit(['rev-parse', '--short=8', 'HEAD'])
   const imageName = `${registry}/${repository}`
   const digest = normalizeDigest(
-    parsed.digest ?? process.env.TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST ?? inspectImageDigest(`${imageName}:${tag}`),
+    parsed.digest ?? process.env.TORGHUT_HYPERLIQUID_FEED_IMAGE_DIGEST ?? inspectOciImageDigest(`${imageName}:${tag}`),
   )
 
   if (!digestPattern.test(digest)) {
@@ -198,6 +231,7 @@ if (import.meta.main) {
 }
 
 export const __private = {
+  extractSingle,
   normalizeDigest,
   parseArgs,
   replaceSingle,

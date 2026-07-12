@@ -7,6 +7,20 @@
 - Maturity: `implementation plan + partial scaffolding landed`
 - Scope: adopt DSPy for LLM-program authoring/optimization while preserving deterministic trading safety and Jangar-native AgentRun control-plane operations
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
+
+
 ## Audit Update (2026-02-26)
 
 - DSPy program/runtime scaffolding and compile/eval/promotion artifact contracts are implemented in Torghut code.

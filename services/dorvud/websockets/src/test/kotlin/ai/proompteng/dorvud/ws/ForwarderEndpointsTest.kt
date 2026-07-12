@@ -1,8 +1,10 @@
 package ai.proompteng.dorvud.ws
 
+import ai.proompteng.dorvud.platform.Envelope
 import ai.proompteng.dorvud.platform.KafkaAuth
 import ai.proompteng.dorvud.platform.KafkaProducerSettings
 import ai.proompteng.dorvud.platform.KafkaTls
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import java.time.Instant
 import kotlin.test.Test
@@ -67,6 +69,7 @@ class ForwarderEndpointsTest {
     val cfg = baseConfig(AlpacaMarketType.EQUITY)
     assertEquals("wss://stream.data.alpaca.markets/v2/iex", alpacaMarketDataStreamUrl(cfg))
     assertEquals("https://data.alpaca.markets/v2/stocks/bars", alpacaBarsBackfillUrl(cfg))
+    assertEquals("https://data.alpaca.markets/v2/stocks/trades", alpacaTradesBackfillUrl(cfg))
     assertTrue(alpacaBarsBackfillNeedsFeed(cfg))
     assertEquals(listOf("trades", "quotes", "bars", "updatedBars"), alpacaMarketDataChannels(cfg))
   }
@@ -95,6 +98,9 @@ class ForwarderEndpointsTest {
     assertFailsWith<IllegalStateException> {
       alpacaBarsBackfillUrl(cfg)
     }
+    assertFailsWith<IllegalStateException> {
+      alpacaTradesBackfillUrl(cfg)
+    }
   }
 
   @Test
@@ -109,6 +115,21 @@ class ForwarderEndpointsTest {
       )
     val bars = assertNotNull(parsed.bars)
     assertTrue(bars.jsonObject.isEmpty())
+    assertEquals(null, parsed.nextPageToken)
+  }
+
+  @Test
+  fun `trades backfill parser tolerates next page token`() {
+    val payload = """{"trades":{},"next_page_token":null}"""
+    val parsed =
+      decodeAlpacaTradesResponse(
+        payload,
+        kotlinx.serialization.json.Json {
+          ignoreUnknownKeys = true
+        },
+      )
+    val trades = assertNotNull(parsed.trades)
+    assertTrue(trades.jsonObject.isEmpty())
     assertEquals(null, parsed.nextPageToken)
   }
 
@@ -132,11 +153,48 @@ class ForwarderEndpointsTest {
   }
 
   @Test
+  fun `equity trades backfill query fetches newest records with pagination`() {
+    val cfg =
+      baseConfig(AlpacaMarketType.EQUITY).copy(
+        tradesBackfillLookbackHours = 120,
+      )
+    val query = alpacaTradesBackfillQuery(cfg, listOf("NVDA", "AMD"), Instant.parse("2026-07-07T20:00:00Z"), "page-2")
+
+    assertEquals("NVDA,AMD", query.symbols)
+    assertEquals("2026-07-02T20:00:00Z", query.start)
+    assertEquals("2026-07-07T20:00:00Z", query.end)
+    assertEquals("10000", query.limit)
+    assertEquals("desc", query.sort)
+    assertEquals("iex", query.feed)
+    assertEquals("page-2", query.pageToken)
+  }
+
+  @Test
   fun `crypto backfill query omits feed parameter`() {
     val cfg = baseConfig(AlpacaMarketType.CRYPTO)
     val query = alpacaBarsBackfillQuery(cfg, listOf("BTC/USD"), Instant.parse("2026-03-11T09:30:00Z"))
 
     assertEquals(null, query.feed)
     assertEquals(null, query.pageToken)
+  }
+
+  @Test
+  fun `only websocket envelopes can satisfy live market-data freshness`() {
+    val wsEnvelope =
+      Envelope(
+        ingestTs = Instant.parse("2026-07-07T14:00:00Z"),
+        eventTs = Instant.parse("2026-07-07T14:00:00Z"),
+        feed = "iex",
+        channel = "trades",
+        symbol = "NVDA",
+        seq = 1,
+        payload = JsonPrimitive("payload"),
+        source = "ws",
+      )
+    val restEnvelope = wsEnvelope.copy(source = "rest")
+
+    assertEquals("trades", marketDataFreshnessChannelFor(wsEnvelope, "trades"))
+    assertEquals(null, marketDataFreshnessChannelFor(restEnvelope, "trades"))
+    assertEquals(null, marketDataFreshnessChannelFor(wsEnvelope, null))
   }
 }

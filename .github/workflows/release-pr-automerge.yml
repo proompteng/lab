@@ -13,6 +13,19 @@ on:
       - 'argocd/applications/khoshut/kustomization.yaml'
       - 'argocd/applications/analysis/kustomization.yaml'
       - 'argocd/applications/bilig/kustomization.yaml'
+      - 'argocd/applications/arc/application.yaml'
+      - 'argocd/applications/app/kustomization.yaml'
+      - 'argocd/applications/attic/deployment.yaml'
+      - 'argocd/applications/attic/gc-cronjob.yaml'
+      - 'argocd/applications/bumba/deployment.yaml'
+      - 'argocd/applications/bumba/kustomization.yaml'
+      - 'argocd/applications/docs/kustomization.yaml'
+      - 'argocd/applications/froussard/knative-service.yaml'
+      - 'argocd/applications/headlamp/values.yaml'
+      - 'argocd/applications/oirat/kustomization.yaml'
+      - 'argocd/applications/olden/kustomization.yaml'
+      - 'argocd/applications/proompteng/kustomization.yaml'
+      - 'argocd/applications/synthesis/kustomization.yaml'
       - '.github/workflows/release-pr-automerge.yml'
   workflow_dispatch:
     inputs:
@@ -36,7 +49,16 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         (
           github.event.pull_request.base.ref == 'main' &&
-          startsWith(github.event.pull_request.head.ref, 'release/') &&
+          (
+            startsWith(github.event.pull_request.head.ref, 'release/') ||
+            (
+              startsWith(github.event.pull_request.head.ref, 'codex/') &&
+              (
+                contains(github.event.pull_request.head.ref, '-nix-release-') ||
+                contains(github.event.pull_request.head.ref, '-release-')
+              )
+            )
+          ) &&
           github.event.pull_request.draft == false
         )
       }}
@@ -63,11 +85,26 @@ jobs:
             exit 0
           fi
 
-          allowed_authors=("app/github-actions" "github-actions[bot]")
-          allowed_paths=(
+          bot_authors=("app/github-actions" "github-actions[bot]")
+          legacy_release_paths=(
             "argocd/applications/khoshut/kustomization.yaml"
             "argocd/applications/analysis/kustomization.yaml"
             "argocd/applications/bilig/kustomization.yaml"
+          )
+          nix_oci_release_paths=(
+            "argocd/applications/arc/application.yaml"
+            "argocd/applications/app/kustomization.yaml"
+            "argocd/applications/attic/deployment.yaml"
+            "argocd/applications/attic/gc-cronjob.yaml"
+            "argocd/applications/bumba/deployment.yaml"
+            "argocd/applications/bumba/kustomization.yaml"
+            "argocd/applications/docs/kustomization.yaml"
+            "argocd/applications/froussard/knative-service.yaml"
+            "argocd/applications/headlamp/values.yaml"
+            "argocd/applications/oirat/kustomization.yaml"
+            "argocd/applications/olden/kustomization.yaml"
+            "argocd/applications/proompteng/kustomization.yaml"
+            "argocd/applications/synthesis/kustomization.yaml"
           )
 
           contains() {
@@ -89,6 +126,7 @@ jobs:
           PR_STATE="$(jq -r '.state // ""' <<< "$pr_json")"
           PR_AUTHOR="$(jq -r '.user.login // ""' <<< "$pr_json")"
           PR_HEAD_REF="$(jq -r '.head.ref // ""' <<< "$pr_json")"
+          PR_HEAD_SHA="$(jq -r '.head.sha // ""' <<< "$pr_json")"
           PR_BASE_REF="$(jq -r '.base.ref // ""' <<< "$pr_json")"
           PR_HEAD_REPO="$(jq -r '.head.repo.full_name // ""' <<< "$pr_json")"
           PR_IS_DRAFT="$(jq -r '.draft // false' <<< "$pr_json")"
@@ -103,7 +141,14 @@ jobs:
             exit 0
           fi
 
-          if [[ "$PR_HEAD_REF" != release/* ]]; then
+          release_kind=""
+          if [[ "$PR_HEAD_REF" == release/* ]]; then
+            release_kind="legacy-release"
+          elif [[ "$PR_HEAD_REF" =~ ^codex/(attic|arc-runner)-release-sha-[0-9a-f]{40}$ ]] ||
+            [[ "$PR_HEAD_REF" =~ ^codex/(headlamp|oirat|bumba|froussard)-nix-release-sha-[0-9a-f]{40}$ ]] ||
+            [[ "$PR_HEAD_REF" =~ ^codex/product-nix-release-[0-9a-f]{40}$ ]]; then
+            release_kind="nix-oci-release"
+          else
             echo "reason=head-not-release-branch" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -118,9 +163,25 @@ jobs:
             exit 0
           fi
 
-          if ! contains "$PR_AUTHOR" "${allowed_authors[@]}"; then
-            echo "reason=author-not-allowlisted" >> "$GITHUB_OUTPUT"
+          if ! [[ "$PR_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "reason=invalid-head-sha" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          if ! contains "$PR_AUTHOR" "${bot_authors[@]}"; then
+            if [[ "$PR_AUTHOR" != "gregkonush" ]]; then
+              echo "reason=author-not-allowlisted" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+
+            commit_json="$(gh api "repos/$GH_REPO/commits/$PR_HEAD_SHA")"
+            commit_committer_login="$(jq -r '.committer.login // ""' <<< "$commit_json")"
+            commit_committer_email="$(jq -r '.commit.committer.email // ""' <<< "$commit_json")"
+            if [[ "$commit_committer_login" != "github-actions[bot]" ]] ||
+              [[ "$commit_committer_email" != "41898282+github-actions[bot]@users.noreply.github.com" ]]; then
+              echo "reason=human-authored-release-pr" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
 
           has_opt_out_label=$(
@@ -133,6 +194,22 @@ jobs:
           if [[ "$has_opt_out_label" == "true" ]]; then
             echo "reason=opt-out-label-present" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+
+          if [[ "$release_kind" == "nix-oci-release" ]]; then
+            for required_label in automated-pr nix-oci; do
+              has_required_label=$(
+                gh pr view "$PR_NUMBER" \
+                  -R "$GH_REPO" \
+                  --json labels \
+                  --jq 'any(.labels[]?; .name == "'"$required_label"'")'
+              )
+
+              if [[ "$has_required_label" != "true" ]]; then
+                echo "reason=missing-required-label:${required_label}" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
           fi
 
           changed_files=()
@@ -156,14 +233,22 @@ jobs:
           fi
 
           for path in "${changed_files[@]}"; do
-            if ! contains "$path" "${allowed_paths[@]}"; then
-              echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
-              exit 0
+            if [[ "$release_kind" == "legacy-release" ]]; then
+              if ! contains "$path" "${legacy_release_paths[@]}"; then
+                echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            else
+              if ! contains "$path" "${nix_oci_release_paths[@]}"; then
+                echo "reason=changed-file-not-allowlisted:$path" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
             fi
           done
 
           echo "eligible=true" >> "$GITHUB_OUTPUT"
-          echo "reason=eligible" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${PR_HEAD_SHA}" >> "$GITHUB_OUTPUT"
+          echo "reason=eligible:${release_kind}" >> "$GITHUB_OUTPUT"
 
       - name: Eligibility summary
         shell: bash
@@ -179,6 +264,7 @@ jobs:
           GH_TOKEN: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.inputs.pr_number }}
+          PR_HEAD_SHA: ${{ steps.gates.outputs.head_sha }}
         run: |
           set -euo pipefail
 
@@ -194,4 +280,4 @@ jobs:
             exit 0
           fi
 
-          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash
+          gh pr merge "$PR_NUMBER" -R "$GH_REPO" --auto --squash --match-head-commit "$PR_HEAD_SHA"

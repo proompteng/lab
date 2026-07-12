@@ -34,7 +34,7 @@ Before code changes, `GET http://agents.agents.svc.cluster.local/ready` at 2026-
 - `business_state=repair_only`
 - `revenue_ready=false`
 - top repair `repair_alpha_readiness`
-- reason `alpha_readiness_not_promotion_eligible`
+- reason `hypothesis_not_promotion_eligible`
 - value gate `routeable_candidate_count`
 - required receipt `torghut.executable-alpha-receipts.v1`
 - `max_notional=0`

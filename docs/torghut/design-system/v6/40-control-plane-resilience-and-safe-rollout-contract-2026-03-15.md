@@ -12,6 +12,20 @@
   - `docs/torghut/design-system/v6/25-knative-startup-probe-port-fix-2026-03-04.md`
   - `docs/torghut/design-system/v6/26-database-migration-lineage-and-readiness-contract-2026-03-05.md`
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: Jangar has route/API integration and many control-plane modules; historical Swarm prose is not a one-to-one runtime spec.
+- Matched implementation area: Jangar/control-plane integration.
+- Current source evidence:
+  - `services/jangar/src/routes/ready.tsx`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+  - `services/jangar/src/server/control-plane-source-serving-contract-verdict.ts`
+  - `services/jangar/src/routes/api/torghut/trading/control-plane/quant/snapshot.ts`
+  - `argocd/applications/agents/kustomization.yaml`
+- Design drift note: Verify against current Jangar modules/routes before treating design contracts as live behavior.
+
+
 ## Why this doc exists
 
 The March 15 cluster read is still showing a pattern where control-plane availability appears healthy while operational truth is not. The failure domains are now better mapped and need explicit architectural isolation before any further optimization work is safe.

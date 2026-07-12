@@ -13,11 +13,22 @@ resources:
   - symphony-fleet-dashboard-configmap.yaml
   - codex-pipeline-dashboard-configmap.yaml
   - torghut-execution-recovery-dashboard-configmap.yaml
+  - arc-runner-capacity-dashboard-configmap.yaml
+  - cluster-metrics-alloy-rbac.yaml
+  - cluster-metrics-alloy-configmap.yaml
+  - cluster-metrics-alloy-deployment.yaml
 
 helmCharts:
+  - name: kube-state-metrics
+    repo: https://prometheus-community.github.io/helm-charts
+    version: 7.3.0
+    releaseName: observability-kube-state-metrics
+    namespace: observability
+    includeCRDs: true
+    valuesFile: kube-state-metrics-values.yaml
   - name: mimir-distributed
     repo: https://grafana.github.io/helm-charts
-    version: 6.0.6
+    version: 6.1.0
     releaseName: observability-mimir
     namespace: observability
     includeCRDs: true
@@ -122,6 +133,15 @@ patches:
         name: observability-loki-loki-distributed-querier
         annotations:
           argocd.argoproj.io/sync-options: Replace=true
+  - target:
+      kind: Job
+      name: observability-mimir-smoke-test
+    patch: |-
+      $patch: delete
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: observability-mimir-smoke-test
   - target:
       kind: StatefulSet
       name: observability-mimir-alertmanager

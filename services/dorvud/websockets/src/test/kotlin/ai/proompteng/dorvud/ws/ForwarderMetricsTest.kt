@@ -82,6 +82,7 @@ class ForwarderMetricsTest {
     val metrics = ForwarderMetrics(registry)
 
     metrics.recordProviderMessage(AlpacaMarketType.OPTIONS, "quote")
+    metrics.recordMarketDataDrop(AlpacaMarketType.OPTIONS, "quote", "invalid_event_ts")
     metrics.setOptionsEventStarvation(true)
 
     assertEquals(
@@ -90,6 +91,16 @@ class ForwarderMetricsTest {
         .find("torghut_ws_provider_messages_total")
         .tag("market_type", "options")
         .tag("channel", "quote")
+        .counter()
+        ?.count(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_drops_total")
+        .tag("market_type", "options")
+        .tag("channel", "quote")
+        .tag("reason", "invalid_event_ts")
         .counter()
         ?.count(),
     )
@@ -106,6 +117,82 @@ class ForwarderMetricsTest {
       0.0,
       registry
         .find("torghut_ws_options_event_starvation")
+        .gauge()
+        ?.value(),
+    )
+  }
+
+  @Test
+  fun `records market data channel readiness gauges`() {
+    val registry = SimpleMeterRegistry()
+    val metrics = ForwarderMetrics(registry)
+
+    metrics.setMarketDataChannelReadiness(
+      listOf(
+        MarketDataChannelReadiness(
+          channel = "trades",
+          ready = false,
+          required = true,
+          gateActive = true,
+          marketSessionState = "regular",
+          latestProviderEventAtMs = 100,
+          latestSerializedAtMs = 110,
+          latestKafkaSuccessAtMs = null,
+          latestSubscriptionAckAtMs = 90,
+          subscribedSymbolCount = 2,
+          subscribedSymbols = listOf("AMD", "NVDA"),
+          observedSymbolCount = 1,
+          observedSymbols = listOf("NVDA"),
+          subscriptionAckLagMs = 20,
+          lagMs = null,
+          maxLagMs = 60_000,
+          reason = "market_data_channel_missing_kafka_success",
+        ),
+      ),
+    )
+
+    assertEquals(
+      0.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "ready")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      -1.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "lag_ms")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      1.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "observed_symbol_count")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      90.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "latest_subscription_ack_at_ms")
+        .gauge()
+        ?.value(),
+    )
+    assertEquals(
+      20.0,
+      registry
+        .find("torghut_ws_market_data_channel")
+        .tag("channel", "trades")
+        .tag("field", "subscription_ack_lag_ms")
         .gauge()
         ?.value(),
     )

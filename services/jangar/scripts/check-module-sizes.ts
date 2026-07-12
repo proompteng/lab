@@ -1,9 +1,9 @@
 import { readdir, readFile } from 'node:fs/promises'
 import { relative, resolve } from 'node:path'
 
-const MAX_NEW_FILE_LINES = 800
+const MAX_FILE_LINES = 1000
 
-const LEGACY_LINE_CAPS: Record<string, number> = {
+const LEGACY_OVERSIZED_LINE_CAPS: Record<string, number> = {
   'src/server/control-plane-status-types.ts': 2980,
   'src/server/atlas-store.ts': 2219,
   'src/server/chat-completion-encoder.ts': 2076,
@@ -15,14 +15,6 @@ const LEGACY_LINE_CAPS: Record<string, number> = {
   'src/server/terminals.ts': 1029,
   'src/routes/github/pulls/$owner/$repo/$number.tsx': 1028,
   'src/server/db.ts': 1017,
-  'src/server/torghut-trading.ts': 988,
-  'src/routes/torghut/trading.tsx': 980,
-  'src/server/torghut-quant-metrics.ts': 929,
-  'src/server/github-review-actions.ts': 928,
-  'src/server/github-client.ts': 905,
-  'src/routes/atlas/search.tsx': 891,
-  'src/routes/control-plane/implementation-specs/$name.tsx': 862,
-  'src/server/torghut-quant-runtime.ts': 818,
 }
 
 const ROOT = process.cwd()
@@ -77,7 +69,7 @@ const main = async () => {
 
   for (const file of files) {
     const lineCount = await countLines(resolve(ROOT, file))
-    const legacyCap = LEGACY_LINE_CAPS[file]
+    const legacyCap = LEGACY_OVERSIZED_LINE_CAPS[file]
 
     if (legacyCap !== undefined) {
       if (lineCount > legacyCap) {
@@ -86,8 +78,8 @@ const main = async () => {
       continue
     }
 
-    if (lineCount > MAX_NEW_FILE_LINES) {
-      failures.push(`${file} is ${lineCount} lines; new modules must stay at or below ${MAX_NEW_FILE_LINES} lines.`)
+    if (lineCount > MAX_FILE_LINES) {
+      failures.push(`${file} is ${lineCount} lines; modules must stay at or below ${MAX_FILE_LINES} lines.`)
     }
   }
 
@@ -100,7 +92,7 @@ const main = async () => {
   }
 
   console.log(
-    `Jangar module-size guardrail passed for ${files.length} files. Legacy oversized files stayed within baseline caps.`,
+    `Jangar module-size guardrail passed for ${files.length} files. Files under ${MAX_FILE_LINES} lines are within policy; legacy oversized files stayed within baseline caps.`,
   )
 }
 

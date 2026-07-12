@@ -2,47 +2,44 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from typing import Literal
 
 from fastapi import APIRouter, FastAPI
 
-_current_app: FastAPI | None = None
+from app.config import settings
 
-WhitepaperRouteRegistrar = Callable[[FastAPI], object | None]
+RuntimeRole = Literal["api", "scheduler", "simulation"]
+_apps_by_runtime_role: dict[RuntimeRole, FastAPI] = {}
 
 
-def register_app(app: FastAPI) -> FastAPI:
+def runtime_owner_for_role(runtime_role: RuntimeRole) -> str:
+    """Return the service that owns trading state for a process role."""
+
+    if runtime_role == "simulation":
+        return "torghut-sim"
+    if runtime_role in {"api", "scheduler"}:
+        return "torghut-scheduler"
+    raise RuntimeError(f"unsupported Torghut runtime role: {runtime_role}")
+
+
+def register_app(app: FastAPI, *, runtime_role: RuntimeRole = "api") -> FastAPI:
     """Register the process-local FastAPI app used by route helpers."""
 
-    global _current_app
-
-    _current_app = app
+    _apps_by_runtime_role[runtime_role] = app
     return app
 
 
 def api_routers() -> tuple[APIRouter, ...]:
     """Return the concrete Torghut API routers mounted on the FastAPI app."""
 
-    from .maintenance import router as maintenance_router
-    from .proofs import router as proofs_router
+    from .metrics import router as metrics_router
     from .readiness import router as readiness_router
-    from .runtime_profitability import router as runtime_profitability_router
-    from .trading_health import router as trading_health_router
-    from .trading_loop_status import router as trading_loop_status_router
-    from .trading_misc import router as trading_misc_router
     from .trading_status import router as trading_status_router
-    from .whitepaper import router as whitepaper_router
 
     return (
         readiness_router,
-        whitepaper_router,
         trading_status_router,
-        trading_loop_status_router,
-        maintenance_router,
-        trading_misc_router,
-        runtime_profitability_router,
-        proofs_router,
-        trading_health_router,
+        metrics_router,
     )
 
 
@@ -57,22 +54,25 @@ def mount_api_routes(app: FastAPI) -> FastAPI:
 def build_registered_app(
     app: FastAPI,
     *,
-    register_whitepaper_inngest_routes: WhitepaperRouteRegistrar,
+    runtime_role: RuntimeRole = "api",
 ) -> FastAPI:
-    """Register the process app, mount API routes, and attach workflow routes."""
+    """Register the process app and mount its operational routes."""
 
-    register_app(app)
+    register_app(app, runtime_role=runtime_role)
     mount_api_routes(app)
-    register_whitepaper_inngest_routes(app)
     return app
 
 
-def get_app() -> FastAPI:
+def get_app(runtime_role: RuntimeRole | None = None) -> FastAPI:
     """Return the registered FastAPI app."""
 
-    if _current_app is None:
-        raise RuntimeError("torghut FastAPI app is not registered")
-    return _current_app
+    resolved_role: RuntimeRole = runtime_role or settings.process_role
+    app = _apps_by_runtime_role.get(resolved_role)
+    if app is None:
+        raise RuntimeError(
+            f"torghut FastAPI app is not registered for role={resolved_role}"
+        )
+    return app
 
 
 __all__ = (
@@ -81,4 +81,6 @@ __all__ = (
     "get_app",
     "mount_api_routes",
     "register_app",
+    "runtime_owner_for_role",
+    "RuntimeRole",
 )

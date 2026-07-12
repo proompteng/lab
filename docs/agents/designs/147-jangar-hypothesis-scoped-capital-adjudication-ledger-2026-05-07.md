@@ -125,7 +125,7 @@ AgentRun objects, GitOps resources, or empirical artifacts.
 - Live `/trading/status` returned HTTP 200 for `mode=live`, active revision `torghut-00259`, build commit
   `0aa204cd446ba8ad24f4460eaa74d392a5ae3ea4`, `pipeline_mode=simple`, and `submit_enabled=false`.
 - Live proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Live empirical jobs were healthy and promotion-authority eligible for candidate
   `chip-paper-microbar-composite@execution-proof` on dataset `torghut-chip-full-day-20260505-5e447b6d-r1`.
@@ -269,7 +269,7 @@ Reducer rules:
 
 - If Torghut proof-floor evidence is missing or expired, keep `torghut_consumer_evidence_missing`.
 - If proof-floor evidence is fresh, replace the generic consumer-evidence gap with dimension reasons such as
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`,
+  `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`,
   `quant_latest_metrics_empty`, `quant_ingestion_lag_exceeded`, or `simple_submit_disabled`.
 - If a hypothesis declares no forecast dependency, `forecast_service_degraded` is a downgrade only, never a paper
   blocker.

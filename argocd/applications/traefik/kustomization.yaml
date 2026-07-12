@@ -7,7 +7,7 @@ resources:
 helmCharts:
   - name: traefik
     repo: https://traefik.github.io/charts
-    version: 39.0.9
+    version: 41.0.1
     releaseName: traefik
     namespace: traefik
     includeCRDs: true
@@ -16,4 +16,4 @@ helmCharts:
 images:
   - name: docker.io/traefik
     newName: mirror.gcr.io/library/traefik
-    newTag: v3.6.15
+    newTag: v3.7.5

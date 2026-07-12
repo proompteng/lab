@@ -17,7 +17,7 @@ through #6419, which promoted source `61111bd109d131e4bda0823e927c7b1bb3500d17` 
 
 Runtime evidence is capital-safe but still repair-only. Source-serving proof converged, the repair receipt frontier now
 has five dispatchable repair lots, and the repair-bid settlement ledger selected five lots with three dispatchable.
-Revenue impact remains blocked by `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`;
+Revenue impact remains blocked by `hypothesis_not_promotion_eligible` and `simple_submit_disabled`;
 `routeable_candidate_count=0`, `zero_notional_or_stale_evidence_rate=1.0`, and `max_notional=0`.
 
 ## Governing requirement
@@ -140,7 +140,7 @@ accurate audit record and naming the exact revenue blocker.
 ## Risks
 
 - Runtime is not revenue-live. The smallest blocker preventing revenue impact is `simple_submit_disabled` with
-  `alpha_readiness_not_promotion_eligible`; routeable candidates remain `0`.
+  `hypothesis_not_promotion_eligible`; routeable candidates remain `0`.
 - `/readyz` is degraded by design while Torghut is in repair-only zero-notional mode.
 - Whitepaper autoresearch error pods remain visible, with one current autoresearch pod running; this is runtime evidence
   risk, not a GitOps promotion failure.
@@ -160,5 +160,5 @@ accurate audit record and naming the exact revenue blocker.
 
 The next revenue-impact gate is increasing `routeable_candidate_count` above `0` while preserving
 `capital_gate_safety`. The smallest current blocker is `simple_submit_disabled` with
-`alpha_readiness_not_promotion_eligible`; clear hypothesis blockers, repair route universe/TCA evidence, restore forecast
+`hypothesis_not_promotion_eligible`; clear hypothesis blockers, repair route universe/TCA evidence, restore forecast
 and promotion custody evidence, and keep submit disabled until acceptance lots clear.

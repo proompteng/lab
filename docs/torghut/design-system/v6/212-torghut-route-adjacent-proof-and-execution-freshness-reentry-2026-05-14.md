@@ -1,25 +1,20 @@
 # 212. Torghut Route-Adjacent Proof And Execution-Freshness Reentry (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut route-adjacent workload proof, execution freshness, alpha-readiness no-delta reentry, zero-notional
-repair lots, validation gates, rollout, rollback, and cross-swarm handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/206-jangar-route-adjacent-proof-custody-and-torghut-reentry-admission-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `211-torghut-controller-ingestion-carry-and-alpha-no-delta-release-2026-05-14.md`
-- `210-torghut-source-bound-verification-carry-import-and-no-delta-release-2026-05-14.md`
-- `209-torghut-verification-carry-import-and-alpha-repair-release-2026-05-14.md`
-- `208-torghut-jangar-verification-carry-bridge-and-no-delta-reentry-market-2026-05-14.md`
-- `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `188-torghut-evidence-clock-arbiter-and-routeable-profit-candidate-exchange-2026-05-12.md`
-- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
 
 ## Decision
 
@@ -32,7 +27,7 @@ active-session execution samples are fresh enough to let alpha-readiness repair 
 
 The evidence is concrete. `/trading/revenue-repair` is `repair_only`, `revenue_ready=false`, `capital_state=zero_notional`,
 and `max_notional=0`. The top queue item is still `repair_alpha_readiness`, reason
-`alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`, and required output
+`hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`, and required output
 `torghut.executable-alpha-receipts.v1`. The route evidence clearinghouse says source freshness is current, but execution
 freshness is held for stale active-session execution samples, rollout image proof is held for
 `route_adjacent_workload_proof_missing`, profit-window custody is held, and capital is held. The execution book has
@@ -123,7 +118,7 @@ All evidence was collected read-only on 2026-05-14 between 20:24Z and 20:27Z.
 
 ### Business Evidence
 
-- The active top queue item is `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate
+- The active top queue item is `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate
   `routeable_candidate_count`, required output `torghut.executable-alpha-receipts.v1`, `max_notional=0`.
 - Controller-ingestion carry is present with `carry_state=lagging`, settlement decision `hold`, and reasons including
   `source_serving_block`, `torghut_verification_carry_unavailable`, and `empirical_jobs_degraded`.

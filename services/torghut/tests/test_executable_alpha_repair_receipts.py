@@ -20,7 +20,7 @@ def _top_alpha_queue() -> list[dict[str, object]]:
     return [
         {
             "code": "repair_alpha_readiness",
-            "reason": "alpha_readiness_not_promotion_eligible",
+            "reason": "hypothesis_not_promotion_eligible",
             "dimension": "alpha_readiness",
             "priority": 70,
             "expected_unblock_value": 4,
@@ -80,7 +80,7 @@ def _alpha_readiness() -> dict[str, object]:
                 "hypothesis_id": "H-LINEAGE",
                 "state": "shadow",
                 "promotion_eligible": False,
-                "reasons": ["alpha_readiness_not_promotion_eligible"],
+                "reasons": ["hypothesis_not_promotion_eligible"],
             },
             {
                 "hypothesis_id": "H-PORTFOLIO",

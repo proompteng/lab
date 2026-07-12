@@ -1,22 +1,20 @@
 # 145. Torghut Repair Dividend Ledger And Submission Quorum (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, repair dividend economics, TCA renewal, quant ingestion, forecast authority, paper/live
-submission quorum, validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/141-jangar-controller-witness-escrow-and-repair-dividend-settlement-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `144-torghut-state-coherent-profit-auction-and-tca-renewal-governor-2026-05-07.md`
-- `143-torghut-empirical-relay-receipts-and-paper-gate-settlement-2026-05-07.md`
-- `140-torghut-endpoint-parity-profit-repair-and-capital-route-auction-2026-05-07.md`
-- `138-torghut-profit-stats-census-and-tca-reactivation-market-2026-05-07.md`
-- `136-torghut-capital-repair-escrow-and-freshness-auction-2026-05-07.md`
 
 ## Decision
 
@@ -28,7 +26,7 @@ the Jangar universe was fresh with 12 symbols, empirical jobs were healthy, and 
 
 That evidence does not justify paper or live capital. `/trading/health` returned HTTP `503` with
 `status=degraded`. The live submission gate was closed by `simple_submit_disabled`, the proof floor was `repair_only`,
-capital state was `zero_notional`, and blockers were `alpha_readiness_not_promotion_eligible`,
+capital state was `zero_notional`, and blockers were `hypothesis_not_promotion_eligible`,
 `execution_tca_stale`, and `simple_submit_disabled`. TCA was last computed on `2026-04-02T20:59:45.136640Z`; average
 absolute slippage was about `568.61` bps against an `8` bps guardrail; expected shortfall coverage was zero; quant
 ingestion lag was `59069` seconds; forecast authority was blocked by `registry_empty`; LEAN was still a deterministic
@@ -88,7 +86,7 @@ state, trading flags, AgentRun records, GitOps resources, or empirical artifacts
   `chip-paper-microbar-composite@execution-proof`.
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, with `capital_stage=shadow`.
 - Profitability proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and
   `simple_submit_disabled`.
 - Quant evidence was not a hard blocker but was degraded: latest metrics count `144`, latest update
   `2026-05-07T10:09:11.915Z`, pipeline lag `22` seconds, stage count `3`, and max stage lag `59069` seconds.

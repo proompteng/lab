@@ -607,6 +607,28 @@ def resolve_aggregated_notional_budget(
 ) -> Decimal:
     if runtime_target_notional is not None and runtime_target_notional > 0:
         return runtime_target_notional
+    if settings.trading_mode == "live" and equity is not None and equity > 0:
+        strategy_pcts = [
+            pct
+            for strategy in strategies
+            if (pct := optional_decimal(strategy.max_position_pct_equity)) is not None
+            and pct > 0
+        ]
+        global_pcts = [
+            pct
+            for pct in (
+                optional_decimal(settings.trading_max_position_pct_equity),
+                optional_decimal(settings.trading_simple_max_symbol_pct_equity),
+            )
+            if pct is not None and pct > 0
+        ]
+        if strategy_pcts:
+            strategy_pct = sum(strategy_pcts, Decimal("0"))
+            effective_pct = min([strategy_pct, *global_pcts])
+            return equity * effective_pct
+        if global_pcts:
+            return equity * min(global_pcts)
+        return Decimal("0")
     total_budget = Decimal("0")
     for strategy in strategies:
         budget = optional_decimal(strategy.max_notional_per_trade)

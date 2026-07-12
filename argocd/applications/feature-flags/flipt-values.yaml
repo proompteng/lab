@@ -2,6 +2,9 @@ fullnameOverride: feature-flags
 
 replicaCount: 1
 
+strategy:
+  type: Recreate
+
 service:
   type: ClusterIP
   httpPort: 8013

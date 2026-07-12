@@ -11,8 +11,24 @@ import { readReleaseContract } from './release-contract'
 const defaultContractPath = '.artifacts/symphony/release-contract.json'
 const defaultImage = 'registry.ide-newton.ts.net/lab/symphony'
 
-const buildTriggerPathRegex =
-  /^(services\/symphony\/|packages\/scripts\/src\/symphony\/|packages\/scripts\/src\/shared\/|packages\/codex\/|packages\/otel\/|nix\/images\/symphony\.nix$|nix\/images\/openai-codex-cli\.nix$|nix\/images\/bun-workspace-service\.nix$|nix\/packages\.nix$|nix\/oci-release-contract\.sh$|flake\.lock$|package\.json$|bun\.lock$|tsconfig\.base\.json$|\.github\/workflows\/nix-oci-build-common\.yml$|\.github\/actions\/setup-nix-toolchain\/|\.github\/workflows\/symphony(?:-build-push|-release|-post-deploy-verify|-deploy-automerge|-ci)\.ya?ml$)/
+const buildTriggerPathPatterns = [
+  /^services\/symphony\//,
+  /^packages\/codex\//,
+  /^packages\/otel\//,
+  /^nix\/images\/symphony\.nix$/,
+  /^nix\/images\/openai-codex-cli\.nix$/,
+  /^nix\/images\/bun-workspace-service\.nix$/,
+  /^nix\/packages\.nix$/,
+  /^nix\/cache-push\.sh$/,
+  /^nix\/ci-nix-oci-summary\.sh$/,
+  /^nix\/ci-run-timed\.sh$/,
+  /^nix\/oci-inspect-archive\.sh$/,
+  /^nix\/oci-push\.sh$/,
+  /^flake\.lock$/,
+  /^package\.json$/,
+  /^bun\.lock$/,
+  /^tsconfig\.base\.json$/,
+]
 
 type CliOptions = {
   eventName?: string
@@ -62,7 +78,8 @@ const normalizeEventName = (value: string): 'workflow_run' | 'workflow_dispatch'
   throw new Error(`Unsupported event '${value}'. Expected workflow_run or workflow_dispatch`)
 }
 
-const isBuildTriggerPath = (filePath: string): boolean => buildTriggerPathRegex.test(filePath)
+const isBuildTriggerPath = (filePath: string): boolean =>
+  buildTriggerPathPatterns.some((pattern) => pattern.test(filePath))
 
 const listChangedFilesBetween = (sourceSha: string, mainHead: string): string[] => {
   if (sourceSha === mainHead) return []
@@ -210,7 +227,7 @@ export const resolveReleaseMetadata = (options: ResolveReleaseMetadataOptions): 
     reason = stalenessDecision.reason
   } else {
     sourceSha = options.commitShaInput?.trim() || mainHead
-    tag = options.imageTagInput?.trim() || sourceSha.slice(0, 8)
+    tag = options.imageTagInput?.trim() || `sha-${sourceSha}`
     reason = 'manual-or-dispatch'
   }
 

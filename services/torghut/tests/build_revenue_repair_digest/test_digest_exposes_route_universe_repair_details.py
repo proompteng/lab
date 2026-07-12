@@ -32,7 +32,7 @@ class TestDigestExposesRouteUniverseRepairDetails(_TestBuildRevenueRepairDigestB
         proof_floor = status["proof_floor"]
         self.assertIsInstance(proof_floor, dict)
         proof_floor["blocking_reasons"] = [
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             "execution_tca_route_universe_empty",
             "simple_submit_disabled",
         ]
@@ -109,7 +109,7 @@ class TestDigestExposesRouteUniverseRepairDetails(_TestBuildRevenueRepairDigestB
         proof_floor = status["proof_floor"]
         self.assertIsInstance(proof_floor, dict)
         proof_floor["blocking_reasons"] = [
-            "alpha_readiness_not_promotion_eligible",
+            "hypothesis_not_promotion_eligible",
             "simple_submit_disabled",
         ]
         proof_floor["repair_ladder"] = [
@@ -122,7 +122,7 @@ class TestDigestExposesRouteUniverseRepairDetails(_TestBuildRevenueRepairDigestB
             },
             {
                 "code": "repair_alpha_readiness",
-                "reason": "alpha_readiness_not_promotion_eligible",
+                "reason": "hypothesis_not_promotion_eligible",
                 "priority": 70,
                 "expected_unblock_value": 3,
             },
@@ -180,7 +180,7 @@ class TestDigestExposesRouteUniverseRepairDetails(_TestBuildRevenueRepairDigestB
     def test_repair_queue_derives_unknown_blocker_and_skips_empty_reasons(self) -> None:
         repair_queue = _build_repair_queue(
             {"route_state": "candidate", "repair_ladder": []},
-            {"simple_lane_reject_reason_totals": {"insufficient_buying_power": 4}},
+            {"execution": {"reject_reason_totals": {"insufficient_buying_power": 4}}},
             ["", "insufficient_buying_power", "custom_blocker"],
         )
 

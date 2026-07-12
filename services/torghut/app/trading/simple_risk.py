@@ -7,7 +7,9 @@ from decimal import Decimal
 from collections.abc import Mapping
 from typing import Any, cast
 
+from .execution_metadata import set_execution_metadata
 from .models import StrategyDecision
+from .portfolio.allocation_helpers import portfolio_exposure
 from .prices import resolve_execution_reference_price
 from .quantity_rules import (
     QuantityResolution,
@@ -41,6 +43,7 @@ class _SimpleRiskRequest:
     buying_power_reserve_bps: Decimal
     max_order_pct_equity: Decimal | None
     max_gross_exposure_pct_equity: Decimal | None
+    max_net_exposure_pct_equity: Decimal | None
     require_equity_for_exposure_increase: bool
 
 
@@ -75,6 +78,7 @@ class _SimpleRiskCaps:
     capped_by_order: bool = False
     capped_by_symbol: bool = False
     capped_by_gross: bool = False
+    capped_by_net: bool = False
     capped_by_buying_power: bool = False
     buying_power: Decimal | None = None
 
@@ -181,6 +185,7 @@ def prepare_simple_decision(
     buying_power_reserve_bps: Decimal = Decimal("0"),
     max_order_pct_equity: Decimal | None = None,
     max_gross_exposure_pct_equity: Decimal | None = None,
+    max_net_exposure_pct_equity: Decimal | None = None,
     require_equity_for_exposure_increase: bool = False,
 ) -> SimpleRiskPreparation:
     return _prepare_simple_risk_request(
@@ -195,6 +200,7 @@ def prepare_simple_decision(
             buying_power_reserve_bps=buying_power_reserve_bps,
             max_order_pct_equity=max_order_pct_equity,
             max_gross_exposure_pct_equity=max_gross_exposure_pct_equity,
+            max_net_exposure_pct_equity=max_net_exposure_pct_equity,
             require_equity_for_exposure_increase=require_equity_for_exposure_increase,
         )
     )
@@ -223,6 +229,7 @@ def _prepare_simple_risk_request(
         ),
         max_order_pct_equity=request.max_order_pct_equity,
         max_gross_exposure_pct_equity=request.max_gross_exposure_pct_equity,
+        max_net_exposure_pct_equity=request.max_net_exposure_pct_equity,
     )
     if rejection is not None:
         return rejection
@@ -236,6 +243,7 @@ def _prepare_simple_risk_request(
         max_notional_per_symbol=request.max_notional_per_symbol,
         max_order_pct_equity=request.max_order_pct_equity,
         max_gross_exposure_pct_equity=request.max_gross_exposure_pct_equity,
+        max_net_exposure_pct_equity=request.max_net_exposure_pct_equity,
     )
     rejection = _final_quantity_rejection(context=context, caps=caps)
     if rejection is not None:
@@ -332,6 +340,7 @@ def _initial_simple_risk_rejection(
     require_equity_for_exposure_increase: bool,
     max_order_pct_equity: Decimal | None,
     max_gross_exposure_pct_equity: Decimal | None,
+    max_net_exposure_pct_equity: Decimal | None,
 ) -> SimpleRiskPreparation | None:
     target_sizing_rejection = _target_sizing_rejection(context)
     if target_sizing_rejection is not None:
@@ -371,6 +380,7 @@ def _initial_simple_risk_rejection(
         require_equity_for_exposure_increase=require_equity_for_exposure_increase,
         max_order_pct_equity=max_order_pct_equity,
         max_gross_exposure_pct_equity=max_gross_exposure_pct_equity,
+        max_net_exposure_pct_equity=max_net_exposure_pct_equity,
     ):
         return _rejected_simple_risk_preparation(
             decision=context.decision,
@@ -408,6 +418,7 @@ def _equity_required_for_exposure(
     require_equity_for_exposure_increase: bool,
     max_order_pct_equity: Decimal | None,
     max_gross_exposure_pct_equity: Decimal | None,
+    max_net_exposure_pct_equity: Decimal | None,
 ) -> bool:
     if not context.enforce_exposure or equity is not None:
         return False
@@ -415,6 +426,7 @@ def _equity_required_for_exposure(
         require_equity_for_exposure_increase
         or _non_negative_limit(max_order_pct_equity)
         or _non_negative_limit(max_gross_exposure_pct_equity)
+        or _non_negative_limit(max_net_exposure_pct_equity)
     )
 
 
@@ -437,6 +449,7 @@ def _apply_simple_risk_caps(
     max_notional_per_symbol: Decimal | None,
     max_order_pct_equity: Decimal | None,
     max_gross_exposure_pct_equity: Decimal | None,
+    max_net_exposure_pct_equity: Decimal | None,
 ) -> _SimpleRiskCaps:
     caps = _SimpleRiskCaps(adjusted_qty=context.quantized_qty)
     if context.enforce_exposure:
@@ -450,6 +463,13 @@ def _apply_simple_risk_caps(
             positions,
             equity,
             max_gross_exposure_pct_equity,
+        )
+        _apply_net_exposure_cap(
+            context,
+            caps,
+            positions,
+            equity,
+            max_net_exposure_pct_equity,
         )
         _apply_buying_power_cap(
             context,
@@ -581,6 +601,37 @@ def _apply_gross_exposure_cap(
         caps.capped_by_gross = True
 
 
+def _apply_net_exposure_cap(
+    context: _SimpleRiskContext,
+    caps: _SimpleRiskCaps,
+    positions: list[dict[str, Any]],
+    equity: Decimal | None,
+    max_net_exposure_pct_equity: Decimal | None,
+) -> None:
+    if equity is None or not _non_negative_limit(max_net_exposure_pct_equity):
+        return
+    _, current_net_notional = portfolio_exposure(positions)
+    net_cap_notional = equity * cast(Decimal, max_net_exposure_pct_equity)
+    if context.normalized_action == "buy":
+        remaining_net_notional = net_cap_notional - current_net_notional
+    else:
+        remaining_net_notional = net_cap_notional + current_net_notional
+    context.diagnostics["max_net_exposure_pct_equity"] = str(
+        max_net_exposure_pct_equity
+    )
+    context.diagnostics["current_net_notional"] = str(current_net_notional)
+    context.diagnostics["net_cap_notional"] = str(net_cap_notional)
+    context.diagnostics["remaining_net_notional_room"] = str(remaining_net_notional)
+    net_cap_qty = quantize_qty_for_symbol(
+        context.decision.symbol,
+        max(remaining_net_notional, Decimal("0")) / context.price,
+        fractional_equities_enabled=context.resolution.fractional_allowed,
+    )
+    if net_cap_qty < caps.adjusted_qty:
+        caps.adjusted_qty = net_cap_qty
+        caps.capped_by_net = True
+
+
 def _apply_buying_power_cap(
     context: _SimpleRiskContext,
     caps: _SimpleRiskCaps,
@@ -600,9 +651,14 @@ def _apply_buying_power_cap(
     )
     context.diagnostics["buying_power_reserve_bps"] = str(buying_power_reserve_bps)
     context.diagnostics["buying_power_after_reserve"] = str(effective_buying_power)
+    buying_power_price = _buying_power_reference_price(
+        context.decision,
+        context.price,
+    )
+    context.diagnostics["buying_power_reference_price"] = str(buying_power_price)
     buying_power_cap_qty = _buying_power_cap_qty(
         decision=context.decision,
-        price=context.price,
+        price=buying_power_price,
         buying_power=max(effective_buying_power, Decimal("0")),
         current_qty=context.current_qty,
         fractional_allowed=context.resolution.fractional_allowed,
@@ -696,17 +752,21 @@ def _approved_simple_risk(
     params = dict(context.decision.params)
     params["execution_lane"] = "simple"
     params["submit_path"] = "direct_alpaca"
-    params["simple_lane"] = {
-        "requested_qty": str(context.decision.qty),
-        "final_qty": str(caps.adjusted_qty),
-        "price": str(context.price),
-        "notional": str(final.notional),
-        "quantity_resolution": context.resolution.to_payload(),
-        "capped_by_order": caps.capped_by_order,
-        "capped_by_symbol": caps.capped_by_symbol,
-        "capped_by_gross": caps.capped_by_gross,
-        "capped_by_buying_power": caps.capped_by_buying_power,
-    }
+    set_execution_metadata(
+        params,
+        {
+            "requested_qty": str(context.decision.qty),
+            "final_qty": str(caps.adjusted_qty),
+            "price": str(context.price),
+            "notional": str(final.notional),
+            "quantity_resolution": context.resolution.to_payload(),
+            "capped_by_order": caps.capped_by_order,
+            "capped_by_symbol": caps.capped_by_symbol,
+            "capped_by_gross": caps.capped_by_gross,
+            "capped_by_net": caps.capped_by_net,
+            "capped_by_buying_power": caps.capped_by_buying_power,
+        },
+    )
     return SimpleRiskPreparation(
         approved=True,
         decision=context.decision.model_copy(
@@ -749,6 +809,8 @@ def _quantity_reject_reason(caps: _SimpleRiskCaps) -> str:
         return "max_symbol_exposure_exceeded"
     if caps.capped_by_gross:
         return "max_gross_exposure_exceeded"
+    if caps.capped_by_net:
+        return "max_net_exposure_exceeded"
     if caps.capped_by_buying_power:
         return "insufficient_buying_power"
     if caps.capped_by_order:
@@ -821,7 +883,22 @@ def _buying_power_required_notional(
     )
     if exposure_increase_qty <= 0:
         return Decimal("0")
-    return price * exposure_increase_qty
+    return _buying_power_reference_price(decision, price) * exposure_increase_qty
+
+
+def _buying_power_reference_price(
+    decision: StrategyDecision,
+    price: Decimal,
+) -> Decimal:
+    if decision.action.strip().lower() != "sell":
+        return price
+    snapshot = decision.params.get("price_snapshot")
+    if not isinstance(snapshot, Mapping):
+        return price
+    ask = _resolve_decimal(cast(Mapping[object, object], snapshot).get("ask"))
+    if ask is None or ask <= 0:
+        return price
+    return max(price, ask * Decimal("1.03"))
 
 
 def _exposure_increase_qty(

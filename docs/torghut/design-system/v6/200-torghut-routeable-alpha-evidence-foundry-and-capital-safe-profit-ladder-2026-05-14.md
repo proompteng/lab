@@ -1,25 +1,20 @@
 # 200. Torghut Routeable Alpha Evidence Foundry And Capital-Safe Profit Ladder (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut alpha-readiness repair, routeable candidate evidence, post-cost profit proof, execution-quality
-guardrails, zero-notional capital safety, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/195-jangar-receipt-backed-alpha-foundry-and-rollout-safety-covenant-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
-- `199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md`
-- `docs/agents/designs/194-jangar-receipt-settled-repair-slots-and-stage-custody-thaw-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
-- `197-torghut-alpha-readiness-strike-ledger-and-routeable-candidate-ladder-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `188-torghut-route-evidence-clearinghouse-and-execution-freshness-market-2026-05-12.md`
-- `docs/agents/designs/swarm-agentic-mission-architecture-2026-05-08.md`
 
 ## Decision
 
@@ -29,7 +24,7 @@ The live business surface is specific. On 2026-05-14 at 00:25 UTC,
 `GET http://torghut.torghut.svc.cluster.local/trading/revenue-repair` returned `revenue_ready=false`,
 `business_state=repair_only`, `capital_state=zero_notional`, `max_notional=0`, and top queue item
 `repair_alpha_readiness`. That top item targets `routeable_candidate_count`, cites
-`alpha_readiness_not_promotion_eligible`, has expected unblock value `4`, and requires
+`hypothesis_not_promotion_eligible`, has expected unblock value `4`, and requires
 `torghut.executable-alpha-receipts.v1`.
 
 The current evidence is not telling us to relax capital. It is telling us to make the alpha repair measurable enough

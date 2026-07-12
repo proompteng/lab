@@ -1,22 +1,21 @@
 # 141. Torghut Watch-Debt Profit Repair Market And Capital Reentry Gates (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, Jangar watch-debt handoff, proof repair bids, market-context freshness, quant alert
-retirement, forecast proof, paper canaries, live capital gates, validation, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/137-jangar-watch-debt-clearing-and-profit-repair-leases-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `140-torghut-endpoint-parity-profit-repair-and-capital-route-auction-2026-05-07.md`
-- `139-torghut-profit-data-witness-and-forecast-repair-exchange-2026-05-07.md`
-- `138-torghut-capital-efficiency-proof-exchange-and-profit-clock-2026-05-07.md`
-- `136-torghut-capital-repair-escrow-and-freshness-auction-2026-05-07.md`
-- `docs/agents/designs/123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
 
 ## Decision
 

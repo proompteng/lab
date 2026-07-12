@@ -487,7 +487,7 @@ def _alpha_blockers(
     if state and state not in _ACCEPTED_STATES:
         blockers.append(f"alpha_readiness_{state}")
     if _int(source_ref.get("promotion_eligible_total"), default=-1) == 0:
-        blockers.append("alpha_readiness_not_promotion_eligible")
+        blockers.append("hypothesis_not_promotion_eligible")
     return _unique(blockers)
 
 
@@ -704,7 +704,6 @@ def build_routeability_repair_acceptance_ledger(
     window: str | None,
     trading_mode: str,
     torghut_revision: str | None,
-    revenue_repair_digest_ref: str,
     consumer_evidence_receipt: Mapping[str, Any],
     proof_floor_receipt: Mapping[str, Any],
     capital_reentry_cohort_ledger: Mapping[str, Any],
@@ -931,7 +930,6 @@ def build_routeability_repair_acceptance_ledger(
         "window": window,
         "trading_mode": trading_mode,
         "torghut_revision": torghut_revision,
-        "revenue_repair_digest_ref": revenue_repair_digest_ref,
         "proof_floor_ref": _text(proof_floor_receipt.get("schema_version")),
         "capital_reentry_ref": capital_reentry_cohort_ledger.get("ledger_id"),
         "quality_frontier_ref": quality_adjusted_profit_frontier.get("frontier_id"),

@@ -1,21 +1,20 @@
 # 176. Torghut Revision-Priced Route Frontier And Capital Carry (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut route repair, proof-floor capital holds, market-context retry spend, Jangar revision carry
-consumption, paper admission, live promotion, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/172-jangar-revision-carry-ledger-and-source-to-serving-action-bonds-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `175-torghut-failure-costed-context-repair-and-route-custody-2026-05-08.md`
-- `174-torghut-continuity-priced-route-repair-market-and-capital-holds-2026-05-08.md`
-- `172-torghut-repair-yield-ledger-and-session-proof-capital-gates-2026-05-07.md`
-- `docs/agents/designs/171-jangar-terminal-debt-exchange-and-retry-custody-2026-05-08.md`
 
 ## Decision
 
@@ -77,7 +76,7 @@ All evidence in this pass was collected read-only. I did not mutate Kubernetes r
 ### Data And Profitability Evidence
 
 - `/readyz` returned HTTP 503 with proof floor `repair_only`, route state `repair_only`, capital state
-  `zero_notional`, and blockers `alpha_readiness_not_promotion_eligible`,
+  `zero_notional`, and blockers `hypothesis_not_promotion_eligible`,
   `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 - The proof floor showed 3 hypotheses, 0 promotion-eligible hypotheses, 2 rollback-required hypotheses, and reason
   totals including missing feature rows, missing drift checks, unavailable required feature sets, and slippage budget

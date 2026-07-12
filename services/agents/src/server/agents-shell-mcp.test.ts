@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -22,6 +22,20 @@ import {
 } from './agents-shell-mcp'
 
 const tempRoots: string[] = []
+
+const collectTypeScriptFiles = (root: string): string[] => {
+  const files: string[] = []
+  for (const entry of readdirSync(root)) {
+    const path = join(root, entry)
+    const stat = statSync(path)
+    if (stat.isDirectory()) {
+      files.push(...collectTypeScriptFiles(path))
+    } else if (path.endsWith('.ts')) {
+      files.push(path)
+    }
+  }
+  return files
+}
 
 const makeConfig = (): AgentsShellConfig => {
   const root = join(tmpdir(), `agents-shell-${crypto.randomUUID()}`)
@@ -382,6 +396,12 @@ describe('agents-shell MCP tools', () => {
     const rawShellRunInputProperties = rawShellRun?.inputSchema?.properties as Record<string, Record<string, unknown>>
     expect(rawShellRunInputProperties.timeoutSeconds.maximum).toBeUndefined()
     expect(rawShellRunInputProperties.maxOutputBytes.maximum).toBeUndefined()
+    expect(rawShellRunInputProperties.timeoutSeconds.description).toBe(
+      'Timeout in seconds. Default: 60. Server cap: 1800.',
+    )
+    expect(rawShellRunInputProperties.maxOutputBytes.description).toBe(
+      'Per-stream output tail cap in bytes. Default: 20000. Server cap: 200000.',
+    )
 
     const rawKubectl = rawTools.find((tool) => tool.name === 'kubectl')
     expect(rawKubectl?.securitySchemes).toEqual(linkedOauthScheme)
@@ -398,6 +418,23 @@ describe('agents-shell MCP tools', () => {
         expect.arrayContaining([expect.objectContaining({ scopes: expect.arrayContaining(['offline_access']) })]),
       )
     }
+  })
+
+  it('keeps agents-shell implementation on Effect Schema without Zod fallback', () => {
+    const serverRoot = join(process.cwd(), 'src/server')
+    const agentsShellFiles = collectTypeScriptFiles(join(serverRoot, 'agents-shell'))
+    const checkedFiles = [...agentsShellFiles, join(serverRoot, 'agents-shell-mcp.ts')]
+
+    for (const file of checkedFiles) {
+      const content = readFileSync(file, 'utf8')
+      expect(content).not.toMatch(/from ['"]zod['"]/)
+      expect(content).not.toContain('zod-compat')
+      expect(content).not.toContain('zod-json-schema-compat')
+      expect(content).not.toContain('registerTool(')
+    }
+
+    const entrypoint = readFileSync(join(serverRoot, 'agents-shell-mcp.ts'), 'utf8')
+    expect(entrypoint.split('\n').length).toBeLessThanOrEqual(150)
   })
 
   it('lists tools before OAuth but challenges protected tool calls', async () => {
@@ -743,6 +780,26 @@ fi
 
     expect(result.isError).toBe(true)
     expect(JSON.stringify(result.content)).toContain('cwd does not exist')
+    expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
+
+    await clientTransport.close()
+    await serverTransport.close()
+    await client.close()
+    await server.close()
+  })
+
+  it('returns readable Effect Schema validation errors without OAuth reconnect metadata', async () => {
+    const config = makeConfig()
+    const { client, server, clientTransport, serverTransport } = await connectServer(config)
+
+    const result = await client.callTool({
+      name: 'shell_run',
+      arguments: { command: 'echo should-not-run', timeoutSeconds: 'bad' },
+    })
+
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('Input validation error')
+    expect(JSON.stringify(result.content)).toContain('shell_run')
     expect(result._meta?.['mcp/www_authenticate']).toBeUndefined()
 
     await clientTransport.close()

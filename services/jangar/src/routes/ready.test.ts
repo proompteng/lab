@@ -658,7 +658,7 @@ describe('getReadyHandler', () => {
           repair_queue: [
             {
               code: 'repair_alpha_readiness',
-              reason: 'alpha_readiness_not_promotion_eligible',
+              reason: 'hypothesis_not_promotion_eligible',
               dimension: 'alpha_readiness',
               action: 'clear_hypothesis_blockers_before_capital',
               priority: 70,
@@ -690,13 +690,13 @@ describe('getReadyHandler', () => {
               hypothesis_id: 'H-MICRO-01',
               repair_class: 'capital_replay_board_refresh',
               target_value_gate: 'routeable_candidate_count',
-              reason_codes: ['alpha_readiness_not_promotion_eligible'],
+              reason_codes: ['hypothesis_not_promotion_eligible'],
               account_id: 'PA3SX7FYNUTF',
               window: '15m',
               trading_mode: 'live',
               candidate_id: 'chip-paper-microbar-composite@execution-proof',
               strategy_id: 'microbar_volume_continuation_long_top2_chip_v1@paper',
-              expected_gate_delta: 'retire_alpha_readiness_not_promotion_eligible',
+              expected_gate_delta: 'retire_hypothesis_not_promotion_eligible',
               required_input_refs: ['capital-replay:ready-test'],
               required_output_receipts: [
                 'alpha_readiness_receipt',
@@ -725,7 +725,7 @@ describe('getReadyHandler', () => {
             routeable_candidate_count_before: 0,
             max_notional: '0',
             capital_rule: 'zero_notional_repair_only',
-            reason_codes: ['alpha_readiness_not_promotion_eligible'],
+            reason_codes: ['hypothesis_not_promotion_eligible'],
             rollback_target: 'stop emitting executable alpha repair receipts',
           },
           alpha_repair_closure_board: {
@@ -766,7 +766,7 @@ describe('getReadyHandler', () => {
     expect(body.affected_value_gate).toBe('routeable_candidate_count')
     expect(body.top_repair_queue_item).toMatchObject({
       code: 'repair_alpha_readiness',
-      reason: 'alpha_readiness_not_promotion_eligible',
+      reason: 'hypothesis_not_promotion_eligible',
       required_output_receipt: 'torghut.executable-alpha-receipts.v1',
     })
     expect(body.repair_queue).toEqual([expect.objectContaining({ value_gate: 'routeable_candidate_count' })])

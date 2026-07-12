@@ -6,6 +6,31 @@
 - Last updated: **2026-02-08**
 - Source of truth (config): `argocd/applications/torghut/**`
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: **Partially implemented.** Runtime evaluation metrics exist from persisted `LLMDecisionReview` rows, and DSPy compile/evaluation tooling exists; promotion is still governed by guardrail evidence fields.
+- Matched implementation area: LLM evaluation workflow.
+- Current source evidence:
+  - `services/torghut/app/trading/llm/evaluation.py::build_llm_evaluation_metrics`
+  - `services/torghut/app/trading/llm/dspy_compile/evaluator.py`
+  - `services/torghut/app/trading/llm/dspy_compile/dataset.py`
+  - `services/torghut/scripts/compile_dspy_program.py`
+  - `services/torghut/tests/test_llm_evaluation.py`
+- What is implemented from the design:
+  - same-day evaluation windowing in America/New_York;
+  - verdict counts and error rate;
+  - confidence, token, and risk-flag summaries;
+  - calibration quality metrics from stored response JSON;
+  - DSPy compile/evaluation test coverage.
+- What changed from the design:
+  - metrics are derived from `LLMDecisionReview` rows joined to `TradeDecision`, not a standalone golden-set runner;
+  - promotion evidence is represented through guardrail fields, but this doc's benchmark table is not itself an automated deploy gate;
+  - current deployment disables LLM runtime, so production evaluation samples may be absent.
+- Remaining gaps / operator caveats:
+  - require a concrete `LLM_EVALUATION_REPORT`, model/version lock, and shadow completion evidence before activation;
+  - do not infer predictive performance from schema/guardrail test coverage alone.
+
 ## Purpose
 
 Define how Torghut evaluates the AI advisory layer for:

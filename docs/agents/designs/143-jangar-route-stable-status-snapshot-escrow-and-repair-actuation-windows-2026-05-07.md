@@ -139,7 +139,7 @@ current runtime state before selecting this design.
 - Live submission was closed by `simple_submit_disabled` with `capital_stage=shadow`.
 - Profitability proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max
   notional `0`.
-- Proof-floor blockers included `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`,
+- Proof-floor blockers included `hypothesis_not_promotion_eligible`, `execution_tca_stale`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Execution TCA was stale from `2026-04-02T20:59:45.136640Z`, with `13,775` orders, average absolute slippage about
   `568.61` bps, and an `8` bps slippage guardrail.

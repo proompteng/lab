@@ -49,6 +49,16 @@ describe('Nix OCI build contract', () => {
         plan,
         digest: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
         invocation: 'manual-script',
+        lockfileHashes: {
+          'flake.lock': 'flake-lock-hash',
+        },
+        toolVersions: {
+          nix: 'nix 2.32.4',
+        },
+        cacheProvenance: {
+          source: 'manual-script-not-collected',
+        },
+        timings: [],
       }),
     ).toEqual({
       service: 'bumba',
@@ -60,6 +70,16 @@ describe('Nix OCI build contract', () => {
       sourceSha: 'feedbeefeedbeefeedbee',
       packageAttr: 'bumba-image',
       platforms: ['linux/amd64', 'linux/arm64'],
+      lockfileHashes: {
+        'flake.lock': 'flake-lock-hash',
+      },
+      toolVersions: {
+        nix: 'nix 2.32.4',
+      },
+      cacheProvenance: {
+        source: 'manual-script-not-collected',
+      },
+      timings: [],
       builder: 'nix-dockerTools-skopeo',
       invocation: 'manual-script',
     })

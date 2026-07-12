@@ -2,6 +2,420 @@
 
 This directory contains the Argo CD application resources for the `torghut` namespace.
 
+## Live API and scheduler ownership
+
+The Knative `Service/torghut` is a stateless API reader (`TORGHUT_PROCESS_ROLE=api`). It must never start trading or
+reconciliation loops. `Deployment/torghut-scheduler` is the only workload configured with
+`TORGHUT_PROCESS_ROLE=scheduler`; it uses `Recreate` rollout semantics and starts at zero replicas for P0a containment.
+The API proxies only the scheduler-owned `/trading/status` surface and returns `503` while the scheduler is unavailable.
+API `/metrics` is process-local API health telemetry, not scheduler or writer proof. Scheduler metrics are exposed
+directly by `Service/torghut-scheduler` and are intentionally unavailable while its Deployment has zero replicas.
+
+Rollout is deliberately two-stage. First promote and prove the scheduler-free API image while the scheduler
+Deployment remains at zero. Then perform the documented one-time emergency removal of legacy Knative revisions and
+prove that no scheduler loop remains. Only after those checks pass may a follow-up GitOps change scale the advisory-
+locked scheduler Deployment to one replica. Do not add a persistent revision-cleanup Job or combine those stages.
+Do not restore `autoscaling.knative.dev/minScale` on the API template: the annotation is copied onto immutable
+revisions and was the reason stale revisions remained hot. Activate the current API revision with an explicit request
+when rollout proof needs a running pod.
+
+### P0a one-time legacy Knative revision cleanup
+
+This is a one-time, operator-run cleanup after the scheduler-free API image is synced. It is not a recurring retention
+mechanism. Do not implement it as a `Job`, `CronJob`, Argo hook, init container, or controller. Never delete revisions
+by label: the deletion list must be pinned and each legacy revision must be named explicitly.
+
+Run the procedure from one Bash shell with `kubectl`, `jq`, `curl`, and the `kubectl cnpg` plugin available. Any failed
+command or assertion is a stop gate: leave `Deployment/torghut-scheduler` at zero, delete nothing else, and investigate.
+Save the command output and the exact deleted revision list in the incident or rollout record.
+
+#### 1. Prove GitOps convergence and scheduler containment
+
+```bash
+set -euo pipefail
+
+NS=torghut
+KSVC=torghut
+SCHEDULER=torghut-scheduler
+
+fail() {
+  echo "P0a cleanup blocked: $*" >&2
+  exit 1
+}
+
+ARGO_SYNC="$(kubectl -n argocd get application torghut -o jsonpath='{.status.sync.status}')"
+ARGO_HEALTH="$(kubectl -n argocd get application torghut -o jsonpath='{.status.health.status}')"
+[[ "$ARGO_SYNC" == "Synced" && "$ARGO_HEALTH" == "Healthy" ]] \
+  || fail "Argo application is sync=$ARGO_SYNC health=$ARGO_HEALTH"
+
+SCHEDULER_JSON="$(kubectl -n "$NS" get deployment "$SCHEDULER" -o json)"
+SCHEDULER_DESIRED="$(jq -r '.spec.replicas // 0' <<<"$SCHEDULER_JSON")"
+SCHEDULER_CURRENT="$(jq -r '.status.replicas // 0' <<<"$SCHEDULER_JSON")"
+SCHEDULER_READY="$(jq -r '.status.readyReplicas // 0' <<<"$SCHEDULER_JSON")"
+SCHEDULER_AVAILABLE="$(jq -r '.status.availableReplicas // 0' <<<"$SCHEDULER_JSON")"
+[[ "$SCHEDULER_DESIRED" == "0" && "$SCHEDULER_CURRENT" == "0" \
+  && "$SCHEDULER_READY" == "0" && "$SCHEDULER_AVAILABLE" == "0" ]] \
+  || fail "scheduler is not fully at zero"
+
+SCHEDULER_PODS="$(
+  kubectl -n "$NS" get pods -l app.kubernetes.io/component=trading-scheduler -o json \
+    | jq '[.items[] | select(.status.phase != "Succeeded" and .status.phase != "Failed")] | length'
+)"
+[[ "$SCHEDULER_PODS" == "0" ]] || fail "scheduler pods still exist"
+
+SCHEDULER_ENDPOINTS="$(
+  kubectl -n "$NS" get endpointslices \
+    -l kubernetes.io/service-name="$SCHEDULER" -o json \
+    | jq '[.items[].endpoints[]?.addresses[]?] | length'
+)"
+[[ "$SCHEDULER_ENDPOINTS" == "0" ]] \
+  || fail "scheduler Service still has endpoints"
+```
+
+The empty scheduler endpoint is expected at this stage. Do not probe API `/metrics` for scheduler leadership; it is the
+wrong process. Do not continue if the Deployment spec is nonzero even when its pods happen to be absent.
+
+#### 2. Pin the new ready revision and its only traffic target
+
+```bash
+read_ksvc_state() {
+  KSVC_JSON="$(kubectl -n "$NS" get ksvc "$KSVC" -o json)"
+  KSVC_UID="$(jq -r '.metadata.uid // ""' <<<"$KSVC_JSON")"
+  KSVC_GENERATION="$(jq -r '.metadata.generation // 0' <<<"$KSVC_JSON")"
+  KSVC_OBSERVED_GENERATION="$(jq -r '.status.observedGeneration // 0' <<<"$KSVC_JSON")"
+  KSVC_URL="$(jq -r '.status.url // ""' <<<"$KSVC_JSON")"
+  API_HOST="${KSVC_URL#*://}"
+  API_HOST="${API_HOST%%/*}"
+  LATEST_CREATED="$(jq -r '.status.latestCreatedRevisionName // ""' <<<"$KSVC_JSON")"
+  LATEST_READY="$(jq -r '.status.latestReadyRevisionName // ""' <<<"$KSVC_JSON")"
+  KSVC_READY="$(
+    jq -r '[.status.conditions[]? | select(.type == "Ready")][0].status // ""' \
+      <<<"$KSVC_JSON"
+  )"
+  TRAFFIC_OK="$(
+    jq -r --arg revision "$LATEST_READY" '
+      (.spec.traffic | length) == 1
+      and .spec.traffic[0].latestRevision == true
+      and (.spec.traffic[0].percent // 0) == 100
+      and (.spec.traffic[0].tag // "") == ""
+      and (.spec.traffic[0].revisionName // "") == ""
+      and (.status.traffic | length) == 1
+      and .status.traffic[0].latestRevision == true
+      and (.status.traffic[0].percent // 0) == 100
+      and .status.traffic[0].revisionName == $revision
+      and (.status.traffic[0].tag // "") == ""
+      and (.status.traffic[0].url // "") == ""
+      and
+      all(.status.traffic[]?; (.tag // "") == "" and (.url // "") == "")
+    ' <<<"$KSVC_JSON"
+  )"
+
+  [[ -n "$KSVC_UID" ]] || fail "Knative Service UID is empty"
+  [[ "$KSVC_GENERATION" == "$KSVC_OBSERVED_GENERATION" ]] \
+    || fail "KService generation=$KSVC_GENERATION observed=$KSVC_OBSERVED_GENERATION"
+  [[ -n "$LATEST_READY" ]] || fail "latestReadyRevisionName is empty"
+  [[ -n "$API_HOST" ]] || fail "Knative Service URL/host is empty"
+  [[ "$KSVC_READY" == "True" ]] || fail "Knative Service Ready=$KSVC_READY"
+  [[ "$LATEST_CREATED" == "$LATEST_READY" ]] \
+    || fail "latestCreated=$LATEST_CREATED differs from latestReady=$LATEST_READY"
+  [[ "$TRAFFIC_OK" == "true" ]] \
+    || fail "traffic is not one untagged 100% latestReady target=$LATEST_READY"
+  if [[ -n "${PINNED_KSVC_UID:-}" ]]; then
+    [[ "$KSVC_UID" == "$PINNED_KSVC_UID" ]] \
+      || fail "KService UID changed during cleanup"
+    [[ "$KSVC_GENERATION" == "$PINNED_KSVC_GENERATION" ]] \
+      || fail "KService generation changed during cleanup"
+  fi
+}
+
+read_ksvc_state
+PINNED_KSVC_UID="$KSVC_UID"
+PINNED_KSVC_GENERATION="$KSVC_GENERATION"
+PINNED_LATEST_READY="$LATEST_READY"
+
+jq '{
+  uid: .metadata.uid,
+  generation: .metadata.generation,
+  observedGeneration: .status.observedGeneration,
+  latestCreatedRevisionName: .status.latestCreatedRevisionName,
+  latestReadyRevisionName: .status.latestReadyRevisionName,
+  specTraffic: [.spec.traffic[]? | {revisionName, latestRevision, percent, tag}],
+  statusTraffic: [.status.traffic[]? | {revisionName, latestRevision, percent, tag, url}],
+  ready: [.status.conditions[]? | select(.type == "Ready")][0].status
+}' <<<"$KSVC_JSON"
+```
+
+Do not proceed when a newer revision is unready, traffic is split, traffic points to an older revision, or
+`latestCreatedRevisionName` changes during the procedure.
+
+#### 3. Activate and inspect the scheduler-free API
+
+The Knative API has no `minScale`; send real traffic through the local Knative gateway to activate the pinned
+revision. The stable `Service/torghut` is an `ExternalName` Service and cannot itself be used with `kubectl
+port-forward`. The gateway port-forward plus the KService `Host` header creates no Kubernetes workload.
+
+```bash
+LOCAL_PORT="${LOCAL_PORT:-18181}"
+PF_LOG="$(mktemp)"
+METRICS_BODY="$(mktemp)"
+STATUS_BODY="$(mktemp)"
+
+kubectl -n istio-system port-forward service/knative-local-gateway \
+  "$LOCAL_PORT":80 >"$PF_LOG" 2>&1 &
+PF_PID=$!
+cleanup_probe() {
+  kill "$PF_PID" 2>/dev/null || true
+  wait "$PF_PID" 2>/dev/null || true
+  rm -f "$PF_LOG" "$METRICS_BODY" "$STATUS_BODY"
+}
+trap cleanup_probe EXIT
+
+for _ in $(seq 1 30); do
+  if curl -fsS -H "Host: $API_HOST" \
+    "http://127.0.0.1:$LOCAL_PORT/healthz" >/dev/null; then
+    break
+  fi
+  sleep 2
+done
+
+curl -fsS -H "Host: $API_HOST" \
+  "http://127.0.0.1:$LOCAL_PORT/healthz" | jq -e '.status == "ok"'
+curl -fsS -H "Host: $API_HOST" \
+  "http://127.0.0.1:$LOCAL_PORT/readyz" | jq -e '.status == "ok"'
+curl -fsS -H "Host: $API_HOST" \
+  "http://127.0.0.1:$LOCAL_PORT/metrics" >"$METRICS_BODY"
+[[ -s "$METRICS_BODY" ]] || fail "API-local metrics response is empty"
+grep -qx 'torghut_api_process_ready 1' "$METRICS_BODY" \
+  || fail "API-local readiness metric is missing"
+grep -qx 'torghut_process_role_info{role="api"} 1' "$METRICS_BODY" \
+  || fail "API-local role metric is missing"
+if grep -q '^torghut_scheduler_leadership_' "$METRICS_BODY"; then
+  fail "API metrics incorrectly expose scheduler leadership"
+fi
+
+STATUS_CODE="$(
+  curl -sS -H "Host: $API_HOST" -o "$STATUS_BODY" -w '%{http_code}' \
+    "http://127.0.0.1:$LOCAL_PORT/trading/status"
+)"
+[[ "$STATUS_CODE" == "503" ]] \
+  || fail "expected /trading/status=503 with scheduler at zero; got $STATUS_CODE"
+jq -e '
+  .detail == "scheduler_runtime_unavailable"
+  and .owner == "torghut-scheduler"
+' "$STATUS_BODY"
+
+cleanup_probe
+trap - EXIT
+
+kubectl -n "$NS" wait --for=condition=Ready pod \
+  -l serving.knative.dev/revision="$PINNED_LATEST_READY" --timeout=180s
+
+API_PODS_JSON="$(
+  kubectl -n "$NS" get pods \
+    -l serving.knative.dev/revision="$PINNED_LATEST_READY" -o json
+)"
+API_POD_COUNT="$(
+  jq '[.items[]
+    | select(.status.phase == "Running")
+    | select(any(.status.containerStatuses[]?;
+        .name == "user-container" and .ready == true))] | length' \
+    <<<"$API_PODS_JSON"
+)"
+[[ "$API_POD_COUNT" == "1" ]] \
+  || fail "expected one ready pinned API pod; found $API_POD_COUNT"
+API_POD="$(
+  jq -r '.items[]
+    | select(.status.phase == "Running")
+    | select(any(.status.containerStatuses[]?;
+        .name == "user-container" and .ready == true))
+    | .metadata.name' <<<"$API_PODS_JSON"
+)"
+
+REVISION_JSON="$(kubectl -n "$NS" get revision "$PINNED_LATEST_READY" -o json)"
+DESIRED_IMAGE="$(jq -r '.spec.template.spec.containers[] | select(.name == "user-container") | .image' <<<"$KSVC_JSON")"
+REVISION_IMAGE="$(jq -r '.spec.containers[] | select(.name == "user-container") | .image' <<<"$REVISION_JSON")"
+REVISION_ROLE="$(
+  jq -r '.spec.containers[] | select(.name == "user-container")
+    | .env[] | select(.name == "TORGHUT_PROCESS_ROLE") | .value' \
+    <<<"$REVISION_JSON"
+)"
+[[ "$REVISION_IMAGE" == "$DESIRED_IMAGE" ]] \
+  || fail "pinned revision image differs from the Knative Service template"
+[[ "$REVISION_ROLE" == "api" ]] \
+  || fail "pinned revision TORGHUT_PROCESS_ROLE=$REVISION_ROLE"
+
+jq '{
+  revision: .metadata.name,
+  image: [.spec.containers[] | select(.name == "user-container") | .image][0],
+  env: [.spec.containers[] | select(.name == "user-container") | .env[]
+    | select(.name | test("^(TORGHUT_PROCESS_ROLE|TRADING_ENABLED|TRADING_MODE|TRADING_SCHEDULER_RUNTIME_BASE_URL|APCA_API_BASE_URL)$"))]
+}' <<<"$REVISION_JSON"
+
+POD_ROLE="$(
+  kubectl -n "$NS" exec "$API_POD" -c user-container -- \
+    printenv TORGHUT_PROCESS_ROLE
+)"
+[[ "$POD_ROLE" == "api" ]] || fail "running pod role=$POD_ROLE"
+
+API_LOGS="$(mktemp)"
+kubectl -n "$NS" logs "$API_POD" -c user-container --since=30m >"$API_LOGS"
+grep -q 'background_worker_owner=external' "$API_LOGS" \
+  || fail "API did not report external background-worker ownership"
+if grep -Eq 'Trading scheduler (starting|loop running)' "$API_LOGS"; then
+  fail "scheduler loop startup found in pinned API logs"
+fi
+rm -f "$API_LOGS"
+```
+
+`/healthz`, `/readyz`, and API-local `/metrics` must succeed. `/trading/status` must fail closed with `503` because the
+scheduler is deliberately absent. A `200` status response at this point is evidence of another scheduler and blocks
+cleanup.
+
+#### 4. Freeze and delete only the legacy revisions
+
+Re-read the Service immediately before inventory and deletion. The pinned revision and traffic assertions must still
+hold. Preflight delete permission, print the exact inventory, and record it before continuing.
+
+```bash
+read_ksvc_state
+[[ "$LATEST_READY" == "$PINNED_LATEST_READY" ]] \
+  || fail "latestReady changed after API proof"
+[[ "$(kubectl auth can-i delete revisions.serving.knative.dev -n "$NS")" == "yes" ]] \
+  || fail "current identity cannot delete Knative revisions"
+
+kubectl -n "$NS" get revisions \
+  -l serving.knative.dev/service="$KSVC" \
+  -o custom-columns='NAME:.metadata.name,CREATED:.metadata.creationTimestamp,READY:.status.conditions[?(@.type=="Ready")].status'
+
+REVISIONS_JSON="$(
+  kubectl -n "$NS" get revisions \
+    -l serving.knative.dev/service="$KSVC" -o json
+)"
+LEGACY_REVISIONS="$(
+  jq -r --arg keep "$PINNED_LATEST_READY" '
+    [.items[] | select(.metadata.name != $keep)]
+    | sort_by(.metadata.creationTimestamp)
+    | .[].metadata.name
+  ' <<<"$REVISIONS_JSON"
+)"
+
+echo "Pinned revision: $PINNED_LATEST_READY"
+printf 'Legacy revisions approved for one-time deletion:\n%s\n' \
+  "${LEGACY_REVISIONS:-<none>}"
+```
+
+If the printed list is wrong, empty unexpectedly, or contains the pinned revision, stop. Run the following deletion
+block once. It intentionally has no label-based delete and rechecks latest-ready and traffic state before every
+revision.
+
+```bash
+while IFS= read -r revision; do
+  [[ -n "$revision" ]] || continue
+  [[ "$revision" != "$PINNED_LATEST_READY" ]] \
+    || fail "refusing to delete pinned revision"
+
+  read_ksvc_state
+  [[ "$LATEST_READY" == "$PINNED_LATEST_READY" ]] \
+    || fail "latestReady changed before deleting $revision"
+  jq -e --arg revision "$revision" '
+    all(.status.traffic[]?;
+      .revisionName != $revision and (.tag // "") == "" and (.url // "") == "")
+  ' <<<"$KSVC_JSON" >/dev/null \
+    || fail "legacy revision $revision remains directly routable"
+
+  kubectl -n "$NS" delete revision "$revision" --wait=true
+  LEGACY_PODS="$(
+    kubectl -n "$NS" get pods \
+      -l serving.knative.dev/revision="$revision" -o name
+  )"
+  if [[ -n "$LEGACY_PODS" ]]; then
+    kubectl -n "$NS" wait --for=delete $LEGACY_PODS --timeout=180s
+  fi
+done <<<"$LEGACY_REVISIONS"
+```
+
+Do not take a fresh list and rerun the deletion block. If the Knative Service changes, stop and begin a new reviewed
+rollout procedure; do not expand this cleanup transaction.
+
+#### 5. Prove one API revision and zero scheduler writers
+
+```bash
+read_ksvc_state
+[[ "$LATEST_READY" == "$PINNED_LATEST_READY" ]] \
+  || fail "latestReady changed during cleanup"
+
+FINAL_REVISIONS_JSON="$(
+  kubectl -n "$NS" get revisions \
+    -l serving.knative.dev/service="$KSVC" -o json
+)"
+FINAL_REVISION_COUNT="$(jq '.items | length' <<<"$FINAL_REVISIONS_JSON")"
+FINAL_REVISION_NAME="$(jq -r '.items[0].metadata.name // ""' <<<"$FINAL_REVISIONS_JSON")"
+[[ "$FINAL_REVISION_COUNT" == "1" \
+  && "$FINAL_REVISION_NAME" == "$PINNED_LATEST_READY" ]] \
+  || fail "revision inventory is not exactly the pinned latestReady revision"
+
+NONLATEST_API_PODS="$(
+  kubectl -n "$NS" get pods \
+    -l serving.knative.dev/service="$KSVC" -o json \
+    | jq --arg keep "$PINNED_LATEST_READY" '
+        [.items[]
+          | select(.metadata.labels["serving.knative.dev/revision"] != $keep)
+          | select(.status.phase != "Succeeded" and .status.phase != "Failed")]
+        | length'
+)"
+[[ "$NONLATEST_API_PODS" == "0" ]] || fail "non-latest API pods remain"
+
+SCHEDULER_JSON="$(kubectl -n "$NS" get deployment "$SCHEDULER" -o json)"
+[[ "$(jq -r '.spec.replicas // 0' <<<"$SCHEDULER_JSON")" == "0" \
+  && "$(jq -r '.status.replicas // 0' <<<"$SCHEDULER_JSON")" == "0" \
+  && "$(jq -r '.status.readyReplicas // 0' <<<"$SCHEDULER_JSON")" == "0" \
+  && "$(jq -r '.status.availableReplicas // 0' <<<"$SCHEDULER_JSON")" == "0" ]] \
+  || fail "scheduler Deployment is no longer fully at zero"
+
+SCHEDULER_PODS="$(
+  kubectl -n "$NS" get pods -l app.kubernetes.io/component=trading-scheduler -o json \
+    | jq '[.items[] | select(.status.phase != "Succeeded" and .status.phase != "Failed")] | length'
+)"
+[[ "$SCHEDULER_PODS" == "0" ]] || fail "scheduler pods exist after cleanup"
+
+SCHEDULER_ENDPOINTS="$(
+  kubectl -n "$NS" get endpointslices \
+    -l kubernetes.io/service-name="$SCHEDULER" -o json \
+    | jq '[.items[].endpoints[]?.addresses[]?] | length'
+)"
+[[ "$SCHEDULER_ENDPOINTS" == "0" ]] || fail "scheduler endpoints exist after cleanup"
+
+# DEFAULT_SCHEDULER_ADVISORY_LOCK_ID=-5582680098985332512 is represented
+# by classid=2995148295, objid=1029058784, objsubid=1 in pg_locks.
+WRITER_LOCK_COUNT="$(
+  kubectl cnpg psql -n "$NS" torghut-db -- \
+    -d torghut -At -v ON_ERROR_STOP=1 \
+    -c "SELECT count(*) FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND classid = '2995148295'::oid
+          AND objid = '1029058784'::oid
+          AND objsubid = 1
+          AND granted;"
+)"
+[[ "$WRITER_LOCK_COUNT" == "0" ]] \
+  || fail "scheduler advisory writer lock count=$WRITER_LOCK_COUNT"
+
+kubectl -n "$NS" get ksvc "$KSVC" -o wide
+kubectl -n "$NS" get revisions \
+  -l serving.knative.dev/service="$KSVC" -o wide
+kubectl -n "$NS" get deployment "$SCHEDULER" -o wide
+echo "P0a cleanup proof passed: latest=$PINNED_LATEST_READY scheduler=0 writers=0"
+```
+
+If CNPG access is denied or any proof query is unavailable, the gate is not satisfied. Do not infer zero writers from
+an absent metrics series. Keep the scheduler at zero until all checks can be rerun successfully. Scaling the dedicated
+scheduler to one is a separate GitOps change after this cleanup proof is recorded.
+
+The API and scheduler currently keep explicit environment entries so the live direct-env safety contract remains
+auditable. `test_single_writer_scheduler_manifest.py` enforces exact parity except for the process role and the two
+scheduler-only leadership settings; migrate both manifests to one typed generated source in a follow-up without
+weakening that contract.
+
 ## TA replay workflow (canonical)
 
 This is the single, canonical TA replay/backfill workflow that oncall should follow (and that an AgentRun can later
@@ -12,37 +426,14 @@ automate via PR + Argo sync). Other docs should link here instead of duplicating
 The Argo WorkflowTemplate `torghut-historical-simulation` is now managed as part of
 `argocd/applications/torghut`.
 
-The Argo WorkflowTemplate `torghut-empirical-promotion` is also managed here. It assembles
-authoritative benchmark parity, foundation router parity, and Janus evidence artifacts from
-replayed/observed manifests, uploads them to the `torghut-empirical-artifacts` bucket when
-configured, and persists freshness rows into `vnext_empirical_job_runs`.
-
 The empirical workflow depends on the namespace-local sealed secret
 `rook-ceph-rgw-argo-workflows` for Argo archive-log uploads. Keep that secret managed here so
 workflow submissions in `torghut` do not rely on manual secret copies from `argo-workflows`.
 
-Runtime-ledger proof packet assembly is no longer scheduled by a Torghut CronJob. Use the explicit operator/API repair
-paths and Argo workflow submissions for bounded proof collection; do not reintroduce a GitOps CronJob that silently
-promotes or imports runtime-window evidence on a timer.
-
-The `torghut-paper-account-flatten` CronJob runs at 09:05, 09:15, 09:20, and 09:25 America/New_York before the regular
-session, then repeats those minutes during the post-close 16:00 hour.
-The post-close run is part of the paper-route proof lane: it persists the flat account snapshot required before explicit
-operator proof collection turns a closed paper-route window into authority-checkable runtime-ledger evidence.
-
 The live TigerBeetle journal CronJob uses small supervised source slices. Keep the execution batch and order-event
-max-batch settings conservative enough to finish under the watchdog; failed slices do not grant accounting authority and
-slow the backlog drain that feeds runtime-ledger proof.
+max-batch settings conservative enough to finish under the watchdog; failed slices block the runtime ledger gate.
 
 Trigger a simulation run via Argo:
-
-The proof packet separates post-cost proof authority from live capital promotion
-authority. `post_cost_proof_authority.allowed=true` means the runtime-ledger
-packet proved the configured post-cost target from paper-route/runtime evidence.
-`promotion_authority.allowed` and `capital_promotion_authority.allowed` can still
-remain false when submit, certificate, or promotion-decision gates are blocked;
-that is an explicit GitOps/manual-promotion prerequisite, not evidence that the
-runtime-ledger proof is missing.
 
 ```bash
 argo submit --from workflowtemplate/torghut-historical-simulation -n argo-workflows \
@@ -134,6 +525,18 @@ kubectl get analysisrun -n torghut
 Kafka topics (v1):
 - Inputs: `torghut.trades.v1`, `torghut.quotes.v1`, `torghut.bars.1m.v1`
 - Outputs (derived): `torghut.ta.bars.1s.v1`, `torghut.ta.signals.v1`
+- Status: `torghut.ta.status.v1`
+
+Market-data freshness smoke:
+
+```bash
+MARKET_DATA_PRINT_SUMMARIES=false bun run smoke:torghut-market-data
+```
+
+The smoke tails Kafka through the Strimzi broker using Kubernetes Secret refs, fetches in-cluster WS/Torghut/Flink
+surfaces through the TA pod by default, and fails during regular market hours when WS channels, Kafka source topics, TA
+heartbeat, or accepted-source freshness are stale. Use `MARKET_DATA_FRESHNESS_MODE=observe` for after-hours diagnostics
+without claiming regular-session proof.
 
 ### Replay window constraints (what can be replayed)
 Replay is constrained by **both** Kafka retention (inputs) and ClickHouse TTL (outputs):
@@ -189,7 +592,7 @@ This script intentionally keeps defaults conservative and does not automate dest
 ### Safety gates (read first)
 - **Trading safety (prerequisite):** if there is any uncertainty about signal correctness (stale/corrupt/partial), pause
   trading first and keep it paused until verification passes.
-  - set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml`
+  - set `spec.replicas: 0` in `argocd/applications/torghut/scheduler-deployment.yaml`
   - keep `TRADING_MODE=paper` unless the recovery explicitly requires live mode
 - **Unique consumer group required (hard requirement):** every replay/backfill must use a **new** `TA_GROUP_ID`
   (consumer-group isolation). Never reuse an old replay group id.
@@ -217,7 +620,7 @@ Before touching the TA job or Kafka topics, record the following in your ticket/
 Goal: recompute TA outputs from retained Kafka inputs without deleting topics or Flink state.
 
 1) Pause trading (recommended; required if signal correctness is uncertain)
-   - `argocd/applications/torghut/knative-service.yaml`: set `TRADING_ENABLED=false`, then Argo sync.
+   - `argocd/applications/torghut/scheduler-deployment.yaml`: set `spec.replicas: 0`, then Argo sync.
 2) Suspend TA to stop writes while you switch group id
    - GitOps-first: set `spec.job.state: suspended` in `argocd/applications/torghut/ta/flinkdeployment.yaml`, then Argo sync.
    - Emergency-only:
@@ -262,7 +665,7 @@ Before starting, get explicit human confirmation that the following are acceptab
 - Deleting Flink checkpoint/savepoint directories under `s3a://flink-checkpoints/torghut/technical-analysis/...`
 
 0) Pause trading (required)
-- Set `TRADING_ENABLED=false` in `argocd/applications/torghut/knative-service.yaml` and Argo sync.
+- Set `spec.replicas: 0` in `argocd/applications/torghut/scheduler-deployment.yaml` and Argo sync.
 
 1) Suspend the job (same as Mode 1)
 

@@ -71,11 +71,20 @@ export const getQuantHealthHandler = async (request: Request) => {
       : []
     const maxStageLagSeconds = stages.reduce((max, stage) => Math.max(max, stage.lagSeconds), 0)
     const missingPipelineHealthStages = pipelineHealthScoped && stages.length === 0
+    const runtime = getTorghutQuantRuntimeStatus()
+    const runtimeLastErrorLagSeconds = runtime.lastErrorAt
+      ? Math.max(0, Math.floor((Date.now() - Date.parse(runtime.lastErrorAt)) / 1000))
+      : null
+    const runtimeRecentErrorAlarm =
+      runtimeLastErrorLagSeconds !== null && runtimeLastErrorLagSeconds <= stageLookbackSeconds
     const overallState =
-      missingPipelineHealthStages || stages.some((stage) => !stage.ok) || missingUpdateAlarm || emptyLatestStoreAlarm
+      missingPipelineHealthStages ||
+      stages.some((stage) => !stage.ok) ||
+      missingUpdateAlarm ||
+      emptyLatestStoreAlarm ||
+      runtimeRecentErrorAlarm
         ? 'degraded'
         : 'ok'
-    const runtime = getTorghutQuantRuntimeStatus()
 
     return jsonResponse({
       ok: true,
@@ -95,6 +104,11 @@ export const getQuantHealthHandler = async (request: Request) => {
       runtimeComputeIntervalMs: runtime.computeIntervalMs,
       runtimeHeavyComputeIntervalMs: runtime.heavyComputeIntervalMs,
       runtimeStreamHeartbeatMs: runtime.streamHeartbeatMs,
+      runtimeLastErrorAt: runtime.lastErrorAt,
+      runtimeLastErrorStage: runtime.lastErrorStage,
+      runtimeLastErrorMessage: runtime.lastErrorMessage,
+      runtimeLastErrorLagSeconds,
+      runtimeRecentErrorAlarm,
       stageScopeOmitted: !pipelineHealthScoped,
       stageLookbackSeconds,
       stageMinRecordedAt,

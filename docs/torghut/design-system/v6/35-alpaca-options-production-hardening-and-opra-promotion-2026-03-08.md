@@ -3,7 +3,7 @@
 ## Status
 
 - Date: `2026-03-08`
-- Maturity: `implementation-ready design`
+- Maturity: `historical hardening plan; not current promotion authority`
 - Scope: `argocd/applications/torghut-options/**`, `argocd/applications/torghut/**`,
   `services/torghut/app/options_lane/**`,
   `services/dorvud/technical-analysis-flink/**`, Torghut Postgres/ClickHouse/Kafka,
@@ -16,6 +16,24 @@
   live lane into an opaque cutover gamble
 - Non-goals: options order execution, strategy enablement, or permanent duplicate
   production feeds
+
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
+
+
+## Current-Truth Notice
+
+This document records the March 8 hardening and OPRA-promotion plan. Do not treat its closed-session observations or promotion stages as current production status. Current promotion authority is live GitOps, runtime status, guardrail readback, and the active Torghut/Jangar proof and repair docs listed from `docs/torghut/README.md`.
 
 ## Executive Summary
 
@@ -86,11 +104,11 @@ yet have a documented regular-session promotion record.
 
 The current production manifests are still `indicative`-backed:
 
-- [`argocd/applications/torghut-options/ws/configmap.yaml`](argocd/applications/torghut-options/ws/configmap.yaml)
+- [`argocd/applications/torghut-options/ws/configmap.yaml`](../../../../argocd/applications/torghut-options/ws/configmap.yaml)
   sets `ALPACA_FEED="indicative"`;
-- [`argocd/applications/torghut-options/enricher/configmap.yaml`](argocd/applications/torghut-options/enricher/configmap.yaml)
+- [`argocd/applications/torghut-options/enricher/configmap.yaml`](../../../../argocd/applications/torghut-options/enricher/configmap.yaml)
   sets `ALPACA_OPTIONS_FEED="indicative"`;
-- [`argocd/applications/torghut-options/ta/configmap.yaml`](argocd/applications/torghut-options/ta/configmap.yaml)
+- [`argocd/applications/torghut-options/ta/configmap.yaml`](../../../../argocd/applications/torghut-options/ta/configmap.yaml)
   sets `OPTIONS_TA_FEED="indicative"`.
 
 Document 33 explicitly selected `opra` as the production target. That target has not
@@ -98,7 +116,7 @@ been realized yet.
 
 ### Existing ClickHouse guardrails still only understand the equity TA tables
 
-[`argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter-configmap.yaml`](argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter-configmap.yaml)
+[`argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter-configmap.yaml`](../../../../argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter-configmap.yaml)
 still defaults `CLICKHOUSE_REPLICATED_TABLES` to `ta_signals,ta_microbars`, and its
 freshness state is hard-coded around those two table families.
 
@@ -111,7 +129,7 @@ whether:
 
 ### ClickHouse schema creation still happens inside the Flink startup path
 
-[`services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/OptionsTechnicalAnalysisJob.kt`](services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/OptionsTechnicalAnalysisJob.kt)
+[`services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/OptionsTechnicalAnalysisJob.kt`](../../../../services/dorvud/technical-analysis-flink/src/main/kotlin/ai/proompteng/dorvud/ta/flink/OptionsTechnicalAnalysisJob.kt)
 calls `ensureOptionsClickhouseSchema(config)` before wiring the three ClickHouse
 sinks.
 
@@ -122,13 +140,13 @@ responsibility.
 
 ### Provider-cap configuration is live, but the source-of-truth is split
 
-[`services/torghut/app/options_lane/settings.py`](services/torghut/app/options_lane/settings.py)
+[`services/torghut/app/options_lane/settings.py`](../../../../services/torghut/app/options_lane/settings.py)
 defaults `OPTIONS_PROVIDER_CAP_BOOTSTRAP` to `500`, while the deployed options
 manifests currently set `OPTIONS_PROVIDER_CAP_BOOTSTRAP="200"` in:
 
-- [`argocd/applications/torghut-options/catalog/configmap.yaml`](argocd/applications/torghut-options/catalog/configmap.yaml)
-- [`argocd/applications/torghut-options/ws/configmap.yaml`](argocd/applications/torghut-options/ws/configmap.yaml)
-- [`argocd/applications/torghut-options/enricher/configmap.yaml`](argocd/applications/torghut-options/enricher/configmap.yaml)
+- [`argocd/applications/torghut-options/catalog/configmap.yaml`](../../../../argocd/applications/torghut-options/catalog/configmap.yaml)
+- [`argocd/applications/torghut-options/ws/configmap.yaml`](../../../../argocd/applications/torghut-options/ws/configmap.yaml)
+- [`argocd/applications/torghut-options/enricher/configmap.yaml`](../../../../argocd/applications/torghut-options/enricher/configmap.yaml)
 
 That mismatch is survivable, but it is the wrong shape for a production promotion
 process because operators do not yet have a durable provider-cap observation ledger.

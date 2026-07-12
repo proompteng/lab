@@ -1,20 +1,21 @@
 # 157. Torghut Profit Contract Actuation And Capital Surface Truth (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, capital-surface truth, design contract actuation, repair receipt convergence,
-validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/153-jangar-design-actuation-ledger-and-contract-convergence-gates-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `156-torghut-repair-closure-yield-ledger-and-capital-unlock-receipts-2026-05-07.md`
-- `155-torghut-capital-repair-outcome-ledger-and-edge-reacquisition-gates-2026-05-07.md`
-- `154-torghut-marginal-proof-spend-portfolio-and-capital-repair-budget-2026-05-07.md`
 
 ## Decision
 
@@ -80,7 +81,7 @@ ClickHouse tables, broker state, AgentRun objects, GitOps resources, or trading 
 - Schema lineage had one branch, no duplicate revisions, no orphan parents, and known parent-fork warnings at
   `0010_execution_provenance_and_governance_trace` and `0015_whitepaper_workflow_tables`.
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live alpha readiness had three shadow hypotheses, zero promotion-eligible hypotheses, and three rollback-required
   hypotheses.

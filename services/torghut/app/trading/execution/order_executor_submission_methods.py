@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any, NamedTuple, cast
 from ...models import (
     coerce_json_payload,
 )
+from ..broker_risk_snapshot import (
+    normalize_live_open_order_rows,
+    normalize_live_position_rows,
+)
 from ...config import settings
 from ..models import ExecutionRequest, StrategyDecision
 from ..quantity_rules import (
@@ -143,10 +147,17 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        durable_position_qty: Decimal | None = None,
     ) -> QuantityResolution:
         position_qty = self._position_qty_for_symbol(
             execution_client,
             request.symbol.strip().upper(),
+        )
+        position_qty = self._submission_position_qty(
+            request=request,
+            broker_position_qty=position_qty,
+            durable_position_qty=durable_position_qty,
         )
         return resolve_quantity_resolution(
             request.symbol,
@@ -161,6 +172,8 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         self,
         execution_client: Any,
         request: ExecutionRequest,
+        *,
+        quantity_resolution: QuantityResolution,
     ) -> dict[str, Any] | None:
         if request.side.strip().lower() != "sell":
             return None
@@ -168,8 +181,11 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         if not symbol:
             return None
 
-        position_qty = self._position_qty_for_symbol(execution_client, symbol)
-        if not self._is_short_increasing_sell(position_qty, request.qty):
+        position_qty = quantity_resolution.position_qty
+        if not (
+            quantity_resolution.short_increasing
+            or self._is_short_increasing_sell(position_qty, request.qty)
+        ):
             return None
 
         if not settings.trading_allow_shorts:
@@ -297,6 +313,25 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
             return True
         return request_qty > position_qty
 
+    @staticmethod
+    def _submission_position_qty(
+        *,
+        request: ExecutionRequest,
+        broker_position_qty: Decimal | None,
+        durable_position_qty: Decimal | None,
+    ) -> Decimal | None:
+        if request.side.strip().lower() != "sell":
+            return broker_position_qty
+        if durable_position_qty is None or durable_position_qty <= 0:
+            return broker_position_qty
+        if broker_position_qty is None:
+            return durable_position_qty
+        if broker_position_qty <= 0:
+            return broker_position_qty
+        if request.qty <= durable_position_qty and broker_position_qty < request.qty:
+            return durable_position_qty
+        return broker_position_qty
+
     @classmethod
     def _position_qty_for_symbol(
         cls,
@@ -324,6 +359,8 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
     def _list_open_orders(execution_client: Any) -> list[dict[str, Any]]:
         lister = getattr(execution_client, "list_orders", None)
         if not callable(lister):
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_open_order_read_unavailable")
             return []
         orders: Any
         try:
@@ -332,24 +369,34 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
             try:
                 orders = lister()
             except Exception as exc:
+                if settings.trading_mode == "live":
+                    raise RuntimeError("live_broker_open_order_read_failed") from exc
                 logger.warning(
                     "Failed to list open orders for broker precheck: %s", exc
                 )
                 return []
         except Exception as exc:
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_open_order_read_failed") from exc
             logger.warning("Failed to list open orders for broker precheck: %s", exc)
             return []
 
         if not isinstance(orders, list):
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_open_order_read_invalid")
             return []
         raw_orders = cast(list[object], orders)
         normalized: list[dict[str, Any]] = []
         for order in raw_orders:
             if not isinstance(order, Mapping):
+                if settings.trading_mode == "live":
+                    raise RuntimeError("live_broker_open_order_read_invalid")
                 continue
             mapped = cast(Mapping[object, Any], order)
             normalized.append({str(key): value for key, value in mapped.items()})
-        return normalized
+        if settings.trading_mode != "live":
+            return normalized
+        return cast(list[dict[str, Any]], normalize_live_open_order_rows(normalized))
 
     @staticmethod
     def _list_positions(execution_client: Any) -> list[dict[str, Any]] | None:
@@ -360,20 +407,30 @@ class _OrderExecutorSubmissionMethods(_OrderExecutorSubmissionBase):
         try:
             positions = lister()
         except Exception as exc:
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_position_read_failed") from exc
             logger.warning("Failed to list positions for broker precheck: %s", exc)
             return None
         if positions is None:
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_position_read_unavailable")
             return None
         if not isinstance(positions, list):
+            if settings.trading_mode == "live":
+                raise RuntimeError("live_broker_position_read_invalid")
             return []
         raw_positions = cast(list[object], positions)
         normalized: list[dict[str, Any]] = []
         for position in raw_positions:
             if not isinstance(position, Mapping):
+                if settings.trading_mode == "live":
+                    raise RuntimeError("live_broker_position_read_invalid")
                 continue
             mapped = cast(Mapping[object, Any], position)
             normalized.append({str(key): value for key, value in mapped.items()})
-        return normalized
+        if settings.trading_mode != "live":
+            return normalized
+        return cast(list[dict[str, Any]], normalize_live_position_rows(normalized))
 
     def _get_account(
         self, execution_client: Any, *, force_refresh: bool = False

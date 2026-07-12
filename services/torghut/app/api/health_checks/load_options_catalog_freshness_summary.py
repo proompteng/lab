@@ -56,9 +56,6 @@ from app.api.health_checks.tigerbeetle_health import (
 from app.api.health_checks.tigerbeetle_health import (
     unavailable_tigerbeetle_reconciliation_payload as _unavailable_tigerbeetle_reconciliation_payload,
 )
-from app.api.proof_contracts import (
-    SIMPLE_LANE_ALLOWED_REJECT_REASONS as _SIMPLE_LANE_ALLOWED_REJECT_REASONS,
-)
 from app.config import settings
 from app.db import SessionLocal
 from app.models import TradeDecision
@@ -511,11 +508,6 @@ def _build_hypothesis_runtime_payload(
 def _build_live_submission_gate_payload(
     state: object,
     *,
-    session: Session | None = None,
-    hypothesis_summary: Mapping[str, Any] | None,
-    empirical_jobs_status: Mapping[str, Any] | None = None,
-    dspy_runtime_status: Mapping[str, Any] | None = None,
-    quant_health_status: Mapping[str, Any] | None = None,
     clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     resolved_clickhouse_ta_status = clickhouse_ta_status
@@ -529,65 +521,10 @@ def _build_live_submission_gate_payload(
     shared_gate_builder = build_live_submission_gate_payload
     if shared_gate_builder is _PUBLIC_BUILD_LIVE_SUBMISSION_GATE_PAYLOAD:
         shared_gate_builder = _raw_build_live_submission_gate_payload
-    gate = shared_gate_builder(
+    return shared_gate_builder(
         state,
-        session=session,
-        hypothesis_summary=hypothesis_summary,
-        empirical_jobs_status=empirical_jobs_status,
-        dspy_runtime_status=dspy_runtime_status,
-        quant_health_status=quant_health_status,
         clickhouse_ta_status=resolved_clickhouse_ta_status,
     )
-    if settings.trading_mode != "live":
-        gate["pipeline_mode"] = "simple"
-        gate["configured_live_promotion"] = settings.trading_simple_submit_enabled
-        gate["simple_lane"] = {
-            "submit_enabled": settings.trading_simple_submit_enabled,
-            "shared_gate_enforced": True,
-            "blocked_reasons": [],
-        }
-        return gate
-    blocked_reasons: list[str] = []
-    if not settings.trading_enabled:
-        blocked_reasons.append("trading_disabled")
-    if settings.trading_kill_switch_enabled:
-        blocked_reasons.append("kill_switch_enabled")
-    if not settings.trading_simple_submit_enabled:
-        blocked_reasons.append("simple_submit_disabled")
-    if settings.trading_emergency_stop_enabled and bool(
-        getattr(state, "emergency_stop_active", False)
-    ):
-        blocked_reasons.append(
-            str(getattr(state, "emergency_stop_reason", "") or "emergency_stop_active")
-        )
-    merged_blocked_reasons = list(
-        dict.fromkeys(
-            [
-                *[
-                    str(item).strip()
-                    for item in cast(
-                        Sequence[object],
-                        gate.get("blocked_reasons") or [],
-                    )
-                    if str(item).strip()
-                ],
-                *blocked_reasons,
-            ]
-        )
-    )
-    gate["allowed"] = bool(gate.get("allowed", False)) and not blocked_reasons
-    gate["blocked_reasons"] = merged_blocked_reasons
-    if blocked_reasons:
-        gate["reason"] = blocked_reasons[0]
-        gate["capital_stage"] = "shadow"
-        gate["capital_state"] = "observe"
-    gate["pipeline_mode"] = "simple"
-    gate["simple_lane"] = {
-        "submit_enabled": settings.trading_simple_submit_enabled,
-        "shared_gate_enforced": True,
-        "blocked_reasons": blocked_reasons,
-    }
-    return gate
 
 
 def build_hypothesis_runtime_payload(
@@ -610,65 +547,15 @@ def build_hypothesis_runtime_payload(
 def build_live_submission_gate_payload(
     state: object,
     *,
-    session: Session | None = None,
-    hypothesis_summary: Mapping[str, Any] | None,
-    empirical_jobs_status: Mapping[str, Any] | None = None,
-    dspy_runtime_status: Mapping[str, Any] | None = None,
-    quant_health_status: Mapping[str, Any] | None = None,
     clickhouse_ta_status: Mapping[str, Any] | None = None,
 ) -> dict[str, object]:
     return _build_live_submission_gate_payload(
         state,
-        session=session,
-        hypothesis_summary=hypothesis_summary,
-        empirical_jobs_status=empirical_jobs_status,
-        dspy_runtime_status=dspy_runtime_status,
-        quant_health_status=quant_health_status,
         clickhouse_ta_status=clickhouse_ta_status,
     )
 
 
 _PUBLIC_BUILD_LIVE_SUBMISSION_GATE_PAYLOAD = build_live_submission_gate_payload
-
-
-def _build_simple_lane_status_payload() -> dict[str, object]:
-    return {
-        "enabled": True,
-        "submit_enabled": settings.trading_simple_submit_enabled,
-        "order_feed_telemetry_enabled": (
-            settings.trading_simple_order_feed_telemetry_enabled
-        ),
-        "order_feed_ingestion_enabled": settings.trading_order_feed_enabled,
-        "order_feed_bootstrap_configured": bool(
-            settings.trading_order_feed_bootstrap_server_list
-        ),
-        "order_feed_topic_count": len(settings.trading_order_feed_topics),
-        "order_feed_assignment_mode": settings.trading_order_feed_assignment_mode,
-        "order_feed_auto_offset_reset": settings.trading_order_feed_auto_offset_reset,
-        "order_feed_lifecycle_required": settings.trading_mode in {"paper", "live"},
-        "order_feed_lifecycle_status": (
-            "enabled"
-            if settings.trading_simple_order_feed_telemetry_enabled
-            else "disabled"
-        ),
-        "paper_route_probe_enabled": (
-            settings.trading_simple_paper_route_probe_enabled
-        ),
-        "paper_route_probe_allow_live_mode": (
-            settings.trading_simple_paper_route_probe_allow_live_mode
-        ),
-        "paper_route_probe_max_notional": (
-            settings.trading_simple_paper_route_probe_max_notional
-        ),
-        "route_symbol_filter_enabled": True,
-        "max_notional_per_order": settings.trading_simple_max_notional_per_order,
-        "max_notional_per_symbol": settings.trading_simple_max_notional_per_symbol,
-        "max_order_pct_equity": settings.trading_simple_max_order_pct_equity,
-        "max_gross_exposure_pct_equity": (
-            settings.trading_simple_max_gross_exposure_pct_equity
-        ),
-        "allowed_reject_reasons": sorted(_SIMPLE_LANE_ALLOWED_REJECT_REASONS),
-    }
 
 
 ensure_utc_datetime = _ensure_utc_datetime
@@ -677,7 +564,6 @@ load_options_catalog_freshness_summary = _load_options_catalog_freshness_summary
 raw_hypothesis_runtime_payload = _build_hypothesis_runtime_payload
 api_live_submission_gate_payload = _build_live_submission_gate_payload
 resolve_tca_scope_symbols = _resolve_tca_scope_symbols
-simple_lane_status_payload = _build_simple_lane_status_payload
 
 
 __all__ = [
@@ -720,7 +606,6 @@ __all__ = [
     "_load_last_decision_at",
     "_build_hypothesis_runtime_payload",
     "_build_live_submission_gate_payload",
-    "_build_simple_lane_status_payload",
     "api_live_submission_gate_payload",
     "build_hypothesis_runtime_payload",
     "build_live_submission_gate_payload",
@@ -729,5 +614,4 @@ __all__ = [
     "load_options_catalog_freshness_summary",
     "raw_hypothesis_runtime_payload",
     "resolve_tca_scope_symbols",
-    "simple_lane_status_payload",
 ]

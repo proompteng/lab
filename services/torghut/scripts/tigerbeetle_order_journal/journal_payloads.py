@@ -39,6 +39,7 @@ def _fresh_reconciliation_for_empty_selection(
     *,
     settings_obj: Settings,
     account_label: str | None,
+    freshness_headroom_seconds: int = 0,
 ) -> dict[str, object] | None:
     latest = latest_tigerbeetle_reconciliation_payload(
         session,
@@ -59,6 +60,11 @@ def _fresh_reconciliation_for_empty_selection(
     )
     if blocked:
         return None
+    age_seconds = int(latest.get("age_seconds") or 0)
+    remaining_freshness_seconds = max_age_seconds - age_seconds
+    required_headroom_seconds = max(0, int(freshness_headroom_seconds))
+    if remaining_freshness_seconds < required_headroom_seconds:
+        return None
     return {
         "ok": True,
         "status": "skipped",
@@ -68,9 +74,11 @@ def _fresh_reconciliation_for_empty_selection(
         "latest_status": str(latest.get("status") or ""),
         "latest_started_at": latest.get("started_at"),
         "latest_finished_at": latest.get("finished_at"),
-        "age_seconds": int(latest.get("age_seconds") or 0),
+        "age_seconds": age_seconds,
         "reconciliation_stale": False,
         "reconciliation_max_age_seconds": max_age_seconds,
+        "remaining_freshness_seconds": remaining_freshness_seconds,
+        "required_freshness_headroom_seconds": required_headroom_seconds,
         "checked_transfer_count": int(latest.get("checked_transfer_count") or 0),
         "runtime_ledger_checked_transfer_count": int(
             latest.get("runtime_ledger_checked_transfer_count") or 0

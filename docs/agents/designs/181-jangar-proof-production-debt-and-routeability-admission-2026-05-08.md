@@ -65,10 +65,10 @@ trading flags.
 - `/readyz` dependencies for Postgres, ClickHouse, and database schema were OK. Alembic current and expected heads were
   both `0030_evidence_epochs`; schema lineage was ready, with parent-fork warnings already known.
 - The live submission gate was closed: `simple_submit_disabled`, `capital_stage=shadow`, and blocked reasons
-  `alpha_readiness_not_promotion_eligible` plus `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible` plus `simple_submit_disabled`.
 - The proof floor was `repair_only`, `capital_state=zero_notional`, and required.
 - Revenue repair digest reported `revenue_ready=false`, `business_state=repair_only`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `simple_submit_disabled`, and `quant_pipeline_stages_missing`.
+  `hypothesis_not_promotion_eligible`, `simple_submit_disabled`, and `quant_pipeline_stages_missing`.
 - Quant health had 144 latest metrics and no empty-store alarm, but zero scoped pipeline stages and
   `missingPipelineHealthStages=true`.
 - Market context last checked ORCL at `2026-05-08T12:27:40Z`; fundamentals were OK, while technicals, news, and regime
@@ -257,5 +257,5 @@ Jangar pod plus degraded Torghut `/readyz` keeps paper/live action held while al
 
 Deployer handoff: deploy observe-only first. Acceptance is a fresh admission payload, no non-zero live notional while
 Torghut is `repair_only`, admitted repair runs tied to value gates, and Jangar status showing the top debt lots:
-`quant_pipeline_stages_missing`, `market_context_stale`, `alpha_readiness_not_promotion_eligible`, and
+`quant_pipeline_stages_missing`, `market_context_stale`, `hypothesis_not_promotion_eligible`, and
 `simple_submit_disabled`.

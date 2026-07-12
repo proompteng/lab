@@ -1,5 +1,5 @@
 name: setup-nix-toolchain
-description: Validate the ARC preinstalled Nix toolchain and fall back to installing Nix when needed.
+description: Validate the preinstalled Nix toolchain and optionally fail closed instead of falling back.
 
 inputs:
   github-token:
@@ -13,6 +13,10 @@ inputs:
       experimental-features = nix-command flakes
   install-ci-toolchain:
     description: Install and validate the repo CI toolchain when the runner image does not already provide it.
+    required: false
+    default: 'false'
+  require-preinstalled:
+    description: Fail instead of installing Nix or the CI toolchain. Use this for ARC jobs that must run on the custom runner image.
     required: false
     default: 'false'
 
@@ -31,8 +35,16 @@ runs:
           echo "nix_available=false" >> "${GITHUB_OUTPUT}"
         fi
 
+    - name: Reject missing preinstalled Nix
+      if: steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Nix is not preinstalled on this runner, and require-preinstalled=true forbids fallback installation." >&2
+        exit 1
+
     - name: Install xz for fallback Nix installer
-      if: steps.detect.outputs.nix_available != 'true'
+      if: steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled != 'true'
       shell: bash
       run: |
         set -euo pipefail
@@ -49,7 +61,7 @@ runs:
         fi
 
     - name: Install fallback Nix
-      if: steps.detect.outputs.nix_available != 'true'
+      if: steps.detect.outputs.nix_available != 'true' && inputs.require-preinstalled != 'true'
       uses: cachix/install-nix-action@v31
       with:
         github_access_token: ${{ inputs.github-token }}
@@ -62,10 +74,23 @@ runs:
       run: |
         set -euo pipefail
         mkdir -p "${HOME}/.config/nix"
-        printf '%s\n' "${EXTRA_NIX_CONFIG}" > "${HOME}/.config/nix/nix.conf"
+        nix_config="${EXTRA_NIX_CONFIG}"
+        has_nixbld_group=false
+        if command -v getent >/dev/null 2>&1; then
+          if getent group nixbld >/dev/null 2>&1; then
+            has_nixbld_group=true
+          fi
+        elif [ -r /etc/group ] && grep -q '^nixbld:' /etc/group; then
+          has_nixbld_group=true
+        fi
+        if [ "${has_nixbld_group}" != "true" ] &&
+          ! printf '%s\n' "${nix_config}" | grep -Eq '^[[:space:]]*build-users-group[[:space:]]*='; then
+          nix_config="${nix_config}"$'\n''build-users-group ='
+        fi
+        printf '%s\n' "${nix_config}" > "${HOME}/.config/nix/nix.conf"
         {
           echo 'NIX_CONFIG<<__LAB_NIX_CONFIG__'
-          printf '%s\n' "${EXTRA_NIX_CONFIG}"
+          printf '%s\n' "${nix_config}"
           echo '__LAB_NIX_CONFIG__'
         } >> "${GITHUB_ENV}"
         {
@@ -75,20 +100,114 @@ runs:
         export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
         nix --version
 
-    - name: Ensure repo CI toolchain
-      if: inputs.install-ci-toolchain == 'true'
+    - name: Validate writable Nix store access
       shell: bash
       run: |
         set -euo pipefail
         export PATH="${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
-        missing=0
-        for cmd in nix skopeo crane cosign jq yq kustomize docker docker-buildx; do
+        store_info_log="$(mktemp)"
+        write_probe="$(mktemp)"
+        trap 'rm -f "${store_info_log}" "${write_probe}"' EXIT
+        printf 'lab-nix-store-write-probe\n' > "${write_probe}"
+
+        probe_store_write() {
+          nix store add-file "${write_probe}" >/dev/null
+        }
+
+        if nix store info >"${store_info_log}" 2>&1 && probe_store_write; then
+          rm -f "${store_info_log}"
+          exit 0
+        fi
+        if [ -S /nix/var/nix/daemon-socket/socket ]; then
+          echo 'NIX_REMOTE=daemon' >> "${GITHUB_ENV}"
+          export NIX_REMOTE=daemon
+          nix store info
+          probe_store_write
+          rm -f "${store_info_log}"
+          exit 0
+        fi
+        real_nix="$(command -v nix)"
+        if sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" store info >/dev/null 2>&1 &&
+          sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" store add-file "${write_probe}" >/dev/null 2>&1; then
+          wrapper_dir="${RUNNER_TEMP:-/tmp}/lab-nix-sudo-wrapper"
+          mkdir -p "${wrapper_dir}"
+          cat > "${wrapper_dir}/nix" <<EOF
+        #!/usr/bin/env bash
+        set -euo pipefail
+        exec sudo -n --preserve-env=NIX_CONFIG,NIX_SSL_CERT_FILE "${real_nix}" "\$@"
+        EOF
+          chmod +x "${wrapper_dir}/nix"
+          echo "${wrapper_dir}" >> "${GITHUB_PATH}"
+          echo 'LAB_NIX_WITH_SUDO=true' >> "${GITHUB_ENV}"
+          echo "LAB_NIX_WRAPPER_DIR=${wrapper_dir}" >> "${GITHUB_ENV}"
+          PATH="${wrapper_dir}:${PATH}" nix store info
+          PATH="${wrapper_dir}:${PATH}" nix store add-file "${write_probe}" >/dev/null
+          rm -f "${store_info_log}"
+          exit 0
+        fi
+        cat "${store_info_log}" >&2
+        rm -f "${store_info_log}"
+        echo "Nix is installed but cannot access its store, and neither daemon nor sudo store access is available." >&2
+        exit 1
+
+    - name: Ensure repo CI toolchain
+      if: inputs.install-ci-toolchain == 'true'
+      shell: bash
+      env:
+        REQUIRE_PREINSTALLED: ${{ inputs.require-preinstalled }}
+      run: |
+        set -euo pipefail
+        wrapper_prefix="${LAB_NIX_WRAPPER_DIR:+${LAB_NIX_WRAPPER_DIR}:}"
+        export PATH="${wrapper_prefix}${HOME}/.nix-profile/bin:/nix/var/nix/profiles/default/bin:${PATH}"
+        missing=()
+        required_commands=(
+          nix
+          node
+          bun
+          go
+          ruby
+          python3.11
+          python3.12
+          uv
+          tofu
+          helm
+          kustomize
+          kubeconform
+          kubectl
+          argo
+          argocd
+          buf
+          gh
+          shellcheck
+          jq
+          yq
+          rg
+          fd
+          fzf
+          buildctl
+          buildkitd
+          docker
+          docker-buildx
+          crane
+          skopeo
+          regctl
+          cosign
+          toolchain-doctor
+          oci-doctor
+        )
+        for cmd in "${required_commands[@]}"; do
           if ! command -v "${cmd}" >/dev/null 2>&1; then
-            missing=1
-            break
+            missing+=("${cmd}")
           fi
         done
-        if [ "${missing}" -eq 1 ]; then
+        if [ "${#missing[@]}" -gt 0 ] && [ "${REQUIRE_PREINSTALLED}" = "true" ]; then
+          printf 'Required CI toolchain commands are missing from the preinstalled runner image:\n' >&2
+          printf '  %s\n' "${missing[@]}" >&2
+          exit 1
+        fi
+        if [ "${#missing[@]}" -gt 0 ]; then
+          printf 'Installing missing CI toolchain commands through Nix profile:\n'
+          printf '  %s\n' "${missing[@]}"
           nix profile install .#ciToolchain --priority 4
         fi
         toolchain-doctor

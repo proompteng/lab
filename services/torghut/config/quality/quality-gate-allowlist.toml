@@ -1,0 +1,19 @@
+# Temporary changed-line quality exceptions.
+#
+# Entries must be specific and reviewable:
+#
+# [[allow]]
+# path = "app/example.py"
+# symbol = "torghut-broad-exception"
+# owner = "torghut-runtime"
+# reason = "External dependency boundary is fail-closed and covered by tests."
+# removal_target = "Replace with DependencyProbeUnavailable after endpoint split."
+# line = 123
+
+[[allow]]
+path = "app/trading/scheduler/capital_controls.py"
+symbol = "torghut-broad-exception"
+owner = "torghut-runtime"
+reason = "The required TigerBeetle safety boundary must fail closed for every ordinary client construction or probe exception."
+removal_target = "Remove after check_tigerbeetle_health converts all client construction failures into TigerBeetleHealth."
+line = 230

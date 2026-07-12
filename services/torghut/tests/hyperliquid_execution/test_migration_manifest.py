@@ -4,18 +4,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.migration_testing import migration_path
 
-TORGHUT_ROOT = Path(__file__).resolve().parents[2]
+
 REPO_ROOT = Path(__file__).resolve().parents[4]
-MIGRATION = (
-    TORGHUT_ROOT / "migrations/versions/0056_hyperliquid_execution_v2_hard_reset.py"
-)
-MULTIFACTOR_MIGRATION = (
-    TORGHUT_ROOT / "migrations/versions/0057_generic_multifactor_machine.py"
-)
+MIGRATION = migration_path("0056_hyperliquid_execution_v2_hard_reset.py")
+MULTIFACTOR_MIGRATION = migration_path("0057_generic_multifactor_machine.py")
 CONFIGMAP = REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/configmap.yaml"
 DEPLOYMENT = (
     REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/deployment.yaml"
+)
+DB_MIGRATIONS_JOB = (
+    REPO_ROOT / "argocd/applications/torghut-hyperliquid-runtime/db-migrations-job.yaml"
 )
 
 
@@ -53,6 +53,40 @@ def test_manifest_uses_v2_command_and_env_prefix_only() -> None:
     assert "app.hyperliquid_execution.api:app" in deployment
     assert "revisionHistoryLimit: 2" in deployment
     assert "HYPERLIQUID_EXECUTION_ORDER_POLICY: marketable_ioc" in configmap
-    assert "HYPERLIQUID_EXECUTION_MAKER_TIF: Ioc" in configmap
-    assert 'HYPERLIQUID_EXECUTION_MAKER_TTL_SECONDS: "10"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_TRADING_ENABLED: "false"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_ORDER_TTL_SECONDS: "10"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MIN_ORDER_NOTIONAL_USD: "12"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_TARGET_MARGIN_UTILIZATION: "0.35"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MAX_SYMBOL_MARGIN_UTILIZATION: "0.08"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MAX_ORDER_MARGIN_UTILIZATION: "0.02"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS: "1000"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MIN_AFTER_COST_EDGE_BPS: "4"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MIN_EDGE_COST_RATIO: "2"' in configmap
+    assert (
+        'HYPERLIQUID_EXECUTION_MAX_SYMBOL_TURNOVER_EQUITY_MULTIPLE_1H: "1"' in configmap
+    )
+    assert (
+        'HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SYMBOL_ENTRIES: "300"' in configmap
+    )
+    assert 'HYPERLIQUID_EXECUTION_MIN_SECONDS_BETWEEN_SIDE_FLIP: "900"' in configmap
+    assert 'HYPERLIQUID_EXECUTION_MAX_DAILY_LOSS_USD: "100"' in configmap
+    assert (
+        'HYPERLIQUID_EXECUTION_MAINTENANCE_REDUCE_ONLY_CLOSE_ENABLED: "true"'
+        in configmap
+    )
+    assert "hyperliquid-testnet-loss-cap-20260705a" in deployment
+    assert "hyperliquid-profitability-freeze-20260705a" not in deployment
     assert "HYPERLIQUID_RUNTIME_" not in configmap
+    assert "HYPERLIQUID_EXECUTION_MAX_ORDER_NOTIONAL_USD" not in configmap
+    assert "HYPERLIQUID_EXECUTION_MAX_GROSS_EXPOSURE_USD" not in configmap
+    assert "HYPERLIQUID_EXECUTION_MAX_SYMBOL_EXPOSURE_USD" not in configmap
+
+
+def test_runtime_migration_hook_uses_image_path_binaries() -> None:
+    manifest = DB_MIGRATIONS_JOB.read_text()
+
+    assert "workingDir: /app" in manifest
+    assert "name: PYTHONPATH\n              value: /app" in manifest
+    assert "until python - <<'PY'" in manifest
+    assert "alembic -c /app/alembic.ini upgrade heads" in manifest
+    assert "/opt/venv/bin/" not in manifest

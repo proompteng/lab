@@ -6,6 +6,7 @@ on:
       - 'release/**'
     paths:
       - 'argocd/applications/*/kustomization.yaml'
+      - 'argocd/applications/headlamp/values.yaml'
       - 'argocd/sag/kustomization.yaml'
   workflow_dispatch:
     inputs:
@@ -104,6 +105,7 @@ jobs:
             "argocd/applications/app/kustomization.yaml"
             "argocd/applications/bumba/kustomization.yaml"
             "argocd/applications/docs/kustomization.yaml"
+            "argocd/applications/headlamp/values.yaml"
             "argocd/applications/oirat/kustomization.yaml"
             "argocd/applications/olden/kustomization.yaml"
             "argocd/applications/proompteng/kustomization.yaml"

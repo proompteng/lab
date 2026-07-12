@@ -1,21 +1,20 @@
 # 102. Torghut Profit Proof Exchange And Capital SLO Budget (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut measurable hypothesis receipts, capital SLO budgets, options and quant proof freshness, rejection-rate
-guards, shadow repair, and Jangar action-budget consumption.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/98-jangar-action-slo-budget-and-profit-proof-exchange-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `101-torghut-proof-debt-retirement-and-shadow-capital-handoff-2026-05-06.md`
-- `100-torghut-market-context-negative-evidence-and-shadow-capital-router-2026-05-06.md`
-- `96-torghut-control-plane-proof-feed-and-profit-route-budget-contract-2026-05-05.md`
-- `94-torghut-session-edge-ledger-and-cost-aware-capital-allocator-2026-05-05.md`
 
 ## Decision
 

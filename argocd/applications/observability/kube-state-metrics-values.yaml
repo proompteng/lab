@@ -1,0 +1,17 @@
+fullnameOverride: observability-kube-state-metrics
+prometheusScrape: false
+replicas: 1
+
+collectors:
+  - deployments
+  - nodes
+  - pods
+
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi

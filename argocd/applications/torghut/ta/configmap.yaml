@@ -16,9 +16,9 @@ data:
   TA_MICROBARS_TOPIC: "torghut.ta.bars.1s.v1"
   TA_SIGNALS_TOPIC: "torghut.ta.signals.v1"
   TA_STATUS_TOPIC: "torghut.ta.status.v1"
-  TA_GROUP_ID: "torghut-ta-replay-profit-proof-signal-gap-20260601T0437Z"
+  TA_GROUP_ID: "torghut-ta-live"
   TA_CLIENT_ID: "torghut-ta"
-  TA_AUTO_OFFSET_RESET: "earliest"
+  TA_AUTO_OFFSET_RESET: "latest"
   TA_CHECKPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis"
   TA_SAVEPOINT_DIR: "s3a://flink-checkpoints/torghut/technical-analysis/savepoints"
   TA_CHECKPOINT_INTERVAL_MS: "60000"
@@ -28,6 +28,7 @@ data:
   # IEX quote cadence can be sparse for the capped chip universe; keep TA quotes
   # fresh enough for execution gates without admitting overnight/stale state.
   TA_QUOTE_STALE_AFTER_MS: "15000"
+  TA_SOURCE_LAG_DEGRADED_AFTER_MS: "300000"
   TA_PARALLELISM: "8"
   TA_VWAP_WINDOW_SECONDS: "300"
   TA_REALIZED_VOL_WINDOW: "60"
@@ -46,3 +47,4 @@ data:
   TA_CLICKHOUSE_SCHEMA_INIT_MAX_RETRIES: "180"
   TA_CLICKHOUSE_SCHEMA_INIT_RETRY_DELAY_MS: "2000"
   TA_CLICKHOUSE_SCHEMA_INIT_STRICT: "true"
+  TA_CLICKHOUSE_REQUIRE_REPLICATED_TABLES: "true"

@@ -18,6 +18,10 @@ from ....config import settings
 from ....models import TradeDecision
 from ...llm.schema import PortfolioSnapshot, RecentDecisionSummary
 from ...models import StrategyDecision
+from ...portfolio.allocation_helpers import (
+    apply_projected_position_decision,
+    position_qty,
+)
 from ...prices import MarketSnapshot
 from ...regime_hmm import (
     resolve_hmm_context,
@@ -168,6 +172,8 @@ def price_snapshot_payload(snapshot: MarketSnapshot) -> dict[str, Any]:
         "as_of": snapshot.as_of.isoformat(),
         "price": str(snapshot.price) if snapshot.price is not None else None,
         "spread": str(snapshot.spread) if snapshot.spread is not None else None,
+        "bid": str(snapshot.bid) if snapshot.bid is not None else None,
+        "ask": str(snapshot.ask) if snapshot.ask is not None else None,
         "source": snapshot.source,
     }
 
@@ -253,37 +259,6 @@ def allocator_rejection_reasons(decision: StrategyDecision) -> list[str]:
         if reason_codes:
             return reason_codes
     return ["allocator_rejected"]
-
-
-def apply_projected_position_decision(
-    positions: list[dict[str, Any]],
-    decision: StrategyDecision,
-) -> None:
-    qty = optional_decimal(decision.qty)
-    if qty is None or qty <= 0 or decision.action not in {"buy", "sell"}:
-        return
-    current_qty = position_qty(decision.symbol, positions)
-    current_market_value = position_market_value(decision.symbol, positions)
-    delta = qty if decision.action == "buy" else -qty
-    projected_qty = current_qty + delta
-    projected_market_value = projected_position_market_value(
-        current_market_value,
-        delta,
-        extract_decision_price(decision),
-    )
-    positions[:] = [
-        position for position in positions if position.get("symbol") != decision.symbol
-    ]
-    if projected_qty == 0:
-        return
-    projected_position = {
-        "symbol": decision.symbol,
-        "qty": str(abs(projected_qty)),
-        "side": "short" if projected_qty < 0 else "long",
-    }
-    if projected_market_value is not None:
-        projected_position["market_value"] = str(projected_market_value)
-    positions.append(projected_position)
 
 
 def project_open_orders_onto_positions(
@@ -534,62 +509,6 @@ def llm_guardrail_controls_snapshot() -> dict[str, Any]:
         "uncertainty_fail_mode": settings.llm_quality_fail_mode,
         "effective_fail_mode": settings.llm_effective_fail_mode_for_current_rollout(),
     }
-
-
-def position_qty(symbol: str, positions: list[dict[str, Any]]) -> Decimal:
-    total_qty = Decimal("0")
-    for position in positions:
-        if position.get("symbol") != symbol:
-            continue
-        qty = optional_decimal(position.get("qty"))
-        if qty is None:
-            qty = optional_decimal(position.get("quantity"))
-        if qty is None:
-            continue
-        side = str(position.get("side") or "").strip().lower()
-        if side == "short":
-            qty = -abs(qty)
-        total_qty += qty
-    return total_qty
-
-
-def position_market_value(
-    symbol: str,
-    positions: list[dict[str, Any]],
-) -> Decimal | None:
-    total_market_value = Decimal("0")
-    has_market_value = False
-    for position in positions:
-        if position.get("symbol") != symbol:
-            continue
-        market_value = optional_decimal(position.get("market_value"))
-        if market_value is None:
-            continue
-        total_market_value += market_value
-        has_market_value = True
-    if not has_market_value:
-        return None
-    return total_market_value
-
-
-def projected_position_market_value(
-    current_market_value: Decimal | None,
-    delta: Decimal,
-    decision_price: Decimal | None,
-) -> Decimal | None:
-    if decision_price is None:
-        return current_market_value
-    return (current_market_value or Decimal("0")) + (delta * decision_price)
-
-
-def extract_decision_price(decision: StrategyDecision) -> Decimal | None:
-    for key in ("price", "limit_price", "stop_price"):
-        value = decision.params.get(key)
-        if value is None:
-            value = getattr(decision, key, None)
-        if value is not None:
-            return optional_decimal(value)
-    return None
 
 
 def open_order_projection(

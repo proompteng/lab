@@ -9,102 +9,9 @@ from typing import Any
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
 from app.hyperliquid_execution.models import ExecutionMarket, OpenOrder, OrderIntent
-
-
-def test_exchange_submits_ioc_restore_order() -> None:
-    sdk = _FakeSdk()
-    sdk.next_order_response = {
-        "response": {"data": {"statuses": [{"filled": {"oid": 123}}]}}
-    }
-    exchange = _FakeExchange(
-        HyperliquidExecutionConfig.from_env(
-            {
-                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
-            }
-        ),
-        sdk=sdk,
-    )
-    intent = OrderIntent(
-        market_id="hl:perp:xyz:NVDA",
-        coin="NVDA",
-        dex="xyz",
-        side="buy",
-        size=Decimal("1"),
-        limit_price=Decimal("10"),
-        notional_usd=Decimal("10"),
-        cloid="0xabc",
-        tif="Ioc",
-        reduce_only=False,
-        signal_id="signal",
-        expires_at=datetime.now(timezone.utc),
-    )
-
-    result = exchange.submit_order(intent)
-    maker_result = exchange.submit_maker_order(intent)
-
-    assert result.status == "filled"
-    assert result.exchange_order_id == "123"
-    assert maker_result.status == "filled"
-    assert sdk.orders[0]["order_type"] == {"limit": {"tif": "Ioc"}}
-    assert sdk.orders[0]["limit_px"] == 10.0
-
-
-def test_exchange_rounds_size_up_after_exchange_precision_normalization() -> None:
-    sdk = _FakeSdk()
-    exchange = _FakeExchange(
-        HyperliquidExecutionConfig.from_env(
-            {
-                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
-                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
-            }
-        ),
-        sdk=sdk,
-    )
-    exchange.filter_supported_markets((_market("NVDA", "xyz"),))
-    intent = OrderIntent(
-        market_id="hl:perp:xyz:NVDA",
-        coin="NVDA",
-        dex="xyz",
-        side="buy",
-        size=Decimal("0.1999"),
-        limit_price=Decimal("50"),
-        notional_usd=Decimal("9.995"),
-        cloid="0xabc",
-        tif="Alo",
-        reduce_only=False,
-        signal_id="signal",
-        expires_at=datetime.now(timezone.utc),
-    )
-
-    result = exchange.submit_order(intent)
-
-    assert result.status == "accepted"
-    assert sdk.orders[0]["sz"] == 0.2
-
-
-def test_exchange_cancels_by_oid() -> None:
-    sdk = _FakeSdk()
-    exchange = _FakeExchange(
-        HyperliquidExecutionConfig.from_env(
-            {"HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1"}
-        ),
-        sdk=sdk,
-    )
-    order = OpenOrder(
-        order_id="order",
-        coin="NVDA",
-        dex="xyz",
-        exchange_order_id="123",
-        cloid="0xabc",
-        status="accepted",
-        expires_at=datetime.now(timezone.utc),
-    )
-
-    result = exchange.cancel_order(order)
-
-    assert result.status == "cancelled"
-    assert sdk.cancels == [("NVDA", 123)]
+from app.hyperliquid_execution.reconciliation_keys import (
+    market_id_by_reconciliation_coin,
+)
 
 
 def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None:
@@ -128,8 +35,11 @@ def test_exchange_filters_metadata_reconciles_account_and_tracks_halts() -> None
 
     selected, status = exchange.filter_supported_markets(markets)
     assert [market.coin for market in selected] == ["NVDA", "HALT"]
+    assert selected[0].max_leverage == Decimal("20")
+    assert selected[0].payload["execution_max_leverage"] == "20"
     assert status.ready is True
     assert "OLD" in status.details["delisted"]
+    assert status.details["max_leverage_by_coin"]["NVDA"] == "20"
 
     halted_intent = _intent("HALT")
     sdk.next_order_response = {
@@ -178,6 +88,33 @@ def test_exchange_reconciles_unified_account_spot_and_perp_dex_state() -> None:
     assert "xyz" in account.account.raw_payload["dexStates"]
 
 
+def test_exchange_canonicalizes_scoped_reconciliation_rows() -> None:
+    exchange = _FakeExchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_API_WALLET_PRIVATE_KEY": "0x1",
+                "HYPERLIQUID_EXECUTION_ACCOUNT_ADDRESS": "0xabc",
+            }
+        ),
+        sdk=_FakeSdk(),
+        info=_ScopedReconciliationInfo(),
+    )
+    market = _market("NVDA", "xyz")
+    exchange.filter_supported_markets((market,))
+    market_id_by_coin = market_id_by_reconciliation_coin((market,))
+
+    fills = exchange.reconcile_fills(market_id_by_coin)
+    account = exchange.reconcile_account(market_id_by_coin)
+
+    assert fills[0].market_id == "hl:perp:xyz:NVDA"
+    assert fills[0].coin == "NVDA"
+    assert fills[0].raw_payload["coin"] == "xyz:NVDA"
+    assert account.positions[0].market_id == "hl:perp:xyz:NVDA"
+    assert account.positions[0].coin == "NVDA"
+    assert account.positions[0].sdk_coin == "xyz:NVDA"
+    assert account.positions[0].raw_payload["coin"] == "xyz:NVDA"
+
+
 def test_exchange_reconciles_spot_state_fallback_paths() -> None:
     config = HyperliquidExecutionConfig.from_env(
         {
@@ -214,7 +151,7 @@ def test_exchange_reconciles_spot_state_fallback_paths() -> None:
 def test_exchange_rejects_unsupported_tif_missing_key_and_local_cancel() -> None:
     exchange = _FakeExchange(HyperliquidExecutionConfig.from_env({}), sdk=_FakeSdk())
 
-    unsupported_tif = exchange.submit_order(_intent("NVDA", tif="Gtc"))
+    unsupported_tif = exchange.submit_order(_intent("NVDA", tif="Alo"))
     missing_key = exchange.submit_order(_intent("NVDA", tif="Ioc"))
     local_cancel = exchange.cancel_order(
         OpenOrder(
@@ -244,30 +181,61 @@ def test_exchange_reduce_only_close_uses_sdk_market_close() -> None:
         ),
         sdk=sdk,
     )
+    exchange.filter_supported_markets((_market("NVDA", "xyz"),))
 
-    result = exchange.close_position_reduce_only(
+    default_result = exchange.close_position_reduce_only(
+        "NVDA", size=Decimal("1.0"), slippage=Decimal("0.02")
+    )
+    scoped_result = exchange.close_position_reduce_only(
+        "xyz:NVDA", size=Decimal("0.5"), slippage=Decimal("0.02")
+    )
+    spx_result = exchange.close_position_reduce_only(
         "SPX", size=Decimal("275.2"), slippage=Decimal("0.02")
     )
 
-    assert result.status == "filled"
-    assert result.exchange_order_id == "789"
-    assert sdk.market_closes == [("SPX", 275.2, 0.02)]
+    assert default_result.status == "filled"
+    assert scoped_result.status == "filled"
+    assert spx_result.exchange_order_id == "789"
+    assert sdk.market_closes == [
+        ("NVDA", 1.0, 0.02),
+        ("xyz:NVDA", 0.5, 0.02),
+        ("SPX", 275.2, 0.02),
+    ]
+
+
+class _FakeSdkInfo:
+    def __init__(self) -> None:
+        self.name_to_coin: dict[str, object] = {
+            "NVDA": 0,
+            "HALT": 1,
+            "AMD": 2,
+            "SPX": 3,
+        }
+        self.coin_to_asset: dict[object, int] = {
+            0: 110000,
+            1: 110001,
+            2: 110002,
+            3: 110003,
+        }
 
 
 class _FakeSdk:
     def __init__(self) -> None:
-        self.orders: list[dict[str, Any]] = []
+        self.info = _FakeSdkInfo()
+        self.market_opens: list[dict[str, Any]] = []
         self.cancels: list[tuple[str, int]] = []
         self.market_closes: list[tuple[str, float | None, float]] = []
         self.next_order_response: dict[str, object] = {
             "response": {"data": {"statuses": [{"resting": {"oid": 123}}]}}
         }
 
-    def order(self, **kwargs: object) -> dict[str, object]:
-        self.orders.append(dict(kwargs))
+    def market_open(self, **kwargs: object) -> dict[str, object]:
+        self.info.name_to_coin[str(kwargs["name"])]
+        self.market_opens.append(dict(kwargs))
         return self.next_order_response
 
     def cancel(self, name: str, oid: int) -> dict[str, object]:
+        self.info.name_to_coin[name]
         self.cancels.append((name, oid))
         return {"status": "ok"}
 
@@ -278,6 +246,7 @@ class _FakeSdk:
         sz: float | None = None,
         slippage: float = 0.05,
     ) -> dict[str, object]:
+        self.info.name_to_coin[coin]
         self.market_closes.append((coin, sz, slippage))
         return {"response": {"data": {"statuses": [{"filled": {"oid": 789}}]}}}
 
@@ -287,12 +256,12 @@ class _FakeInfo:
         if dex == "xyz":
             return {
                 "universe": [
-                    {"name": "NVDA", "szDecimals": 2},
+                    {"name": "NVDA", "szDecimals": 2, "maxLeverage": 20},
                     {"name": "OLD", "isDelisted": True, "szDecimals": 2},
-                    {"name": "HALT", "szDecimals": 2},
+                    {"name": "HALT", "szDecimals": 2, "maxLeverage": 10},
                 ]
             }
-        return {"universe": [{"name": "BTC", "szDecimals": 3}]}
+        return {"universe": [{"name": "BTC", "szDecimals": 3, "maxLeverage": 40}]}
 
     def user_fills(self, _account: str) -> list[dict[str, object]]:
         return [
@@ -347,7 +316,7 @@ class _FakeInfo:
 class _UnifiedAccountInfo(_FakeInfo):
     def meta(self, *, dex: str = "") -> dict[str, object]:
         if dex == "xyz":
-            return {"universe": [{"name": "AMD", "szDecimals": 3}]}
+            return {"universe": [{"name": "AMD", "szDecimals": 3, "maxLeverage": 20}]}
         return {"universe": []}
 
     def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
@@ -390,6 +359,52 @@ class _UnifiedAccountInfo(_FakeInfo):
                 }
             ],
             "tokenToAvailableAfterMaintenance": [[0, "987.602738"]],
+        }
+
+
+class _ScopedReconciliationInfo(_FakeInfo):
+    def user_fills(self, _account: str) -> list[dict[str, object]]:
+        return [
+            {
+                "coin": "xyz:NVDA",
+                "px": "100",
+                "sz": "0.1",
+                "fee": "0.01",
+                "closedPnl": "0.50",
+                "oid": "123",
+                "hash": "fill-1",
+                "side": "B",
+                "time": "1781870400000",
+            }
+        ]
+
+    def user_state(self, _account: str, dex: str = "") -> dict[str, object]:
+        if dex == "xyz":
+            return {
+                "marginSummary": {
+                    "accountValue": "1000",
+                    "totalNtlPos": "20",
+                },
+                "withdrawable": "900",
+                "assetPositions": [
+                    {
+                        "position": {
+                            "coin": "xyz:NVDA",
+                            "szi": "0.1",
+                            "entryPx": "100",
+                            "positionValue": "20",
+                            "unrealizedPnl": "0.25",
+                        }
+                    }
+                ],
+            }
+        return {
+            "marginSummary": {
+                "accountValue": "0",
+                "totalNtlPos": "0",
+            },
+            "withdrawable": "0",
+            "assetPositions": [],
         }
 
 
@@ -441,7 +456,7 @@ class _FakeExchange(HyperliquidSdkExecutionExchange):
         return raw
 
 
-def _intent(coin: str, *, tif: str = "Alo") -> OrderIntent:
+def _intent(coin: str, *, tif: str = "Ioc") -> OrderIntent:
     return OrderIntent(
         market_id=f"hl:perp:xyz:{coin}",
         coin=coin,

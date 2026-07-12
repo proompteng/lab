@@ -1,21 +1,20 @@
 # 169. Torghut Route Reacquisition Board And Profit Repair Packets (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut routeability repair, capital holdbacks, profit hypotheses, Jangar proof packet consumption, validation,
-rollout, rollback, and measurable capital reentry gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/165-jangar-proof-settlement-broker-and-profit-repair-packet-gates-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
-- `167-torghut-scoped-profit-repair-options-and-freshness-debt-retirement-2026-05-07.md`
-- `166-torghut-paper-edge-witness-notary-and-zero-notional-repair-queue-2026-05-07.md`
-- `165-torghut-quant-freshness-debt-and-paper-edge-ledgers-2026-05-07.md`
 
 ## Decision
 
@@ -82,7 +81,7 @@ Evidence was collected read-only on 2026-05-07.
   symbols. Missing symbols were `AMZN`, `GOOGL`, and `ORCL`; blocked symbols included `AMD`, `AVGO`, `INTC`, and
   `NVDA`.
 - `/trading/health` reported profit floor `repair_only`, capital `zero_notional`, `market_context_stale`,
-  `execution_tca_route_universe_incomplete`, `alpha_readiness_not_promotion_eligible`, and `simple_submit_disabled`.
+  `execution_tca_route_universe_incomplete`, `hypothesis_not_promotion_eligible`, and `simple_submit_disabled`.
 - Jangar typed quant health for `account=paper&window=1d` had zero latest metrics and no stages. Torghut's configured
   15-minute quant evidence had latest metrics but still no stages, so it is informational rather than a capital
   receipt.

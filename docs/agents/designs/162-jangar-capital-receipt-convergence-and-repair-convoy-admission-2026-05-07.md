@@ -111,7 +111,7 @@ AgentRuns, broker state, or Torghut flags.
 - Live submission gate was closed by `simple_submit_disabled`, capital stage `shadow`, proof floor `repair_only`,
   route state `repair_only`, capital state `zero_notional`, and max notional `0`.
 - Live alpha readiness had three shadow hypotheses, zero promotion eligible, and three rollback required.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live routeability had zero routeable symbols, five blocked symbols, and three missing symbols. Blocked symbols were
   `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA`; missing symbols were `AMZN`, `GOOGL`, and `ORCL`.

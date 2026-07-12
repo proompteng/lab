@@ -7,6 +7,34 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: **Implemented and expanded.** The Flink TA job exists as a production FlinkDeployment with Kafka sources/sinks, ClickHouse JDBC sinks, schema initialization, optional quote/bars streams, status heartbeat, and quote-freshness logic.
+- Current source evidence:
+  - `FlinkTechnicalAnalysisJob.kt::main` builds Kafka sources for trades plus optional quotes/bars1m, assigns event-time watermarks, creates microbars, computes TA signals, optionally emits status, writes Kafka sinks, applies ClickHouse sinks, and executes `torghut-technical-analysis-flink`.
+  - `FlinkTaConfig.kt` defines current env contract: topics, group/client ids, checkpoint/savepoint dirs, checkpoint interval/timeout/pause, max out-of-order ms, quote stale after ms, parallelism, S3 checkpoint config, delivery guarantee, and ClickHouse sink/schema-init settings.
+  - `FlinkTechnicalAnalysisJob.kt::ensureClickhouseSchema` applies `ta-schema.sql` with retry/strictness before ClickHouse sinks are used.
+  - `argocd/applications/torghut/ta/flinkdeployment.yaml` sets Flink v2.0, checkpoint dirs, `EXACTLY_ONCE` checkpoint mode, retained external checkpoints, unaligned checkpoints, Prometheus metrics, fixed-delay restarts, and secret-backed Kafka/ClickHouse/S3 credentials.
+  - Tests include `ParseEnvelopeFlatMapTest`, `SerializationSchemasTest`, `FlinkTechnicalAnalysisOptionalStreamsTest`, `FlinkTechnicalAnalysisQuoteFreshnessTest`, and `RetryHelperTest`.
+- What is implemented from the design:
+  - Kafka trades input;
+  - optional quotes/bars input;
+  - microbar output;
+  - signal output;
+  - ClickHouse sink with at-least-once/dedup-friendly storage;
+  - checkpoint/savepoint configuration;
+  - status heartbeat support;
+  - schema-init retry path.
+- What changed from the design:
+  - current `TA_CHECKPOINT_INTERVAL_MS` in GitOps is 60000, not the older 10000 default shown in config source defaults;
+  - `TA_GROUP_ID` is a stable live value (`torghut-ta-live`); replay/backfill runs must use a separate temporary group
+    and restore this value before production readiness can be claimed;
+  - quote freshness is explicit via `TA_QUOTE_STALE_AFTER_MS=15000` and code paths that reject stale quotes for signal computation.
+- Remaining gaps / operator caveats:
+  - Kafka sinks are still at-least-once; ClickHouse table keys and replacing semantics carry the dedup burden.
+  - Exactly-once Flink checkpointing does not make the ClickHouse JDBC sink exactly-once.
+
 ## Purpose
 
 Specify the Flink TA job’s runtime contract, configuration, checkpointing semantics, ClickHouse sink behavior, and the
@@ -55,8 +83,8 @@ flowchart LR
 | `TA_TRADES_TOPIC`             | Input                | `torghut.trades.v1`                                             |
 | `TA_MICROBARS_TOPIC`          | Output               | `torghut.ta.bars.1s.v1`                                         |
 | `TA_SIGNALS_TOPIC`            | Output               | `torghut.ta.signals.v1`                                         |
-| `TA_GROUP_ID`                 | Consumer group       | `torghut-ta-2025-12-23`                                         |
-| `TA_AUTO_OFFSET_RESET`        | Replay behavior      | `earliest`                                                      |
+| `TA_GROUP_ID`                 | Consumer group       | `torghut-ta-live`                                               |
+| `TA_AUTO_OFFSET_RESET`        | Replay behavior      | `latest`                                                        |
 | `TA_CHECKPOINT_DIR`           | Checkpoints          | `s3a://flink-checkpoints/torghut/technical-analysis`            |
 | `TA_SAVEPOINT_DIR`            | Savepoints           | `s3a://flink-checkpoints/torghut/technical-analysis/savepoints` |
 | `TA_KAFKA_DELIVERY_GUARANTEE` | Kafka sink semantics | `AT_LEAST_ONCE`                                                 |

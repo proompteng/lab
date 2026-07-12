@@ -45,6 +45,7 @@ SIM_SOURCE_BATCH_SIZE = 100
 SIM_RUNTIME_LEDGER_BATCH_SIZE = 100
 SIM_ORDER_EVENT_SCAN_LIMIT = 5000
 RUNTIME_LEDGER_RECONCILE_TIMEOUT_SECONDS = 120.0
+RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS = 1800
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class JournalCronCommand:
     event_scan_limit: int | None = None
     skip_reconcile: bool = False
     reconcile_empty_selection: bool = False
+    reconcile_empty_selection_freshness_headroom_seconds: int = 0
     allow_data_quality_degraded: bool = False
     commit_each_row: bool = False
     progress_interval: int | None = None
@@ -196,6 +198,9 @@ def _live_commands(
             max_batches=1,
             reconcile_limit=LIVE_RECONCILE_LIMIT,
             reconcile_empty_selection=True,
+            reconcile_empty_selection_freshness_headroom_seconds=(
+                RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS
+            ),
             allow_data_quality_degraded=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
             supervise_timeout_seconds=max(
@@ -276,6 +281,9 @@ def _sim_commands(
             reconcile_limit=reconcile_limit,
             account_label=account_label,
             reconcile_empty_selection=True,
+            reconcile_empty_selection_freshness_headroom_seconds=(
+                RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS
+            ),
             allow_data_quality_degraded=True,
             journal_batch_chunk_size=journal_batch_chunk_size,
             supervise_timeout_seconds=max(
@@ -364,6 +372,13 @@ def _argv_for_command(
         argv.append("--skip-reconcile")
     if command.reconcile_empty_selection:
         argv.append("--reconcile-empty-selection")
+    if command.reconcile_empty_selection_freshness_headroom_seconds > 0:
+        argv.extend(
+            [
+                "--reconcile-empty-selection-freshness-headroom-seconds",
+                str(command.reconcile_empty_selection_freshness_headroom_seconds),
+            ]
+        )
     argv.append("--fail-on-degraded")
     if command.allow_data_quality_degraded:
         argv.append("--allow-data-quality-degraded")

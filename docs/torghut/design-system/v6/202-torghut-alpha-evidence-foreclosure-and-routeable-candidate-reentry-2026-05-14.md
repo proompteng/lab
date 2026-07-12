@@ -1,23 +1,20 @@
 # 202. Torghut Alpha Evidence Foreclosure And Routeable Candidate Reentry (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant revenue repair, alpha evidence-window foreclosure, no-delta debt settlement, routeable candidate
-reentry, zero-notional capital safety, validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/197-jangar-alpha-evidence-foreclosure-governor-and-runner-custody-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `201-torghut-alpha-closure-settlement-and-feature-replay-market-2026-05-14.md`
-- `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
-- `199-torghut-executable-alpha-settlement-slots-and-no-delta-repair-custody-2026-05-14.md`
-- `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
 
 ## Decision
 
@@ -29,7 +26,7 @@ The live business surface has moved again, but the revenue blocker has not clear
 `business_state=repair_only`, `revenue_ready=false`, active revision `torghut-00376`, accepted routeable candidate
 count `0`, `zero_notional_or_stale_evidence_rate=1.0`, `max_notional=0`, and top queue item
 `repair_alpha_readiness`. That queue item still targets `routeable_candidate_count`, still cites
-`alpha_readiness_not_promotion_eligible`, and still requires `torghut.executable-alpha-receipts.v1`.
+`hypothesis_not_promotion_eligible`, and still requires `torghut.executable-alpha-receipts.v1`.
 
 The difference is that Torghut now publishes the alpha evidence foundry, alpha repair closure board, closure settlement
 market, and executable alpha repair receipts. Those contracts make the work visible. They also expose a new failure
@@ -142,7 +139,7 @@ broker state, GitOps resources, AgentRuns, or market data.
   `capital_state=zero_notional`, and `max_notional=0`.
 - Top repair queue item:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `value_gate=routeable_candidate_count`
   - `expected_unblock_value=4`
   - `required_output_receipt=torghut.executable-alpha-receipts.v1`

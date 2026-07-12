@@ -23,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -215,15 +216,41 @@ class HyperliquidFeedApp(
           metrics.setWsConnected(true)
           subscribeAll(shard)
           updateReady()
+          val marketDataStallGuard =
+            MarketDataStallGuard(
+              connectedAtMs = nowMs(),
+              startupGraceMs = config.readyEventMaxAgeMs,
+              checkIntervalMs = config.heartbeatIntervalMs,
+            )
           val heartbeat = launch { heartbeatLoop() }
           try {
-            for (frame in incoming) {
-              if (frame !is Frame.Text) continue
-              val raw = frame.readText()
-              val rawRecord = mapper.rawRecord(raw)
-              publishRecords(producer, clickHouseSink, listOf(rawRecord))
-              val normalized = mapper.websocketRecords(raw)
-              publishRecords(producer, clickHouseSink, normalized)
+            while (scope.isActive) {
+              val frame =
+                withTimeoutOrNull(config.wsReadIdleTimeoutMs) {
+                  incoming.receive()
+                } ?: error(
+                  "hyperliquid websocket shard=${shard.index} idle for ${config.wsReadIdleTimeoutMs}ms; reconnecting",
+                )
+              if (frame is Frame.Text) {
+                val raw = frame.readText()
+                val rawRecord = mapper.rawRecord(raw)
+                publishRecords(producer, clickHouseSink, listOf(rawRecord))
+                val normalized = mapper.websocketRecords(raw)
+                publishRecords(producer, clickHouseSink, normalized)
+              }
+
+              val staleMarketData =
+                marketDataStallGuard.staleSnapshotIfDue(
+                  observedAtMs = nowMs(),
+                  freshness = ::eventFreshnessSnapshot,
+                )
+              if (staleMarketData != null) {
+                error(
+                  "hyperliquid websocket shard=${shard.index} market data stale " +
+                    "last_seen_lag_ms=${staleMarketData.lastSeenLagMs} " +
+                    "ready_event_max_age_ms=${config.readyEventMaxAgeMs}; reconnecting",
+                )
+              }
             }
           } finally {
             heartbeat.cancel()
@@ -293,14 +320,14 @@ class HyperliquidFeedApp(
         metrics.recordDedupDrop(record.envelope.channel)
         return@forEach
       }
+      metrics.recordEvent(record.envelope.channel)
+      recordMarketDataFreshness(record.envelope.channel)
       val payload = json.encodeToString(record.envelope)
       runCatching {
         producer.send(ProducerRecord(record.topic, record.key, payload)) { _, error ->
           if (error == null) {
             recordKafkaSuccess()
             metrics.kafkaProduceSuccess.increment()
-            metrics.recordEvent(record.envelope.channel)
-            recordMarketDataFreshness(record.envelope.channel)
           } else {
             recordKafkaFailure(record.topic, error)
           }
@@ -395,10 +422,8 @@ class HyperliquidFeedApp(
   private fun clickHouseFreshAt(observedAt: Long): Boolean {
     if (!config.clickHouse.enabled) return true
     val lastSuccess = clickHouseLastSuccessMs.get()
-    val lastFailure = clickHouseLastFailureMs.get()
     val successFresh = lastSuccess > 0 && observedAt - lastSuccess <= config.clickHouse.readyMaxAgeMs
-    val failureExpired = lastFailure == 0L || observedAt - lastFailure > config.clickHouse.failureHoldMs
-    return clickHouseReady.get() && successFresh && failureExpired
+    return clickHouseReady.get() && successFresh
   }
 
   private fun clickHouseLastSuccessLagMs(): Long? {

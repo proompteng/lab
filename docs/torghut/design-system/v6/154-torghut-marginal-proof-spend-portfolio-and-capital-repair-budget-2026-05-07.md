@@ -1,20 +1,20 @@
 # 154. Torghut Marginal Proof-Spend Portfolio And Capital Repair Budget (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, proof-floor blockers, repair prioritization, proof-spend budgets, Jangar brownout
-admission, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/150-jangar-controller-brownout-budgets-and-proof-spend-admission-exchange-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: strategy/alpha/discovery/profile modules and tests exist, but research strategy proposals are not all promoted runtime strategies.
+- Matched implementation area: Strategy, alpha, TSMOM, regime, portfolio, and sizing.
+- Current source evidence:
+  - `services/torghut/app/strategies/catalog.py`
+  - `services/torghut/app/trading/alpha/tsmom.py`
+  - `services/torghut/app/trading/strategy_runtime`
+  - `services/torghut/app/trading/discovery/candidate_specs.py`
+  - `services/torghut/app/trading/portfolio`
+- Design drift note: A research/stress module is not enough to call a strategy live; promotion still depends on proof/readiness gates.
 
-Extends:
-
-- `153-torghut-useful-evidence-capital-escrow-and-provider-repair-gates-2026-05-07.md`
-- `152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
-- `151-torghut-repair-alpha-carry-exchange-and-paper-settlement-ledger-2026-05-07.md`
 
 ## Decision
 
@@ -84,7 +84,7 @@ broker state, AgentRun objects, GitOps resources, trading flags, or empirical ar
 - Live submission gate was closed: `allowed=false`, `reason=simple_submit_disabled`, `capital_stage=shadow`.
 - Profitability proof floor was not ok: `floor_state=repair_only`, `route_state=repair_only`,
   `capital_state=zero_notional`.
-- Proof-floor blockers were `alpha_readiness_not_promotion_eligible`,
+- Proof-floor blockers were `hypothesis_not_promotion_eligible`,
   `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and `simple_submit_disabled`.
 - TCA evidence was fresh enough to evaluate but not good enough to promote: `13,775` orders, `13,571` filled
   executions, latest computed at `2026-05-07T14:23:44.018621+00:00`, average absolute slippage

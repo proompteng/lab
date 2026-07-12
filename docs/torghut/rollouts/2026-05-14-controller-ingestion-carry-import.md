@@ -14,7 +14,7 @@ Source: `http://torghut.torghut.svc.cluster.local/trading/revenue-repair`
 
 - `business_state=repair_only`
 - `revenue_ready=false`
-- top queue item: `repair_alpha_readiness` / `alpha_readiness_not_promotion_eligible`
+- top queue item: `repair_alpha_readiness` / `hypothesis_not_promotion_eligible`
 - affected value gate: `routeable_candidate_count`
 - `accepted_routeable_candidate_count=0`
 - `max_notional=0`

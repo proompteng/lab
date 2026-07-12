@@ -106,7 +106,7 @@ records, GitOps resources, AgentRuns, broker state, Torghut flags, or ClickHouse
   `kysely_migration`, 29 registered migrations, 29 applied migrations, zero unapplied or unexpected migrations, and
   latest applied `20260508_torghut_quant_pipeline_health_account_window_created_at_index`.
 - Torghut `/trading/status` reported the trading loop running but zero-notional: live submission was not allowed,
-  blocked by `alpha_readiness_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
+  blocked by `hypothesis_not_promotion_eligible`, `empirical_jobs_not_ready`, and `simple_submit_disabled`.
 - Torghut data freshness was the primary business blocker: signal lag was about `328k` seconds, market context
   freshness was about `330k` seconds, all major market-context domains were stale, empirical jobs were stale, and no
   hypotheses were promotion-eligible.

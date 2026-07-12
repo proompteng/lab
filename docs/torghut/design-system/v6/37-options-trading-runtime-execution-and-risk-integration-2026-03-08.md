@@ -3,7 +3,7 @@
 ## Status
 
 - Date: `2026-03-08`
-- Maturity: `implementation-ready design`
+- Maturity: `historical options-trading design; no live trading authority`
 - Scope: `services/torghut/app/trading/**`, `services/torghut/scripts/**`,
   options broker integration, Torghut Postgres execution/accounting state, and the
   operating contracts that would eventually allow options decisions to become orders
@@ -17,6 +17,24 @@
   sizing, exercise/assignment handling, and promotion gates
 - Non-goals: immediate live options execution, uncovered short options, or a broad
   "all asset classes everywhere" refactor
+
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
+
+
+## Current-Truth Notice
+
+This document is a March 8 design snapshot for eventual options trading integration. It does not authorize options order routing, risk changes, capital allocation, or live execution. Current reality is still governed by live-submit gates, proof-floor settlement, alpha-readiness, repair-ledger evidence, `services/torghut/app/trading/**`, and the current Torghut operations index.
 
 ## Executive Summary
 
@@ -67,7 +85,7 @@ generic execution adapter.
 
 ### Execution price normalization is explicitly US-equity-oriented
 
-[`services/torghut/app/trading/execution_policy.py`](services/torghut/app/trading/execution_policy.py)
+[`../../../../services/torghut/app/trading/execution_policy/policy.py`](../../../../services/torghut/app/trading/execution_policy/policy.py)
 documents `_normalize_price_for_trading(...)` as aligning broker-facing prices to
 "common US-equity tick sizes" and quantizes prices to:
 
@@ -78,7 +96,7 @@ That is not a safe universal rule for options orders.
 
 ### Market-price lookup still reads the equity microbar table
 
-[`services/torghut/app/trading/prices.py`](services/torghut/app/trading/prices.py)
+[`services/torghut/app/trading/prices.py`](../../../../services/torghut/app/trading/prices.py)
 queries `ta_microbars` and returns `source="ta_microbars"` in the market snapshot.
 
 There is no options-aware pricing adapter that reads
@@ -86,14 +104,14 @@ There is no options-aware pricing adapter that reads
 
 ### Dataset selection still only recognizes an equity universe contract
 
-[`services/torghut/app/trading/llm/dspy_compile/dataset.py`](services/torghut/app/trading/llm/dspy_compile/dataset.py)
+[`services/torghut/app/trading/llm/dspy_compile/dataset.py`](../../../../services/torghut/app/trading/llm/dspy_compile/dataset.py)
 supports `torghut:equity:enabled`, but no options universe selector. That proves the
 current research and dataset tooling cannot yet train or evaluate strategy logic on an
 options contract universe.
 
 ### Risk and portfolio controls are equity-centric
 
-[`services/torghut/app/trading/risk.py`](services/torghut/app/trading/risk.py)
+[`services/torghut/app/trading/risk.py`](../../../../services/torghut/app/trading/risk.py)
 enforces position growth against `equity * max_pct`.
 
 Repository search across `services/torghut/app/trading/**` shows the broader runtime

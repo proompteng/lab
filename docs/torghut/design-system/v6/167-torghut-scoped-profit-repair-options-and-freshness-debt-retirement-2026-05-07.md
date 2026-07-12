@@ -1,21 +1,20 @@
 # 167. Torghut Scoped Profit Repair Options And Freshness Debt Retirement (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability, scoped proof freshness, repair option ranking, route/TCA reacquisition, Jangar evidence
-debt consumption, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/163-jangar-scoped-evidence-debt-and-retained-failure-quarantine-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `166-torghut-executable-profit-receipts-and-repair-convoy-settlement-2026-05-07.md`
-- `165-torghut-outcome-priced-repair-market-and-capital-shadow-swaps-2026-05-07.md`
-- `164-torghut-zero-notional-route-repair-packets-and-paper-rehearsal-2026-05-07.md`
-- `163-torghut-quant-stage-cohort-and-evidence-repair-settlement-2026-05-07.md`
 
 ## Decision
 
@@ -78,7 +77,7 @@ resources, AgentRuns, broker state, Torghut flags, or ClickHouse tables.
 ### Profitability Evidence
 
 - Live proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Live proof-floor blockers were `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Live proof-floor blockers were `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_empty`, `market_context_stale`, and `simple_submit_disabled`.
 - Live routeability was zero of eight scoped symbols. `AAPL`, `AMD`, `AVGO`, `INTC`, and `NVDA` were blocked by TCA
   route evidence. `AMZN`, `GOOGL`, and `ORCL` were missing.
@@ -340,7 +339,7 @@ Read-only runtime evidence showed:
   were not eligible.
 - Alpha readiness had `3` hypotheses, `0` promotion eligible, and `3` rollback required; dependency quorum decision was
   `block` because empirical jobs were degraded.
-- Proof-floor blockers included `alpha_readiness_not_promotion_eligible`, `degraded`,
+- Proof-floor blockers included `hypothesis_not_promotion_eligible`, `degraded`,
   `execution_tca_route_universe_incomplete`, `market_context_stale`, and `simple_submit_disabled`.
 - Market-context health for `NVDA` was degraded through Jangar: technicals and regime were stale at about `922s`, news
   at about `12363s`, and fundamentals at about `4865116s`.

@@ -1,21 +1,20 @@
 # 143. Torghut Empirical Relay Receipts And Paper Gate Settlement (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut empirical relay receipts, doc29 paper gate settlement, TCA and execution proof, scoped quant freshness,
-capital warrants, validation, rollout, and rollback.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/139-jangar-empirical-relay-source-binding-and-capital-gate-parity-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and changed: empirical status/proof concepts remain in code, but old empirical job scripts and Argo workflow templates were removed.
+- Matched implementation area: Empirical jobs and promotion evidence.
+- Current source evidence:
+  - `services/torghut/app/trading/empirical_jobs.py`
+  - `services/torghut/app/api/health_checks/shared_context.py`
+  - `services/torghut/app/trading/profit_windows.py`
+  - `services/torghut/app/trading/profit_leases.py`
+  - `services/torghut/scripts/build_historical_profitability_proof.py`
+- Design drift note: Old empirical-promotion scripts/templates must not be cited as live source authority.
 
-Extends:
-
-- `142-torghut-alpha-truth-windows-and-capital-reentry-warrants-2026-05-07.md`
-- `123-torghut-empirical-profit-claims-and-shadow-capital-settlement-2026-05-06.md`
-- `38-authoritative-empirical-promotion-evidence-contract-2026-03-09.md`
-- `29-code-investigated-vnext-architecture-reset-2026-03-06.md`
 
 ## Decision
 
@@ -69,7 +68,7 @@ flags, or empirical artifacts.
 - The live submission gate returned `allowed=false`, `reason=simple_submit_disabled`, `capital_stage=shadow`,
   `configured_live_promotion=false`, and `promotion_eligible_total=0`.
 - The proof floor returned `floor_state=repair_only`, `capital_state=zero_notional`, `max_notional=0`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, and `simple_submit_disabled`.
 - The proof floor empirical dimension was `pass` with candidate
   `chip-paper-microbar-composite@execution-proof` and dataset `torghut-chip-full-day-20260505-5e447b6d-r1`.
 - The proof floor quant-ingestion dimension was informationally degraded with account `PA3SX7FYNUTF`, window `15m`,

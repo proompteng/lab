@@ -121,7 +121,7 @@ broker state, AgentRun objects, GitOps resources, trading flags, or empirical ar
 - Quant direct health was HTTP 200, but stage rows were empty and `pipelineHealthSkippedReason` was
   `account_and_window_required`.
 - The proof floor remained `repair_only`, `capital_state=zero_notional`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`, `market_context_stale`, and
   `simple_submit_disabled`.
 - TCA was stale and poor: `13,775` orders, latest computed at `2026-04-02T20:59:45.136640Z`, and
   `avg_abs_slippage_bps=568.6138848199565249` against an `8` bps guardrail.

@@ -25,7 +25,6 @@ from .shared_context import (
     LATEST_SIGNAL_TS_CACHE_TTL,
     LATEST_SIGNAL_TS_ERROR_LOG_COOLDOWN,
     SignalBatch,
-    coerce_count as _coerce_count,
 )
 from .clickhouse_signal_ingestor_market_support import (
     ClickHouseRequest as _ClickHouseRequest,
@@ -59,6 +58,7 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
         *,
         symbols: tuple[str, ...] = (),
         timeframes: tuple[str, ...] = (),
+        fail_on_query_error: bool = False,
     ) -> Optional[datetime]:
         now = datetime.now(timezone.utc)
         scope_key = _signal_scope_key(symbols, timeframes)
@@ -72,6 +72,8 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
             timeframes=timeframes,
         )
         if last_error is not None:
+            if fail_on_query_error:
+                raise last_error
             return self._latest_signal_timestamp_query_failed(
                 scope_key,
                 now,
@@ -173,86 +175,6 @@ class _ClickHouseSignalIngestorMarketMethods(_ClickHouseSignalIngestorMarketBase
             self._latest_signal_ts_cache = latest
             return
         self._latest_signal_ts_scoped_cache[scope_key] = latest
-
-    def latest_signal_status(self) -> dict[str, Any]:
-        if not self.url:
-            return {
-                "state": "missing",
-                "reason_codes": ["clickhouse_url_missing"],
-                "source_ref": self.table,
-            }
-        try:
-            time_column = self._resolve_time_column()
-            latest_signal_at = self._latest_signal_timestamp(time_column)
-        except Exception as exc:
-            logger.warning("Failed to load ClickHouse TA freshness status: %s", exc)
-            return {
-                "state": "missing",
-                "reason_codes": ["clickhouse_ta_status_query_failed"],
-                "source_ref": self.table,
-                "detail": str(exc)[:200],
-            }
-        if latest_signal_at is None:
-            return {
-                "state": "missing",
-                "reason_codes": ["clickhouse_ta_latest_signal_missing"],
-                "source_ref": self.table,
-                "time_column": time_column,
-            }
-        status: dict[str, Any] = {
-            "state": "current",
-            "latest_signal_at": latest_signal_at,
-            "source_ref": self.table,
-            "time_column": time_column,
-        }
-        try:
-            status.update(
-                self._latest_signal_readiness_counts(
-                    time_column=time_column,
-                    latest_signal_at=latest_signal_at,
-                )
-            )
-        except Exception as exc:
-            logger.warning("Failed to load ClickHouse TA readiness counts: %s", exc)
-            status["readiness_reason_codes"] = ["clickhouse_ta_readiness_query_failed"]
-            status["readiness_detail"] = str(exc)[:200]
-        return status
-
-    def _latest_signal_readiness_counts(
-        self,
-        *,
-        time_column: str,
-        latest_signal_at: datetime,
-    ) -> dict[str, Any]:
-        safe_time_column = _safe_identifier(time_column, kind="column")
-        lookback_minutes = max(int(self.initial_lookback_minutes or 1), 1)
-        window_start = latest_signal_at - timedelta(minutes=lookback_minutes)
-        where_parts = [
-            f"{safe_time_column} >= {to_datetime64(window_start)}",
-            f"{safe_time_column} <= {to_datetime64(latest_signal_at)}",
-        ]
-        source_clause = self._source_where_clause()
-        if source_clause is not None:
-            where_parts.append(source_clause)
-        query = " ".join(
-            [
-                "SELECT",
-                "count() AS signal_rows, uniqExact(symbol) AS symbol_count",
-                "FROM",
-                self.table,
-                "WHERE",
-                " AND ".join(where_parts),
-                "FORMAT JSONEachRow",
-            ]
-        )
-        rows = self._query_clickhouse(query)
-        row = rows[0] if rows else {}
-        return {
-            "signal_rows": _coerce_count(row.get("signal_rows")),
-            "symbol_count": _coerce_count(row.get("symbol_count")),
-            "readiness_window_start": window_start,
-            "readiness_window_end": latest_signal_at,
-        }
 
     def _latest_signal_timestamp_queries(
         self,

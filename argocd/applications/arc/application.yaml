@@ -8,13 +8,13 @@ spec:
   sources:
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set-controller
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-controller
         skipCrds: false
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set
         skipCrds: false
@@ -28,7 +28,7 @@ spec:
           scaleSetLabels:
             - arc-arm64
           minRunners: 1
-          maxRunners: 3
+          maxRunners: 10
           listenerTemplate:
             spec:
               dnsConfig:
@@ -47,13 +47,13 @@ spec:
               securityContext:
                 runAsNonRoot: false
                 # ARC runners need a writable tool cache under /home/runner/_work/_tool.
-                # With PVC-backed work dirs, the volume is root-owned by default; set an fsGroup so the
-                # non-root runner user can create directories before any workflow steps run.
+                # Keep lab runners on node-local work dirs so high-concurrency Nix image builds do not
+                # block on dynamic PVC provisioning before the runner can accept a job.
                 fsGroup: 1001
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f104125c6521dfe50c08e92edb239530f47f2307e288a60822e3a7db0234664f
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -64,7 +64,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f104125c6521dfe50c08e92edb239530f47f2307e288a60822e3a7db0234664f
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
@@ -78,9 +78,9 @@ spec:
                       docker version
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
-                      ephemeral-storage: "40Gi"
+                      ephemeral-storage: "4Gi"
                     limits:
                       cpu: "8"
                       memory: "16Gi"
@@ -110,9 +110,9 @@ spec:
                     - --max-concurrent-uploads=8
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
-                      ephemeral-storage: "30Gi"
+                      ephemeral-storage: "6Gi"
                     limits:
                       cpu: "12"
                       memory: "16Gi"
@@ -131,21 +131,15 @@ spec:
                       mountPath: /home/runner/externals
               volumes:
                 - name: work
-                  ephemeral:
-                    volumeClaimTemplate:
-                      spec:
-                        accessModes: ["ReadWriteOnce"]
-                        storageClassName: "rook-ceph-block"
-                        resources:
-                          requests:
-                            storage: 20Gi
+                  emptyDir:
+                    sizeLimit: 80Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-amd64
         skipCrds: false
@@ -158,8 +152,8 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          minRunners: 0
-          maxRunners: 2
+          minRunners: 1
+          maxRunners: 10
           listenerTemplate:
             spec:
               dnsConfig:
@@ -180,7 +174,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f104125c6521dfe50c08e92edb239530f47f2307e288a60822e3a7db0234664f
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -191,7 +185,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f104125c6521dfe50c08e92edb239530f47f2307e288a60822e3a7db0234664f
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |
@@ -205,9 +199,9 @@ spec:
                       docker version
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
-                      ephemeral-storage: "40Gi"
+                      ephemeral-storage: "4Gi"
                     limits:
                       cpu: "8"
                       memory: "16Gi"
@@ -237,9 +231,9 @@ spec:
                     - --max-concurrent-uploads=8
                   resources:
                     requests:
-                      cpu: "4"
+                      cpu: "2"
                       memory: "8Gi"
-                      ephemeral-storage: "30Gi"
+                      ephemeral-storage: "6Gi"
                     limits:
                       cpu: "12"
                       memory: "16Gi"
@@ -258,21 +252,15 @@ spec:
                       mountPath: /home/runner/externals
               volumes:
                 - name: work
-                  ephemeral:
-                    volumeClaimTemplate:
-                      spec:
-                        accessModes: ["ReadWriteOnce"]
-                        storageClassName: "rook-ceph-block"
-                        resources:
-                          requests:
-                            storage: 20Gi
+                  emptyDir:
+                    sizeLimit: 80Gi
                 - name: dind-sock
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
-      targetRevision: 0.14.1
+      targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-analysis
         skipCrds: false
@@ -285,8 +273,8 @@ spec:
           runnerScaleSetName: analysis-arm64
           scaleSetLabels:
             - arc-arm64
-          minRunners: 0
-          maxRunners: 2
+          minRunners: 1
+          maxRunners: 5
           listenerTemplate:
             spec:
               dnsConfig:
@@ -310,7 +298,7 @@ spec:
                 fsGroupChangePolicy: OnRootMismatch
               initContainers:
                 - name: init-dind-externals
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f104125c6521dfe50c08e92edb239530f47f2307e288a60822e3a7db0234664f
                   command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
                   resources:
                     requests:
@@ -321,7 +309,7 @@ spec:
                       memory: "256Mi"
               containers:
                 - name: runner
-                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:4a5d57be68379792aee41ec2bf11048e2f0c4f732dfc7cbcc3d44bebdd9b47a4
+                  image: registry.ide-newton.ts.net/lab/arc-runner@sha256:f104125c6521dfe50c08e92edb239530f47f2307e288a60822e3a7db0234664f
                   command: ["/bin/bash", "-lc"]
                   args:
                     - |

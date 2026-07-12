@@ -119,7 +119,7 @@ broker state, AgentRun objects, GitOps resources, trading flags, or empirical ar
 - Torghut live `/trading/status` returned HTTP 200 for active revision `torghut-00257`, build commit
   `81b8231d014c94dc2c70173f35fb53bb279749cf`, mode `live`, pipeline `simple`, and `submit_enabled=false`.
 - Live proof floor was `repair_only`, `capital_state=zero_notional`, `max_notional=0`, with blockers
-  `alpha_readiness_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
+  `hypothesis_not_promotion_eligible`, `execution_tca_stale`, `market_context_stale`, and
   `simple_submit_disabled`.
 - Live execution TCA had `13,775` orders, `avg_abs_slippage_bps=568.6138848199565249`, an `8` bps guardrail, and
   `last_computed_at=2026-04-02T20:59:45.136640Z`.

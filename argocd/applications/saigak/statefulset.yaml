@@ -102,8 +102,6 @@ spec:
               value: 30m
             - name: OLLAMA_MAX_LOADED_MODELS
               value: "1"
-            - name: OLLAMA_FLASH_ATTENTION
-              value: "1"
             - name: NVIDIA_VISIBLE_DEVICES
               value: all
             - name: NVIDIA_DRIVER_CAPABILITIES
@@ -119,11 +117,11 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: "2"
-              memory: 16Gi
+              cpu: "8"
+              memory: 32Gi
               nvidia.com/gpu: "1"
             limits:
-              cpu: "8"
+              cpu: "32"
               memory: 64Gi
               nvidia.com/gpu: "1"
           securityContext:
@@ -149,6 +147,8 @@ spec:
               value: "4096"
             - name: SAIGAK_PROXY_TIMEOUT_SECONDS
               value: "120"
+            - name: SAIGAK_REQUIRE_GPU_RESIDENCY
+              value: "true"
           ports:
             - name: http
               containerPort: 11434
@@ -198,5 +198,5 @@ spec:
             name: saigak-runtime
         - name: model-cache
           persistentVolumeClaim:
-            claimName: saigak-data
+            claimName: saigak-altra-data
       restartPolicy: Always

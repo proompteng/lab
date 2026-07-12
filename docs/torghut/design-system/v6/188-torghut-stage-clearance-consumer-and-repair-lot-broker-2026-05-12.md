@@ -1,21 +1,20 @@
 # 188. Torghut Stage-Clearance Consumer And Repair-Lot Broker (2026-05-12)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-12
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut profitability, Jangar stage-clearance consumption, repair-lot brokerage, zero-notional capital safety,
-validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/184-jangar-stage-clearance-packets-and-repair-run-lot-ledger-2026-05-12.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `187-torghut-profit-window-custody-and-repair-value-market-2026-05-08.md`
-- `186-torghut-routeability-acceptance-cutover-and-fill-quality-loop-2026-05-08.md`
-- `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
 
 ## Decision
 
@@ -65,7 +64,7 @@ flags, broker state, GitOps resources, or AgentRun objects.
 
 ### Data And Capital Evidence
 
-- Live submission was blocked by `simple_submit_disabled`, `alpha_readiness_not_promotion_eligible`, and
+- Live submission was blocked by `simple_submit_disabled`, `hypothesis_not_promotion_eligible`, and
   `empirical_jobs_not_ready`.
 - Profitability proof floor was `repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
 - Consumer evidence produced a current receipt and a route-proven-profit repair decision with `route_repair_value=14`.

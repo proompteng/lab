@@ -3,8 +3,6 @@ from __future__ import annotations
 from tests.live_config_manifest_contract.support import (
     Decimal,
     Mapping,
-    SOURCE_TYPE_EXECUTION_ORDER_EVENT,
-    _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
     _TestLiveConfigManifestContractBase,
     _assert_exact_live_execution_chip_universe,
     _assert_exact_quote_covered_paper_strategy_universe,
@@ -21,12 +19,36 @@ from tests.live_config_manifest_contract.support import (
 )
 
 
-class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
-    _TestLiveConfigManifestContractBase
-):
-    def test_tigerbeetle_journal_order_events_is_manual_operator_tool_only(
-        self,
-    ) -> None:
+def _migration_job_context() -> tuple[
+    Mapping[str, object],
+    str,
+    set[object],
+    dict[object, Mapping[str, object]],
+    list[object],
+]:
+    manifest = _load_yaml_mapping("argocd/applications/torghut/db-migrations-job.yaml")
+    containers = (
+        manifest.get("spec", {})
+        .get("template", {})
+        .get("spec", {})
+        .get("containers", [])
+    )
+    if not containers:
+        raise AssertionError("migration job is missing containers")
+    container = cast(Mapping[str, object], containers[0])
+    args = "\n".join(str(item) for item in container.get("args", []))
+    env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
+    return (
+        container,
+        args,
+        {item.get("name") for item in env},
+        {item.get("name"): item for item in env},
+        [item.get("name") for item in env],
+    )
+
+
+class TestTorghutScheduledMaintenance(_TestLiveConfigManifestContractBase):
+    def test_tigerbeetle_journal_order_events_cronjob_is_removed(self) -> None:
         relative_path = (
             "argocd/applications/torghut/tigerbeetle-journal-order-events-cronjob.yaml"
         )
@@ -41,90 +63,9 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             (
                 _repo_root()
                 / "services/torghut/scripts/run_tigerbeetle_journal_cron.py"
-            ).is_file()
+            ).is_file(),
+            "retain the bounded runner for explicit operator-driven repair",
         )
-
-        live_execution_commands = [
-            command
-            for command in tigerbeetle_journal_runner._live_commands(
-                execution_batch_size=5
-            )
-            if command.source == tigerbeetle_journal_runner.SOURCE_TYPE_EXECUTION
-        ]
-        self.assertEqual(len(live_execution_commands), 1)
-        live_execution_command = live_execution_commands[0]
-        self.assertEqual(live_execution_command.batch_size, 5)
-        self.assertEqual(
-            live_execution_command.repeat_count,
-            tigerbeetle_journal_runner.LIVE_EXECUTION_SLICE_COUNT,
-        )
-        self.assertTrue(live_execution_command.commit_each_row)
-        self.assertEqual(
-            live_execution_command.progress_interval,
-            tigerbeetle_journal_runner.LIVE_EXECUTION_PROGRESS_INTERVAL,
-        )
-        live_order_event_commands = [
-            command
-            for command in tigerbeetle_journal_runner._live_commands(
-                execution_batch_size=5
-            )
-            if command.source == SOURCE_TYPE_EXECUTION_ORDER_EVENT
-        ]
-        self.assertEqual(len(live_order_event_commands), 1)
-        live_order_event_command = live_order_event_commands[0]
-        self.assertEqual(
-            live_order_event_command.batch_size,
-            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
-        )
-        self.assertEqual(live_order_event_command.batch_size, 50)
-        self.assertEqual(
-            live_order_event_command.event_scan_limit,
-            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_SCAN_LIMIT,
-        )
-        self.assertEqual(
-            live_order_event_command.max_batches,
-            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_MAX_BATCHES,
-        )
-        self.assertEqual(live_order_event_command.max_batches, 1)
-        self.assertLessEqual(
-            live_order_event_command.max_batches,
-            2,
-            "live order-event slices must not run PR #9799's unsafe 3-batch shape under the bounded watchdog",
-        )
-        self.assertLessEqual(
-            live_order_event_command.batch_size * live_order_event_command.max_batches,
-            tigerbeetle_journal_runner.LIVE_ORDER_EVENT_BATCH_SIZE,
-            "live order-event slices must stay to one bounded batch under the bounded watchdog",
-        )
-        self.assertTrue(live_order_event_command.skip_reconcile)
-        self.assertTrue(live_order_event_command.allow_data_quality_degraded)
-        live_runtime_commands = [
-            command
-            for command in tigerbeetle_journal_runner._live_commands(
-                execution_batch_size=5
-            )
-            if command.source
-            == tigerbeetle_journal_runner.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
-        ]
-        self.assertEqual(len(live_runtime_commands), 1)
-        live_runtime_command = live_runtime_commands[0]
-        self.assertFalse(live_runtime_command.skip_reconcile)
-        self.assertTrue(live_runtime_command.reconcile_empty_selection)
-        self.assertEqual(
-            live_runtime_command.reconcile_limit,
-            tigerbeetle_journal_runner.LIVE_RECONCILE_LIMIT,
-        )
-
-        sim_runtime_commands = [
-            command
-            for command in tigerbeetle_journal_runner._sim_commands()
-            if command.source
-            == tigerbeetle_journal_runner.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
-        ]
-        self.assertEqual(len(sim_runtime_commands), 1)
-        sim_runtime_command = sim_runtime_commands[0]
-        self.assertFalse(sim_runtime_command.skip_reconcile)
-        self.assertTrue(sim_runtime_command.reconcile_empty_selection)
 
     def test_empirical_promotion_renewal_cronjob_is_removed_from_gitops(
         self,
@@ -141,28 +82,15 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertNotIn("empirical-promotion-renewal-cronjob.yaml", resources)
 
     def test_migration_job_prepares_sim_database_before_sim_upgrade(self) -> None:
-        manifest = _load_yaml_mapping(
-            "argocd/applications/torghut/db-migrations-job.yaml"
-        )
-        containers = (
-            manifest.get("spec", {})
-            .get("template", {})
-            .get("spec", {})
-            .get("containers", [])
-        )
-        self.assertTrue(containers)
-        container = containers[0]
-        args = "\n".join(str(item) for item in container.get("args", []))
-        env = [item for item in container.get("env", []) if isinstance(item, Mapping)]
+        container, args, env_names, env_by_name, env_order = _migration_job_context()
         upgrade_to_research_objects = (
-            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini '
+            'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini '
             "upgrade 0026_strategy_factory_research_objects"
         )
-        upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" /opt/venv/bin/alembic -c /app/alembic.ini upgrade heads'
-        env_names = {item.get("name") for item in env}
-        env_by_name = {item.get("name"): item for item in env}
-        env_order = [item.get("name") for item in env]
+        upgrade_heads = 'DB_DSN="${TORGHUT_SIM_ADMIN_DSN}" alembic -c /app/alembic.ini upgrade heads'
 
+        self.assertEqual(container.get("workingDir"), "/app")
+        self.assertEqual(env_by_name["PYTHONPATH"].get("value"), "/app")
         self.assertIn("TORGHUT_POSTGRES_ADMIN_URI", env_names)
         self.assertIn("TORGHUT_SIM_ADMIN_DSN", env_names)
         self.assertLess(
@@ -190,8 +118,8 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertIn("owner_statement = (", args)
         self.assertIn("ALTER {owned_relation['object_type']}", args)
         self.assertIn("{owned_relation['object_name']} OWNER TO {quoted_role}", args)
-        self.assertNotIn("DO $$", args)
-        self.assertNotIn("format(", args)
+        for forbidden_snippet in ("DO $$", "format(", "/opt/venv/bin/"):
+            self.assertNotIn(forbidden_snippet, args)
         self.assertIn(upgrade_to_research_objects, args)
         self.assertIn("0028_autoresearch_epoch_ledgers", args)
         self.assertIn("whitepaper_claims", args)
@@ -333,9 +261,9 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         env_from = first_container.get("envFrom", [])
         self.assertEqual(env_from, [])
 
-    def test_manifest_simple_lane_profile_is_enforced(self) -> None:
+    def test_api_manifest_simple_lane_profile_is_enforced(self) -> None:
         env = _load_torghut_knative_env()
-        self.assertTrue(_manifest_bool(env, "TRADING_ENABLED"))
+        self.assertFalse(_manifest_bool(env, "TRADING_ENABLED"))
         self.assertEqual(env.get("TRADING_MODE"), "live")
         self.assertEqual(env.get("TRADING_PIPELINE_MODE"), "simple")
         self.assertEqual(env.get("TRADING_UNIVERSE_SOURCE"), "static")
@@ -347,29 +275,22 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
             context="live static universe",
         )
         self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_SUBMIT_ENABLED"))
-        self.assertTrue(_manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED"))
-        self.assertTrue(
-            _manifest_bool(env, "TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE")
-        )
-        self.assertEqual(
-            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL"),
-            _SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL,
-        )
-        self.assertEqual(
-            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_BATCH_LIMIT"), "0"
-        )
-        self.assertEqual(
-            env.get("TRADING_SIMPLE_PAPER_ROUTE_PROBE_RETRY_SCAN_LIMIT"), "0"
-        )
-        self.assertEqual(env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER"), "100")
-        self.assertEqual(env.get("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL"), "250")
-        self.assertEqual(env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.25")
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED", env)
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_ALLOW_LIVE_MODE", env)
+        self.assertNotIn("TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL", env)
+        self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER", env)
+        self.assertNotIn("TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL", env)
+        self.assertNotIn("TRADING_PAPER_ROUTE_TARGET_PLAN_URL", env)
+        self.assertEqual(env.get("TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY"), "0.50")
+        self.assertEqual(env.get("TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY"), "0.50")
         self.assertEqual(
             env.get("TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY"),
-            "0.05",
+            "4.0",
         )
+        self.assertEqual(env.get("TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY"), "0.50")
+        self.assertEqual(env.get("TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS"), "1000")
         self.assertTrue(_manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_ENABLED"))
-        self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "iex")
+        self.assertEqual(env.get("TRADING_ALPACA_QUOTE_FEED"), "sip")
         self.assertEqual(env.get("TRADING_ALPACA_QUOTE_MAX_AGE_SECONDS"), "20")
         self.assertTrue(
             _manifest_bool(env, "TRADING_ALPACA_QUOTE_FALLBACK_MARKET_SESSION_REQUIRED")
@@ -381,7 +302,7 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ENABLED"))
         self.assertFalse(_manifest_bool(env, "TRADING_AUTONOMY_ALLOW_LIVE_PROMOTION"))
         self.assertFalse(_manifest_bool(env, "TRADING_KILL_SWITCH_ENABLED"))
-        self.assertFalse(_manifest_bool(env, "TRADING_EMERGENCY_STOP_ENABLED"))
+        self.assertTrue(_manifest_bool(env, "TRADING_EMERGENCY_STOP_ENABLED"))
         self.assertNotIn("TRADING_EXECUTION_ADAPTER_POLICY", env)
         self.assertNotIn("TRADING_EXECUTION_ADAPTER", env)
         self.assertNotIn("TRADING_EXECUTION_FALLBACK_ADAPTER", env)
@@ -412,3 +333,35 @@ class TestTigerbeetleJournalOrderEventsCronjobCoversLiveAndSim(
         )
         _require_flag_enabled_false("torghut_llm_fail_open_live_approved")
         _require_flag_enabled_false("torghut_llm_shadow_mode")
+
+
+class TestTigerBeetleJournalRuntimeReconcileFreshnessHeadroom(
+    _TestLiveConfigManifestContractBase
+):
+    def test_live_runtime_command_preserves_reconciliation_headroom(self) -> None:
+        [command] = [
+            item
+            for item in tigerbeetle_journal_runner._live_commands(
+                execution_batch_size=5
+            )
+            if item.source
+            == tigerbeetle_journal_runner.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+        ]
+
+        self.assertEqual(
+            command.reconcile_empty_selection_freshness_headroom_seconds,
+            tigerbeetle_journal_runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS,
+        )
+
+    def test_sim_runtime_command_preserves_reconciliation_headroom(self) -> None:
+        [command] = [
+            item
+            for item in tigerbeetle_journal_runner._sim_commands()
+            if item.source
+            == tigerbeetle_journal_runner.SOURCE_TYPE_RUNTIME_LEDGER_BUCKET
+        ]
+
+        self.assertEqual(
+            command.reconcile_empty_selection_freshness_headroom_seconds,
+            tigerbeetle_journal_runner.RUNTIME_LEDGER_RECONCILE_FRESHNESS_HEADROOM_SECONDS,
+        )

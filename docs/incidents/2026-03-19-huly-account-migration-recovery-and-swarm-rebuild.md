@@ -126,5 +126,5 @@ Primary causes:
 ## References
 
 - [docs/runbooks/huly-swarm-recovery-and-account-rebuild.md](../runbooks/huly-swarm-recovery-and-account-rebuild.md)
-- [argocd/applications/huly/cockroach/cockroach-account-migration-repair-job.yaml](../../argocd/applications/huly/cockroach/cockroach-account-migration-repair-job.yaml)
-- [argocd/applications/huly/config/healthcheck-scripts-configmap.yaml](../../argocd/applications/huly/config/healthcheck-scripts-configmap.yaml)
+- Historical GitOps path from the incident: `argocd/applications/huly/cockroach/cockroach-account-migration-repair-job.yaml`
+- Historical GitOps path from the incident: `argocd/applications/huly/config/healthcheck-scripts-configmap.yaml`

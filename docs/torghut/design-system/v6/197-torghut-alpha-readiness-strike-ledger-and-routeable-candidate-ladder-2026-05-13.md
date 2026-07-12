@@ -1,22 +1,20 @@
 # 197. Torghut Alpha Readiness Strike Ledger And Routeable Candidate Ladder (2026-05-13)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-13
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant revenue repair, alpha readiness, promotion custody, zero-notional repair dispatch,
-routeable-candidate admission, capital safety, validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/192-jangar-alpha-readiness-repair-escrow-and-runner-admission-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `196-torghut-profit-carry-passports-and-repair-capacity-futures-2026-05-13.md`
-- `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
-- `192-torghut-typed-consumer-evidence-route-and-capital-safe-repair-dispatch-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `168-torghut-executable-alpha-receipts-and-capital-replay-board-2026-05-07.md`
 
 ## Decision
 
@@ -25,7 +23,7 @@ I am selecting an **alpha-readiness strike ledger** as the next Torghut quant ar
 The live business surface is no longer asking for a generic proof loop. `/trading/revenue-repair` is explicit:
 `business_state=repair_only`, `revenue_ready=false`, `routeable_candidate_count=0`,
 `zero_notional_or_stale_evidence_rate=1.0`, `capital_state=zero_notional`, `max_notional=0`, and the top repair queue
-item is `repair_alpha_readiness` for `alpha_readiness_not_promotion_eligible`. The required output receipt is
+item is `repair_alpha_readiness` for `hypothesis_not_promotion_eligible`. The required output receipt is
 `torghut.executable-alpha-receipts.v1`, with `alpha_readiness_receipt`, `hypothesis_promotion_receipt`, and
 `capital_replay_board` as required receipts.
 
@@ -82,13 +80,13 @@ records, trading flags, broker state, or AgentRuns.
   `capital_stage=shadow`, `proof_floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`,
   and `max_notional=0`.
 - The repair queue had two visible business blockers:
-  - `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate `routeable_candidate_count`,
+  - `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate `routeable_candidate_count`,
     priority `70`, expected unblock value `2`, required output `torghut.executable-alpha-receipts.v1`.
   - `live_submit_gate_closed`, reason `simple_submit_disabled`, value gate `capital_gate_safety`, priority `50`, and
     capital rule `zero_notional_repair_only`.
 - Route evidence reported `accepted_routeable_candidate_count=0`, `zero_notional_or_stale_evidence_rate=1.0`,
   `selected_repair_bid_count=32`, and held action classes `paper_canary`, `live_micro_canary`, and `live_scale`.
-- Routeability acceptance was blocked with reason codes including `alpha_readiness_not_promotion_eligible`,
+- Routeability acceptance was blocked with reason codes including `hypothesis_not_promotion_eligible`,
   `alpha_readiness_fail`, `proof_floor_repair_only`, `capital_state_zero_notional`,
   `route_tca_passed_but_dependency_receipts_block_capital`, `execution_tca_route_universe_exclusions_applied`,
   `execution_tca_symbol_missing`, `hypothesis_not_promotion_eligible`, `research_candidates_empty`,
@@ -148,7 +146,7 @@ records, trading flags, broker state, or AgentRuns.
 ### Source And Test Surface
 
 - `services/torghut/app/trading/revenue_repair.py` already maps
-  `alpha_readiness_not_promotion_eligible` to `repair_alpha_readiness`, value gate `routeable_candidate_count`, and
+  `hypothesis_not_promotion_eligible` to `repair_alpha_readiness`, value gate `routeable_candidate_count`, and
   required output `torghut.executable-alpha-receipts.v1`.
 - `services/torghut/app/trading/executable_alpha_receipts.py` builds the zero-notional capital replay board and
   candidate executable alpha receipts. The current receipts are projections: `after_refs` are empty, measured delta is

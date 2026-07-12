@@ -1,23 +1,20 @@
 # 210. Torghut Source-Bound Verification Carry Import And No-Delta Release (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut verification-carry import board, no-delta release accounting, Jangar source-bound carry exchange,
-routeable-candidate recovery, data quality, validation, rollout, rollback, and cross-swarm handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/204-jangar-source-bound-verification-carry-exchange-and-repair-slot-reconciliation-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Implemented/partially evolved: Torghut GitOps, migrations, release workflows, and scripts exist; post-deploy verification wiring has changed over time.
+- Matched implementation area: CI/CD, release, GitOps, Argo, Knative, and deployment automation.
+- Current source evidence:
+  - `argocd/applications/torghut/knative-service.yaml`
+  - `argocd/applications/torghut/db-migrations-job.yaml`
+  - `.github/workflows/torghut-ci.yml`
+  - `.github/workflows/torghut-release.yml`
+  - `packages/scripts/src/torghut/update-manifests.ts`
+- Design drift note: Deployment docs must be checked against current workflows because old names have been retired or replaced.
 
-Extends:
-
-- `209-torghut-verification-carry-import-and-alpha-repair-release-2026-05-14.md`
-- `208-torghut-jangar-verification-carry-bridge-and-no-delta-reentry-market-2026-05-14.md`
-- `206-torghut-no-delta-repair-reentry-auction-and-verification-carry-2026-05-14.md`
-- `205-torghut-alpha-readiness-settlement-conveyor-and-routeable-profit-runway-2026-05-14.md`
-- `204-torghut-alpha-repair-dividend-ledger-and-custody-flight-recorder-2026-05-14.md`
-- `200-torghut-routeable-alpha-evidence-foundry-and-capital-safe-profit-ladder-2026-05-14.md`
 
 ## Decision
 
@@ -109,10 +106,10 @@ flags, GitOps resources, AgentRuns, or market data.
 
 - `/trading/revenue-repair` generated at `2026-05-14T16:28:24.776278+00:00`.
 - `business_state=repair_only` and `revenue_ready=false`.
-- Top queue item was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, priority `70`,
+- Top queue item was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, priority `70`,
   selected value gate `routeable_candidate_count`, expected unblock value `2`, and required output
   `torghut.executable-alpha-receipts.v1`.
-- Blockers were `alpha_readiness_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, and
+- Blockers were `hypothesis_not_promotion_eligible`, `degraded`, `simple_submit_disabled`, and
   `empirical_jobs_not_ready`.
 - `alpha_readiness_settlement_conveyor.status=no_delta`, `settlement_state=no_delta`, selected hypothesis
   `H-MICRO-01`, and selected strategy `microbar_volume_continuation_long_top2_chip_v1@paper`.

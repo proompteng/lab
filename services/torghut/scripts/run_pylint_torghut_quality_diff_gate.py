@@ -7,9 +7,11 @@ import ast
 import re
 import subprocess
 import sys
-from collections.abc import Iterable, Sequence
+import tomllib
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 TORGHUT_PREFIX = "services/torghut/"
 CUSTOM_RULES = (
@@ -27,7 +29,11 @@ CUSTOM_RULES = (
     "torghut-custom-module-class",
     "torghut-test-compat-wrapper",
     "torghut-source-string-execution",
+    "torghut-typing-any-import",
+    "torghut-broad-exception",
+    "torghut-base-exception",
 )
+DEFAULT_ALLOWLIST_PATH = "config/quality/quality-gate-allowlist.toml"
 
 _DIFF_FILE_RE = re.compile(r"^\+\+\+ b/(.+)$")
 _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -46,6 +52,22 @@ class PylintMessage:
     path: str
     line: int
     raw: str
+    symbol: str | None = None
+
+
+@dataclass(frozen=True)
+class AllowlistEntry:
+    path: str
+    symbol: str
+    owner: str
+    reason: str
+    removal_target: str
+    line: int | None = None
+
+    def matches(self, message: PylintMessage) -> bool:
+        if self.path != message.path or self.symbol != message.symbol:
+            return False
+        return self.line is None or self.line == message.line
 
 
 def parse_changed_lines(diff_text: str) -> dict[str, set[int]]:
@@ -76,11 +98,13 @@ def parse_pylint_messages(output: str) -> list[PylintMessage]:
         match = _PYLINT_MESSAGE_RE.match(line)
         if match is None:
             continue
+        symbol = _message_symbol(line)
         messages.append(
             PylintMessage(
                 path=match.group("path"),
                 line=int(match.group("line")),
                 raw=line,
+                symbol=symbol,
             )
         )
     return messages
@@ -114,6 +138,17 @@ def filter_base_line_messages(
     return filtered
 
 
+def filter_allowlisted_messages(
+    messages: Iterable[PylintMessage],
+    allowlist: Sequence[AllowlistEntry],
+) -> list[PylintMessage]:
+    return [
+        message
+        for message in messages
+        if not any(entry.matches(message) for entry in allowlist)
+    ]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -134,10 +169,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Ignore changed-line messages whose current source line already exists in the base app/scripts tree.",
     )
+    parser.add_argument(
+        "--allowlist",
+        default=DEFAULT_ALLOWLIST_PATH,
+        help="TOML allowlist for temporary changed-line quality exceptions.",
+    )
     parser.add_argument("files", nargs="+", help="Torghut-relative Python files")
     args = parser.parse_args(argv)
 
     repo_root = _repo_root()
+    allowlist = load_allowlist(Path(args.allowlist))
     diff_text = _run(
         [
             "git",
@@ -179,6 +220,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             current_root=Path.cwd(),
             repo_root=repo_root,
         )
+    messages = filter_allowlisted_messages(messages, allowlist)
     if messages:
         print("Pylint violations on changed lines:")
         for message in messages:
@@ -191,6 +233,45 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _repo_root() -> Path:
     result = _run(["git", "rev-parse", "--show-toplevel"], cwd=Path.cwd(), check=True)
     return Path(result.stdout.strip())
+
+
+def load_allowlist(path: Path) -> list[AllowlistEntry]:
+    if not path.exists():
+        return []
+    with path.open("rb") as handle:
+        payload = cast(dict[str, object], tomllib.load(handle))
+    raw_entries = payload.get("allow", [])
+    if not isinstance(raw_entries, list):
+        raise ValueError("quality_gate_allowlist_requires_allow_list")
+    return [
+        _allowlist_entry(raw_entry) for raw_entry in cast(list[object], raw_entries)
+    ]
+
+
+def _allowlist_entry(raw_entry: object) -> AllowlistEntry:
+    if not isinstance(raw_entry, dict):
+        raise ValueError("quality_gate_allowlist_entry_must_be_table")
+    entry = cast(Mapping[str, object], raw_entry)
+    required = ("path", "symbol", "owner", "reason", "removal_target")
+    missing = [field for field in required if not _non_empty_str(entry.get(field))]
+    if missing:
+        raise ValueError(
+            f"quality_gate_allowlist_entry_missing_required_fields={','.join(missing)}"
+        )
+    line_value = entry.get("line")
+    line = line_value if isinstance(line_value, int) else None
+    return AllowlistEntry(
+        path=str(entry["path"]),
+        symbol=str(entry["symbol"]),
+        owner=str(entry["owner"]),
+        reason=str(entry["reason"]),
+        removal_target=str(entry["removal_target"]),
+        line=line,
+    )
+
+
+def _non_empty_str(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
 
 
 def _run(
@@ -213,6 +294,18 @@ def _torghut_relative_path(path: str) -> str | None:
     if not path.startswith(TORGHUT_PREFIX):
         return None
     return path.removeprefix(TORGHUT_PREFIX)
+
+
+def _message_symbol(line: str) -> str | None:
+    if not line.endswith(")"):
+        return None
+    open_paren = line.rfind("(")
+    if open_paren == -1:
+        return None
+    symbol = line[open_paren + 1 : -1]
+    if re.fullmatch(r"[a-z][a-z0-9-]+", symbol):
+        return symbol
+    return None
 
 
 def _base_torghut_app_script_lines(base: str, repo_root: Path) -> set[str]:

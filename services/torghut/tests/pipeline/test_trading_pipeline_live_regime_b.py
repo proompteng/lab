@@ -40,6 +40,8 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
             "trading_autonomy_enabled": config.settings.trading_autonomy_enabled,
             "trading_autonomy_allow_live_promotion": config.settings.trading_autonomy_allow_live_promotion,
             "trading_kill_switch_enabled": config.settings.trading_kill_switch_enabled,
+            "trading_simple_submit_enabled": config.settings.trading_simple_submit_enabled,
+            "trading_live_submit_enabled": config.settings.trading_live_submit_enabled,
             "trading_universe_source": config.settings.trading_universe_source,
             "trading_static_symbols_raw": config.settings.trading_static_symbols_raw,
         }
@@ -49,19 +51,12 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
         config.settings.trading_autonomy_enabled = False
         config.settings.trading_autonomy_allow_live_promotion = True
         config.settings.trading_kill_switch_enabled = False
+        config.settings.trading_simple_submit_enabled = True
+        config.settings.trading_live_submit_enabled = True
         config.settings.trading_universe_source = "static"
         config.settings.trading_static_symbols_raw = "AAPL"
 
         try:
-            allowed_summary = {
-                "promotion_eligible_total": 1,
-                "capital_stage_totals": {"shadow": 1},
-                "dependency_quorum": {
-                    "decision": "allow",
-                    "reasons": [],
-                    "message": "ready",
-                },
-            }
             with self.session_local() as session:
                 strategy = Strategy(
                     name="live-canary-empty-quant",
@@ -105,39 +100,12 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                 account_label="paper",
                 session_factory=self.session_local,
             )
+            pipeline._is_market_session_open = lambda _now=None: True
 
             with (
                 patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_hypothesis_runtime_summary",
-                    return_value=allowed_summary,
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.build_empirical_jobs_status",
-                    return_value={"ready": True, "status": "healthy"},
-                ),
-                patch(
-                    "app.trading.scheduler.pipeline.decision_lifecycle.load_quant_evidence_status",
-                    return_value={
-                        "required": True,
-                        "ok": False,
-                        "status": "degraded",
-                        "reason": "quant_latest_metrics_empty",
-                        "blocking_reasons": [
-                            "quant_latest_metrics_empty",
-                            "quant_latest_store_alarm",
-                        ],
-                        "account": "paper",
-                        "window": "15m",
-                        "source_url": "http://jangar.test/api/torghut/trading/control-plane/quant/health?account=paper&window=15m",
-                        "latest_metrics_count": 0,
-                        "latest_metrics_updated_at": None,
-                        "empty_latest_store_alarm": True,
-                        "missing_update_alarm": False,
-                        "metrics_pipeline_lag_seconds": None,
-                        "stage_count": 0,
-                        "max_stage_lag_seconds": 0,
-                        "stages": [],
-                    },
+                    "app.trading.submission_council._alpaca_broker_available",
+                    return_value=True,
                 ),
             ):
                 pipeline.run_once()
@@ -145,7 +113,7 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
             with self.session_local() as session:
                 decision_rows = session.execute(select(TradeDecision)).scalars().all()
                 self.assertEqual(len(decision_rows), 1)
-                self.assertEqual(decision_rows[0].status, "blocked")
+                self.assertNotEqual(decision_rows[0].status, "blocked")
                 decision_json = decision_rows[0].decision_json
                 assert isinstance(decision_json, dict)
                 control_plane_snapshot = decision_json.get("control_plane_snapshot")
@@ -154,18 +122,19 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
                     "live_submission_gate"
                 )
                 assert isinstance(live_submission_gate, dict)
-                self.assertEqual(live_submission_gate.get("allowed"), False)
+                self.assertEqual(live_submission_gate.get("allowed"), True)
                 self.assertEqual(
                     live_submission_gate.get("reason"),
-                    "quant_latest_metrics_empty",
+                    "operational_submission_ready",
                 )
-                self.assertEqual(live_submission_gate.get("capital_state"), "observe")
-                self.assertIn(
+                self.assertEqual(live_submission_gate.get("capital_state"), "live")
+                self.assertNotIn(
                     "quant_latest_store_alarm",
                     live_submission_gate.get("blocked_reasons", []),
                 )
+                self.assertNotIn("quant_evidence", live_submission_gate)
 
-            self.assertEqual(alpaca_client.submitted, [])
+            self.assertNotEqual(alpaca_client.submitted, [])
         finally:
             config.settings.trading_enabled = original["trading_enabled"]
             config.settings.trading_mode = original["trading_mode"]
@@ -178,6 +147,12 @@ class TestTradingPipelineLiveRegimeB(TradingPipelineTestCaseBase):
             ]
             config.settings.trading_kill_switch_enabled = original[
                 "trading_kill_switch_enabled"
+            ]
+            config.settings.trading_simple_submit_enabled = original[
+                "trading_simple_submit_enabled"
+            ]
+            config.settings.trading_live_submit_enabled = original[
+                "trading_live_submit_enabled"
             ]
             config.settings.trading_universe_source = original[
                 "trading_universe_source"

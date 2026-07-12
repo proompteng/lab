@@ -1,21 +1,21 @@
 # 151. Torghut Hypothesis-Scoped Capital Adjudication And Profit Gates (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability, hypothesis-scoped proof verdicts, paper/live capital gates, forecast dependency scoping,
-TCA and market-context guardrails, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/147-jangar-hypothesis-scoped-capital-adjudication-ledger-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `150-torghut-repair-dividend-order-book-and-capital-warrants-2026-05-07.md`
-- `149-torghut-profit-evidence-convergence-epochs-and-quant-stage-arbitrage-2026-05-07.md`
-- `148-torghut-profit-evidence-reactivation-scheduler-and-paper-gate-receipts-2026-05-07.md`
-- `docs/agents/designs/146-jangar-repair-warrant-exchange-and-schedule-debt-firebreak-2026-05-07.md`
 
 ## Decision
 
@@ -84,7 +84,7 @@ ClickHouse tables, AgentRun objects, GitOps resources, or empirical artifacts.
   `torghut-00259`, build commit `0aa204cd446ba8ad24f4460eaa74d392a5ae3ea4`, and `orders_submitted_total=0`.
 - Live submission gate was `allowed=false`, reason `simple_submit_disabled`, `capital_stage=shadow`.
 - Live proof floor was `repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
-- Live proof blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live proof blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Live empirical jobs were healthy, truthful, and promotion-authority eligible for candidate
   `chip-paper-microbar-composite@execution-proof` on dataset `torghut-chip-full-day-20260505-5e447b6d-r1`.

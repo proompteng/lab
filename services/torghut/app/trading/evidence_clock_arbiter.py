@@ -9,6 +9,10 @@ from hashlib import sha256
 import json
 from typing import Any, cast
 
+from app.trading.evidence_clock_market_session import (
+    clickhouse_ta_session_staleness_gate,
+)
+
 
 EVIDENCE_CLOCK_ARBITER_SCHEMA_VERSION = "torghut.evidence-clock-arbiter.v1"
 ROUTEABLE_PROFIT_CANDIDATE_EXCHANGE_SCHEMA_VERSION = (
@@ -228,13 +232,14 @@ def _clickhouse_ta_clock(
         *_strings(clickhouse_ta_status.get("reason_codes")),
         *_strings(clickhouse_ta_status.get("blocking_reasons")),
     ]
+    gate = clickhouse_ta_session_staleness_gate(clickhouse_ta_status)
     status = _state_from_status(clickhouse_ta_status)
     if status in _BAD_STATES:
         reasons.append(f"clickhouse_ta_{status}")
     age = _age_seconds(as_of, now)
     if as_of is None:
         reasons.append("clickhouse_ta_timestamp_missing")
-    elif age is not None and age > max_age_seconds:
+    elif age is not None and age > max_age_seconds and not gate.suppress_stale:
         reasons.append("clickhouse_ta_stale")
     return _clock(
         name="clickhouse_ta",
@@ -248,6 +253,8 @@ def _clickhouse_ta_clock(
         details={
             "age_seconds": age,
             "symbol_count": clickhouse_ta_status.get("symbol_count"),
+            "accepted_source_state": gate.accepted_source_state or None,
+            "regular_session_open": gate.regular_session_open,
         },
     )
 
@@ -400,9 +407,9 @@ def _tca_clock(
             "latest_execution_created_at": _iso(latest_execution_at),
             "computed_age_seconds": computed_age,
             "execution_age_seconds": execution_age,
-            "avg_abs_slippage_bps": str(avg_abs_slippage_bps)
-            if avg_abs_slippage_bps is not None
-            else None,
+            "avg_abs_slippage_bps": (
+                str(avg_abs_slippage_bps) if avg_abs_slippage_bps is not None else None
+            ),
             "slippage_guardrail_bps": str(slippage_guardrail_bps),
             "expected_shortfall_sample_count": expected_shortfall_count,
             "missing_symbols": missing_symbols,
@@ -490,7 +497,7 @@ def _hypothesis_clock(hypothesis_payload: Mapping[str, Any]) -> dict[str, object
         summary.get("promotion_eligible_total"), default=eligible_count
     )
     if promotion_eligible_total <= 0:
-        reasons.append("alpha_readiness_not_promotion_eligible")
+        reasons.append("hypothesis_not_promotion_eligible")
     return _clock(
         name="hypothesis_lineage",
         state="current" if not reasons else "stale",

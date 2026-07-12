@@ -1,4 +1,5 @@
 import {
+  createMemoryEmbeddingIndexIfReady as defaultCreateMemoryEmbeddingIndexIfReady,
   queryMemory as defaultQueryMemory,
   resolveMemoryConnection as defaultResolveMemoryConnection,
   writeMemoryEmbedding as defaultWriteMemoryEmbedding,
@@ -18,6 +19,7 @@ export type MemoryOperationsApiDependencies = {
   writeMemoryKv?: typeof defaultWriteMemoryKv
   writeMemoryEmbedding?: typeof defaultWriteMemoryEmbedding
   queryMemory?: typeof defaultQueryMemory
+  createMemoryEmbeddingIndexIfReady?: typeof defaultCreateMemoryEmbeddingIndexIfReady
 }
 
 type MemoryOperationPayload =
@@ -49,6 +51,11 @@ type MemoryOperationPayload =
       namespace: string
       query: string
       limit?: number
+    }
+  | {
+      operation: 'embedding-index'
+      memoryRef: string
+      namespace: string
     }
 
 const getKubeClient = (deps: MemoryOperationsApiDependencies) =>
@@ -125,7 +132,11 @@ export const parseMemoryOperationPayload = (payload: Record<string, unknown>): M
     }
   }
 
-  throw new Error('operation must be one of event, kv, embedding, query')
+  if (operation === 'embedding-index') {
+    return { operation, memoryRef, namespace }
+  }
+
+  throw new Error('operation must be one of event, kv, embedding, query, embedding-index')
 }
 
 export const postMemoryOperationsHandler = async (request: Request, deps: MemoryOperationsApiDependencies = {}) => {
@@ -173,6 +184,19 @@ export const postMemoryOperationsHandler = async (request: Request, deps: Memory
         operation: parsed.operation,
         memoryRef: parsed.memoryRef,
         namespace: parsed.namespace,
+      })
+    }
+
+    if (parsed.operation === 'embedding-index') {
+      const created = await (deps.createMemoryEmbeddingIndexIfReady ?? defaultCreateMemoryEmbeddingIndexIfReady)(
+        connection,
+      )
+      return okResponse({
+        ok: true,
+        operation: parsed.operation,
+        memoryRef: parsed.memoryRef,
+        namespace: parsed.namespace,
+        created,
       })
     }
 

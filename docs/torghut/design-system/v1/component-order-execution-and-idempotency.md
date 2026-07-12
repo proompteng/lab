@@ -7,6 +7,31 @@
 - Source of truth (config): `argocd/applications/torghut/**`
 - Implementation status: `Implemented` (verified with code + tests + runtime/config on 2026-02-21)
 
+## Source Implementation Audit (2026-07-04)
+
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: **Implemented, but no longer matches the old single-file `execution.py` description.** The core idempotency contract exists through account-scoped `TradeDecision.decision_hash`, `Execution.client_order_id`, executor lookup before submit, broker/simulation adapter support, and readiness checks for the account-scoped client-order index.
+- Current source evidence:
+  - `services/torghut/app/trading/execution/order_executor_core_methods.py::ensure_decision` computes `decision_hash(decision, account_label=...)`, reuses an existing `TradeDecision` by `(decision_hash, alpaca_account_label)`, and handles `IntegrityError` by re-reading the existing row.
+  - `services/torghut/app/trading/execution/order_executor_core_methods.py::_fetch_execution` first checks exact `trade_decision_id`, then falls back to `(Execution.client_order_id == decision_hash, alpaca_account_label == account_label)`. The code explicitly says it must never match by account label alone.
+  - `services/torghut/app/trading/execution/order_executor_core_methods.py::submit_order` returns early when an execution already exists, checks broker-side existing orders, prepares the order, applies retry policy, raises on conflicting open orders, resolves sell inventory, submits, and syncs the submitted execution.
+  - `services/torghut/app/trading/execution/order_executor_core_support.py::_execution_request_from_decision` sets `client_order_id=decision_row.decision_hash`; `_submission_extra_params` passes that client id to adapters.
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py` implements `AlpacaExecutionAdapter`, `SimulationExecutionAdapter`, and `SessionRoutingExecutionAdapter`; the simulation adapter stores `idempotency_key=client_order_id`.
+  - `services/torghut/app/api/readiness_helpers/refresh_universe_state_for_readiness.py` checks for the required unique index on `(alpaca_account_label, client_order_id)` and flags the legacy single-account `executions.client_order_id` index as stale.
+- What is implemented from the design:
+  - decision-level idempotency;
+  - broker/simulation `client_order_id` propagation;
+  - execution row dedup before submission;
+  - conflict/open-order protection before submit;
+  - account-scoped multi-account isolation for idempotency.
+- What changed from the design:
+  - `OrderExecutor` is now split under `services/torghut/app/trading/execution/**`, not a standalone `services/torghut/app/trading/execution.py` module;
+  - the adapter layer is explicit and route-aware, with Alpaca, simulation, Lean, and session-routing paths;
+  - idempotency now includes multi-account account label scoping, which the old v1 text did not cover.
+- Remaining gaps / operator caveats:
+  - The old sequence diagram is still useful for intent, but it omits current route selection, sell-inventory reservation, order-feed linkage/repair, Lean shadow paths, and readiness index checks.
+  - Do not rely on any legacy single-column `client_order_id` uniqueness claim; current readiness expects account-scoped uniqueness.
+
 ## Purpose
 
 Document the order submission flow and idempotency strategy so retries, restarts, and partial failures do not cause
@@ -25,8 +50,13 @@ duplicate orders.
 
 ## Current implementation (pointers)
 
-- Order executor: `services/torghut/app/trading/execution.py` (`OrderExecutor`)
-- Decision hashing: `services/torghut/app/trading/models.py` (`decision_hash`)
+- Executor core: `services/torghut/app/trading/execution/order_executor_core_methods.py`
+- Executor request/idempotency support: `services/torghut/app/trading/execution/order_executor_core_support.py`
+- Execution runtime status/gate: `services/torghut/app/trading/execution_runtime.py`
+- Execution adapters: `services/torghut/app/trading/execution_adapters/adapter_types.py`, `services/torghut/app/trading/execution_adapters/lean_adapter.py`
+- Order policy helpers: `services/torghut/app/trading/execution_policy/order_rules.py`
+- Trading records: `services/torghut/app/models/entities/trading_records.py`
+- Readiness index checks: `services/torghut/app/api/readiness_helpers/refresh_universe_state_for_readiness.py`
 - Knative env defaults: `argocd/applications/torghut/knative-service.yaml`
 
 ## Flow
@@ -56,10 +86,12 @@ sequenceDiagram
 
 ### Decision-level idempotency
 
-`services/torghut/app/trading/execution.py` uses:
+Current execution code uses:
 
-- `decision_hash(decision)` persisted as `trade_decisions.decision_hash` (unique index)
-- `client_order_id = decision_hash` for broker-level dedup where supported
+- `services/torghut/app/trading/execution/order_executor_core_methods.py::ensure_decision` to persist/reuse `trade_decisions.decision_hash` scoped by `alpaca_account_label`;
+- `services/torghut/app/trading/execution/order_executor_core_support.py::_execution_request_from_decision` to set `client_order_id=decision_row.decision_hash`;
+- `services/torghut/app/trading/execution/order_executor_core_methods.py::_fetch_execution` to deduplicate by exact decision link first, then by account-scoped `(client_order_id, alpaca_account_label)`;
+- `services/torghut/app/trading/execution_adapters/**` to propagate the idempotency key through Alpaca, simulation, Lean, or session-routing adapters.
 
 ### Execution-level idempotency
 

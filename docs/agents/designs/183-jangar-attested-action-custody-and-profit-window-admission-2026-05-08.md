@@ -34,7 +34,7 @@ assessment showed `79` Error pods and `20` failed AgentRuns retained in `agents`
 `dispatch_repair`, `dispatch_normal`, `deploy_widen`, and `merge_ready` because the controller ingestion self-report is
 missing. Torghut consumer evidence is current through the `jangar.jangar` route, but it still says `decision=repair`,
 `max_notional=0`, and reason codes including `forecast_registry_degraded`, `simple_submit_disabled`,
-`alpha_readiness_not_promotion_eligible`, and `market_context_stale`.
+`hypothesis_not_promotion_eligible`, and `market_context_stale`.
 
 The design answer is a custody object, not a larger health object. Jangar should not let any runner, deployer, or
 capital consumer infer action readiness from pod health, Argo health, fresh quant metrics, or a live Torghut

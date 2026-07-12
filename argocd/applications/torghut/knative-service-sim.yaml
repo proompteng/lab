@@ -16,7 +16,7 @@ spec:
   template:
     metadata:
       annotations:
-        client.knative.dev/updateTimestamp: "2026-07-01T01:13:29Z"
+        client.knative.dev/updateTimestamp: "2026-07-12T00:48:09Z"
         autoscaling.knative.dev/minScale: "1"
         autoscaling.knative.dev/maxScale: "1"
         autoscaling.knative.dev/target: "80"
@@ -31,11 +31,17 @@ spec:
           securityContext:
             seccompProfile:
               type: Unconfined
-          image: registry.ide-newton.ts.net/lab/torghut@sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+          image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
           ports:
             - name: http1
               containerPort: 8181
           env:
+            - name: TORGHUT_PROCESS_ROLE
+              value: simulation
+            - name: TRADING_SCHEDULER_LEADERSHIP_REQUIRED
+              value: "true"
+            - name: TRADING_SCHEDULER_LEADERSHIP_LOCK_NAME
+              value: torghut:simulation-scheduler
             - name: APP_ENV
               value: prod
             - name: LOG_LEVEL
@@ -120,29 +126,27 @@ spec:
             - name: CLICKHOUSE_TIMEOUT_SECONDS
               value: "10"
             - name: TRADING_ENABLED
-              value: "true"
+              value: "false"
+            - name: TRADING_ORDER_MAX_ATTEMPTS
+              value: "1"
+            - name: TRADING_EXECUTION_MAX_RETRIES
+              value: "0"
             - name: TRADING_PIPELINE_MODE
               value: simple
             - name: TRADING_SIMPLE_SUBMIT_ENABLED
               value: "true"
             - name: TRADING_SIMPLE_ORDER_FEED_TELEMETRY_ENABLED
               value: "true"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_ENABLED
-              value: "true"
-            - name: TRADING_SIMPLE_PAPER_ROUTE_PROBE_MAX_NOTIONAL
-              value: "100"
-            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_ORDER
-              value: "100"
-            - name: TRADING_SIMPLE_MAX_NOTIONAL_PER_SYMBOL
-              value: "250"
             - name: TRADING_SIMPLE_MAX_ORDER_PCT_EQUITY
-              value: "0.25"
+              value: "0.50"
+            - name: TRADING_SIMPLE_MAX_SYMBOL_PCT_EQUITY
+              value: "0.50"
             - name: TRADING_SIMPLE_MAX_GROSS_EXPOSURE_PCT_EQUITY
-              value: "0.05"
-            - name: TRADING_PAPER_ROUTE_TARGET_PLAN_URL
-              value: http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20
-            - name: TRADING_PAPER_ROUTE_TARGET_PLAN_TIMEOUT_SECONDS
-              value: "10"
+              value: "4.0"
+            - name: TRADING_SIMPLE_MAX_NET_EXPOSURE_PCT_EQUITY
+              value: "0.50"
+            - name: TRADING_SIMPLE_BUYING_POWER_RESERVE_BPS
+              value: "1000"
             - name: TRADING_KILL_SWITCH_ENABLED
               value: "false"
             - name: TRADING_FEATURE_FLAGS_ENABLED
@@ -539,11 +543,11 @@ spec:
             - name: TA_CLICKHOUSE_CONN_TIMEOUT_SECONDS
               value: "10"
             - name: TORGHUT_VERSION
-              value: v0.596.0-1247-gc1e630bf5
+              value: v0.596.0-1720-gccfdd9e0a
             - name: TORGHUT_COMMIT
-              value: 8e1ae9a8c668c206afc6885ca817039da226810b
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
             - name: TORGHUT_IMAGE_DIGEST
-              value: sha256:0c2014dbf926afc33de70aa2890b01dc2ab06d7836fece344a5cc22ce56fbbc4
+              value: sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
             - name: TORGHUT_REQUIRED_IMAGE_PLATFORMS
               value: linux/amd64,linux/arm64
             - name: TORGHUT_OBSERVED_IMAGE_PLATFORMS

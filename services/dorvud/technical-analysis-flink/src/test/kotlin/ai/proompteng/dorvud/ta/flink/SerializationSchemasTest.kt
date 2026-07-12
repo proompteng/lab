@@ -10,6 +10,7 @@ import ai.proompteng.dorvud.ta.stream.MicrostructureSignalV1
 import ai.proompteng.dorvud.ta.stream.OptionsContractBarPayload
 import ai.proompteng.dorvud.ta.stream.QuotePayload
 import ai.proompteng.dorvud.ta.stream.TaSignalsPayload
+import ai.proompteng.dorvud.ta.stream.TaStatusPayload
 import ai.proompteng.dorvud.ta.stream.TradePayload
 import kotlinx.serialization.json.Json
 import org.apache.flink.api.common.serialization.SerializerConfigImpl
@@ -19,6 +20,7 @@ import java.io.ObjectOutputStream
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
@@ -46,6 +48,60 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `status serialization includes current processing freshness fields`() {
+    val status =
+      Envelope(
+        ingestTs = Instant.parse("2026-07-07T14:00:05Z"),
+        eventTs = Instant.parse("2026-07-07T14:00:05Z"),
+        feed = "ta",
+        channel = "status",
+        symbol = "ta",
+        seq = 1,
+        payload =
+          TaStatusPayload(
+            watermarkLagMs = 250,
+            sourceLagMs = 1_000,
+            lastEventTs = "2026-07-07T14:00:04Z",
+            lastInputEventTs = "2026-07-07T14:00:04Z",
+            lastOutputEventTs = "2026-07-07T14:00:04Z",
+            inputEventCount = 42,
+            outputEventCount = 40,
+            currentInputEventCount = 2,
+            currentOutputEventCount = 1,
+            currentRecordCount = 3,
+            inputRatePerSecond = 10.5,
+            outputRatePerSecond = 9.5,
+            microbarEventCount = 42,
+            signalEventCount = 40,
+            microbarRatePerSecond = 10.5,
+            signalRatePerSecond = 9.5,
+            clickhouseSinkEnabled = true,
+            perSymbolLatestEventTs = mapOf("NVDA" to "2026-07-07T14:00:04Z"),
+            marketSessionState = "regular",
+            statusReason = null,
+          ),
+        isFinal = true,
+        source = "ta",
+        window = null,
+        version = 1,
+      )
+
+    val json = serde.statusJson(status)
+
+    assertTrue(json.contains("source_lag_ms"))
+    assertTrue(json.contains("last_input_event_ts"))
+    assertTrue(json.contains("input_event_count"))
+    assertTrue(json.contains("current_record_count"))
+    assertTrue(json.contains("output_rate_per_second"))
+    assertTrue(json.contains("microbar_event_count"))
+    assertTrue(json.contains("signal_event_count"))
+    assertTrue(json.contains("clickhouse_sink_enabled"))
+    assertTrue(json.contains("market_session_state"))
+    assertTrue(json.contains("per_symbol_latest_event_ts"))
+    assertTrue(json.contains("NVDA"))
+  }
+
+  @Test
   fun `parse envelope flatmap remains serializable`() {
     val fn = ParseEnvelopeFlatMap(SerializerFactory { TradePayload.serializer() })
     assertSerializable(fn)
@@ -55,6 +111,17 @@ class SerializationSchemasTest {
   fun `bars1m compat flatmap remains serializable`() {
     val fn = ParseMicroBarCompatFlatMap()
     assertSerializable(fn)
+  }
+
+  @Test
+  fun `live websocket bar signals are emitted as accepted ta source`() {
+    assertEquals("ta", taSignalOutputSource("ws"))
+    assertEquals("ta", taSignalOutputSource("ta"))
+  }
+
+  @Test
+  fun `rest backfill bar signals remain excluded from accepted ta source`() {
+    assertEquals("rest", taSignalOutputSource("rest"))
   }
 
   @Test
@@ -138,6 +205,54 @@ class SerializationSchemasTest {
     assertTrue(schema.contains("microstructure_signal_v1 Nullable(String)"))
     assertTrue(schema.contains("ALTER TABLE torghut.ta_signals ON CLUSTER default"))
     assertTrue(schema.contains("MODIFY TTL toDateTime(event_ts) + INTERVAL 35 DAY"))
+  }
+
+  @Test
+  fun `clickhouse ta table engine validation rejects local tables`() {
+    val failure =
+      assertFailsWith<IllegalStateException> {
+        validateClickhouseTaTableEngines(
+          mapOf(
+            "ta_microbars" to "ReplacingMergeTree",
+            "ta_signals" to "ReplicatedReplacingMergeTree",
+          ),
+        )
+      }
+
+    assertTrue(failure.message.orEmpty().contains("ta_microbars=ReplacingMergeTree"))
+  }
+
+  @Test
+  fun `clickhouse ta table engine validation requires every ta table`() {
+    val failure =
+      assertFailsWith<IllegalStateException> {
+        validateClickhouseTaTableEngines(mapOf("ta_signals" to "ReplicatedReplacingMergeTree"))
+      }
+
+    assertTrue(failure.message.orEmpty().contains("ta_microbars=missing"))
+  }
+
+  @Test
+  fun `clickhouse ta table engine validation accepts replicated tables`() {
+    validateClickhouseTaTableEngines(
+      mapOf(
+        "ta_microbars" to "ReplicatedReplacingMergeTree",
+        "ta_signals" to "ReplicatedReplacingMergeTree",
+      ),
+    )
+  }
+
+  @Test
+  fun `clickhouse database name is loaded from sink jdbc url`() {
+    assertEquals(
+      "torghut",
+      clickhouseDatabaseName("jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/torghut"),
+    )
+    assertEquals(
+      "torghut_sim_default",
+      clickhouseDatabaseName("jdbc:clickhouse://torghut-clickhouse.torghut.svc.cluster.local:8123/default?database=torghut_sim_default"),
+    )
+    assertEquals("default", clickhouseDatabaseName("not a url"))
   }
 
   @Test

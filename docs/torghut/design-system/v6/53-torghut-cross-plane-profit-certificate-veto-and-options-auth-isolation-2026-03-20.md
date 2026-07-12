@@ -1,19 +1,20 @@
 # 53. Torghut Cross-Plane Profit-Certificate Veto and Options-Auth Isolation (2026-03-20)
 
 Status: Ready for merge (discover architecture lane)
-Date: `2026-03-20`
-Owner: Victor Chen (Jangar Engineering)
-Related mission: `codex/swarm-jangar-control-plane-discover`
-Companion doc:
 
-- `docs/agents/designs/54-jangar-witness-mirror-quorum-and-promotion-veto-2026-03-20.md`
+## Source Implementation Audit (2026-07-04)
 
-Extends:
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-- `50-torghut-submission-parity-council-and-options-bootstrap-escrow-2026-03-19.md`
-- `51-torghut-profit-reservations-schema-witness-and-simulation-slot-ledger-2026-03-19.md`
-- `51-torghut-promotion-certificate-and-segment-firebreak-handoff-2026-03-19.md`
-- `52-torghut-profit-sleeves-segment-scoped-deallocation-and-evidence-decay-2026-03-19.md`
 
 ## Executive summary
 

@@ -1,20 +1,21 @@
 # 155. Torghut Capital Repair Outcome Ledger And Edge Reacquisition Gates (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders architecture
-Scope: Torghut profitability, capital repair outcome settlement, post-cost edge reacquisition, proof-floor closure,
-Jangar repair outcome feedback, validation, rollout, rollback, and implementation handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/151-jangar-repair-outcome-settlement-and-schedule-debt-roi-exchange-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `154-torghut-marginal-proof-spend-portfolio-and-capital-repair-budget-2026-05-07.md`
-- `153-torghut-useful-evidence-capital-escrow-and-provider-repair-gates-2026-05-07.md`
-- `152-torghut-proof-floor-settlement-bonds-and-tca-repair-auction-2026-05-07.md`
 
 ## Decision
 
@@ -82,7 +83,7 @@ records, ClickHouse tables, broker state, GitOps resources, or trading flags.
 - Live submission gate was closed: `simple_submit_disabled`, `capital_stage=shadow`.
 - Live proof floor was `floor_state=repair_only`, `route_state=repair_only`, `capital_state=zero_notional`, and
   `max_notional=0`.
-- Live blockers were `alpha_readiness_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
+- Live blockers were `hypothesis_not_promotion_eligible`, `execution_tca_slippage_guardrail_exceeded`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Alpha readiness had `promotion_eligible_total=0`, `rollback_required_total=3`, and `state_totals.shadow=3`.
 - Execution TCA had `13,775` orders, `13,571` filled executions, average absolute slippage

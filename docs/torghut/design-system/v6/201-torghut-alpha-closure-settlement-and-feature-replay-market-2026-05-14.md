@@ -1,23 +1,20 @@
 # 201. Torghut Alpha Closure Settlement And Feature Replay Market (2026-05-14)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-14
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant revenue repair, alpha-closure settlement, feature replay, zero-notional capital safety, Jangar
-runner admission, validation, rollout, rollback, and next implementation gates.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/196-jangar-alpha-closure-slot-governor-and-no-delta-budget-2026-05-14.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: historical simulation, replay, Lean backtest APIs, and local replay scripts exist, but older monolithic simulation assumptions have been split.
+- Matched implementation area: Simulation, replay, backtesting, and Lean.
+- Current source evidence:
+  - `services/torghut/scripts/run_local_simple_lane_replay.py`
+  - `services/torghut/scripts/verify_historical_simulation_parity.py`
+  - `services/torghut/app/api/trading_misc/lean_backtests.py`
+  - `services/jangar/src/routes/api/torghut/simulation/runs.ts`
+  - `argocd/applications/torghut/historical-simulation-workflowtemplate.yaml`
+- Design drift note: Simulation docs must be checked against current split scripts and Jangar simulation routes.
 
-Extends:
-
-- `198-torghut-alpha-repair-closure-board-and-routeable-revenue-reentry-2026-05-14.md`
-- `197-torghut-executable-alpha-repair-receipts-and-zero-notional-reentry-2026-05-13.md`
-- `197-torghut-alpha-readiness-strike-ledger-and-routeable-candidate-ladder-2026-05-13.md`
-- `193-torghut-repair-outcome-dividend-ledger-and-capital-reentry-frontier-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `docs/agents/designs/193-jangar-cross-plane-closure-board-and-revenue-repair-admission-2026-05-14.md`
 
 ## Decision
 
@@ -27,7 +24,7 @@ increment.
 The live business surface is explicit and still capital-safe. On 2026-05-14 at 00:27 UTC,
 `GET /trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`,
 `routeable_candidate_count=0`, `max_notional=0`, and `capital_rule=zero_notional_repair_only`. The top queue item
-remained `repair_alpha_readiness` for `alpha_readiness_not_promotion_eligible`, value gate
+remained `repair_alpha_readiness` for `hypothesis_not_promotion_eligible`, value gate
 `routeable_candidate_count`, expected unblock value `4`, and required output receipt
 `torghut.executable-alpha-receipts.v1`.
 
@@ -137,7 +134,7 @@ broker state, GitOps resources, AgentRuns, or market data.
   `capital_stage=shadow`, `proof_floor_state=repair_only`, `capital_state=zero_notional`, and `max_notional=0`.
 - Top queue item:
   - `code=repair_alpha_readiness`
-  - `reason=alpha_readiness_not_promotion_eligible`
+  - `reason=hypothesis_not_promotion_eligible`
   - `value_gate=routeable_candidate_count`
   - `expected_unblock_value=4`
   - `required_output_receipt=torghut.executable-alpha-receipts.v1`
@@ -443,5 +440,5 @@ Deployer: validate that the board is visible and capital remains closed. A succe
 revenue-ready; it means the next zero-notional repair can be admitted and audited.
 
 Revenue metric: this targets `routeable_candidate_count`. The smallest blocker preventing immediate revenue impact is
-`alpha_readiness_not_promotion_eligible` with feature rows, drift checks, and required feature set evidence missing on
+`hypothesis_not_promotion_eligible` with feature rows, drift checks, and required feature set evidence missing on
 the lineage-ready `H-MICRO-01` lane.

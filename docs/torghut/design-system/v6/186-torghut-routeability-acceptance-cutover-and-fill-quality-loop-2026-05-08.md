@@ -1,21 +1,20 @@
 # 186. Torghut Routeability Acceptance Cutover And Fill-Quality Loop (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Gideon Park, Torghut Traders Architecture Lead
-Scope: Torghut quant profitability, routeability acceptance cutover, fill/TCA quality, scoped data freshness,
-Jangar admission, capital safety, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/182-jangar-routeability-cutover-backpressure-and-proof-run-admission-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented and evolved: execution route/gate/status modules exist, with live submission controlled by scheduler and submission-council gates.
+- Matched implementation area: Execution, live submission, and broker path.
+- Current source evidence:
+  - `services/torghut/app/trading/execution_runtime.py`
+  - `services/torghut/app/trading/execution_adapters/adapter_types.py`
+  - `services/torghut/app/trading/execution_policy/order_rules.py`
+  - `services/torghut/app/trading/submission_council/__init__.py`
+  - `services/torghut/app/trading/scheduler/pipeline/submission_policy.py`
+- Design drift note: Old monolithic order executor/live path claims are stale; current source uses split execution/runtime/gate modules.
 
-Extends:
-
-- `185-torghut-routeability-repair-acceptance-ledger-2026-05-08.md`
-- `184-torghut-profit-signal-quorum-and-context-routability-handoff-2026-05-08.md`
-- `184-torghut-execution-trusted-profit-repair-settlement-2026-05-08.md`
-- `docs/agents/designs/181-jangar-proof-production-debt-and-routeability-admission-2026-05-08.md`
 
 ## Decision
 
@@ -71,11 +70,11 @@ flags, GitOps manifests, or AgentRun objects.
 - Direct secret and database access is forbidden for `system:serviceaccount:agents:agents-sa`, so database evidence for
   this pass comes from the Torghut runtime database contracts and Kubernetes endpoints.
 - `/trading/status` reports `enabled=true`, `mode=live`, `running=true`, live submission
-  `allowed=false`, and blocked reasons `alpha_readiness_not_promotion_eligible` and `simple_submit_disabled`.
+  `allowed=false`, and blocked reasons `hypothesis_not_promotion_eligible` and `simple_submit_disabled`.
 - `profit_signal_quorum` reports three observe-only quorums, three zero-notional quorums, zero paper candidates, zero
   routeable candidates, and fourteen blocked or stale evidence cells.
 - `/trading/revenue-repair` reports `business_state=repair_only`, `revenue_ready=false`, and blockers
-  `alpha_readiness_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
+  `hypothesis_not_promotion_eligible`, `market_context_stale`, `simple_submit_disabled`, and
   `quant_pipeline_stages_missing`.
 - `/trading/consumer-evidence` reports route-proven profit state `repair`, proof floor `repair_only`,
   capital state `zero_notional`, seven zero-notional repair lots, and zero routeable candidates.

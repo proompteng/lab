@@ -1,20 +1,20 @@
 # 184. Torghut Profit Frontier Reclocking And Capital Reentry Guardrails (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Victor Chen, Jangar Engineering
-Scope: Torghut profitability proof, forecast and quant repair prioritization, zero-notional route rehearsal, and Jangar
-consumer evidence admission.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/180-jangar-evidence-settlement-reclocking-and-profit-gated-rollouts-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: metrics/renderers, PostHog hooks, guardrail exporters, and operational manifests exist; full SLO/on-call process is mostly doc/runbook-level.
+- Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
+- Current source evidence:
+  - `services/torghut/app/metrics/core.py`
+  - `services/torghut/app/observability/posthog.py`
+  - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
+  - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
+  - `docs/torghut/production-readiness-proof-runbook.md`
+- Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
 
-Extends:
-
-- `183-torghut-receipt-settled-capital-reentry-cohorts-2026-05-08.md`
-- `183-torghut-forecast-registry-repair-and-route-rehearsal-profit-gates-2026-05-08.md`
-- `182-torghut-route-proven-profit-receipts-and-consumer-evidence-canary-2026-05-08.md`
 
 ## Decision
 
@@ -40,14 +40,14 @@ This evidence pass was read-only on 2026-05-08.
   parent-fork warnings at earlier migrations.
 - `/trading/status` reports `enabled=true`, `mode=live`, and `running=true`. The live submission gate is not allowed:
   reason `simple_submit_disabled`, blocked by `simple_submit_disabled` and
-  `alpha_readiness_not_promotion_eligible`.
+  `hypothesis_not_promotion_eligible`.
 - The hypothesis registry path `/app/config/trading/hypotheses` is loaded with three hypotheses. All three are in
   shadow, all capital multipliers are zero, promotion-eligible total is zero, and rollback-required total is three.
 - TCA has 7,334 orders, average absolute slippage around 13.82 bps, and eight symbols in scope, but the latest execution
   timestamp is 2026-04-02. That is useful historical evidence, not enough active-session execution realism.
 - `/trading/consumer-evidence` emits schema `torghut.consumer-evidence-status.v1`, active revision `torghut-00308`, and
   a route-proven profit receipt in `repair` state. Reason codes include `forecast_registry_degraded`,
-  `simple_submit_disabled`, and `alpha_readiness_not_promotion_eligible`.
+  `simple_submit_disabled`, and `hypothesis_not_promotion_eligible`.
 - Consumer evidence reports empirical jobs healthy and ready, but forecast service degraded with `registry_empty`,
   market context degraded with stale `technicals`, `news`, and `regime` domains, and quant evidence degraded with
   `quant_pipeline_stages_missing`. Latest quant metrics count is 144, but pipeline stage count is zero.

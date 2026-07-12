@@ -329,7 +329,7 @@ class TestPromotionTruthfulness(TestCase):
             )
 
         self.assertIn("alpha_readiness_strategy_family_unmapped", result.reasons)
-        self.assertIn("alpha_readiness_not_promotion_eligible", result.reasons)
+        self.assertIn("hypothesis_not_promotion_eligible", result.reasons)
 
     def test_promotion_prerequisites_fail_when_alpha_readiness_or_dependency_quorum_block(
         self,
@@ -366,7 +366,7 @@ class TestPromotionTruthfulness(TestCase):
                 artifact_root=artifact_root,
             )
 
-        self.assertIn("alpha_readiness_not_promotion_eligible", result.reasons)
+        self.assertIn("hypothesis_not_promotion_eligible", result.reasons)
         self.assertIn("jangar_dependency_quorum_delay", result.reasons)
 
     def test_probation_evidence_collection_never_becomes_promotion_authority(

@@ -4,10 +4,12 @@ from tests.order_idempotency.support import (
     AccountShortingDisabledClient,
     ConflictingOrderClient,
     Decimal,
+    Execution,
     ExecutionTCAMetric,
     FakeAlpacaClient,
     FilledAlpacaClient,
     OrderExecutor,
+    PositionLookupNoneClient,
     SimulationExecutionAdapter,
     Strategy,
     StrategyDecision,
@@ -19,6 +21,26 @@ from tests.order_idempotency.support import (
     settings,
     timezone,
 )
+
+
+def _add_lagging_broker_fill(session: object, suffix: str) -> None:
+    session.add(
+        Execution(
+            alpaca_account_label="paper",
+            alpaca_order_id=f"lagging-setup-buy-{suffix}",
+            client_order_id=f"lagging-setup-client-{suffix}",
+            symbol="AAPL",
+            side="buy",
+            order_type="market",
+            time_in_force="day",
+            submitted_qty=Decimal("0.5"),
+            filled_qty=Decimal("0.5"),
+            status="filled",
+            execution_expected_adapter="alpaca",
+            execution_actual_adapter="alpaca",
+            raw_order={},
+        )
+    )
 
 
 class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
@@ -668,6 +690,169 @@ class TestSimulationSubmitOrderWithoutPriceKeepsLegacyFallback(
                 "paper",
             )
             self.assertIsNotNone(execution)
+
+    def test_submit_order_precheck_uses_durable_inventory_for_lagging_fractional_exit(
+        self,
+    ) -> None:
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            executor = OrderExecutor()
+            buy_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, 14, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            buy_decision_row = executor.ensure_decision(
+                session, buy_decision, strategy, "paper"
+            )
+            buy_execution = executor.submit_order(
+                session,
+                FilledAlpacaClient(),
+                buy_decision,
+                buy_decision_row,
+                "paper",
+                execution_expected_adapter="alpaca",
+            )
+            self.assertIsNotNone(buy_execution)
+            _add_lagging_broker_fill(session, "1")
+            session.commit()
+
+            sell_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, 20, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("101")},
+            )
+            sell_decision_row = executor.ensure_decision(
+                session, sell_decision, strategy, "paper"
+            )
+            lagging_client = PositionLookupNoneClient()
+
+            sell_execution = executor.submit_order(
+                session,
+                lagging_client,
+                sell_decision,
+                sell_decision_row,
+                "paper",
+            )
+
+            self.assertIsNotNone(sell_execution)
+            self.assertEqual(len(lagging_client.submitted), 1)
+            self.assertEqual(lagging_client.submitted[0]["side"], "sell")
+            self.assertEqual(lagging_client.submitted[0]["qty"], "0.5")
+
+    def test_submit_order_precheck_blocks_second_lagging_fractional_exit_when_reserved(
+        self,
+    ) -> None:
+        class LaggingReservedSellClient(PositionLookupNoneClient):
+            def list_orders(self, status: str = "all") -> list[dict[str, str]]:
+                if status != "open":
+                    return []
+                return [
+                    {
+                        "id": "reserved-sell-1",
+                        "client_order_id": "reserved-sell-client-id",
+                        "symbol": "AAPL",
+                        "side": "sell",
+                        "type": "limit",
+                        "time_in_force": "day",
+                        "qty": "0.5",
+                        "filled_qty": "0",
+                        "status": "accepted",
+                    }
+                ]
+
+        settings.trading_fractional_equities_enabled = True
+        settings.trading_allow_shorts = True
+        with self.session_local() as session:
+            strategy = Strategy(
+                name="demo",
+                description="demo",
+                enabled=True,
+                base_timeframe="1Min",
+                universe_type="static",
+                universe_symbols=["AAPL"],
+            )
+            session.add(strategy)
+            session.commit()
+            session.refresh(strategy)
+
+            executor = OrderExecutor()
+            buy_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, 14, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="buy",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("100")},
+            )
+            buy_decision_row = executor.ensure_decision(
+                session, buy_decision, strategy, "paper"
+            )
+            buy_execution = executor.submit_order(
+                session,
+                FilledAlpacaClient(),
+                buy_decision,
+                buy_decision_row,
+                "paper",
+                execution_expected_adapter="alpaca",
+            )
+            self.assertIsNotNone(buy_execution)
+
+            sell_decision = StrategyDecision(
+                strategy_id=str(strategy.id),
+                symbol="AAPL",
+                event_ts=datetime(2026, 2, 10, 20, tzinfo=timezone.utc),
+                timeframe="1Min",
+                action="sell",
+                qty=Decimal("0.5"),
+                params={"price": Decimal("101")},
+            )
+            sell_decision_row = executor.ensure_decision(
+                session, sell_decision, strategy, "paper"
+            )
+            lagging_client = LaggingReservedSellClient()
+
+            with self.assertRaises(RuntimeError) as context:
+                executor.submit_order(
+                    session,
+                    lagging_client,
+                    sell_decision,
+                    sell_decision_row,
+                    "paper",
+                )
+
+            payload = json.loads(str(context.exception))
+            self.assertEqual(payload.get("source"), "broker_precheck")
+            self.assertEqual(payload.get("code"), "precheck_sell_qty_exceeds_available")
+            self.assertEqual(Decimal(str(payload.get("position_qty"))), Decimal("0.5"))
+            self.assertEqual(
+                Decimal(str(payload.get("held_for_open_sells"))), Decimal("0.5")
+            )
+            self.assertEqual(Decimal(str(payload.get("available_qty"))), Decimal("0"))
+            self.assertEqual(payload.get("existing_order_id"), "reserved-sell-1")
+            self.assertEqual(len(lagging_client.submitted), 0)
 
     def test_submit_order_precheck_blocks_fractional_short_increasing_sell_when_enabled(
         self,

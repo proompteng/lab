@@ -1,22 +1,21 @@
 # 197. Torghut Serving Promotion Closure And No-Delta Repair Value (2026-05-13)
 
 Status: Accepted for Jangar engineer and deployer handoff
-Date: 2026-05-13
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut source-to-serving promotion closure, revenue-repair queue ranking, profit-carry passport rollout,
-zero-notional no-delta repair accounting, validation, rollout, rollback, and Jangar handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/192-jangar-source-to-serving-promotion-closure-and-repair-value-accounting-2026-05-13.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: typed proof/readiness/repair/capital surfaces exist across API, trading, and Jangar consumer modules; contract text remains broader than runtime.
+- Matched implementation area: Proof, evidence, freshness, repair, and capital gating.
+- Current source evidence:
+  - `services/torghut/app/api/readiness_helpers/trading_health_proof_lane.py`
+  - `services/torghut/app/api/proof_floor_payloads/proof_floor_receipts.py`
+  - `services/torghut/app/trading/consumer_evidence.py`
+  - `services/torghut/app/trading/freshness_carry.py`
+  - `services/torghut/app/trading/revenue_repair/repair_queue.py`
+  - `services/jangar/src/server/control-plane-torghut-consumer-evidence.ts`
+- Design drift note: Most May 2026 proof/capital docs are implemented as distributed surfaces, not single resources named after each document.
 
-Extends:
-
-- `196-torghut-profit-carry-passports-and-repair-capacity-futures-2026-05-13.md`
-- `195-torghut-stale-projection-foreclosure-and-route-custody-2026-05-13.md`
-- `190-torghut-repair-bid-settlement-and-routeability-proof-compaction-2026-05-13.md`
-- `191-torghut-source-serving-proof-and-repair-receipt-promotion-2026-05-13.md`
-- `docs/agents/designs/191-jangar-rollout-proof-passports-and-runner-capacity-futures-2026-05-13.md`
 
 ## Decision
 

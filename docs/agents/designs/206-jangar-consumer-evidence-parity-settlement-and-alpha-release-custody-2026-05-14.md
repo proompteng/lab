@@ -138,7 +138,7 @@ GitOps resources, AgentRuns, trading flags, broker state, or market data.
 - Direct `/trading/revenue-repair` returned `business_state=repair_only`, `revenue_ready=false`,
   `readyz_status=degraded`, active revision `torghut-00415`, and operating rule
   `keep_live_submit_disabled_until_repair_queue_clears`.
-- The top repair was `repair_alpha_readiness`, reason `alpha_readiness_not_promotion_eligible`, value gate
+- The top repair was `repair_alpha_readiness`, reason `hypothesis_not_promotion_eligible`, value gate
   `routeable_candidate_count`, required output `torghut.executable-alpha-receipts.v1`, and `max_notional=0`.
 - `routeability_acceptance.accepted_routeable_candidate_count=0` and
   `route_evidence_clearinghouse.accepted_routeable_candidate_count=0`.

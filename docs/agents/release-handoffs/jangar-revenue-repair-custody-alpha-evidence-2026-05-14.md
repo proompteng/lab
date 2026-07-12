@@ -26,7 +26,7 @@ Before local implementation, `GET http://agents.agents.svc.cluster.local/ready` 
 - `business_state=repair_only`
 - `revenue_ready=false`
 - top queue item `repair_alpha_readiness`
-- top queue reason `alpha_readiness_not_promotion_eligible`
+- top queue reason `hypothesis_not_promotion_eligible`
 - affected value gate `routeable_candidate_count`
 - `execution_trust.status=degraded`
 - blocker `jangar-control-plane:verify` consecutive failures

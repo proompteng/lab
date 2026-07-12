@@ -87,8 +87,6 @@ _LOT_VALIDATION = {
 _ALPHA_READINESS_STRIKE_PRIORITY = 98
 _ALPHA_READINESS_STRIKE_RECEIPT = "torghut.executable-alpha-receipts.v1"
 _ALPHA_READINESS_STRIKE_REASONS = {
-    "alpha_hypothesis_not_promotion_eligible",
-    "alpha_readiness_not_promotion_eligible",
     "hypothesis_not_promotion_eligible",
 }
 _PROFIT_FRESHNESS_REPAIR_PRIORITY = 99

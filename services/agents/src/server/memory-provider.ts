@@ -4,6 +4,12 @@ import { Pool } from 'pg'
 
 import { type KubernetesClient, RESOURCE_MAP } from './kube-types'
 import { resolveEmbeddingConfig } from './memory-config'
+import {
+  createMemoryProviderAnnIndexIfReady,
+  ensureMemoryProviderSchema,
+  qualifyMemoryProviderTable,
+  type MemoryProviderQueryable,
+} from './memory-provider-schema'
 import { asRecord, asString, readNested } from './primitives'
 
 export type MemoryConnection = {
@@ -22,9 +28,12 @@ export type MemoryQueryResult = {
 type EnvSource = Record<string, string | undefined>
 
 const DEFAULT_MEMORY_DATABASE_POOL_MAX = 2
+const DEFAULT_MEMORY_IVFFLAT_PROBES = 10
 
 const globalState = globalThis as typeof globalThis & {
+  __agentsMemoryProviderPoolFactory?: (connectionString: string) => MemoryProviderQueryable
   __agentsMemoryProviderPools?: Map<string, Pool>
+  __agentsMemoryProviderSchemaReady?: Map<string, Promise<void>>
 }
 
 const parsePositiveInt = (value: string | undefined, fallback: number) => {
@@ -85,7 +94,10 @@ const getPoolCache = () => {
   return globalState.__agentsMemoryProviderPools
 }
 
-const getMemoryPool = (connectionString: string) => {
+const getMemoryPool = (connectionString: string): MemoryProviderQueryable => {
+  const testPoolFactory = globalState.__agentsMemoryProviderPoolFactory
+  if (testPoolFactory) return testPoolFactory(connectionString)
+
   const pools = getPoolCache()
   const existing = pools.get(connectionString)
   if (existing) return existing
@@ -99,10 +111,38 @@ const getMemoryPool = (connectionString: string) => {
   return created
 }
 
+const getSchemaReadyCache = () => {
+  if (!globalState.__agentsMemoryProviderSchemaReady) {
+    globalState.__agentsMemoryProviderSchemaReady = new Map<string, Promise<void>>()
+  }
+  return globalState.__agentsMemoryProviderSchemaReady
+}
+
+const memoryProviderSchemaCacheKey = (connection: MemoryConnection) =>
+  `${connection.connectionString}\0${connection.schema}\0${connection.embeddingDimension}`
+
+const ensureProviderSchemaReady = async (connection: MemoryConnection, pool: MemoryProviderQueryable) => {
+  const cache = getSchemaReadyCache()
+  const key = memoryProviderSchemaCacheKey(connection)
+  let ready = cache.get(key)
+  if (!ready) {
+    ready = ensureMemoryProviderSchema(pool, connection)
+    cache.set(key, ready)
+  }
+
+  try {
+    await ready
+  } catch (error) {
+    cache.delete(key)
+    throw error
+  }
+}
+
 export const closeMemoryProviderPools = async () => {
   const pools = getPoolCache()
   const activePools = [...pools.values()]
   pools.clear()
+  globalState.__agentsMemoryProviderSchemaReady?.clear()
   await Promise.all(activePools.map((pool) => pool.end()))
 }
 
@@ -230,16 +270,19 @@ export const writeMemoryEvent = async (
   payload: Record<string, unknown>,
 ) => {
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
   await pool.query(
-    `INSERT INTO ${connection.schema}.memory_events (dataset, event_type, payload) VALUES ($1, $2, $3)`,
+    `INSERT INTO ${qualifyMemoryProviderTable(connection.schema, 'memory_events')} (dataset, event_type, payload)
+     VALUES ($1, $2, $3)`,
     [connection.dataset, eventType, payload],
   )
 }
 
 export const writeMemoryKv = async (connection: MemoryConnection, key: string, value: Record<string, unknown>) => {
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
   await pool.query(
-    `INSERT INTO ${connection.schema}.memory_kv (dataset, key, value)
+    `INSERT INTO ${qualifyMemoryProviderTable(connection.schema, 'memory_kv')} (dataset, key, value)
      VALUES ($1, $2, $3)
      ON CONFLICT (dataset, key)
      DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
@@ -256,8 +299,9 @@ export const writeMemoryEmbedding = async (
   const embedding = await embedText(text, connection.embeddingDimension)
   const vector = vectorToPg(embedding)
   const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
   await pool.query(
-    `INSERT INTO ${connection.schema}.memory_embeddings (dataset, key, embedding, metadata)
+    `INSERT INTO ${qualifyMemoryProviderTable(connection.schema, 'memory_embeddings')} (dataset, key, embedding, metadata)
      VALUES ($1, $2, $3::vector, $4)`,
     [connection.dataset, key, vector, metadata],
   )
@@ -271,17 +315,52 @@ export const queryMemory = async (
   const embedding = await embedText(query, connection.embeddingDimension)
   const vector = vectorToPg(embedding)
   const pool = getMemoryPool(connection.connectionString)
-  const { rows } = await pool.query(
-    `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
-     FROM ${connection.schema}.memory_embeddings
+  await ensureProviderSchemaReady(connection, pool)
+  const statement = `SELECT key, metadata, (1 - (embedding <=> $1::vector)) as score
+     FROM ${qualifyMemoryProviderTable(connection.schema, 'memory_embeddings')}
      WHERE dataset = $2
      ORDER BY embedding <=> $1::vector
-     LIMIT $3`,
-    [vector, connection.dataset, limit],
-  )
-  return rows.map((row: { key: string; score: number | null; metadata: Record<string, unknown> }) => ({
+     LIMIT $3`
+  const parameters = [vector, connection.dataset, limit]
+  const probes = parsePositiveInt(process.env.AGENTS_MEMORY_IVFFLAT_PROBES, DEFAULT_MEMORY_IVFFLAT_PROBES)
+  const client = pool.connect ? await pool.connect() : null
+  let rows: Array<{ key: string; score: number | null; metadata: Record<string, unknown> }>
+  if (client) {
+    try {
+      await client.query('BEGIN')
+      await client.query(`SET LOCAL ivfflat.probes = ${probes}`)
+      const result = await client.query(statement, parameters)
+      rows = result.rows
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    } finally {
+      client.release()
+    }
+  } else {
+    const result = await pool.query(statement, parameters)
+    rows = result.rows
+  }
+  return rows.map((row) => ({
     key: row.key,
     score: row.score,
     metadata: row.metadata ?? {},
   }))
+}
+
+export const createMemoryEmbeddingIndexIfReady = async (connection: MemoryConnection) => {
+  const pool = getMemoryPool(connection.connectionString)
+  await ensureProviderSchemaReady(connection, pool)
+  return createMemoryProviderAnnIndexIfReady(pool, connection)
+}
+
+export const __test__ = {
+  resetMemoryProviderState: () => {
+    delete globalState.__agentsMemoryProviderPoolFactory
+    globalState.__agentsMemoryProviderSchemaReady?.clear()
+  },
+  setMemoryProviderPoolFactory: (factory: (connectionString: string) => MemoryProviderQueryable) => {
+    globalState.__agentsMemoryProviderPoolFactory = factory
+  },
 }

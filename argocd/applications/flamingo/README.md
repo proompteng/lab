@@ -6,7 +6,7 @@ agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
 ## Production Target
 
 - Node: `turin`
-- GPU: `NVIDIA RTX PRO 6000 Blackwell Max-Q`, advertised as `nvidia.com/gpu: 1`
+- GPU: one physical `NVIDIA RTX PRO 6000 Blackwell Max-Q`; the device plugin may expose time-sliced `nvidia.com/gpu` replicas.
 - RuntimeClass: `nvidia`
 - Server: `vllm/vllm-openai:v0.23.0-x86_64-cu129`
 - Image digest: `sha256:871762282db5bc464b5a3f0a59e41207ef25c2d95edf5f701e57a6bfc27b9496`
@@ -26,9 +26,8 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --trust-remote-code
 --dtype bfloat16
 --max-model-len 262144
---gpu-memory-utilization 0.95
+--gpu-memory-utilization 0.85
 --kv-cache-dtype fp8
---safetensors-load-strategy eager
 --max-num-seqs 16
 --max-num-batched-tokens 16384
 --enable-prefix-caching
@@ -54,18 +53,26 @@ The model weights are NVFP4, but the KV cache uses FP8. Live rollout proved that
 `requires sm100f`; do not retry NVFP4 KV unless the vLLM/image/GPU capability
 combination changes and is proven in a separate smoke.
 
-Safetensors eager loading is forced because the model cache is RBD-backed but
-appears to vLLM as local EXT4. Live rollout proved lazy checkpoint loading can
-block for about 12 minutes in disk I/O before the HTTP server starts, and
-`--safetensors-load-strategy prefetch` was slower than the lazy baseline on the
-single 23 GiB shard. `eager` uses a different vLLM loader path that reads the
-whole shard into RAM before yielding tensors.
+Safetensors eager loading remains a candidate, not a production default. The
+model cache is RBD-backed but appears to vLLM as local EXT4, and earlier rollout
+work showed lazy checkpoint loading can block for about 12 minutes in disk I/O
+before the HTTP server starts. The July 3, 2026 DBO/eager candidate also
+crash-looped, so isolate `--safetensors-load-strategy eager` in its own rollout
+before promoting it.
 
 The active reasoning parser is `qwen3`, so reasoning text is returned through
 the OpenAI-compatible reasoning field instead of being mixed into normal
 assistant content. The active tool parser is `qwen3_coder`, which is the vLLM
 Qwen3.5/Qwen3.6 recipe recommendation for automatic tool calling.
 Reference: <https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3.5.html>
+
+Do not enable concurrent partial prefill or DBO directly in this production
+profile on the pinned vLLM image. The July 3, 2026 rollout with
+`--max-num-partial-prefills 2` failed before engine startup with
+`NotImplementedError: Concurrent Partial Prefill is not supported`. The
+follow-up DBO/eager-only rollout also crash-looped. Keep those flags as isolated
+shadow candidates until a newer vLLM image or single-variable rollout proves
+support for this model/configuration.
 
 ## Rollout Gates
 
@@ -80,8 +87,11 @@ kubectl -n flamingo exec deploy/flamingo -- df -h /models || true
 
 Expected:
 
-- `nvidia.com/gpu` allocatable is `1`.
-- No non-Flamingo workload consumes the GPU.
+- `nvidia.com/gpu` allocatable is non-zero.
+- `flamingo` and the approved Plex transcode workload are the only expected
+  Blackwell GPU consumers before tuning.
+- `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
+  separate embeddings path.
 - The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
 
 Render before sync:
@@ -200,24 +210,106 @@ turns with `preserve_thinking=true`.
 ## Optimization Matrix
 
 Record each run with the vLLM image digest, model revision, flags, concurrency,
-prompt/output token counts, TTFT, output tokens per second, peak GPU memory, GPU
-power draw, temperature, preemption count, and any OOM or parser failure.
+prompt/output token counts, TTFT, TPOT, output tokens per second, KV-cache usage,
+prefix-cache hits, request wait/running gauges, GPU memory, GPU power draw,
+temperature, and any OOM, parser, HTTP, or preemption failure.
 
 Use the repo runner so output is comparable:
 
 ```bash
-bun run flamingo:benchmark --profile=smoke
-bun run flamingo:benchmark --profile=full --long-targets=180000,220000,229000
+bun run flamingo:benchmark --profile=smoke --candidate-id=baseline-live --fail-on-gate
+bun run flamingo:benchmark --profile=full --candidate-id=<candidate> --baseline-result=<baseline.json> --long-targets=180000,220000,229000 --fail-on-gate
 ```
+
+Do not run the `full` profile against production while Saigak is still resident
+on Turin. On July 3, 2026, `full` reached `warmup-c16` and the vLLM engine died
+with CUDA OOM in the FlashInfer fused-MoE path after only about `593 MiB` was
+free on the physical Blackwell. Run `smoke` first, move Saigak off Blackwell,
+then use `full` as the promotion gate for one candidate at a time.
+
+`candidate-profiles.yaml` is the rendered GitOps source for safe rollout
+profiles. It is a no-traffic ConfigMap, not a second model server, so Argo can
+carry the policy without allocating another Blackwell GPU or changing the
+production route.
 
 | Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
 | --- | ---: | ---: | ---: | ---: | --- |
 | `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8-eager` | `262144` | `0.95` | `16` | `16384` | Promoted production profile |
-| `context-262k-lowseq` | `262144` | `0.95` | `8` | `8192` | Startup fallback if the initial candidate OOMs |
-| `kv-262k-auto` | `262144` | `0.95` | `16` | `16384` | Compare only after FP8 smokes pass |
-| `batch-262k-32k` | `262144` | `0.95` | `16` | `32768` | Promote only if TTFT and preemption stay acceptable |
-| `mem-262k-097` | `262144` | `0.97` | `16` | `16384` | Promote only if no OOM or sustained preemption |
+| `context-262k-fp8` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
+| `eager-262k` | `262144` | `0.85` | `16` | `16384` | Test `--safetensors-load-strategy eager` alone before promotion |
+| `image-lane` | `262144` | `0.85` | `16` | `16384` | New official stable vLLM CUDA digest with current flags first |
+| `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
+| `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
+| `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
+
+### Recorded Live Optimization Run
+
+Run date: `2026-07-03`.
+
+Live precondition fixed first:
+
+- `saigak` had drifted onto `turin` with a `nvidia.com/gpu` request while its
+  PVC was local-path storage selected on `turin`.
+- The safe live/GitOps correction is CPU-only `saigak` on `turin` until a real
+  Altra 3090 storage migration exists.
+- After the correction, the only GPU consumers were `flamingo` and Plex, and
+  `saigak` still returned `4096`-dimension embeddings while blocking chat
+  completions.
+
+Fresh post-deconflict baseline artifacts:
+
+| Artifact | Result |
+| --- | --- |
+| `/tmp/flamingo-real-opt-candidates/flamingo-baseline-deconflicted-smoke-2026-07-03T21-59-10-261Z.json` | `0` failed gates, `129.41` gen tok/s, `0` errors/aborts/preemptions |
+| `/tmp/flamingo-real-opt-candidates/flamingo-baseline-deconflicted-full-2026-07-03T21-59-58-481Z.json` | `0` failed gates, `133.21` gen tok/s, `1,620,474` prompt tokens, `0` errors/aborts/preemptions |
+
+Measured candidate outcomes on the same deployed model/image:
+
+| Candidate | Live change | Artifact | Decision |
+| --- | --- | --- | --- |
+| `batch24576` | `--max-num-batched-tokens 24576` | `/tmp/flamingo-real-opt-candidates/flamingo-batch24576-smoke-2026-07-03T22-11-29-828Z.json` | Rejected: output throughput and p99 TTFT gates failed |
+| `gmem086` | `--gpu-memory-utilization 0.86` | `/tmp/flamingo-real-opt-candidates/flamingo-gmem086-smoke-2026-07-03T22-16-12-023Z.json` | Rejected: KV capacity improved, but throughput and p99 TTFT gates failed |
+| `mtp1-prefix-off` | `--no-enable-prefix-caching --speculative-config {"method":"mtp","num_speculative_tokens":1}` | `/tmp/flamingo-real-opt-candidates/flamingo-mtp1-prefix-off-mtp-al-2026-07-03T22-30-05-021Z.json` and `/tmp/flamingo-real-opt-candidates/flamingo-mtp1-prefix-off-smoke-2026-07-03T22-30-59-838Z.json` | Rejected: real AL was about `1.80`, but smoke throughput, p99 TTFT, and TPOT gates failed |
+| `language-model-only-warm` | `--language-model-only` | `/tmp/flamingo-real-opt-candidates/flamingo-language-model-only-warm-smoke-2026-07-03T22-36-36-387Z.json` | Rejected as a performance promotion: quality gates passed, but throughput did not beat baseline threshold |
+| `cudagraph-estimate-off-warm` | `VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=0` | `/tmp/flamingo-real-opt-candidates/flamingo-cudagraph-estimate-off-warm-smoke-2026-07-03T22-43-00-169Z.json` | Rejected: larger KV cache did not improve throughput, and vLLM warned about unaccounted CUDA graph memory/OOM risk |
+
+Final live state was restored to `baseline.args` and smoke-tested:
+`/tmp/flamingo-real-opt-candidates/flamingo-baseline-restored-smoke-2026-07-03T22-50-51-537Z.json`
+with `0` failed gates and `0` request errors/aborts/preemptions.
+
+No vLLM launch-flag candidate was promoted from this run. The production
+optimization that passed end-to-end is the Blackwell resource deconflict:
+Saigak no longer consumes the physical Blackwell GPU, allowing the current
+Qwen3.6 baseline to pass the full 262K profile that previously OOMed.
+
+The default `full` benchmark profile now covers the InferenceX-inspired
+serving shapes:
+
+- warmups at concurrency `1/2/4/8/16` plus a long-prefill warmup;
+- scheduler profile `4K` input / `512` output;
+- scheduler profile `32K` input / `4K` output;
+- scheduler profile `128K` input / `512` output;
+- long-context recall at `180K`, `220K`, and `229K` when the default full
+  target set is used.
+
+`--profile=mtp-al` adds Qwen chat-template thinking-on/off MTP acceptance
+cells. It only measures the deployed `--speculative-config`; synthetic
+acceptance is not a production gate.
+
+### InferenceX Methodology Adaptation
+
+InferenceX Qwen3.5 work is not copied flag-for-flag because it benchmarks a
+different model scale and hardware topology. The reusable parts are:
+
+- Qwen-specific reasoning and tool parsers stay active during every benchmark.
+- Thinking mode is controlled through Qwen chat-template kwargs, not generic
+  prose prompts.
+- Throughput is judged on coding-agent-like prompt/output shapes, not only tiny
+  random-token requests.
+- Speculative decoding is measured by accepted-token and draft counters:
+  `AL = 1 + accepted_draft_tokens / verification_drafts`.
+- Synthetic acceptance is benchmark-only and must not be used as a production
+  quality shortcut.
 
 ### Recorded Production Run
 
@@ -271,12 +363,23 @@ Short coding-loop smoke benchmark:
 | Mean TPOT | `6.38 ms` |
 | Failed requests | `0` |
 
-MTP candidate flags:
+MTP candidate flags, tested one value at a time:
 
 ```text
---moe-backend marlin
---speculative-config {"method":"mtp","num_speculative_tokens":3,"moe_backend":"triton"}
+--speculative-config {"method":"mtp","num_speculative_tokens":1}
+--speculative-config {"method":"mtp","num_speculative_tokens":2}
+--speculative-config {"method":"mtp","num_speculative_tokens":3}
+--speculative-config {"method":"mtp","num_speculative_tokens":4}
 ```
+
+Promote MTP only when all of these hold in the benchmark artifact:
+
+- exact no-thinking, medium thinking, structured tool call, prefix-cache repeat,
+  and long-context recall pass;
+- `speculativeDecode.metricDelta.speculativeAcceptanceLength` is present;
+- output throughput improves by at least `15%` against the same non-MTP profile;
+- p99 TTFT regresses by no more than `10%`;
+- a real AnyPi-style repo task still completes with a code/test diff.
 
 KV-cache candidates must be checked against the pinned vLLM image before use:
 
@@ -285,9 +388,15 @@ KV-cache candidates must be checked against the pinned vLLM image before use:
 --kv-cache-dtype auto
 ```
 
-Do not combine MTP, KV-cache dtype, batching, and memory changes after the
-initial 262K candidate. Change one variable, run the smoke suite, then run a
-real AnyPi AgentRun.
+Do not combine MTP, KV-cache dtype, batching, memory, DBO, or concurrent partial
+prefill changes after the initial 262K candidate. Change one variable, run the
+smoke suite, then run a real AnyPi AgentRun.
+
+Do not re-enable `--enable-dbo` in the single-GPU production profile. Do not
+re-enable `--max-num-partial-prefills > 1` until the upgraded vLLM image proves
+support in a canary startup and smoke. True prefill/decode disaggregation is a
+separate `flamingo-pd-shadow` design that requires at least two physical free
+GPUs after Plex preservation; time-sliced replicas are not enough.
 
 ## Completion Criteria
 

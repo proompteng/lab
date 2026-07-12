@@ -121,6 +121,7 @@ def _parse_args() -> argparse.Namespace:
             "default empty source slices remain a no-op."
         ),
     )
+    _add_reconcile_empty_selection_headroom_arg(parser)
     parser.add_argument(
         "--fail-on-degraded",
         action="store_true",
@@ -178,6 +179,20 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--json", action="store_true")
     return parser.parse_args()
+
+
+def _add_reconcile_empty_selection_headroom_arg(
+    parser: argparse.ArgumentParser,
+) -> None:
+    parser.add_argument(
+        "--reconcile-empty-selection-freshness-headroom-seconds",
+        type=int,
+        default=0,
+        help=(
+            "When reusing a previous clean reconciliation for an empty source "
+            "selection, require this many seconds of freshness budget to remain."
+        ),
+    )
 
 
 def _sqlalchemy_dsn(dsn: str) -> str:

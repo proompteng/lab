@@ -6,6 +6,8 @@ metadata:
 spec:
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
+  syncPolicy:
+    preserveResourcesOnDeletion: true
   generators:
     - matrix:
         generators:
@@ -71,10 +73,11 @@ spec:
                 path: argocd/applications/olden
                 namespace: olden
                 renderWithLovely: false
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "5"
                 automation: auto
-                enabled: "true"
+                enabled: "false"
               - name: analysis
                 path: argocd/applications/analysis
                 namespace: analysis
@@ -277,7 +280,7 @@ spec:
                   labels:
                     external-secrets.proompteng.ai/enabled: "true"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: torghut
                 path: argocd/applications/torghut
                 namespace: torghut
@@ -501,11 +504,21 @@ spec:
           - PruneLast=true
           - ClientSideApplyMigration=false
   templatePatch: |
-    {{- if .annotations }}
+    {{- $cascadeResourcesOnDeletion := false -}}
+    {{- if hasKey . "cascadeResourcesOnDeletion" -}}
+    {{- $cascadeResourcesOnDeletion = .cascadeResourcesOnDeletion -}}
+    {{- end -}}
+    {{- if or .annotations $cascadeResourcesOnDeletion }}
     metadata:
+    {{- if $cascadeResourcesOnDeletion }}
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    {{- end }}
+    {{- if .annotations }}
       annotations:
     {{- range $key, $value := .annotations }}
         {{ $key }}: {{ $value | quote }}
+    {{- end }}
     {{- end }}
     {{- end }}
     {{- $hasDestServer := hasKey . "destinationServer" -}}

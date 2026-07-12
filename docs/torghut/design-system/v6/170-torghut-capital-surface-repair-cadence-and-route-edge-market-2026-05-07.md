@@ -1,20 +1,20 @@
 # 170. Torghut Capital Surface Repair Cadence And Route Edge Market (2026-05-07)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-07
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant profitability, route edge reacquisition, proof repair cadence, no-notional guardrails, capital
-promotion gates, validation, rollout, rollback, and handoff.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/166-jangar-repair-cadence-ledger-and-capital-surface-admission-2026-05-07.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `169-torghut-route-reacquisition-board-and-profit-repair-packets-2026-05-07.md`
-- `163-torghut-quant-stage-cohort-and-evidence-repair-settlement-2026-05-07.md`
-- `docs/agents/designs/165-jangar-proof-settlement-broker-and-profit-repair-packet-gates-2026-05-07.md`
 
 ## Decision
 
@@ -102,7 +102,7 @@ flags.
 - Scheduler was running and startup grace was inactive.
 - Live submission gate was closed with `simple_submit_disabled`.
 - Proof floor was `repair_only`, route state `repair_only`, capital state `zero_notional`, and max notional `0`.
-- Blocking reasons were `alpha_readiness_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
+- Blocking reasons were `hypothesis_not_promotion_eligible`, `execution_tca_route_universe_incomplete`,
   `market_context_stale`, and `simple_submit_disabled`.
 - Alpha readiness had three hypotheses: one blocked, two shadow, zero promotion eligible, and three rollback required.
 - Market context state was stale with no last freshness seconds or domain states in the proof-floor source reference.

@@ -1,20 +1,20 @@
 # 118. Torghut Proof Route Parity And Options-Informed Repair Scheduler (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut quant proof-route parity, Jangar evidence transport consumption, options-lane alpha repair scheduling,
-paper/live capital guardrails, and deployer validation.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/114-jangar-evidence-transport-ledger-and-watch-restart-circuit-breakers-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: options data/control lane exists; options trading authority remains separate and gated.
+- Matched implementation area: Options lane.
+- Current source evidence:
+  - `services/torghut/app/options_lane/settings.py`
+  - `services/torghut/app/options_lane/catalog_service.py`
+  - `services/torghut/app/options_lane/enricher_service.py`
+  - `argocd/applications/torghut-options/ws/deployment.yaml`
+  - `argocd/applications/torghut-options/ta/flinkdeployment.yaml`
+- Design drift note: March/options text must be checked against current `options_lane` source and `torghut-options` GitOps before use.
 
-Extends:
-
-- `117-torghut-contradiction-priced-profit-repair-and-capital-readmission-2026-05-06.md`
-- `116-torghut-session-scoped-alpha-ledger-and-replay-capital-scheduler-2026-05-06.md`
-- `115-torghut-proof-spend-market-and-negative-evidence-consumer-2026-05-06.md`
 
 ## Decision
 

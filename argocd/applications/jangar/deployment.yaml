@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/name: jangar
     app.kubernetes.io/part-of: lab
   annotations:
-    deploy.knative.dev/rollout: 2026-06-30T15:18:56Z
+    deploy.knative.dev/rollout: 2026-07-12T00:53:15Z
 spec:
   replicas: 1
   strategy:
@@ -57,9 +57,9 @@ spec:
             - name: UI_PORT
               value: "8080"
             - name: JANGAR_SOURCE_HEAD_SHA
-              value: 2c392bf93edd4004a8e917d26079b136da283e96
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
             - name: JANGAR_GITOPS_REVISION
-              value: 2c392bf93edd4004a8e917d26079b136da283e96
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
             - name: JANGAR_HTTP_IDLE_TIMEOUT_SECONDS
               value: "120"
             - name: JANGAR_CONTROL_PLANE_STATUS_CACHE_TTL_MS
@@ -247,10 +247,6 @@ spec:
               value: "15"
             - name: JANGAR_TORGHUT_QUANT_POLICY_MAX_TA_FRESHNESS_SECONDS
               value: "120"
-            - name: JANGAR_TORGHUT_STATUS_URL
-              value: http://torghut.torghut.svc.cluster.local/trading/consumer-evidence
-            - name: JANGAR_TORGHUT_STATUS_TIMEOUT_MS
-              value: "3000"
             - name: JANGAR_TORGHUT_QUANT_HEALTH_MISSING_UPDATE_SECONDS
               value: "15"
             - name: JANGAR_FEATURE_FLAGS_URL
@@ -296,9 +292,9 @@ spec:
             - name: JANGAR_MARKET_CONTEXT_REQUIRE_TECHNICALS_SOURCE_HEALTH
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_TECHNICALS_MAX_FRESHNESS_SECONDS
-              value: "60"
+              value: "300"
             - name: JANGAR_MARKET_CONTEXT_REGIME_MAX_FRESHNESS_SECONDS
-              value: "120"
+              value: "300"
             - name: JANGAR_MARKET_CONTEXT_BATCH_REQUIRE_OPEN_SESSION
               value: "true"
             - name: JANGAR_MARKET_CONTEXT_BATCH_TRADING_STATUS_URL
@@ -359,15 +355,15 @@ spec:
             - name: ATLAS_CODE_SEARCH_HEALTH_SAMPLE_LIMIT
               value: "50"
             - name: JANGAR_SOURCE_CI_RUN_ID
-              value: "28454358302"
+              value: "29173231564"
             - name: JANGAR_SOURCE_CI_CONCLUSION
               value: success
             - name: JANGAR_MANIFEST_IMAGE_DIGEST
-              value: sha256:1c50c47d76bc1ec7fa086b1f59c768db2a619481829f81c29d5ef46a2c421631
+              value: sha256:0323aec2f8891959277ef09a148ebac05315a46db897f4adf83b510b1dbcf042
             - name: JANGAR_SERVING_BUILD_COMMIT
-              value: 2c392bf93edd4004a8e917d26079b136da283e96
+              value: ccfdd9e0acf9a68ceb2b6fa32fd072fb038aec00
             - name: JANGAR_SERVING_IMAGE_DIGEST
-              value: sha256:1c50c47d76bc1ec7fa086b1f59c768db2a619481829f81c29d5ef46a2c421631
+              value: sha256:0323aec2f8891959277ef09a148ebac05315a46db897f4adf83b510b1dbcf042
           ports:
             - name: http
               containerPort: 8080

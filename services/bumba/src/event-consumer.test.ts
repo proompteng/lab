@@ -7,6 +7,7 @@ const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_CONSUMER_ENABLED',
   'BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS',
   'BUMBA_GITHUB_EVENT_BATCH_SIZE',
+  'BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK',
   'BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS',
   'BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES',
   'BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS',
@@ -102,6 +103,7 @@ test('resolveConsumerConfig reads environment overrides', () => {
   process.env.BUMBA_GITHUB_EVENT_CONSUMER_ENABLED = 'false'
   process.env.BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS = '2500'
   process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE = '11'
+  process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK = '2'
   process.env.BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS = '55'
   process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES = '3'
   process.env.BUMBA_GITHUB_EVENT_NONTERMINAL_STALE_MS = '600000'
@@ -114,12 +116,186 @@ test('resolveConsumerConfig reads environment overrides', () => {
   expect(config.enabled).toBe(false)
   expect(config.pollIntervalMs).toBe(2500)
   expect(config.batchSize).toBe(11)
+  expect(config.maxDispatchEventsPerTick).toBe(2)
   expect(config.maxEventFileTargets).toBe(55)
   expect(config.maxDispatchFailures).toBe(3)
   expect(config.nonterminalIngestionStaleMs).toBe(600000)
   expect(config.routingAlignmentEnabled).toBe(false)
   expect(config.taskQueue).toBe('jangar')
   expect(config.repoRoot).toBe('/workspace/lab')
+})
+
+test('resolveConsumerConfig defaults dispatch limit to scan batch size', () => {
+  process.env.BUMBA_GITHUB_EVENT_BATCH_SIZE = '17'
+  delete process.env.BUMBA_GITHUB_EVENT_MAX_DISPATCH_EVENTS_PER_TICK
+
+  const config = __test__.resolveConsumerConfig()
+
+  expect(config.batchSize).toBe(17)
+  expect(config.maxDispatchEventsPerTick).toBe(17)
+})
+
+test('runEventConsumerTick scans past waiting rows before applying dispatch limit', async () => {
+  const events = [
+    {
+      id: 'event-waiting-1',
+      delivery_id: 'waiting-1',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+    {
+      id: 'event-waiting-2',
+      delivery_id: 'waiting-2',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+    {
+      id: 'event-dispatch-1',
+      delivery_id: 'dispatch-1',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+    {
+      id: 'event-dispatch-2',
+      delivery_id: 'dispatch-2',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+  ]
+  const processedDeliveries: string[] = []
+  const dispatchedDeliveries: string[] = []
+  const markedProcessed: string[] = []
+
+  await __test__.runEventConsumerTick({
+    db: {} as never,
+    client: {} as never,
+    config: {
+      enabled: true,
+      pollIntervalMs: 10_000,
+      batchSize: events.length,
+      maxDispatchEventsPerTick: 1,
+      maxEventFileTargets: 200,
+      maxDispatchFailures: 6,
+      nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
+      routingAlignmentEnabled: false,
+      taskQueue: 'bumba',
+      repoRoot: '/workspace/lab',
+    },
+    inFlightDeliveries: new Set(),
+    dispatchFailureCounts: new Map(),
+    ensureRoutingAlignment: async () => true,
+    listPendingEvents: async (_db, batchSize) => {
+      expect(batchSize).toBe(events.length)
+      return events
+    },
+    processPendingEvent: async (_db, _client, _config, event) => {
+      processedDeliveries.push(event.delivery_id)
+      if (event.delivery_id.startsWith('waiting-')) {
+        return {
+          processed: false,
+          waitingOnIngestion: true,
+          dispatchStarted: 0,
+          dispatchAlreadyStarted: 0,
+          dispatchFailed: 0,
+        }
+      }
+
+      dispatchedDeliveries.push(event.delivery_id)
+      return {
+        processed: false,
+        waitingOnIngestion: false,
+        dispatchStarted: 1,
+        dispatchAlreadyStarted: 0,
+        dispatchFailed: 0,
+      }
+    },
+    markProcessed: async (_db, deliveryId) => {
+      markedProcessed.push(deliveryId)
+    },
+  })
+
+  expect(processedDeliveries).toEqual(['waiting-1', 'waiting-2', 'dispatch-1'])
+  expect(dispatchedDeliveries).toEqual(['dispatch-1'])
+  expect(markedProcessed).toEqual([])
+})
+
+test('runEventConsumerTick does not count already-started rows against dispatch limit', async () => {
+  const events = [
+    {
+      id: 'event-duplicate',
+      delivery_id: 'duplicate-1',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+    {
+      id: 'event-dispatch',
+      delivery_id: 'dispatch-1',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+    {
+      id: 'event-dispatch-2',
+      delivery_id: 'dispatch-2',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+  ]
+  const processedDeliveries: string[] = []
+  const dispatchedDeliveries: string[] = []
+  const failureCounts = new Map<string, number>([['duplicate-1', 1]])
+
+  await __test__.runEventConsumerTick({
+    db: {} as never,
+    client: {} as never,
+    config: {
+      enabled: true,
+      pollIntervalMs: 10_000,
+      batchSize: events.length,
+      maxDispatchEventsPerTick: 1,
+      maxEventFileTargets: 200,
+      maxDispatchFailures: 6,
+      nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
+      routingAlignmentEnabled: false,
+      taskQueue: 'bumba',
+      repoRoot: '/workspace/lab',
+    },
+    inFlightDeliveries: new Set(),
+    dispatchFailureCounts: failureCounts,
+    ensureRoutingAlignment: async () => true,
+    listPendingEvents: async () => events,
+    processPendingEvent: async (_db, _client, _config, event) => {
+      processedDeliveries.push(event.delivery_id)
+      if (event.delivery_id === 'duplicate-1') {
+        return {
+          processed: false,
+          waitingOnIngestion: false,
+          dispatchStarted: 0,
+          dispatchAlreadyStarted: 1,
+          dispatchFailed: 0,
+        }
+      }
+
+      dispatchedDeliveries.push(event.delivery_id)
+      return {
+        processed: false,
+        waitingOnIngestion: false,
+        dispatchStarted: 1,
+        dispatchAlreadyStarted: 0,
+        dispatchFailed: 0,
+      }
+    },
+  })
+
+  expect(processedDeliveries).toEqual(['duplicate-1', 'dispatch-1'])
+  expect(dispatchedDeliveries).toEqual(['dispatch-1'])
+  expect(failureCounts.has('duplicate-1')).toBe(false)
 })
 
 test('isWorkflowAlreadyStartedError recognizes Temporal already-started errors', () => {

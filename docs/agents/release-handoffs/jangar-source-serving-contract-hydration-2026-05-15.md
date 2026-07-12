@@ -18,7 +18,7 @@ Before implementation, read-only evidence from `http://agents.agents.svc.cluster
 - `business_state=repair_only`
 - `revenue_ready=false`
 - top repair queue item `repair_alpha_readiness`
-- top repair reason `alpha_readiness_not_promotion_eligible`
+- top repair reason `hypothesis_not_promotion_eligible`
 - affected value gate `routeable_candidate_count`
 - `execution_trust.status=degraded` because the Jangar verify stage was stale
 - Jangar `controller_ingestion_settlement.decision=hold`

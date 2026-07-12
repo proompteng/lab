@@ -233,42 +233,101 @@ jobs:
             done
           done
 
-          set +e
-          KNSVC_READY="$(kubectl get ksvc torghut -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-ksvc-ready.err)"
-          KNSVC_READY_STATUS=$?
-          set -e
-          if [ "${KNSVC_READY_STATUS}" -ne 0 ]; then
-            if grep -qi 'not found' /tmp/torghut-ksvc-ready.err; then
-              echo "Knative Service torghut was not found"
-              cat /tmp/torghut-ksvc-ready.err
+          TORGHUT_SCHEDULER_REPLICAS="$(
+            kubectl get deployment torghut-scheduler -n torghut -o jsonpath='{.spec.replicas}'
+          )"
+          case "${TORGHUT_SCHEDULER_REPLICAS}" in
+            0 | 1)
+              ;;
+            *)
+              echo "Torghut scheduler replicas must be exactly 0 or 1; got ${TORGHUT_SCHEDULER_REPLICAS:-unset}"
               exit 1
-            else
-              echo "Failed to read Knative Service torghut"
-              cat /tmp/torghut-ksvc-ready.err
-              exit 1
-            fi
-          elif [ "${KNSVC_READY}" != 'True' ]; then
-            echo "Knative Service torghut is not Ready"
+              ;;
+          esac
+          echo "Torghut scheduler desired replicas: ${TORGHUT_SCHEDULER_REPLICAS}"
+          if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+            kubectl rollout status deployment/torghut-scheduler -n torghut --timeout=10m
+          fi
+
+          if ! TORGHUT_SIM_TRADING_ENABLED="$(
+            kubectl get ksvc torghut-sim -n torghut -o json |
+              jq -r '
+                [.spec.template.spec.containers[]
+                  | select(.name == "user-container")
+                  | (.env // [])[]
+                  | select(.name == "TRADING_ENABLED")
+                  | (.value // "")]
+                | if length == 1 then .[0] else "" end
+              '
+          )"; then
+            echo "Failed to read torghut-sim desired TRADING_ENABLED from the live Knative Service"
             exit 1
           fi
-          set +e
-          SIM_KNSVC_READY="$(kubectl get ksvc torghut-sim -n torghut -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2> /tmp/torghut-sim-ksvc-ready.err)"
-          SIM_KNSVC_READY_STATUS=$?
-          set -e
-          if [ "${SIM_KNSVC_READY_STATUS}" -ne 0 ]; then
-            if grep -qi 'not found' /tmp/torghut-sim-ksvc-ready.err; then
-              echo "Knative Service torghut-sim was not found"
-              cat /tmp/torghut-sim-ksvc-ready.err
+          case "${TORGHUT_SIM_TRADING_ENABLED}" in
+            true | false)
+              ;;
+            *)
+              echo "torghut-sim desired TRADING_ENABLED must be exactly true or false; got ${TORGHUT_SIM_TRADING_ENABLED:-unset}"
               exit 1
-            else
-              echo "Failed to read Knative Service torghut-sim"
-              cat /tmp/torghut-sim-ksvc-ready.err
-              exit 1
-            fi
-          elif [ "${SIM_KNSVC_READY}" != 'True' ]; then
-            echo "Knative Service torghut-sim is not Ready"
-            exit 1
-          fi
+              ;;
+          esac
+          export TORGHUT_SIM_TRADING_ENABLED
+          echo "torghut-sim desired TRADING_ENABLED=${TORGHUT_SIM_TRADING_ENABLED}"
+
+          KNSVC_READY_ATTEMPTS=60
+          KNSVC_READY_INTERVAL_SECONDS=2
+
+          wait_knative_service_ready() {
+            local service="$1"
+            local attempt
+            local status
+            local ready
+            local latest_ready
+            local latest_created
+            local output
+            local error_path="/tmp/${service}-ksvc-ready.err"
+
+            for attempt in $(seq 1 "${KNSVC_READY_ATTEMPTS}"); do
+              set +e
+              output="$(
+                kubectl get ksvc "${service}" -n torghut \
+                  -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.latestReadyRevisionName} {.status.latestCreatedRevisionName}' \
+                  2> "${error_path}"
+              )"
+              status=$?
+              set -e
+
+              if [ "${status}" -ne 0 ]; then
+                if grep -qi 'not found' "${error_path}"; then
+                  echo "Knative Service ${service} was not found"
+                  cat "${error_path}"
+                  exit 1
+                fi
+                echo "Failed to read Knative Service ${service}"
+                cat "${error_path}"
+                exit 1
+              fi
+
+              ready="$(echo "${output}" | awk '{print $1}')"
+              latest_ready="$(echo "${output}" | awk '{print $2}')"
+              latest_created="$(echo "${output}" | awk '{print $3}')"
+              if [ "${ready}" = 'True' ]; then
+                return 0
+              fi
+
+              if [ "${attempt}" -eq "${KNSVC_READY_ATTEMPTS}" ]; then
+                echo "Knative Service ${service} did not become Ready after bounded retry window"
+                kubectl get ksvc "${service}" -n torghut -o yaml || true
+                exit 1
+              fi
+
+              echo "Attempt ${attempt}: Knative Service ${service} ready=${ready:-empty} latestReady=${latest_ready:-empty} latestCreated=${latest_created:-empty}"
+              sleep "${KNSVC_READY_INTERVAL_SECONDS}"
+            done
+          }
+
+          wait_knative_service_ready torghut
+          wait_knative_service_ready torghut-sim
 
           for deployment in \
             torghut-options-catalog \
@@ -303,11 +362,9 @@ jobs:
           HTTP_MAX_TIME_SECONDS=15
           JSON_EVIDENCE_ATTEMPTS=3
           READYZ_EVIDENCE_ATTEMPTS=12
-          PAPER_ROUTE_EVIDENCE_ATTEMPTS=1
-          PAPER_ROUTE_HTTP_MAX_TIME_SECONDS=8
           EVIDENCE_RETRY_INTERVAL_SECONDS=2
-          SIM_MIRROR_ATTEMPTS=12
-          SIM_MIRROR_RETRY_INTERVAL_SECONDS=5
+          FULL_CONTRACT_ATTEMPTS=120
+          FULL_CONTRACT_INTERVAL_SECONDS=10
 
           fetch_json() {
             local url="$1"
@@ -405,371 +462,129 @@ jobs:
             done
           }
 
-          fetch_json_2xx() {
-            local url="$1"
-            local output_path="$2"
-            local label="$3"
-            local status
+          append_contract_diagnostic() {
+            local message="$1"
+            if [ -n "${CONTRACT_DIAGNOSTICS}" ]; then
+              CONTRACT_DIAGNOSTICS="${CONTRACT_DIAGNOSTICS}; ${message}"
+            else
+              CONTRACT_DIAGNOSTICS="${message}"
+            fi
+          }
 
-            for attempt in $(seq 1 "${JSON_EVIDENCE_ATTEMPTS}"); do
-              status="$(
-                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${HTTP_MAX_TIME_SECONDS}" \
-                  -o "${output_path}" -w '%{http_code}' "${url}" || true
-              )"
-              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                return 0
-              fi
+          for contract_attempt in $(seq 1 "${FULL_CONTRACT_ATTEMPTS}"); do
+            rm -f \
+              "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+              "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+              "${EVIDENCE_DIR}/torghut-sim-status.json" \
+              "${EVIDENCE_DIR}/torghut-status.json"
+            unset TORGHUT_SCHEDULER_READYZ_HTTP_STATUS TORGHUT_SCHEDULER_READYZ_PAYLOAD
+            CONTRACT_CAPTURE_OK='true'
+            CONTRACT_DIAGNOSTICS=''
 
-              if [ "${attempt}" -eq "${JSON_EVIDENCE_ATTEMPTS}" ]; then
-                if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                  [ "${status}" != '000' ] &&
-                  python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                  echo "${label} returned HTTP ${status}; expected 2xx" >&2
-                else
-                  echo "${label} did not return a parseable JSON HTTP 2xx response; status=${status:-empty}" >&2
-                fi
-                head -c 1000 "${output_path}" >&2 || true
-                echo >&2
-                return 1
-              fi
+            if ! TORGHUT_API_READYZ_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut.torghut.svc.cluster.local/readyz \
+                "${EVIDENCE_DIR}/torghut-api-readyz.json" \
+                "Torghut stable API /readyz" \
+                2> "${EVIDENCE_DIR}/torghut-api-readyz-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'stable API readiness capture failed'
+            elif ! [[ "${TORGHUT_API_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_API_READYZ_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "stable API readiness returned invalid HTTP status ${TORGHUT_API_READYZ_HTTP_STATUS:-unset}"
+            fi
 
-              if [[ "${status}" =~ ^[0-9]{3}$ ]] &&
-                [ "${status}" != '000' ] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                echo "Attempt ${attempt}: ${label} returned HTTP ${status}; expected 2xx; retrying" >&2
+            if [ "${TORGHUT_SCHEDULER_REPLICAS}" = '1' ]; then
+              if ! TORGHUT_SCHEDULER_READYZ_HTTP_STATUS="$(
+                fetch_readyz_json \
+                  http://torghut-scheduler.torghut.svc.cluster.local:8183/readyz \
+                  "${EVIDENCE_DIR}/torghut-scheduler-readyz.json" \
+                  "Torghut scheduler /readyz" \
+                  2> "${EVIDENCE_DIR}/torghut-scheduler-readyz-fetch.err"
+              )"; then
+                CONTRACT_CAPTURE_OK='false'
+                append_contract_diagnostic 'scheduler readiness capture failed'
+              elif ! [[ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+                [ "${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS}" = '000' ]; then
+                CONTRACT_CAPTURE_OK='false'
+                append_contract_diagnostic "scheduler readiness returned invalid HTTP status ${TORGHUT_SCHEDULER_READYZ_HTTP_STATUS:-unset}"
               else
-                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable JSON 2xx yet; retrying" >&2
+                export TORGHUT_SCHEDULER_READYZ_HTTP_STATUS
+                export TORGHUT_SCHEDULER_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-scheduler-readyz.json"
               fi
-              sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
-            done
-          }
-
-          fetch_json_2xx_optional() {
-            local url="$1"
-            local output_path="$2"
-            local label="$3"
-            local status
-
-            for attempt in $(seq 1 "${PAPER_ROUTE_EVIDENCE_ATTEMPTS}"); do
-              status="$(
-                curl -sS --connect-timeout "${HTTP_CONNECT_TIMEOUT_SECONDS}" --max-time "${PAPER_ROUTE_HTTP_MAX_TIME_SECONDS}" \
-                  -o "${output_path}" -w '%{http_code}' "${url}" || true
-              )"
-              if [[ "${status}" =~ ^2[0-9][0-9]$ ]] &&
-                python3 -m json.tool "${output_path}" >/dev/null 2>&1; then
-                return 0
-              fi
-
-              if [ "${attempt}" -lt "${PAPER_ROUTE_EVIDENCE_ATTEMPTS}" ]; then
-                echo "Attempt ${attempt}: ${label} status=${status:-empty} not usable optional JSON 2xx yet; retrying"
-                sleep "${EVIDENCE_RETRY_INTERVAL_SECONDS}"
-              fi
-            done
-
-            echo "${label} unavailable after bounded optional evidence retry; status=${status:-empty}; skipping paper-route mirror-only validation"
-            rm -f "${output_path}"
-            return 1
-          }
-
-          TORGHUT_READYZ_HTTP_STATUS="$(
-            fetch_readyz_json \
-              http://torghut.torghut.svc.cluster.local/readyz \
-              "${EVIDENCE_DIR}/torghut-readyz.json" \
-              "Torghut /readyz"
-          )"
-          if [ -z "${TORGHUT_READYZ_HTTP_STATUS}" ] || [ "${TORGHUT_READYZ_HTTP_STATUS}" = '000' ]; then
-            echo "Torghut /readyz did not return an HTTP response"
-            exit 1
-          fi
-          if ! [[ "${TORGHUT_READYZ_HTTP_STATUS}" =~ ^[0-9]{3}$ ]]; then
-            echo "Torghut /readyz returned invalid HTTP status ${TORGHUT_READYZ_HTTP_STATUS}"
-            exit 1
-          fi
-          echo "Torghut /readyz HTTP ${TORGHUT_READYZ_HTTP_STATUS}"
-
-          fetch_json_2xx \
-            http://torghut.torghut.svc.cluster.local/trading/status \
-            "${EVIDENCE_DIR}/torghut-status.json" \
-            "Torghut /trading/status"
-          fetch_json_2xx \
-            http://torghut.torghut.svc.cluster.local/trading/revenue-repair \
-            "${EVIDENCE_DIR}/torghut-revenue-repair-digest.json" \
-            "Torghut /trading/revenue-repair"
-          export TORGHUT_REVENUE_REPAIR_DIGEST="${EVIDENCE_DIR}/torghut-revenue-repair-digest.json"
-          export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
-          export TORGHUT_READYZ_HTTP_STATUS
-          export TORGHUT_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-readyz.json"
-
-          capture_paper_route_mirror_evidence() {
-            local live_ok='false'
-            local sim_ok='false'
-
-            unset TORGHUT_PAPER_ROUTE_EVIDENCE
-            unset TORGHUT_SIM_PAPER_ROUTE_EVIDENCE
-
-            if fetch_json_2xx_optional \
-              'http://torghut.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
-              "${EVIDENCE_DIR}/torghut-proofs.json" \
-              "Torghut /trading/proofs"; then
-              live_ok='true'
-            fi
-            if fetch_json_2xx_optional \
-              'http://torghut-sim.torghut.svc.cluster.local/trading/proofs?kind=runtime_window&window=next&limit=20' \
-              "${EVIDENCE_DIR}/torghut-sim-proofs.json" \
-              "Torghut sim /trading/proofs"; then
-              sim_ok='true'
             fi
 
-            if [ "${live_ok}" = 'true' ] && [ "${sim_ok}" = 'true' ]; then
-              export TORGHUT_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-proofs.json"
-              export TORGHUT_SIM_PAPER_ROUTE_EVIDENCE="${EVIDENCE_DIR}/torghut-sim-proofs.json"
-              return 0
+            if ! TORGHUT_STATUS_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut.torghut.svc.cluster.local/trading/status \
+                "${EVIDENCE_DIR}/torghut-status.json" \
+                "Torghut /trading/status" \
+                2> "${EVIDENCE_DIR}/torghut-status-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'trading status capture failed'
+            elif ! [[ "${TORGHUT_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_STATUS_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "trading status returned invalid HTTP status ${TORGHUT_STATUS_HTTP_STATUS:-unset}"
             fi
 
-            echo \
-              "Paper-route mirror evidence unavailable; hard rollout, image-pull, readyz, status, and revenue-repair gates passed"
-            return 1
-          }
+            if ! TORGHUT_SIM_STATUS_HTTP_STATUS="$(
+              fetch_json \
+                http://torghut-sim.torghut.svc.cluster.local/trading/status \
+                "${EVIDENCE_DIR}/torghut-sim-status.json" \
+                "Torghut simulation /trading/status" \
+                2> "${EVIDENCE_DIR}/torghut-sim-status-fetch.err"
+            )"; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic 'simulation trading status capture failed'
+            elif ! [[ "${TORGHUT_SIM_STATUS_HTTP_STATUS}" =~ ^[0-9]{3}$ ]] ||
+              [ "${TORGHUT_SIM_STATUS_HTTP_STATUS}" = '000' ]; then
+              CONTRACT_CAPTURE_OK='false'
+              append_contract_diagnostic "simulation trading status returned invalid HTTP status ${TORGHUT_SIM_STATUS_HTTP_STATUS:-unset}"
+            fi
 
-          run_post_deploy_evidence_validator() {
-            bun run packages/scripts/src/torghut/post-deploy-evidence.ts
-          }
-
-          validate_post_deploy_evidence_with_mirror_retry() {
-            local attempt
-            local status
-            local output_path="${EVIDENCE_DIR}/post-deploy-evidence-validator.out"
-
-            for attempt in $(seq 1 "${SIM_MIRROR_ATTEMPTS}"); do
-              set +e
-              run_post_deploy_evidence_validator > "${output_path}" 2>&1
-              status=$?
-              set -e
-
-              if [ "${status}" -eq 0 ]; then
-                cat "${output_path}"
-                return 0
+            if [ "${CONTRACT_CAPTURE_OK}" = 'true' ]; then
+              export TORGHUT_SCHEDULER_REPLICAS
+              export TORGHUT_STATUS_HTTP_STATUS
+              export TORGHUT_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-status.json"
+              export TORGHUT_API_READYZ_HTTP_STATUS
+              export TORGHUT_API_READYZ_PAYLOAD="${EVIDENCE_DIR}/torghut-api-readyz.json"
+              export TORGHUT_SIM_STATUS_HTTP_STATUS
+              export TORGHUT_SIM_STATUS_PAYLOAD="${EVIDENCE_DIR}/torghut-sim-status.json"
+              if CONTRACT_DIAGNOSTICS="$(
+                bun run packages/scripts/src/torghut/post-deploy-evidence.ts 2>&1
+              )"; then
+                printf '%s\n' "${CONTRACT_DIAGNOSTICS}"
+                echo "Torghut full post-deploy contract converged on attempt ${contract_attempt}"
+                break
               fi
+            fi
 
-              if ! grep -Eq 'torghut-sim paper-route target plan (is empty while live torghut exposes targets|missing live target)' "${output_path}"; then
-                cat "${output_path}" >&2
-                return "${status}"
-              fi
+            CONTRACT_DIAGNOSTIC_LINE="$(
+              printf '%s\n' "${CONTRACT_DIAGNOSTICS}" | tail -n 1 | cut -c 1-500
+            )"
+            echo "Attempt ${contract_attempt}/${FULL_CONTRACT_ATTEMPTS}: Torghut full contract not converged: ${CONTRACT_DIAGNOSTIC_LINE:-unknown error}"
+            if [ "${contract_attempt}" -eq "${FULL_CONTRACT_ATTEMPTS}" ]; then
+              echo "Torghut full post-deploy contract did not converge after ${FULL_CONTRACT_ATTEMPTS} attempts"
+              exit 1
+            fi
+            sleep "${FULL_CONTRACT_INTERVAL_SECONDS}"
+          done
 
-              if [ "${attempt}" -eq "${SIM_MIRROR_ATTEMPTS}" ]; then
-                echo "Torghut sim paper-route target mirror did not materialize after bounded retry window" >&2
-                cat "${output_path}" >&2
-                return "${status}"
-              fi
-
-              echo "Attempt ${attempt}: Torghut sim paper-route target mirror not materialized yet; refreshing evidence payloads" >&2
-              if ! capture_paper_route_mirror_evidence; then
-                run_post_deploy_evidence_validator
-                return 0
-              fi
-              sleep "${SIM_MIRROR_RETRY_INTERVAL_SECONDS}"
-            done
-          }
-
-          if capture_paper_route_mirror_evidence; then
-            validate_post_deploy_evidence_with_mirror_retry
-          else
-            run_post_deploy_evidence_validator
-          fi
-
-      - name: Close superseded Torghut rollback pull requests
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/github-script@v8
-        env:
-          VERIFIED_SHA: ${{ github.sha }}
-          VERIFIED_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        with:
-          github-token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo
-            const rollbackPrefix = 'codex/torghut-rollback-'
-            const rollbackTitlePrefix = 'revert(torghut): rollback failed promotion '
-            const verifiedSha = process.env.VERIFIED_SHA
-            const verifiedRunUrl = process.env.VERIFIED_RUN_URL
-
-            const openPulls = await github.paginate(github.rest.pulls.list, {
-              owner,
-              repo,
-              state: 'open',
-              base: 'main',
-              per_page: 100,
-            })
-
-            const rollbackPulls = openPulls.filter((pr) =>
-              pr.head?.repo?.full_name === `${owner}/${repo}` &&
-              pr.head?.ref?.startsWith(rollbackPrefix) &&
-              pr.title?.startsWith(rollbackTitlePrefix)
-            )
-
-            if (rollbackPulls.length === 0) {
-              core.info('No superseded Torghut rollback pull requests to close')
-              return
-            }
-
-            for (const pr of rollbackPulls) {
-              const body = [
-                `Closing this superseded automatic Torghut rollback PR because a newer torghut-post-deploy-verify run succeeded on ${verifiedSha}.`,
-                '',
-                `Successful run: ${verifiedRunUrl}`,
-              ].join('\n')
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: pr.number,
-                body,
-              })
-              await github.rest.pulls.update({
-                owner,
-                repo,
-                pull_number: pr.number,
-                state: 'closed',
-              })
-              await github.rest.git.deleteRef({
-                owner,
-                repo,
-                ref: `heads/${pr.head.ref}`,
-              }).catch((error) => {
-                if (![404, 422].includes(error.status)) {
-                  throw error
-                }
-                core.warning(`Could not delete ${pr.head.ref}: ${error.message}`)
-              })
-              core.info(`Closed superseded Torghut rollback PR #${pr.number}`)
-            }
-
-      - name: Prepare rollback manifests
-        if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        id: rollback
+      - name: Verify market-data freshness
         shell: bash
+        env:
+          MARKET_DATA_FRESHNESS_MODE: auto
+          MARKET_DATA_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_ACCEPTED_MAX_LAG_SECONDS: '300'
+          MARKET_DATA_HOLIDAYS: '2026-01-01,2026-01-19,2026-02-16,2026-04-03,2026-05-25,2026-06-19,2026-07-03,2026-09-07,2026-11-26,2026-12-25,2027-01-01,2027-01-18,2027-02-15,2027-03-26,2027-05-31,2027-06-18,2027-07-05,2027-09-06,2027-11-25,2027-12-24,2027-12-31,2028-01-17,2028-02-21,2028-04-14,2028-05-29,2028-06-19,2028-07-04,2028-09-04,2028-11-23,2028-12-25'
+          MARKET_DATA_PRINT_SUMMARIES: 'false'
         run: |
           set -euo pipefail
-
-          HEAD_MESSAGE="$(git log -1 --pretty=%s)"
-          if [[ "${HEAD_MESSAGE}" == rollback\(torghut\):* || "${HEAD_MESSAGE}" == revert\(torghut\):* ]]; then
-            echo "Skipping rollback PR because current commit is already a rollback"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          if ! git rev-parse --verify HEAD^ >/dev/null 2>&1; then
-            echo "No parent commit available for rollback"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git fetch --no-tags --depth=200 origin main
-          MAIN_HEAD="$(git rev-parse origin/main)"
-          if [ "${GITHUB_SHA}" != "${MAIN_HEAD}" ]; then
-            echo "Skipping rollback PR because main advanced from ${GITHUB_SHA} to ${MAIN_HEAD}"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          git checkout --quiet HEAD^ -- \
-            argocd/applications/torghut
-
-          if git diff --quiet HEAD -- \
-            argocd/applications/torghut; then
-            echo "No rollback diff detected"
-            echo "should_rollback=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "should_rollback=true" >> "$GITHUB_OUTPUT"
-
-      - name: Close older failed-promotion rollback pull requests
-        if: failure() && steps.rollback.outputs.should_rollback == 'true'
-        uses: actions/github-script@v8
-        env:
-          FAILED_SHA: ${{ github.sha }}
-          FAILED_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          CURRENT_ROLLBACK_BRANCH: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
-        with:
-          github-token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          script: |
-            const { owner, repo } = context.repo
-            const rollbackPrefix = 'codex/torghut-rollback-'
-            const rollbackTitlePrefix = 'revert(torghut): rollback failed promotion '
-            const currentBranch = process.env.CURRENT_ROLLBACK_BRANCH
-            const failedSha = process.env.FAILED_SHA
-            const failedRunUrl = process.env.FAILED_RUN_URL
-
-            const openPulls = await github.paginate(github.rest.pulls.list, {
-              owner,
-              repo,
-              state: 'open',
-              base: 'main',
-              per_page: 100,
-            })
-
-            const rollbackPulls = openPulls.filter((pr) =>
-              pr.head?.repo?.full_name === `${owner}/${repo}` &&
-              pr.head?.ref?.startsWith(rollbackPrefix) &&
-              pr.head.ref !== currentBranch &&
-              pr.title?.startsWith(rollbackTitlePrefix)
-            )
-
-            if (rollbackPulls.length === 0) {
-              core.info('No older Torghut rollback pull requests to close')
-              return
-            }
-
-            for (const pr of rollbackPulls) {
-              const body = [
-                `Closing this older automatic Torghut rollback PR because a newer failed promotion rollback is being opened for ${failedSha}.`,
-                '',
-                `New failed run: ${failedRunUrl}`,
-              ].join('\n')
-              await github.rest.issues.createComment({
-                owner,
-                repo,
-                issue_number: pr.number,
-                body,
-              })
-              await github.rest.pulls.update({
-                owner,
-                repo,
-                pull_number: pr.number,
-                state: 'closed',
-              })
-              await github.rest.git.deleteRef({
-                owner,
-                repo,
-                ref: `heads/${pr.head.ref}`,
-              }).catch((error) => {
-                if (![404, 422].includes(error.status)) {
-                  throw error
-                }
-                core.warning(`Could not delete ${pr.head.ref}: ${error.message}`)
-              })
-              core.info(`Closed older Torghut rollback PR #${pr.number}`)
-            }
-
-      - name: Open rollback pull request
-        if: failure() && steps.rollback.outputs.should_rollback == 'true'
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.AGENTS_SPLIT_TOKEN || secrets.GITHUB_TOKEN }}
-          branch: codex/torghut-rollback-${{ github.run_id }}-${{ github.run_attempt }}
-          base: main
-          title: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
-          commit-message: 'revert(torghut): rollback failed promotion ${{ github.sha }}'
-          delete-branch: true
-          add-paths: |
-            argocd/applications/torghut
-          body: |
-            ## Summary
-            Automatic rollback created because `torghut-post-deploy-verify` failed on `main`.
-
-            - Failed commit: `${{ github.sha }}`
-            - Workflow run: `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`
-            - Rollback source: `HEAD^` manifests from the failed run checkout
+          bun run smoke:torghut-market-data
 
       - name: Upload revenue repair evidence
         if: always()

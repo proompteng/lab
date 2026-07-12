@@ -1,21 +1,20 @@
 # 178. Torghut Route Sample Mint And Capital Proof Ratchet (2026-05-08)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-08
-Owner: Gideon Park, Torghut Traders Architecture
-Scope: Torghut profitability architecture, route sample acquisition, proof-floor repair, capital ratchets, Jangar
-ledger consumption, validation, rollout, rollback, and measurable trading hypotheses.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/174-jangar-observer-rights-and-source-settled-capital-ledger-2026-05-08.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `177-torghut-profit-repair-broker-and-capital-promotion-gates-2026-05-08.md`
-- `176-torghut-source-bound-evidence-reconciliation-and-capital-admission-ledger-2026-05-08.md`
-- `174-torghut-route-local-profit-lab-and-capital-frontier-2026-05-08.md`
-- `docs/agents/designs/173-jangar-action-broker-and-proof-carrying-rollout-cells-2026-05-08.md`
 
 ## Decision
 
@@ -25,7 +24,7 @@ The current data says Torghut should not trade live notional, but it also says e
 at 02:11Z, Torghut `/readyz` returned `status=degraded` while Postgres, ClickHouse, Alpaca, universe, database schema,
 and empirical jobs were healthy. The degradation was capital-specific: live submission was blocked by
 `simple_submit_disabled`, the proof floor was `repair_only`, capital state was `zero_notional`, and zero hypotheses
-were promotion-eligible. The proof floor named three blocking reasons: `alpha_readiness_not_promotion_eligible`,
+were promotion-eligible. The proof floor named three blocking reasons: `hypothesis_not_promotion_eligible`,
 `execution_tca_route_universe_incomplete`, and `simple_submit_disabled`.
 
 The profitability evidence is specific enough to be actionable. `/trading/tca` reported 7,334 orders and 7,245 filled

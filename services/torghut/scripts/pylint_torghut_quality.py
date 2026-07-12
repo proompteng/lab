@@ -7,11 +7,11 @@ import io
 import re
 import tokenize
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Protocol, cast
 
-from astroid import nodes
 from pylint.checkers import BaseChecker
 from pylint.lint import PyLinter
+from pylint.typing import MessageDefinitionTuple
 
 PLUGIN_PATH = Path(__file__).resolve()
 
@@ -25,6 +25,16 @@ class CommentRule(NamedTuple):
     pattern: re.Pattern[str]
     symbol: str
     reason: str
+
+
+class PylintMessageEmitter(Protocol):
+    def __call__(
+        self,
+        msgid: str,
+        line: int | None = None,
+        node: object | None = None,
+        args: object = None,
+    ) -> None: ...
 
 
 FORBIDDEN_COMMENT_RULES: tuple[CommentRule, ...] = (
@@ -63,112 +73,130 @@ FORBIDDEN_COMMENT_RULES: tuple[CommentRule, ...] = (
 )
 
 
+TORGHUT_QUALITY_MESSAGES: dict[str, MessageDefinitionTuple] = {
+    "C9001": (
+        "Generated split filename %s; use a semantic module name",
+        "torghut-generated-split-filename",
+        "Used when a changed Torghut Python file keeps part_* generated naming.",
+    ),
+    "C9002": (
+        "%s: %s",
+        "torghut-dynamic-globals-reexport",
+        "Used when a module re-exports another module through globals().update.",
+    ),
+    "C9003": (
+        "%s: %s",
+        "torghut-compat-module-wrapper",
+        "Used when a module implements a custom compatibility ModuleType wrapper.",
+    ),
+    "C9004": (
+        "%s: %s",
+        "torghut-compat-module-registry",
+        "Used when generated compatibility module registries are present.",
+    ),
+    "C9005": (
+        "%s: %s",
+        "torghut-module-class-mutation",
+        "Used when code mutates a module object's class.",
+    ),
+    "C9006": (
+        "%s: %s",
+        "torghut-module-replacement",
+        "Used when code replaces an entry in sys.modules.",
+    ),
+    "C9007": (
+        "%s: %s",
+        "torghut-file-pyright-suppression",
+        "Used when a file-level Pyright suppression disables checking.",
+    ),
+    "C9008": (
+        "%s: %s",
+        "torghut-type-ignore",
+        "Used when a type-check suppression is present.",
+    ),
+    "C9009": (
+        "%s: %s",
+        "torghut-file-ruff-noqa",
+        "Used when a file-level Ruff suppression disables linting.",
+    ),
+    "C9010": (
+        "%s: %s",
+        "torghut-blanket-pylint-disable",
+        "Used when blanket Pylint suppressions disable size or all checks.",
+    ),
+    "C9011": (
+        "Module-level dynamic attribute hook %s; use explicit exports",
+        "torghut-dynamic-attribute-hook",
+        "Used when modules define top-level __getattr__ or __setattr__ hooks.",
+    ),
+    "C9012": (
+        "Dynamic __all__; define explicit public exports",
+        "torghut-dynamic-all",
+        "Used when __all__ is built from globals().",
+    ),
+    "C9013": (
+        "Wildcard import from %s; import explicit names",
+        "torghut-wildcard-import",
+        "Used when a module imports every symbol from another module.",
+    ),
+    "C9014": (
+        "Custom module class %s; use normal modules and explicit exports",
+        "torghut-custom-module-class",
+        "Used when a class extends ModuleType to build module facades.",
+    ),
+    "C9015": (
+        "Dead test compatibility wrapper; delete the wrapper and run split tests directly",
+        "torghut-test-compat-wrapper",
+        "Used when a test module only disables collection and re-exports split tests.",
+    ),
+    "C9016": (
+        "%s: %s",
+        "torghut-private-pyright-suppression",
+        "Used when a file-level Pyright suppression disables private-usage checks.",
+    ),
+    "C9017": (
+        "%s: %s",
+        "torghut-wildcard-ruff-noqa",
+        "Used when a file-level Ruff suppression keeps wildcard-import checks disabled.",
+    ),
+    "C9018": (
+        "Dynamic exec call %s; move generated source into normal modules",
+        "torghut-source-string-execution",
+        "Used when code executes source strings instead of importing normal modules.",
+    ),
+    "C9019": (
+        "Shadowed __all__ at line %s; keep a single explicit export list",
+        "torghut-shadowed-all",
+        "Used when a module defines top-level __all__ more than once.",
+    ),
+    "C9020": (
+        "Empty __all__; delete the no-op export stub",
+        "torghut-empty-all",
+        "Used when a module defines an empty top-level __all__.",
+    ),
+    "C9021": (
+        "Import from typing.Any; use a specific type boundary",
+        "torghut-typing-any-import",
+        "Used when changed runtime code imports typing.Any instead of a specific type boundary.",
+    ),
+    "C9022": (
+        "Broad except Exception; catch a domain/dependency exception or document an allowlist",
+        "torghut-broad-exception",
+        "Used when changed runtime code catches Exception broadly.",
+    ),
+    "C9023": (
+        "Do not catch BaseException in Torghut runtime code",
+        "torghut-base-exception",
+        "Used when changed runtime code catches BaseException.",
+    ),
+}
+
+
 class TorghutQualityChecker(BaseChecker):
     name = "torghut-quality"
-    msgs = {
-        "C9001": (
-            "Generated split filename %s; use a semantic module name",
-            "torghut-generated-split-filename",
-            "Used when a changed Torghut Python file keeps part_* generated naming.",
-        ),
-        "C9002": (
-            "%s: %s",
-            "torghut-dynamic-globals-reexport",
-            "Used when a module re-exports another module through globals().update.",
-        ),
-        "C9003": (
-            "%s: %s",
-            "torghut-compat-module-wrapper",
-            "Used when a module implements a custom compatibility ModuleType wrapper.",
-        ),
-        "C9004": (
-            "%s: %s",
-            "torghut-compat-module-registry",
-            "Used when generated compatibility module registries are present.",
-        ),
-        "C9005": (
-            "%s: %s",
-            "torghut-module-class-mutation",
-            "Used when code mutates a module object's class.",
-        ),
-        "C9006": (
-            "%s: %s",
-            "torghut-module-replacement",
-            "Used when code replaces an entry in sys.modules.",
-        ),
-        "C9007": (
-            "%s: %s",
-            "torghut-file-pyright-suppression",
-            "Used when a file-level Pyright suppression disables checking.",
-        ),
-        "C9008": (
-            "%s: %s",
-            "torghut-type-ignore",
-            "Used when a type-check suppression is present.",
-        ),
-        "C9009": (
-            "%s: %s",
-            "torghut-file-ruff-noqa",
-            "Used when a file-level Ruff suppression disables linting.",
-        ),
-        "C9010": (
-            "%s: %s",
-            "torghut-blanket-pylint-disable",
-            "Used when blanket Pylint suppressions disable size or all checks.",
-        ),
-        "C9011": (
-            "Module-level dynamic attribute hook %s; use explicit exports",
-            "torghut-dynamic-attribute-hook",
-            "Used when modules define top-level __getattr__ or __setattr__ hooks.",
-        ),
-        "C9012": (
-            "Dynamic __all__; define explicit public exports",
-            "torghut-dynamic-all",
-            "Used when __all__ is built from globals().",
-        ),
-        "C9013": (
-            "Wildcard import from %s; import explicit names",
-            "torghut-wildcard-import",
-            "Used when a module imports every symbol from another module.",
-        ),
-        "C9014": (
-            "Custom module class %s; use normal modules and explicit exports",
-            "torghut-custom-module-class",
-            "Used when a class extends ModuleType to build module facades.",
-        ),
-        "C9015": (
-            "Dead test compatibility wrapper; delete the wrapper and run split tests directly",
-            "torghut-test-compat-wrapper",
-            "Used when a test module only disables collection and re-exports split tests.",
-        ),
-        "C9016": (
-            "%s: %s",
-            "torghut-private-pyright-suppression",
-            "Used when a file-level Pyright suppression disables private-usage checks.",
-        ),
-        "C9017": (
-            "%s: %s",
-            "torghut-wildcard-ruff-noqa",
-            "Used when a file-level Ruff suppression keeps wildcard-import checks disabled.",
-        ),
-        "C9018": (
-            "Dynamic exec call %s; move generated source into normal modules",
-            "torghut-source-string-execution",
-            "Used when code executes source strings instead of importing normal modules.",
-        ),
-        "C9019": (
-            "Shadowed __all__ at line %s; keep a single explicit export list",
-            "torghut-shadowed-all",
-            "Used when a module defines top-level __all__ more than once.",
-        ),
-        "C9020": (
-            "Empty __all__; delete the no-op export stub",
-            "torghut-empty-all",
-            "Used when a module defines an empty top-level __all__.",
-        ),
-    }
+    msgs = TORGHUT_QUALITY_MESSAGES
 
-    def visit_module(self, node: nodes.Module) -> None:
+    def visit_module(self, node: object) -> None:
         path = Path(str(getattr(node, "file", "")))
         if path.resolve() == PLUGIN_PATH:
             return
@@ -180,16 +208,27 @@ class TorghutQualityChecker(BaseChecker):
         self._check_ast(node, text)
         self._check_test_wrapper(node, path, text)
 
-    def _check_filename(self, module_node: nodes.Module, path: Path) -> None:
+    def _add_module_message(
+        self,
+        msgid: str,
+        *,
+        module_node: object,
+        line: int,
+        args: object = None,
+    ) -> None:
+        add_message = cast(PylintMessageEmitter, self.add_message)
+        add_message(msgid, line=line, node=module_node, args=args)
+
+    def _check_filename(self, module_node: object, path: Path) -> None:
         if GENERATED_SPLIT_NAME_RE.match(path.name):
-            self.add_message(
+            self._add_module_message(
                 "torghut-generated-split-filename",
-                node=module_node,
+                module_node=module_node,
                 line=1,
                 args=(path.name,),
             )
 
-    def _check_comments(self, module_node: nodes.Module, text: str) -> None:
+    def _check_comments(self, module_node: object, text: str) -> None:
         try:
             tokens = tokenize.generate_tokens(io.StringIO(text).readline)
             comment_tokens = [
@@ -205,14 +244,14 @@ class TorghutQualityChecker(BaseChecker):
             line_number = token_info.start[0]
             for rule in FORBIDDEN_COMMENT_RULES:
                 if rule.pattern.search(comment):
-                    self.add_message(
+                    self._add_module_message(
                         rule.symbol,
-                        node=module_node,
+                        module_node=module_node,
                         line=line_number,
                         args=(rule.reason, comment.strip()),
                     )
 
-    def _check_ast(self, module_node: nodes.Module, text: str) -> None:
+    def _check_ast(self, module_node: object, text: str) -> None:
         try:
             tree = ast.parse(text)
         except SyntaxError:
@@ -222,30 +261,30 @@ class TorghutQualityChecker(BaseChecker):
         for node in ast.walk(tree):
             self._check_node(module_node, node)
 
-    def _check_shadowed_all(self, module_node: nodes.Module, tree: ast.Module) -> None:
+    def _check_shadowed_all(self, module_node: object, tree: ast.Module) -> None:
         all_assignments = [
             statement
             for statement in tree.body
             if _is_top_level_all_assignment(statement)
         ]
         for shadowed in all_assignments[:-1]:
-            self.add_message(
+            self._add_module_message(
                 "torghut-shadowed-all",
-                node=module_node,
+                module_node=module_node,
                 line=shadowed.lineno,
                 args=(all_assignments[-1].lineno,),
             )
 
-    def _check_empty_all(self, module_node: nodes.Module, tree: ast.Module) -> None:
+    def _check_empty_all(self, module_node: object, tree: ast.Module) -> None:
         for statement in tree.body:
             if _is_empty_all_assignment(statement):
-                self.add_message(
+                self._add_module_message(
                     "torghut-empty-all",
-                    node=module_node,
+                    module_node=module_node,
                     line=statement.lineno,
                 )
 
-    def _check_node(self, module_node: nodes.Module, node: ast.AST) -> None:
+    def _check_node(self, module_node: object, node: ast.AST) -> None:
         if isinstance(node, ast.ClassDef):
             self._check_class(module_node, node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -254,103 +293,127 @@ class TorghutQualityChecker(BaseChecker):
             self._check_assignment(module_node, node)
         elif isinstance(node, ast.ImportFrom):
             self._check_import_from(module_node, node)
+        elif isinstance(node, ast.ExceptHandler):
+            self._check_except_handler(module_node, node)
         elif isinstance(node, ast.Call):
             self._check_call(module_node, node)
 
-    def _check_class(self, module_node: nodes.Module, node: ast.ClassDef) -> None:
+    def _check_class(self, module_node: object, node: ast.ClassDef) -> None:
         if node.name in {"CompatModule", "__CompatModule__"}:
-            self.add_message(
+            self._add_module_message(
                 "torghut-compat-module-wrapper",
-                node=module_node,
+                module_node=module_node,
                 line=node.lineno,
                 args=("custom compatibility module wrapper", node.name),
             )
         if any(_is_module_type_base(base) for base in node.bases):
-            self.add_message(
+            self._add_module_message(
                 "torghut-custom-module-class",
-                node=module_node,
+                module_node=module_node,
                 line=node.lineno,
                 args=(node.name,),
             )
 
     def _check_function(
-        self, module_node: nodes.Module, node: ast.FunctionDef | ast.AsyncFunctionDef
+        self, module_node: object, node: ast.FunctionDef | ast.AsyncFunctionDef
     ) -> None:
         if node.col_offset == 0 and node.name in {"__getattr__", "__setattr__"}:
-            self.add_message(
+            self._add_module_message(
                 "torghut-dynamic-attribute-hook",
-                node=module_node,
+                module_node=module_node,
                 line=node.lineno,
                 args=(node.name,),
             )
 
-    def _check_assignment(self, module_node: nodes.Module, node: ast.Assign) -> None:
+    def _check_assignment(self, module_node: object, node: ast.Assign) -> None:
         if any(
             _is_dynamic_all_assignment(target, node.value) for target in node.targets
         ):
-            self.add_message("torghut-dynamic-all", node=module_node, line=node.lineno)
+            self._add_module_message(
+                "torghut-dynamic-all",
+                module_node=module_node,
+                line=node.lineno,
+            )
         for target in node.targets:
             if _is_compat_module_registry_target(target):
-                self.add_message(
+                self._add_module_message(
                     "torghut-compat-module-registry",
-                    node=module_node,
+                    module_node=module_node,
                     line=node.lineno,
                     args=("generated compatibility registry", ast.unparse(target)),
                 )
         for target in node.targets:
             if _is_sys_modules_class_target(target):
-                self.add_message(
+                self._add_module_message(
                     "torghut-module-class-mutation",
-                    node=module_node,
+                    module_node=module_node,
                     line=node.lineno,
                     args=("module class mutation", ast.unparse(target)),
                 )
         for target in node.targets:
             if _is_sys_modules_replacement_target(target):
-                self.add_message(
+                self._add_module_message(
                     "torghut-module-replacement",
-                    node=module_node,
+                    module_node=module_node,
                     line=node.lineno,
                     args=("module replacement", ast.unparse(target)),
                 )
 
-    def _check_import_from(
-        self, module_node: nodes.Module, node: ast.ImportFrom
-    ) -> None:
-        if not any(alias.name == "*" for alias in node.names):
-            return
-        module = "." * node.level + (node.module or "")
-        self.add_message(
-            "torghut-wildcard-import",
-            node=module_node,
-            line=node.lineno,
-            args=(module,),
-        )
+    def _check_import_from(self, module_node: object, node: ast.ImportFrom) -> None:
+        if node.module == "typing" and any(alias.name == "Any" for alias in node.names):
+            self._add_module_message(
+                "torghut-typing-any-import",
+                module_node=module_node,
+                line=node.lineno,
+            )
+        if any(alias.name == "*" for alias in node.names):
+            module = "." * node.level + (node.module or "")
+            self._add_module_message(
+                "torghut-wildcard-import",
+                module_node=module_node,
+                line=node.lineno,
+                args=(module,),
+            )
 
-    def _check_call(self, module_node: nodes.Module, node: ast.Call) -> None:
+    def _check_except_handler(
+        self, module_node: object, node: ast.ExceptHandler
+    ) -> None:
+        exception_name = _exception_handler_name(node.type)
+        if exception_name == "Exception":
+            self._add_module_message(
+                "torghut-broad-exception",
+                module_node=module_node,
+                line=node.lineno,
+            )
+        elif exception_name == "BaseException":
+            self._add_module_message(
+                "torghut-base-exception",
+                module_node=module_node,
+                line=node.lineno,
+            )
+
+    def _check_call(self, module_node: object, node: ast.Call) -> None:
         if _is_globals_update_call(node):
-            self.add_message(
+            self._add_module_message(
                 "torghut-dynamic-globals-reexport",
-                node=module_node,
+                module_node=module_node,
                 line=node.lineno,
                 args=("dynamic globals re-export", ast.unparse(node)),
             )
         if _is_exec_call(node):
-            self.add_message(
+            self._add_module_message(
                 "torghut-source-string-execution",
-                node=module_node,
+                module_node=module_node,
                 line=node.lineno,
                 args=(ast.unparse(node),),
             )
 
-    def _check_test_wrapper(
-        self, module_node: nodes.Module, path: Path, text: str
-    ) -> None:
+    def _check_test_wrapper(self, module_node: object, path: Path, text: str) -> None:
         if not _is_dead_test_compat_wrapper(path, text):
             return
-        self.add_message(
+        self._add_module_message(
             "torghut-test-compat-wrapper",
-            node=module_node,
+            module_node=module_node,
             line=1,
         )
 
@@ -368,6 +431,14 @@ def _is_module_type_base(node: ast.AST) -> bool:
     return isinstance(node, ast.Attribute) and node.attr == "ModuleType"
 
 
+def _exception_handler_name(node: ast.expr | None) -> str | None:
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
+
+
 def _is_dynamic_all_assignment(target: ast.AST, value: ast.AST) -> bool:
     return (
         isinstance(target, ast.Name)
@@ -383,9 +454,18 @@ def _is_top_level_all_assignment(statement: ast.stmt) -> bool:
 
 
 def _is_empty_all_assignment(statement: ast.stmt) -> bool:
-    if not _is_top_level_all_assignment(statement):
+    if isinstance(statement, ast.Assign):
+        value = (
+            statement.value
+            if any(_is_all_target(target) for target in statement.targets)
+            else None
+        )
+    elif isinstance(statement, ast.AnnAssign) and _is_all_target(statement.target):
+        value = statement.value
+    else:
         return False
-    value = statement.value
+    if value is None:
+        return False
     return isinstance(value, (ast.List, ast.Tuple)) and not value.elts
 
 

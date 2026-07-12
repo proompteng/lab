@@ -10,14 +10,14 @@ from typing import Any, Mapping, Sequence, cast
 SCHEMA_VERSION = "torghut.revenue-repair-digest.v1"
 
 _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
-    "alpha_readiness_not_promotion_eligible": (
+    "hypothesis_not_promotion_eligible": (
         "repair_alpha_readiness",
         "alpha_readiness",
         "clear_hypothesis_blockers_before_capital",
         70,
         6,
     ),
-    "runtime_ledger_source_collection_pending": (
+    "runtime_window_import_required": (
         "repair_source_runtime_window_import",
         "runtime_window_import",
         "import_source_collection_runtime_ledger_window_before_alpha_promotion",
@@ -87,6 +87,13 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
         57,
         2,
     ),
+    "submit_disabled": (
+        "live_submit_gate_closed",
+        "live_submission_gate",
+        "keep_submit_disabled_until_proof_floor_passes",
+        50,
+        1,
+    ),
     "simple_submit_disabled": (
         "live_submit_gate_closed",
         "live_submission_gate",
@@ -104,7 +111,7 @@ _REPAIR_CATALOG: dict[str, tuple[str, str, str, int, int]] = {
 }
 
 _REPAIR_METADATA: dict[str, dict[str, object]] = {
-    "alpha_readiness_not_promotion_eligible": {
+    "hypothesis_not_promotion_eligible": {
         "value_gate": "routeable_candidate_count",
         "required_output_receipt": "torghut.executable-alpha-receipts.v1",
         "required_receipts": [
@@ -113,7 +120,7 @@ _REPAIR_METADATA: dict[str, dict[str, object]] = {
             "capital_replay_board",
         ],
     },
-    "runtime_ledger_source_collection_pending": {
+    "runtime_window_import_required": {
         "value_gate": "routeable_candidate_count",
         "required_output_receipt": "torghut.runtime-window-import-readback.v1",
         "required_receipts": [
@@ -337,7 +344,8 @@ def _choose_mapping(*values: object) -> dict[str, Any]:
 
 def _collect_reason_counts(status_payload: Mapping[str, Any]) -> dict[str, int]:
     totals: dict[str, int] = {}
-    raw_totals = _mapping(status_payload.get("simple_lane_reject_reason_totals"))
+    execution = _mapping(status_payload.get("execution"))
+    raw_totals = _mapping(execution.get("reject_reason_totals"))
     for reason, count in raw_totals.items():
         normalized = _text(reason)
         if normalized:

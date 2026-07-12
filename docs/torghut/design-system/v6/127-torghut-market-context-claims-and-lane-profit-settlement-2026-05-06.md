@@ -1,21 +1,20 @@
 # 127. Torghut Market-Context Claims And Lane Profit Settlement (2026-05-06)
 
 Status: Accepted for engineer and deployer handoff
-Date: 2026-05-06
-Owner: Victor Chen, Jangar Engineering Architecture
-Scope: Torghut market-context freshness, lane dependency declarations, profit settlement, Jangar claim consumption,
-paper/live capital gates, and rollback evidence.
 
-Companion Jangar contract:
+## Source Implementation Audit (2026-07-04)
 
-- `docs/agents/designs/123-jangar-market-context-contradiction-ledger-and-lane-capital-holds-2026-05-06.md`
+- Source baseline inspected: `6473f3ee7 ci(arc): fit ten lab runners per node (#11877)`.
+- Implementation status: Partially implemented: route repair, paper-route probing, quote routeability, and TCA/freshness surfaces exist but remain gate-controlled.
+- Matched implementation area: Routeability, TCA, fill quality, and market context.
+- Current source evidence:
+  - `services/torghut/app/trading/route_reacquisition.py`
+  - `services/torghut/app/trading/route_reacquisition_probe.py`
+  - `services/torghut/app/trading/scheduler/paper_route_probe/probe_processing.py`
+  - `services/torghut/app/trading/scheduler/submission_preparation/quote_routeability.py`
+  - `services/torghut/app/trading/tca`
+- Design drift note: Routeability claims need current repair/probe/TCA/readiness evidence.
 
-Extends:
-
-- `126-torghut-hypothesis-custody-ledger-and-data-cost-profit-reserve-2026-05-06.md`
-- `125-torghut-profit-priced-evidence-renewal-and-capital-reentry-ledger-2026-05-06.md`
-- `124-torghut-capital-action-verdict-consumer-and-profit-hypothesis-settlement-2026-05-06.md`
-- `76-torghut-profit-projection-consumer-and-route-parity-gates-2026-05-05.md`
 
 ## Decision
 
