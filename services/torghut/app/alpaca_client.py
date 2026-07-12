@@ -37,6 +37,17 @@ class OrderFirewallViolation(PermissionError):
     """Raised when broker mutation methods are called outside OrderFirewall."""
 
 
+class AlpacaStrictOrderLookupMalformedError(RuntimeError):
+    """Raised when an exact broker lookup returns no trustworthy order payload."""
+
+
+def _is_explicit_http_not_found(exc: APIError) -> bool:
+    """Return whether Alpaca supplied an unambiguous HTTP 404 status."""
+
+    status_code: object = getattr(exc, "status_code", None)
+    return type(status_code) is int and status_code == 404
+
+
 _RESERVED_ORDER_EXTRA_PARAMS = frozenset(
     {
         "limit_price",
@@ -208,8 +219,7 @@ class TorghutAlpacaClient:
         try:
             asset = self.trading.get_asset(symbol_or_asset_id)
         except APIError as exc:
-            status_code = getattr(exc, "status_code", None)
-            if isinstance(status_code, int) and status_code == 404:
+            if _is_explicit_http_not_found(exc):
                 return None
             raise
         if asset is None:
@@ -241,14 +251,37 @@ class TorghutAlpacaClient:
         try:
             order = self.trading.get_order_by_client_id(client_order_id)
         except APIError as exc:
-            status_code = getattr(exc, "status_code", None)
-            if isinstance(status_code, int) and status_code == 404:
+            if _is_explicit_http_not_found(exc):
                 return None
             raise
         if order is None:
             return None
 
         return self._model_to_dict(order)
+
+    def get_order_by_client_order_id_strict(
+        self, client_order_id: str
+    ) -> dict[str, object] | None:
+        """Read one exact client id once; only an explicit broker 404 means absent."""
+
+        if not client_order_id.strip():
+            raise ValueError("alpaca_client_order_id_required")
+        try:
+            order = self._trading.get_order_by_client_id(client_order_id)
+        except APIError as exc:
+            if _is_explicit_http_not_found(exc):
+                return None
+            raise
+        if order is None:
+            raise AlpacaStrictOrderLookupMalformedError(
+                "alpaca_strict_order_lookup_missing_payload"
+            )
+        raw = self._extract_model_payload(order)
+        if any(not isinstance(key, str) for key in raw):
+            raise AlpacaStrictOrderLookupMalformedError(
+                "alpaca_strict_order_lookup_non_string_key"
+            )
+        return {cast(str, key): value for key, value in raw.items()}
 
     def submit_order(
         self,
@@ -476,6 +509,7 @@ def _normalize_alpaca_base_url(base_url: Optional[str]) -> Optional[str]:
 
 
 __all__ = [
+    "AlpacaStrictOrderLookupMalformedError",
     "OrderFirewallToken",
     "OrderFirewallViolation",
     "TorghutAlpacaClient",

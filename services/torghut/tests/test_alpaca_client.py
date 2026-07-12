@@ -11,7 +11,11 @@ from alpaca.trading.requests import GetOrdersRequest
 from requests import Response
 from requests.exceptions import HTTPError
 
-from app.alpaca_client import OrderFirewallViolation, TorghutAlpacaClient
+from app.alpaca_client import (
+    AlpacaStrictOrderLookupMalformedError,
+    OrderFirewallViolation,
+    TorghutAlpacaClient,
+)
 from app.alpaca_client import OrderFirewallToken
 from app.config import settings
 from app.trading.firewall import OrderFirewall
@@ -51,7 +55,7 @@ class DummyTradingClient:
     def get_order_by_id(self, order_id: str) -> DummyModel:
         return DummyModel(id=order_id, symbol="AAPL")
 
-    def get_order_by_client_id(self, client_id: str) -> DummyModel:
+    def get_order_by_client_id(self, client_id: str) -> DummyModel | None:
         return DummyModel(id="order-xyz", client_order_id=client_id)
 
     def submit_order(self, order_data: Any) -> DummyModel:
@@ -304,6 +308,175 @@ class TestAlpacaClient(TestCase):
         assert order is not None
         self.assertEqual(order["id"], "order-xyz")
         self.assertEqual(order["client_order_id"], "client-123")
+
+        strict_order = client.get_order_by_client_order_id_strict("client-123")
+        assert strict_order is not None
+        self.assertEqual(strict_order["id"], "order-xyz")
+        self.assertEqual(strict_order["client_order_id"], "client-123")
+
+    def test_strict_client_order_lookup_rejects_missing_or_malformed_payload(
+        self,
+    ) -> None:
+        class MalformedLookupTradingClient(DummyTradingClient):
+            def __init__(self, payload: object) -> None:
+                super().__init__()
+                self.payload = payload
+
+            def get_order_by_client_id(self, client_id: str) -> Any:
+                del client_id
+                return self.payload
+
+        for payload, expected_error in (
+            (None, "missing_payload"),
+            ({1: "not-a-string-key"}, "non_string_key"),
+        ):
+            with self.subTest(expected_error=expected_error):
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                    trading_client=MalformedLookupTradingClient(payload),
+                    data_client=DummyDataClient(),
+                )
+
+                with self.assertRaisesRegex(
+                    AlpacaStrictOrderLookupMalformedError,
+                    expected_error,
+                ):
+                    client.get_order_by_client_order_id_strict("client-123")
+
+    def test_strict_client_order_lookup_requires_non_empty_client_id(self) -> None:
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=DummyTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        for client_order_id in ("", "   "):
+            with (
+                self.subTest(client_order_id=repr(client_order_id)),
+                self.assertRaisesRegex(ValueError, "client_order_id_required"),
+            ):
+                client.get_order_by_client_order_id_strict(client_order_id)
+
+    def test_strict_client_order_lookup_uses_exact_endpoint_and_only_404_is_absent(
+        self,
+    ) -> None:
+        for status_code in (401, 403, 404, 429, 500, 503):
+            with self.subTest(status_code=status_code):
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                    data_client=DummyDataClient(),
+                )
+                response = Mock(spec=Response)
+                response.status_code = status_code
+                response.text = (
+                    f'{{"code": {status_code}, "message": "lookup failure"}}'
+                )
+                response.raise_for_status.side_effect = HTTPError(response=response)
+
+                with (
+                    patch(
+                        "alpaca.common.rest.Session.request", return_value=response
+                    ) as mock_request,
+                    patch("alpaca.common.rest.time.sleep") as mock_sleep,
+                ):
+                    if status_code == 404:
+                        self.assertIsNone(
+                            client.get_order_by_client_order_id_strict("client-123")
+                        )
+                    else:
+                        with self.assertRaises(APIError) as raised:
+                            client.get_order_by_client_order_id_strict("client-123")
+                        self.assertEqual(raised.exception.status_code, status_code)
+
+                mock_request.assert_called_once()
+                self.assertEqual(mock_request.call_args.args[0], "GET")
+                self.assertTrue(
+                    mock_request.call_args.args[1].endswith(
+                        "/orders:by_client_order_id"
+                    )
+                )
+                self.assertEqual(
+                    mock_request.call_args.kwargs["params"],
+                    {"client_order_id": "client-123"},
+                )
+                mock_sleep.assert_not_called()
+
+    def test_404_classification_rejects_404_like_non_integer_statuses(self) -> None:
+        class IntLike404(int):
+            pass
+
+        class FailingReadTradingClient(DummyTradingClient):
+            def __init__(self, error: APIError) -> None:
+                super().__init__()
+                self.error = error
+
+            def get_asset(self, symbol_or_asset_id: str) -> DummyModel:
+                del symbol_or_asset_id
+                raise self.error
+
+            def get_order_by_client_id(self, client_id: str) -> DummyModel | None:
+                del client_id
+                raise self.error
+
+        for status_code in (True, "404", 404.0, IntLike404(404), None):
+            with self.subTest(status_code=repr(status_code)):
+                response = Mock(spec=Response)
+                response.status_code = status_code
+                error = APIError(
+                    '{"code": 404, "message": "lookup failure"}',
+                    HTTPError(response=response),
+                )
+                client = TorghutAlpacaClient(
+                    api_key="k",
+                    secret_key="s",
+                    base_url="https://paper-api.alpaca.markets",
+                    trading_client=FailingReadTradingClient(error),
+                    data_client=DummyDataClient(),
+                )
+
+                for lookup in (
+                    lambda: client.get_asset("AAPL"),
+                    lambda: client.get_order_by_client_order_id("client-123"),
+                    lambda: client.get_order_by_client_order_id_strict("client-123"),
+                ):
+                    with self.assertRaises(APIError) as raised:
+                        lookup()
+                    self.assertIs(raised.exception, error)
+
+    def test_explicit_http_404_is_not_found_for_optional_reads(self) -> None:
+        response = Mock(spec=Response)
+        response.status_code = 404
+        error = APIError(
+            '{"code": 404, "message": "not found"}',
+            HTTPError(response=response),
+        )
+
+        class NotFoundTradingClient(DummyTradingClient):
+            def get_asset(self, symbol_or_asset_id: str) -> DummyModel:
+                del symbol_or_asset_id
+                raise error
+
+            def get_order_by_client_id(self, client_id: str) -> DummyModel | None:
+                del client_id
+                raise error
+
+        client = TorghutAlpacaClient(
+            api_key="k",
+            secret_key="s",
+            base_url="https://paper-api.alpaca.markets",
+            trading_client=NotFoundTradingClient(),
+            data_client=DummyDataClient(),
+        )
+
+        self.assertIsNone(client.get_asset("AAPL"))
+        self.assertIsNone(client.get_order_by_client_order_id("client-123"))
+        self.assertIsNone(client.get_order_by_client_order_id_strict("client-123"))
 
     def test_get_asset_returns_model_from_read_surface(self) -> None:
         client = TorghutAlpacaClient(
