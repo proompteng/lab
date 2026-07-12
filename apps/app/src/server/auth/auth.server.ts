@@ -3,6 +3,7 @@ import { tanstackStartCookies } from 'better-auth/tanstack-start'
 import { genericOAuth, keycloak } from 'better-auth/plugins'
 import { Pool } from 'pg'
 
+import { createMigrationRunner } from './migration-runner'
 import type { SessionUser } from './types'
 
 const requireEnv = (key: string): string => {
@@ -34,16 +35,10 @@ export const auth = betterAuth({
   ],
 })
 
-let migrationsPromise: Promise<void> | null = null
-export const ensureAuthMigrations = async () => {
-  if (!migrationsPromise) {
-    migrationsPromise = (async () => {
-      const ctx = await auth.$context
-      await ctx.runMigrations()
-    })()
-  }
-  await migrationsPromise
-}
+export const ensureAuthMigrations = createMigrationRunner(async () => {
+  const ctx = await auth.$context
+  await ctx.runMigrations()
+})
 
 export const getCurrentUser = async (request: Request): Promise<SessionUser | null> => {
   await ensureAuthMigrations()
@@ -102,7 +97,6 @@ export const logoutResponse = async (request: Request): Promise<Response> => {
 
   const result = await auth.api.signOut({
     headers: request.headers,
-    body: {},
     returnHeaders: true,
     returnStatus: true,
   })
