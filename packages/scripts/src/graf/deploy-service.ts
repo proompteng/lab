@@ -9,6 +9,9 @@ import { buildImage } from './build-image'
 
 const manifestPath = resolve(repoRoot, 'argocd/applications/graf/knative-service.yaml')
 
+export const resolveGrafWaitTimeout = (env: Record<string, string | undefined> = process.env) =>
+  env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
+
 const ensureResources = () => {
   ensureCli('docker')
   ensureCli('kn')
@@ -79,8 +82,7 @@ const updateManifestImage = (image: string, version: string, commit: string) => 
 }
 
 const applyManifest = async () => {
-  const rawTimeout = process.env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
-  const waitTimeout = rawTimeout.replace(/s$/, '')
+  const waitTimeout = resolveGrafWaitTimeout()
   await run('kn', [
     'service',
     'apply',
