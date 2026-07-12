@@ -18,11 +18,14 @@ const ENV_KEYS = [
   'CODEX_CWD',
   'DATABASE_URL',
   'AGENTS_SERVICE_BASE_URL',
+  'GITHUB_API_BASE_URL',
+  'GITHUB_TOKEN',
   'OPENAI_API_BASE_URL',
   'OPENAI_API_KEY',
   'OPENAI_COMPLETION_MODEL',
   'OPENAI_COMPLETION_TIMEOUT_MS',
   'OPENAI_COMPLETION_MAX_OUTPUT_TOKENS',
+  'BUMBA_MERGE_NOTE_REASONING_EFFORT',
 ] as const
 
 const originalFetch = globalThis.fetch
@@ -96,6 +99,7 @@ const githubPushEvent = (files: string[], ref = 'refs/heads/main') => ({
   event_type: 'push',
   repository: 'proompteng/lab',
   payload: {
+    before: '1234567890abcdef',
     after: 'abcdef1234567890',
     ref,
     head_commit: { id: 'abcdef1234567890', modified: files, message: 'fix: merge change' },
@@ -214,6 +218,7 @@ test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the 
       loadEnrichments: async () => [
         { path: 'src/a.ts', summary: 'Handles events.', content: '- Retries partial dispatches.' },
       ],
+      loadDiff: async () => [{ path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@' }],
       generateNote: async () => ({
         summary: 'Event processing now preserves partial work.',
         content: 'Bumba retries undispatched file targets and records merge knowledge only after enrichment settles.',
@@ -239,6 +244,7 @@ test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the 
       commit: 'abcdef1234567890',
       fileCount: 1,
       enrichmentCount: 1,
+      diffFileCount: 1,
     },
   })
 })
@@ -266,13 +272,26 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   }) as typeof fetch
 
   const event = githubPushEvent(['src/a.ts'])
-  const note = await __test__.generateMainMergeMemoryNote(event, event.payload, [
-    {
-      path: 'src/a.ts',
-      summary: 'Dispatches enrichment.',
-      content: '- Deterministic workflow IDs prevent duplicates.',
-    },
-  ])
+  const note = await __test__.generateMainMergeMemoryNote(
+    event,
+    event.payload,
+    [
+      {
+        path: '.github/workflows/bumba-ci.yml',
+        summary: 'Builds Bumba.',
+        content: '- Runs CI checks.',
+      },
+      {
+        path: 'src/a.ts',
+        summary: 'Dispatches enrichment.',
+        content: '- Deterministic workflow IDs prevent duplicates.',
+      },
+    ],
+    [
+      { path: '.github/workflows/bumba-ci.yml', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' },
+      { path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old behavior\n+retry missing targets' },
+    ],
+  )
 
   expect(note).toEqual({
     summary: 'Bumba preserves complete enrichment across retries.',
@@ -282,11 +301,44 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   expect(requestBody).toMatchObject({
     model: 'qwen36-flamingo',
     stream: false,
+    temperature: 0.1,
+    reasoning_effort: 'none',
     response_format: { type: 'json_object' },
   })
   const messages = requestBody?.messages as Array<{ content: string }>
+  const userContent = messages[1]?.content ?? ''
   expect(messages[0]?.content).toContain('knowledge that is not recoverable from a filename list or git log')
-  expect(messages[1]?.content).toContain('Deterministic workflow IDs prevent duplicates.')
+  expect(messages[0]?.content).toContain('Keep Flamingo completion and the Agents memory endpoint distinct.')
+  expect(userContent).toContain('Deterministic workflow IDs prevent duplicates.')
+  expect(userContent).toContain('+retry missing targets')
+  expect(userContent.indexOf('File: src/a.ts')).toBeLessThan(
+    userContent.indexOf('File: .github/workflows/bumba-ci.yml'),
+  )
+})
+
+test('loadMainMergeDiff fetches bounded change evidence from GitHub compare', async () => {
+  process.env.GITHUB_API_BASE_URL = 'http://github.test'
+  process.env.GITHUB_TOKEN = 'token'
+  let request: Request | undefined
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    request = new Request(input, init)
+    return Response.json({
+      files: [
+        { filename: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' },
+        { filename: 'assets/logo.png', status: 'modified' },
+      ],
+    })
+  }) as typeof fetch
+
+  const event = githubPushEvent(['src/a.ts'])
+  const diff = await __test__.loadMainMergeDiff(event, event.payload, 'abcdef1234567890')
+
+  expect(request?.url).toBe('http://github.test/repos/proompteng/lab/compare/1234567890abcdef...abcdef1234567890')
+  expect(request?.headers.get('authorization')).toBe('Bearer token')
+  expect(diff).toEqual([
+    { path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' },
+    { path: 'assets/logo.png', status: 'modified', patch: null },
+  ])
 })
 
 test('publishMainMergeMemoryNote ignores non-main pushes', async () => {

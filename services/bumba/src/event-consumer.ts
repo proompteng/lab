@@ -135,6 +135,12 @@ type GeneratedMemoryNote = {
   tags: string[]
 }
 
+type MergeDiffFile = {
+  path: string
+  status: string
+  patch: string | null
+}
+
 type ProcessEventResult = {
   processed: boolean
   waitingOnIngestion: boolean
@@ -397,6 +403,51 @@ const loadMainMergeEnrichments = async (db: SqlClient, eventId: string, commit: 
   `) as EventEnrichment[]
 }
 
+const loadMainMergeDiff = async (
+  event: GithubEventRow,
+  payload: Record<string, unknown>,
+  commit: string,
+): Promise<MergeDiffFile[]> => {
+  const before = normalizeOptionalText(payload.before)
+  if (!before || /^0+$/.test(before)) return []
+
+  const [owner, repository] = event.repository.split('/')
+  if (!owner || !repository) {
+    throw new Error(`invalid GitHub repository slug for merge diff: ${event.repository}`)
+  }
+
+  const apiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com').replace(/\/+$/, '')
+  const headers: Record<string, string> = {
+    accept: 'application/vnd.github+json',
+    'x-github-api-version': '2022-11-28',
+  }
+  const token = normalizeOptionalText(process.env.GITHUB_TOKEN)
+  if (token) headers.authorization = `Bearer ${token}`
+
+  const response = await fetch(
+    `${apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/compare/${encodeURIComponent(before)}...${encodeURIComponent(commit)}`,
+    { headers, signal: AbortSignal.timeout(30_000) },
+  )
+  if (!response.ok) {
+    throw new Error(`GitHub merge diff request failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`)
+  }
+
+  const body = (await response.json()) as {
+    files?: Array<{ filename?: unknown; status?: unknown; patch?: unknown }>
+  }
+  return (body.files ?? []).flatMap((file) => {
+    const path = normalizeOptionalText(file.filename)
+    if (!path) return []
+    return [
+      {
+        path,
+        status: normalizeOptionalText(file.status) ?? 'modified',
+        patch: normalizeOptionalText(file.patch) ?? null,
+      },
+    ]
+  })
+}
+
 const normalizeGeneratedMemoryNote = (raw: unknown): GeneratedMemoryNote => {
   const record = asRecord(raw)
   const summary = normalizeOptionalText(record?.summary)
@@ -420,10 +471,19 @@ const normalizeGeneratedMemoryNote = (raw: unknown): GeneratedMemoryNote => {
   }
 }
 
+const mergeContextPriority = (path: string) => {
+  if (/(?:^|\/)src\//.test(path) && !/\.(?:test|spec)\.[^.]+$/.test(path)) return 0
+  if (path.endsWith('/package.json')) return 1
+  if (/readme|runbook|design/i.test(path)) return 2
+  if (/\.(?:test|spec)\.[^.]+$/.test(path)) return 3
+  return 4
+}
+
 const generateMainMergeMemoryNote = async (
   event: GithubEventRow,
   payload: Record<string, unknown>,
   enrichments: EventEnrichment[],
+  diffFiles: MergeDiffFile[],
 ): Promise<GeneratedMemoryNote> => {
   const apiBaseUrl = (
     process.env.OPENAI_API_BASE_URL ??
@@ -431,24 +491,56 @@ const generateMainMergeMemoryNote = async (
     'http://flamingo.flamingo.svc.cluster.local/v1'
   ).replace(/\/+$/, '')
   const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo'
+  const reasoningEffort = normalizeOptionalText(process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT) ?? 'none'
   const timeoutMs = parsePositiveInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS, 300_000)
   const maxOutputTokens = parsePositiveInt(process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS, 1_024)
   const commitMessage = normalizeOptionalText(asRecord(payload.head_commit)?.message)
 
-  const sections: string[] = []
-  let inputChars = 0
-  for (const enrichment of enrichments) {
+  const enrichmentSections: string[] = []
+  let enrichmentChars = 0
+  const prioritizedEnrichments = [...enrichments].sort(
+    (left, right) => mergeContextPriority(left.path) - mergeContextPriority(right.path),
+  )
+  for (const enrichment of prioritizedEnrichments) {
     const section = [`File: ${enrichment.path}`, `Summary: ${enrichment.summary}`, enrichment.content].join('\n')
-    if (inputChars + section.length > 48_000) break
-    sections.push(section)
-    inputChars += section.length
+    if (enrichmentChars + section.length > 12_000) break
+    enrichmentSections.push(section)
+    enrichmentChars += section.length
+  }
+
+  const diffSections: string[] = []
+  let diffChars = 0
+  const prioritizedDiffs = [...diffFiles].sort(
+    (left, right) => mergeContextPriority(left.path) - mergeContextPriority(right.path),
+  )
+  for (const file of prioritizedDiffs) {
+    const perFileLimit = mergeContextPriority(file.path) === 0 ? 24_000 : 4_000
+    const patch = file.patch ? file.patch.slice(0, perFileLimit) : null
+    const section = [
+      `File: ${file.path} (${file.status})`,
+      patch ?? '[GitHub did not provide a textual patch for this file.]',
+      file.patch && file.patch.length > perFileLimit ? '[Patch truncated at the context boundary.]' : null,
+    ].join('\n')
+    if (diffChars + section.length > 36_000) break
+    diffSections.push(section)
+    diffChars += section.length
   }
 
   const systemPrompt = [
     'You create durable engineering memory for future coding agents.',
     'Synthesize the supplied file enrichments into knowledge that is not recoverable from a filename list or git log alone.',
     'Capture system behavior, important relationships, decisions or invariants, operational consequences, and risks.',
+    'Use the merge diff as the authority for what changed and the enrichments as context for current system behavior.',
+    'Lead with the primary runtime behavior and the failure mode it fixes.',
+    'Treat dependency hashes, CI wiring, documentation, and tests as supporting evidence unless they change runtime semantics.',
+    'State only behavior directly proven by the supplied diff or enrichment; omit uncertain interpretations.',
+    'Do not describe a retry, completion condition, error path, or side-effect ordering unless the evidence explicitly proves it.',
+    'Keep Flamingo completion and the Agents memory endpoint distinct.',
+    'Context limits are measured in characters, never tokens.',
+    'Include risks only when demonstrated by the evidence; do not add generic cost, coupling, rate-limit, or performance speculation.',
     'Do not narrate the commit metadata, enumerate every file, or claim facts absent from the evidence.',
+    'The content should make the durable invariant, retry/failure behavior, completion gate, and operational consequence easy to retrieve.',
+    'Keep content under 1800 characters and prefer identifiers or exact conditions over broad paraphrases.',
     'Return one JSON object with exactly: summary (one concise sentence), content (concise markdown), and tags (3-8 retrieval tags).',
     'If enrichment failed or evidence is incomplete, state that limitation explicitly.',
   ].join(' ')
@@ -456,7 +548,12 @@ const generateMainMergeMemoryNote = async (
     `Repository: ${event.repository}`,
     ...(commitMessage ? [`Merge context: ${commitMessage}`] : []),
     `Successful file enrichments: ${enrichments.length}`,
-    sections.length > 0 ? sections.join('\n\n') : 'No successful file enrichments were available.',
+    enrichmentSections.length > 0
+      ? `Semantic enrichments:\n\n${enrichmentSections.join('\n\n')}`
+      : 'No successful file enrichments were available.',
+    diffSections.length > 0
+      ? `Merge diff:\n\n${diffSections.join('\n\n')}`
+      : 'No textual merge diff was available; do not infer exact code changes.',
   ].join('\n\n')
 
   const headers: Record<string, string> = { 'content-type': 'application/json' }
@@ -470,9 +567,9 @@ const generateMainMergeMemoryNote = async (
       model,
       stream: false,
       max_tokens: maxOutputTokens,
-      temperature: 0.3,
+      temperature: 0.1,
       top_p: 0.8,
-      reasoning_effort: 'none',
+      reasoning_effort: reasoningEffort,
       response_format: { type: 'json_object' },
       messages: [
         { role: 'system', content: systemPrompt },
@@ -514,6 +611,7 @@ const publishMainMergeMemoryNote = async (
   counts: IngestionCounts,
   dependencies: {
     loadEnrichments?: typeof loadMainMergeEnrichments
+    loadDiff?: typeof loadMainMergeDiff
     generateNote?: typeof generateMainMergeMemoryNote
   } = {},
 ) => {
@@ -527,7 +625,8 @@ const publishMainMergeMemoryNote = async (
   if (existing.body.count > 0) return
 
   const enrichments = await (dependencies.loadEnrichments ?? loadMainMergeEnrichments)(db, event.id, commit)
-  const note = await (dependencies.generateNote ?? generateMainMergeMemoryNote)(event, payload, enrichments)
+  const diffFiles = await (dependencies.loadDiff ?? loadMainMergeDiff)(event, payload, commit)
+  const note = await (dependencies.generateNote ?? generateMainMergeMemoryNote)(event, payload, enrichments, diffFiles)
 
   const persisted = await persistMemoryNoteToAgentsService({
     namespace,
@@ -543,6 +642,7 @@ const publishMainMergeMemoryNote = async (
       ingestionTotal: counts.total,
       ingestionFailed: counts.failed,
       enrichmentCount: enrichments.length,
+      diffFileCount: diffFiles.length,
       noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo',
     },
   })
@@ -1127,6 +1227,7 @@ export const __test__ = {
   processEvent,
   publishMainMergeMemoryNote,
   loadMainMergeEnrichments,
+  loadMainMergeDiff,
   generateMainMergeMemoryNote,
   normalizeGeneratedMemoryNote,
   isMainBranchRef,
