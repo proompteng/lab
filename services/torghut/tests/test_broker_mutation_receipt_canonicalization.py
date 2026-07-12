@@ -71,6 +71,26 @@ def test_endpoint_fingerprint_normalizes_only_credential_free_origin_and_path() 
             fingerprint_broker_endpoint(invalid)
 
 
+@pytest.mark.parametrize(
+    ("variant", "canonical"),
+    [
+        (
+            "https://[2001:0db8:0000:0000:0000:0000:0000:0001]:443/v2/../v3/",
+            "https://[2001:db8::1]/v3",
+        ),
+        ("https://bücher.example./v2", "https://xn--bcher-kva.example/v2"),
+        ("http://EXAMPLE.com:80/a/./b/../c/", "http://example.com/a/c"),
+    ],
+)
+def test_endpoint_fingerprint_preserves_host_and_path_normalization(
+    variant: str,
+    canonical: str,
+) -> None:
+    assert fingerprint_broker_endpoint(variant) == fingerprint_broker_endpoint(
+        canonical
+    )
+
+
 def test_intent_is_stable_and_uses_exact_decimal_strings() -> None:
     first = _submit_intent(
         request={
@@ -256,6 +276,16 @@ def test_evidence_is_canonical_hashed_and_rejects_floats() -> None:
         canonicalize_broker_mutation_evidence({"latency_seconds": 0.5})
     with pytest.raises(BrokerMutationReceiptValidationError, match="must_be_object"):
         canonicalize_broker_mutation_evidence("unstructured")
+
+
+def test_evidence_normalization_preserves_canonical_edge_cases() -> None:
+    encoded, _ = canonicalize_broker_mutation_evidence(
+        {"values": (Decimal("-0.000"), Decimal("1E+2"), "e\u0301")}
+    )
+
+    assert json.loads(encoded) == {"values": ["0", "100", "é"]}
+    with pytest.raises(BrokerMutationReceiptValidationError, match="key_collision"):
+        canonicalize_broker_mutation_evidence({"é": 1, "e\u0301": 2})
 
 
 def test_recovery_evidence_binds_identity_and_outcome() -> None:
