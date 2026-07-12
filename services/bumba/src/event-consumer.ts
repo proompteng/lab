@@ -511,7 +511,17 @@ const loadMainMergeDiffEffect = (
       const beforeExists = (await runGit(['cat-file', '-e', `${before}^{commit}`], true)).exitCode === 0
       const commitExists = (await runGit(['cat-file', '-e', `${commit}^{commit}`], true)).exitCode === 0
       if (!beforeExists || !commitExists) {
-        await runGit(buildAuthenticatedGitArgs(['fetch', '--no-tags', '--depth=2', 'origin', before, commit]))
+        await runGit(
+          buildAuthenticatedGitArgs([
+            'fetch',
+            '--no-auto-maintenance',
+            '--no-tags',
+            '--depth=2',
+            'origin',
+            before,
+            commit,
+          ]),
+        )
       }
 
       const changedPaths = (await runGit(['diff', '--name-only', '-z', before, commit])).stdout
