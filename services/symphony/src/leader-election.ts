@@ -238,14 +238,16 @@ const readOptionalFile = (filePath: string) =>
     Effect.catchAll(() => Effect.succeed<string | null>(null)),
   )
 
-const resolveLeaderElectionConfig = (): Effect.Effect<LeaderElectionConfig, never, never> =>
+const resolveLeaderElectionConfig = (
+  readFileOptional: typeof readOptionalFile = readOptionalFile,
+): Effect.Effect<LeaderElectionConfig, never, never> =>
   Effect.gen(function* () {
     const inCluster = Boolean(process.env.KUBERNETES_SERVICE_HOST)
     const defaultEnabled = inCluster
     const enabled = parseBooleanEnv(process.env.SYMPHONY_LEADER_ELECTION_ENABLED, defaultEnabled)
     const namespace =
       (process.env.SYMPHONY_LEADER_ELECTION_LEASE_NAMESPACE ?? '').trim() ||
-      (yield* readOptionalFile(NAMESPACE_PATH)) ||
+      (yield* readFileOptional(NAMESPACE_PATH)) ||
       null
 
     const required = enabled
@@ -297,14 +299,18 @@ export class LeaderElectionService extends Context.Tag('symphony/LeaderElectionS
   LeaderElectionServiceDefinition
 >() {}
 
-export const makeLeaderElectionLayer = (logger: Logger) =>
+export const makeLeaderElectionLayer = (
+  logger: Logger,
+  dependencies: { readOptionalFile?: typeof readOptionalFile } = {},
+) =>
   Layer.effect(
     LeaderElectionService,
     Effect.gen(function* () {
       const leaderLogger = logger.child({ component: 'leader-election' })
-      const config = yield* resolveLeaderElectionConfig()
-      const token = (yield* readOptionalFile(TOKEN_PATH)) ?? ''
-      const ca = (yield* readOptionalFile(CA_PATH)) ?? ''
+      const readFileOptional = dependencies.readOptionalFile ?? readOptionalFile
+      const config = yield* resolveLeaderElectionConfig(readFileOptional)
+      const token = (yield* readFileOptional(TOKEN_PATH)) ?? ''
+      const ca = (yield* readFileOptional(CA_PATH)) ?? ''
       const credentialError =
         config.required && (!token || !ca || !config.leaseNamespace)
           ? 'leader election is enabled but Kubernetes service-account credentials are incomplete'
