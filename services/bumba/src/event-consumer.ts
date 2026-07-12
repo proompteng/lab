@@ -394,6 +394,11 @@ const mainMergeMemoryNamespace = (deliveryId: string) => `bumba-main-${deliveryI
 
 const buildMainMergeNoteWorkflowId = (deliveryId: string) => `bumba-main-note-${shortHash(deliveryId)}`
 
+const buildAuthenticatedGitArgs = (args: string[]) => {
+  const token = normalizeOptionalText(process.env.GITHUB_TOKEN) ?? normalizeOptionalText(process.env.GH_TOKEN)
+  return token ? ['-c', `http.extraheader=Authorization: Bearer ${token}`, ...args] : args
+}
+
 const requestAgentsJsonEffect = (path: string, init?: RequestInit) =>
   Effect.tryPromise({
     try: async () => {
@@ -488,6 +493,7 @@ const loadMainMergeDiffEffect = (
       const runGit = async (args: string[], allowFailure = false) => {
         const child = Bun.spawn(['git', ...args], {
           cwd: repoRoot,
+          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
           stdout: 'pipe',
           stderr: 'pipe',
         })
@@ -505,7 +511,7 @@ const loadMainMergeDiffEffect = (
       const beforeExists = (await runGit(['cat-file', '-e', `${before}^{commit}`], true)).exitCode === 0
       const commitExists = (await runGit(['cat-file', '-e', `${commit}^{commit}`], true)).exitCode === 0
       if (!beforeExists || !commitExists) {
-        await runGit(['fetch', '--no-tags', '--depth=2', 'origin', before, commit])
+        await runGit(buildAuthenticatedGitArgs(['fetch', '--no-tags', '--depth=2', 'origin', before, commit]))
       }
 
       const changedPaths = (await runGit(['diff', '--name-only', '-z', before, commit])).stdout
@@ -1437,6 +1443,7 @@ export const createGithubEventConsumer = (
 }
 
 export const __test__ = {
+  buildAuthenticatedGitArgs,
   buildEventWorkflowId,
   buildMainMergeNoteWorkflowId,
   extractEventFilePaths,

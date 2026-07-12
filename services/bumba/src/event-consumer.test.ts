@@ -484,6 +484,28 @@ test('loadMainMergeDiff reads exact change evidence from the local repository cl
   }
 })
 
+test('missing merge commits are fetched with GitHub auth when configured', () => {
+  const previousGithubToken = process.env.GITHUB_TOKEN
+  const previousGhToken = process.env.GH_TOKEN
+  process.env.GITHUB_TOKEN = 'github-token'
+  process.env.GH_TOKEN = 'fallback-token'
+
+  try {
+    expect(__test__.buildAuthenticatedGitArgs(['fetch', 'origin', 'deadbeef'])).toEqual([
+      '-c',
+      'http.extraheader=Authorization: Bearer github-token',
+      'fetch',
+      'origin',
+      'deadbeef',
+    ])
+  } finally {
+    if (previousGithubToken === undefined) delete process.env.GITHUB_TOKEN
+    else process.env.GITHUB_TOKEN = previousGithubToken
+    if (previousGhToken === undefined) delete process.env.GH_TOKEN
+    else process.env.GH_TOKEN = previousGhToken
+  }
+})
+
 test('publishMainMergeMemoryNote ignores non-main pushes', async () => {
   let called = false
   globalThis.fetch = (async () => {
