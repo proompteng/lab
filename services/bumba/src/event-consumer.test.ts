@@ -347,6 +347,8 @@ test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the 
       ],
       loadDiff: async () => [{ path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@' }],
       generateNote: async () => ({
+        decision: 'save',
+        reason: 'The merge establishes a durable retry and completion invariant.',
         summary: 'Event processing now preserves partial work.',
         content: 'Bumba retries undispatched file targets and records merge knowledge only after enrichment settles.',
         tags: ['event-consumer', 'temporal'],
@@ -387,6 +389,8 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
         {
           message: {
             content: JSON.stringify({
+              decision: 'save',
+              reason: 'The merge establishes a durable completion invariant.',
               summary: 'Bumba preserves complete enrichment across retries.',
               content:
                 'The event consumer uses deterministic workflow IDs and waits for semantic enrichment to settle.',
@@ -421,6 +425,8 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   )
 
   expect(note).toEqual({
+    decision: 'save',
+    reason: 'The merge establishes a durable completion invariant.',
     summary: 'Bumba preserves complete enrichment across retries.',
     content: 'The event consumer uses deterministic workflow IDs and waits for semantic enrichment to settle.',
     tags: ['bumba', 'temporal', 'event-consumer'],
@@ -434,13 +440,86 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   })
   const messages = requestBody?.messages as Array<{ content: string }>
   const userContent = messages[1]?.content ?? ''
-  expect(messages[0]?.content).toContain('knowledge that is not recoverable from a filename list or git log')
+  expect(messages[0]?.content).toContain('most merges should be skipped')
+  expect(messages[0]?.content).toContain('Skip image or build-ID promotions')
+  expect(messages[0]?.content).toContain('GitHub smart-HTTP Git authentication requires Basic credentials')
+  expect(messages[0]?.content).toContain(
+    'never invent a command, credential source, endpoint, or operational procedure',
+  )
   expect(messages[0]?.content).toContain('Keep Flamingo completion and the Agents memory endpoint distinct.')
   expect(userContent).toContain('Deterministic workflow IDs prevent duplicates.')
   expect(userContent).toContain('+retry missing targets')
   expect(userContent.indexOf('File: src/a.ts')).toBeLessThan(
     userContent.indexOf('File: .github/workflows/bumba-ci.yml'),
   )
+})
+
+test('publishMainMergeMemoryNote does not persist a low-value merge', async () => {
+  process.env.AGENTS_SERVICE_BASE_URL = 'http://agents.test'
+  const requests: Array<{ url: string; method: string }> = []
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input
+    const method = init?.method ?? 'GET'
+    requests.push({ url, method })
+    return Response.json({ ok: true, count: 0 })
+  }) as typeof fetch
+
+  const event = githubPushEvent(['argocd/applications/bumba/deployment.yaml'])
+  await __test__.publishMainMergeMemoryNote(
+    {} as never,
+    '/workspace/lab',
+    event,
+    event.payload,
+    'refs/heads/main',
+    'abcdef1234567890',
+    ['argocd/applications/bumba/deployment.yaml'],
+    ingestionCounts({ total: 1, terminal: 1 }),
+    {
+      loadEnrichments: async () => [],
+      loadDiff: async () => [
+        {
+          path: 'argocd/applications/bumba/deployment.yaml',
+          status: 'modified',
+          patch: '- value: bumba@old\n+ value: bumba@new',
+        },
+      ],
+      generateNote: async () => ({
+        decision: 'skip',
+        reason: 'The merge only promotes an existing binary and adds no durable system knowledge.',
+        summary: '',
+        content: '',
+        tags: [],
+      }),
+    },
+  )
+
+  expect(requests).toEqual([
+    {
+      url: 'http://agents.test/v1/memory-notes/count?namespace=bumba-main-delivery-1',
+      method: 'GET',
+    },
+  ])
+})
+
+test('normalizeGeneratedMemoryNote requires an explicit save or skip decision', () => {
+  expect(
+    __test__.normalizeGeneratedMemoryNote({
+      decision: 'skip',
+      reason: 'Routine image promotion.',
+      summary: '',
+      content: '',
+      tags: [],
+    }),
+  ).toEqual({
+    decision: 'skip',
+    reason: 'Routine image promotion.',
+    summary: '',
+    content: '',
+    tags: [],
+  })
+  expect(() =>
+    __test__.normalizeGeneratedMemoryNote({ summary: 'Diff summary', content: 'Restates the diff.', tags: [] }),
+  ).toThrow('decision to save or skip')
 })
 
 test('loadMainMergeDiff reads exact change evidence from the local repository clone', async () => {
