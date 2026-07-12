@@ -412,6 +412,7 @@ spec:
                 path: argocd/applications/posthog
                 namespace: posthog
                 renderWithLovely: false
+                cascadeResourcesOnDeletion: true
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual

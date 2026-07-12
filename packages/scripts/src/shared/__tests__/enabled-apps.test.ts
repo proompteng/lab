@@ -43,9 +43,10 @@ describe('enabled app inventory', () => {
     expect(productApplicationSet.spec?.syncPolicy?.preserveResourcesOnDeletion).toBe(true)
   })
 
-  it('cascades Olden resources when its generated Application is deleted', () => {
+  it('cascades resources for generated Applications that are disabled destructively', () => {
     const productElements = productApplicationSet.spec?.generators?.[0]?.matrix?.generators?.[1]?.list?.elements ?? []
     expect(productElements.find((candidate) => candidate.name === 'olden')?.cascadeResourcesOnDeletion).toBe(true)
+    expect(productElements.find((candidate) => candidate.name === 'posthog')?.cascadeResourcesOnDeletion).toBe(true)
     expect(productApplicationSet.spec?.templatePatch).toContain('resources-finalizer.argocd.argoproj.io')
   })
 
