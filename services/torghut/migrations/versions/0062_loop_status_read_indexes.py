@@ -28,6 +28,24 @@ ON hyperliquid_execution_signals (generated_at DESC)
 """,
     ),
     (
+        "ix_hyperliquid_execution_orders_network_created_desc",
+        "hyperliquid_execution_orders",
+        """
+CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  ix_hyperliquid_execution_orders_network_created_desc
+ON hyperliquid_execution_orders (execution_network, created_at DESC)
+""",
+    ),
+    (
+        "ix_hyperliquid_execution_fills_network_event_desc",
+        "hyperliquid_execution_fills",
+        """
+CREATE INDEX CONCURRENTLY IF NOT EXISTS
+  ix_hyperliquid_execution_fills_network_event_desc
+ON hyperliquid_execution_fills (execution_network, event_ts DESC)
+""",
+    ),
+    (
         "ix_executions_created_at_desc",
         "executions",
         """
