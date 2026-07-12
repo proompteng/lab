@@ -252,13 +252,11 @@ test('startMainMergeNoteWorkflow creates a delivery-scoped durable workflow', as
   const event = githubPushEvent(['src/a.ts'])
 
   await __test__.startMainMergeNoteWorkflow(client as never, eventConsumerConfig(), {
-    event,
-    payload: event.payload as Record<string, unknown>,
+    eventId: event.id,
+    deliveryId: event.delivery_id,
     repoRoot: '/workspace/lab',
     ref: 'refs/heads/main',
     commit: 'abcdef1234567890',
-    files: ['src/a.ts'],
-    counts: ingestionCounts({ total: 1, terminal: 1 }),
   })
 
   expect(options?.workflowId).toBe(__test__.buildMainMergeNoteWorkflowId(event.delivery_id))
@@ -276,7 +274,7 @@ test('processEvent schedules the main merge note workflow before marking a fully
       throw new Error('WorkflowExecutionAlreadyStarted')
     },
     startMainMergeNoteWorkflow: async (_client, _config, input) => {
-      calls.push(`note:${input.ref}:${input.commit}:${input.files.join(',')}`)
+      calls.push(`note:${input.deliveryId}:${input.ref}:${input.commit}`)
     },
     markProcessed: async (_db, deliveryId) => {
       calls.push(`processed:${deliveryId}`)
@@ -284,7 +282,7 @@ test('processEvent schedules the main merge note workflow before marking a fully
   })
 
   expect(result.processed).toBe(true)
-  expect(calls).toEqual(['note:refs/heads/main:abcdef1234567890:src/a.ts,src/b.ts', 'processed:delivery-1'])
+  expect(calls).toEqual(['note:delivery-1:refs/heads/main:abcdef1234567890', 'processed:delivery-1'])
 })
 
 test('main branch and memory namespace helpers are stable', () => {

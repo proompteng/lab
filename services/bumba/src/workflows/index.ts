@@ -249,25 +249,11 @@ const EnrichRepositoryInput = Schema.Struct({
 })
 
 const MainMergeMemoryNoteWorkflowInput = Schema.Struct({
-  event: Schema.Struct({
-    id: Schema.String,
-    delivery_id: Schema.String,
-    event_type: Schema.String,
-    repository: Schema.String,
-    payload: Schema.Unknown,
-  }),
-  payload: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  eventId: Schema.String,
+  deliveryId: Schema.String,
   repoRoot: Schema.String,
   ref: Schema.String,
   commit: Schema.String,
-  files: Schema.Array(Schema.String),
-  counts: Schema.Struct({
-    total: Schema.Number,
-    terminal: Schema.Number,
-    failed: Schema.Number,
-    nonterminal: Schema.Number,
-    oldestNonterminalStartedAt: Schema.NullOr(Schema.Number),
-  }),
 })
 
 const ChildWorkflowCompletionSignal = Schema.Struct({
@@ -292,8 +278,8 @@ export const workflows = [
       logWorkflow('publishMainMergeMemoryNote.started', {
         workflowId: info.workflowId,
         runId: info.runId,
-        deliveryId: input.event.delivery_id,
-        repository: input.event.repository,
+        eventId: input.eventId,
+        deliveryId: input.deliveryId,
         commit: input.commit,
       })
 
@@ -311,7 +297,7 @@ export const workflows = [
       logWorkflow('publishMainMergeMemoryNote.completed', {
         workflowId: info.workflowId,
         runId: info.runId,
-        deliveryId: input.event.delivery_id,
+        deliveryId: input.deliveryId,
       })
     }),
   ),

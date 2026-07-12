@@ -98,25 +98,11 @@ const legacyRepositoryIngestionState = (
 test('publishMainMergeMemoryNote delegates durable delivery to a retrying activity', async () => {
   const { executor } = makeExecutor()
   const input = {
-    event: {
-      id: 'event-1',
-      delivery_id: 'delivery-1',
-      event_type: 'push',
-      repository: 'proompteng/lab',
-      payload: {},
-    },
-    payload: { ref: 'refs/heads/main' },
+    eventId: 'event-1',
+    deliveryId: 'delivery-1',
     repoRoot: '/workspace/lab',
     ref: 'refs/heads/main',
     commit: 'abcdef1234567890',
-    files: ['services/bumba/src/event-consumer.ts'],
-    counts: {
-      total: 1,
-      terminal: 1,
-      failed: 0,
-      nonterminal: 0,
-      oldestNonterminalStartedAt: null,
-    },
   }
 
   const output = await execute(executor, {
@@ -129,6 +115,7 @@ test('publishMainMergeMemoryNote delegates durable delivery to a retrying activi
   expect(intent?.kind).toBe('schedule-activity')
   if (intent?.kind !== 'schedule-activity') throw new Error('expected schedule-activity intent')
   expect(intent.activityType).toBe('publishMainMergeMemoryNote')
+  expect(intent.input).toEqual([input])
   expect(intent.retry?.maximumAttempts).toBe(100)
   expect(intent.timeouts.scheduleToCloseTimeoutMs).toBe(7 * 24 * 60 * 60 * 1_000)
 })

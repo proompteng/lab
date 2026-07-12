@@ -160,13 +160,11 @@ type ProcessEventDependencies = {
 }
 
 export type MainMergeMemoryNoteInput = {
-  event: GithubEventRow
-  payload: Record<string, unknown>
+  eventId: string
+  deliveryId: string
   repoRoot: string
   ref: string
   commit: string
-  files: string[]
-  counts: IngestionCounts
 }
 
 type EventConsumerTickDependencies = {
@@ -791,16 +789,20 @@ export const publishMainMergeMemoryNoteActivity = async (input: MainMergeMemoryN
 
   const db = new SQL(withDefaultSslMode(databaseUrl))
   try {
-    await publishMainMergeMemoryNote(
-      db,
-      input.repoRoot,
-      input.event,
-      input.payload,
-      input.ref,
-      input.commit,
-      input.files,
-      input.counts,
-    )
+    const rows = (await db`
+      SELECT id, delivery_id, event_type, repository, payload
+      FROM atlas.github_events
+      WHERE id = ${input.eventId}
+        AND delivery_id = ${input.deliveryId}
+      LIMIT 1;
+    `) as GithubEventRow[]
+    const event = rows[0]
+    if (!event) throw new Error(`GitHub event ${input.eventId} was not found for merge-note publication`)
+
+    const payload = resolveEventPayload(event.payload)
+    const files = extractEventFilePaths(payload)
+    const counts = await getIngestionCounts(db, event.id)
+    await publishMainMergeMemoryNote(db, input.repoRoot, event, payload, input.ref, input.commit, files, counts)
   } finally {
     await db.close().catch(() => undefined)
   }
@@ -964,7 +966,7 @@ const startMainMergeNoteWorkflow = async (
 ) => {
   try {
     await client.workflow.start({
-      workflowId: buildMainMergeNoteWorkflowId(input.event.delivery_id),
+      workflowId: buildMainMergeNoteWorkflowId(input.deliveryId),
       workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
       workflowType: 'publishMainMergeMemoryNote',
       taskQueue: config.taskQueue,
@@ -1098,13 +1100,11 @@ const processEvent = async (
     if (ingestionCounts.total === ingestionCounts.terminal) {
       if (isMainBranchRef(ref)) {
         await startMergeNoteWorkflow(client, config, {
-          event,
-          payload,
+          eventId: event.id,
+          deliveryId: event.delivery_id,
           repoRoot: config.repoRoot,
           ref,
           commit,
-          files,
-          counts: ingestionCounts,
         })
       }
       await markProcessed(db, event.delivery_id)
