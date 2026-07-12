@@ -18,6 +18,7 @@ data class AlpacaError(
   val msg: String? = null,
 ) : AlpacaMessage
 
+@Serializable
 data class AlpacaUnknownMessage(
   override val type: String,
   val raw: JsonElement,
