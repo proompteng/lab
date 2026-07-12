@@ -19,6 +19,7 @@ type ChatResult = {
   status?: number
   response?: unknown
   error?: string
+  validationErrors?: string[]
 }
 
 type BenchmarkRun = {
@@ -466,7 +467,14 @@ async function chatSmoke(label: string, payload: unknown): Promise<ChatResult> {
       method: 'POST',
       body: JSON.stringify(payload),
     })
-    return { label, ok: true, elapsedMs: Date.now() - started, response }
+    const validationErrors = validateChatSmokeResponse(label, response)
+    return {
+      label,
+      ok: validationErrors.length === 0,
+      elapsedMs: Date.now() - started,
+      response,
+      validationErrors: validationErrors.length > 0 ? validationErrors : undefined,
+    }
   } catch (error) {
     return {
       label,
@@ -475,6 +483,100 @@ async function chatSmoke(label: string, payload: unknown): Promise<ChatResult> {
       error: error instanceof Error ? error.message : String(error),
     }
   }
+}
+
+type ChatChoice = {
+  finishReason?: unknown
+  message?: Record<string, unknown>
+}
+
+function firstChatChoice(response: unknown): ChatChoice | undefined {
+  if (!isRecord(response) || !Array.isArray(response.choices) || !isRecord(response.choices[0])) return undefined
+  const choice = response.choices[0]
+  return {
+    finishReason: choice.finish_reason,
+    message: isRecord(choice.message) ? choice.message : undefined,
+  }
+}
+
+function validateTextCompletion(response: unknown, expectedContent: string): string[] {
+  const choice = firstChatChoice(response)
+  if (!choice?.message) return ['missing choices[0].message']
+
+  const errors: string[] = []
+  const content = choice.message.content
+  if (typeof content !== 'string' || !content.includes(expectedContent)) {
+    errors.push(`choices[0].message.content must contain ${JSON.stringify(expectedContent)}`)
+  }
+  if (choice.finishReason !== 'stop' && choice.finishReason !== 'length') {
+    errors.push(`choices[0].finish_reason must be "stop" or "length", got ${JSON.stringify(choice.finishReason)}`)
+  }
+  return errors
+}
+
+function validateToolCall(response: unknown): string[] {
+  const choice = firstChatChoice(response)
+  if (!choice?.message) return ['missing choices[0].message']
+
+  const errors: string[] = []
+  if (choice.finishReason !== 'tool_calls') {
+    errors.push(`choices[0].finish_reason must be "tool_calls", got ${JSON.stringify(choice.finishReason)}`)
+  }
+
+  const toolCalls = choice.message.tool_calls
+  if (!Array.isArray(toolCalls) || toolCalls.length !== 1 || !isRecord(toolCalls[0])) {
+    errors.push('choices[0].message.tool_calls must contain exactly one tool call')
+    return errors
+  }
+
+  const toolCall = toolCalls[0]
+  if (toolCall.type !== 'function' || !isRecord(toolCall.function)) {
+    errors.push('tool call must be a function')
+    return errors
+  }
+  if (toolCall.function.name !== 'lookup_status') {
+    errors.push('tool call function name must be "lookup_status"')
+  }
+
+  const rawArguments = toolCall.function.arguments
+  if (typeof rawArguments !== 'string') {
+    errors.push('tool call arguments must be a JSON string')
+    return errors
+  }
+  try {
+    const parsedArguments: unknown = JSON.parse(rawArguments)
+    if (
+      !isRecord(parsedArguments) ||
+      Object.keys(parsedArguments).length !== 1 ||
+      parsedArguments.id !== 'FLAMINGO-262K'
+    ) {
+      errors.push('tool call arguments must be exactly {"id":"FLAMINGO-262K"}')
+    }
+  } catch {
+    errors.push('tool call arguments must be valid JSON')
+  }
+  return errors
+}
+
+export function validateChatSmokeResponse(label: string, response: unknown): string[] {
+  if (label === 'exact-no-thinking') return validateTextCompletion(response, 'qwen36-ready')
+  if (label === 'medium-thinking') {
+    const errors = validateTextCompletion(response, 'qwen36-thinking-ready')
+    const completionTokens =
+      isRecord(response) && isRecord(response.usage) ? response.usage.completion_tokens : undefined
+    if (typeof completionTokens !== 'number' || completionTokens <= 0) {
+      errors.push(`usage.completion_tokens must be positive, got ${JSON.stringify(completionTokens)}`)
+    }
+    return errors
+  }
+  if (label === 'tool-call') return validateToolCall(response)
+  if (label.startsWith('long-context-')) {
+    return validateTextCompletion(response, `flamingo-long-${label.slice('long-context-'.length)}`)
+  }
+  if (label === 'prefix-cache-first' || label === 'prefix-cache-second') {
+    return validateTextCompletion(response, 'prefix-cache-ready')
+  }
+  return []
 }
 
 function buildLongPrompt(targetTokens: number, marker: string): string {
