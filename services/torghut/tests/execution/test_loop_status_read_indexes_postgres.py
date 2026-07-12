@@ -73,7 +73,7 @@ def _create_loop_status_tables(engine: Engine) -> None:
                     id bigint PRIMARY KEY,
                     finished_at timestamptz NOT NULL
                 );
-                CREATE INDEX ix_test_cycles_finished_at
+                CREATE INDEX ix_hyperliquid_execution_cycles_finished
                     ON hyperliquid_execution_cycles (finished_at);
 
                 CREATE TABLE hyperliquid_execution_signals (
@@ -92,27 +92,20 @@ def _create_loop_status_tables(engine: Engine) -> None:
                     execution_network text NOT NULL,
                     created_at timestamptz NOT NULL
                 );
-                CREATE INDEX ix_test_orders_network_created
-                    ON hyperliquid_execution_orders (execution_network, created_at);
 
                 CREATE TABLE hyperliquid_execution_fills (
                     id bigint PRIMARY KEY,
                     execution_network text NOT NULL,
                     event_ts timestamptz NOT NULL
                 );
-                CREATE INDEX ix_test_fills_network_event
-                    ON hyperliquid_execution_fills (execution_network, event_ts);
 
                 CREATE TABLE hyperliquid_execution_account_snapshots (
                     id bigint PRIMARY KEY,
                     execution_network text NOT NULL,
                     observed_at timestamptz NOT NULL
                 );
-                CREATE INDEX ix_test_accounts_network_observed
-                    ON hyperliquid_execution_account_snapshots (
-                        execution_network,
-                        observed_at
-                    );
+                CREATE INDEX ix_hyperliquid_execution_account_observed
+                    ON hyperliquid_execution_account_snapshots (observed_at);
 
                 CREATE TABLE executions (
                     id bigint PRIMARY KEY,
@@ -154,19 +147,19 @@ def _load_realistic_loop_status_rows(engine: Engine) -> None:
                 INSERT INTO hyperliquid_execution_orders (
                     id, execution_network, created_at
                 )
-                SELECT n, 'testnet', clock_timestamp() - make_interval(secs => n)
+                SELECT n, 'testnet', clock_timestamp() - make_interval(mins => n)
                   FROM generate_series(1, 5000) AS n;
 
                 INSERT INTO hyperliquid_execution_fills (
                     id, execution_network, event_ts
                 )
-                SELECT n, 'testnet', clock_timestamp() - make_interval(secs => n)
+                SELECT n, 'testnet', clock_timestamp() - make_interval(mins => n)
                   FROM generate_series(1, 5000) AS n;
 
                 INSERT INTO hyperliquid_execution_account_snapshots (
                     id, execution_network, observed_at
                 )
-                SELECT n, 'testnet', clock_timestamp() - make_interval(secs => n)
+                SELECT n, 'testnet', clock_timestamp() - make_interval(mins => n)
                   FROM generate_series(1, 75000) AS n;
 
                 INSERT INTO executions (id, created_at, alpaca_account_label)
@@ -227,6 +220,9 @@ def test_indexes_bound_exact_loop_status_reads_and_downgrade_symmetrically(
     unexpected_live_plan = _explain_json(harness.engine, _UNEXPECTED_LIVE_ALPACA_SQL)
     assert "ix_hyperliquid_execution_signals_generated_at_desc" in latest_plan
     assert "ix_hyperliquid_execution_signals_generated_at_desc" in counts_plan
+    assert "ix_hyperliquid_execution_orders_network_created_desc" in counts_plan
+    assert "ix_hyperliquid_execution_fills_network_event_desc" in counts_plan
+    assert "ix_hyperliquid_execution_account_observed" in counts_plan
     assert "ix_executions_created_at_desc" in unexpected_live_plan
     assert "ix_execution_order_events_activity_at_desc" in unexpected_live_plan
 
@@ -252,10 +248,14 @@ def test_indexes_bound_exact_loop_status_reads_and_downgrade_symmetrically(
             text(
                 """
                 SELECT to_regclass('ix_hyperliquid_execution_signals_generated_at_desc'),
+                       to_regclass('ix_hyperliquid_execution_orders_network_created_desc'),
+                       to_regclass('ix_hyperliquid_execution_fills_network_event_desc'),
                        to_regclass('ix_executions_created_at_desc'),
-                       to_regclass('ix_execution_order_events_activity_at_desc')
+                       to_regclass('ix_execution_order_events_activity_at_desc'),
+                       to_regclass('ix_hyperliquid_execution_account_observed')
                 """
             )
         ).one()
     assert version == "0061_linked_submission_terminal"
-    assert indexes == (None, None, None)
+    assert indexes[:5] == (None, None, None, None, None)
+    assert indexes[5] == "ix_hyperliquid_execution_account_observed"

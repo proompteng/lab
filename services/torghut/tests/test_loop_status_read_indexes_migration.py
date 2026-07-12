@@ -39,9 +39,17 @@ class TestLoopStatusReadIndexesMigration(TestCase):
 
         get_context.return_value.autocommit_block.assert_called_once_with()
         executed_sql = "\n".join(str(call.args[0]) for call in execute.call_args_list)
-        self.assertEqual(execute.call_count, 3)
-        self.assertEqual(executed_sql.count("CREATE INDEX CONCURRENTLY"), 3)
+        self.assertEqual(execute.call_count, 5)
+        self.assertEqual(executed_sql.count("CREATE INDEX CONCURRENTLY"), 5)
         self.assertIn("hyperliquid_execution_signals (generated_at DESC)", executed_sql)
+        self.assertIn(
+            "hyperliquid_execution_orders (execution_network, created_at DESC)",
+            executed_sql,
+        )
+        self.assertIn(
+            "hyperliquid_execution_fills (execution_network, event_ts DESC)",
+            executed_sql,
+        )
         self.assertIn("executions (created_at DESC)", executed_sql)
         self.assertIn("COALESCE(event_ts, created_at)", executed_sql)
         self.assertEqual(executed_sql.count("INCLUDE (alpaca_account_label)"), 2)
@@ -51,7 +59,7 @@ class TestLoopStatusReadIndexesMigration(TestCase):
         bind = MagicMock()
         bind.dialect.name = "postgresql"
         inspector = MagicMock()
-        inspector.has_table.side_effect = [True, False, True]
+        inspector.has_table.side_effect = [True, False, True, False, True]
 
         with (
             patch.object(module.op, "get_bind", return_value=bind),
@@ -61,13 +69,19 @@ class TestLoopStatusReadIndexesMigration(TestCase):
         ):
             module.upgrade()
 
-        self.assertEqual(execute.call_count, 2)
+        self.assertEqual(execute.call_count, 3)
 
     def test_upgrade_rebuilds_invalid_concurrent_index_residue(self) -> None:
         module = load_migration_module(MIGRATION_FILENAME)
         bind = MagicMock()
         bind.dialect.name = "postgresql"
-        bind.execute.return_value.scalar_one_or_none.side_effect = [False, True, True]
+        bind.execute.return_value.scalar_one_or_none.side_effect = [
+            True,
+            False,
+            False,
+            True,
+            True,
+        ]
         inspector = MagicMock()
         inspector.has_table.return_value = True
 
@@ -80,13 +94,19 @@ class TestLoopStatusReadIndexesMigration(TestCase):
             module.upgrade()
 
         executed_sql = [str(call.args[0]) for call in execute.call_args_list]
-        self.assertEqual(len(executed_sql), 2)
+        self.assertEqual(len(executed_sql), 4)
         self.assertIn(
             "DROP INDEX CONCURRENTLY IF EXISTS "
-            "ix_hyperliquid_execution_signals_generated_at_desc",
+            "ix_hyperliquid_execution_orders_network_created_desc",
             executed_sql[0],
         )
         self.assertIn("CREATE INDEX CONCURRENTLY", executed_sql[1])
+        self.assertIn(
+            "DROP INDEX CONCURRENTLY IF EXISTS "
+            "ix_hyperliquid_execution_fills_network_event_desc",
+            executed_sql[2],
+        )
+        self.assertIn("CREATE INDEX CONCURRENTLY", executed_sql[3])
 
     def test_upgrade_skips_non_postgres(self) -> None:
         module = load_migration_module(MIGRATION_FILENAME)
@@ -118,8 +138,20 @@ class TestLoopStatusReadIndexesMigration(TestCase):
 
         get_context.return_value.autocommit_block.assert_called_once_with()
         executed_sql = [str(call.args[0]) for call in execute.call_args_list]
-        self.assertEqual(len(executed_sql), 3)
+        self.assertEqual(len(executed_sql), 5)
         self.assertIn("ix_execution_order_events_activity_at_desc", executed_sql[0])
+        self.assertTrue(
+            any(
+                "ix_hyperliquid_execution_orders_network_created_desc" in sql
+                for sql in executed_sql
+            )
+        )
+        self.assertTrue(
+            any(
+                "ix_hyperliquid_execution_fills_network_event_desc" in sql
+                for sql in executed_sql
+            )
+        )
         self.assertIn(
             "ix_hyperliquid_execution_signals_generated_at_desc", executed_sql[-1]
         )
