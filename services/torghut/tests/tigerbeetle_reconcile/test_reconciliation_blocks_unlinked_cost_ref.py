@@ -3,6 +3,8 @@ from __future__ import annotations
 from tests.tigerbeetle_reconcile.support import (
     BLOCKER_CLIENT_UNAVAILABLE,
     BLOCKER_CODE_MISMATCH,
+    BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH,
+    BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
     BLOCKER_SOURCE_AMOUNT_MISMATCH,
     BLOCKER_SOURCE_ROW_MISSING,
     BLOCKER_TRANSFER_MISSING,
@@ -29,9 +31,12 @@ from tests.tigerbeetle_reconcile.support import (
     TigerBeetleTransferRef,
     TigerBeetleTransferSpec,
     _TestTigerBeetleReconcileBase,
+    _add_account_refs_for_plan,
     _add_ref,
+    _runtime_bucket,
     archived_runtime_ledger_amount_micros,
     attr,
+    build_runtime_ledger_bucket_transfer_plan,
     cost_amount_micros,
     execution_amount_micros,
     expected_source_amount_micros,
@@ -333,6 +338,68 @@ class TestReconciliationBlocksUnlinkedCostRef(_TestTigerBeetleReconcileBase):
             self.assertEqual(payload["source_row_missing_count"], 1)
             self.assertEqual(payload["source_missing_count"], 2)
             self.assertEqual(payload["missing_transfer_count"], 0)
+
+    def test_client_failure_preserves_runtime_ledger_checked_count(self) -> None:
+        with Session(self.engine) as session:
+            bucket = _runtime_bucket(net_pnl=Decimal("2.50"))
+            session.add(bucket)
+            session.flush()
+            plan = build_runtime_ledger_bucket_transfer_plan(bucket)
+            self.assertIsNotNone(plan)
+            assert plan is not None
+            _add_account_refs_for_plan(session, plan)
+            transfer = plan.transfer_spec
+            session.add(
+                TigerBeetleTransferRef(
+                    cluster_id=2001,
+                    transfer_id=str(transfer.transfer_id),
+                    transfer_kind=transfer.transfer_kind,
+                    ledger=transfer.ledger,
+                    code=transfer.code,
+                    amount=Decimal(transfer.amount),
+                    status="created",
+                    runtime_ledger_bucket_id=bucket.id,
+                    source_type=SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                    source_id=str(bucket.id),
+                    payload_json={
+                        "source": SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
+                        "run_id": bucket.run_id,
+                        "candidate_id": bucket.candidate_id,
+                        "hypothesis_id": bucket.hypothesis_id,
+                        "observed_stage": bucket.observed_stage,
+                        "pnl_basis": bucket.pnl_basis,
+                        "ledger_schema_version": bucket.ledger_schema_version,
+                        "amount_source": str(plan.amount_source),
+                        "signed_amount_micros": plan.signed_amount_micros,
+                        "pnl_direction": plan.pnl_direction,
+                        "runtime_key": plan.runtime_key,
+                        "debit_account_id": str(transfer.debit_account_id),
+                        "credit_account_id": str(transfer.credit_account_id),
+                    },
+                )
+            )
+            session.flush()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=FailingLookupClient(),
+            )
+
+            self.assertFalse(payload["ok"])
+            self.assertIn(BLOCKER_CLIENT_UNAVAILABLE, payload["blockers"])
+            self.assertEqual(payload["runtime_ledger_checked_transfer_count"], 1)
+            self.assertEqual(payload["runtime_ledger_signed_transfer_count"], 0)
+            self.assertEqual(payload["mismatched_transfer_count"], 0)
+            self.assertNotIn(BLOCKER_TRANSFER_MISSING, payload["blockers"])
+            self.assertNotIn(
+                BLOCKER_RUNTIME_LEDGER_DIRECTION_MISMATCH,
+                payload["blockers"],
+            )
+            self.assertNotIn(
+                BLOCKER_RUNTIME_LEDGER_METADATA_MISMATCH,
+                payload["blockers"],
+            )
 
     def test_latest_reconciliation_payload_normalizes_blockers(self) -> None:
         with Session(self.engine) as session:

@@ -335,6 +335,8 @@ def _validate_postgres_source_ref(
         SOURCE_TYPE_RUNTIME_LEDGER_BUCKET,
     }:
         _validate_source_amount(session, context)
+    if context.ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
+        context.state.counts.runtime_ledger_checked_transfer_count += 1
 
 
 def _validate_source_amount(
@@ -389,7 +391,6 @@ def _validate_runtime_ledger(
 ) -> None:
     ref = context.ref
     counts = context.state.counts
-    counts.runtime_ledger_checked_transfer_count += 1
     source_uuid = _uuid_or_none(ref.source_id)
     bucket = (
         session.get(StrategyRuntimeLedgerBucket, source_uuid)
