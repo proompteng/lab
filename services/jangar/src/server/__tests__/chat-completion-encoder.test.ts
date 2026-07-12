@@ -251,6 +251,17 @@ describe('chat completion encoder', () => {
     expect(content).toContain('\n```\n\n')
   })
 
+  it('preserves output for generic tool kinds', () => {
+    const toolRenderer: ToolRenderer = {
+      onToolEvent: () => [{ type: 'emitContent', content: 'generic tool output' }],
+    }
+
+    const session = createSession({ toolRenderer })
+    const frames = session.onDelta({ type: 'tool', id: 'tool-generic', toolKind: 'tool' })
+
+    expect(collectContent(frames)).toContain('generic tool output')
+  })
+
   it('renders plan updates as markdown todos', () => {
     const session = createSession()
 

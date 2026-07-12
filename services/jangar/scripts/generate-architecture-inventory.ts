@@ -107,12 +107,17 @@ const readTopModules = async (): Promise<ModuleStat[]> => {
   return modules.sort((left, right) => right.loc - left.loc || left.path.localeCompare(right.path)).slice(0, 20)
 }
 
+export const classifyControlPlaneRouteSource = (source: string): ControlPlaneRouteStat['kind'] =>
+  source.includes('throw redirect(') || source.includes('ControlPlaneRedirect') || /<Navigate\b/.test(source)
+    ? 'redirect'
+    : 'page'
+
 const readControlPlaneRoutes = async (): Promise<ControlPlaneRouteStat[]> => {
   const files = await readSourceFiles(controlPlaneRoutesRoot)
   const routes = await Promise.all(
     files.map(async (filePath) => {
       const source = await readFile(filePath, 'utf8')
-      const kind = source.includes('throw redirect(') ? 'redirect' : 'page'
+      const kind = classifyControlPlaneRouteSource(source)
       return {
         filePath: toRepoPath(filePath),
         routePath: toControlPlaneRoutePath(filePath),
@@ -214,4 +219,6 @@ const main = async () => {
   console.log(`[jangar] wrote ${toRepoPath(outputPath)}`)
 }
 
-await main()
+if (import.meta.main) {
+  await main()
+}
