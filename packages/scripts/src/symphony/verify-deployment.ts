@@ -33,6 +33,9 @@ type CommandResult = {
 type KubernetesPodList = {
   items?: Array<{
     metadata?: { name?: string }
+    spec?: {
+      containers?: Array<{ name?: string; image?: string }>
+    }
     status?: {
       containerStatuses?: Array<{ name?: string; imageID?: string; ready?: boolean }>
     }
@@ -303,25 +306,31 @@ const verifyServiceHealth = async (serviceBaseUrl: string) => {
   return stateBody
 }
 
-export const imageIdMatchesDigest = (imageId: string, expectedDigest: string): boolean => {
-  const normalizedImageId = imageId.trim()
+export const imageReferenceMatchesDigest = (imageReference: string, expectedDigest: string): boolean => {
+  const normalizedImageReference = imageReference.trim()
   const normalizedDigest = expectedDigest.trim()
   return (
-    normalizedImageId === normalizedDigest ||
-    normalizedImageId.endsWith(`@${normalizedDigest}`) ||
-    normalizedImageId.endsWith(`://${normalizedDigest}`)
+    normalizedImageReference === normalizedDigest ||
+    normalizedImageReference.endsWith(`@${normalizedDigest}`) ||
+    normalizedImageReference.endsWith(`://${normalizedDigest}`)
   )
 }
 
 export const selectReadyContainerImages = (
   podList: KubernetesPodList,
   containerName: string,
-): Array<{ pod: string; imageID: string }> =>
-  (podList.items ?? []).flatMap((pod) =>
-    (pod.status?.containerStatuses ?? [])
-      .filter((status) => status.name === containerName && status.ready === true && Boolean(status.imageID))
-      .map((status) => ({ pod: pod.metadata?.name ?? 'unknown', imageID: status.imageID as string })),
-  )
+): Array<{ pod: string; image: string; imageID: string | null }> =>
+  (podList.items ?? []).flatMap((pod) => {
+    const image = (pod.spec?.containers ?? []).find((candidate) => candidate.name === containerName)?.image
+    if (!image) return []
+    return (pod.status?.containerStatuses ?? [])
+      .filter((status) => status.name === containerName && status.ready === true)
+      .map((status) => ({
+        pod: pod.metadata?.name ?? 'unknown',
+        image,
+        imageID: status.imageID?.trim() || null,
+      }))
+  })
 
 const verifyRunningDigest = async (options: ResolvedOptions, expectedDigest: string) => {
   const podsResult = await runCommand('kubectl', [
@@ -338,10 +347,10 @@ const verifyRunningDigest = async (options: ResolvedOptions, expectedDigest: str
   const runningImages = selectReadyContainerImages(podList, options.containerName)
   if (runningImages.length === 0) {
     throw new Error(
-      `No ready '${options.containerName}' container image IDs were found for deployment ${options.deployment}`,
+      `No ready '${options.containerName}' container image references were found for deployment ${options.deployment}`,
     )
   }
-  const mismatches = runningImages.filter((status) => !imageIdMatchesDigest(status.imageID, expectedDigest))
+  const mismatches = runningImages.filter((status) => !imageReferenceMatchesDigest(status.image, expectedDigest))
   if (mismatches.length > 0) {
     throw new Error(
       `Running ${options.deployment} image digest does not match ${expectedDigest}: ${JSON.stringify(mismatches)}`,
