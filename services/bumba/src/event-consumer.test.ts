@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { afterEach, expect, test } from 'bun:test'
 import type { TemporalConfig } from '@proompteng/temporal-bun-sdk'
 
@@ -18,8 +22,6 @@ const ENV_KEYS = [
   'CODEX_CWD',
   'DATABASE_URL',
   'AGENTS_SERVICE_BASE_URL',
-  'GITHUB_API_BASE_URL',
-  'GITHUB_TOKEN',
   'OPENAI_API_BASE_URL',
   'OPENAI_API_KEY',
   'OPENAI_COMPLETION_MODEL',
@@ -171,7 +173,7 @@ test('processEvent publishes the main merge note before marking a fully terminal
     startWorkflow: async () => {
       throw new Error('WorkflowExecutionAlreadyStarted')
     },
-    publishMainMergeNote: async (_db, _event, _payload, ref, commit, files) => {
+    publishMainMergeNote: async (_db, _repoRoot, _event, _payload, ref, commit, files) => {
       calls.push(`note:${ref}:${commit}:${files.join(',')}`)
     },
     markProcessed: async (_db, deliveryId) => {
@@ -208,6 +210,7 @@ test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the 
   const event = githubPushEvent(['src/a.ts'])
   await __test__.publishMainMergeMemoryNote(
     {} as never,
+    '/workspace/lab',
     event,
     event.payload,
     'refs/heads/main',
@@ -316,29 +319,36 @@ test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge
   )
 })
 
-test('loadMainMergeDiff fetches bounded change evidence from GitHub compare', async () => {
-  process.env.GITHUB_API_BASE_URL = 'http://github.test'
-  process.env.GITHUB_TOKEN = 'token'
-  let request: Request | undefined
-  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
-    request = new Request(input, init)
-    return Response.json({
-      files: [
-        { filename: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' },
-        { filename: 'assets/logo.png', status: 'modified' },
-      ],
-    })
-  }) as typeof fetch
+test('loadMainMergeDiff reads exact change evidence from the local repository clone', async () => {
+  const repoRoot = await mkdtemp(join(tmpdir(), 'bumba-event-diff-'))
+  const runGit = (...args: string[]) => {
+    const result = Bun.spawnSync(['git', ...args], { cwd: repoRoot, stdout: 'pipe', stderr: 'pipe' })
+    if (result.exitCode !== 0) throw new Error(result.stderr.toString())
+    return result.stdout.toString().trim()
+  }
 
-  const event = githubPushEvent(['src/a.ts'])
-  const diff = await __test__.loadMainMergeDiff(event, event.payload, 'abcdef1234567890')
+  try {
+    runGit('init')
+    runGit('config', 'user.email', 'bumba@test.invalid')
+    runGit('config', 'user.name', 'Bumba Test')
+    await writeFile(join(repoRoot, 'a.ts'), 'export const value = "old"\n')
+    runGit('add', 'a.ts')
+    runGit('commit', '-m', 'initial')
+    const before = runGit('rev-parse', 'HEAD')
 
-  expect(request?.url).toBe('http://github.test/repos/proompteng/lab/compare/1234567890abcdef...abcdef1234567890')
-  expect(request?.headers.get('authorization')).toBe('Bearer token')
-  expect(diff).toEqual([
-    { path: 'src/a.ts', status: 'modified', patch: '@@ -1 +1 @@\n-old\n+new' },
-    { path: 'assets/logo.png', status: 'modified', patch: null },
-  ])
+    await writeFile(join(repoRoot, 'a.ts'), 'export const value = "new"\n')
+    runGit('add', 'a.ts')
+    runGit('commit', '-m', 'change')
+    const after = runGit('rev-parse', 'HEAD')
+
+    const diff = await __test__.loadMainMergeDiff(repoRoot, { before }, after)
+    expect(diff).toHaveLength(1)
+    expect(diff[0]).toMatchObject({ path: 'a.ts', status: 'changed' })
+    expect(diff[0]?.patch).toContain('-export const value = "old"')
+    expect(diff[0]?.patch).toContain('+export const value = "new"')
+  } finally {
+    await rm(repoRoot, { recursive: true, force: true })
+  }
 })
 
 test('publishMainMergeMemoryNote ignores non-main pushes', async () => {
@@ -351,6 +361,7 @@ test('publishMainMergeMemoryNote ignores non-main pushes', async () => {
 
   await __test__.publishMainMergeMemoryNote(
     {} as never,
+    '/workspace/lab',
     event,
     event.payload,
     'refs/heads/feature',

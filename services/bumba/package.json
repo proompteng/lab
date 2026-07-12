@@ -14,7 +14,6 @@
   },
   "dependencies": {
     "@effect/schema": "^0.75.5",
-    "@proompteng/agent-contracts": "workspace:*",
     "@proompteng/temporal-bun-sdk": "workspace:*",
     "@tree-sitter-grammars/tree-sitter-hcl": "^1.2.0",
     "@tree-sitter-grammars/tree-sitter-kotlin": "^1.1.0",

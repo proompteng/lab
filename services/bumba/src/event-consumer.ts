@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
-import { countMemoryNotesFromAgentsService, persistMemoryNoteToAgentsService } from '@proompteng/agent-contracts'
 import {
   createTemporalClient,
   type TemporalClient,
@@ -382,6 +381,49 @@ const isMainBranchRef = (ref: string) => ref === 'main' || ref === 'refs/heads/m
 
 const mainMergeMemoryNamespace = (deliveryId: string) => `bumba-main-${deliveryId}`.slice(0, 200)
 
+const requestAgentsJson = async (path: string, init?: RequestInit): Promise<Record<string, unknown>> => {
+  const baseUrl = (process.env.AGENTS_SERVICE_BASE_URL ?? 'http://agents.agents.svc.cluster.local').replace(/\/+$/, '')
+  const response = await fetch(`${baseUrl}${path}`, {
+    ...init,
+    headers: {
+      accept: 'application/json',
+      'x-agents-client': 'bumba',
+      ...(init?.body ? { 'content-type': 'application/json' } : {}),
+      ...init?.headers,
+    },
+    signal: init?.signal ?? AbortSignal.timeout(30_000),
+  })
+  const body = (await response.json().catch(() => null)) as unknown
+  if (!response.ok) {
+    const error = normalizeOptionalText(asRecord(body)?.error) ?? response.statusText ?? 'unknown error'
+    throw new Error(`Agents request failed (${response.status}): ${error}`)
+  }
+  const record = asRecord(body)
+  if (!record) throw new Error('Agents request returned an invalid JSON body')
+  return record
+}
+
+const countMainMergeMemoryNotes = async (namespace: string) => {
+  const body = await requestAgentsJson(`/v1/memory-notes/count?namespace=${encodeURIComponent(namespace)}`)
+  const count = body.count
+  if (typeof count === 'number' && Number.isFinite(count)) return count
+  if (typeof count === 'string' && /^\d+$/.test(count)) return Number.parseInt(count, 10)
+  throw new Error('Agents memory-note count response did not include a valid count')
+}
+
+const persistMainMergeMemoryNote = async (input: {
+  namespace: string
+  summary: string
+  content: string
+  tags: string[]
+  metadata: Record<string, unknown>
+}) => {
+  await requestAgentsJson('/v1/memory-notes', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
 const loadMainMergeEnrichments = async (db: SqlClient, eventId: string, commit: string): Promise<EventEnrichment[]> => {
   return (await db`
     SELECT DISTINCT ON (fk.path)
@@ -404,48 +446,46 @@ const loadMainMergeEnrichments = async (db: SqlClient, eventId: string, commit: 
 }
 
 const loadMainMergeDiff = async (
-  event: GithubEventRow,
+  repoRoot: string,
   payload: Record<string, unknown>,
   commit: string,
 ): Promise<MergeDiffFile[]> => {
   const before = normalizeOptionalText(payload.before)
   if (!before || /^0+$/.test(before)) return []
 
-  const [owner, repository] = event.repository.split('/')
-  if (!owner || !repository) {
-    throw new Error(`invalid GitHub repository slug for merge diff: ${event.repository}`)
+  const runGit = async (args: string[], allowFailure = false) => {
+    const child = Bun.spawn(['git', ...args], {
+      cwd: repoRoot,
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [exitCode, stdout, stderr] = await Promise.all([
+      child.exited,
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+    ])
+    if (exitCode !== 0 && !allowFailure) {
+      throw new Error(`git ${args[0] ?? 'command'} failed (${exitCode}): ${stderr.trim().slice(0, 1_000)}`)
+    }
+    return { exitCode, stdout }
   }
 
-  const apiBaseUrl = (process.env.GITHUB_API_BASE_URL ?? 'https://api.github.com').replace(/\/+$/, '')
-  const headers: Record<string, string> = {
-    accept: 'application/vnd.github+json',
-    'x-github-api-version': '2022-11-28',
-  }
-  const token = normalizeOptionalText(process.env.GITHUB_TOKEN)
-  if (token) headers.authorization = `Bearer ${token}`
-
-  const response = await fetch(
-    `${apiBaseUrl}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/compare/${encodeURIComponent(before)}...${encodeURIComponent(commit)}`,
-    { headers, signal: AbortSignal.timeout(30_000) },
-  )
-  if (!response.ok) {
-    throw new Error(`GitHub merge diff request failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`)
+  const beforeExists = (await runGit(['cat-file', '-e', `${before}^{commit}`], true)).exitCode === 0
+  const commitExists = (await runGit(['cat-file', '-e', `${commit}^{commit}`], true)).exitCode === 0
+  if (!beforeExists || !commitExists) {
+    await runGit(['fetch', '--no-tags', '--depth=2', 'origin', before, commit])
   }
 
-  const body = (await response.json()) as {
-    files?: Array<{ filename?: unknown; status?: unknown; patch?: unknown }>
+  const changedPaths = (await runGit(['diff', '--name-only', '-z', before, commit])).stdout
+    .split('\0')
+    .filter((path) => path.length > 0)
+
+  const diffFiles: MergeDiffFile[] = []
+  for (const path of changedPaths) {
+    const patch = (await runGit(['diff', '--no-ext-diff', '--unified=3', before, commit, '--', path])).stdout.trim()
+    diffFiles.push({ path, status: 'changed', patch: patch || null })
   }
-  return (body.files ?? []).flatMap((file) => {
-    const path = normalizeOptionalText(file.filename)
-    if (!path) return []
-    return [
-      {
-        path,
-        status: normalizeOptionalText(file.status) ?? 'modified',
-        patch: normalizeOptionalText(file.patch) ?? null,
-      },
-    ]
-  })
+  return diffFiles
 }
 
 const normalizeGeneratedMemoryNote = (raw: unknown): GeneratedMemoryNote => {
@@ -603,6 +643,7 @@ const generateMainMergeMemoryNote = async (
 
 const publishMainMergeMemoryNote = async (
   db: SqlClient,
+  repoRoot: string,
   event: GithubEventRow,
   payload: Record<string, unknown>,
   ref: string,
@@ -618,17 +659,13 @@ const publishMainMergeMemoryNote = async (
   if (!isMainBranchRef(ref)) return
 
   const namespace = mainMergeMemoryNamespace(event.delivery_id)
-  const existing = await countMemoryNotesFromAgentsService({ namespace })
-  if (!existing.ok) {
-    throw new Error(`failed to check Agents memory note (${existing.status}): ${existing.error ?? 'unknown error'}`)
-  }
-  if (existing.body.count > 0) return
+  if ((await countMainMergeMemoryNotes(namespace)) > 0) return
 
   const enrichments = await (dependencies.loadEnrichments ?? loadMainMergeEnrichments)(db, event.id, commit)
-  const diffFiles = await (dependencies.loadDiff ?? loadMainMergeDiff)(event, payload, commit)
+  const diffFiles = await (dependencies.loadDiff ?? loadMainMergeDiff)(repoRoot, payload, commit)
   const note = await (dependencies.generateNote ?? generateMainMergeMemoryNote)(event, payload, enrichments, diffFiles)
 
-  const persisted = await persistMemoryNoteToAgentsService({
+  await persistMainMergeMemoryNote({
     namespace,
     summary: note.summary,
     content: note.content,
@@ -646,9 +683,6 @@ const publishMainMergeMemoryNote = async (
       noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo',
     },
   })
-  if (!persisted.ok) {
-    throw new Error(`failed to persist Agents memory note (${persisted.status}): ${persisted.error ?? 'unknown error'}`)
-  }
 }
 
 const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig, taskQueue: string) => {
@@ -904,7 +938,7 @@ const processEvent = async (
   ingestionCounts = await getCounts(db, event.id)
   if (allTargetsDispatched && ingestionCounts.total >= files.length) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
-      await publishMergeNote(db, event, payload, ref, commit, files, ingestionCounts)
+      await publishMergeNote(db, config.repoRoot, event, payload, ref, commit, files, ingestionCounts)
       await markProcessed(db, event.delivery_id)
       return {
         processed: true,

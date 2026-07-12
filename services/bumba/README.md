@@ -15,7 +15,7 @@ Temporal worker that enriches repository files using AST context + self-hosted m
 - `BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS` is a per-tick dispatch budget. Events with more eligible files remain pending
   and continue across later ticks; individual start failures are retried and never cause the event to be marked complete.
 - After every fully terminal push to `main`, the consumer loads the completed per-file enrichments and a bounded
-  GitHub compare diff, asks Flamingo to synthesize durable engineering knowledge, and writes that generated note
+  diff from the mounted repository clone, asks Flamingo to synthesize durable engineering knowledge, and writes that generated note
   to the Agents `/v1/memory-notes` endpoint. Commit and delivery fields are stored only as provenance metadata.
   Set `AGENTS_SERVICE_BASE_URL` only when the in-cluster default is not appropriate. Merge-note synthesis disables
   reasoning by default so the structured response fits the completion budget; override it with
