@@ -30,6 +30,7 @@ _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,31}$")
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit", "trailing_stop"})
 _TIME_IN_FORCE = frozenset({"day", "gtc", "opg", "cls", "ioc", "fok"})
 _BROKER_STATUSES = frozenset(status.value for status in OrderStatus)
+_FULL_FILL_PERMITTED_STATUSES = frozenset({"calculated", "filled"})
 _ZERO_FILL_STATUSES = frozenset(
     {
         "accepted",
@@ -502,7 +503,9 @@ def _lifecycle_is_valid(
         return False
     if (filled_qty == 0) != (filled_avg_price is None):
         return False
-    if (status == "filled") != (filled_qty == submitted_qty):
+    if (status == "filled" and filled_qty != submitted_qty) or (
+        filled_qty == submitted_qty and status not in _FULL_FILL_PERMITTED_STATUSES
+    ):
         return False
     if status == "partially_filled" and not 0 < filled_qty < submitted_qty:
         return False

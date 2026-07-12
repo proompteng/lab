@@ -54,6 +54,7 @@ _ZERO_FILL_ORDER_STATUSES = frozenset(
         "rejected",
     }
 )
+_FULL_FILL_PERMITTED_ORDER_STATUSES = frozenset({"calculated", "filled"})
 _PARTIAL_OR_ZERO_ORDER_STATUSES = _PINNED_ORDER_STATUSES.difference(
     _ZERO_FILL_ORDER_STATUSES,
     {"filled", "partially_filled"},
@@ -585,7 +586,7 @@ def test_every_pinned_status_has_exhaustive_zero_partial_and_full_fill_coverage(
         )
     )
     expected_valid = (
-        (status == "filled" and filled_qty == "2")
+        (status in _FULL_FILL_PERMITTED_ORDER_STATUSES and filled_qty == "2")
         or (status == "partially_filled" and filled_qty == "1")
         or (status in _ZERO_FILL_ORDER_STATUSES and filled_qty == "0")
         or (status in _PARTIAL_OR_ZERO_ORDER_STATUSES and filled_qty in {"0", "1"})
@@ -598,6 +599,28 @@ def test_every_pinned_status_has_exhaustive_zero_partial_and_full_fill_coverage(
     else:
         assert result.reason is AlpacaRecoveryObservationReason.BROKER_LIFECYCLE_INVALID
         assert result.order is None
+
+
+@pytest.mark.parametrize(
+    ("filled_qty", "filled_avg_price"),
+    [("0", None), ("1", "190"), ("2", "190")],
+)
+def test_calculated_explicitly_preserves_zero_partial_and_complete_fill_truth(
+    filled_qty: str,
+    filled_avg_price: str | None,
+) -> None:
+    result = _observe(
+        broker_order=_broker_order(
+            status="calculated",
+            filled_qty=filled_qty,
+            filled_avg_price=filled_avg_price,
+        )
+    )
+
+    assert result.validated
+    assert result.order is not None
+    assert result.order.status == "calculated"
+    assert result.order.filled_qty == Decimal(filled_qty)
 
 
 @pytest.mark.parametrize(
