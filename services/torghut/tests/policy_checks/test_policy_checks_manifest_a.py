@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.trading.autonomy.policy_check.profitability_manifest import (
+    append_profitability_stage_manifest_reasons,
+)
 from tests.policy_checks.policy_checks_support import (
     Path,
     PolicyChecksTestCaseBase,
@@ -17,6 +20,52 @@ from tests.policy_checks.policy_checks_support import (
 
 
 class TestPolicyChecksManifestA(PolicyChecksTestCaseBase):
+    def test_required_replay_contract_is_checked_without_valid_stages(self) -> None:
+        for stages in ({}, []):
+            with self.subTest(stages=stages), tempfile.TemporaryDirectory() as tmpdir:
+                root = Path(tmpdir)
+                manifest_path = (
+                    root / "profitability" / "profitability-stage-manifest-v1.json"
+                )
+                manifest_path.parent.mkdir(parents=True)
+                manifest_path.write_text(
+                    json.dumps({"stages": stages}),
+                    encoding="utf-8",
+                )
+                reasons: list[str] = []
+                reason_details: list[dict[str, object]] = []
+
+                append_profitability_stage_manifest_reasons(
+                    reasons=reasons,
+                    reason_details=reason_details,
+                    policy_payload={
+                        "promotion_require_profitability_stage_replay_contract": True
+                    },
+                    artifact_root=root,
+                )
+
+                self.assertEqual(
+                    reasons.count(
+                        "profitability_stage_manifest_replay_contract_missing"
+                    ),
+                    1,
+                )
+                replay_details = [
+                    detail
+                    for detail in reason_details
+                    if detail.get("reason")
+                    == "profitability_stage_manifest_replay_contract_missing"
+                ]
+                self.assertEqual(
+                    replay_details,
+                    [
+                        {
+                            "reason": "profitability_stage_manifest_replay_contract_missing",
+                            "artifact_ref": str(manifest_path),
+                        }
+                    ],
+                )
+
     def test_alpha_readiness_summary_skips_disabled_policy_gates(self) -> None:
         reasons, details = evaluate_alpha_readiness_summary(
             policy_payload={

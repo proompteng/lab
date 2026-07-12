@@ -678,15 +678,12 @@ def append_profitability_stage_manifest_reasons(
         ctx, manifest_payload, manifest_path, policy_payload, artifact_root
     )
 
-    if (
-        bool(
-            policy_payload.get(
-                "promotion_require_profitability_stage_replay_contract", False
-            )
+    if bool(
+        policy_payload.get(
+            "promotion_require_profitability_stage_replay_contract", False
         )
-        and stages
     ):
-        _validate_replay_contract(ctx, manifest_payload, manifest_path, stages)
+        _validate_replay_contract(ctx, manifest_payload, manifest_path, stages or {})
 
     _validate_overall_manifest(ctx, manifest_payload, manifest_path, stages)
 
