@@ -94,28 +94,13 @@ class ClickHouseFeedReader:
         database = _identifier(self._config.clickhouse_database)
         network = _sql_string(self._config.market_data_network)
         market_list = ", ".join(_sql_string(market_id) for market_id in market_ids)
-        query = f"""
-        SELECT
-          market_id,
-          coin,
-          dex,
-          event_ts,
-          price,
-          momentum_5m_bps,
-          spread_bps,
-          liquidity_usd,
-          volatility_bps,
-          book_imbalance,
-          source_lag_seconds,
-          bid_price,
-          ask_price,
-          quote_lag_seconds
-        FROM {database}.hyperliquid_runtime_latest_features
-        WHERE network = {network}
-          AND market_id IN ({market_list})
-        ORDER BY event_ts DESC
-        LIMIT {len(market_ids)}
-        """
+        query = _latest_feature_query(
+            database=database,
+            network=network,
+            market_list=market_list,
+            limit=len(market_ids),
+            quote_lookback_seconds=max(1, self._config.signal_staleness_seconds),
+        )
         return [_feature_from_row(row) for row in self.query_json_each_row(query)]
 
     def status(self) -> FeedStatus:
@@ -241,6 +226,95 @@ class ClickHouseFeedReader:
             reason=reason,
             details=details,
         )
+
+
+def _latest_feature_query(
+    *,
+    database: str,
+    network: str,
+    market_list: str,
+    limit: int,
+    quote_lookback_seconds: int,
+) -> str:
+    """Build a key-filtered latest-feature query without expanding the global view."""
+
+    return f"""
+        SELECT
+          features.market_id AS market_id,
+          features.coin AS coin,
+          features.dex AS dex,
+          features.latest_event_ts AS event_ts,
+          features.price AS price,
+          features.momentum_5m_bps AS momentum_5m_bps,
+          features.spread_bps AS spread_bps,
+          features.liquidity_usd AS liquidity_usd,
+          features.volatility_bps AS volatility_bps,
+          features.book_imbalance AS book_imbalance,
+          features.source_lag_seconds AS source_lag_seconds,
+          quotes.bid_price AS bid_price,
+          quotes.ask_price AS ask_price,
+          greatest(
+            0,
+            dateDiff('second', quotes.quote_ingest_ts, now64(3))
+          ) AS quote_lag_seconds
+        FROM
+        (
+          SELECT
+            network,
+            market_id,
+            argMax(coin, event_ts) AS coin,
+            argMax(dex, event_ts) AS dex,
+            max(event_ts) AS latest_event_ts,
+            argMax(price, event_ts) AS price,
+            argMaxIf(momentum_5m_bps, event_ts, interval = '5m') AS momentum_5m_bps,
+            argMax(spread_bps, event_ts) AS spread_bps,
+            argMax(liquidity_usd, event_ts) AS liquidity_usd,
+            argMax(volatility_bps, event_ts) AS volatility_bps,
+            argMax(book_imbalance, event_ts) AS book_imbalance,
+            argMax(source_lag_seconds, event_ts) AS source_lag_seconds
+          FROM {database}.hyperliquid_ta_features
+          PREWHERE network = {network}
+            AND market_id IN ({market_list})
+          WHERE event_ts >= now() - INTERVAL 2 HOUR
+          GROUP BY network, market_id
+        ) AS features
+        LEFT JOIN
+        (
+          SELECT
+            network,
+            market_id,
+            argMax(
+              toFloat64OrZero(JSONExtractString(payload, 'bbo', 1, 'px')),
+              parseDateTimeBestEffort(ingest_ts)
+            ) AS bid_price,
+            argMax(
+              toFloat64OrZero(JSONExtractString(payload, 'bbo', 2, 'px')),
+              parseDateTimeBestEffort(ingest_ts)
+            ) AS ask_price,
+            max(toDateTime64(parseDateTimeBestEffort(ingest_ts), 3, 'UTC'))
+              AS quote_ingest_ts
+          FROM {database}.hyperliquid_bbo
+          WHERE network = {network}
+            AND market_id IN ({market_list})
+            AND channel = 'bbo'
+            AND market_type = 'perp'
+            AND event_ts >= concat(
+              formatDateTime(
+                now() - toIntervalSecond({quote_lookback_seconds}),
+                '%Y-%m-%dT%H:%i:%S',
+                'UTC'
+              ),
+              '.000Z'
+            )
+            AND parseDateTimeBestEffort(ingest_ts) >=
+              now() - toIntervalSecond({quote_lookback_seconds})
+          GROUP BY network, market_id
+        ) AS quotes
+          ON features.network = quotes.network
+          AND features.market_id = quotes.market_id
+        ORDER BY features.latest_event_ts DESC
+        LIMIT {limit}
+        """
 
 
 def _request_clickhouse(

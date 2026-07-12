@@ -153,7 +153,10 @@ def test_feed_reader_builds_queries_parses_features_and_reports_status() -> None
     assert status.ready is True
     assert status.statuses[0].name == "hyperliquid_candles"
     assert "hyperliquid_market_catalog" in reader.queries[0]
-    assert "hyperliquid_runtime_latest_features" in reader.queries[1]
+    assert "FROM torghut.hyperliquid_ta_features" in reader.queries[1]
+    assert "PREWHERE network = 'mainnet'" in reader.queries[1]
+    assert "FROM torghut.hyperliquid_bbo" in reader.queries[1]
+    assert "now() - toIntervalSecond(120)" in reader.queries[1]
 
     failing = _FailingFeedReader(config)
     assert failing.status().statuses[0].reason == "clickhouse_query_failed:RuntimeError"
@@ -482,7 +485,7 @@ class _FakeFeedReader(ClickHouseFeedReader):
         includes_format: bool = False,
     ) -> list[dict[str, object]]:
         self.queries.append(query)
-        if "hyperliquid_runtime_latest_features" in query:
+        if "argMaxIf(momentum_5m_bps" in query:
             return [
                 {
                     "market_id": "hl:perp:xyz:NVDA",
