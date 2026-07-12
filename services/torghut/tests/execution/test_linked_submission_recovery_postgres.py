@@ -467,7 +467,7 @@ def test_recovery_reconciled_terminal_commits_exactly_once(
     ]
     with pytest.raises(
         DBAPIError,
-        match="refusing to downgrade linked recovery terminal state",
+        match="refusing to downgrade linked recovery state",
     ):
         command.downgrade(
             recovery_harness.alembic,

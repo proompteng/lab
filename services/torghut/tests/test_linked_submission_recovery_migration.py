@@ -53,6 +53,8 @@ class TestLinkedSubmissionRecoveryMigration(TestCase):
             "linked recovery terminal evidence envelope mismatch",
             "linked nonterminal recovery state is asymmetric",
             "event.recovery_token IS DISTINCT FROM claim.recovery_token",
+            "latest.recovery_after IS DISTINCT FROM claim.recovery_after",
+            "event.recovery_after IS DISTINCT FROM claim.recovery_after",
             "event.recovery_lease_expires_at",
             "IS DISTINCT FROM claim.recovery_lease_expires_at",
             "claim.recovery_checked_at IS DISTINCT FROM event.settled_at",
@@ -83,7 +85,7 @@ class TestLinkedSubmissionRecoveryMigration(TestCase):
         )
         self.assertTrue(all(len(name) <= 63 for name in names))
 
-    def test_downgrade_refuses_recovery_terminals_and_restores_0061(self) -> None:
+    def test_downgrade_refuses_recovery_state_and_restores_0061(self) -> None:
         module = load_migration_module(MIGRATION_FILENAME)
 
         with patch.object(module.op, "execute") as execute:
@@ -93,7 +95,12 @@ class TestLinkedSubmissionRecoveryMigration(TestCase):
         sql = "\n".join(str(call.args[0]) for call in execute.call_args_list)
         for marker in (
             "ACCESS EXCLUSIVE MODE NOWAIT",
-            "refusing to downgrade linked recovery terminal state",
+            "refusing to downgrade linked recovery state",
+            "SELECT max(latest.sequence_no)",
+            "event.event_type LIKE 'recovery_%'",
+            "event.recovery_epoch <> 0",
+            "num_nonnulls(",
+            "event.recovery_evidence_sha256",
             "event.settlement_source = 'recovery'",
             "CREATE OR REPLACE FUNCTION torghut_guard_broker_mutation_event()",
             "NEW.submission_claim_token IS NOT NULL",

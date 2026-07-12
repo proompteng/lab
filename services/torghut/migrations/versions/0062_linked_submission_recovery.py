@@ -44,21 +44,15 @@ DO $$ BEGIN
                latest.id IS NULL
                OR latest.state <> 'broker_io'
                OR latest.recovery_token IS DISTINCT FROM claim.recovery_token
-               OR latest.recovery_epoch
-                    IS DISTINCT FROM claim.recovery_fencing_epoch
+               OR latest.recovery_epoch IS DISTINCT FROM claim.recovery_fencing_epoch
                OR latest.recovery_owner IS DISTINCT FROM claim.recovery_owner
-               OR latest.recovery_lease_started_at
-                    IS DISTINCT FROM claim.recovery_lease_started_at
-               OR latest.recovery_lease_expires_at
-                    IS DISTINCT FROM claim.recovery_lease_expires_at
-               OR latest.recovery_checked_at
-                    IS DISTINCT FROM claim.recovery_checked_at
-               OR latest.recovery_observation_epoch
-                    IS DISTINCT FROM claim.recovery_observation_epoch
-               OR latest.recovery_outcome
-                    IS DISTINCT FROM claim.recovery_outcome
-               OR latest.recovery_evidence_json
-                    IS DISTINCT FROM claim.recovery_evidence
+               OR latest.recovery_after IS DISTINCT FROM claim.recovery_after
+               OR latest.recovery_lease_started_at IS DISTINCT FROM claim.recovery_lease_started_at
+               OR latest.recovery_lease_expires_at IS DISTINCT FROM claim.recovery_lease_expires_at
+               OR latest.recovery_checked_at IS DISTINCT FROM claim.recovery_checked_at
+               OR latest.recovery_observation_epoch IS DISTINCT FROM claim.recovery_observation_epoch
+               OR latest.recovery_outcome IS DISTINCT FROM claim.recovery_outcome
+               OR latest.recovery_evidence_json IS DISTINCT FROM claim.recovery_evidence
            )
     ) THEN
         RAISE EXCEPTION
@@ -74,12 +68,25 @@ DO $$ BEGIN
     IF EXISTS (
         SELECT 1
           FROM broker_mutation_receipt_events AS event
-          JOIN broker_mutation_receipts AS receipt ON receipt.id = event.receipt_id
+         JOIN broker_mutation_receipts AS receipt ON receipt.id = event.receipt_id
          WHERE receipt.submission_claim_id IS NOT NULL
-           AND event.event_type = 'settled'
-           AND event.settlement_source = 'recovery'
+           AND event.sequence_no = (
+               SELECT max(latest.sequence_no) FROM broker_mutation_receipt_events AS latest
+                WHERE latest.receipt_id = event.receipt_id
+           )
+           AND ((event.event_type = 'settled' AND event.settlement_source = 'recovery')
+                OR (event.state = 'broker_io' AND (
+                    event.event_type LIKE 'recovery_%'
+                    OR event.recovery_epoch <> 0
+                    OR num_nonnulls(
+                        event.recovery_token, event.recovery_owner,
+                        event.recovery_writer_generation, event.recovery_lease_started_at,
+                        event.recovery_lease_expires_at, event.recovery_checked_at,
+                        event.recovery_observation_epoch, event.recovery_outcome,
+                        event.recovery_evidence_json, event.recovery_evidence_sha256
+                    ) > 0)))
     ) THEN
-        RAISE EXCEPTION 'refusing to downgrade linked recovery terminal state'
+        RAISE EXCEPTION 'refusing to downgrade linked recovery state'
             USING ERRCODE = '55000';
     END IF;
 END; $$
@@ -403,20 +410,15 @@ BEGIN
         END IF;
         IF claim.state = 'broker_io' AND (
             event.recovery_token IS DISTINCT FROM claim.recovery_token
-            OR event.recovery_epoch
-                IS DISTINCT FROM claim.recovery_fencing_epoch
+            OR event.recovery_epoch IS DISTINCT FROM claim.recovery_fencing_epoch
             OR event.recovery_owner IS DISTINCT FROM claim.recovery_owner
-            OR event.recovery_lease_started_at
-                IS DISTINCT FROM claim.recovery_lease_started_at
-            OR event.recovery_lease_expires_at
-                IS DISTINCT FROM claim.recovery_lease_expires_at
-            OR event.recovery_checked_at
-                IS DISTINCT FROM claim.recovery_checked_at
-            OR event.recovery_observation_epoch
-                IS DISTINCT FROM claim.recovery_observation_epoch
+            OR event.recovery_after IS DISTINCT FROM claim.recovery_after
+            OR event.recovery_lease_started_at IS DISTINCT FROM claim.recovery_lease_started_at
+            OR event.recovery_lease_expires_at IS DISTINCT FROM claim.recovery_lease_expires_at
+            OR event.recovery_checked_at IS DISTINCT FROM claim.recovery_checked_at
+            OR event.recovery_observation_epoch IS DISTINCT FROM claim.recovery_observation_epoch
             OR event.recovery_outcome IS DISTINCT FROM claim.recovery_outcome
-            OR event.recovery_evidence_json
-                IS DISTINCT FROM claim.recovery_evidence
+            OR event.recovery_evidence_json IS DISTINCT FROM claim.recovery_evidence
         ) THEN
             RAISE EXCEPTION 'linked nonterminal recovery state is asymmetric'
                 USING ERRCODE = '23514';
@@ -771,8 +773,10 @@ BEGIN
     ELSIF NEW.event_type = 'broker_io_started' THEN
         requested_interval :=
             NEW.recovery_after - NEW.broker_io_started_at;
-        NEW.broker_io_started_at := now_at;
-        NEW.recovery_after := now_at + requested_interval;
+        IF receipt_row.submission_claim_id IS NULL THEN
+            NEW.broker_io_started_at := now_at;
+            NEW.recovery_after := now_at + requested_interval;
+        END IF;
         IF previous.state <> 'claimed'
            OR previous.primary_lease_expires_at <= now_at
            OR NEW.state <> 'broker_io'
