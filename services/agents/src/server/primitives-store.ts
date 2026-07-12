@@ -816,6 +816,7 @@ export const createPrimitivesStore = (options: PrimitivesStoreOptions = {}): Pri
       })
       .where('parent_ref', '=', input.parentRef)
       .where('attempt', '=', input.attempt)
+      .where('delivery_id', '=', input.deliveryId)
       .where('status', 'in', ['failed', 'pending', 'queued'])
       .returningAll()
       .executeTakeFirst()

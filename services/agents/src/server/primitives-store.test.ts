@@ -16,6 +16,25 @@ type IdempotencyDbRow = {
   updated_at: Date
 }
 
+type RerunSubmissionDbRow = {
+  id: string
+  parent_ref: string
+  parent_agent_run_id: string | null
+  parent_agent_run_name: string | null
+  parent_agent_run_namespace: string | null
+  attempt: number
+  delivery_id: string
+  status: string
+  submission_attempt: number
+  response_status: number | null
+  error: string | null
+  request_payload: Record<string, unknown>
+  response_payload: Record<string, unknown> | null
+  created_at: Date
+  updated_at: Date
+  submitted_at: Date | null
+}
+
 const makeIdempotencyRow = (overrides: Partial<IdempotencyDbRow> = {}): IdempotencyDbRow => ({
   id: 'idempotency-1',
   namespace: 'agents',
@@ -30,11 +49,32 @@ const makeIdempotencyRow = (overrides: Partial<IdempotencyDbRow> = {}): Idempote
   ...overrides,
 })
 
+const makeRerunSubmissionRow = (overrides: Partial<RerunSubmissionDbRow> = {}): RerunSubmissionDbRow => ({
+  id: 'rerun-submission-1',
+  parent_ref: 'agent_runs:agent-run-1',
+  parent_agent_run_id: 'agent-run-1',
+  parent_agent_run_name: 'codex-agent-1',
+  parent_agent_run_namespace: 'agents',
+  attempt: 2,
+  delivery_id: 'rerun-delivery-1',
+  status: 'pending',
+  submission_attempt: 1,
+  response_status: null,
+  error: null,
+  request_payload: {},
+  response_payload: null,
+  created_at: new Date('2026-07-04T00:00:00.000Z'),
+  updated_at: new Date('2026-07-04T00:00:00.000Z'),
+  submitted_at: null,
+  ...overrides,
+})
+
 const makeFakeDb = (options: {
   insertedRow?: IdempotencyDbRow
   existingRow?: IdempotencyDbRow
   insertedRows?: Array<IdempotencyDbRow | undefined>
   existingRows?: Array<IdempotencyDbRow | undefined>
+  updatedRow?: RerunSubmissionDbRow
 }) => {
   const insertedRows = [...(options.insertedRows ?? [options.insertedRow])]
   const existingRows = [...(options.existingRows ?? [options.existingRow])]
@@ -51,6 +91,12 @@ const makeFakeDb = (options: {
     where: vi.fn(),
     executeTakeFirst: vi.fn(),
   }
+  const updateBuilder = {
+    set: vi.fn(),
+    where: vi.fn(),
+    returningAll: vi.fn(),
+    executeTakeFirst: vi.fn(),
+  }
 
   insertBuilder.values.mockReturnValue(insertBuilder)
   insertBuilder.onConflict.mockImplementation((callback: (builder: { columns: typeof columns }) => unknown) => {
@@ -64,13 +110,19 @@ const makeFakeDb = (options: {
   selectBuilder.where.mockReturnValue(selectBuilder)
   selectBuilder.executeTakeFirst.mockImplementation(async () => existingRows.shift())
 
+  updateBuilder.set.mockReturnValue(updateBuilder)
+  updateBuilder.where.mockReturnValue(updateBuilder)
+  updateBuilder.returningAll.mockReturnValue(updateBuilder)
+  updateBuilder.executeTakeFirst.mockResolvedValue(options.updatedRow)
+
   const db = {
     insertInto: vi.fn(() => insertBuilder),
     selectFrom: vi.fn(() => selectBuilder),
+    updateTable: vi.fn(() => updateBuilder),
     destroy: vi.fn(async () => {}),
   }
 
-  return { db: db as unknown as Db, insertBuilder, selectBuilder }
+  return { db: db as unknown as Db, insertBuilder, selectBuilder, updateBuilder }
 }
 
 describe('createPrimitivesStore', () => {
@@ -169,5 +221,22 @@ describe('createPrimitivesStore', () => {
     })
     expect(insertBuilder.executeTakeFirst).toHaveBeenCalledTimes(2)
     expect(selectBuilder.executeTakeFirst).toHaveBeenCalledTimes(1)
+  })
+
+  it('scopes rerun claims to the requested delivery id', async () => {
+    const { db, updateBuilder } = makeFakeDb({ updatedRow: makeRerunSubmissionRow() })
+    const store = createPrimitivesStore({
+      url: 'postgresql://user:pass@localhost:5432/agents',
+      createDb: () => db,
+    })
+
+    const result = await store.claimAgentRunRerunSubmission({
+      parentRef: 'agent_runs:agent-run-1',
+      attempt: 2,
+      deliveryId: 'rerun-delivery-1',
+    })
+
+    expect(result?.shouldSubmit).toBe(true)
+    expect(updateBuilder.where).toHaveBeenCalledWith('delivery_id', '=', 'rerun-delivery-1')
   })
 })
