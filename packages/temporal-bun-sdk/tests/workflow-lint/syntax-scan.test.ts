@@ -121,6 +121,14 @@ describe('workflow lint syntax scanner', () => {
       [
         'function fetch(input: string) { return input }',
         'interface Adapter { fetch(): void }',
+        'const adapter = {',
+        '  fetch()',
+        '  { return undefined }',
+        '}',
+        'class AdapterClass {',
+        '  fetch()',
+        '  { return undefined }',
+        '}',
         'export const workflow = () => {',
         "  return fetch('runtime')",
         '}',
@@ -136,7 +144,27 @@ describe('workflow lint syntax scanner', () => {
     })
 
     expect(violations.map((violation) => violation.details?.global)).toEqual(['fetch'])
-    expect(violations[0]?.line).toBe(4)
+    expect(violations[0]?.line).toBe(12)
+  })
+
+  test('flags denied global calls before standalone blocks', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'workflow-lint-'))
+    const filePath = join(dir, 'workflow.ts')
+    await writeFile(
+      filePath,
+      ['export const workflow = () => {', '  fetch()', '  { const standalone = true }', '}'].join('\n'),
+      'utf8',
+    )
+
+    const violations = await lintWorkflowModuleAst({
+      filePath,
+      denyGlobals: new Set(['fetch']),
+      denyImports: new Set<string>(),
+      denyMemberExpressions: new Set<string>(),
+    })
+
+    expect(violations.map((violation) => violation.details?.global)).toEqual(['fetch'])
+    expect(violations[0]?.line).toBe(2)
   })
 
   test('flags optional and ternary calls to denied globals', async () => {
@@ -197,6 +225,39 @@ describe('workflow lint syntax scanner', () => {
       'Date.now',
       'Date.now',
       'Date.now',
+    ])
+    expect(violations.map((violation) => violation.line)).toEqual([5, 6, 8])
+  })
+
+  test('does not flag type-only typeof Bun.spawn queries', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'workflow-lint-'))
+    const filePath = join(dir, 'workflow.ts')
+    await writeFile(
+      filePath,
+      [
+        'type SpawnFn = typeof Bun.spawn',
+        'const spawn: typeof Bun.spawn = fallback',
+        'const assertedSpawn = fallback as typeof Bun.spawn',
+        'export const workflow = () => {',
+        '  const runtime = { kind: typeof Bun.spawn }',
+        '  return typeof Bun.spawn ?? runtime',
+        '}',
+        'const runtimeAfterAssertion = (fallback as unknown, typeof Bun.spawn)',
+      ].join('\n'),
+      'utf8',
+    )
+
+    const violations = await lintWorkflowModuleAst({
+      filePath,
+      denyGlobals: new Set(['Bun.spawn']),
+      denyImports: new Set<string>(),
+      denyMemberExpressions: new Set<string>(),
+    })
+
+    expect(violations.map((violation) => violation.details?.global)).toEqual([
+      'Bun.spawn',
+      'Bun.spawn',
+      'Bun.spawn',
     ])
     expect(violations.map((violation) => violation.line)).toEqual([5, 6, 8])
   })

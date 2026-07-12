@@ -138,21 +138,59 @@ const hasTernaryQuestionBefore = (
   return false
 }
 
-const isDeclarationLikeGlobalCallShape = (
-  tokens: readonly WorkflowSyntaxToken[],
-  index: number,
-  previous: WorkflowSyntaxToken | undefined,
-): boolean => {
-  if (previous?.kind === SyntaxKind.FunctionKeyword) return true
+const findEnclosingOpenBraceIndex = (tokens: readonly WorkflowSyntaxToken[], index: number): number | undefined => {
+  let depth = 0
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const kind = tokens[cursor]?.kind
+    if (kind === SyntaxKind.CloseBraceToken) {
+      depth += 1
+      continue
+    }
+    if (kind !== SyntaxKind.OpenBraceToken) continue
+    if (depth === 0) return cursor
+    depth -= 1
+  }
+
+  return undefined
+}
+
+const isDeclarationMemberContainer = (tokens: readonly WorkflowSyntaxToken[], index: number): boolean => {
+  const openBraceIndex = findEnclosingOpenBraceIndex(tokens, index)
+  if (openBraceIndex == null) return false
+
+  const containerStart = findStatementStartIndex(tokens, openBraceIndex, { lineBreaksAreBoundaries: false })
+  for (let cursor = containerStart; cursor < openBraceIndex; cursor += 1) {
+    const kind = tokens[cursor]?.kind
+    if (kind === SyntaxKind.ClassKeyword || kind === SyntaxKind.InterfaceKeyword || kind === SyntaxKind.TypeKeyword)
+      return true
+  }
+
+  const beforeOpenBrace = tokens[openBraceIndex - 1]?.kind
+  return (
+    beforeOpenBrace === SyntaxKind.EqualsToken ||
+    beforeOpenBrace === SyntaxKind.ReturnKeyword ||
+    beforeOpenBrace === SyntaxKind.DefaultKeyword ||
+    beforeOpenBrace === SyntaxKind.OpenParenToken ||
+    beforeOpenBrace === SyntaxKind.OpenBracketToken ||
+    beforeOpenBrace === SyntaxKind.CommaToken ||
+    beforeOpenBrace === SyntaxKind.ColonToken ||
+    beforeOpenBrace === SyntaxKind.QuestionToken
+  )
+}
+
+const isDeclarationLikeGlobalCallShape = (tokens: readonly WorkflowSyntaxToken[], index: number): boolean => {
+  const statementStart = findStatementStartIndex(tokens, index, { lineBreaksAreBoundaries: false })
+  for (let cursor = statementStart; cursor < index; cursor += 1) {
+    if (tokens[cursor]?.kind === SyntaxKind.FunctionKeyword) return true
+  }
 
   const closeParenIndex = findMatchingCloseParenIndex(tokens, index + 1)
   if (closeParenIndex == null) return false
 
   const afterCloseParen = tokens[closeParenIndex + 1]
-  if (afterCloseParen?.kind === SyntaxKind.OpenBraceToken) return true
+  if (afterCloseParen?.kind === SyntaxKind.OpenBraceToken) return isDeclarationMemberContainer(tokens, index)
   if (afterCloseParen?.kind !== SyntaxKind.ColonToken) return false
 
-  const statementStart = findStatementStartIndex(tokens, index, { lineBreaksAreBoundaries: false })
   return !hasTernaryQuestionBefore(tokens, statementStart, index)
 }
 
@@ -285,8 +323,7 @@ export const lintWorkflowModuleAst = async (options: {
         next?.kind === SyntaxKind.QuestionDotToken && tokens[index + 2]?.kind === SyntaxKind.OpenParenToken
       const isMemberCall = previous?.kind === SyntaxKind.DotToken || previous?.kind === SyntaxKind.QuestionDotToken
 
-      const isDeclarationLikeGlobalCall =
-        isDirectGlobalCall && isDeclarationLikeGlobalCallShape(tokens, index, previous)
+      const isDeclarationLikeGlobalCall = isDirectGlobalCall && isDeclarationLikeGlobalCallShape(tokens, index)
 
       if ((isDirectGlobalCall || isOptionalGlobalCall) && !isMemberCall && !isDeclarationLikeGlobalCall) {
         report(token.start, {
@@ -324,7 +361,11 @@ export const lintWorkflowModuleAst = async (options: {
       })
     }
 
-    if (member.name === 'Bun.spawn' && options.denyGlobals.has('Bun.spawn')) {
+    if (
+      member.name === 'Bun.spawn' &&
+      options.denyGlobals.has('Bun.spawn') &&
+      !isTypeOnlyTypeofMemberExpression(tokens, index, previous)
+    ) {
       report(member.token.start, {
         rule: 'deny-global',
         message: 'Disallowed global in workflow module: Bun.spawn(...)',
