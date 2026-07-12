@@ -484,17 +484,18 @@ test('loadMainMergeDiff reads exact change evidence from the local repository cl
   }
 })
 
-test('missing merge commits are fetched with GitHub auth when configured', () => {
+test('missing merge commits are fetched with GitHub auth and without auto-maintenance', () => {
   const previousGithubToken = process.env.GITHUB_TOKEN
   const previousGhToken = process.env.GH_TOKEN
   process.env.GITHUB_TOKEN = 'github-token'
   process.env.GH_TOKEN = 'fallback-token'
 
   try {
-    expect(__test__.buildAuthenticatedGitArgs(['fetch', 'origin', 'deadbeef'])).toEqual([
+    expect(__test__.buildAuthenticatedGitArgs(['fetch', '--no-auto-maintenance', 'origin', 'deadbeef'])).toEqual([
       '-c',
       'http.extraheader=Authorization: Bearer github-token',
       'fetch',
+      '--no-auto-maintenance',
       'origin',
       'deadbeef',
     ])
