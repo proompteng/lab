@@ -116,7 +116,7 @@ test('publishMainMergeMemoryNote delegates durable delivery to a retrying activi
   if (intent?.kind !== 'schedule-activity') throw new Error('expected schedule-activity intent')
   expect(intent.activityType).toBe('publishMainMergeMemoryNote')
   expect(intent.input).toEqual([input])
-  expect(intent.retry?.maximumAttempts).toBe(100)
+  expect(intent.retry?.maximumAttempts).toBeUndefined()
   expect(intent.timeouts.scheduleToCloseTimeoutMs).toBe(7 * 24 * 60 * 60 * 1_000)
 })
 

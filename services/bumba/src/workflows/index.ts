@@ -290,7 +290,6 @@ export const workflows = [
           initialIntervalMs: 5_000,
           backoffCoefficient: 2,
           maximumIntervalMs: 600_000,
-          maximumAttempts: 100,
         },
       })
 
