@@ -9,6 +9,7 @@ import {
 } from '@proompteng/temporal-bun-sdk'
 import { VersioningBehavior, WorkflowIdReusePolicy } from '@proompteng/temporal-bun-sdk/worker'
 import { SQL } from 'bun'
+import { Effect } from 'effect'
 
 const DEFAULT_TASK_QUEUE = 'bumba'
 const DEFAULT_REF = 'main'
@@ -383,51 +384,64 @@ const isMainBranchRef = (ref: string) => ref === 'main' || ref === 'refs/heads/m
 
 const mainMergeMemoryNamespace = (deliveryId: string) => `bumba-main-${deliveryId}`.slice(0, 200)
 
-const requestAgentsJson = async (path: string, init?: RequestInit): Promise<Record<string, unknown>> => {
-  const baseUrl = (process.env.AGENTS_SERVICE_BASE_URL ?? 'http://agents.agents.svc.cluster.local').replace(/\/+$/, '')
-  const response = await fetch(`${baseUrl}${path}`, {
-    ...init,
-    headers: {
-      accept: 'application/json',
-      'x-agents-client': 'bumba',
-      ...(init?.body ? { 'content-type': 'application/json' } : {}),
-      ...init?.headers,
+const requestAgentsJsonEffect = (path: string, init?: RequestInit) =>
+  Effect.tryPromise({
+    try: async () => {
+      const baseUrl = (process.env.AGENTS_SERVICE_BASE_URL ?? 'http://agents.agents.svc.cluster.local').replace(
+        /\/+$/,
+        '',
+      )
+      const response = await fetch(`${baseUrl}${path}`, {
+        ...init,
+        headers: {
+          accept: 'application/json',
+          'x-agents-client': 'bumba',
+          ...(init?.body ? { 'content-type': 'application/json' } : {}),
+          ...init?.headers,
+        },
+        signal: init?.signal ?? AbortSignal.timeout(30_000),
+      })
+      const body = (await response.json().catch(() => null)) as unknown
+      if (!response.ok) {
+        const error = normalizeOptionalText(asRecord(body)?.error) ?? response.statusText ?? 'unknown error'
+        throw new Error(`Agents request failed (${response.status}): ${error}`)
+      }
+      const record = asRecord(body)
+      if (!record) throw new Error('Agents request returned an invalid JSON body')
+      return record
     },
-    signal: init?.signal ?? AbortSignal.timeout(30_000),
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   })
-  const body = (await response.json().catch(() => null)) as unknown
-  if (!response.ok) {
-    const error = normalizeOptionalText(asRecord(body)?.error) ?? response.statusText ?? 'unknown error'
-    throw new Error(`Agents request failed (${response.status}): ${error}`)
-  }
-  const record = asRecord(body)
-  if (!record) throw new Error('Agents request returned an invalid JSON body')
-  return record
-}
 
-const countMainMergeMemoryNotes = async (namespace: string) => {
-  const body = await requestAgentsJson(`/v1/memory-notes/count?namespace=${encodeURIComponent(namespace)}`)
-  const count = body.count
-  if (typeof count === 'number' && Number.isFinite(count)) return count
-  if (typeof count === 'string' && /^\d+$/.test(count)) return Number.parseInt(count, 10)
-  throw new Error('Agents memory-note count response did not include a valid count')
-}
+const countMainMergeMemoryNotesEffect = (namespace: string) =>
+  Effect.flatMap(
+    requestAgentsJsonEffect(`/v1/memory-notes/count?namespace=${encodeURIComponent(namespace)}`),
+    (body) => {
+      const count = body.count
+      if (typeof count === 'number' && Number.isFinite(count)) return Effect.succeed(count)
+      if (typeof count === 'string' && /^\d+$/.test(count)) return Effect.succeed(Number.parseInt(count, 10))
+      return Effect.fail(new Error('Agents memory-note count response did not include a valid count'))
+    },
+  )
 
-const persistMainMergeMemoryNote = async (input: {
+const persistMainMergeMemoryNoteEffect = (input: {
   namespace: string
   summary: string
   content: string
   tags: string[]
   metadata: Record<string, unknown>
-}) => {
-  await requestAgentsJson('/v1/memory-notes', {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
-}
+}) =>
+  Effect.asVoid(
+    requestAgentsJsonEffect('/v1/memory-notes', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  )
 
-const loadMainMergeEnrichments = async (db: SqlClient, eventId: string, commit: string): Promise<EventEnrichment[]> => {
-  return (await db`
+const loadMainMergeEnrichmentsEffect = (db: SqlClient, eventId: string, commit: string) =>
+  Effect.tryPromise({
+    try: async () =>
+      (await db`
     SELECT DISTINCT ON (fk.path)
       fk.path,
       COALESCE(e.summary, '') AS summary,
@@ -444,58 +458,76 @@ const loadMainMergeEnrichments = async (db: SqlClient, eventId: string, commit: 
      AND e.chunk_id IS NULL
     WHERE ef.event_id = ${eventId}
     ORDER BY fk.path, e.created_at DESC;
-  `) as EventEnrichment[]
-}
+      `) as EventEnrichment[],
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  })
 
-const loadMainMergeDiff = async (
+const loadMainMergeEnrichments = (db: SqlClient, eventId: string, commit: string): Promise<EventEnrichment[]> =>
+  Effect.runPromise(loadMainMergeEnrichmentsEffect(db, eventId, commit))
+
+const loadMainMergeDiffEffect = (
   repoRoot: string,
   payload: Record<string, unknown>,
   commit: string,
-): Promise<MergeDiffFile[]> => {
-  const before = normalizeOptionalText(payload.before)
-  if (!before || /^0+$/.test(before)) return []
+): Effect.Effect<MergeDiffFile[], Error> =>
+  Effect.tryPromise({
+    try: async () => {
+      const before = normalizeOptionalText(payload.before)
+      if (!before || /^0+$/.test(before)) return []
 
-  const runGit = async (args: string[], allowFailure = false) => {
-    const child = Bun.spawn(['git', ...args], {
-      cwd: repoRoot,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    })
-    const [exitCode, stdout, stderr] = await Promise.all([
-      child.exited,
-      new Response(child.stdout).text(),
-      new Response(child.stderr).text(),
-    ])
-    if (exitCode !== 0 && !allowFailure) {
-      throw new Error(`git ${args[0] ?? 'command'} failed (${exitCode}): ${stderr.trim().slice(0, 1_000)}`)
-    }
-    return { exitCode, stdout }
-  }
+      const runGit = async (args: string[], allowFailure = false) => {
+        const child = Bun.spawn(['git', ...args], {
+          cwd: repoRoot,
+          stdout: 'pipe',
+          stderr: 'pipe',
+        })
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ])
+        if (exitCode !== 0 && !allowFailure) {
+          throw new Error(`git ${args[0] ?? 'command'} failed (${exitCode}): ${stderr.trim().slice(0, 1_000)}`)
+        }
+        return { exitCode, stdout }
+      }
 
-  const beforeExists = (await runGit(['cat-file', '-e', `${before}^{commit}`], true)).exitCode === 0
-  const commitExists = (await runGit(['cat-file', '-e', `${commit}^{commit}`], true)).exitCode === 0
-  if (!beforeExists || !commitExists) {
-    await runGit(['fetch', '--no-tags', '--depth=2', 'origin', before, commit])
-  }
+      const beforeExists = (await runGit(['cat-file', '-e', `${before}^{commit}`], true)).exitCode === 0
+      const commitExists = (await runGit(['cat-file', '-e', `${commit}^{commit}`], true)).exitCode === 0
+      if (!beforeExists || !commitExists) {
+        await runGit(['fetch', '--no-tags', '--depth=2', 'origin', before, commit])
+      }
 
-  const changedPaths = (await runGit(['diff', '--name-only', '-z', before, commit])).stdout
-    .split('\0')
-    .filter((path) => path.length > 0)
+      const changedPaths = (await runGit(['diff', '--name-only', '-z', before, commit])).stdout
+        .split('\0')
+        .filter((path) => path.length > 0)
 
-  const prioritizedPaths = changedPaths.sort((left, right) => mergeContextPriority(left) - mergeContextPriority(right))
-  const diffFiles: MergeDiffFile[] = []
-  let collectedChars = 0
-  for (const path of prioritizedPaths) {
-    if (collectedChars >= MAX_MERGE_DIFF_CHARS) break
-    const rawPatch = (await runGit(['diff', '--no-ext-diff', '--unified=3', before, commit, '--', path])).stdout.trim()
-    const perFileLimit = mergeContextPriority(path) === 0 ? 24_000 : 4_000
-    const remainingChars = MAX_MERGE_DIFF_CHARS - collectedChars
-    const patch = rawPatch.slice(0, Math.min(perFileLimit, remainingChars))
-    diffFiles.push({ path, status: 'changed', patch: patch || null })
-    collectedChars += patch.length
-  }
-  return diffFiles
-}
+      const prioritizedPaths = changedPaths.sort(
+        (left, right) => mergeContextPriority(left) - mergeContextPriority(right),
+      )
+      const diffFiles: MergeDiffFile[] = []
+      let collectedChars = 0
+      for (const path of prioritizedPaths) {
+        if (collectedChars >= MAX_MERGE_DIFF_CHARS) break
+        const rawPatch = (
+          await runGit(['diff', '--no-ext-diff', '--unified=3', before, commit, '--', path])
+        ).stdout.trim()
+        const perFileLimit = mergeContextPriority(path) === 0 ? 24_000 : 4_000
+        const remainingChars = MAX_MERGE_DIFF_CHARS - collectedChars
+        const patch = rawPatch.slice(0, Math.min(perFileLimit, remainingChars))
+        diffFiles.push({ path, status: 'changed', patch: patch || null })
+        collectedChars += patch.length
+      }
+      return diffFiles
+    },
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  })
+
+const loadMainMergeDiff = (
+  repoRoot: string,
+  payload: Record<string, unknown>,
+  commit: string,
+): Promise<MergeDiffFile[]> => Effect.runPromise(loadMainMergeDiffEffect(repoRoot, payload, commit))
 
 const normalizeGeneratedMemoryNote = (raw: unknown): GeneratedMemoryNote => {
   const record = asRecord(raw)
@@ -528,129 +560,141 @@ const mergeContextPriority = (path: string) => {
   return 4
 }
 
-const generateMainMergeMemoryNote = async (
+const generateMainMergeMemoryNoteEffect = (
   event: GithubEventRow,
   payload: Record<string, unknown>,
   enrichments: EventEnrichment[],
   diffFiles: MergeDiffFile[],
-): Promise<GeneratedMemoryNote> => {
-  const apiBaseUrl = (
-    process.env.OPENAI_API_BASE_URL ??
-    process.env.OPENAI_API_BASE ??
-    'http://flamingo.flamingo.svc.cluster.local/v1'
-  ).replace(/\/+$/, '')
-  const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo'
-  const reasoningEffort = normalizeOptionalText(process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT) ?? 'none'
-  const timeoutMs = parsePositiveInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS, 300_000)
-  const maxOutputTokens = parsePositiveInt(process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS, 1_024)
-  const commitMessage = normalizeOptionalText(asRecord(payload.head_commit)?.message)
+): Effect.Effect<GeneratedMemoryNote, Error> =>
+  Effect.tryPromise({
+    try: async () => {
+      const apiBaseUrl = (
+        process.env.OPENAI_API_BASE_URL ??
+        process.env.OPENAI_API_BASE ??
+        'http://flamingo.flamingo.svc.cluster.local/v1'
+      ).replace(/\/+$/, '')
+      const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo'
+      const reasoningEffort = normalizeOptionalText(process.env.BUMBA_MERGE_NOTE_REASONING_EFFORT) ?? 'none'
+      const timeoutMs = parsePositiveInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS, 300_000)
+      const maxOutputTokens = parsePositiveInt(process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS, 1_024)
+      const commitMessage = normalizeOptionalText(asRecord(payload.head_commit)?.message)
 
-  const enrichmentSections: string[] = []
-  let enrichmentChars = 0
-  const prioritizedEnrichments = [...enrichments].sort(
-    (left, right) => mergeContextPriority(left.path) - mergeContextPriority(right.path),
-  )
-  for (const enrichment of prioritizedEnrichments) {
-    const section = [`File: ${enrichment.path}`, `Summary: ${enrichment.summary}`, enrichment.content].join('\n')
-    if (enrichmentChars + section.length > 12_000) break
-    enrichmentSections.push(section)
-    enrichmentChars += section.length
-  }
+      const enrichmentSections: string[] = []
+      let enrichmentChars = 0
+      const prioritizedEnrichments = [...enrichments].sort(
+        (left, right) => mergeContextPriority(left.path) - mergeContextPriority(right.path),
+      )
+      for (const enrichment of prioritizedEnrichments) {
+        const section = [`File: ${enrichment.path}`, `Summary: ${enrichment.summary}`, enrichment.content].join('\n')
+        if (enrichmentChars + section.length > 12_000) break
+        enrichmentSections.push(section)
+        enrichmentChars += section.length
+      }
 
-  const diffSections: string[] = []
-  let diffChars = 0
-  const prioritizedDiffs = [...diffFiles].sort(
-    (left, right) => mergeContextPriority(left.path) - mergeContextPriority(right.path),
-  )
-  for (const file of prioritizedDiffs) {
-    const perFileLimit = mergeContextPriority(file.path) === 0 ? 24_000 : 4_000
-    const patch = file.patch ? file.patch.slice(0, perFileLimit) : null
-    const section = [
-      `File: ${file.path} (${file.status})`,
-      patch ?? '[GitHub did not provide a textual patch for this file.]',
-      file.patch && file.patch.length > perFileLimit ? '[Patch truncated at the context boundary.]' : null,
-    ].join('\n')
-    if (diffChars + section.length > 36_000) break
-    diffSections.push(section)
-    diffChars += section.length
-  }
+      const diffSections: string[] = []
+      let diffChars = 0
+      const prioritizedDiffs = [...diffFiles].sort(
+        (left, right) => mergeContextPriority(left.path) - mergeContextPriority(right.path),
+      )
+      for (const file of prioritizedDiffs) {
+        const perFileLimit = mergeContextPriority(file.path) === 0 ? 24_000 : 4_000
+        const patch = file.patch ? file.patch.slice(0, perFileLimit) : null
+        const section = [
+          `File: ${file.path} (${file.status})`,
+          patch ?? '[GitHub did not provide a textual patch for this file.]',
+          file.patch && file.patch.length > perFileLimit ? '[Patch truncated at the context boundary.]' : null,
+        ].join('\n')
+        if (diffChars + section.length > 36_000) break
+        diffSections.push(section)
+        diffChars += section.length
+      }
 
-  const systemPrompt = [
-    'You create durable engineering memory for future coding agents.',
-    'Synthesize the supplied file enrichments into knowledge that is not recoverable from a filename list or git log alone.',
-    'Capture system behavior, important relationships, decisions or invariants, operational consequences, and risks.',
-    'Use the merge diff as the authority for what changed and the enrichments as context for current system behavior.',
-    'Lead with the primary runtime behavior and the failure mode it fixes.',
-    'Treat dependency hashes, CI wiring, documentation, and tests as supporting evidence unless they change runtime semantics.',
-    'State only behavior directly proven by the supplied diff or enrichment; omit uncertain interpretations.',
-    'Do not describe a retry, completion condition, error path, or side-effect ordering unless the evidence explicitly proves it.',
-    'Keep Flamingo completion and the Agents memory endpoint distinct.',
-    'Context limits are measured in characters, never tokens.',
-    'Include risks only when demonstrated by the evidence; do not add generic cost, coupling, rate-limit, or performance speculation.',
-    'Do not narrate the commit metadata, enumerate every file, or claim facts absent from the evidence.',
-    'The content should make the durable invariant, retry/failure behavior, completion gate, and operational consequence easy to retrieve.',
-    'Keep content under 1800 characters and prefer identifiers or exact conditions over broad paraphrases.',
-    'Return one JSON object with exactly: summary (one concise sentence), content (concise markdown), and tags (3-8 retrieval tags).',
-    'If enrichment failed or evidence is incomplete, state that limitation explicitly.',
-  ].join(' ')
-  const userPrompt = [
-    `Repository: ${event.repository}`,
-    ...(commitMessage ? [`Merge context: ${commitMessage}`] : []),
-    `Successful file enrichments: ${enrichments.length}`,
-    enrichmentSections.length > 0
-      ? `Semantic enrichments:\n\n${enrichmentSections.join('\n\n')}`
-      : 'No successful file enrichments were available.',
-    diffSections.length > 0
-      ? `Merge diff:\n\n${diffSections.join('\n\n')}`
-      : 'No textual merge diff was available; do not infer exact code changes.',
-  ].join('\n\n')
+      const systemPrompt = [
+        'You create durable engineering memory for future coding agents.',
+        'Synthesize the supplied file enrichments into knowledge that is not recoverable from a filename list or git log alone.',
+        'Capture system behavior, important relationships, decisions or invariants, operational consequences, and risks.',
+        'Use the merge diff as the authority for what changed and the enrichments as context for current system behavior.',
+        'Lead with the primary runtime behavior and the failure mode it fixes.',
+        'Treat dependency hashes, CI wiring, documentation, and tests as supporting evidence unless they change runtime semantics.',
+        'State only behavior directly proven by the supplied diff or enrichment; omit uncertain interpretations.',
+        'Do not describe a retry, completion condition, error path, or side-effect ordering unless the evidence explicitly proves it.',
+        'Keep Flamingo completion and the Agents memory endpoint distinct.',
+        'Context limits are measured in characters, never tokens.',
+        'Include risks only when demonstrated by the evidence; do not add generic cost, coupling, rate-limit, or performance speculation.',
+        'Do not narrate the commit metadata, enumerate every file, or claim facts absent from the evidence.',
+        'The content should make the durable invariant, retry/failure behavior, completion gate, and operational consequence easy to retrieve.',
+        'Keep content under 1800 characters and prefer identifiers or exact conditions over broad paraphrases.',
+        'Return one JSON object with exactly: summary (one concise sentence), content (concise markdown), and tags (3-8 retrieval tags).',
+        'If enrichment failed or evidence is incomplete, state that limitation explicitly.',
+      ].join(' ')
+      const userPrompt = [
+        `Repository: ${event.repository}`,
+        ...(commitMessage ? [`Merge context: ${commitMessage}`] : []),
+        `Successful file enrichments: ${enrichments.length}`,
+        enrichmentSections.length > 0
+          ? `Semantic enrichments:\n\n${enrichmentSections.join('\n\n')}`
+          : 'No successful file enrichments were available.',
+        diffSections.length > 0
+          ? `Merge diff:\n\n${diffSections.join('\n\n')}`
+          : 'No textual merge diff was available; do not infer exact code changes.',
+      ].join('\n\n')
 
-  const headers: Record<string, string> = { 'content-type': 'application/json' }
-  const apiKey = normalizeOptionalText(process.env.OPENAI_API_KEY)
-  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+      const headers: Record<string, string> = { 'content-type': 'application/json' }
+      const apiKey = normalizeOptionalText(process.env.OPENAI_API_KEY)
+      if (apiKey) headers.authorization = `Bearer ${apiKey}`
 
-  const response = await fetch(`${apiBaseUrl}/chat/completions`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      model,
-      stream: false,
-      max_tokens: maxOutputTokens,
-      temperature: 0.1,
-      top_p: 0.8,
-      reasoning_effort: reasoningEffort,
-      response_format: { type: 'json_object' },
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt },
-      ],
-    }),
-    signal: AbortSignal.timeout(timeoutMs),
+      const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          model,
+          stream: false,
+          max_tokens: maxOutputTokens,
+          temperature: 0.1,
+          top_p: 0.8,
+          reasoning_effort: reasoningEffort,
+          response_format: { type: 'json_object' },
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userPrompt },
+          ],
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      })
+      if (!response.ok) {
+        throw new Error(
+          `Flamingo merge-note completion failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`,
+        )
+      }
+
+      const completion = (await response.json()) as {
+        choices?: Array<{ message?: { content?: unknown } }>
+      }
+      const rawContent = completion.choices?.[0]?.message?.content
+      if (typeof rawContent !== 'string') {
+        throw new Error('Flamingo merge-note completion returned no message content')
+      }
+
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(rawContent)
+      } catch {
+        throw new Error('Flamingo merge-note completion returned invalid JSON')
+      }
+      return normalizeGeneratedMemoryNote(parsed)
+    },
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
   })
-  if (!response.ok) {
-    throw new Error(
-      `Flamingo merge-note completion failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`,
-    )
-  }
 
-  const completion = (await response.json()) as {
-    choices?: Array<{ message?: { content?: unknown } }>
-  }
-  const rawContent = completion.choices?.[0]?.message?.content
-  if (typeof rawContent !== 'string') {
-    throw new Error('Flamingo merge-note completion returned no message content')
-  }
+const generateMainMergeMemoryNote = (
+  event: GithubEventRow,
+  payload: Record<string, unknown>,
+  enrichments: EventEnrichment[],
+  diffFiles: MergeDiffFile[],
+): Promise<GeneratedMemoryNote> =>
+  Effect.runPromise(generateMainMergeMemoryNoteEffect(event, payload, enrichments, diffFiles))
 
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(rawContent)
-  } catch {
-    throw new Error('Flamingo merge-note completion returned invalid JSON')
-  }
-  return normalizeGeneratedMemoryNote(parsed)
-}
-
-const publishMainMergeMemoryNote = async (
+const publishMainMergeMemoryNoteEffect = (
   db: SqlClient,
   repoRoot: string,
   event: GithubEventRow,
@@ -664,35 +708,70 @@ const publishMainMergeMemoryNote = async (
     loadDiff?: typeof loadMainMergeDiff
     generateNote?: typeof generateMainMergeMemoryNote
   } = {},
-) => {
-  if (!isMainBranchRef(ref)) return
+): Effect.Effect<void, Error> =>
+  Effect.gen(function* () {
+    if (!isMainBranchRef(ref)) return
 
-  const namespace = mainMergeMemoryNamespace(event.delivery_id)
-  if ((await countMainMergeMemoryNotes(namespace)) > 0) return
+    const namespace = mainMergeMemoryNamespace(event.delivery_id)
+    if ((yield* countMainMergeMemoryNotesEffect(namespace)) > 0) return
 
-  const enrichments = await (dependencies.loadEnrichments ?? loadMainMergeEnrichments)(db, event.id, commit)
-  const diffFiles = await (dependencies.loadDiff ?? loadMainMergeDiff)(repoRoot, payload, commit)
-  const note = await (dependencies.generateNote ?? generateMainMergeMemoryNote)(event, payload, enrichments, diffFiles)
+    const enrichments = dependencies.loadEnrichments
+      ? yield* Effect.tryPromise({
+          try: () => dependencies.loadEnrichments!(db, event.id, commit),
+          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        })
+      : yield* loadMainMergeEnrichmentsEffect(db, event.id, commit)
+    const diffFiles = dependencies.loadDiff
+      ? yield* Effect.tryPromise({
+          try: () => dependencies.loadDiff!(repoRoot, payload, commit),
+          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        })
+      : yield* loadMainMergeDiffEffect(repoRoot, payload, commit)
+    const note = dependencies.generateNote
+      ? yield* Effect.tryPromise({
+          try: () => dependencies.generateNote!(event, payload, enrichments, diffFiles),
+          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        })
+      : yield* generateMainMergeMemoryNoteEffect(event, payload, enrichments, diffFiles)
 
-  await persistMainMergeMemoryNote({
-    namespace,
-    summary: note.summary,
-    content: note.content,
-    tags: Array.from(new Set(['bumba', 'main', 'merge', ...note.tags])).slice(0, 12),
-    metadata: {
-      deliveryId: event.delivery_id,
-      repository: event.repository,
-      ref,
-      commit,
-      fileCount: files.length,
-      ingestionTotal: counts.total,
-      ingestionFailed: counts.failed,
-      enrichmentCount: enrichments.length,
-      diffFileCount: diffFiles.length,
-      noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo',
-    },
+    yield* persistMainMergeMemoryNoteEffect({
+      namespace,
+      summary: note.summary,
+      content: note.content,
+      tags: Array.from(new Set(['bumba', 'main', 'merge', ...note.tags])).slice(0, 12),
+      metadata: {
+        deliveryId: event.delivery_id,
+        repository: event.repository,
+        ref,
+        commit,
+        fileCount: files.length,
+        ingestionTotal: counts.total,
+        ingestionFailed: counts.failed,
+        enrichmentCount: enrichments.length,
+        diffFileCount: diffFiles.length,
+        noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo',
+      },
+    })
   })
-}
+
+const publishMainMergeMemoryNote = (
+  db: SqlClient,
+  repoRoot: string,
+  event: GithubEventRow,
+  payload: Record<string, unknown>,
+  ref: string,
+  commit: string,
+  files: string[],
+  counts: IngestionCounts,
+  dependencies: {
+    loadEnrichments?: typeof loadMainMergeEnrichments
+    loadDiff?: typeof loadMainMergeDiff
+    generateNote?: typeof generateMainMergeMemoryNote
+  } = {},
+): Promise<void> =>
+  Effect.runPromise(
+    publishMainMergeMemoryNoteEffect(db, repoRoot, event, payload, ref, commit, files, counts, dependencies),
+  )
 
 const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig, taskQueue: string) => {
   return (
@@ -1018,7 +1097,7 @@ const processEvent = async (
   }
 }
 
-const runEventConsumerTick = async ({
+const runEventConsumerTickEffect = ({
   db,
   client,
   config,
@@ -1027,66 +1106,87 @@ const runEventConsumerTick = async ({
   ensureRoutingAlignment,
   listPendingEvents = listPendingGithubEvents,
   processPendingEvent = processEvent,
-}: EventConsumerTickDependencies) => {
-  if (!(await ensureRoutingAlignment())) return
+}: EventConsumerTickDependencies): Effect.Effect<void, Error> =>
+  Effect.gen(function* () {
+    const routingAligned = yield* Effect.tryPromise({
+      try: ensureRoutingAlignment,
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    })
+    if (!routingAligned) return
 
-  const events = await listPendingEvents(db, config.batchSize)
-  if (events.length === 0) return
+    const events = yield* Effect.tryPromise({
+      try: () => listPendingEvents(db, config.batchSize),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    })
 
-  let dispatchedEvents = 0
-  for (const event of events) {
-    if (dispatchedEvents >= config.maxDispatchEventsPerTick) break
-    if (inFlightDeliveries.has(event.delivery_id)) continue
-
-    inFlightDeliveries.add(event.delivery_id)
-    try {
-      const result = await processPendingEvent(db, client, config, event)
-      if (result.dispatchStarted > 0) {
-        dispatchedEvents += 1
-      }
-
-      if (result.dispatchFailed > 0) {
-        const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
-        if (failures >= config.maxDispatchFailures) {
-          console.error('[bumba][event-consumer] event remains pending after repeated dispatch failures', {
-            deliveryId: event.delivery_id,
-            repository: event.repository,
-            dispatchFailed: result.dispatchFailed,
-            attempts: failures,
-          })
-          dispatchFailureCounts.set(event.delivery_id, config.maxDispatchFailures)
-        } else {
-          dispatchFailureCounts.set(event.delivery_id, failures)
-          console.warn('[bumba][event-consumer] retaining event for retry after dispatch failures', {
-            deliveryId: event.delivery_id,
-            repository: event.repository,
-            dispatchFailed: result.dispatchFailed,
-            attempts: failures,
-            maxAttempts: config.maxDispatchFailures,
-          })
+    let dispatchedEvents = 0
+    yield* Effect.forEach(
+      events,
+      (event) => {
+        if (dispatchedEvents >= config.maxDispatchEventsPerTick || inFlightDeliveries.has(event.delivery_id)) {
+          return Effect.void
         }
-        continue
-      }
 
-      if (
-        result.processed ||
-        result.waitingOnIngestion ||
-        result.dispatchStarted > 0 ||
-        result.dispatchAlreadyStarted > 0
-      ) {
-        dispatchFailureCounts.delete(event.delivery_id)
-      }
-    } catch (error) {
-      console.warn('[bumba][event-consumer] event processing failed; retaining event for retry', {
-        deliveryId: event.delivery_id,
-        repository: event.repository,
-        error: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      inFlightDeliveries.delete(event.delivery_id)
-    }
-  }
-}
+        inFlightDeliveries.add(event.delivery_id)
+        return Effect.tryPromise({
+          try: () => processPendingEvent(db, client, config, event),
+          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        }).pipe(
+          Effect.tap((result) =>
+            Effect.sync(() => {
+              if (result.dispatchStarted > 0) dispatchedEvents += 1
+
+              if (result.dispatchFailed > 0) {
+                const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
+                if (failures >= config.maxDispatchFailures) {
+                  console.error('[bumba][event-consumer] event remains pending after repeated dispatch failures', {
+                    deliveryId: event.delivery_id,
+                    repository: event.repository,
+                    dispatchFailed: result.dispatchFailed,
+                    attempts: failures,
+                  })
+                  dispatchFailureCounts.set(event.delivery_id, config.maxDispatchFailures)
+                } else {
+                  dispatchFailureCounts.set(event.delivery_id, failures)
+                  console.warn('[bumba][event-consumer] retaining event for retry after dispatch failures', {
+                    deliveryId: event.delivery_id,
+                    repository: event.repository,
+                    dispatchFailed: result.dispatchFailed,
+                    attempts: failures,
+                    maxAttempts: config.maxDispatchFailures,
+                  })
+                }
+                return
+              }
+
+              if (
+                result.processed ||
+                result.waitingOnIngestion ||
+                result.dispatchStarted > 0 ||
+                result.dispatchAlreadyStarted > 0
+              ) {
+                dispatchFailureCounts.delete(event.delivery_id)
+              }
+            }),
+          ),
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              console.warn('[bumba][event-consumer] event processing failed; retaining event for retry', {
+                deliveryId: event.delivery_id,
+                repository: event.repository,
+                error: error.message,
+              })
+            }),
+          ),
+          Effect.ensuring(Effect.sync(() => inFlightDeliveries.delete(event.delivery_id))),
+        )
+      },
+      { concurrency: 1, discard: true },
+    )
+  })
+
+const runEventConsumerTick = (dependencies: EventConsumerTickDependencies): Promise<void> =>
+  Effect.runPromise(runEventConsumerTickEffect(dependencies))
 
 const createSqlClient = () => {
   const databaseUrl = normalizeOptionalText(process.env.DATABASE_URL)

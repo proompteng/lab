@@ -12,6 +12,8 @@ Temporal worker that enriches repository files using AST context + self-hosted m
   `BUMBA_GITHUB_EVENT_CONSUMER_ENABLED`, `BUMBA_GITHUB_EVENT_POLL_INTERVAL_MS`,
   `BUMBA_GITHUB_EVENT_BATCH_SIZE`, `BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS`,
   `BUMBA_GITHUB_EVENT_MAX_DISPATCH_FAILURES`, `BUMBA_GITHUB_EVENT_ROUTING_ALIGNMENT_ENABLED`.
+- Event-consumer orchestration, external requests, and merge-note synthesis run as Effect programs; Promise conversion is
+  limited to the worker's public lifecycle boundary. Temporal workflow definitions use the same Effect runtime model.
 - `BUMBA_GITHUB_EVENT_MAX_FILE_TARGETS` is a per-tick dispatch budget. Events with more eligible files remain pending
   and continue across later ticks; individual start failures are retried and never cause the event to be marked complete.
 - After every fully terminal push to `main`, the consumer loads the completed per-file enrichments and a bounded
