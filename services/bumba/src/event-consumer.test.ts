@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { afterEach, expect, test } from 'bun:test'
 import type { TemporalConfig } from '@proompteng/temporal-bun-sdk'
 
-import { __test__, createGithubEventConsumer } from './event-consumer'
+import { __test__, createGithubEventConsumer, runGitFetchWithPublicFallback } from './event-consumer'
 
 const ENV_KEYS = [
   'BUMBA_GITHUB_EVENT_CONSUMER_ENABLED',
@@ -455,6 +455,7 @@ test('loadMainMergeDiff reads exact change evidence from the local repository cl
     runGit('init')
     runGit('config', 'user.email', 'bumba@test.invalid')
     runGit('config', 'user.name', 'Bumba Test')
+    runGit('config', 'commit.gpgsign', 'false')
     await mkdir(join(repoRoot, 'src'))
     await mkdir(join(repoRoot, 'docs'))
     await writeFile(join(repoRoot, 'src/a.ts'), 'export const value = "old"\n')
@@ -504,6 +505,44 @@ test('missing merge commits are fetched with GitHub auth and without auto-mainte
     else process.env.GITHUB_TOKEN = previousGithubToken
     if (previousGhToken === undefined) delete process.env.GH_TOKEN
     else process.env.GH_TOKEN = previousGhToken
+  }
+})
+
+test('failed authenticated git fetch retries anonymously for public repositories', async () => {
+  const previousGithubToken = process.env.GITHUB_TOKEN
+  process.env.GITHUB_TOKEN = 'stale-token'
+  const calls: Array<{ args: string[]; allowFailure: boolean | undefined }> = []
+
+  try {
+    const result = await runGitFetchWithPublicFallback(
+      ['fetch', '--no-auto-maintenance', 'origin', 'deadbeef'],
+      async (args, allowFailure) => {
+        calls.push({ args, allowFailure })
+        return { exitCode: calls.length === 1 ? 128 : 0 }
+      },
+    )
+
+    expect(result.exitCode).toBe(0)
+    expect(calls).toEqual([
+      {
+        args: [
+          '-c',
+          'http.extraheader=Authorization: Bearer stale-token',
+          'fetch',
+          '--no-auto-maintenance',
+          'origin',
+          'deadbeef',
+        ],
+        allowFailure: true,
+      },
+      {
+        args: ['fetch', '--no-auto-maintenance', 'origin', 'deadbeef'],
+        allowFailure: undefined,
+      },
+    ])
+  } finally {
+    if (previousGithubToken === undefined) delete process.env.GITHUB_TOKEN
+    else process.env.GITHUB_TOKEN = previousGithubToken
   }
 })
 

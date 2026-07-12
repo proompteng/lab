@@ -402,6 +402,18 @@ const buildAuthenticatedGitArgs = (args: string[]) => {
   return token ? ['-c', `http.extraheader=Authorization: Bearer ${token}`, ...args] : args
 }
 
+export const runGitFetchWithPublicFallback = async <T extends { exitCode: number }>(
+  fetchArgs: string[],
+  runGit: (args: string[], allowFailure?: boolean) => Promise<T>,
+): Promise<T> => {
+  const authenticatedArgs = buildAuthenticatedGitArgs(fetchArgs)
+  if (authenticatedArgs.length > fetchArgs.length) {
+    const authenticatedResult = await runGit(authenticatedArgs, true)
+    if (authenticatedResult.exitCode === 0) return authenticatedResult
+  }
+  return runGit(fetchArgs)
+}
+
 const requestAgentsJsonEffect = (path: string, init?: RequestInit) =>
   Effect.tryPromise({
     try: async () => {
@@ -512,16 +524,9 @@ const loadMainMergeDiffEffect = (
       const beforeExists = (await runGit(['cat-file', '-e', `${before}^{commit}`], true)).exitCode === 0
       const commitExists = (await runGit(['cat-file', '-e', `${commit}^{commit}`], true)).exitCode === 0
       if (!beforeExists || !commitExists) {
-        await runGit(
-          buildAuthenticatedGitArgs([
-            'fetch',
-            '--no-auto-maintenance',
-            '--no-tags',
-            '--depth=2',
-            'origin',
-            before,
-            commit,
-          ]),
+        await runGitFetchWithPublicFallback(
+          ['fetch', '--no-auto-maintenance', '--no-tags', '--depth=2', 'origin', before, commit],
+          runGit,
         )
       }
 

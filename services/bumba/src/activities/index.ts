@@ -9,7 +9,11 @@ import { Language, Parser } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
 import { runCommandIsolated } from '../command-runner'
-import { publishMainMergeMemoryNoteActivity, type MainMergeMemoryNoteInput } from '../event-consumer'
+import {
+  publishMainMergeMemoryNoteActivity,
+  runGitFetchWithPublicFallback,
+  type MainMergeMemoryNoteInput,
+} from '../event-consumer'
 
 export type ReadRepoFileInput = {
   repoRoot: string
@@ -706,9 +710,6 @@ const runCommand = async (
   return result.stdout.length > 0 ? result.stdout : null
 }
 
-const buildGitAuthArgs = (token: string | null) =>
-  token ? ['-c', `http.extraheader=Authorization: Bearer ${token}`] : []
-
 const commitExistsLocally = async (repoRoot: string, commit: string) => {
   const result = await runCommandResult(['git', '-C', repoRoot, 'cat-file', '-e', `${commit}^{commit}`], repoRoot, {
     GIT_TERMINAL_PROMPT: '0',
@@ -717,40 +718,21 @@ const commitExistsLocally = async (repoRoot: string, commit: string) => {
 }
 
 const fetchCommitFromOrigin = async (repoRoot: string, commit: string) => {
-  const token = resolveGithubToken()
-  const args = [
-    'git',
-    '-C',
-    repoRoot,
-    ...buildGitAuthArgs(token),
-    'fetch',
-    '--no-auto-maintenance',
-    '--quiet',
-    '--depth=1',
-    'origin',
-    commit,
-  ]
-  const result = await runCommandResult(args, repoRoot, { GIT_TERMINAL_PROMPT: '0' })
+  const fetchArgs = ['fetch', '--no-auto-maintenance', '--quiet', '--depth=1', 'origin', commit]
+  const result = await runGitFetchWithPublicFallback(fetchArgs, (args) =>
+    runCommandResult(['git', '-C', repoRoot, ...args], repoRoot, { GIT_TERMINAL_PROMPT: '0' }),
+  )
   return result.exitCode === 0
 }
 
 const fetchFromOrigin = async (repoRoot: string, ref?: string) => {
-  const token = resolveGithubToken()
-  const args = [
-    'git',
-    '-C',
-    repoRoot,
-    ...buildGitAuthArgs(token),
-    'fetch',
-    '--no-auto-maintenance',
-    '--quiet',
-    '--depth=1',
-    'origin',
-  ]
+  const fetchArgs = ['fetch', '--no-auto-maintenance', '--quiet', '--depth=1', 'origin']
   if (ref) {
-    args.push(ref)
+    fetchArgs.push(ref)
   }
-  const result = await runCommandResult(args, repoRoot, { GIT_TERMINAL_PROMPT: '0' })
+  const result = await runGitFetchWithPublicFallback(fetchArgs, (args) =>
+    runCommandResult(['git', '-C', repoRoot, ...args], repoRoot, { GIT_TERMINAL_PROMPT: '0' }),
+  )
   return result.exitCode === 0
 }
 
