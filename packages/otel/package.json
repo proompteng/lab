@@ -89,7 +89,7 @@
     }
   },
   "scripts": {
-    "build": "tsc --project tsconfig.json --pretty false",
+    "build": "bun ../../node_modules/typescript/bin/tsc --project tsconfig.json --pretty false",
     "test": "bun test"
   },
   "devDependencies": {

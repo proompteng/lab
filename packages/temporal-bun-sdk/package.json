@@ -77,7 +77,7 @@
   "scripts": {
     "clean": "rm -rf dist",
     "dev": "bun --watch src/bin/start-worker.ts",
-    "build": "tsc --project tsconfig.json --pretty false",
+    "build": "bun run --cwd ../otel build && bun ../../node_modules/typescript/bin/tsc --project tsconfig.json --pretty false",
     "test": "bun test",
     "test:load": "bun scripts/run-worker-load.ts",
     "evidence:production": "bun scripts/collect-production-evidence.ts",
