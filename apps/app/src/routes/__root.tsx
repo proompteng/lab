@@ -4,6 +4,7 @@ import { TanStackRouterDevtoolsPanel } from '@tanstack/react-router-devtools'
 
 import Header from '../components/Header'
 import { getCurrentUserServerFn } from '../server/auth/server-fns'
+import { resolveLoginNext } from './login-redirect'
 
 import appCss from '../styles.css?url'
 
@@ -18,7 +19,7 @@ export const Route = createRootRoute({
       throw redirect({
         to: '/login',
         search: {
-          next: location.pathname,
+          next: resolveLoginNext(location),
         },
       })
     }
