@@ -1,4 +1,5 @@
 import { normalizeTorghutSymbol } from './torghut-symbols'
+import { isQuantWindow, type QuantWindow } from './torghut-quant-contract'
 
 type EnvSource = Record<string, string | undefined>
 
@@ -21,8 +22,8 @@ export type TorghutQuantRuntimeConfig = {
   seriesSamplingMs: number
   streamHeartbeatMs: number
   maxStalenessSeconds: number
-  windowsLight: string[]
-  windowsHeavy: string[]
+  windowsLight: QuantWindow[]
+  windowsHeavy: QuantWindow[]
   alertsEnabled: boolean
   alertsEnabledFlagKey: string
   policy: QuantPolicyConfig
@@ -88,12 +89,17 @@ const parseNumber = (value: string | undefined, fallback: number) => {
   return Number.isFinite(parsed) ? parsed : fallback
 }
 
-const parseWindowList = (value: string | undefined, fallback: string[]) => {
+const parseWindowList = (value: string | undefined, fallback: QuantWindow[]): QuantWindow[] => {
   const normalized = (value ?? '')
     .split(',')
     .map((item) => item.trim())
     .filter((item) => item.length > 0)
-  return normalized.length > 0 ? normalized : [...fallback]
+  if (normalized.length === 0) return [...fallback]
+  const invalid = normalized.filter((window) => !isQuantWindow(window))
+  if (invalid.length > 0) {
+    throw new Error(`Unsupported Torghut quant window(s): ${invalid.join(', ')}`)
+  }
+  return normalized as QuantWindow[]
 }
 
 const normalizeUrl = (value: string | undefined, fallback: string) =>

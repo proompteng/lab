@@ -18,6 +18,9 @@ export const Route = createFileRoute('/api/torghut/trading/control-plane/quant/s
   },
 })
 
+export const matchesQuantStreamAccount = (requestedAccount: string, eventAccount: string) =>
+  requestedAccount ? eventAccount === requestedAccount : eventAccount === ''
+
 export const streamQuantEvents = async (request: Request) => {
   startTorghutQuantRuntime()
 
@@ -75,21 +78,21 @@ export const streamQuantEvents = async (request: Request) => {
         if (event.type === 'quant.metrics.snapshot') {
           if (event.frame.strategyId !== strategyIdResult.value) return
           if (event.frame.window !== windowResult.value) return
-          if (account && event.frame.account !== account) return
+          if (!matchesQuantStreamAccount(account, event.frame.account)) return
           push(event)
           return
         }
         if (event.type === 'quant.metrics.delta') {
           if (event.strategyId !== strategyIdResult.value) return
           if (event.window !== windowResult.value) return
-          if (account && event.account !== account) return
+          if (!matchesQuantStreamAccount(account, event.account)) return
           push(event)
           return
         }
         if (event.type === 'quant.alert.opened' || event.type === 'quant.alert.resolved') {
           if (event.alert.strategyId !== strategyIdResult.value) return
           if (event.alert.window !== windowResult.value) return
-          if (account && event.alert.account !== account) return
+          if (!matchesQuantStreamAccount(account, event.alert.account)) return
           push(event)
           return
         }

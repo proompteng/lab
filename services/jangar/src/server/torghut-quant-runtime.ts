@@ -97,8 +97,8 @@ const loadConfig = (overrides?: { enabled?: boolean; alertsEnabled?: boolean }):
   const config = resolveTorghutQuantRuntimeConfig(process.env, overrides)
   return {
     ...config,
-    windowsLight: config.windowsLight as QuantWindow[],
-    windowsHeavy: config.windowsHeavy as QuantWindow[],
+    windowsLight: config.windowsLight,
+    windowsHeavy: config.windowsHeavy,
   }
 }
 

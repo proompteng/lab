@@ -21,6 +21,14 @@ describe('torghut-config', () => {
     expect(config.policy.maxDrawdown1d).toBe(0.08)
   })
 
+  it('rejects unsupported quant windows instead of casting them', () => {
+    expect(() =>
+      resolveTorghutQuantRuntimeConfig({
+        JANGAR_TORGHUT_QUANT_WINDOWS_LIGHT: '1m,30m',
+      }),
+    ).toThrow('Unsupported Torghut quant window(s): 30m')
+  })
+
   it('normalizes torghut endpoints and health defaults', () => {
     expect(
       resolveTorghutEndpointsConfig({
