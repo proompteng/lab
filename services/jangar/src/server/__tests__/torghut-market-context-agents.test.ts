@@ -29,7 +29,7 @@ describe('torghut market-context agent helpers', () => {
           updatedAt: new Date('2026-03-05T19:58:00.000Z'),
         },
         {
-          status: 'cancelled',
+          status: 'failed',
           error: 'provider_attempt_timeout',
           updatedAt: new Date('2026-03-05T19:55:00.000Z'),
         },
@@ -45,6 +45,37 @@ describe('torghut market-context agent helpers', () => {
     expect(state.consecutiveFailures).toBe(3)
     expect(state.cooldownRemainingSeconds).toBe(780)
     expect(state.lastError).toBe('provider_turn_failed')
+  })
+
+  it('does not count operator cancellations as provider failures', async () => {
+    const { resolveProviderCircuitStateFromRows } = await import('../torghut-market-context-agents')
+
+    const state = resolveProviderCircuitStateFromRows({
+      provider: 'codex-spark',
+      threshold: 2,
+      cooldownSeconds: 900,
+      now: new Date('2026-03-05T20:00:00.000Z'),
+      rows: [
+        {
+          status: 'failed',
+          error: 'provider_turn_failed',
+          updatedAt: new Date('2026-03-05T19:58:00.000Z'),
+        },
+        {
+          status: 'cancelled',
+          error: 'market_closed',
+          updatedAt: new Date('2026-03-05T19:57:00.000Z'),
+        },
+        {
+          status: 'failed',
+          error: 'older_failure',
+          updatedAt: new Date('2026-03-05T19:56:00.000Z'),
+        },
+      ],
+    })
+
+    expect(state.cooldownOpen).toBe(false)
+    expect(state.consecutiveFailures).toBe(1)
   })
 
   it('keeps provider circuit closed when a success breaks the failure chain', async () => {
