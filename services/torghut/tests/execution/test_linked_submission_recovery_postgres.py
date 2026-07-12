@@ -32,8 +32,10 @@ from app.trading.broker_mutation_receipts import (
     build_broker_mutation_settlement,
     build_linked_submission_recovery_settlement,
     get_broker_mutation_receipt_history,
+    list_due_broker_mutation_receipt_ids,
     mark_broker_mutation_io_started,
     record_linked_submission_recovery_observation,
+    release_broker_mutation_receipt,
     release_linked_submission_recovery,
     renew_linked_submission_recovery,
     settle_linked_submission_recovery,
@@ -238,6 +240,59 @@ def _acquire_linked_recovery(
         acquired=acquired,
         recovery=recovery,
     )
+
+
+@pytest.mark.parametrize("receipt_state", ["claimed", "released"])
+def test_linked_receipt_before_broker_io_does_not_require_recovery(
+    recovery_harness: _RecoveryHarness,
+    receipt_state: str,
+) -> None:
+    fixture = create_linked_submit_fixture(recovery_harness.engine)
+    with recovery_harness.sessions() as session:
+        acquired = acquire_broker_mutation_receipt(
+            session,
+            intent=fixture.intent,
+            primary_owner=fixture.claim_handle.claim_owner,
+            writer_generation=1,
+            options=BrokerMutationReceiptAcquireOptions(
+                submission_claim_handle=fixture.claim_handle,
+            ),
+        )
+    receipt = acquired.receipt
+    if receipt_state == "released":
+        with recovery_harness.sessions() as session:
+            receipt = release_broker_mutation_receipt(
+                session,
+                handle=receipt.primary_handle,
+                reason="broker call not started",
+            )
+    assert receipt.state == receipt_state
+
+    with recovery_harness.sessions() as session:
+        recovery = acquire_linked_submission_recovery(
+            session,
+            receipt_id=acquired.receipt.receipt_id,
+            recovery_owner="reconciler-a",
+            writer_generation=7,
+        )
+
+    assert recovery.outcome == "not_required"
+    assert recovery.receipt == receipt
+    assert recovery.submission_claim is None
+
+
+def test_generic_due_recovery_scan_excludes_linked_receipts(
+    recovery_harness: _RecoveryHarness,
+) -> None:
+    fixture, acquired = _enter_linked_io(recovery_harness)
+    _force_linked_recovery_due(
+        recovery_harness,
+        fixture=fixture,
+        receipt_id=acquired.receipt.receipt_id,
+    )
+
+    with recovery_harness.sessions() as session:
+        assert list_due_broker_mutation_receipt_ids(session) == ()
 
 
 def _observation(fixture: LinkedSubmitFixture, outcome: str):

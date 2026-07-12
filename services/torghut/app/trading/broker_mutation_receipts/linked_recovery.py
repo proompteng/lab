@@ -124,6 +124,13 @@ def acquire_linked_submission_recovery(
             current = lock_current_receipt(session, request.receipt_id)
             if current is None:
                 return _acquire_read_result(session, "not_required", None, None)
+            if current.snapshot.state in {"claimed", "released"}:
+                return _acquire_read_result(
+                    session,
+                    "not_required",
+                    current,
+                    None,
+                )
             claim = _lock_linked_claim(
                 session,
                 current=current,

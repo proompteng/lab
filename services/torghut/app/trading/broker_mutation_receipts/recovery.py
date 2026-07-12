@@ -10,7 +10,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from ...models import BrokerMutationReceiptEvent
+from ...models import BrokerMutationReceipt, BrokerMutationReceiptEvent
 from .lifecycle_helpers import (
     LockedReceipt,
     append_and_commit,
@@ -98,11 +98,16 @@ def _list_due_broker_mutation_receipt_ids(
     rows = session.execute(
         select(BrokerMutationReceiptEvent.receipt_id)
         .join(
+            BrokerMutationReceipt,
+            BrokerMutationReceipt.id == BrokerMutationReceiptEvent.receipt_id,
+        )
+        .join(
             latest,
             (BrokerMutationReceiptEvent.receipt_id == latest.c.receipt_id)
             & (BrokerMutationReceiptEvent.sequence_no == latest.c.sequence_no),
         )
         .where(
+            BrokerMutationReceipt.submission_claim_id.is_(None),
             BrokerMutationReceiptEvent.state == "broker_io",
             BrokerMutationReceiptEvent.recovery_after.is_not(None),
             BrokerMutationReceiptEvent.recovery_after <= now,
