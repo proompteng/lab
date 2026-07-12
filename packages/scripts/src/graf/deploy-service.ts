@@ -9,8 +9,14 @@ import { buildImage } from './build-image'
 
 const manifestPath = resolve(repoRoot, 'argocd/applications/graf/knative-service.yaml')
 
-export const resolveGrafWaitTimeout = (env: Record<string, string | undefined> = process.env) =>
-  env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
+export const resolveGrafWaitTimeout = (env: Record<string, string | undefined> = process.env) => {
+  const rawTimeout = (env.GRAF_KN_WAIT_TIMEOUT ?? '300').trim()
+  const match = /^(\d+)s?$/.exec(rawTimeout)
+  if (!match || Number.parseInt(match[1], 10) <= 0) {
+    throw new Error('GRAF_KN_WAIT_TIMEOUT must be a positive integer number of seconds')
+  }
+  return match[1]
+}
 
 const ensureResources = () => {
   ensureCli('docker')
