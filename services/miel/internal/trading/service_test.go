@@ -3,6 +3,7 @@ package trading
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,11 +17,40 @@ import (
 
 type ledgerRecorderStub struct {
 	orders []*sdkalpaca.Order
+	err    error
 }
 
 func (s *ledgerRecorderStub) RecordOrder(_ context.Context, order *sdkalpaca.Order) error {
 	s.orders = append(s.orders, order)
-	return nil
+	return s.err
+}
+
+func TestSubmitMarketOrderReturnsAcceptedOrderWhenLedgerWriteFails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(sdkalpaca.Order{ID: "order-accepted", Symbol: "AAPL", Side: sdkalpaca.Buy}); err != nil {
+			t.Fatalf("encode order: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Config{
+		AlpacaAPIKey:         "key",
+		AlpacaAPISecret:      "secret",
+		AlpacaTradingBaseURL: server.URL,
+		AlpacaMarketDataURL:  server.URL,
+		RequestTimeout:       time.Second,
+	}
+	recorder := &ledgerRecorderStub{err: errors.New("ledger unavailable")}
+	svc := NewService(alpaca.NewClient(cfg), recorder)
+
+	order, err := svc.SubmitMarketOrder(context.Background(), "AAPL", 1, "buy", "day", false)
+	if err != nil {
+		t.Fatalf("accepted broker order must not be reported as failed: %v", err)
+	}
+	if order.ID != "order-accepted" {
+		t.Fatalf("unexpected order id %s", order.ID)
+	}
 }
 
 func (s *ledgerRecorderStub) RecordBacktest(context.Context, backtest.Result) error { return nil }
