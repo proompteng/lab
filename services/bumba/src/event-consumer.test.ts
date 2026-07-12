@@ -18,6 +18,11 @@ const ENV_KEYS = [
   'CODEX_CWD',
   'DATABASE_URL',
   'AGENTS_SERVICE_BASE_URL',
+  'OPENAI_API_BASE_URL',
+  'OPENAI_API_KEY',
+  'OPENAI_COMPLETION_MODEL',
+  'OPENAI_COMPLETION_TIMEOUT_MS',
+  'OPENAI_COMPLETION_MAX_OUTPUT_TOKENS',
 ] as const
 
 const originalFetch = globalThis.fetch
@@ -162,7 +167,7 @@ test('processEvent publishes the main merge note before marking a fully terminal
     startWorkflow: async () => {
       throw new Error('WorkflowExecutionAlreadyStarted')
     },
-    publishMainMergeNote: async (_event, _payload, ref, commit, files) => {
+    publishMainMergeNote: async (_db, _event, _payload, ref, commit, files) => {
       calls.push(`note:${ref}:${commit}:${files.join(',')}`)
     },
     markProcessed: async (_db, deliveryId) => {
@@ -181,7 +186,7 @@ test('main branch and memory namespace helpers are stable', () => {
   expect(__test__.mainMergeMemoryNamespace('delivery-1')).toBe('bumba-main-delivery-1')
 })
 
-test('publishMainMergeMemoryNote writes one delivery-scoped note through the Agents endpoint', async () => {
+test('publishMainMergeMemoryNote saves Flamingo-generated knowledge through the Agents endpoint', async () => {
   process.env.AGENTS_SERVICE_BASE_URL = 'http://agents.test'
   const requests: Array<{ url: string; method: string; body?: unknown }> = []
   globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
@@ -198,12 +203,23 @@ test('publishMainMergeMemoryNote writes one delivery-scoped note through the Age
 
   const event = githubPushEvent(['src/a.ts'])
   await __test__.publishMainMergeMemoryNote(
+    {} as never,
     event,
     event.payload,
     'refs/heads/main',
     'abcdef1234567890',
     ['src/a.ts'],
     ingestionCounts({ total: 1, terminal: 1 }),
+    {
+      loadEnrichments: async () => [
+        { path: 'src/a.ts', summary: 'Handles events.', content: '- Retries partial dispatches.' },
+      ],
+      generateNote: async () => ({
+        summary: 'Event processing now preserves partial work.',
+        content: 'Bumba retries undispatched file targets and records merge knowledge only after enrichment settles.',
+        tags: ['event-consumer', 'temporal'],
+      }),
+    },
   )
 
   expect(requests).toHaveLength(2)
@@ -214,14 +230,63 @@ test('publishMainMergeMemoryNote writes one delivery-scoped note through the Age
   expect(requests[1]).toMatchObject({ url: 'http://agents.test/v1/memory-notes', method: 'POST' })
   expect(requests[1]?.body).toMatchObject({
     namespace: 'bumba-main-delivery-1',
-    tags: ['bumba', 'github', 'main', 'merge', 'enrichment'],
+    summary: 'Event processing now preserves partial work.',
+    content: 'Bumba retries undispatched file targets and records merge knowledge only after enrichment settles.',
+    tags: ['bumba', 'main', 'merge', 'event-consumer', 'temporal'],
     metadata: {
       deliveryId: 'delivery-1',
       repository: 'proompteng/lab',
       commit: 'abcdef1234567890',
       fileCount: 1,
+      enrichmentCount: 1,
     },
   })
+})
+
+test('generateMainMergeMemoryNote asks Flamingo for structured durable knowledge', async () => {
+  process.env.OPENAI_API_BASE_URL = 'http://flamingo.test/v1'
+  process.env.OPENAI_COMPLETION_MODEL = 'qwen36-flamingo'
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input: URL | RequestInfo, init?: RequestInit) => {
+    requestBody = typeof init?.body === 'string' ? JSON.parse(init.body) : undefined
+    return Response.json({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              summary: 'Bumba preserves complete enrichment across retries.',
+              content:
+                'The event consumer uses deterministic workflow IDs and waits for semantic enrichment to settle.',
+              tags: ['Bumba', 'Temporal', 'event-consumer'],
+            }),
+          },
+        },
+      ],
+    })
+  }) as typeof fetch
+
+  const event = githubPushEvent(['src/a.ts'])
+  const note = await __test__.generateMainMergeMemoryNote(event, event.payload, [
+    {
+      path: 'src/a.ts',
+      summary: 'Dispatches enrichment.',
+      content: '- Deterministic workflow IDs prevent duplicates.',
+    },
+  ])
+
+  expect(note).toEqual({
+    summary: 'Bumba preserves complete enrichment across retries.',
+    content: 'The event consumer uses deterministic workflow IDs and waits for semantic enrichment to settle.',
+    tags: ['bumba', 'temporal', 'event-consumer'],
+  })
+  expect(requestBody).toMatchObject({
+    model: 'qwen36-flamingo',
+    stream: false,
+    response_format: { type: 'json_object' },
+  })
+  const messages = requestBody?.messages as Array<{ content: string }>
+  expect(messages[0]?.content).toContain('knowledge that is not recoverable from a filename list or git log')
+  expect(messages[1]?.content).toContain('Deterministic workflow IDs prevent duplicates.')
 })
 
 test('publishMainMergeMemoryNote ignores non-main pushes', async () => {
@@ -233,6 +298,7 @@ test('publishMainMergeMemoryNote ignores non-main pushes', async () => {
   const event = githubPushEvent(['src/a.ts'], 'refs/heads/feature')
 
   await __test__.publishMainMergeMemoryNote(
+    {} as never,
     event,
     event.payload,
     'refs/heads/feature',

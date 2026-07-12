@@ -123,6 +123,18 @@ type IngestionCounts = {
   oldestNonterminalStartedAt: number | null
 }
 
+type EventEnrichment = {
+  path: string
+  summary: string
+  content: string
+}
+
+type GeneratedMemoryNote = {
+  summary: string
+  content: string
+  tags: string[]
+}
+
 type ProcessEventResult = {
   processed: boolean
   waitingOnIngestion: boolean
@@ -364,13 +376,146 @@ const isMainBranchRef = (ref: string) => ref === 'main' || ref === 'refs/heads/m
 
 const mainMergeMemoryNamespace = (deliveryId: string) => `bumba-main-${deliveryId}`.slice(0, 200)
 
+const loadMainMergeEnrichments = async (db: SqlClient, eventId: string, commit: string): Promise<EventEnrichment[]> => {
+  return (await db`
+    SELECT DISTINCT ON (fk.path)
+      fk.path,
+      COALESCE(e.summary, '') AS summary,
+      e.content
+    FROM atlas.event_files ef
+    JOIN atlas.file_keys fk ON fk.id = ef.file_key_id
+    JOIN atlas.file_versions fv
+      ON fv.file_key_id = fk.id
+     AND fv.repository_commit = ${commit}
+    JOIN atlas.enrichments e
+      ON e.file_version_id = fv.id
+     AND e.kind = 'model_enrichment'
+     AND e.source = 'bumba'
+     AND e.chunk_id IS NULL
+    WHERE ef.event_id = ${eventId}
+    ORDER BY fk.path, e.created_at DESC;
+  `) as EventEnrichment[]
+}
+
+const normalizeGeneratedMemoryNote = (raw: unknown): GeneratedMemoryNote => {
+  const record = asRecord(raw)
+  const summary = normalizeOptionalText(record?.summary)
+  const content = normalizeOptionalText(record?.content)
+  const tags = Array.isArray(record?.tags)
+    ? record.tags
+        .filter((tag): tag is string => typeof tag === 'string')
+        .map((tag) => tag.trim().toLowerCase())
+        .filter((tag, index, values) => tag.length > 0 && tag.length <= 64 && values.indexOf(tag) === index)
+        .slice(0, 12)
+    : []
+
+  if (!summary || !content) {
+    throw new Error('Flamingo merge-note response must include non-empty summary and content')
+  }
+
+  return {
+    summary: summary.slice(0, 1_000),
+    content: content.slice(0, 48_000),
+    tags,
+  }
+}
+
+const generateMainMergeMemoryNote = async (
+  event: GithubEventRow,
+  payload: Record<string, unknown>,
+  enrichments: EventEnrichment[],
+): Promise<GeneratedMemoryNote> => {
+  const apiBaseUrl = (
+    process.env.OPENAI_API_BASE_URL ??
+    process.env.OPENAI_API_BASE ??
+    'http://flamingo.flamingo.svc.cluster.local/v1'
+  ).replace(/\/+$/, '')
+  const model = normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo'
+  const timeoutMs = parsePositiveInt(process.env.OPENAI_COMPLETION_TIMEOUT_MS, 300_000)
+  const maxOutputTokens = parsePositiveInt(process.env.OPENAI_COMPLETION_MAX_OUTPUT_TOKENS, 1_024)
+  const commitMessage = normalizeOptionalText(asRecord(payload.head_commit)?.message)
+
+  const sections: string[] = []
+  let inputChars = 0
+  for (const enrichment of enrichments) {
+    const section = [`File: ${enrichment.path}`, `Summary: ${enrichment.summary}`, enrichment.content].join('\n')
+    if (inputChars + section.length > 48_000) break
+    sections.push(section)
+    inputChars += section.length
+  }
+
+  const systemPrompt = [
+    'You create durable engineering memory for future coding agents.',
+    'Synthesize the supplied file enrichments into knowledge that is not recoverable from a filename list or git log alone.',
+    'Capture system behavior, important relationships, decisions or invariants, operational consequences, and risks.',
+    'Do not narrate the commit metadata, enumerate every file, or claim facts absent from the evidence.',
+    'Return one JSON object with exactly: summary (one concise sentence), content (concise markdown), and tags (3-8 retrieval tags).',
+    'If enrichment failed or evidence is incomplete, state that limitation explicitly.',
+  ].join(' ')
+  const userPrompt = [
+    `Repository: ${event.repository}`,
+    ...(commitMessage ? [`Merge context: ${commitMessage}`] : []),
+    `Successful file enrichments: ${enrichments.length}`,
+    sections.length > 0 ? sections.join('\n\n') : 'No successful file enrichments were available.',
+  ].join('\n\n')
+
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  const apiKey = normalizeOptionalText(process.env.OPENAI_API_KEY)
+  if (apiKey) headers.authorization = `Bearer ${apiKey}`
+
+  const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      stream: false,
+      max_tokens: maxOutputTokens,
+      temperature: 0.3,
+      top_p: 0.8,
+      reasoning_effort: 'none',
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    }),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (!response.ok) {
+    throw new Error(
+      `Flamingo merge-note completion failed (${response.status}): ${(await response.text()).slice(0, 1_000)}`,
+    )
+  }
+
+  const completion = (await response.json()) as {
+    choices?: Array<{ message?: { content?: unknown } }>
+  }
+  const rawContent = completion.choices?.[0]?.message?.content
+  if (typeof rawContent !== 'string') {
+    throw new Error('Flamingo merge-note completion returned no message content')
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(rawContent)
+  } catch {
+    throw new Error('Flamingo merge-note completion returned invalid JSON')
+  }
+  return normalizeGeneratedMemoryNote(parsed)
+}
+
 const publishMainMergeMemoryNote = async (
+  db: SqlClient,
   event: GithubEventRow,
   payload: Record<string, unknown>,
   ref: string,
   commit: string,
   files: string[],
   counts: IngestionCounts,
+  dependencies: {
+    loadEnrichments?: typeof loadMainMergeEnrichments
+    generateNote?: typeof generateMainMergeMemoryNote
+  } = {},
 ) => {
   if (!isMainBranchRef(ref)) return
 
@@ -381,36 +526,14 @@ const publishMainMergeMemoryNote = async (
   }
   if (existing.body.count > 0) return
 
-  const headCommit = asRecord(payload.head_commit)
-  const commitMessage = normalizeOptionalText(headCommit?.message)
-  const status = counts.failed > 0 ? 'completed with failed ingestions' : 'completed'
-  const summary = `Bumba enrichment ${status} for ${event.repository}@${commit.slice(0, 12)} on main.`
-  const contentLines = [
-    summary,
-    `GitHub delivery: ${event.delivery_id}`,
-    `Ref: ${ref}`,
-    `Changed files: ${files.length}`,
-    `Ingestions: ${counts.terminal}/${counts.total} terminal, ${counts.failed} failed`,
-    ...(commitMessage ? [`Commit message: ${commitMessage}`] : []),
-    '',
-  ]
-  let content = contentLines.join('\n')
-  let listedFiles = 0
-  for (const file of files) {
-    const line = `\n- ${file}`
-    if (content.length + line.length > 48_000) break
-    content += line
-    listedFiles += 1
-  }
-  if (listedFiles < files.length) {
-    content += `\n- ... ${files.length - listedFiles} additional files omitted from note`
-  }
+  const enrichments = await (dependencies.loadEnrichments ?? loadMainMergeEnrichments)(db, event.id, commit)
+  const note = await (dependencies.generateNote ?? generateMainMergeMemoryNote)(event, payload, enrichments)
 
   const persisted = await persistMemoryNoteToAgentsService({
     namespace,
-    summary,
-    content,
-    tags: ['bumba', 'github', 'main', 'merge', 'enrichment'],
+    summary: note.summary,
+    content: note.content,
+    tags: Array.from(new Set(['bumba', 'main', 'merge', ...note.tags])).slice(0, 12),
     metadata: {
       deliveryId: event.delivery_id,
       repository: event.repository,
@@ -419,6 +542,8 @@ const publishMainMergeMemoryNote = async (
       fileCount: files.length,
       ingestionTotal: counts.total,
       ingestionFailed: counts.failed,
+      enrichmentCount: enrichments.length,
+      noteModel: normalizeOptionalText(process.env.OPENAI_COMPLETION_MODEL) ?? 'qwen36-flamingo',
     },
   })
   if (!persisted.ok) {
@@ -679,7 +804,7 @@ const processEvent = async (
   ingestionCounts = await getCounts(db, event.id)
   if (allTargetsDispatched && ingestionCounts.total >= files.length) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
-      await publishMergeNote(event, payload, ref, commit, files, ingestionCounts)
+      await publishMergeNote(db, event, payload, ref, commit, files, ingestionCounts)
       await markProcessed(db, event.delivery_id)
       return {
         processed: true,
@@ -1001,6 +1126,9 @@ export const __test__ = {
   runEventConsumerTick,
   processEvent,
   publishMainMergeMemoryNote,
+  loadMainMergeEnrichments,
+  generateMainMergeMemoryNote,
+  normalizeGeneratedMemoryNote,
   isMainBranchRef,
   mainMergeMemoryNamespace,
   TERMINAL_INGESTION_STATUSES,
