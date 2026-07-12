@@ -9,6 +9,7 @@ on:
       - 'argocd/root.yaml'
       - 'argocd/applicationsets/**'
       - 'argocd/applications/**'
+      - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - '.github/workflows/scripts-ci.yml'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - 'argocd/root.yaml'
       - 'argocd/applicationsets/**'
       - 'argocd/applications/**'
+      - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
       - '.github/workflows/scripts-ci.yml'
 
