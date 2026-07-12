@@ -260,6 +260,77 @@ def test_original_quantity_must_be_positive_exact_numeric_20_8(
 
 
 @pytest.mark.parametrize(
+    ("intent_overrides", "broker_overrides", "reason"),
+    [
+        (
+            {"qty": "1e13"},
+            {},
+            AlpacaRecoveryObservationReason.REQUEST_QTY_INVALID,
+        ),
+        (
+            {},
+            {"qty": "1e13"},
+            AlpacaRecoveryObservationReason.BROKER_PAYLOAD_INVALID,
+        ),
+        (
+            {},
+            {"qty": Decimal("1e13")},
+            AlpacaRecoveryObservationReason.BROKER_PAYLOAD_INVALID,
+        ),
+        (
+            {},
+            {"filled_qty": "1e13"},
+            AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
+        ),
+        (
+            {},
+            {"filled_avg_price": "1e13"},
+            AlpacaRecoveryObservationReason.BROKER_FILL_INVALID,
+        ),
+        (
+            {"limit_price": "1e13"},
+            {},
+            AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
+        ),
+        (
+            {},
+            {"limit_price": "1e13"},
+            AlpacaRecoveryObservationReason.ORDER_IDENTITY_MISMATCH,
+        ),
+    ],
+)
+def test_positive_exponent_values_cannot_bypass_numeric_20_8_integer_bounds(
+    intent_overrides: dict[str, object],
+    broker_overrides: dict[str, object],
+    reason: AlpacaRecoveryObservationReason,
+) -> None:
+    _assert_indeterminate(
+        reason,
+        result=_observe(
+            intent=_intent(**intent_overrides),
+            broker_order=_broker_order(**broker_overrides),
+        ),
+    )
+
+
+def test_twelve_integer_digit_scientific_values_remain_in_bounds() -> None:
+    result = _observe(
+        intent=_intent(qty="1e11", limit_price="1e11"),
+        broker_order=_broker_order(
+            qty="1e11",
+            limit_price="1e11",
+            filled_qty="0e13",
+        ),
+    )
+
+    assert result.validated
+    assert result.order is not None
+    assert result.order.terms.qty == Decimal("1e11")
+    assert result.order.terms.limit_price == Decimal("1e11")
+    assert result.order.filled_qty == Decimal("0")
+
+
+@pytest.mark.parametrize(
     "request_overrides",
     [
         {"symbol": "aapl"},
@@ -282,6 +353,46 @@ def test_original_order_terms_must_be_unambiguous_and_complete(
     _assert_indeterminate(
         AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
         result=_observe(intent=_intent(**request_overrides)),
+    )
+
+
+@pytest.mark.parametrize(
+    ("order_class", "nested_terms"),
+    [
+        (
+            "bracket",
+            {
+                "take_profit": {"limit_price": Decimal("210")},
+                "stop_loss": {"stop_price": Decimal("180")},
+            },
+        ),
+        (
+            "oto",
+            {"take_profit": {"limit_price": Decimal("210")}},
+        ),
+        (
+            "oco",
+            {
+                "legs": [
+                    {"type": "limit", "limit_price": Decimal("210")},
+                    {"type": "stop", "stop_price": Decimal("180")},
+                ]
+            },
+        ),
+    ],
+)
+def test_matching_complex_order_classes_remain_indeterminate_until_legs_are_modeled(
+    order_class: str,
+    nested_terms: dict[str, object],
+) -> None:
+    result = _observe(
+        intent=_intent(order_class=order_class, **nested_terms),
+        broker_order=_broker_order(order_class=order_class, **nested_terms),
+    )
+
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
+        result=result,
     )
 
 

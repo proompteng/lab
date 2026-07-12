@@ -409,7 +409,7 @@ def _parse_terms(
         or side not in {"buy", "sell"}
         or order_type not in _ORDER_TYPES
         or time_in_force not in _TIME_IN_FORCE
-        or order_class is None
+        or order_class != "simple"
         or position_intent is _INVALID
         or not isinstance(extended_hours, bool)
     ):
@@ -562,10 +562,13 @@ def _decimal(
         or (not allow_zero and normalized == 0)
     ):
         return None
+    if normalized == 0:
+        normalized = Decimal("0")
     sign, digits, exponent = normalized.as_tuple()
     del sign
-    scale = max(-cast(int, exponent), 0)
-    integer_digits = max(len(digits) - scale, 0)
+    normalized_exponent = cast(int, exponent)
+    scale = max(-normalized_exponent, 0)
+    integer_digits = max(len(digits) + normalized_exponent, 0)
     if scale > 8 or integer_digits > 12:
         return None
     return normalized
