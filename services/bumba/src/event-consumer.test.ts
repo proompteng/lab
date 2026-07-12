@@ -494,7 +494,7 @@ test('missing merge commits are fetched with GitHub auth and without auto-mainte
   try {
     expect(__test__.buildAuthenticatedGitArgs(['fetch', '--no-auto-maintenance', 'origin', 'deadbeef'])).toEqual([
       '-c',
-      'http.extraheader=Authorization: Bearer github-token',
+      'http.extraheader=Authorization: Basic eC1hY2Nlc3MtdG9rZW46Z2l0aHViLXRva2Vu',
       'fetch',
       '--no-auto-maintenance',
       'origin',
@@ -527,7 +527,7 @@ test('failed authenticated git fetch retries anonymously for public repositories
       {
         args: [
           '-c',
-          'http.extraheader=Authorization: Bearer stale-token',
+          'http.extraheader=Authorization: Basic eC1hY2Nlc3MtdG9rZW46c3RhbGUtdG9rZW4=',
           'fetch',
           '--no-auto-maintenance',
           'origin',
