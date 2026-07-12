@@ -1127,7 +1127,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
   const outputRoot = String(runtime.output_root ?? DEFAULT_OUTPUT_ROOT)
   const workflowOutputRoot = resolveWorkflowOutputRoot(outputRoot)
   const artifactRoot = `${outputRoot.replace(/\/+$/, '')}/${normalizeRunToken(runId)}`
-  const cachedDataset =
+  const cachedDatasetRow =
     requestedCachePolicy === 'refresh'
       ? null
       : await db
@@ -1136,6 +1136,12 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
           .where('cache_key', '=', cacheKey)
           .where('status', '=', 'ready')
           .executeTakeFirst()
+  const cachedArtifactPath = asString(cachedDatasetRow?.artifact_path)
+  const cachedChunkManifestPath = asString(cachedDatasetRow?.chunk_manifest_path)
+  const cachedDataset =
+    cachedDatasetRow && cachedArtifactPath?.startsWith('s3://') && cachedChunkManifestPath?.startsWith('s3://')
+      ? cachedDatasetRow
+      : null
   const cacheDecision = cachedDataset ? 'hit' : requestedCachePolicy === 'refresh' ? 'refresh' : 'miss'
   const cacheStatus = cachedDataset ? 'hit' : 'miss'
   const cachePaths = buildDatasetCacheArtifactPaths(cacheKey, asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT)
@@ -1426,7 +1432,7 @@ export const submitTorghutSimulationCampaign = async (request: TorghutSimulation
       const label = asString(windowSpec.label)
       if (label) manifest.window_label = label
       manifest.campaign = {
-        ...(asRecord(manifest.campaign) ?? {}),
+        ...asRecord(manifest.campaign),
         campaignId,
         windowSetRef: normalized.windowSetRef,
         gateConfigRef: normalized.gateConfigRef,
