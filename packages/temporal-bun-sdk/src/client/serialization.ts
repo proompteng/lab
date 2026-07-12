@@ -218,6 +218,7 @@ export const buildStartWorkflowRequest = async (
   return create(StartWorkflowExecutionRequestSchema, {
     namespace,
     workflowId: options.workflowId,
+    workflowIdReusePolicy: options.workflowIdReusePolicy,
     workflowType,
     taskQueue,
     identity,

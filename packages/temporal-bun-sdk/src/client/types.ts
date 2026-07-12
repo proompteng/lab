@@ -1,4 +1,4 @@
-import type { VersioningBehavior } from '../proto/temporal/api/enums/v1/workflow_pb'
+import type { VersioningBehavior, WorkflowIdReusePolicy } from '../proto/temporal/api/enums/v1/workflow_pb'
 
 export interface WorkflowHandle {
   workflowId: string
@@ -41,6 +41,7 @@ export interface StartWorkflowOptions {
   namespace?: string
   identity?: string
   versioningBehavior?: VersioningBehavior
+  workflowIdReusePolicy?: WorkflowIdReusePolicy
   cronSchedule?: string
   memo?: Record<string, unknown>
   headers?: Record<string, unknown>

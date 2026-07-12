@@ -11,7 +11,7 @@ import { WorkerRuntime } from './worker/runtime'
 import type { WorkflowDefinitions } from './workflow/definition'
 
 export { WorkerVersioningMode } from './proto/temporal/api/enums/v1/deployment_pb'
-export { VersioningBehavior } from './proto/temporal/api/enums/v1/workflow_pb'
+export { VersioningBehavior, WorkflowIdReusePolicy } from './proto/temporal/api/enums/v1/workflow_pb'
 
 export interface CreateWorkerOptions {
   config?: TemporalConfig
