@@ -47,6 +47,8 @@ def _shift_claim_recovery_after(
         ),
         {"decision_id": decision_id},
     )
+
+
 def _enable_claim_guard(session: Session) -> None:
     session.execute(
         text(
