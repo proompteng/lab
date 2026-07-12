@@ -538,7 +538,7 @@ export const resolveProviderCircuitStateFromRows = (params: {
   for (const row of params.rows) {
     const status = row.status.trim().toLowerCase()
     if (status === 'succeeded' || status === 'partial') break
-    if (status !== 'failed' && status !== 'cancelled') break
+    if (status !== 'failed') break
     consecutiveFailures += 1
     if (!lastFailureAt) {
       lastFailureAt = row.updatedAt
@@ -592,7 +592,7 @@ const buildDegradedSnapshotMetadata = (params: {
   payload.providerCircuit = coercePayload(params.latestRun.metadata.providerCircuit)
   payload.fallbackUsed = payload.provider !== preferredProvider
 
-  if (params.latestRun.status === 'failed' || params.latestRun.status === 'cancelled') {
+  if (params.latestRun.status === 'failed') {
     payload.generationFailed = true
     payload.degradedReason =
       payload.lastFailureCategory ?? params.latestRun.error ?? `${params.domain}_generation_failed_all_models`
@@ -616,7 +616,7 @@ export const getMarketContextProviderResult = async (params: {
 
   if (!db) {
     const riskFlags = [`${params.domain}_missing`, `${params.domain}_database_unavailable`]
-    if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
+    if (latestRun?.status === 'failed') {
       riskFlags.push(`${params.domain}_generation_failed_all_models`, 'market_context_degraded_last_good')
     }
     return {
@@ -658,7 +658,7 @@ export const getMarketContextProviderResult = async (params: {
       settings,
       now,
     })
-    if (latestRun?.status === 'failed' || latestRun?.status === 'cancelled') {
+    if (latestRun?.status === 'failed') {
       riskFlags.add(`${params.domain}_generation_failed_all_models`)
       riskFlags.add('market_context_degraded_last_good')
     }
