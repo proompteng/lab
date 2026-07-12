@@ -41,7 +41,7 @@ spec:
         - name: allowMissingState
         - name: outputRoot
     container:
-      image: registry.ide-newton.ts.net/lab/torghut@sha256:f10eaec1ba7181509ff01c8c4e1ca6b66132242d75d81e0fa0188df2308dcea9
+      image: registry.ide-newton.ts.net/lab/torghut@sha256:be9883a606407d0e2ce6f3553ce67e6c1fae562386a631677110603f0b21593c
       imagePullPolicy: Always
       env:
         - name: DB_DSN
