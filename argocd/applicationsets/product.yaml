@@ -416,7 +416,7 @@ spec:
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: manual
-                enabled: "true"
+                enabled: "false"
               - name: miel
                 path: argocd/applications/miel
                 namespace: miel

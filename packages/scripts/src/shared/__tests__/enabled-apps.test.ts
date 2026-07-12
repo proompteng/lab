@@ -30,12 +30,13 @@ const entry = (name: string) => {
 
 describe('enabled app inventory', () => {
   it('loads only root-enabled ApplicationSet entries plus direct root-managed Applications', () => {
-    expect(inventory.applicationSetEntryCount).toBe(69)
+    expect(inventory.applicationSetEntryCount).toBe(68)
     expect(inventory.directApplicationCount).toBe(1)
-    expect(inventory.entries).toHaveLength(70)
+    expect(inventory.entries).toHaveLength(69)
     expect(inventory.entries.some((candidate) => candidate.name === 'facteur')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'bonjour')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'olden')).toBe(false)
+    expect(inventory.entries.some((candidate) => candidate.name === 'posthog')).toBe(false)
     expect(inventory.entries.some((candidate) => candidate.name === 'sag')).toBe(false)
   })
 
