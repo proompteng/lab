@@ -2,13 +2,15 @@
 
 ## Operating Contract
 
-- Work from the requested outcome. Infer ordinary implementation details from context, preserve explicit constraints, required evidence, success criteria, and output format, and ask only when a material ambiguity could change the outcome, risk, or approval boundary.
-- For review, explanation, diagnosis, or planning requests, inspect and report without changing state. For build, fix, or change requests, make in-scope local edits and run relevant non-destructive validation. Reading, searching, inspecting logs, editing in-scope code, and running local tests are pre-approved.
-- Require confirmation for destructive actions, external writes not inherent to the requested workflow, purchases, credential or permission changes, and material scope expansion.
+- Infer the requested goal and intended level of work from context. Preserve domain context, hard constraints, approval boundaries, success criteria, required evidence, and output format. Choose ordinary implementation steps yourself; ask only when an important ambiguity could materially change one of those.
+- For requests to answer, explain, review, diagnose, or plan, inspect the relevant materials and report the result. Do not implement changes unless the request also asks for them.
+- For requests to change, build, or fix, make the requested in-scope local changes and run relevant non-destructive validation without asking first. Safe local actions include reading and searching files, inspecting logs and repository state, editing in-scope code, and running tests.
+- Require confirmation before external writes not explicitly requested, destructive actions, purchases, credential or permission changes, or a material expansion of scope.
 - Complete the requested outcome before yielding. For multi-step work, keep a short plan, update it only at meaningful milestones, and avoid narrating routine tool use.
 - Start from concrete evidence and reproduce defects when practical. Gather context until you can name the files or resources to change and the validation path, then act without repeating equivalent searches or reads.
 - Lead final responses with the result, evidence, validation commands and outcomes, material caveats or blockers, and the next required action. Omit repeated background and generic reassurance.
 - Check the nearest `README` or nested `AGENTS.md` for component-specific rules.
+- Keep this root guide repository-wide. Add new path-specific rules to the nearest nested `AGENTS.md` instead of expanding the global instruction chain.
 
 ## Repository Map
 
@@ -23,7 +25,7 @@
 
 - Prefer `nix develop` from the repository root. Run `toolchain-doctor` inside the shell when versions look wrong.
 - Pinned versions: Node 24.11.1, Bun 1.3.14, Go 1.25.5, Ruby 3.4.7 with Bundler 2.7+, and Helm 3. Go services support Go 1.24+.
-- Python support: 3.9–3.12 for `apps/alchimie`; 3.11–3.12 for `services/torghut`.
+- Python support: 3.9–3.12 for `apps/alchimie`; see nested guidance for Python services.
 - Helm 4 is not supported for `kustomize --enable-helm` in this repository.
 - Optional local direnv setup: copy `.envrc.example` to `.envrc`, then run `direnv allow`.
 - Do not edit generated output (`dist/`, `build/`, `_generated`) or lockfiles (`bun.lock`, `bun.lockb`) directly; use the owning generator.
@@ -44,11 +46,9 @@
 ## Memory Workflow
 
 - Before substantial investigation or implementation, retrieve relevant prior context from the repository root with `bun run --filter memories retrieve-memory --query "<task, service, and relevant identifiers>" --limit 10`.
-- Retrieval searches all namespaces by default. Add `--task-name "<namespace>"` only when intentionally restricting the search to one stable namespace.
-- Treat retrieved memories as leads, not authority. Verify important claims against the current branch, current documentation, or live state before acting.
-- After completing work, save a memory only when it contains durable context that will materially help future tasks, such as architectural decisions, discovered constraints, operational facts, or important identifiers. Use `bun run --filter memories save-memory --task-name "<stable-namespace>" --content "<durable context>" --summary "<short summary>" --tags "<comma-separated-tags>"`.
-- Do not save secrets, credentials, access tokens, private user data, raw logs, transient CI or rollout status, speculative conclusions, or facts that are easily rediscovered without added context.
-- In agents-shell and other Kubernetes workloads, the scripts auto-detect the in-cluster Agents endpoint. Memory unavailability is non-blocking unless the task explicitly depends on it.
+- Retrieval searches all namespaces by default; use `--task-name "<namespace>"` only to restrict the search. Treat results as leads and verify important claims against the current branch, documentation, or live state.
+- After completing work, save only durable context that will materially help future tasks—architectural decisions, discovered constraints, operational facts, or important identifiers—with `bun run --filter memories save-memory --task-name "<stable-namespace>" --content "<durable context>" --summary "<short summary>" --tags "<comma-separated-tags>"`.
+- Never save secrets, credentials, tokens, private user data, raw logs, transient CI or rollout status, speculation, or easily rediscovered facts. The scripts auto-detect the in-cluster Agents endpoint; memory unavailability is non-blocking unless the task explicitly depends on it.
 
 ## Code Standards
 
@@ -79,11 +79,6 @@
 - Build every PR body from `.github/PULL_REQUEST_TEMPLATE.md`. Describe only actual changes, fill each retained section, use `N/A` where appropriate, check completed checklist items, and remove placeholders or duplicate sections before create or update.
 - Run focused local validation before pushing. Fix all required CI failures before reporting the PR ready or merging.
 - Ensure CI provides language-appropriate linting for every touched path: Oxlint/Oxfmt for TypeScript, Ruff for Python, and the service-specific Go linter where applicable.
-- For `services/torghut`, run all required type checks before claiming success:
-  - `uv sync --frozen --extra dev`
-  - `uv run --frozen pyright --project pyrightconfig.json`
-  - `uv run --frozen pyright --project pyrightconfig.alpha.json`
-  - `uv run --frozen pyright --project pyrightconfig.scripts.json`
 - Use squash merges: `gh pr merge <number> --squash -R proompteng/lab`. Do not pass `--delete-branch`, which conflicts with worktrees.
 - Normal deployments flow through committed CI/CD and GitOps; do not deploy services directly from a worktree.
 
