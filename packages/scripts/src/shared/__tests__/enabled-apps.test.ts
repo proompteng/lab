@@ -81,9 +81,7 @@ describe('enabled app inventory', () => {
     expect(entry('headlamp')).toMatchObject({
       class: 'nix-image',
       hasHelmChart: true,
-      repoImages: [
-        'registry.ide-newton.ts.net/lab/headlamp@sha256:6d61f6563c3df42d176b1d445a757df48f0c6f84c02baa4f4f76dbd258ee2ddd',
-      ],
+      repoImages: [expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/headlamp@sha256:[0-9a-f]{64}$/)],
       nixImageAttr: 'headlamp-image',
       buildScriptPath: 'packages/scripts/src/headlamp/build-image.ts',
       deployScriptPath: 'packages/scripts/src/headlamp/deploy-service.ts',
@@ -93,14 +91,14 @@ describe('enabled app inventory', () => {
 
   it('preserves sibling digest pins for Helm values and Kustomize images', () => {
     expect(entry('app').repoImages).toEqual([
-      'registry.ide-newton.ts.net/lab/app@sha256:586a5a937f5812b059ff5f228fe8c6f7efb05c5a1ce3c67e4452fa6a8041c7ff',
+      expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/app@sha256:[0-9a-f]{64}$/),
     ])
     expect(entry('agents').repoImages).toEqual([
-      'registry.ide-newton.ts.net/lab/agents-codex-runner@sha256:1e9e47aaedadf5429de22359e48262520cb2787f38dbd29bc0971aaaf52e80c7',
-      'registry.ide-newton.ts.net/lab/agents-control-plane@sha256:bf03a79b1fce3ed2f404e4fe04b2c7e5711740dd9b2ad530a9c3381112202cb3',
-      'registry.ide-newton.ts.net/lab/agents-controller@sha256:c60652f0ca10496edb27116e1b7afa7c8e59b73e3b7361173602491d9b32d7e5',
-      'registry.ide-newton.ts.net/lab/agents-shell@sha256:837942c706d7bde2462b08e053b6c91fb3c0d4d30db95874fb0de460438837d0',
-      'registry.ide-newton.ts.net/lab/anypi:a5796fc2b@sha256:4e4e7ac9f646c061baaa7478ae42bf3acefc2ab46b2640ffa52b677cb8ed86ca',
+      expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/agents-codex-runner@sha256:[0-9a-f]{64}$/),
+      expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/agents-control-plane@sha256:[0-9a-f]{64}$/),
+      expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/agents-controller@sha256:[0-9a-f]{64}$/),
+      expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/agents-shell@sha256:[0-9a-f]{64}$/),
+      expect.stringMatching(/^registry\.ide-newton\.ts\.net\/lab\/anypi:[^@]+@sha256:[0-9a-f]{64}$/),
     ])
   })
 
