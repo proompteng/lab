@@ -87,11 +87,12 @@
 ## Codex Reviews
 
 - Treat Codex review as a required PR completion gate in addition to CI. Codex feedback can arrive after status checks pass, so do not merge or report a PR ready immediately after `gh pr checks` succeeds.
-- Let the automatic Codex review run while CI is active. After CI completes, inspect the current head SHA, review submissions, and unresolved threads once; do not trigger or poll for Codex review.
+- Let the automatic Codex review run while CI is active. After CI completes, inspect the current head SHA, review submissions, unresolved threads, and PR reactions once; do not trigger or poll for Codex review.
+- Treat a `+1` reaction from `chatgpt-codex-connector[bot]` on the PR as Codex approval when the reaction was created after the current head commit and there are no unresolved actionable Codex threads. GitHub reactions do not carry a reviewed commit SHA, so a later head commit makes the reaction stale and requires a new Codex review signal.
 - Fetch thread-aware review state; flat issue/PR comments are insufficient. Inspect unresolved inline threads, review submissions, resolution state, and the reviewed commit SHA.
 - Address actionable findings in severity order, with P0/P1 correctness, security, data-loss, and rollout issues blocking all lower-priority work. Add regression coverage or exact live validation appropriate to the finding.
 - Push the fix before replying. Reply with the commit and validation evidence, and resolve the thread only after the fix is present on the PR branch.
-- Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review targets an older commit.
+- Do not merge or report a PR ready while an actionable Codex thread is unresolved, Codex review is still pending, or the only Codex review signal targets or predates the current head commit.
 
 ## UI/UX
 
