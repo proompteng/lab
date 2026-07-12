@@ -11,6 +11,7 @@ from typing import AsyncIterator, cast
 from fastapi import FastAPI, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.db import SessionLocal
 from app.trading.loop_status import (
@@ -183,6 +184,7 @@ async def _runtime_loop() -> None:
 
 def _run_one_cycle() -> CycleResult:
     session = SessionLocal()
+    cycle_failed = False
     try:
         result = runtime_state.service.run_once(session)
         runtime_state.latest_cycle = result
@@ -190,12 +192,21 @@ def _run_one_cycle() -> CycleResult:
         runtime_state.metrics.record_cycle(result)
         return result
     except Exception as exc:
-        session.rollback()
+        cycle_failed = True
         runtime_state.latest_error = f"{type(exc).__name__}:{exc}"
         runtime_state.metrics.record_error(exc)
+        try:
+            session.rollback()
+        except SQLAlchemyError:
+            logger.exception("Hyperliquid execution cycle rollback failed")
         raise
     finally:
-        session.close()
+        try:
+            session.close()
+        except SQLAlchemyError:
+            if not cycle_failed:
+                raise
+            logger.exception("Hyperliquid execution cycle session close failed")
 
 
 def _runtime_report_payload() -> dict[str, object]:

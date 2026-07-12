@@ -13,10 +13,12 @@ from .exchange import HyperliquidExecutionExchange
 from .feed_reader import FeedStatus
 from .maintenance import close_largest_positions_over_cap, risk_state_over_cap
 from .models import (
+    AccountState,
     CycleRecord,
     CycleResult,
     ExecutionMarket,
     FeatureSnapshot,
+    Fill,
     OpenOrder,
     RiskState,
     RuntimeDependencyStatus,
@@ -209,39 +211,46 @@ class HyperliquidExecutionService:
                 max_markets=self._config.max_markets_per_cycle,
             ),
         )
-        repository.upsert_markets(feed_markets)
         execution_markets, execution_status = self._exchange.filter_supported_markets(
             feed_markets
         )
         liquid_markets, liquidity_status = self._exchange.filter_crossable_markets(
             execution_markets
         )
-        fresh_features = self._fresh_features(liquid_markets)
-        selected_markets, selected_features = _select_markets_with_fresh_features(
-            liquid_markets, fresh_features
+        selection = _selected_execution(
+            liquid_markets,
+            self._fresh_features(liquid_markets),
         )
-        feature_status = _feature_status(liquid_markets, fresh_features)
-        open_order_status = self._reconcile_exchange_state(
-            repository, selected_markets, observed_at
-        )
+        exchange_state = self._read_exchange_state(selection.markets)
         exchange_status = self._exchange.dependency_status()
+        execution_metadata_details = self._exchange.execution_metadata_details()
+
+        # Complete every dependency read before opening the cycle transaction.
+        # PostgreSQL enforces a short idle-in-transaction timeout, while these
+        # HTTP/SDK reads can legitimately consume their full network timeout.
+        repository.upsert_markets(feed_markets)
+        open_order_status = self._persist_exchange_state(
+            repository,
+            exchange_state,
+            observed_at,
+        )
         return _CycleContext(
-            markets=selected_markets,
-            features=selected_features,
+            markets=selection.markets,
+            features=selection.features,
             dependencies=feed_status.statuses
             + (
                 execution_status,
                 liquidity_status,
-                feature_status,
+                selection.status,
                 open_order_status,
                 exchange_status,
             ),
             universe_details=universe_details(
                 feed_details,
                 (execution_status, liquidity_status),
-                feature_status,
-                selected_markets,
-                self._exchange.execution_metadata_details(),
+                selection.status,
+                selection.markets,
+                execution_metadata_details,
             ),
         )
 
@@ -257,25 +266,32 @@ class HyperliquidExecutionService:
             if feature.source_lag_seconds <= self._config.signal_staleness_seconds
         )
 
-    def _reconcile_exchange_state(
+    def _read_exchange_state(
         self,
-        repository: HyperliquidExecutionRepository,
         execution_markets: tuple[ExecutionMarket, ...],
+    ) -> "_ReconciledExchangeState":
+        market_id_by_coin = market_id_by_reconciliation_coin(execution_markets)
+        return _ReconciledExchangeState(
+            fills=tuple(self._exchange.reconcile_fills(market_id_by_coin)),
+            account_state=self._exchange.reconcile_account(market_id_by_coin),
+            open_order_coins=self._exchange.reconcile_open_order_coins(
+                frozenset(market_id_by_coin)
+            ),
+        )
+
+    @staticmethod
+    def _persist_exchange_state(
+        repository: HyperliquidExecutionRepository,
+        exchange_state: "_ReconciledExchangeState",
         observed_at: datetime,
     ) -> RuntimeDependencyStatus:
-        market_id_by_coin = market_id_by_reconciliation_coin(execution_markets)
-        repository.upsert_fills(self._exchange.reconcile_fills(market_id_by_coin))
-        repository.upsert_account_state(
-            self._exchange.reconcile_account(market_id_by_coin)
-        )
-        open_coins = self._exchange.reconcile_open_order_coins(
-            frozenset(market_id_by_coin)
-        )
+        repository.upsert_fills(exchange_state.fills)
+        repository.upsert_account_state(exchange_state.account_state)
         return RuntimeDependencyStatus(
             name="hyperliquid_open_orders",
             ready=True,
             observed_at=observed_at,
-            details={"open_order_coins": sorted(open_coins)},
+            details={"open_order_coins": sorted(exchange_state.open_order_coins)},
         )
 
 
@@ -306,6 +322,20 @@ class _CycleContext:
     features: tuple[FeatureSnapshot, ...]
     dependencies: tuple[RuntimeDependencyStatus, ...]
     universe_details: dict[str, object]
+
+
+@dataclass(frozen=True)
+class _ReconciledExchangeState:
+    fills: tuple[Fill, ...]
+    account_state: AccountState
+    open_order_coins: frozenset[str]
+
+
+@dataclass(frozen=True)
+class _SelectedExecution:
+    markets: tuple[ExecutionMarket, ...]
+    features: tuple[FeatureSnapshot, ...]
+    status: RuntimeDependencyStatus
 
 
 @dataclass(frozen=True)
@@ -400,6 +430,21 @@ def _select_markets_with_fresh_features(
         feature_by_market_id[market.market_id] for market in selected_markets
     )
     return selected_markets, selected_features
+
+
+def _selected_execution(
+    markets: tuple[ExecutionMarket, ...],
+    features: tuple[FeatureSnapshot, ...],
+) -> _SelectedExecution:
+    selected_markets, selected_features = _select_markets_with_fresh_features(
+        markets,
+        features,
+    )
+    return _SelectedExecution(
+        markets=selected_markets,
+        features=selected_features,
+        status=_feature_status(markets, features),
+    )
 
 
 def _cycle_universe_details(
