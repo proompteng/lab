@@ -71,25 +71,28 @@ export const streamQuantEvents = async (request: Request) => {
       safeEnqueue('retry: 1000\n\n')
       safeEnqueue(': connected\n\n')
 
+      const matchesRequestedAccount = (eventAccount: string) =>
+        account ? eventAccount === account : eventAccount === ''
+
       const listener = (event: QuantStreamEvent) => {
         if (event.type === 'quant.metrics.snapshot') {
           if (event.frame.strategyId !== strategyIdResult.value) return
           if (event.frame.window !== windowResult.value) return
-          if (account && event.frame.account !== account) return
+          if (!matchesRequestedAccount(event.frame.account)) return
           push(event)
           return
         }
         if (event.type === 'quant.metrics.delta') {
           if (event.strategyId !== strategyIdResult.value) return
           if (event.window !== windowResult.value) return
-          if (account && event.account !== account) return
+          if (!matchesRequestedAccount(event.account)) return
           push(event)
           return
         }
         if (event.type === 'quant.alert.opened' || event.type === 'quant.alert.resolved') {
           if (event.alert.strategyId !== strategyIdResult.value) return
           if (event.alert.window !== windowResult.value) return
-          if (account && event.alert.account !== account) return
+          if (!matchesRequestedAccount(event.alert.account)) return
           push(event)
           return
         }

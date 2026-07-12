@@ -66,10 +66,8 @@ create_tree() {
       return 1
     fi
     if ! git -C "$target_path" pull --ff-only; then
-      if ! git -C "$target_path" reset --hard "origin/$branch"; then
-        echo "create_tree: failed to sync with origin/$branch" >&2
-        return 1
-      fi
+      echo "create_tree: origin/$branch cannot be fast-forwarded without discarding local work" >&2
+      return 1
     fi
   else
     git -C "$target_path" config branch."$branch".remote origin

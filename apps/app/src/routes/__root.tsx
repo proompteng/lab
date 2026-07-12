@@ -18,7 +18,7 @@ export const Route = createRootRoute({
       throw redirect({
         to: '/login',
         search: {
-          next: location.pathname,
+          next: location.href,
         },
       })
     }

@@ -442,18 +442,6 @@ type ToolSummary =
 
 const toToolLogicalId = (kind: string, toolId: string) => `tool:${kind}-${toolId}`
 
-const summarizePlan = (record: unknown): string | null => {
-  if (!record || typeof record !== 'object') return null
-  const value = record as Record<string, unknown>
-  return toPlanMarkdown(value)
-}
-
-const summarizeRateLimits = (record: unknown): string | null => {
-  if (!record || typeof record !== 'object') return null
-  const value = record as Record<string, unknown>
-  return toRateLimitMarkdown(value.rateLimits)
-}
-
 const summarizeFileChanges = (event: ToolEvent) => {
   const rawChanges = Array.isArray(event.changes) ? event.changes : []
   const changedPaths: string[] = []
@@ -1579,6 +1567,18 @@ const createSession = (args: {
         forceDetailLink: Boolean(summary.imageUrl),
       })
       return
+    }
+
+    // Unknown and future tool kinds still need a visible transcript fallback.
+    // The rich renderer above only handles known structured kinds.
+    for (const action of toolRenderer.onToolEvent(toolEvent)) {
+      if (action.type === 'openCommandFence') {
+        openCommandFence(frames)
+      } else if (action.type === 'closeCommandFence') {
+        closeCommandFence(frames)
+      } else if (action.type === 'emitContent' && action.content) {
+        emitContentDelta(frames, action.content)
+      }
     }
   }
 

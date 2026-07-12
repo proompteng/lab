@@ -437,8 +437,8 @@ describe('submitTorghutSimulationRun', () => {
       cache_key: cacheKey,
       lane: 'equity',
       status: 'ready',
-      artifact_path: 'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst',
-      chunk_manifest_path: 'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst.manifest.json',
+      artifact_path: 's3://torghut-simulations/cache/prior-run/source-dump.jsonl.zst',
+      chunk_manifest_path: 's3://torghut-simulations/cache/prior-run/source-dump.jsonl.zst.manifest.json',
       built_by_run_id: 'prior-run',
       hit_count: 2,
     })
@@ -453,15 +453,15 @@ describe('submitTorghutSimulationRun', () => {
     expect(result.run.cacheStatus).toBe('hit')
     const cacheRow = state.cache.get(cacheKey)
     expect(cacheRow?.status).toBe('ready')
-    expect(cacheRow?.artifact_path).toBe('artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst')
+    expect(cacheRow?.artifact_path).toBe('s3://torghut-simulations/cache/prior-run/source-dump.jsonl.zst')
     expect(cacheRow?.chunk_manifest_path).toBe(
-      'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst.manifest.json',
+      's3://torghut-simulations/cache/prior-run/source-dump.jsonl.zst.manifest.json',
     )
     expect(cacheRow?.built_by_run_id).toBe('prior-run')
     expect(cacheRow?.hit_count).toBe(3)
     expect((state.runs.get('sim-cache-hit-proof')?.metadata as Record<string, unknown>)?.cacheDecision).toBe('hit')
     expect((state.runs.get('sim-cache-hit-proof')?.metadata as Record<string, unknown>)?.cacheArtifactPath).toBe(
-      'artifacts/torghut/simulations/prior-run/source-dump.jsonl.zst',
+      's3://torghut-simulations/cache/prior-run/source-dump.jsonl.zst',
     )
   })
 
@@ -503,6 +503,16 @@ describe('submitTorghutSimulationRun', () => {
       .digest('hex')
     const expectedArtifactPath = `s3://argo-workflows/torghut-simulation-cache/${cacheKey}/source-dump.jsonl.zst`
     const expectedManifestPath = `${expectedArtifactPath}.manifest.json`
+
+    state.cache.set(cacheKey, {
+      cache_key: cacheKey,
+      lane: 'equity',
+      status: 'ready',
+      artifact_path: 'artifacts/local-only/source-dump.jsonl.zst',
+      chunk_manifest_path: 'artifacts/local-only/source-dump.jsonl.zst.manifest.json',
+      built_by_run_id: 'stale-local-run',
+      hit_count: 4,
+    })
 
     const result = await submitTorghutSimulationRun({
       runId: 'sim-cache-miss-proof',

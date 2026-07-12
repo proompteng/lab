@@ -574,8 +574,8 @@ class _ClickHouseSignalIngestorCoreMethods(_ClickHouseSignalIngestorCoreBase):
         return SignalBatch(
             signals=[],
             cursor_at=cursor_at,
-            cursor_seq=cursor_seq if fast_forwarded else None,
-            cursor_symbol=cursor_symbol if fast_forwarded else None,
+            cursor_seq=cursor_seq,
+            cursor_symbol=cursor_symbol,
             query_start=query_start,
             query_end=query_end,
             signal_lag_seconds=signal_lag_seconds,

@@ -50,6 +50,7 @@ const DEFAULT_LEASE_NAME = 'symphony-leader'
 const DEFAULT_LEASE_DURATION_SECONDS = 30
 const DEFAULT_RENEW_DEADLINE_SECONDS = 20
 const DEFAULT_RETRY_PERIOD_SECONDS = 5
+const KUBERNETES_REQUEST_TIMEOUT_MS = 5_000
 const SERVICE_ACCOUNT_DIRECTORY = '/var/run/secrets/kubernetes.io/serviceaccount'
 const TOKEN_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/token`
 const CA_PATH = `${SERVICE_ACCOUNT_DIRECTORY}/ca.crt`
@@ -217,6 +218,9 @@ const requestKubernetes = (
         )
 
         request.on('error', reject)
+        request.setTimeout(KUBERNETES_REQUEST_TIMEOUT_MS, () => {
+          request.destroy(new Error(`kubernetes lease request timed out after ${KUBERNETES_REQUEST_TIMEOUT_MS}ms`))
+        })
         if (rawBody) {
           request.write(rawBody)
         }
@@ -239,13 +243,12 @@ const resolveLeaderElectionConfig = (): Effect.Effect<LeaderElectionConfig, neve
     const inCluster = Boolean(process.env.KUBERNETES_SERVICE_HOST)
     const defaultEnabled = inCluster
     const enabled = parseBooleanEnv(process.env.SYMPHONY_LEADER_ELECTION_ENABLED, defaultEnabled)
-    const token = yield* readOptionalFile(TOKEN_PATH)
     const namespace =
       (process.env.SYMPHONY_LEADER_ELECTION_LEASE_NAMESPACE ?? '').trim() ||
       (yield* readOptionalFile(NAMESPACE_PATH)) ||
       null
 
-    const required = enabled && inCluster && token !== null && namespace !== null
+    const required = enabled
 
     const config = {
       enabled,
@@ -302,6 +305,10 @@ export const makeLeaderElectionLayer = (logger: Logger) =>
       const config = yield* resolveLeaderElectionConfig()
       const token = (yield* readOptionalFile(TOKEN_PATH)) ?? ''
       const ca = (yield* readOptionalFile(CA_PATH)) ?? ''
+      const credentialError =
+        config.required && (!token || !ca || !config.leaseNamespace)
+          ? 'leader election is enabled but Kubernetes service-account credentials are incomplete'
+          : null
       const identity = resolveIdentity()
       const initialStatus: LeaderSnapshot = {
         enabled: config.enabled,
@@ -406,6 +413,11 @@ export const makeLeaderElectionLayer = (logger: Logger) =>
       const tick = Effect.gen(function* () {
         if (!config.required) {
           yield* updateStatus({ isLeader: true, lastError: null })
+          return
+        }
+
+        if (credentialError) {
+          yield* updateStatus({ isLeader: false, lastAttemptAt: nowIso(), lastError: credentialError })
           return
         }
 

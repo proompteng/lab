@@ -210,6 +210,16 @@ def build_historical_profitability_bundle(
     if baseline_run_dirs:
         baseline_runs = [_load_run_summary(path) for path in baseline_run_dirs]
         _require_consistent_lineage(baseline_runs, label="baseline")
+        candidate_days = [
+            item.trading_day
+            for item in sorted(candidate_runs, key=lambda item: item.trading_day)
+        ]
+        baseline_days = [
+            item.trading_day
+            for item in sorted(baseline_runs, key=lambda item: item.trading_day)
+        ]
+        if baseline_days != candidate_days:
+            raise RuntimeError("baseline_trading_days_mismatch")
         baseline_report_payload = _build_report_payload(baseline_runs)
         inferred_baseline_id = baseline_id.strip() or baseline_runs[0].candidate_id
     else:

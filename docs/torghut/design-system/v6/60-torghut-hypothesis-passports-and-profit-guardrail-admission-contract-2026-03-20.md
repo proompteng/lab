@@ -1,6 +1,6 @@
 # 60. Torghut Hypothesis Passports and Profit Guardrail Admission Contract (2026-03-20)
 
-Status: Approved for implementation (`plan`)
+Status: Superseded; non-authoritative. See `60-torghut-hypothesis-passports-and-capability-quote-auction-contract-2026-03-20.md`.
 
 ## Source Implementation Audit (2026-07-04)
 
@@ -14,7 +14,6 @@ Status: Approved for implementation (`plan`)
   - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
   - `docs/torghut/production-readiness-proof-runbook.md`
 - Design drift note: Operational docs need runtime status and alerting readback before being treated as complete.
-
 
 ## Executive summary
 

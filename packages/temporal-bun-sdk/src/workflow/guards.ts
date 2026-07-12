@@ -587,7 +587,7 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   if (typeof originalWebSocket === 'function') {
     globalRef[ORIGINAL_WEBSOCKET_SYMBOL] = originalWebSocket
     // biome-ignore lint/complexity/useArrowFunction: must remain constructable (usable with `new`)
-    ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = function (...args: unknown[]) {
+    const guardedWebSocket = function (this: unknown, ...args: unknown[]) {
       const ctx = currentWorkflowLogContext()
       if (!ctx) {
         handleViolation({
@@ -595,15 +595,23 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
           message: 'WebSocket is not allowed in workflow code',
           remediation: 'Move socket I/O into an activity or an external service and communicate via signals.',
         })
-        return new (originalWebSocket as unknown as new (...args: unknown[]) => unknown)(...args)
+        return Reflect.construct(originalWebSocket, args, new.target ?? originalWebSocket)
       }
       handleViolation({
         api: 'WebSocket',
         message: 'WebSocket is not allowed in workflow code',
         remediation: 'Move socket I/O into an activity or an external service and communicate via signals.',
       })
-      return new (originalWebSocket as unknown as new (...args: unknown[]) => unknown)(...args)
+      return Reflect.construct(originalWebSocket, args, new.target ?? originalWebSocket)
     }
+    Object.setPrototypeOf(guardedWebSocket, originalWebSocket)
+    Object.defineProperty(guardedWebSocket, 'prototype', {
+      configurable: false,
+      enumerable: false,
+      value: (originalWebSocket as { prototype?: unknown }).prototype,
+      writable: false,
+    })
+    ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = guardedWebSocket
   }
 
   const processRef = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process

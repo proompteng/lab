@@ -1169,7 +1169,12 @@ const reconstructDeterminismState = (
           if (event.attributes?.case !== 'nexusOperationScheduledEventAttributes') {
             break
           }
-          const intent = yield* fromNexusOperationScheduled(event.attributes.value, sequence, intake)
+          const intent = yield* fromNexusOperationScheduled(
+            event.attributes.value,
+            sequence,
+            intake,
+            normalizeEventId(event.eventId),
+          )
           if (intent) {
             commandHistory.push({
               intent,
@@ -1431,6 +1436,7 @@ const fromNexusOperationScheduled = (
   attributes: NexusOperationScheduledEventAttributes,
   sequence: number,
   intake: ReplayIntake,
+  scheduledEventId?: string | null,
 ): Effect.Effect<ScheduleNexusOperationCommandIntent | undefined, unknown, never> =>
   Effect.gen(function* () {
     if (!attributes.endpoint || !attributes.service || !attributes.operation) {
@@ -1440,7 +1446,7 @@ const fromNexusOperationScheduled = (
     const input = attributes.input
       ? yield* Effect.tryPromise(async () => await intake.dataConverter.fromPayload(attributes.input))
       : undefined
-    const operationId = attributes.nexusHeader?.[NEXUS_OPERATION_ID_HEADER] ?? `nexus-${sequence}`
+    const operationId = attributes.nexusHeader?.[NEXUS_OPERATION_ID_HEADER] ?? `nexus-${scheduledEventId ?? sequence}`
 
     const intent: ScheduleNexusOperationCommandIntent = {
       id: `schedule-nexus-operation-${sequence}`,

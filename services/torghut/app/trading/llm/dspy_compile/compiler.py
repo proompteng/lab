@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from math import ceil
 from pathlib import Path
 from typing import Any, Mapping, cast
 from urllib.parse import unquote, urlsplit
@@ -507,7 +508,7 @@ def _percentile_disc(values: list[int], *, percentile: float) -> int:
         raise ValueError("percentile_values_required")
     normalized = min(max(float(percentile), 0.0), 1.0)
     ordered = sorted(values)
-    index = max(int((len(ordered) - 1) * normalized), 0)
+    index = min(max(ceil(len(ordered) * normalized) - 1, 0), len(ordered) - 1)
     return ordered[index]
 
 

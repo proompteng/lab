@@ -29,6 +29,15 @@ type CommandResult = {
   exitCode: number
 }
 
+type KubernetesPodList = {
+  items?: Array<{
+    metadata?: { name?: string }
+    status?: {
+      containerStatuses?: Array<{ name?: string; imageID?: string; ready?: boolean }>
+    }
+  }>
+}
+
 type ResolvedOptions = {
   namespace: string
   deployment: string
@@ -286,9 +295,51 @@ const verifyServiceHealth = async (serviceBaseUrl: string) => {
   return stateBody
 }
 
+export const imageIdMatchesDigest = (imageId: string, expectedDigest: string): boolean => {
+  const normalizedImageId = imageId.trim()
+  const normalizedDigest = expectedDigest.trim()
+  return (
+    normalizedImageId === normalizedDigest ||
+    normalizedImageId.endsWith(`@${normalizedDigest}`) ||
+    normalizedImageId.endsWith(`://${normalizedDigest}`)
+  )
+}
+
+const verifyRunningDigest = async (options: ResolvedOptions, expectedDigest: string) => {
+  const podsResult = await runCommand('kubectl', [
+    'get',
+    'pods',
+    '-n',
+    options.namespace,
+    '-l',
+    `app.kubernetes.io/name=${options.deployment}`,
+    '-o',
+    'json',
+  ])
+  const podList = JSON.parse(podsResult.stdout) as KubernetesPodList
+  const statuses = (podList.items ?? []).flatMap((pod) =>
+    (pod.status?.containerStatuses ?? [])
+      .filter((status) => status.name === options.deployment)
+      .map((status) => ({ pod: pod.metadata?.name ?? 'unknown', ...status })),
+  )
+  if (statuses.length === 0) {
+    throw new Error(`No running ${options.deployment} container image IDs were found`)
+  }
+  const mismatches = statuses.filter(
+    (status) => status.ready !== true || !status.imageID || !imageIdMatchesDigest(status.imageID, expectedDigest),
+  )
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Running ${options.deployment} image digest does not match ${expectedDigest}: ${JSON.stringify(mismatches)}`,
+    )
+  }
+  return statuses.map((status) => ({ pod: status.pod, imageID: status.imageID }))
+}
+
 export const verifyDeployment = async (options: CliOptions = {}) => {
   ensureCli('kubectl')
   const resolved = resolveOptions(options)
+  const expectedDigest = extractExpectedDigest(readFileSync(resolved.kustomizationPath, 'utf8'), resolved.imageName)
 
   await runCommand('kubectl', [
     'rollout',
@@ -300,8 +351,8 @@ export const verifyDeployment = async (options: CliOptions = {}) => {
   ])
 
   const argoStatus = await verifyArgoHealth(resolved)
+  const runningImages = await verifyRunningDigest(resolved, expectedDigest)
   const stateBody = await verifyServiceHealth(resolved.serviceBaseUrl)
-  const expectedDigest = extractExpectedDigest(readFileSync(resolved.kustomizationPath, 'utf8'), resolved.imageName)
 
   console.log(
     JSON.stringify(
@@ -310,6 +361,7 @@ export const verifyDeployment = async (options: CliOptions = {}) => {
         deployment: resolved.deployment,
         argo: argoStatus,
         expectedDigest,
+        runningImages,
         instance: stateBody.instance?.name ?? null,
       },
       null,

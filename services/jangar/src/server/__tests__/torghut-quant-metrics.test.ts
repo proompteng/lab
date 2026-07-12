@@ -28,13 +28,15 @@ describe('torghut quant metrics helpers', () => {
       { asOf: '2026-02-12T00:00:00.000Z', equity: 100 },
       { asOf: '2026-02-12T00:01:00.000Z', equity: 110 },
       { asOf: '2026-02-12T00:02:00.000Z', equity: 99 },
-      { asOf: '2026-02-12T00:03:00.000Z', equity: 105 },
+      { asOf: '2026-02-12T00:03:00.000Z', equity: 120 },
     ]
 
     const dd = __private.computeMaxDrawdown(series)
     // Peak 110 to trough 99 => -10%
     expect(dd.maxDrawdown).toBeCloseTo(-0.1, 6)
     expect(dd.drawdownDurationMinutes).toBe(1)
+    expect(dd.peakTs).toBe('2026-02-12T00:01:00.000Z')
+    expect(dd.troughTs).toBe('2026-02-12T00:02:00.000Z')
   })
 
   it('computes route provenance continuity ratios from execution metadata', () => {

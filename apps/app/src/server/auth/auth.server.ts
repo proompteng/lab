@@ -37,10 +37,14 @@ export const auth = betterAuth({
 let migrationsPromise: Promise<void> | null = null
 export const ensureAuthMigrations = async () => {
   if (!migrationsPromise) {
-    migrationsPromise = (async () => {
+    const pending = (async () => {
       const ctx = await auth.$context
       await ctx.runMigrations()
     })()
+    migrationsPromise = pending
+    pending.catch(() => {
+      if (migrationsPromise === pending) migrationsPromise = null
+    })
   }
   await migrationsPromise
 }
@@ -102,7 +106,6 @@ export const logoutResponse = async (request: Request): Promise<Response> => {
 
   const result = await auth.api.signOut({
     headers: request.headers,
-    body: {},
     returnHeaders: true,
     returnStatus: true,
   })

@@ -122,6 +122,8 @@ def build_historical_parity_report(*, run_dirs: list[Path]) -> dict[str, Any]:
             failed_reasons.append(f"legacy_path_count_nonzero:{snapshot.run_id}")
         if snapshot.fallback_count != 0:
             failed_reasons.append(f"fallback_count_nonzero:{snapshot.run_id}")
+        if not snapshot.dump_sha256:
+            failed_reasons.append(f"dump_sha256_missing:{snapshot.run_id}")
         if snapshot.parity_hash != baseline.parity_hash:
             failed_reasons.append(f"parity_hash_mismatch:{snapshot.run_id}")
         if snapshot.dump_sha256 != baseline.dump_sha256:

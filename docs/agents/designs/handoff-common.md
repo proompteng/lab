@@ -67,7 +67,7 @@ Render the full desired install (Helm via kustomize, matching Argo CD):
 
 ```bash
 mise exec helm@3 -- kustomize build --enable-helm argocd/applications/agents > /tmp/agents.yaml
-rg -n \"^kind: (Deployment|Service|CustomResourceDefinition)$\" /tmp/agents.yaml | head
+rg -n '^kind: (Deployment|Service|CustomResourceDefinition)$' /tmp/agents.yaml | head
 ```
 
 Validate schema / examples / chart renderability (includes kubeconform and size checks):
@@ -99,7 +99,7 @@ kubectl version --short
 kubectl get --raw /version
 
 # Argo CD view (requires access to namespace argocd)
-kubectl get application -n argocd agents -o yaml | rg -n \"sync|health|revision\"
+kubectl get application -n argocd agents -o yaml | rg -n 'sync|health|revision'
 
 # Workloads
 kubectl get deploy -n agents
@@ -107,7 +107,7 @@ kubectl rollout status -n agents deploy/agents
 kubectl rollout status -n agents deploy/agents-controllers
 
 # CRDs (cluster-scoped)
-kubectl get crd | rg 'proompteng\\.ai'
+kubectl get crd | rg 'proompteng\.ai'
 ```
 
 ## Rollout discipline (GitOps)

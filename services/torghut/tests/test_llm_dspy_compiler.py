@@ -401,7 +401,7 @@ class TestLLMDSPyCompiler(TestCase):
             self.assertEqual(metric_bundle["vetoAlignmentRate"], 1.0)
             self.assertEqual(metric_bundle["falseVetoRate"], 1.0)
             self.assertEqual(metric_bundle["fallbackRate"], 2 / 3)
-            self.assertEqual(metric_bundle["latencyP95Ms"], 110)
+            self.assertEqual(metric_bundle["latencyP95Ms"], 190)
 
     def test_compile_rejects_partial_observed_metrics(self) -> None:
         with TemporaryDirectory() as tmp:

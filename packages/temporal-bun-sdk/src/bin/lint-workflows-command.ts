@@ -142,7 +142,16 @@ const listChangedFiles = async (cwdPath: string): Promise<Set<string>> => {
     stdout: 'pipe',
     stderr: 'pipe',
   })
-  const text = await new Response(child.stdout).text()
+  const [text, stderr, exitCode] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ])
+  if (exitCode !== 0) {
+    throw new WorkflowLintCommandError(
+      `Unable to determine changed workflow files: ${stderr.trim() || `git diff exited with ${exitCode}`}`,
+    )
+  }
   const files = text
     .split('\n')
     .map((line) => line.trim())

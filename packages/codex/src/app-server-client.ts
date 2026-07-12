@@ -880,30 +880,41 @@ export class CodexAppServerClient {
     const { id, method, params } = message
     this.log('info', 'codex app-server request (server → client)', { id, method })
 
-    // Auto-decline risky requests to avoid hangs; extend if approvals are needed later.
-    let result: unknown = { acknowledged: true }
-
     switch (method) {
       case 'item/commandExecution/requestApproval':
-        result = { decision: 'decline', acceptSettings: null }
-        break
+        this.send({ id, result: { decision: 'decline', acceptSettings: null } })
+        return
       case 'item/fileChange/requestApproval':
-        result = { decision: 'decline' }
-        break
+        this.send({ id, result: { decision: 'decline' } })
+        return
+      case 'item/tool/requestUserInput':
+        this.send({ id, result: { answers: {} } })
+        return
+      case 'item/tool/call':
+        this.send({
+          id,
+          result: {
+            contentItems: [{ type: 'inputText', text: 'Dynamic tool calls are not supported by this client.' }],
+            success: false,
+          },
+        })
+        return
+      case 'item/permissions/requestApproval':
+        this.send({ id, result: { permissions: {}, scope: 'turn', strictAutoReview: true } })
+        return
       case 'mcpServer/elicitation/request':
-        result = { action: 'decline', content: null }
-        break
+        this.send({ id, result: { action: 'decline', content: null } })
+        return
       case 'applyPatchApproval':
-        result = { decision: 'denied' }
-        break
+        this.send({ id, result: { decision: 'denied' } })
+        return
       case 'execCommandApproval':
-        result = { decision: 'denied' }
-        break
+        this.send({ id, result: { decision: 'denied' } })
+        return
       default:
-        this.log('warn', 'unrecognized server request method, sending empty ack', { method, params })
+        this.log('warn', 'unrecognized server request method, sending method-not-found error', { method, params })
+        this.send({ id, error: { code: -32601, message: `Unsupported server request method: ${method}` } })
     }
-
-    this.send({ id, result })
   }
 
   private handleResponse(message: { id: RequestId; result?: unknown; error?: unknown }): void {

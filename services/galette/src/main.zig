@@ -67,14 +67,19 @@ fn handleConnection(conn: *std.net.Server.Connection, allocator: std.mem.Allocat
 
     var buffer: [1024]u8 = undefined;
     var newline_found = false;
+    var headers = std.array_list.Managed(u8).init(allocator);
+    defer headers.deinit();
 
     while (!newline_found) {
         const read_bytes = try conn.stream.read(&buffer);
         if (read_bytes == 0) return;
 
-        for (buffer[0..read_bytes]) |byte| {
+        for (buffer[0..read_bytes], 0..) |byte, index| {
             if (byte == '\n') {
                 newline_found = true;
+                if (index + 1 < read_bytes) {
+                    try headers.appendSlice(buffer[index + 1 .. read_bytes]);
+                }
                 break;
             }
 
@@ -95,13 +100,11 @@ fn handleConnection(conn: *std.net.Server.Connection, allocator: std.mem.Allocat
 
     const response = route(method, raw_path);
 
-    while (true) {
+    while (!headersComplete(headers.items)) {
         const bytes = try conn.stream.read(&buffer);
         if (bytes == 0) break;
-
-        const slice = buffer[0..bytes];
-        if (std.mem.indexOf(u8, slice, "\r\n\r\n")) |_| break;
-        if (std.mem.indexOf(u8, slice, "\n\n")) |_| break;
+        try headers.appendSlice(buffer[0..bytes]);
+        if (headers.items.len > 32768) return;
     }
 
     var header_buf: [256]u8 = undefined;
@@ -113,6 +116,11 @@ fn handleConnection(conn: *std.net.Server.Connection, allocator: std.mem.Allocat
 
     try conn.stream.writeAll(header);
     try conn.stream.writeAll(response.body);
+}
+
+fn headersComplete(headers: []const u8) bool {
+    return std.mem.indexOf(u8, headers, "\r\n\r\n") != null or
+        std.mem.indexOf(u8, headers, "\n\n") != null;
 }
 
 pub fn route(method: []const u8, path: []const u8) Response {
@@ -162,4 +170,10 @@ test "route handles health endpoints" {
 test "route rejects unsupported methods" {
     const res = route("POST", "/");
     try std.testing.expectEqual(@as(u16, 405), res.status_code);
+}
+
+test "headersComplete detects terminators carried from the request-line read" {
+    try std.testing.expect(headersComplete("Host: example\r\n\r\n"));
+    try std.testing.expect(headersComplete("Host: example\n\n"));
+    try std.testing.expect(!headersComplete("Host: example\r\n"));
 }

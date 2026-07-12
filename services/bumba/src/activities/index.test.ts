@@ -6,6 +6,8 @@ import { Language } from 'web-tree-sitter'
 
 import { __test__, activities, parseCompletionOutput } from './index'
 
+const activitiesSource = await Bun.file(import.meta.dir + '/index.ts').text()
+
 const runGit = (args: string[], cwd: string) => {
   const result = Bun.spawnSync(['git', ...args], { cwd, stdout: 'pipe', stderr: 'pipe' })
   if (result.exitCode !== 0) {
@@ -31,6 +33,14 @@ describe('bumba ast extraction', () => {
   it('parses tree-sitter kotlin files', async () => {
     const result = await runExtract('.kt', 'class Foo {}')
     expect(result.metadata.language).toBe('kotlin')
+  })
+
+  describe('bumba chunk index replacement', () => {
+    it('deletes chunks that are no longer present in the latest file version', () => {
+      expect(activitiesSource).toContain('DELETE FROM atlas.file_chunks')
+      expect(activitiesSource).toContain('NOT (chunk_index = ANY(')
+      expect(activitiesSource).toContain('WHERE file_version_id = ${input.fileVersionId};')
+    })
   })
 
   it('parses tree-sitter terraform files', async () => {

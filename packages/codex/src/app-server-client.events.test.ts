@@ -471,6 +471,44 @@ describe('CodexAppServerClient v2 notifications', () => {
     client.stop()
   })
 
+  it('responds to user-input requests with an empty answer map', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const responsePromise = nextMessage(child)
+    writeLine(child, {
+      id: 43,
+      method: 'item/tool/requestUserInput',
+      params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-1', questions: [] },
+    })
+
+    await expect(responsePromise).resolves.toEqual({ id: 43, result: { answers: {} } })
+    client.stop()
+  })
+
+  it('fails unsupported dynamic tool calls without returning a schema-invalid acknowledgement', async () => {
+    const { child, client } = setupClient()
+    await respondToInitialize(child)
+    await client.ensureReady()
+
+    const responsePromise = nextMessage(child)
+    writeLine(child, {
+      id: 44,
+      method: 'item/tool/call',
+      params: { threadId: 'thread-1', turnId: 'turn-1', itemId: 'item-2', tool: 'custom', arguments: {} },
+    })
+
+    await expect(responsePromise).resolves.toEqual({
+      id: 44,
+      result: {
+        contentItems: [{ type: 'inputText', text: 'Dynamic tool calls are not supported by this client.' }],
+        success: false,
+      },
+    })
+    client.stop()
+  })
+
   it('emits usage deltas from thread/tokenUsage/updated', async () => {
     const { child, client } = setupClient()
     await respondToInitialize(child)

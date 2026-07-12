@@ -10,6 +10,7 @@ from unittest.mock import patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.models import Base, LLMDecisionReview, Strategy, TradeDecision
 from app.trading.llm.dspy_compile.dataset import build_dspy_dataset_artifacts
 
@@ -217,6 +218,14 @@ class TestLLMDSPyDatasetBuilder(TestCase):
         self,
     ) -> None:
         now = datetime(2026, 2, 27, 9, 30, tzinfo=timezone.utc)
+        previous_fallback_enabled = settings.trading_universe_static_fallback_enabled
+        settings.trading_universe_static_fallback_enabled = True
+        self.addCleanup(
+            setattr,
+            settings,
+            "trading_universe_static_fallback_enabled",
+            previous_fallback_enabled,
+        )
         with Session(self.engine) as session:
             disabled_strategy = self._create_strategy(
                 session,

@@ -319,27 +319,31 @@ const annualizationFactor = (sampleSeconds: number | null) => {
 const computeMaxDrawdown = (series: Array<{ asOf: string; equity: number }>) => {
   let peak = -Infinity
   let maxDrawdown = 0
-  let peakTs: string | null = null
+  let currentPeakTs: string | null = null
+  let maxDrawdownPeakTs: string | null = null
   let troughTs: string | null = null
 
   for (const point of series) {
     if (point.equity > peak) {
       peak = point.equity
-      peakTs = point.asOf
+      currentPeakTs = point.asOf
     }
     if (peak > 0) {
       const drawdown = point.equity / peak - 1
       if (drawdown < maxDrawdown) {
         maxDrawdown = drawdown
+        maxDrawdownPeakTs = currentPeakTs
         troughTs = point.asOf
       }
     }
   }
 
   const durationMinutes =
-    peakTs && troughTs ? Math.max(0, Math.floor((Date.parse(troughTs) - Date.parse(peakTs)) / 60_000)) : null
+    maxDrawdownPeakTs && troughTs
+      ? Math.max(0, Math.floor((Date.parse(troughTs) - Date.parse(maxDrawdownPeakTs)) / 60_000))
+      : null
 
-  return { maxDrawdown, drawdownDurationMinutes: durationMinutes, peakTs, troughTs }
+  return { maxDrawdown, drawdownDurationMinutes: durationMinutes, peakTs: maxDrawdownPeakTs, troughTs }
 }
 
 const inferSnapshotSampleSeconds = (series: Array<{ asOf: string; equity: number }>) => {

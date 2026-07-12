@@ -128,7 +128,7 @@ def _volatility_within_budget(
     ceil: Decimal | None,
 ) -> bool:
     if volatility is None:
-        return True
+        return False
     if floor is not None and volatility < floor:
         return False
     if ceil is not None and volatility > ceil:

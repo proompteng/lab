@@ -90,3 +90,23 @@ test('buildStartWorkflowRequest defaults to unversioned behavior', async () => {
 
   expect(request.versioningOverride).toBeUndefined()
 })
+
+test('buildStartWorkflowRequest uses a valid Temporal retry backoff default', async () => {
+  const request = await buildStartWorkflowRequest(
+    {
+      options: {
+        workflowId: 'wf-retry-defaults',
+        workflowType: 'exampleWorkflow',
+        retryPolicy: { maximumAttempts: 3 },
+      },
+      defaults: {
+        namespace: 'default',
+        identity: 'test-worker',
+        taskQueue: 'example',
+      },
+    },
+    dataConverter,
+  )
+
+  expect(request.retryPolicy?.backoffCoefficient).toBe(2)
+})

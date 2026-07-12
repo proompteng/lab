@@ -1,6 +1,6 @@
 # 61. Jangar Runtime Kit Ledger and Execution-Class Admission Contract (2026-03-20)
 
-Status: Approved for implementation (`plan`)
+Status: Superseded; non-authoritative. See `61-jangar-runtime-kits-and-admission-passports-contract-2026-03-20.md`.
 Date: `2026-03-20`
 Owner: Victor Chen (Jangar Engineering)
 Mission: `codex/swarm-jangar-control-plane-plan`

@@ -464,7 +464,7 @@ def _prefer_preferred_signal(
 
 def _signal_preference_key(
     signal: SignalEnvelope,
-) -> tuple[int, int, int, str, int, str]:
+) -> tuple[int, int, int, str, int, str, str]:
     return (
         1 if _signal_matches_active_simulation_run(signal) else 0,
         _signal_provenance_completeness(signal),
@@ -472,6 +472,9 @@ def _signal_preference_key(
         _signal_payload_context_fingerprint(signal),
         _coerce_seq(signal.seq) or -1,
         signal.source or "",
+        signal.ingest_ts.astimezone(timezone.utc).isoformat()
+        if signal.ingest_ts is not None
+        else "",
     )
 
 

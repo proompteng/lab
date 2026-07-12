@@ -112,7 +112,10 @@ const readControlPlaneRoutes = async (): Promise<ControlPlaneRouteStat[]> => {
   const routes = await Promise.all(
     files.map(async (filePath) => {
       const source = await readFile(filePath, 'utf8')
-      const kind = source.includes('throw redirect(') ? 'redirect' : 'page'
+      const kind =
+        source.includes('throw redirect(') || source.includes('ControlPlaneRedirect') || /<Navigate\b/.test(source)
+          ? 'redirect'
+          : 'page'
       return {
         filePath: toRepoPath(filePath),
         routePath: toControlPlaneRoutePath(filePath),

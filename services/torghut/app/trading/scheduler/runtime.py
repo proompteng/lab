@@ -968,11 +968,15 @@ class TradingScheduler(
             self.state.last_error = self._runtime_iteration_error()
 
     async def _run_autonomy_iteration(self) -> None:
+        # Clear only the previous iteration's error before starting. The
+        # autonomous cycle may handle an internal failure by setting a fresh
+        # error and returning normally; that new error must survive this loop.
+        self._set_autonomy_iteration_error(None)
         try:
             if self._pipeline is None:
                 raise RuntimeError("trading_pipeline_not_initialized")
             await asyncio.to_thread(self._run_autonomous_cycle)
-            self._set_autonomy_iteration_error(None)
+            self._set_autonomy_iteration_error(self.state.last_autonomy_error)
         except Exception as exc:  # pragma: no cover - loop guard
             self._emit_runtime_loop_failure(loop_name="autonomy", error=exc)
             logger.exception("Autonomous loop failed: %s", exc)

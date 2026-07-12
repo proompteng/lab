@@ -80,7 +80,7 @@ const updateManifestImage = (image: string, version: string, commit: string) => 
 
 const applyManifest = async () => {
   const rawTimeout = process.env.GRAF_KN_WAIT_TIMEOUT ?? '300s'
-  const waitTimeout = rawTimeout.replace(/s$/, '')
+  const waitTimeout = rawTimeout
   await run('kn', [
     'service',
     'apply',

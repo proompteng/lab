@@ -1,6 +1,12 @@
-import { DiagConsoleLogger, DiagLogLevel, diag } from './diag'
-import { type Counter, type Histogram, NoopMeterProvider } from './sdk-metrics'
-import { NoopTracerProvider, type Span, type SpanOptions, SpanStatusCode } from './sdk-trace'
+import {
+  DiagConsoleLogger,
+  DiagLogLevel,
+  diag,
+  metrics as sharedMetrics,
+  trace as sharedTrace,
+} from '@proompteng/otel/api'
+import type { Counter, Histogram } from './sdk-metrics'
+import { type Span, type SpanOptions, SpanStatusCode } from './sdk-trace'
 
 type MeterLike = {
   createCounter: (name: string, options?: { description?: string; unit?: string }) => Counter
@@ -19,24 +25,25 @@ type GlobalTracerProvider = {
   getTracer: (name: string, version?: string) => TracerLike
 }
 
-let globalMeterProvider: GlobalMeterProvider = new NoopMeterProvider()
-let globalTracerProvider: GlobalTracerProvider = new NoopTracerProvider()
-
 export const metrics = {
   setGlobalMeterProvider(provider: GlobalMeterProvider) {
-    globalMeterProvider = provider
+    sharedMetrics.setGlobalMeterProvider(
+      provider as unknown as Parameters<typeof sharedMetrics.setGlobalMeterProvider>[0],
+    )
   },
   getMeter(name: string, version?: string) {
-    return globalMeterProvider.getMeter(name, version)
+    return sharedMetrics.getMeter(name, version)
   },
 }
 
 export const trace = {
   setGlobalTracerProvider(provider: GlobalTracerProvider) {
-    globalTracerProvider = provider
+    sharedTrace.setGlobalTracerProvider(
+      provider as unknown as Parameters<typeof sharedTrace.setGlobalTracerProvider>[0],
+    )
   },
   getTracer(name: string, version?: string) {
-    return globalTracerProvider.getTracer(name, version)
+    return sharedTrace.getTracer(name, version)
   },
 }
 
