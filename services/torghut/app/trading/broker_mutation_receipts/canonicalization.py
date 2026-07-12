@@ -3,17 +3,12 @@
 from __future__ import annotations
 
 import hashlib
-import ipaddress
 import json
-import posixpath
-import re
-import unicodedata
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import cast
-from urllib.parse import SplitResult, urlsplit, urlunsplit
 
 from .types import (
     BrokerMutationIntent,
@@ -36,12 +31,12 @@ from .types import (
 from .validation import (
     MAX_CANONICAL_INTENT_BYTES,
     MAX_CANONICAL_EVIDENCE_BYTES,
-    MAX_CANONICAL_NESTING,
     BrokerMutationReceiptValidationError,
+    canonical_json_value,
     enum_value,
+    normalize_endpoint_url,
     optional_uuid,
     optional_text,
-    reject_control_characters,
     required_text,
     sha256_hex,
 )
@@ -50,20 +45,6 @@ from .validation import (
 BROKER_MUTATION_INTENT_SCHEMA_VERSION = "torghut.broker-mutation-intent.v1"
 _RECOVERY_EVIDENCE_SCHEMA_VERSION = "torghut.broker-mutation-recovery-evidence.v1"
 _SETTLEMENT_EVIDENCE_SCHEMA_VERSION = "torghut.broker-mutation-settlement-evidence.v1"
-_DNS_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
-_SECRET_BEARING_KEY_MARKERS = (
-    "apikey",
-    "authorization",
-    "bearer",
-    "cookie",
-    "credential",
-    "password",
-    "passwd",
-    "privatekey",
-    "secret",
-    "token",
-)
-
 _ROUTES: tuple[BrokerMutationRoute, ...] = ("alpaca", "hyperliquid")
 _OPERATIONS: tuple[BrokerMutationOperation, ...] = (
     "submit_order",
@@ -129,71 +110,8 @@ class _NormalizedIntentFields:
 def fingerprint_broker_endpoint(endpoint_url: str) -> str:
     """Hash a credential-free normalized endpoint without returning the URL."""
 
-    normalized = _normalized_endpoint_url(endpoint_url)
+    normalized = normalize_endpoint_url(endpoint_url)
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-
-def _normalized_endpoint_url(endpoint_url: str) -> str:
-    raw = required_text(endpoint_url, field="endpoint_url", maximum=2048)
-    try:
-        parsed = urlsplit(raw)
-        port = parsed.port
-    except ValueError as exc:
-        raise BrokerMutationReceiptValidationError("endpoint_url_invalid") from exc
-    scheme = parsed.scheme.lower()
-    if scheme not in {"http", "https"}:
-        raise BrokerMutationReceiptValidationError("endpoint_url_scheme_invalid")
-    if parsed.username is not None or parsed.password is not None:
-        raise BrokerMutationReceiptValidationError("endpoint_url_credentials_forbidden")
-    if parsed.query or parsed.fragment:
-        raise BrokerMutationReceiptValidationError(
-            "endpoint_url_query_or_fragment_forbidden"
-        )
-    hostname = parsed.hostname
-    if hostname is None:
-        raise BrokerMutationReceiptValidationError("endpoint_url_host_required")
-    normalized_host = _normalized_endpoint_host(hostname)
-    if ":" in normalized_host:
-        normalized_host = f"[{normalized_host}]"
-    default_port = 443 if scheme == "https" else 80
-    authority = (
-        normalized_host if port in {None, default_port} else f"{normalized_host}:{port}"
-    )
-    path = _normalized_endpoint_path(parsed.path)
-    normalized = urlunsplit(SplitResult(scheme, authority, path, "", ""))
-    reject_control_characters(normalized, field="endpoint_url")
-    return normalized
-
-
-def _normalized_endpoint_host(hostname: str) -> str:
-    if "%" in hostname:
-        raise BrokerMutationReceiptValidationError("endpoint_url_host_invalid")
-    try:
-        return ipaddress.ip_address(hostname).compressed.lower()
-    except ValueError:
-        pass
-    try:
-        normalized = hostname.rstrip(".").encode("idna").decode("ascii").lower()
-    except UnicodeError as exc:
-        raise BrokerMutationReceiptValidationError("endpoint_url_host_invalid") from exc
-    if (
-        not normalized
-        or len(normalized) > 253
-        or any(_DNS_LABEL.fullmatch(label) is None for label in normalized.split("."))
-    ):
-        raise BrokerMutationReceiptValidationError("endpoint_url_host_invalid")
-    return normalized
-
-
-def _normalized_endpoint_path(path: str) -> str:
-    if not path or path == "/":
-        return "/"
-    if not path.startswith("/"):
-        raise BrokerMutationReceiptValidationError("endpoint_url_path_invalid")
-    normalized = posixpath.normpath(path)
-    if path.endswith("/") and normalized != "/":
-        normalized = normalized.rstrip("/")
-    return normalized
 
 
 def build_broker_mutation_intent(
@@ -254,8 +172,9 @@ def _normalize_intent_request(
             request.client_request_id, field="client_request_id", maximum=128
         ),
         target=_normalize_target(request.target),
-        request_payload=_canonical_json_value(
-            request.request_payload, path="request", depth=0
+        request_payload=cast(
+            CanonicalJsonValue,
+            canonical_json_value(request.request_payload, path="request", depth=0),
         ),
         submission_claim_id=optional_uuid(
             request.submission_claim_id, field="submission_claim_id"
@@ -366,7 +285,7 @@ def canonicalize_broker_mutation_evidence(payload: object) -> tuple[str, str]:
 
     if not isinstance(payload, Mapping):
         raise BrokerMutationReceiptValidationError("evidence_must_be_object")
-    normalized = _canonical_json_value(
+    normalized = canonical_json_value(
         cast(Mapping[object, object], payload),
         path="evidence",
         depth=0,
@@ -711,118 +630,6 @@ def _validate_operation_contract(
         raise BrokerMutationReceiptValidationError(
             "close_all_positions_contract_invalid"
         )
-
-
-def _canonical_json_value(
-    value: object, *, path: str, depth: int
-) -> CanonicalJsonValue:
-    if depth > MAX_CANONICAL_NESTING:
-        raise BrokerMutationReceiptValidationError(
-            f"canonical_intent_nesting_too_deep:{MAX_CANONICAL_NESTING}"
-        )
-    if value is None or isinstance(value, bool):
-        return value
-    if isinstance(value, int):
-        if value.bit_length() > MAX_CANONICAL_INTENT_BYTES * 4:
-            raise BrokerMutationReceiptValidationError(f"{path}_integer_too_large")
-        try:
-            rendered_integer = str(value)
-        except (MemoryError, ValueError) as exc:
-            raise BrokerMutationReceiptValidationError(
-                f"{path}_integer_too_large"
-            ) from exc
-        if len(rendered_integer) > MAX_CANONICAL_INTENT_BYTES:
-            raise BrokerMutationReceiptValidationError(f"{path}_integer_too_large")
-        return value
-    if isinstance(value, float):
-        raise BrokerMutationReceiptValidationError(f"{path}_float_forbidden")
-    if isinstance(value, Decimal):
-        return _canonical_decimal(value, path=path)
-    if isinstance(value, str):
-        reject_control_characters(value, field=path)
-        return unicodedata.normalize("NFC", value)
-    if isinstance(value, Mapping):
-        return _canonical_mapping(
-            cast(Mapping[object, object], value),
-            path=path,
-            depth=depth,
-        )
-    if isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray)):
-        return [
-            _canonical_json_value(item, path=f"{path}[{index}]", depth=depth + 1)
-            for index, item in enumerate(cast(Sequence[object], value))
-        ]
-    raise BrokerMutationReceiptValidationError(
-        f"{path}_type_unsupported:{type(value).__name__}"
-    )
-
-
-def _canonical_mapping(
-    value: Mapping[object, object],
-    *,
-    path: str,
-    depth: int,
-) -> dict[str, CanonicalJsonValue]:
-    normalized: dict[str, CanonicalJsonValue] = {}
-    for raw_key, raw_value in value.items():
-        if not isinstance(raw_key, str):
-            raise BrokerMutationReceiptValidationError(f"{path}_key_must_be_string")
-        key = required_text(raw_key, field=f"{path}_key", maximum=128)
-        if key != unicodedata.normalize("NFC", raw_key):
-            raise BrokerMutationReceiptValidationError(
-                f"{path}_key_surrounding_whitespace_forbidden"
-            )
-        _reject_secret_bearing_key(key, path=path)
-        if key in normalized:
-            raise BrokerMutationReceiptValidationError(f"{path}_key_collision:{key}")
-        normalized[key] = _canonical_json_value(
-            raw_value,
-            path=f"{path}.{key}",
-            depth=depth + 1,
-        )
-    return normalized
-
-
-def _reject_secret_bearing_key(key: str, *, path: str) -> None:
-    security_key = re.sub(
-        r"[^a-z0-9]",
-        "",
-        unicodedata.normalize("NFKC", key).casefold(),
-    )
-    if any(marker in security_key for marker in _SECRET_BEARING_KEY_MARKERS):
-        raise BrokerMutationReceiptValidationError(
-            f"{path}_secret_bearing_key_forbidden"
-        )
-
-
-def _canonical_decimal(value: Decimal, *, path: str) -> str:
-    if not value.is_finite():
-        raise BrokerMutationReceiptValidationError(f"{path}_decimal_non_finite")
-    if value.is_zero():
-        return "0"
-    sign, raw_digits, raw_exponent = value.as_tuple()
-    exponent = cast(int, raw_exponent)
-    digits = list(raw_digits)
-    while digits and digits[-1] == 0:
-        digits.pop()
-        exponent += 1
-    coefficient = "".join(str(digit) for digit in digits) or "0"
-    if exponent >= 0:
-        if len(coefficient) + exponent > MAX_CANONICAL_INTENT_BYTES:
-            raise BrokerMutationReceiptValidationError(f"{path}_decimal_too_large")
-        rendered = coefficient + ("0" * exponent)
-    else:
-        decimal_position = len(coefficient) + exponent
-        if decimal_position > 0:
-            rendered = (
-                f"{coefficient[:decimal_position]}.{coefficient[decimal_position:]}"
-            )
-        else:
-            leading_zeros = -decimal_position
-            if len(coefficient) + leading_zeros > MAX_CANONICAL_INTENT_BYTES:
-                raise BrokerMutationReceiptValidationError(f"{path}_decimal_too_large")
-            rendered = f"0.{('0' * leading_zeros)}{coefficient}"
-    return f"-{rendered}" if sign else rendered
 
 
 __all__ = [
