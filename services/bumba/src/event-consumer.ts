@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { resolve } from 'node:path'
 
+import { countMemoryNotesFromAgentsService, persistMemoryNoteToAgentsService } from '@proompteng/agent-contracts'
 import {
   createTemporalClient,
   type TemporalClient,
@@ -96,6 +97,7 @@ type GithubEventRow = {
 type IngestionCountsRow = {
   total: number | string | bigint
   terminal: number | string | bigint
+  failed: number | string | bigint
   nonterminal: number | string | bigint
   oldest_nonterminal_started_at: Date | string | null
 }
@@ -116,6 +118,7 @@ type GithubEventConsumerConfig = {
 type IngestionCounts = {
   total: number
   terminal: number
+  failed: number
   nonterminal: number
   oldestNonterminalStartedAt: number | null
 }
@@ -128,6 +131,14 @@ type ProcessEventResult = {
   dispatchFailed: number
 }
 
+type ProcessEventDependencies = {
+  getCounts?: typeof getIngestionCounts
+  markProcessed?: typeof markEventProcessed
+  markStaleFailed?: typeof markStaleIngestionsFailed
+  startWorkflow?: typeof startEventWorkflow
+  publishMainMergeNote?: typeof publishMainMergeMemoryNote
+}
+
 type EventConsumerTickDependencies = {
   db: SqlClient
   client: TemporalClient
@@ -137,7 +148,6 @@ type EventConsumerTickDependencies = {
   ensureRoutingAlignment: () => Promise<boolean>
   listPendingEvents?: typeof listPendingGithubEvents
   processPendingEvent?: typeof processEvent
-  markProcessed?: typeof markEventProcessed
 }
 
 export type GithubEventConsumer = {
@@ -262,7 +272,7 @@ const collectCommitPaths = (commitPayload: Record<string, unknown>) => {
   return paths
 }
 
-const extractEventFilePaths = (payload: Record<string, unknown>, maxTargets: number) => {
+const extractEventFilePaths = (payload: Record<string, unknown>) => {
   const paths = new Set<string>()
 
   const headCommit = asRecord(payload.head_commit)
@@ -281,7 +291,7 @@ const extractEventFilePaths = (payload: Record<string, unknown>, maxTargets: num
     }
   }
 
-  return Array.from(paths).sort().slice(0, maxTargets)
+  return Array.from(paths).sort()
 }
 
 const resolveEventPayload = (rawPayload: unknown): Record<string, unknown> => {
@@ -350,6 +360,72 @@ const buildEventWorkflowId = (deliveryId: string, filePath: string) => {
   return `bumba-event-${deliveryHash}-${pathHash}`
 }
 
+const isMainBranchRef = (ref: string) => ref === 'main' || ref === 'refs/heads/main'
+
+const mainMergeMemoryNamespace = (deliveryId: string) => `bumba-main-${deliveryId}`.slice(0, 200)
+
+const publishMainMergeMemoryNote = async (
+  event: GithubEventRow,
+  payload: Record<string, unknown>,
+  ref: string,
+  commit: string,
+  files: string[],
+  counts: IngestionCounts,
+) => {
+  if (!isMainBranchRef(ref)) return
+
+  const namespace = mainMergeMemoryNamespace(event.delivery_id)
+  const existing = await countMemoryNotesFromAgentsService({ namespace })
+  if (!existing.ok) {
+    throw new Error(`failed to check Agents memory note (${existing.status}): ${existing.error ?? 'unknown error'}`)
+  }
+  if (existing.body.count > 0) return
+
+  const headCommit = asRecord(payload.head_commit)
+  const commitMessage = normalizeOptionalText(headCommit?.message)
+  const status = counts.failed > 0 ? 'completed with failed ingestions' : 'completed'
+  const summary = `Bumba enrichment ${status} for ${event.repository}@${commit.slice(0, 12)} on main.`
+  const contentLines = [
+    summary,
+    `GitHub delivery: ${event.delivery_id}`,
+    `Ref: ${ref}`,
+    `Changed files: ${files.length}`,
+    `Ingestions: ${counts.terminal}/${counts.total} terminal, ${counts.failed} failed`,
+    ...(commitMessage ? [`Commit message: ${commitMessage}`] : []),
+    '',
+  ]
+  let content = contentLines.join('\n')
+  let listedFiles = 0
+  for (const file of files) {
+    const line = `\n- ${file}`
+    if (content.length + line.length > 48_000) break
+    content += line
+    listedFiles += 1
+  }
+  if (listedFiles < files.length) {
+    content += `\n- ... ${files.length - listedFiles} additional files omitted from note`
+  }
+
+  const persisted = await persistMemoryNoteToAgentsService({
+    namespace,
+    summary,
+    content,
+    tags: ['bumba', 'github', 'main', 'merge', 'enrichment'],
+    metadata: {
+      deliveryId: event.delivery_id,
+      repository: event.repository,
+      ref,
+      commit,
+      fileCount: files.length,
+      ingestionTotal: counts.total,
+      ingestionFailed: counts.failed,
+    },
+  })
+  if (!persisted.ok) {
+    throw new Error(`failed to persist Agents memory note (${persisted.status}): ${persisted.error ?? 'unknown error'}`)
+  }
+}
+
 const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig, taskQueue: string) => {
   return (
     normalizeOptionalText(process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME) ??
@@ -416,6 +492,7 @@ const getIngestionCounts = async (db: SqlClient, eventId: string): Promise<Inges
     SELECT
       count(*)::bigint AS total,
       count(*) FILTER (WHERE status IN ('completed', 'failed', 'skipped'))::bigint AS terminal,
+      count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
       count(*) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped'))::bigint AS nonterminal,
       min(started_at) FILTER (WHERE status NOT IN ('completed', 'failed', 'skipped')) AS oldest_nonterminal_started_at
     FROM atlas.ingestions
@@ -423,11 +500,12 @@ const getIngestionCounts = async (db: SqlClient, eventId: string): Promise<Inges
   `) as IngestionCountsRow[]
 
   const row = rows[0]
-  if (!row) return { total: 0, terminal: 0, nonterminal: 0, oldestNonterminalStartedAt: null }
+  if (!row) return { total: 0, terminal: 0, failed: 0, nonterminal: 0, oldestNonterminalStartedAt: null }
 
   return {
     total: toNumber(row.total),
     terminal: toNumber(row.terminal),
+    failed: toNumber(row.failed),
     nonterminal: toNumber(row.nonterminal),
     oldestNonterminalStartedAt: toEpochMs(row.oldest_nonterminal_started_at),
   }
@@ -494,9 +572,16 @@ const processEvent = async (
   client: TemporalClient,
   config: GithubEventConsumerConfig,
   event: GithubEventRow,
+  dependencies: ProcessEventDependencies = {},
 ): Promise<ProcessEventResult> => {
+  const getCounts = dependencies.getCounts ?? getIngestionCounts
+  const markProcessed = dependencies.markProcessed ?? markEventProcessed
+  const markStaleFailed = dependencies.markStaleFailed ?? markStaleIngestionsFailed
+  const startWorkflow = dependencies.startWorkflow ?? startEventWorkflow
+  const publishMergeNote = dependencies.publishMainMergeNote ?? publishMainMergeMemoryNote
+
   if (event.event_type !== 'push') {
-    await markEventProcessed(db, event.delivery_id)
+    await markProcessed(db, event.delivery_id)
     return {
       processed: true,
       waitingOnIngestion: false,
@@ -513,7 +598,7 @@ const processEvent = async (
       deliveryId: event.delivery_id,
       repository: event.repository,
     })
-    await markEventProcessed(db, event.delivery_id)
+    await markProcessed(db, event.delivery_id)
     return {
       processed: true,
       waitingOnIngestion: false,
@@ -523,13 +608,13 @@ const processEvent = async (
     }
   }
 
-  const files = extractEventFilePaths(payload, config.maxEventFileTargets)
+  const files = extractEventFilePaths(payload)
   if (files.length === 0) {
     console.info('[bumba][event-consumer] skipping push event without indexable files', {
       deliveryId: event.delivery_id,
       repository: event.repository,
     })
-    await markEventProcessed(db, event.delivery_id)
+    await markProcessed(db, event.delivery_id)
     return {
       processed: true,
       waitingOnIngestion: false,
@@ -539,19 +624,8 @@ const processEvent = async (
     }
   }
 
-  let ingestionCounts = await getIngestionCounts(db, event.id)
-  if (ingestionCounts.total > 0) {
-    if (ingestionCounts.total === ingestionCounts.terminal) {
-      await markEventProcessed(db, event.delivery_id)
-      return {
-        processed: true,
-        waitingOnIngestion: false,
-        dispatchStarted: 0,
-        dispatchAlreadyStarted: 0,
-        dispatchFailed: 0,
-      }
-    }
-
+  let ingestionCounts = await getCounts(db, event.id)
+  if (ingestionCounts.nonterminal > 0) {
     const oldestNonterminalStartedAt = ingestionCounts.oldestNonterminalStartedAt
     const isStaleBlocked =
       ingestionCounts.nonterminal > 0 &&
@@ -559,7 +633,7 @@ const processEvent = async (
       Date.now() - oldestNonterminalStartedAt >= config.nonterminalIngestionStaleMs
 
     if (isStaleBlocked) {
-      const staleFailed = await markStaleIngestionsFailed(db, event.id, config.nonterminalIngestionStaleMs)
+      const staleFailed = await markStaleFailed(db, event.id, config.nonterminalIngestionStaleMs)
       if (staleFailed > 0) {
         console.warn('[bumba][event-consumer] auto-failed stale nonterminal ingestions', {
           deliveryId: event.delivery_id,
@@ -567,26 +641,8 @@ const processEvent = async (
           staleFailed,
           staleAfterMs: config.nonterminalIngestionStaleMs,
         })
-        ingestionCounts = await getIngestionCounts(db, event.id)
-        if (ingestionCounts.total === ingestionCounts.terminal) {
-          await markEventProcessed(db, event.delivery_id)
-          return {
-            processed: true,
-            waitingOnIngestion: false,
-            dispatchStarted: 0,
-            dispatchAlreadyStarted: 0,
-            dispatchFailed: 0,
-          }
-        }
+        ingestionCounts = await getCounts(db, event.id)
       }
-    }
-
-    return {
-      processed: false,
-      waitingOnIngestion: true,
-      dispatchStarted: 0,
-      dispatchAlreadyStarted: 0,
-      dispatchFailed: 0,
     }
   }
 
@@ -595,10 +651,13 @@ const processEvent = async (
   let started = 0
   let alreadyStarted = 0
   let failed = 0
+  let attempted = 0
 
   for (const filePath of files) {
+    if (started >= config.maxEventFileTargets) break
+    attempted += 1
     try {
-      await startEventWorkflow(client, config, event, filePath, ref, commit)
+      await startWorkflow(client, config, event, filePath, ref, commit)
       started += 1
     } catch (error) {
       if (isWorkflowAlreadyStartedError(error)) {
@@ -613,6 +672,30 @@ const processEvent = async (
         filePath,
         error: error instanceof Error ? error.message : String(error),
       })
+    }
+  }
+
+  const allTargetsDispatched = attempted === files.length && failed === 0
+  ingestionCounts = await getCounts(db, event.id)
+  if (allTargetsDispatched && ingestionCounts.total >= files.length) {
+    if (ingestionCounts.total === ingestionCounts.terminal) {
+      await publishMergeNote(event, payload, ref, commit, files, ingestionCounts)
+      await markProcessed(db, event.delivery_id)
+      return {
+        processed: true,
+        waitingOnIngestion: false,
+        dispatchStarted: started,
+        dispatchAlreadyStarted: alreadyStarted,
+        dispatchFailed: failed,
+      }
+    }
+
+    return {
+      processed: false,
+      waitingOnIngestion: true,
+      dispatchStarted: started,
+      dispatchAlreadyStarted: alreadyStarted,
+      dispatchFailed: failed,
     }
   }
 
@@ -658,7 +741,6 @@ const runEventConsumerTick = async ({
   ensureRoutingAlignment,
   listPendingEvents = listPendingGithubEvents,
   processPendingEvent = processEvent,
-  markProcessed = markEventProcessed,
 }: EventConsumerTickDependencies) => {
   if (!(await ensureRoutingAlignment())) return
 
@@ -677,27 +759,16 @@ const runEventConsumerTick = async ({
         dispatchedEvents += 1
       }
 
-      if (
-        result.processed ||
-        result.waitingOnIngestion ||
-        result.dispatchStarted > 0 ||
-        result.dispatchAlreadyStarted > 0
-      ) {
-        dispatchFailureCounts.delete(event.delivery_id)
-        continue
-      }
-
       if (result.dispatchFailed > 0) {
         const failures = (dispatchFailureCounts.get(event.delivery_id) ?? 0) + 1
         if (failures >= config.maxDispatchFailures) {
-          console.error('[bumba][event-consumer] giving up on event after repeated dispatch failures', {
+          console.error('[bumba][event-consumer] event remains pending after repeated dispatch failures', {
             deliveryId: event.delivery_id,
             repository: event.repository,
             dispatchFailed: result.dispatchFailed,
             attempts: failures,
           })
-          await markProcessed(db, event.delivery_id)
-          dispatchFailureCounts.delete(event.delivery_id)
+          dispatchFailureCounts.set(event.delivery_id, config.maxDispatchFailures)
         } else {
           dispatchFailureCounts.set(event.delivery_id, failures)
           console.warn('[bumba][event-consumer] retaining event for retry after dispatch failures', {
@@ -708,7 +779,23 @@ const runEventConsumerTick = async ({
             maxAttempts: config.maxDispatchFailures,
           })
         }
+        continue
       }
+
+      if (
+        result.processed ||
+        result.waitingOnIngestion ||
+        result.dispatchStarted > 0 ||
+        result.dispatchAlreadyStarted > 0
+      ) {
+        dispatchFailureCounts.delete(event.delivery_id)
+      }
+    } catch (error) {
+      console.warn('[bumba][event-consumer] event processing failed; retaining event for retry', {
+        deliveryId: event.delivery_id,
+        repository: event.repository,
+        error: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       inFlightDeliveries.delete(event.delivery_id)
     }
@@ -912,5 +999,9 @@ export const __test__ = {
   isTransientRoutingAlignmentError,
   isDeploymentApiUnavailableError,
   runEventConsumerTick,
+  processEvent,
+  publishMainMergeMemoryNote,
+  isMainBranchRef,
+  mainMergeMemoryNamespace,
   TERMINAL_INGESTION_STATUSES,
 }

@@ -15,14 +15,17 @@ import ./bun-workspace-service.nix {
     aarch64-linux = "sha256-fkdC7RAPgQME79kor3txmeFTXwtmCKGS0nPkDTH1I40=";
   };
   installFilters = [
+    "@proompteng/agent-contracts"
     "@proompteng/bumba"
     "@proompteng/temporal-bun-sdk"
   ];
   sourcePaths = [
+    "packages/agent-contracts"
     "packages/temporal-bun-sdk"
     "services/bumba"
   ];
   buildCommands = [
+    "bun --cwd=packages/agent-contracts run build"
     "bun --cwd=packages/temporal-bun-sdk run build"
   ];
   command = [

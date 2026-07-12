@@ -17,7 +17,10 @@ const ENV_KEYS = [
   'BUMBA_WORKSPACE_ROOT',
   'CODEX_CWD',
   'DATABASE_URL',
+  'AGENTS_SERVICE_BASE_URL',
 ] as const
+
+const originalFetch = globalThis.fetch
 
 const envSnapshot = new Map<string, string | undefined>()
 for (const key of ENV_KEYS) {
@@ -25,6 +28,7 @@ for (const key of ENV_KEYS) {
 }
 
 afterEach(() => {
+  globalThis.fetch = originalFetch
   for (const key of ENV_KEYS) {
     const value = envSnapshot.get(key)
     if (value === undefined) {
@@ -49,11 +53,11 @@ test('extractEventFilePaths returns sorted, deduped, indexable paths', () => {
     ],
   }
 
-  const paths = __test__.extractEventFilePaths(payload, 200)
+  const paths = __test__.extractEventFilePaths(payload)
   expect(paths).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts', 'src/z.ts'])
 })
 
-test('extractEventFilePaths honors max target limit', () => {
+test('extractEventFilePaths retains every target for batched dispatch', () => {
   const payload = {
     commits: [
       {
@@ -62,8 +66,182 @@ test('extractEventFilePaths honors max target limit', () => {
     ],
   }
 
-  const paths = __test__.extractEventFilePaths(payload, 2)
-  expect(paths).toEqual(['src/a.ts', 'src/b.ts'])
+  const paths = __test__.extractEventFilePaths(payload)
+  expect(paths).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+})
+
+const eventConsumerConfig = (overrides: Record<string, unknown> = {}) =>
+  ({
+    enabled: true,
+    pollIntervalMs: 10_000,
+    batchSize: 20,
+    maxDispatchEventsPerTick: 2,
+    maxEventFileTargets: 200,
+    maxDispatchFailures: 6,
+    nonterminalIngestionStaleMs: 12 * 60 * 60 * 1000,
+    routingAlignmentEnabled: false,
+    taskQueue: 'bumba',
+    repoRoot: '/workspace/lab',
+    ...overrides,
+  }) as never
+
+const githubPushEvent = (files: string[], ref = 'refs/heads/main') => ({
+  id: 'event-1',
+  delivery_id: 'delivery-1',
+  event_type: 'push',
+  repository: 'proompteng/lab',
+  payload: {
+    after: 'abcdef1234567890',
+    ref,
+    head_commit: { id: 'abcdef1234567890', modified: files, message: 'fix: merge change' },
+  },
+})
+
+const ingestionCounts = (overrides: Record<string, unknown> = {}) =>
+  ({
+    total: 0,
+    terminal: 0,
+    failed: 0,
+    nonterminal: 0,
+    oldestNonterminalStartedAt: null,
+    ...overrides,
+  }) as never
+
+test('processEvent retries a failed target when another target already has an ingestion', async () => {
+  const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
+  const started = new Set(['src/a.ts'])
+  let failB = true
+
+  const dependencies = {
+    getCounts: async () =>
+      ingestionCounts({ total: 1, terminal: 0, nonterminal: 1, oldestNonterminalStartedAt: Date.now() }),
+    startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
+      if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
+      if (filePath === 'src/b.ts' && failB) throw new Error('deadline exceeded')
+      started.add(filePath)
+      return {} as never
+    },
+  }
+
+  const first = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, dependencies)
+  expect(first).toMatchObject({ dispatchAlreadyStarted: 1, dispatchFailed: 1, dispatchStarted: 0 })
+
+  failB = false
+  const second = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, dependencies)
+  expect(second).toMatchObject({ dispatchAlreadyStarted: 1, dispatchFailed: 0, dispatchStarted: 1 })
+  expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts']))
+})
+
+test('processEvent dispatches oversized events across ticks without dropping targets', async () => {
+  const event = githubPushEvent(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+  const started = new Set<string>()
+  const dependencies = {
+    getCounts: async () => ingestionCounts(),
+    startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
+      if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
+      started.add(filePath)
+      return {} as never
+    },
+  }
+  const config = eventConsumerConfig({ maxEventFileTargets: 2 })
+
+  const first = await __test__.processEvent({} as never, {} as never, config, event, dependencies)
+  expect(first).toMatchObject({ dispatchStarted: 2, dispatchAlreadyStarted: 0 })
+  expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts']))
+
+  const second = await __test__.processEvent({} as never, {} as never, config, event, dependencies)
+  expect(second).toMatchObject({ dispatchStarted: 1, dispatchAlreadyStarted: 2 })
+  expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts', 'src/c.ts']))
+})
+
+test('processEvent publishes the main merge note before marking a fully terminal event processed', async () => {
+  const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
+  const calls: string[] = []
+  const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
+    getCounts: async () => ingestionCounts({ total: 2, terminal: 2 }),
+    startWorkflow: async () => {
+      throw new Error('WorkflowExecutionAlreadyStarted')
+    },
+    publishMainMergeNote: async (_event, _payload, ref, commit, files) => {
+      calls.push(`note:${ref}:${commit}:${files.join(',')}`)
+    },
+    markProcessed: async (_db, deliveryId) => {
+      calls.push(`processed:${deliveryId}`)
+    },
+  })
+
+  expect(result.processed).toBe(true)
+  expect(calls).toEqual(['note:refs/heads/main:abcdef1234567890:src/a.ts,src/b.ts', 'processed:delivery-1'])
+})
+
+test('main branch and memory namespace helpers are stable', () => {
+  expect(__test__.isMainBranchRef('main')).toBe(true)
+  expect(__test__.isMainBranchRef('refs/heads/main')).toBe(true)
+  expect(__test__.isMainBranchRef('refs/heads/feature')).toBe(false)
+  expect(__test__.mainMergeMemoryNamespace('delivery-1')).toBe('bumba-main-delivery-1')
+})
+
+test('publishMainMergeMemoryNote writes one delivery-scoped note through the Agents endpoint', async () => {
+  process.env.AGENTS_SERVICE_BASE_URL = 'http://agents.test'
+  const requests: Array<{ url: string; method: string; body?: unknown }> = []
+  globalThis.fetch = (async (input: URL | RequestInfo, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : input instanceof URL ? input.toString() : input
+    const method = init?.method ?? 'GET'
+    requests.push({
+      url,
+      method,
+      body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+    })
+    if (method === 'GET') return Response.json({ ok: true, count: 0 })
+    return Response.json({ ok: true, memory: { id: 'memory-1' } }, { status: 201 })
+  }) as typeof fetch
+
+  const event = githubPushEvent(['src/a.ts'])
+  await __test__.publishMainMergeMemoryNote(
+    event,
+    event.payload,
+    'refs/heads/main',
+    'abcdef1234567890',
+    ['src/a.ts'],
+    ingestionCounts({ total: 1, terminal: 1 }),
+  )
+
+  expect(requests).toHaveLength(2)
+  expect(requests[0]).toMatchObject({
+    url: 'http://agents.test/v1/memory-notes/count?namespace=bumba-main-delivery-1',
+    method: 'GET',
+  })
+  expect(requests[1]).toMatchObject({ url: 'http://agents.test/v1/memory-notes', method: 'POST' })
+  expect(requests[1]?.body).toMatchObject({
+    namespace: 'bumba-main-delivery-1',
+    tags: ['bumba', 'github', 'main', 'merge', 'enrichment'],
+    metadata: {
+      deliveryId: 'delivery-1',
+      repository: 'proompteng/lab',
+      commit: 'abcdef1234567890',
+      fileCount: 1,
+    },
+  })
+})
+
+test('publishMainMergeMemoryNote ignores non-main pushes', async () => {
+  let called = false
+  globalThis.fetch = (async () => {
+    called = true
+    return Response.json({ ok: true })
+  }) as unknown as typeof fetch
+  const event = githubPushEvent(['src/a.ts'], 'refs/heads/feature')
+
+  await __test__.publishMainMergeMemoryNote(
+    event,
+    event.payload,
+    'refs/heads/feature',
+    'abcdef1234567890',
+    ['src/a.ts'],
+    ingestionCounts({ total: 1, terminal: 1 }),
+  )
+
+  expect(called).toBe(false)
 })
 
 test('resolveEventCommit prefers after and falls back to head commit id', () => {
@@ -168,7 +346,6 @@ test('runEventConsumerTick scans past waiting rows before applying dispatch limi
   ]
   const processedDeliveries: string[] = []
   const dispatchedDeliveries: string[] = []
-  const markedProcessed: string[] = []
 
   await __test__.runEventConsumerTick({
     db: {} as never,
@@ -213,14 +390,10 @@ test('runEventConsumerTick scans past waiting rows before applying dispatch limi
         dispatchFailed: 0,
       }
     },
-    markProcessed: async (_db, deliveryId) => {
-      markedProcessed.push(deliveryId)
-    },
   })
 
   expect(processedDeliveries).toEqual(['waiting-1', 'waiting-2', 'dispatch-1'])
   expect(dispatchedDeliveries).toEqual(['dispatch-1'])
-  expect(markedProcessed).toEqual([])
 })
 
 test('runEventConsumerTick does not count already-started rows against dispatch limit', async () => {
@@ -296,6 +469,59 @@ test('runEventConsumerTick does not count already-started rows against dispatch 
   expect(processedDeliveries).toEqual(['duplicate-1', 'dispatch-1'])
   expect(dispatchedDeliveries).toEqual(['dispatch-1'])
   expect(failureCounts.has('duplicate-1')).toBe(false)
+})
+
+test('runEventConsumerTick retains failure state for an incompletely dispatched event', async () => {
+  const event = githubPushEvent(['src/a.ts'])
+  const failureCounts = new Map<string, number>()
+
+  await __test__.runEventConsumerTick({
+    db: {} as never,
+    client: {} as never,
+    config: eventConsumerConfig({ batchSize: 1, maxDispatchFailures: 1 }),
+    inFlightDeliveries: new Set(),
+    dispatchFailureCounts: failureCounts,
+    ensureRoutingAlignment: async () => true,
+    listPendingEvents: async () => [event],
+    processPendingEvent: async () => ({
+      processed: false,
+      waitingOnIngestion: false,
+      dispatchStarted: 0,
+      dispatchAlreadyStarted: 0,
+      dispatchFailed: 1,
+    }),
+  })
+
+  expect(failureCounts.get('delivery-1')).toBe(1)
+})
+
+test('runEventConsumerTick continues after one event processing error', async () => {
+  const first = githubPushEvent(['src/a.ts'])
+  const second = { ...githubPushEvent(['src/b.ts']), id: 'event-2', delivery_id: 'delivery-2' }
+  const attempted: string[] = []
+
+  await __test__.runEventConsumerTick({
+    db: {} as never,
+    client: {} as never,
+    config: eventConsumerConfig({ batchSize: 2 }),
+    inFlightDeliveries: new Set(),
+    dispatchFailureCounts: new Map(),
+    ensureRoutingAlignment: async () => true,
+    listPendingEvents: async () => [first, second],
+    processPendingEvent: async (_db, _client, _config, event) => {
+      attempted.push(event.delivery_id)
+      if (event.delivery_id === 'delivery-1') throw new Error('Agents unavailable')
+      return {
+        processed: false,
+        waitingOnIngestion: false,
+        dispatchStarted: 1,
+        dispatchAlreadyStarted: 0,
+        dispatchFailed: 0,
+      }
+    },
+  })
+
+  expect(attempted).toEqual(['delivery-1', 'delivery-2'])
 })
 
 test('isWorkflowAlreadyStartedError recognizes Temporal already-started errors', () => {
