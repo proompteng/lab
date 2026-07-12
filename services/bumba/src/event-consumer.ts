@@ -828,7 +828,7 @@ const startEventWorkflow = async (
 
   return await client.workflow.start({
     workflowId,
-    workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
+    workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
     workflowType: 'enrichFile',
     taskQueue: config.taskQueue,
     versioningBehavior: VersioningBehavior.AUTO_UPGRADE,

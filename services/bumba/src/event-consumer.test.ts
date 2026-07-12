@@ -214,7 +214,7 @@ test('processEvent bounds failed Temporal start attempts per tick', async () => 
   expect(attempted).toEqual(['src/a.ts', 'src/b.ts'])
 })
 
-test('startEventWorkflow rejects reuse of closed deterministic workflow IDs', async () => {
+test('startEventWorkflow reuses failed but not completed deterministic workflow IDs', async () => {
   let options: Record<string, unknown> | undefined
   const client = {
     workflow: {
@@ -236,7 +236,7 @@ test('startEventWorkflow rejects reuse of closed deterministic workflow IDs', as
   )
 
   expect(options?.workflowId).toBe(__test__.buildEventWorkflowId(event.delivery_id, 'src/a.ts'))
-  expect(options?.workflowIdReusePolicy).toBe(3)
+  expect(options?.workflowIdReusePolicy).toBe(2)
 })
 
 test('processEvent publishes the main merge note before marking a fully terminal event processed', async () => {
