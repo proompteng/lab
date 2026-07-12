@@ -11,6 +11,8 @@ import { VersioningBehavior, WorkflowIdReusePolicy } from '@proompteng/temporal-
 import { SQL } from 'bun'
 import { Effect } from 'effect'
 
+import { runCommandIsolated } from './command-runner'
+
 const DEFAULT_TASK_QUEUE = 'bumba'
 const DEFAULT_REF = 'main'
 const DEFAULT_POLL_INTERVAL_MS = 10_000
@@ -22,6 +24,7 @@ const DEFAULT_ROUTING_ALIGNMENT_ENABLED = true
 const DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS = 5_000
 const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
 const MAX_MERGE_DIFF_CHARS = 36_000
+const MERGE_DIFF_GIT_TIMEOUT_MS = 30_000
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -491,17 +494,15 @@ const loadMainMergeDiffEffect = (
       if (!before || /^0+$/.test(before)) return []
 
       const runGit = async (args: string[], allowFailure = false) => {
-        const child = Bun.spawn(['git', ...args], {
-          cwd: repoRoot,
-          env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
-          stdout: 'pipe',
-          stderr: 'pipe',
+        const result = await runCommandIsolated(['git', ...args], repoRoot, MERGE_DIFF_GIT_TIMEOUT_MS, {
+          GIT_TERMINAL_PROMPT: '0',
         })
-        const [exitCode, stdout, stderr] = await Promise.all([
-          child.exited,
-          new Response(child.stdout).text(),
-          new Response(child.stderr).text(),
-        ])
+        const exitCode = result.exitCode
+        const stdout = result.stdout.toString()
+        const stderr = result.stderr.toString()
+        if (exitCode === null) {
+          throw new Error(`git ${args[0] ?? 'command'} timed out after ${MERGE_DIFF_GIT_TIMEOUT_MS}ms`)
+        }
         if (exitCode !== 0 && !allowFailure) {
           throw new Error(`git ${args[0] ?? 'command'} failed (${exitCode}): ${stderr.trim().slice(0, 1_000)}`)
         }
