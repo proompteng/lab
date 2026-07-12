@@ -9,33 +9,26 @@ from unittest.mock import patch
 
 import pytest
 from alembic import command
-from alembic.config import Config as AlembicConfig
-from sqlalchemy import create_engine, event, text
-from sqlalchemy.engine import Connection, Engine, make_url
+from sqlalchemy import event, text
+from sqlalchemy.engine import Connection
 from sqlalchemy.exc import DBAPIError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.trading.broker_mutation_receipts import (
     BrokerMutationLinkedSubmissionRecoveryAcquireResult,
     BrokerMutationLinkedSubmissionRecoveryHandle,
-    BrokerMutationReceiptAcquireOptions,
     BrokerMutationReceiptAcquireResult,
     BrokerMutationReceiptError,
     BrokerMutationReceiptValidationError,
     BrokerMutationRecoveryAcquireOptions,
     BrokerMutationRecoveryObservationRequest,
     BrokerMutationSettlementRequest,
-    acquire_broker_mutation_receipt,
     acquire_linked_submission_recovery,
     build_broker_mutation_recovery_observation,
     build_broker_mutation_settlement,
     build_linked_submission_recovery_settlement,
     get_broker_mutation_receipt_history,
-    list_due_broker_mutation_receipt_ids,
-    mark_broker_mutation_io_started,
     record_linked_submission_recovery_observation,
-    release_broker_mutation_receipt,
     release_linked_submission_recovery,
     renew_linked_submission_recovery,
     settle_linked_submission_recovery,
@@ -45,22 +38,22 @@ from app.trading.broker_mutation_receipts.persistence import (
     full_state_values_from_event,
     load_latest_receipt_event,
 )
-from tests.execution.decision_submission_claims_postgres_support import (
-    POSTGRES_DSN,
-    SERVICE_ROOT,
-    create_parent_tables,
+from tests.execution.linked_submission_recovery_postgres_support import (
+    RecoveryHarness,
+    build_recovery_harness,
+    enter_linked_io,
+    force_linked_recovery_due,
 )
 from tests.execution.test_broker_mutation_linked_receipts_postgres import (
     LinkedSubmitFixture,
-    create_linked_submit_fixture,
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _RecoveryHarness:
-    engine: Engine
-    sessions: sessionmaker[Session]
-    alembic: AlembicConfig
+@pytest.fixture
+def recovery_harness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[RecoveryHarness]:
+    yield from build_recovery_harness(monkeypatch)
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,135 +69,12 @@ class _RecoveryContext:
         return handle
 
 
-@pytest.fixture
-def recovery_harness(
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[_RecoveryHarness]:
-    if POSTGRES_DSN is None:
-        pytest.skip("set TORGHUT_TEST_POSTGRES_DSN for the opt-in recovery test")
-    schema = f"linked_recovery_{uuid.uuid4().hex}"
-    admin_engine = create_engine(POSTGRES_DSN, future=True)
-    schema_url = make_url(POSTGRES_DSN).update_query_dict(
-        {"options": f"-csearch_path={schema}"}
-    )
-    schema_engine = create_engine(schema_url, future=True)
-    sessions = sessionmaker(
-        bind=schema_engine,
-        class_=Session,
-        autoflush=False,
-        expire_on_commit=False,
-        future=True,
-    )
-    try:
-        with admin_engine.begin() as connection:
-            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-        create_parent_tables(schema_engine)
-        monkeypatch.setattr(
-            settings,
-            "db_dsn",
-            schema_url.render_as_string(hide_password=False),
-        )
-        alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
-        command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0062_linked_submission_recovery")
-        yield _RecoveryHarness(engine=schema_engine, sessions=sessions, alembic=alembic)
-    finally:
-        schema_engine.dispose()
-        with admin_engine.begin() as connection:
-            connection.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
-        admin_engine.dispose()
-
-
-def _enter_linked_io(
-    harness: _RecoveryHarness,
-) -> tuple[LinkedSubmitFixture, BrokerMutationReceiptAcquireResult]:
-    fixture = create_linked_submit_fixture(harness.engine)
-    with harness.sessions() as session:
-        acquired = acquire_broker_mutation_receipt(
-            session,
-            intent=fixture.intent,
-            primary_owner=fixture.claim_handle.claim_owner,
-            writer_generation=1,
-            options=BrokerMutationReceiptAcquireOptions(
-                submission_claim_handle=fixture.claim_handle,
-            ),
-        )
-    assert acquired.outcome == "acquired"
-    with harness.sessions() as session:
-        started = mark_broker_mutation_io_started(
-            session,
-            handle=acquired.receipt.primary_handle,
-            submission_claim_handle=fixture.claim_handle,
-        )
-    assert started.authorized
-    return fixture, acquired
-
-
-def _force_linked_recovery_due(
-    harness: _RecoveryHarness,
-    *,
-    fixture: LinkedSubmitFixture,
-    receipt_id: uuid.UUID,
-) -> None:
-    with harness.engine.begin() as connection:
-        due_at = connection.execute(
-            text("SELECT clock_timestamp() - interval '1 minute'")
-        ).scalar_one()
-        connection.execute(
-            text(
-                "ALTER TABLE broker_mutation_receipt_events "
-                "DISABLE TRIGGER trg_guard_bm_receipt_event"
-            )
-        )
-        connection.execute(
-            text(
-                """
-                UPDATE broker_mutation_receipt_events
-                   SET recovery_after = :due_at
-                 WHERE id = (
-                     SELECT id FROM broker_mutation_receipt_events
-                      WHERE receipt_id = :receipt_id
-                      ORDER BY sequence_no DESC LIMIT 1
-                 )
-                """
-            ),
-            {"due_at": due_at, "receipt_id": receipt_id},
-        )
-        connection.execute(
-            text(
-                "ALTER TABLE broker_mutation_receipt_events "
-                "ENABLE TRIGGER trg_guard_bm_receipt_event"
-            )
-        )
-        connection.execute(
-            text(
-                "ALTER TABLE trade_decision_submission_claims "
-                "DISABLE TRIGGER trg_guard_td_submission_claim_0061_update"
-            )
-        )
-        connection.execute(
-            text(
-                "UPDATE trade_decision_submission_claims "
-                "SET recovery_after = :due_at "
-                "WHERE trade_decision_id = :decision_id"
-            ),
-            {"due_at": due_at, "decision_id": fixture.decision_id},
-        )
-        connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
-        connection.execute(
-            text(
-                "ALTER TABLE trade_decision_submission_claims "
-                "ENABLE TRIGGER trg_guard_td_submission_claim_0061_update"
-            )
-        )
-
-
 def _acquire_linked_recovery(
-    harness: _RecoveryHarness,
+    harness: RecoveryHarness,
     *,
     token: uuid.UUID | None = None,
 ) -> _RecoveryContext:
-    fixture, acquired = _enter_linked_io(harness)
+    fixture, acquired = enter_linked_io(harness)
     recovery_token = token or uuid.uuid4()
     with harness.sessions() as session:
         premature = acquire_linked_submission_recovery(
@@ -218,7 +88,7 @@ def _acquire_linked_recovery(
             ),
         )
     assert premature.outcome == "not_ready"
-    _force_linked_recovery_due(
+    force_linked_recovery_due(
         harness,
         fixture=fixture,
         receipt_id=acquired.receipt.receipt_id,
@@ -240,59 +110,6 @@ def _acquire_linked_recovery(
         acquired=acquired,
         recovery=recovery,
     )
-
-
-@pytest.mark.parametrize("receipt_state", ["claimed", "released"])
-def test_linked_receipt_before_broker_io_does_not_require_recovery(
-    recovery_harness: _RecoveryHarness,
-    receipt_state: str,
-) -> None:
-    fixture = create_linked_submit_fixture(recovery_harness.engine)
-    with recovery_harness.sessions() as session:
-        acquired = acquire_broker_mutation_receipt(
-            session,
-            intent=fixture.intent,
-            primary_owner=fixture.claim_handle.claim_owner,
-            writer_generation=1,
-            options=BrokerMutationReceiptAcquireOptions(
-                submission_claim_handle=fixture.claim_handle,
-            ),
-        )
-    receipt = acquired.receipt
-    if receipt_state == "released":
-        with recovery_harness.sessions() as session:
-            receipt = release_broker_mutation_receipt(
-                session,
-                handle=receipt.primary_handle,
-                reason="broker call not started",
-            )
-    assert receipt.state == receipt_state
-
-    with recovery_harness.sessions() as session:
-        recovery = acquire_linked_submission_recovery(
-            session,
-            receipt_id=acquired.receipt.receipt_id,
-            recovery_owner="reconciler-a",
-            writer_generation=7,
-        )
-
-    assert recovery.outcome == "not_required"
-    assert recovery.receipt == receipt
-    assert recovery.submission_claim is None
-
-
-def test_generic_due_recovery_scan_excludes_linked_receipts(
-    recovery_harness: _RecoveryHarness,
-) -> None:
-    fixture, acquired = _enter_linked_io(recovery_harness)
-    _force_linked_recovery_due(
-        recovery_harness,
-        fixture=fixture,
-        receipt_id=acquired.receipt.receipt_id,
-    )
-
-    with recovery_harness.sessions() as session:
-        assert list_due_broker_mutation_receipt_ids(session) == ()
 
 
 def _observation(fixture: LinkedSubmitFixture, outcome: str):
@@ -349,7 +166,7 @@ def _recovery_settlement(
 
 
 def _assert_recovery_still_nonterminal(
-    harness: _RecoveryHarness,
+    harness: RecoveryHarness,
     *,
     context: _RecoveryContext,
 ) -> None:
@@ -407,7 +224,7 @@ def _assert_recovery_still_nonterminal(
 
 @pytest.mark.parametrize("observation_outcome", ["not_found", "indeterminate"])
 def test_paired_recovery_acquire_retry_renew_release_and_observe(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
     observation_outcome: str,
 ) -> None:
     token = uuid.uuid4()
@@ -541,10 +358,10 @@ def test_paired_recovery_acquire_retry_renew_release_and_observe(
 
 
 def test_paired_recovery_acquisition_race_has_one_fence_pair(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
-    fixture, acquired = _enter_linked_io(recovery_harness)
-    _force_linked_recovery_due(
+    fixture, acquired = enter_linked_io(recovery_harness)
+    force_linked_recovery_due(
         recovery_harness,
         fixture=fixture,
         receipt_id=acquired.receipt.receipt_id,
@@ -586,7 +403,7 @@ def test_paired_recovery_acquisition_race_has_one_fence_pair(
 
 
 def test_recovery_reconciled_terminal_commits_exactly_once(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
     execution_id = uuid.uuid4()
@@ -666,7 +483,7 @@ def test_recovery_reconciled_terminal_commits_exactly_once(
 
 
 def test_recovery_acknowledged_and_rejected_terminals_fail_closed(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
     with pytest.raises(
@@ -702,7 +519,7 @@ def test_recovery_acknowledged_and_rejected_terminals_fail_closed(
 
 
 def test_stale_paired_recovery_handles_cannot_mutate_either_half(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
     stale_handles = (
@@ -741,7 +558,7 @@ def test_stale_paired_recovery_handles_cannot_mutate_either_half(
 
 @pytest.mark.parametrize("failure_point", ["append", "commit"])
 def test_recovery_terminal_failure_rolls_back_claim_receipt_and_execution(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
     failure_point: str,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
@@ -774,10 +591,10 @@ def test_recovery_terminal_failure_rolls_back_claim_receipt_and_execution(
 
 
 def test_0062_deferred_guards_reject_each_recovery_lease_half(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
-    receipt_fixture, receipt_acquired = _enter_linked_io(recovery_harness)
-    _force_linked_recovery_due(
+    receipt_fixture, receipt_acquired = enter_linked_io(recovery_harness)
+    force_linked_recovery_due(
         recovery_harness,
         fixture=receipt_fixture,
         receipt_id=receipt_acquired.receipt.receipt_id,
@@ -844,7 +661,7 @@ def test_0062_deferred_guards_reject_each_recovery_lease_half(
 
 @pytest.mark.parametrize("outcome", ["acknowledged", "rejected"])
 def test_0062_database_rejects_nonreconciled_recovery_terminal(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
     outcome: str,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
@@ -893,7 +710,7 @@ def test_0062_database_rejects_nonreconciled_recovery_terminal(
 
 
 def test_0062_database_rejects_null_found_observation(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
     execution_id = uuid.uuid4()
@@ -960,7 +777,7 @@ def test_0062_database_rejects_null_found_observation(
 
 
 def test_exact_recovery_terminal_race_converges_to_one_event(
-    recovery_harness: _RecoveryHarness,
+    recovery_harness: RecoveryHarness,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)
     execution_id = uuid.uuid4()
