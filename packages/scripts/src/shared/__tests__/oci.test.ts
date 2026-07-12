@@ -67,6 +67,7 @@ const torghutCiWorkflow = readRepoFile('.github/workflows/torghut-ci.yml')
 const torghutDeployAutomergeWorkflow = readRepoFile('.github/workflows/torghut-deploy-automerge.yml')
 const autoPrReleaseBranchesWorkflow = readRepoFile('.github/workflows/auto-pr-release-branches.yml')
 const releasePrAutomergeWorkflow = readRepoFile('.github/workflows/release-pr-automerge.yml')
+const productImageUpdater = readRepoFile('argocd/applications/argocd/base/image-updater-product.yaml')
 const oiratWorkflow = readRepoFile('.github/workflows/oirat-ci.yml')
 const bumbaWorkflow = readRepoFile('.github/workflows/bumba-ci.yml')
 const froussardWorkflow = readRepoFile('.github/workflows/froussard-ci.yml')
@@ -1395,6 +1396,14 @@ describe('native OCI build workflows', () => {
       'inherit pkgs lib nodejs repoRevision;\n              repoRoot = ./.;\n              bun = exact.bun;',
     )
     expect(readRepoFile('argocd/applications/bumba/deployment.yaml')).toContain('TEMPORAL_WORKER_BUILD_ID')
+  })
+
+  it('keeps Bumba release ownership out of Argo CD Image Updater', () => {
+    expect(productImageUpdater).not.toContain('namePattern: bumba')
+    expect(productImageUpdater).not.toContain('writeBackTarget: kustomization:/argocd/applications/bumba')
+    expect(productImageUpdater).not.toContain('imageName: registry.ide-newton.ts.net/lab/bumba:latest')
+    expect(enabledSimpleReleaseWorkflow).toContain('- bumba')
+    expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/bumba/kustomization.yaml')
   })
 
   it('opens digest-pinning release PRs for enabled product app Nix builds', () => {

@@ -152,24 +152,6 @@ spec:
           manifestTargets:
             kustomize:
               name: registry.ide-newton.ts.net/lab/dernier
-    - namePattern: bumba
-      writeBackConfig:
-        method: git:secret:argocd/image-updater-git-ssh
-        gitConfig:
-          repository: git@github.com:proompteng/lab.git
-          branch: main:release/{{.SHA256}}
-          writeBackTarget: kustomization:/argocd/applications/bumba
-      images:
-        - alias: bumba
-          imageName: registry.ide-newton.ts.net/lab/bumba:latest
-          commonUpdateSettings:
-            updateStrategy: newest-build
-            allowTags: 'regexp:^(sha-[0-9a-f]{7}|[0-9a-f]{40})$'
-            platforms:
-              - linux/arm64
-          manifestTargets:
-            kustomize:
-              name: registry.ide-newton.ts.net/lab/bumba
     - namePattern: bilig
       writeBackConfig:
         method: git:secret:argocd/image-updater-git-ssh
