@@ -7,7 +7,7 @@ import {
   type TemporalConfig,
   temporalCallOptions,
 } from '@proompteng/temporal-bun-sdk'
-import { VersioningBehavior } from '@proompteng/temporal-bun-sdk/worker'
+import { VersioningBehavior, WorkflowIdReusePolicy } from '@proompteng/temporal-bun-sdk/worker'
 import { SQL } from 'bun'
 
 const DEFAULT_TASK_QUEUE = 'bumba'
@@ -20,6 +20,7 @@ const DEFAULT_NONTERMINAL_INGESTION_STALE_MS = 12 * 60 * 60 * 1000
 const DEFAULT_ROUTING_ALIGNMENT_ENABLED = true
 const DEFAULT_ROUTING_ALIGNMENT_RPC_TIMEOUT_MS = 5_000
 const STALE_INGESTION_ERROR = 'stale nonterminal ingestion auto-failed by bumba event-consumer'
+const MAX_MERGE_DIFF_CHARS = 36_000
 
 const LOCK_FILENAMES = new Set([
   'bun.lock',
@@ -150,6 +151,7 @@ type ProcessEventResult = {
 
 type ProcessEventDependencies = {
   getCounts?: typeof getIngestionCounts
+  getWorkflowIds?: typeof listIngestionWorkflowIds
   markProcessed?: typeof markEventProcessed
   markStaleFailed?: typeof markStaleIngestionsFailed
   startWorkflow?: typeof startEventWorkflow
@@ -480,10 +482,17 @@ const loadMainMergeDiff = async (
     .split('\0')
     .filter((path) => path.length > 0)
 
+  const prioritizedPaths = changedPaths.sort((left, right) => mergeContextPriority(left) - mergeContextPriority(right))
   const diffFiles: MergeDiffFile[] = []
-  for (const path of changedPaths) {
-    const patch = (await runGit(['diff', '--no-ext-diff', '--unified=3', before, commit, '--', path])).stdout.trim()
+  let collectedChars = 0
+  for (const path of prioritizedPaths) {
+    if (collectedChars >= MAX_MERGE_DIFF_CHARS) break
+    const rawPatch = (await runGit(['diff', '--no-ext-diff', '--unified=3', before, commit, '--', path])).stdout.trim()
+    const perFileLimit = mergeContextPriority(path) === 0 ? 24_000 : 4_000
+    const remainingChars = MAX_MERGE_DIFF_CHARS - collectedChars
+    const patch = rawPatch.slice(0, Math.min(perFileLimit, remainingChars))
     diffFiles.push({ path, status: 'changed', patch: patch || null })
+    collectedChars += patch.length
   }
   return diffFiles
 }
@@ -770,6 +779,15 @@ const getIngestionCounts = async (db: SqlClient, eventId: string): Promise<Inges
   }
 }
 
+const listIngestionWorkflowIds = async (db: SqlClient, eventId: string): Promise<Set<string>> => {
+  const rows = (await db`
+    SELECT workflow_id
+    FROM atlas.ingestions
+    WHERE event_id = ${eventId};
+  `) as Array<{ workflow_id: string }>
+  return new Set(rows.map((row) => row.workflow_id))
+}
+
 const markStaleIngestionsFailed = async (db: SqlClient, eventId: string, staleMs: number) => {
   const rows = (await db`
     UPDATE atlas.ingestions
@@ -810,6 +828,7 @@ const startEventWorkflow = async (
 
   return await client.workflow.start({
     workflowId,
+    workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
     workflowType: 'enrichFile',
     taskQueue: config.taskQueue,
     versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
@@ -834,6 +853,7 @@ const processEvent = async (
   dependencies: ProcessEventDependencies = {},
 ): Promise<ProcessEventResult> => {
   const getCounts = dependencies.getCounts ?? getIngestionCounts
+  const getWorkflowIds = dependencies.getWorkflowIds ?? listIngestionWorkflowIds
   const markProcessed = dependencies.markProcessed ?? markEventProcessed
   const markStaleFailed = dependencies.markStaleFailed ?? markStaleIngestionsFailed
   const startWorkflow = dependencies.startWorkflow ?? startEventWorkflow
@@ -906,15 +926,22 @@ const processEvent = async (
   }
 
   const ref = resolveEventRef(payload)
+  const ingestionWorkflowIds = await getWorkflowIds(db, event.id)
 
   let started = 0
   let alreadyStarted = 0
   let failed = 0
-  let attempted = 0
+  let scanned = 0
 
   for (const filePath of files) {
-    if (started >= config.maxEventFileTargets) break
-    attempted += 1
+    const workflowId = buildEventWorkflowId(event.delivery_id, filePath)
+    if (ingestionWorkflowIds.has(workflowId)) {
+      alreadyStarted += 1
+      scanned += 1
+      continue
+    }
+    if (started + failed >= config.maxEventFileTargets) break
+    scanned += 1
     try {
       await startWorkflow(client, config, event, filePath, ref, commit)
       started += 1
@@ -934,7 +961,7 @@ const processEvent = async (
     }
   }
 
-  const allTargetsDispatched = attempted === files.length && failed === 0
+  const allTargetsDispatched = scanned === files.length && failed === 0
   ingestionCounts = await getCounts(db, event.id)
   if (allTargetsDispatched && ingestionCounts.total >= files.length) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
@@ -1259,6 +1286,7 @@ export const __test__ = {
   isDeploymentApiUnavailableError,
   runEventConsumerTick,
   processEvent,
+  startEventWorkflow,
   publishMainMergeMemoryNote,
   loadMainMergeEnrichments,
   loadMainMergeDiff,

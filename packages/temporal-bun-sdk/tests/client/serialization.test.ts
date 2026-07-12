@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 
 import { createDefaultDataConverter } from '../../src/common/payloads'
 import { buildStartWorkflowRequest, computeSignalRequestId } from '../../src/client/serialization'
-import { VersioningBehavior } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
+import { VersioningBehavior, WorkflowIdReusePolicy } from '../../src/proto/temporal/api/enums/v1/workflow_pb'
 
 const dataConverter = createDefaultDataConverter()
 const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
@@ -89,4 +89,24 @@ test('buildStartWorkflowRequest defaults to unversioned behavior', async () => {
   )
 
   expect(request.versioningOverride).toBeUndefined()
+})
+
+test('buildStartWorkflowRequest preserves workflow ID reuse policy', async () => {
+  const request = await buildStartWorkflowRequest(
+    {
+      options: {
+        workflowId: 'wf-no-reuse',
+        workflowType: 'exampleWorkflow',
+        workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
+      },
+      defaults: {
+        namespace: 'default',
+        identity: 'test-worker',
+        taskQueue: 'example',
+      },
+    },
+    dataConverter,
+  )
+
+  expect(request.workflowIdReusePolicy).toBe(WorkflowIdReusePolicy.REJECT_DUPLICATE)
 })

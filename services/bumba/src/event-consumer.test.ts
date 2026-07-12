@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -126,6 +126,7 @@ test('processEvent retries a failed target when another target already has an in
   const dependencies = {
     getCounts: async () =>
       ingestionCounts({ total: 1, terminal: 0, nonterminal: 1, oldestNonterminalStartedAt: Date.now() }),
+    getWorkflowIds: async () => new Set<string>(),
     startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
       if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
       if (filePath === 'src/b.ts' && failB) throw new Error('deadline exceeded')
@@ -148,6 +149,7 @@ test('processEvent dispatches oversized events across ticks without dropping tar
   const started = new Set<string>()
   const dependencies = {
     getCounts: async () => ingestionCounts(),
+    getWorkflowIds: async () => new Set<string>(),
     startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
       if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
       started.add(filePath)
@@ -165,11 +167,84 @@ test('processEvent dispatches oversized events across ticks without dropping tar
   expect(started).toEqual(new Set(['src/a.ts', 'src/b.ts', 'src/c.ts']))
 })
 
+test('processEvent skips ingestion-backed workflow IDs and advances to missing targets', async () => {
+  const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
+  const knownWorkflowId = __test__.buildEventWorkflowId(event.delivery_id, 'src/a.ts')
+  const started: string[] = []
+
+  const result = await __test__.processEvent(
+    {} as never,
+    {} as never,
+    eventConsumerConfig({ maxEventFileTargets: 1 }),
+    event,
+    {
+      getCounts: async () => ingestionCounts(),
+      getWorkflowIds: async () => new Set([knownWorkflowId]),
+      startWorkflow: async (_client, _config, _event, filePath) => {
+        started.push(filePath)
+        return {} as never
+      },
+    },
+  )
+
+  expect(result).toMatchObject({ dispatchStarted: 1, dispatchAlreadyStarted: 1, dispatchFailed: 0 })
+  expect(started).toEqual(['src/b.ts'])
+})
+
+test('processEvent bounds failed Temporal start attempts per tick', async () => {
+  const event = githubPushEvent(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+  const attempted: string[] = []
+
+  const result = await __test__.processEvent(
+    {} as never,
+    {} as never,
+    eventConsumerConfig({ maxEventFileTargets: 2 }),
+    event,
+    {
+      getCounts: async () => ingestionCounts(),
+      getWorkflowIds: async () => new Set<string>(),
+      startWorkflow: async (_client, _config, _event, filePath) => {
+        attempted.push(filePath)
+        throw new Error('Temporal unavailable')
+      },
+    },
+  )
+
+  expect(result.dispatchFailed).toBe(2)
+  expect(attempted).toEqual(['src/a.ts', 'src/b.ts'])
+})
+
+test('startEventWorkflow rejects reuse of closed deterministic workflow IDs', async () => {
+  let options: Record<string, unknown> | undefined
+  const client = {
+    workflow: {
+      start: async (input: Record<string, unknown>) => {
+        options = input
+        return {} as never
+      },
+    },
+  }
+  const event = githubPushEvent(['src/a.ts'])
+
+  await __test__.startEventWorkflow(
+    client as never,
+    eventConsumerConfig(),
+    event,
+    'src/a.ts',
+    'refs/heads/main',
+    'abcdef1234567890',
+  )
+
+  expect(options?.workflowId).toBe(__test__.buildEventWorkflowId(event.delivery_id, 'src/a.ts'))
+  expect(options?.workflowIdReusePolicy).toBe(3)
+})
+
 test('processEvent publishes the main merge note before marking a fully terminal event processed', async () => {
   const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
   const calls: string[] = []
   const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
     getCounts: async () => ingestionCounts({ total: 2, terminal: 2 }),
+    getWorkflowIds: async () => new Set<string>(),
     startWorkflow: async () => {
       throw new Error('WorkflowExecutionAlreadyStarted')
     },
@@ -331,21 +406,30 @@ test('loadMainMergeDiff reads exact change evidence from the local repository cl
     runGit('init')
     runGit('config', 'user.email', 'bumba@test.invalid')
     runGit('config', 'user.name', 'Bumba Test')
-    await writeFile(join(repoRoot, 'a.ts'), 'export const value = "old"\n')
-    runGit('add', 'a.ts')
+    await mkdir(join(repoRoot, 'src'))
+    await mkdir(join(repoRoot, 'docs'))
+    await writeFile(join(repoRoot, 'src/a.ts'), 'export const value = "old"\n')
+    for (let index = 0; index < 10; index += 1) {
+      await writeFile(join(repoRoot, `docs/${index}.md`), `old-${index}-${'x'.repeat(5_000)}\n`)
+    }
+    runGit('add', '.')
     runGit('commit', '-m', 'initial')
     const before = runGit('rev-parse', 'HEAD')
 
-    await writeFile(join(repoRoot, 'a.ts'), 'export const value = "new"\n')
-    runGit('add', 'a.ts')
+    await writeFile(join(repoRoot, 'src/a.ts'), 'export const value = "new"\n')
+    for (let index = 0; index < 10; index += 1) {
+      await writeFile(join(repoRoot, `docs/${index}.md`), `new-${index}-${'y'.repeat(5_000)}\n`)
+    }
+    runGit('add', '.')
     runGit('commit', '-m', 'change')
     const after = runGit('rev-parse', 'HEAD')
 
     const diff = await __test__.loadMainMergeDiff(repoRoot, { before }, after)
-    expect(diff).toHaveLength(1)
-    expect(diff[0]).toMatchObject({ path: 'a.ts', status: 'changed' })
+    expect(diff.length).toBeLessThan(11)
+    expect(diff[0]).toMatchObject({ path: 'src/a.ts', status: 'changed' })
     expect(diff[0]?.patch).toContain('-export const value = "old"')
     expect(diff[0]?.patch).toContain('+export const value = "new"')
+    expect(diff.reduce((total, file) => total + (file.patch?.length ?? 0), 0)).toBeLessThanOrEqual(36_000)
   } finally {
     await rm(repoRoot, { recursive: true, force: true })
   }
