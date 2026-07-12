@@ -3,6 +3,7 @@ package trading
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	sdkalpaca "github.com/alpacahq/alpaca-trade-api-go/v3/alpaca"
@@ -44,7 +45,9 @@ func (s *Service) SubmitMarketOrder(ctx context.Context, symbol string, qty floa
 
 	if s.ledger != nil {
 		if err := s.ledger.RecordOrder(ctx, order); err != nil {
-			return nil, fmt.Errorf("record order in ledger: %w", err)
+			// The broker has already accepted the order. Returning an error here
+			// invites callers to retry and submit a duplicate live order.
+			slog.ErrorContext(ctx, "failed to record accepted broker order in ledger", "order_id", order.ID, "error", err)
 		}
 	}
 
