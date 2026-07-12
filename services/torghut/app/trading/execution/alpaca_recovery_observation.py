@@ -15,6 +15,8 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import cast
 
+from alpaca.trading.enums import OrderStatus
+
 from ..broker_mutation_receipts import BrokerMutationIntent
 from ..broker_mutation_receipts.canonicalization import (
     verify_broker_mutation_intent,
@@ -27,28 +29,17 @@ from ..broker_mutation_receipts.validation import (
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,31}$")
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit", "trailing_stop"})
 _TIME_IN_FORCE = frozenset({"day", "gtc", "opg", "cls", "ioc", "fok"})
-_BROKER_STATUSES = frozenset(
+_BROKER_STATUSES = frozenset(status.value for status in OrderStatus)
+_ZERO_FILL_STATUSES = frozenset(
     {
         "accepted",
         "accepted_for_bidding",
-        "calculated",
-        "canceled",
-        "done_for_day",
-        "expired",
-        "filled",
+        "held",
         "new",
-        "partially_filled",
-        "pending_cancel",
         "pending_new",
-        "pending_replace",
+        "pending_review",
         "rejected",
-        "replaced",
-        "stopped",
-        "suspended",
     }
-)
-_ZERO_FILL_STATUSES = frozenset(
-    {"accepted", "accepted_for_bidding", "new", "pending_new", "rejected"}
 )
 
 
@@ -511,7 +502,7 @@ def _lifecycle_is_valid(
         return False
     if (filled_qty == 0) != (filled_avg_price is None):
         return False
-    if status == "filled" and filled_qty != submitted_qty:
+    if (status == "filled") != (filled_qty == submitted_qty):
         return False
     if status == "partially_filled" and not 0 < filled_qty < submitted_qty:
         return False

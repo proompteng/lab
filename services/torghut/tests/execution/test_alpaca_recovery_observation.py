@@ -5,6 +5,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
+from alpaca.trading.enums import OrderStatus
 
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
@@ -20,6 +21,43 @@ from app.trading.execution.alpaca_recovery_observation import (
 
 _DECISION_ID = uuid.UUID("00000000-0000-0000-0000-000000000101")
 _CLIENT_ORDER_ID = "client-order-101"
+_PINNED_ORDER_STATUSES = frozenset(
+    {
+        "accepted",
+        "accepted_for_bidding",
+        "calculated",
+        "canceled",
+        "done_for_day",
+        "expired",
+        "filled",
+        "held",
+        "new",
+        "partially_filled",
+        "pending_cancel",
+        "pending_new",
+        "pending_replace",
+        "pending_review",
+        "rejected",
+        "replaced",
+        "stopped",
+        "suspended",
+    }
+)
+_ZERO_FILL_ORDER_STATUSES = frozenset(
+    {
+        "accepted",
+        "accepted_for_bidding",
+        "held",
+        "new",
+        "pending_new",
+        "pending_review",
+        "rejected",
+    }
+)
+_PARTIAL_OR_ZERO_ORDER_STATUSES = _PINNED_ORDER_STATUSES.difference(
+    _ZERO_FILL_ORDER_STATUSES,
+    {"filled", "partially_filled"},
+)
 
 
 def _request(**overrides: object) -> dict[str, object]:
@@ -523,6 +561,43 @@ def test_broker_status_is_explicit_and_recognized(status: object) -> None:
         AlpacaRecoveryObservationReason.BROKER_STATUS_INVALID,
         result=_observe(broker_order=_broker_order(status=status)),
     )
+
+
+def test_pinned_sdk_order_status_allow_list_has_no_unreviewed_drift() -> None:
+    assert frozenset(status.value for status in OrderStatus) == _PINNED_ORDER_STATUSES
+
+
+@pytest.mark.parametrize("status", tuple(status.value for status in OrderStatus))
+@pytest.mark.parametrize(
+    ("filled_qty", "filled_avg_price"),
+    [("0", None), ("1", "190"), ("2", "190")],
+)
+def test_every_pinned_status_has_exhaustive_zero_partial_and_full_fill_coverage(
+    status: str,
+    filled_qty: str,
+    filled_avg_price: str | None,
+) -> None:
+    result = _observe(
+        broker_order=_broker_order(
+            status=status,
+            filled_qty=filled_qty,
+            filled_avg_price=filled_avg_price,
+        )
+    )
+    expected_valid = (
+        (status == "filled" and filled_qty == "2")
+        or (status == "partially_filled" and filled_qty == "1")
+        or (status in _ZERO_FILL_ORDER_STATUSES and filled_qty == "0")
+        or (status in _PARTIAL_OR_ZERO_ORDER_STATUSES and filled_qty in {"0", "1"})
+    )
+
+    assert result.validated is expected_valid
+    if expected_valid:
+        assert result.order is not None
+        assert result.order.status == status
+    else:
+        assert result.reason is AlpacaRecoveryObservationReason.BROKER_LIFECYCLE_INVALID
+        assert result.order is None
 
 
 @pytest.mark.parametrize(
