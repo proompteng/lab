@@ -10,6 +10,7 @@ import { ensureCli, fatal, repoRoot } from '../shared/cli'
 type CliOptions = {
   namespace?: string
   deployment?: string
+  containerName?: string
   kustomizationPath?: string
   imageName?: string
   argoNamespace?: string
@@ -29,9 +30,19 @@ type CommandResult = {
   exitCode: number
 }
 
+type KubernetesPodList = {
+  items?: Array<{
+    metadata?: { name?: string }
+    status?: {
+      containerStatuses?: Array<{ name?: string; imageID?: string; ready?: boolean }>
+    }
+  }>
+}
+
 type ResolvedOptions = {
   namespace: string
   deployment: string
+  containerName: string
   kustomizationPath: string
   imageName: string
   argoNamespace: string
@@ -47,6 +58,7 @@ type ResolvedOptions = {
 
 const defaultNamespace = 'jangar'
 const defaultDeployment = 'symphony'
+const defaultContainerName = 'symphony'
 const defaultKustomizationPath = 'argocd/applications/symphony/kustomization.yaml'
 const defaultImageName = 'registry.ide-newton.ts.net/lab/symphony'
 const defaultArgoNamespace = 'argocd'
@@ -136,6 +148,7 @@ const parseArgs = (argv: string[]): CliOptions => {
 Options:
   --namespace <name>
   --deployment <name>
+  --container-name <name>
   --kustomization-path <path>
   --image-name <registry/repository>
   --argo-namespace <name>
@@ -174,6 +187,9 @@ Options:
         break
       case '--deployment':
         options.deployment = value
+        break
+      case '--container-name':
+        options.containerName = value
         break
       case '--kustomization-path':
         options.kustomizationPath = value
@@ -216,6 +232,7 @@ Options:
 const resolveOptions = (options: CliOptions): ResolvedOptions => ({
   namespace: options.namespace ?? defaultNamespace,
   deployment: options.deployment ?? defaultDeployment,
+  containerName: options.containerName ?? defaultContainerName,
   kustomizationPath: resolvePath(options.kustomizationPath ?? defaultKustomizationPath),
   imageName: options.imageName ?? defaultImageName,
   argoNamespace: options.argoNamespace ?? defaultArgoNamespace,
@@ -286,9 +303,57 @@ const verifyServiceHealth = async (serviceBaseUrl: string) => {
   return stateBody
 }
 
+export const imageIdMatchesDigest = (imageId: string, expectedDigest: string): boolean => {
+  const normalizedImageId = imageId.trim()
+  const normalizedDigest = expectedDigest.trim()
+  return (
+    normalizedImageId === normalizedDigest ||
+    normalizedImageId.endsWith(`@${normalizedDigest}`) ||
+    normalizedImageId.endsWith(`://${normalizedDigest}`)
+  )
+}
+
+export const selectReadyContainerImages = (
+  podList: KubernetesPodList,
+  containerName: string,
+): Array<{ pod: string; imageID: string }> =>
+  (podList.items ?? []).flatMap((pod) =>
+    (pod.status?.containerStatuses ?? [])
+      .filter((status) => status.name === containerName && status.ready === true && Boolean(status.imageID))
+      .map((status) => ({ pod: pod.metadata?.name ?? 'unknown', imageID: status.imageID as string })),
+  )
+
+const verifyRunningDigest = async (options: ResolvedOptions, expectedDigest: string) => {
+  const podsResult = await runCommand('kubectl', [
+    'get',
+    'pods',
+    '-n',
+    options.namespace,
+    '-l',
+    `app.kubernetes.io/name=${options.deployment}`,
+    '-o',
+    'json',
+  ])
+  const podList = JSON.parse(podsResult.stdout) as KubernetesPodList
+  const runningImages = selectReadyContainerImages(podList, options.containerName)
+  if (runningImages.length === 0) {
+    throw new Error(
+      `No ready '${options.containerName}' container image IDs were found for deployment ${options.deployment}`,
+    )
+  }
+  const mismatches = runningImages.filter((status) => !imageIdMatchesDigest(status.imageID, expectedDigest))
+  if (mismatches.length > 0) {
+    throw new Error(
+      `Running ${options.deployment} image digest does not match ${expectedDigest}: ${JSON.stringify(mismatches)}`,
+    )
+  }
+  return runningImages
+}
+
 export const verifyDeployment = async (options: CliOptions = {}) => {
   ensureCli('kubectl')
   const resolved = resolveOptions(options)
+  const expectedDigest = extractExpectedDigest(readFileSync(resolved.kustomizationPath, 'utf8'), resolved.imageName)
 
   await runCommand('kubectl', [
     'rollout',
@@ -300,16 +365,18 @@ export const verifyDeployment = async (options: CliOptions = {}) => {
   ])
 
   const argoStatus = await verifyArgoHealth(resolved)
+  const runningImages = await verifyRunningDigest(resolved, expectedDigest)
   const stateBody = await verifyServiceHealth(resolved.serviceBaseUrl)
-  const expectedDigest = extractExpectedDigest(readFileSync(resolved.kustomizationPath, 'utf8'), resolved.imageName)
 
   console.log(
     JSON.stringify(
       {
         namespace: resolved.namespace,
         deployment: resolved.deployment,
+        containerName: resolved.containerName,
         argo: argoStatus,
         expectedDigest,
+        runningImages,
         instance: stateBody.instance?.name ?? null,
       },
       null,

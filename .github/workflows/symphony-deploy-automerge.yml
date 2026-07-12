@@ -21,6 +21,7 @@ jobs:
     if: >-
       ${{
         startsWith(github.event.pull_request.head.ref, 'codex/symphony-release-') &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
         github.event.pull_request.base.ref == 'main' &&
         github.event.pull_request.draft == false
       }}
