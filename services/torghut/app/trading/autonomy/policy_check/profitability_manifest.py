@@ -455,6 +455,13 @@ def _validate_overall_manifest(
 
     _validate_overall_status(ctx, manifest_payload, manifest_path, stages)
     _validate_stage_transition(ctx, manifest_payload, stages, manifest_path)
+    if str(manifest_payload.get("overall_status", "")).strip() == "fail":
+        _add_manifest_reason(
+            ctx,
+            "profitability_stage_manifest_stage_chain_not_passed",
+            str(manifest_path),
+            failure_reasons=_list_of_strings(manifest_payload.get("failure_reasons")),
+        )
 
 
 def _validate_overall_status(
@@ -523,15 +530,6 @@ def _validate_stage_transition(
                 stage=stage_name,
             )
             break
-
-    failure_reasons = _list_of_strings(manifest_payload.get("failure_reasons"))
-    if str(manifest_payload.get("overall_status", "")).strip() == "fail":
-        _add_manifest_reason(
-            ctx,
-            "profitability_stage_manifest_stage_chain_not_passed",
-            str(manifest_path),
-            failure_reasons=failure_reasons,
-        )
 
 
 # ---------------------------------------------------------------------------
