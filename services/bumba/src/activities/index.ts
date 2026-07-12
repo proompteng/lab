@@ -8,6 +8,8 @@ import * as TSemaphore from 'effect/TSemaphore'
 import { Language, Parser } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
+import { publishMainMergeMemoryNoteActivity, type MainMergeMemoryNoteInput } from '../event-consumer'
+
 export type ReadRepoFileInput = {
   repoRoot: string
   filePath: string
@@ -2617,6 +2619,10 @@ const updateChunkEmbeddingMetadata = async (db: SQL, chunkIds: string[], metadat
 }
 
 export const activities = {
+  async publishMainMergeMemoryNote(input: MainMergeMemoryNoteInput): Promise<void> {
+    await publishMainMergeMemoryNoteActivity(input)
+  },
+
   async listRepoFiles(input: ListRepoFilesInput): Promise<ListRepoFilesOutput> {
     const repoRoot = resolve(input.repoRoot)
     const requestedRef = normalizeOptionalText(input.ref) ?? 'HEAD'

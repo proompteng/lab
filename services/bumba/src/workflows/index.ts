@@ -14,6 +14,7 @@ import type {
   ReadRepoFileOutput,
   UpsertIngestionOutput,
 } from '../activities/index'
+import type { MainMergeMemoryNoteInput } from '../event-consumer'
 
 const activityRetry = {
   initialIntervalMs: 2_000,
@@ -247,6 +248,28 @@ const EnrichRepositoryInput = Schema.Struct({
   ),
 })
 
+const MainMergeMemoryNoteWorkflowInput = Schema.Struct({
+  event: Schema.Struct({
+    id: Schema.String,
+    delivery_id: Schema.String,
+    event_type: Schema.String,
+    repository: Schema.String,
+    payload: Schema.Unknown,
+  }),
+  payload: Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  repoRoot: Schema.String,
+  ref: Schema.String,
+  commit: Schema.String,
+  files: Schema.Array(Schema.String),
+  counts: Schema.Struct({
+    total: Schema.Number,
+    terminal: Schema.Number,
+    failed: Schema.Number,
+    nonterminal: Schema.Number,
+    oldestNonterminalStartedAt: Schema.NullOr(Schema.Number),
+  }),
+})
+
 const ChildWorkflowCompletionSignal = Schema.Struct({
   workflowId: Schema.String,
   runId: Schema.optional(Schema.String),
@@ -264,6 +287,34 @@ const enrichRepositorySignals = defineWorkflowSignals({
 })
 
 export const workflows = [
+  defineWorkflow('publishMainMergeMemoryNote', MainMergeMemoryNoteWorkflowInput, ({ input, activities, info }) =>
+    Effect.gen(function* () {
+      logWorkflow('publishMainMergeMemoryNote.started', {
+        workflowId: info.workflowId,
+        runId: info.runId,
+        deliveryId: input.event.delivery_id,
+        repository: input.event.repository,
+        commit: input.commit,
+      })
+
+      yield* activities.schedule('publishMainMergeMemoryNote', [input as MainMergeMemoryNoteInput], {
+        startToCloseTimeoutMs: 600_000,
+        scheduleToCloseTimeoutMs: 7 * 24 * 60 * 60 * 1_000,
+        retry: {
+          initialIntervalMs: 5_000,
+          backoffCoefficient: 2,
+          maximumIntervalMs: 600_000,
+          maximumAttempts: 100,
+        },
+      })
+
+      logWorkflow('publishMainMergeMemoryNote.completed', {
+        workflowId: info.workflowId,
+        runId: info.runId,
+        deliveryId: input.event.delivery_id,
+      })
+    }),
+  ),
   defineWorkflow('enrichFile', EnrichFileInput, ({ input, activities, info, determinism }) => {
     const { repoRoot, filePath, repository, ref, commit, context, eventDeliveryId, force } = input
 

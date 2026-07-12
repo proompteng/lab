@@ -95,6 +95,44 @@ const legacyRepositoryIngestionState = (
   queries: [],
 })
 
+test('publishMainMergeMemoryNote delegates durable delivery to a retrying activity', async () => {
+  const { executor } = makeExecutor()
+  const input = {
+    event: {
+      id: 'event-1',
+      delivery_id: 'delivery-1',
+      event_type: 'push',
+      repository: 'proompteng/lab',
+      payload: {},
+    },
+    payload: { ref: 'refs/heads/main' },
+    repoRoot: '/workspace/lab',
+    ref: 'refs/heads/main',
+    commit: 'abcdef1234567890',
+    files: ['services/bumba/src/event-consumer.ts'],
+    counts: {
+      total: 1,
+      terminal: 1,
+      failed: 0,
+      nonterminal: 0,
+      oldestNonterminalStartedAt: null,
+    },
+  }
+
+  const output = await execute(executor, {
+    workflowType: 'publishMainMergeMemoryNote',
+    arguments: input,
+  })
+
+  expect(output.completion).toBe('pending')
+  const intent = output.determinismState.commandHistory[0]?.intent
+  expect(intent?.kind).toBe('schedule-activity')
+  if (intent?.kind !== 'schedule-activity') throw new Error('expected schedule-activity intent')
+  expect(intent.activityType).toBe('publishMainMergeMemoryNote')
+  expect(intent.retry?.maximumAttempts).toBe(100)
+  expect(intent.timeouts.scheduleToCloseTimeoutMs).toBe(7 * 24 * 60 * 60 * 1_000)
+})
+
 test('enrichFile schedules the first activity and blocks', async () => {
   const { executor, dataConverter } = makeExecutor()
   const input = {

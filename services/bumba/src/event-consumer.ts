@@ -156,7 +156,17 @@ type ProcessEventDependencies = {
   markProcessed?: typeof markEventProcessed
   markStaleFailed?: typeof markStaleIngestionsFailed
   startWorkflow?: typeof startEventWorkflow
-  publishMainMergeNote?: typeof publishMainMergeMemoryNote
+  startMainMergeNoteWorkflow?: typeof startMainMergeNoteWorkflow
+}
+
+export type MainMergeMemoryNoteInput = {
+  event: GithubEventRow
+  payload: Record<string, unknown>
+  repoRoot: string
+  ref: string
+  commit: string
+  files: string[]
+  counts: IngestionCounts
 }
 
 type EventConsumerTickDependencies = {
@@ -383,6 +393,8 @@ const buildEventWorkflowId = (deliveryId: string, filePath: string) => {
 const isMainBranchRef = (ref: string) => ref === 'main' || ref === 'refs/heads/main'
 
 const mainMergeMemoryNamespace = (deliveryId: string) => `bumba-main-${deliveryId}`.slice(0, 200)
+
+const buildMainMergeNoteWorkflowId = (deliveryId: string) => `bumba-main-note-${shortHash(deliveryId)}`
 
 const requestAgentsJsonEffect = (path: string, init?: RequestInit) =>
   Effect.tryPromise({
@@ -773,6 +785,27 @@ const publishMainMergeMemoryNote = (
     publishMainMergeMemoryNoteEffect(db, repoRoot, event, payload, ref, commit, files, counts, dependencies),
   )
 
+export const publishMainMergeMemoryNoteActivity = async (input: MainMergeMemoryNoteInput): Promise<void> => {
+  const databaseUrl = normalizeOptionalText(process.env.DATABASE_URL)
+  if (!databaseUrl) throw new Error('DATABASE_URL is required to publish a main-merge memory note')
+
+  const db = new SQL(withDefaultSslMode(databaseUrl))
+  try {
+    await publishMainMergeMemoryNote(
+      db,
+      input.repoRoot,
+      input.event,
+      input.payload,
+      input.ref,
+      input.commit,
+      input.files,
+      input.counts,
+    )
+  } finally {
+    await db.close().catch(() => undefined)
+  }
+}
+
 const resolveWorkerDeploymentName = (temporalConfig: TemporalConfig, taskQueue: string) => {
   return (
     normalizeOptionalText(process.env.TEMPORAL_WORKER_DEPLOYMENT_NAME) ??
@@ -924,6 +957,25 @@ const startEventWorkflow = async (
   })
 }
 
+const startMainMergeNoteWorkflow = async (
+  client: TemporalClient,
+  config: GithubEventConsumerConfig,
+  input: MainMergeMemoryNoteInput,
+) => {
+  try {
+    await client.workflow.start({
+      workflowId: buildMainMergeNoteWorkflowId(input.event.delivery_id),
+      workflowIdReusePolicy: WorkflowIdReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
+      workflowType: 'publishMainMergeMemoryNote',
+      taskQueue: config.taskQueue,
+      versioningBehavior: VersioningBehavior.AUTO_UPGRADE,
+      args: [input],
+    })
+  } catch (error) {
+    if (!isWorkflowAlreadyStartedError(error)) throw error
+  }
+}
+
 const processEvent = async (
   db: SqlClient,
   client: TemporalClient,
@@ -936,7 +988,7 @@ const processEvent = async (
   const markProcessed = dependencies.markProcessed ?? markEventProcessed
   const markStaleFailed = dependencies.markStaleFailed ?? markStaleIngestionsFailed
   const startWorkflow = dependencies.startWorkflow ?? startEventWorkflow
-  const publishMergeNote = dependencies.publishMainMergeNote ?? publishMainMergeMemoryNote
+  const startMergeNoteWorkflow = dependencies.startMainMergeNoteWorkflow ?? startMainMergeNoteWorkflow
 
   if (event.event_type !== 'push') {
     await markProcessed(db, event.delivery_id)
@@ -1044,7 +1096,17 @@ const processEvent = async (
   ingestionCounts = await getCounts(db, event.id)
   if (allTargetsDispatched && ingestionCounts.total >= files.length) {
     if (ingestionCounts.total === ingestionCounts.terminal) {
-      await publishMergeNote(db, config.repoRoot, event, payload, ref, commit, files, ingestionCounts)
+      if (isMainBranchRef(ref)) {
+        await startMergeNoteWorkflow(client, config, {
+          event,
+          payload,
+          repoRoot: config.repoRoot,
+          ref,
+          commit,
+          files,
+          counts: ingestionCounts,
+        })
+      }
       await markProcessed(db, event.delivery_id)
       return {
         processed: true,
@@ -1374,6 +1436,7 @@ export const createGithubEventConsumer = (
 
 export const __test__ = {
   buildEventWorkflowId,
+  buildMainMergeNoteWorkflowId,
   extractEventFilePaths,
   resolveEventCommit,
   resolveEventRef,
@@ -1387,6 +1450,7 @@ export const __test__ = {
   runEventConsumerTick,
   processEvent,
   startEventWorkflow,
+  startMainMergeNoteWorkflow,
   publishMainMergeMemoryNote,
   loadMainMergeEnrichments,
   loadMainMergeDiff,

@@ -239,7 +239,34 @@ test('startEventWorkflow reuses failed but not completed deterministic workflow 
   expect(options?.workflowIdReusePolicy).toBe(2)
 })
 
-test('processEvent publishes the main merge note before marking a fully terminal event processed', async () => {
+test('startMainMergeNoteWorkflow creates a delivery-scoped durable workflow', async () => {
+  let options: Record<string, unknown> | undefined
+  const client = {
+    workflow: {
+      start: async (input: Record<string, unknown>) => {
+        options = input
+        return {} as never
+      },
+    },
+  }
+  const event = githubPushEvent(['src/a.ts'])
+
+  await __test__.startMainMergeNoteWorkflow(client as never, eventConsumerConfig(), {
+    event,
+    payload: event.payload as Record<string, unknown>,
+    repoRoot: '/workspace/lab',
+    ref: 'refs/heads/main',
+    commit: 'abcdef1234567890',
+    files: ['src/a.ts'],
+    counts: ingestionCounts({ total: 1, terminal: 1 }),
+  })
+
+  expect(options?.workflowId).toBe(__test__.buildMainMergeNoteWorkflowId(event.delivery_id))
+  expect(options?.workflowType).toBe('publishMainMergeMemoryNote')
+  expect(options?.workflowIdReusePolicy).toBe(2)
+})
+
+test('processEvent schedules the main merge note workflow before marking a fully terminal event processed', async () => {
   const event = githubPushEvent(['src/a.ts', 'src/b.ts'])
   const calls: string[] = []
   const result = await __test__.processEvent({} as never, {} as never, eventConsumerConfig(), event, {
@@ -248,8 +275,8 @@ test('processEvent publishes the main merge note before marking a fully terminal
     startWorkflow: async () => {
       throw new Error('WorkflowExecutionAlreadyStarted')
     },
-    publishMainMergeNote: async (_db, _repoRoot, _event, _payload, ref, commit, files) => {
-      calls.push(`note:${ref}:${commit}:${files.join(',')}`)
+    startMainMergeNoteWorkflow: async (_client, _config, input) => {
+      calls.push(`note:${input.ref}:${input.commit}:${input.files.join(',')}`)
     },
     markProcessed: async (_db, deliveryId) => {
       calls.push(`processed:${deliveryId}`)
