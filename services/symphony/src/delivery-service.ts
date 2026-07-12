@@ -406,11 +406,11 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         })
       }
 
-      const listPullRequests = (repo: string) => {
+      const listPullRequests = (repo: string, baseBranch: string) => {
         const parsedRepo = parseRepo(repo)
         return githubRequest<GitHubPullsResponse>(
           repo,
-          `/repos/${parsedRepo.owner}/${parsedRepo.name}/pulls?state=all&base=main&sort=updated&direction=desc&per_page=100`,
+          `/repos/${parsedRepo.owner}/${parsedRepo.name}/pulls?state=all&base=${encodeURIComponent(baseBranch)}&sort=updated&direction=desc&per_page=100`,
         )
       }
 
@@ -596,9 +596,9 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         (issue.delivery?.codePr?.number
           ? getPullRequestPayload(config.target.repo, issue.delivery.codePr.number).pipe(
               Effect.map((pullRequest) => [pullRequest] as GitHubPullRequest[]),
-              Effect.catchAll(() => listPullRequests(config.target.repo)),
+              Effect.catchAll(() => listPullRequests(config.target.repo, config.target.defaultBranch)),
             )
-          : listPullRequests(config.target.repo)
+          : listPullRequests(config.target.repo, config.target.defaultBranch)
         ).pipe(
           Effect.map((pullRequests) => {
             const matched = pullRequests.find(
@@ -621,34 +621,42 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
         (previousNumber
           ? getPullRequestPayload(repo, previousNumber).pipe(
               Effect.map((pullRequest) => [pullRequest] as GitHubPullRequest[]),
-              Effect.catchAll(() => listPullRequests(repo)),
+              Effect.catchAll(() => listPullRequests(repo, config.target.defaultBranch)),
             )
-          : listPullRequests(repo)
+          : listPullRequests(repo, config.target.defaultBranch)
         ).pipe(
           Effect.map((pullRequests) => {
+            if (!sourceSha) return null
             const matched = pullRequests.find(
               (pullRequest) =>
                 pullRequest.base.ref === config.target.defaultBranch &&
                 pullRequest.head.ref.startsWith(config.release.promotionBranchPrefix) &&
-                (sourceSha === null || (pullRequest.body ?? '').includes(sourceSha)),
+                (pullRequest.body ?? '').includes(sourceSha),
             )
             return matched ?? null
           }),
         )
 
-      const findRollbackPr = (repo: string, failedCommitSha: string | null, previousNumber: number | null) =>
+      const findRollbackPr = (
+        repo: string,
+        failedCommitSha: string | null,
+        baseBranch: string,
+        previousNumber: number | null,
+      ) =>
         (previousNumber
           ? getPullRequestPayload(repo, previousNumber).pipe(
               Effect.map((pullRequest) => [pullRequest] as GitHubPullRequest[]),
-              Effect.catchAll(() => listPullRequests(repo)),
+              Effect.catchAll(() => listPullRequests(repo, baseBranch)),
             )
-          : listPullRequests(repo)
+          : listPullRequests(repo, baseBranch)
         ).pipe(
           Effect.map((pullRequests) => {
+            if (!failedCommitSha) return null
             const matched = pullRequests.find(
               (pullRequest) =>
+                pullRequest.base.ref === baseBranch &&
                 pullRequest.head.ref.startsWith(ROLLBACK_BRANCH_PREFIX) &&
-                (failedCommitSha === null || (pullRequest.body ?? '').includes(failedCommitSha)),
+                (pullRequest.body ?? '').includes(failedCommitSha),
             )
             return matched ?? null
           }),
@@ -712,6 +720,7 @@ export const makeDeliveryServiceLayer = (logger: Logger) =>
           const rollbackPrPayload = yield* findRollbackPr(
             config.target.repo,
             promotionMergeCommitSha,
+            config.target.defaultBranch,
             baseDelivery.rollbackPr?.number ?? null,
           )
           const rollbackPr = rollbackPrPayload ? toPullRequestRef(rollbackPrPayload) : null
