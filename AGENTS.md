@@ -86,8 +86,8 @@
 
 ## Codex Reviews
 
-- Treat automatic Codex review as a merge gate alongside CI. Do not request `@codex review` or poll for completion.
-- After CI finishes, inspect the PR once for the current head SHA, Codex reactions, submitted reviews, and inline findings from `chatgpt-codex-connector[bot]`.
+- Treat automatic Codex review as a merge gate alongside CI. Do not request `@codex review`; let the configured automatic review start on its own.
+- After CI finishes, poll the PR every 30–60 seconds for the current head SHA, Codex reactions, submitted reviews, and inline findings from `chatgpt-codex-connector[bot]`. Continue until review completes or Codex posts an actionable finding; avoid tighter polling.
 - Interpret an `eyes` reaction as review in progress. Interpret a `+1` reaction created after the current head commit as review complete with no blocking findings unless Codex also posted an actionable finding. A reaction or review that predates the current head is stale.
 - Evaluate only actionable issues introduced by the PR that affect correctness, security, performance, maintainability, or developer experience. Prioritize severe findings and skip nits unless they block understanding or verification of the change.
 - For each actionable finding, verify the cited code and line range, fix the issue, and add focused regression coverage or exact validation. Push the fix before replying with the commit and evidence; resolve the finding only after the fix is on the branch.
