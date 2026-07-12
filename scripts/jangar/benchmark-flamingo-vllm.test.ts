@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import { validateChatSmokeResponse } from './benchmark-flamingo-vllm'
+import { validateChatSmokeResponse, withCacheSalt } from './benchmark-flamingo-vllm'
 
 function textResponse(content: string, finishReason = 'stop', completionTokens = 8): unknown {
   return {
@@ -8,6 +8,15 @@ function textResponse(content: string, finishReason = 'stop', completionTokens =
     usage: { completion_tokens: completionTokens },
   }
 }
+
+describe('withCacheSalt', () => {
+  test('isolates every chat payload without mutating the caller input', () => {
+    const payload = { model: 'qwen36-flamingo', messages: [{ role: 'user', content: 'hello' }] }
+
+    expect(withCacheSalt(payload, 'run-specific-salt')).toEqual({ ...payload, cache_salt: 'run-specific-salt' })
+    expect(payload).not.toHaveProperty('cache_salt')
+  })
+})
 
 describe('validateChatSmokeResponse', () => {
   test('accepts real OpenAI text completion fields', () => {

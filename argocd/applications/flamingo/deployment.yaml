@@ -102,12 +102,12 @@ spec:
             failureThreshold: 6
           resources:
             requests:
-              cpu: "16"
-              memory: 128Gi
+              cpu: "4"
+              memory: 32Gi
               nvidia.com/gpu: "1"
             limits:
-              cpu: "64"
-              memory: 256Gi
+              cpu: "8"
+              memory: 40Gi
               nvidia.com/gpu: "1"
           securityContext:
             allowPrivilegeEscalation: false
