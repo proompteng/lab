@@ -17,3 +17,10 @@ describe('bumba Dockerfile', () => {
     expect(dockerfile).not.toMatch(/^FROM oven\/bun:/m)
   })
 })
+
+test('the Nix image runs Bumba under tini so orphaned subprocesses are reaped', async () => {
+  const image = await readFile(resolve(import.meta.dir, '../../../nix/images/bumba.nix'), 'utf8')
+
+  expect(image).toContain('pkgs.tini')
+  expect(image).toMatch(/command = \[\s*"tini"\s*"-g"\s*"--"\s*"bun"/)
+})

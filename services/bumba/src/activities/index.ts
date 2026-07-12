@@ -8,6 +8,7 @@ import * as TSemaphore from 'effect/TSemaphore'
 import { Language, Parser } from 'web-tree-sitter'
 import { isMap, isScalar, isSeq, LineCounter, parseAllDocuments } from 'yaml'
 
+import { runCommandIsolated } from '../command-runner'
 import { publishMainMergeMemoryNoteActivity, type MainMergeMemoryNoteInput } from '../event-consumer'
 
 export type ReadRepoFileInput = {
@@ -651,25 +652,25 @@ type CommandResult = {
   stderr: string
 }
 
+const COMMAND_TIMEOUT_MS = 30_000
+
 const runCommandRaw = async (
   args: string[],
   cwd: string,
   env?: Record<string, string | undefined>,
 ): Promise<CommandResult> => {
   try {
-    const proc = Bun.spawn(args, {
-      cwd,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      env: env ? { ...process.env, ...env } : process.env,
-    })
-    const [stdout, stderr, exitCode] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ])
+    const result = await runCommandIsolated(args, cwd, COMMAND_TIMEOUT_MS, env)
+    const { stdout, stderr } = result
+    if (result.exitCode === null) {
+      return {
+        exitCode: 1,
+        stdout,
+        stderr: stderr || `command timed out after ${COMMAND_TIMEOUT_MS}ms`,
+      }
+    }
     return {
-      exitCode,
+      exitCode: result.exitCode,
       stdout,
       stderr,
     }
@@ -717,14 +718,35 @@ const commitExistsLocally = async (repoRoot: string, commit: string) => {
 
 const fetchCommitFromOrigin = async (repoRoot: string, commit: string) => {
   const token = resolveGithubToken()
-  const args = ['git', '-C', repoRoot, ...buildGitAuthArgs(token), 'fetch', '--quiet', '--depth=1', 'origin', commit]
+  const args = [
+    'git',
+    '-C',
+    repoRoot,
+    ...buildGitAuthArgs(token),
+    'fetch',
+    '--no-auto-maintenance',
+    '--quiet',
+    '--depth=1',
+    'origin',
+    commit,
+  ]
   const result = await runCommandResult(args, repoRoot, { GIT_TERMINAL_PROMPT: '0' })
   return result.exitCode === 0
 }
 
 const fetchFromOrigin = async (repoRoot: string, ref?: string) => {
   const token = resolveGithubToken()
-  const args = ['git', '-C', repoRoot, ...buildGitAuthArgs(token), 'fetch', '--quiet', '--depth=1', 'origin']
+  const args = [
+    'git',
+    '-C',
+    repoRoot,
+    ...buildGitAuthArgs(token),
+    'fetch',
+    '--no-auto-maintenance',
+    '--quiet',
+    '--depth=1',
+    'origin',
+  ]
   if (ref) {
     args.push(ref)
   }

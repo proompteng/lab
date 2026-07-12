@@ -26,11 +26,15 @@ import ./bun-workspace-service.nix {
     "bun --cwd=packages/temporal-bun-sdk run build"
   ];
   command = [
+    "tini"
+    "-g"
+    "--"
     "bun"
     "services/bumba/src/worker.ts"
   ];
   extraContents = [
     pkgs.git
+    pkgs.tini
   ];
   exposedPorts = {
     "3001/tcp" = { };
