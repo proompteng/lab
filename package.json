@@ -129,7 +129,7 @@
     "oxlint": "^1.63.0",
     "oxlint-tsgolint": "^0.22.1",
     "turbo": "2.9.9",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "lint-staged": {
     "*.go": "gofmt -w",

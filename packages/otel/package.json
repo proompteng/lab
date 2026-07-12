@@ -89,12 +89,12 @@
     }
   },
   "scripts": {
-    "build": "node -e \"require('child_process').execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '--project', 'tsconfig.json', '--pretty', 'false'], { stdio: 'inherit' })\"",
+    "build": "tsc --project tsconfig.json --pretty false",
     "test": "bun test"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",
     "bun-types": "1.3.14",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   }
 }

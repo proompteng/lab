@@ -2,7 +2,11 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { dirname, extname, resolve } from 'node:path'
 
-import ts from 'typescript'
+import {
+  collectWorkflowDynamicImportPositions,
+  collectWorkflowModuleSpecifiers,
+  scanWorkflowSyntaxTokens,
+} from './syntax-scan'
 
 export type ImportEdge = {
   readonly from: string
@@ -62,26 +66,6 @@ const tryResolveFile = (baseDir: string, specifier: string): string | undefined 
   return undefined
 }
 
-const collectImportSpecifiers = (sourceFile: ts.SourceFile): { specifiers: string[]; hasDynamicImport: boolean } => {
-  const specifiers: string[] = []
-  let hasDynamicImport = false
-
-  const visit = (node: ts.Node) => {
-    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      const module = node.moduleSpecifier
-      if (module && ts.isStringLiteral(module)) {
-        specifiers.push(module.text)
-      }
-    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      hasDynamicImport = true
-    }
-    ts.forEachChild(node, visit)
-  }
-
-  visit(sourceFile)
-  return { specifiers, hasDynamicImport }
-}
-
 export const buildWorkflowLintGraph = async (options: {
   readonly entry: string
   readonly cwd: string
@@ -103,7 +87,7 @@ export const buildWorkflowLintGraph = async (options: {
     let sourceText: string
     try {
       sourceText = await readFile(filePath, 'utf8')
-    } catch (_error) {
+    } catch {
       violations.push({
         filePath,
         rule: 'deny-import',
@@ -112,9 +96,9 @@ export const buildWorkflowLintGraph = async (options: {
       continue
     }
 
-    const sourceFile = ts.createSourceFile(filePath, sourceText, ts.ScriptTarget.Latest, true)
-    const { specifiers, hasDynamicImport } = collectImportSpecifiers(sourceFile)
-    if (hasDynamicImport) {
+    const tokens = scanWorkflowSyntaxTokens(sourceText)
+    const dynamicImportPositions = collectWorkflowDynamicImportPositions(tokens)
+    if (dynamicImportPositions.length > 0) {
       violations.push({
         filePath,
         rule: 'dynamic-import',
@@ -123,7 +107,7 @@ export const buildWorkflowLintGraph = async (options: {
     }
 
     const baseDir = dirname(filePath)
-    for (const specifier of specifiers) {
+    for (const { specifier } of collectWorkflowModuleSpecifiers(tokens)) {
       edges.push({ from: filePath, specifier })
 
       if (!isRelative(specifier)) {
