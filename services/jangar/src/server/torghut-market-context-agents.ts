@@ -762,6 +762,20 @@ const coerceLifecycleStatus = (value: unknown, fallback: string) => {
 const isLifecycleStatusTerminal = (status: string) =>
   status === 'succeeded' || status === 'failed' || status === 'partial' || status === 'cancelled'
 
+export const resolveProviderRunProgressFailureSignal = (params: {
+  status: string
+  metadata: Record<string, unknown>
+  message: string | null
+}) => {
+  if (params.status === 'failed') {
+    return resolveFailureSignal({ metadata: params.metadata, message: params.message })
+  }
+  if (params.status !== 'cancelled' || resolveFailureCategoryFromMetadata(params.metadata) === null) {
+    return null
+  }
+  return resolveFailureSignal({ metadata: params.metadata, message: params.message })
+}
+
 const parseRunIdentifier = (value: unknown) => {
   const requestId = parseNonEmptyString(value)
   if (!requestId) throw new Error('requestId is required')
@@ -1004,7 +1018,7 @@ export const recordMarketContextProviderRunProgress = async (input: RunProgressP
   const now = new Date()
 
   const context = await loadRunContext({ requestId })
-  const failureSignal = status === 'failed' ? resolveFailureSignal({ metadata, message }) : null
+  const failureSignal = resolveProviderRunProgressFailureSignal({ status, metadata, message })
   const runError = failureSignal?.error ?? null
   const finishedAt = isLifecycleStatusTerminal(status) ? now : null
 

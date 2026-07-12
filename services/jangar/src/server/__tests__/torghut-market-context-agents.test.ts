@@ -110,6 +110,29 @@ describe('torghut market-context agent helpers', () => {
     expect(state.lastError).toBe('provider_attempt_timeout')
   })
 
+  it('captures provider failure metadata from cancelled progress updates', async () => {
+    const { resolveProviderRunProgressFailureSignal } = await import('../torghut-market-context-agents')
+
+    expect(
+      resolveProviderRunProgressFailureSignal({
+        status: 'cancelled',
+        metadata: { failureCategory: 'provider_attempt_timeout' },
+        message: 'provider attempt timed out',
+      }),
+    ).toEqual({
+      category: 'provider_attempt_timeout',
+      error: 'provider_attempt_timeout',
+      message: 'provider attempt timed out',
+    })
+    expect(
+      resolveProviderRunProgressFailureSignal({
+        status: 'cancelled',
+        metadata: {},
+        message: 'market closed',
+      }),
+    ).toBeNull()
+  })
+
   it('keeps provider circuit closed when a success breaks the failure chain', async () => {
     const { resolveProviderCircuitStateFromRows } = await import('../torghut-market-context-agents')
 
