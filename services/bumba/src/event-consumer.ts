@@ -399,7 +399,9 @@ const buildMainMergeNoteWorkflowId = (deliveryId: string) => `bumba-main-note-${
 
 const buildAuthenticatedGitArgs = (args: string[]) => {
   const token = normalizeOptionalText(process.env.GITHUB_TOKEN) ?? normalizeOptionalText(process.env.GH_TOKEN)
-  return token ? ['-c', `http.extraheader=Authorization: Bearer ${token}`, ...args] : args
+  if (!token) return args
+  const credentials = Buffer.from(`x-access-token:${token}`).toString('base64')
+  return ['-c', `http.extraheader=Authorization: Basic ${credentials}`, ...args]
 }
 
 export const runGitFetchWithPublicFallback = async <T extends { exitCode: number }>(
