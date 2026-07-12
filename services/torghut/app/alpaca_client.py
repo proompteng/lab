@@ -37,6 +37,32 @@ class OrderFirewallViolation(PermissionError):
     """Raised when broker mutation methods are called outside OrderFirewall."""
 
 
+_RESERVED_ORDER_EXTRA_PARAMS = frozenset(
+    {
+        "limit_price",
+        "notional",
+        "order_type",
+        "qty",
+        "side",
+        "stop_price",
+        "symbol",
+        "time_in_force",
+        "type",
+    }
+)
+_ALLOWED_ORDER_EXTRA_PARAMS = frozenset(
+    {
+        "client_order_id",
+        "extended_hours",
+        "legs",
+        "order_class",
+        "position_intent",
+        "stop_loss",
+        "take_profit",
+    }
+)
+
+
 class _ReadOnlyTradingClientLike(Protocol):
     def get_account(self) -> Any: ...
 
@@ -239,6 +265,22 @@ class TorghutAlpacaClient:
     ) -> Dict[str, Any]:
         self._require_firewall_caller()
         self._require_firewall_token(firewall_token)
+        order_extra_params = dict(extra_params or {})
+        reserved_extra_params = sorted(
+            _RESERVED_ORDER_EXTRA_PARAMS.intersection(order_extra_params)
+        )
+        if reserved_extra_params:
+            raise ValueError(
+                "alpaca_order_extra_params_reserved:" + ",".join(reserved_extra_params)
+            )
+        unsupported_extra_params = sorted(
+            set(order_extra_params).difference(_ALLOWED_ORDER_EXTRA_PARAMS)
+        )
+        if unsupported_extra_params:
+            raise ValueError(
+                "alpaca_order_extra_params_unsupported:"
+                + ",".join(unsupported_extra_params)
+            )
         side_enum = OrderSide(side.lower())
         tif_enum = TimeInForce(time_in_force.lower())
         payload = {
@@ -247,8 +289,7 @@ class TorghutAlpacaClient:
             "side": side_enum,
             "time_in_force": tif_enum,
         }
-        if extra_params:
-            payload.update(extra_params)
+        payload.update(order_extra_params)
 
         order_type_lower = order_type.lower()
         if order_type_lower == "market":
