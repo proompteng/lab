@@ -14,6 +14,11 @@ afterEach(() => {
 })
 
 describe('torghut trading summary reason parsing', () => {
+  it('uses the configured planned-decision timeout', () => {
+    expect(__private.resolveStalePlannedThresholdMs({ TRADING_PLANNED_DECISION_TIMEOUT_SECONDS: '90' })).toBe(90_000)
+    expect(__private.resolveStalePlannedThresholdMs({})).toBe(600_000)
+  })
+
   it('splits semicolon-delimited risk reasons into individual tokens', () => {
     expect(__private.splitRiskReason('shorts_not_allowed;symbol_capacity_exhausted')).toEqual([
       'shorts_not_allowed',

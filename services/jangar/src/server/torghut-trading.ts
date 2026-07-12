@@ -158,7 +158,13 @@ const TORGHUT_API_BASE_URL = resolveTorghutEndpointsConfig(process.env).apiBaseU
 
 const SUBMITTED_DECISION_STATUSES = new Set(['submitted', 'filled', 'canceled', 'cancelled', 'expired'])
 const SUBMIT_ATTEMPT_DECISION_STAGES = new Set(['submit_requested', 'submitted', 'rejected_submit'])
-const STALE_PLANNED_THRESHOLD_MS = 60_000
+
+const resolveStalePlannedThresholdMs = (env: Record<string, string | undefined> = process.env) => {
+  const raw = env.TRADING_PLANNED_DECISION_TIMEOUT_SECONDS?.trim()
+  if (!raw) return 600_000
+  const seconds = Number.parseInt(raw, 10)
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 600_000
+}
 
 const countMapToSortedList = (counts: Map<string, number>, limit = 12) =>
   [...counts.entries()]
@@ -824,7 +830,9 @@ export const buildTorghutTradingSummary = async (params: {
   const pnl = computeRealizedPnlAverageCostLongOnly(executions)
   const staleReferenceTime = Math.min(Date.parse(params.interval.endUtc), Date.now())
   const staleCutoffIso = toIsoString(
-    new Date((Number.isFinite(staleReferenceTime) ? staleReferenceTime : Date.now()) - STALE_PLANNED_THRESHOLD_MS),
+    new Date(
+      (Number.isFinite(staleReferenceTime) ? staleReferenceTime : Date.now()) - resolveStalePlannedThresholdMs(),
+    ),
   )
   const decisionLifecycle = summarizeDecisionLifecycle(decisions, staleCutoffIso)
   const runtimeProfitability: RuntimeProfitabilitySummary = profitabilityResult.ok
@@ -984,4 +992,5 @@ export const __private = {
   summarizeDecisionLifecycle,
   parseRuntimeProfitabilitySummary,
   parseRuntimeControlPlaneSummary,
+  resolveStalePlannedThresholdMs,
 }
