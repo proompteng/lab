@@ -142,6 +142,12 @@ class _TransferValidationContext:
 
 
 @dataclass(frozen=True)
+class _SourceValidationContext:
+    ref: TigerBeetleTransferRef
+    state: _ReconciliationState
+
+
+@dataclass(frozen=True)
 class _ReconciliationRequest:
     settings_obj: Settings
     client: TigerBeetleClientProtocol | None
@@ -202,6 +208,9 @@ def _process_single_transfer(
             ),
         )
 
+    source_validation = _SourceValidationContext(ref=ref, state=state)
+    _validate_postgres_source_ref(session, settings_obj, source_validation)
+
     if not state.client_lookup_ok:
         return
 
@@ -220,7 +229,8 @@ def _process_single_transfer(
 
     validation = _TransferValidationContext(ref=ref, actual=actual, state=state)
     _validate_transfer_fields(validation)
-    _validate_event_ref(session, settings_obj, validation)
+    if ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
+        _validate_runtime_ledger(session, validation)
 
 
 def _validate_transfer_fields(context: _TransferValidationContext) -> None:
@@ -302,10 +312,10 @@ def _check_and_append(
     )
 
 
-def _validate_event_ref(
+def _validate_postgres_source_ref(
     session: Session,
     settings_obj: Settings,
-    context: _TransferValidationContext,
+    context: _SourceValidationContext,
 ) -> None:
     if not _ref_matches_expected_event(session, context.ref, settings_obj=settings_obj):
         context.state.counts.mismatched_transfer_count += 1
@@ -316,7 +326,6 @@ def _validate_event_ref(
                 context.ref,
                 blocker=BLOCKER_POSTGRES_REF_MISMATCH,
                 reason="transfer_ref_no_longer_matches_order_event_plan",
-                actual=context.actual,
             ),
         )
 
@@ -327,13 +336,10 @@ def _validate_event_ref(
     }:
         _validate_source_amount(session, context)
 
-    if context.ref.source_type == SOURCE_TYPE_RUNTIME_LEDGER_BUCKET:
-        _validate_runtime_ledger(session, context)
-
 
 def _validate_source_amount(
     session: Session,
-    context: _TransferValidationContext,
+    context: _SourceValidationContext,
 ) -> None:
     ref = context.ref
     counts = context.state.counts
@@ -351,7 +357,6 @@ def _validate_source_amount(
                     ref,
                     blocker=BLOCKER_SOURCE_ROW_MISSING,
                     reason="source_row_missing_or_source_id_not_uuid",
-                    actual=context.actual,
                 ),
             )
     elif ref.amount != expected_source_amount:
@@ -363,7 +368,6 @@ def _validate_source_amount(
                     ref,
                     blocker="tigerbeetle_legacy_source_amount_unverifiable",
                     reason="legacy_source_ref_lacks_revision_or_archived_amount",
-                    actual=context.actual,
                 ),
             )
         else:
@@ -375,7 +379,6 @@ def _validate_source_amount(
                     ref,
                     blocker=BLOCKER_SOURCE_AMOUNT_MISMATCH,
                     reason="source_amount_micros_differs_from_transfer_ref",
-                    actual=context.actual,
                 ),
             )
 

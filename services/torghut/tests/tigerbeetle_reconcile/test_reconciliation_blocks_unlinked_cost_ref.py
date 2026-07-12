@@ -3,6 +3,8 @@ from __future__ import annotations
 from tests.tigerbeetle_reconcile.support import (
     BLOCKER_CLIENT_UNAVAILABLE,
     BLOCKER_CODE_MISMATCH,
+    BLOCKER_SOURCE_AMOUNT_MISMATCH,
+    BLOCKER_SOURCE_ROW_MISSING,
     BLOCKER_TRANSFER_MISSING,
     BLOCKER_UNLINKED_COST,
     BLOCKER_UNLINKED_RUNTIME_LEDGER,
@@ -268,6 +270,69 @@ class TestReconciliationBlocksUnlinkedCostRef(_TestTigerBeetleReconcileBase):
             self.assertIn("RuntimeError: lookup failed", str(payload["client_error"]))
             self.assertEqual(payload["missing_transfer_count"], 0)
             self.assertEqual(payload["missing_transfer_refs"], [])
+
+    def test_client_failure_preserves_postgres_source_validation(self) -> None:
+        with Session(self.engine) as session:
+            execution = Execution(
+                alpaca_account_label="paper",
+                alpaca_order_id="order-client-failure-source-mismatch",
+                client_order_id="client-failure-source-mismatch",
+                symbol="AAPL",
+                side="buy",
+                order_type="market",
+                time_in_force="day",
+                submitted_qty=Decimal("1"),
+                filled_qty=Decimal("1"),
+                avg_fill_price=Decimal("190.25"),
+                status="filled",
+                raw_order={"id": "order-client-failure-source-mismatch"},
+            )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id="1101",
+                        transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                        ledger=LEDGER_USD_MICRO,
+                        code=TRANSFER_CODE_EXECUTION_FILL,
+                        amount=Decimal("1"),
+                        status="created",
+                        execution_id=execution.id,
+                        source_type=SOURCE_TYPE_EXECUTION,
+                        source_id=f"{execution.id}:current",
+                    ),
+                    TigerBeetleTransferRef(
+                        cluster_id=2001,
+                        transfer_id="1102",
+                        transfer_kind=TRANSFER_KIND_EXECUTION_FILL,
+                        ledger=LEDGER_USD_MICRO,
+                        code=TRANSFER_CODE_EXECUTION_FILL,
+                        amount=Decimal("190250000"),
+                        status="created",
+                        source_type=SOURCE_TYPE_EXECUTION,
+                        source_id="6f767a53-6b44-428a-bd85-2f662642f637",
+                    ),
+                ]
+            )
+            session.flush()
+
+            payload = reconcile_tigerbeetle_transfers(
+                session,
+                settings_obj=_settings(),
+                client=FailingLookupClient(),
+            )
+
+            self.assertFalse(payload["ok"])
+            self.assertIn(BLOCKER_CLIENT_UNAVAILABLE, payload["blockers"])
+            self.assertIn(BLOCKER_SOURCE_AMOUNT_MISMATCH, payload["blockers"])
+            self.assertIn(BLOCKER_SOURCE_ROW_MISSING, payload["blockers"])
+            self.assertNotIn(BLOCKER_TRANSFER_MISSING, payload["blockers"])
+            self.assertEqual(payload["source_amount_mismatch_count"], 1)
+            self.assertEqual(payload["source_row_missing_count"], 1)
+            self.assertEqual(payload["source_missing_count"], 2)
+            self.assertEqual(payload["missing_transfer_count"], 0)
 
     def test_latest_reconciliation_payload_normalizes_blockers(self) -> None:
         with Session(self.engine) as session:
