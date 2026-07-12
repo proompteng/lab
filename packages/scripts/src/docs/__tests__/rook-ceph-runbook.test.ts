@@ -13,3 +13,10 @@ it('selects RBD CSI nodeplugin pods by label without silently skipping mapped KR
   expect(runbook).toContain('-c csi-rbdplugin -- rbd showmapped --format json')
   expect(runbook).not.toContain("rg 'rook-ceph\\.rbd\\.csi\\.ceph\\.com-nodeplugin'")
 })
+
+it('runs the packages scripts regression suite when the protected runbook changes', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/scripts-ci.yml'), 'utf8')
+  const runbookPath = "'docs/runbooks/rook-ceph-client-ops-performance.md'"
+
+  expect(workflow.split(runbookPath)).toHaveLength(3)
+})
