@@ -1065,6 +1065,7 @@ const processEvent = async (
   let alreadyStarted = 0
   let failed = 0
   let scanned = 0
+  let startAttempts = 0
 
   for (const filePath of files) {
     const workflowId = buildEventWorkflowId(event.delivery_id, filePath)
@@ -1073,8 +1074,9 @@ const processEvent = async (
       scanned += 1
       continue
     }
-    if (started + failed >= config.maxEventFileTargets) break
+    if (startAttempts >= config.maxEventFileTargets) break
     scanned += 1
+    startAttempts += 1
     try {
       await startWorkflow(client, config, event, filePath, ref, commit)
       started += 1

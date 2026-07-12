@@ -149,7 +149,8 @@ test('processEvent dispatches oversized events across ticks without dropping tar
   const started = new Set<string>()
   const dependencies = {
     getCounts: async () => ingestionCounts(),
-    getWorkflowIds: async () => new Set<string>(),
+    getWorkflowIds: async () =>
+      new Set(Array.from(started, (filePath) => __test__.buildEventWorkflowId(event.delivery_id, filePath))),
     startWorkflow: async (_client: unknown, _config: unknown, _event: unknown, filePath: string) => {
       if (started.has(filePath)) throw new Error('WorkflowExecutionAlreadyStarted')
       started.add(filePath)
@@ -211,6 +212,29 @@ test('processEvent bounds failed Temporal start attempts per tick', async () => 
   )
 
   expect(result.dispatchFailed).toBe(2)
+  expect(attempted).toEqual(['src/a.ts', 'src/b.ts'])
+})
+
+test('processEvent counts Temporal AlreadyStarted responses against the per-tick attempt budget', async () => {
+  const event = githubPushEvent(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+  const attempted: string[] = []
+
+  const result = await __test__.processEvent(
+    {} as never,
+    {} as never,
+    eventConsumerConfig({ maxEventFileTargets: 2 }),
+    event,
+    {
+      getCounts: async () => ingestionCounts(),
+      getWorkflowIds: async () => new Set<string>(),
+      startWorkflow: async (_client, _config, _event, filePath) => {
+        attempted.push(filePath)
+        throw new Error('WorkflowExecutionAlreadyStarted')
+      },
+    },
+  )
+
+  expect(result.dispatchAlreadyStarted).toBe(2)
   expect(attempted).toEqual(['src/a.ts', 'src/b.ts'])
 })
 
