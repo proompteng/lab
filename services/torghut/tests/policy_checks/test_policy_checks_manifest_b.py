@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.trading.autonomy.policy_check.profitability_manifest import (
+    append_profitability_stage_manifest_reasons,
+)
 from tests.policy_checks.policy_checks_support import (
     Path,
     PolicyChecksTestCaseBase,
@@ -17,6 +20,80 @@ from tests.policy_checks.policy_checks_support import (
 
 
 class TestPolicyChecksManifestB(PolicyChecksTestCaseBase):
+    def test_empty_replay_hashes_report_each_missing_stage_artifact_hash(self) -> None:
+        missing_hashes = object()
+        for artifact_hashes in (missing_hashes, {}, {" ": " "}):
+            with (
+                self.subTest(artifact_hashes=artifact_hashes),
+                tempfile.TemporaryDirectory() as tmpdir,
+            ):
+                root = Path(tmpdir)
+                manifest_path = (
+                    root / "profitability" / "profitability-stage-manifest-v1.json"
+                )
+                manifest_path.parent.mkdir(parents=True)
+                replay_contract: dict[str, object] = {"contract_hash": "invalid"}
+                if artifact_hashes is not missing_hashes:
+                    replay_contract["artifact_hashes"] = artifact_hashes
+                manifest_path.write_text(
+                    json.dumps(
+                        {
+                            "stages": {
+                                "research": {
+                                    "artifacts": {
+                                        "candidate_spec": {
+                                            "path": "research/candidate-spec.json",
+                                            "sha256": "abc123",
+                                        }
+                                    }
+                                }
+                            },
+                            "replay_contract": replay_contract,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                reasons: list[str] = []
+                reason_details: list[dict[str, object]] = []
+
+                append_profitability_stage_manifest_reasons(
+                    reasons=reasons,
+                    reason_details=reason_details,
+                    policy_payload={
+                        "promotion_require_profitability_stage_replay_contract": True
+                    },
+                    artifact_root=root,
+                )
+
+                self.assertEqual(
+                    reasons.count(
+                        "profitability_stage_manifest_replay_artifact_hashes_missing"
+                    ),
+                    1,
+                )
+                self.assertEqual(
+                    reasons.count(
+                        "profitability_stage_manifest_replay_artifact_hash_missing"
+                    ),
+                    1,
+                )
+                missing_details = [
+                    detail
+                    for detail in reason_details
+                    if detail.get("reason")
+                    == "profitability_stage_manifest_replay_artifact_hash_missing"
+                ]
+                self.assertEqual(
+                    missing_details,
+                    [
+                        {
+                            "reason": "profitability_stage_manifest_replay_artifact_hash_missing",
+                            "artifact_ref": str(manifest_path),
+                            "stage_artifact_ref": "research/candidate-spec.json",
+                        }
+                    ],
+                )
+
     def test_promotion_prerequisites_fail_when_profitability_stage_manifest_replay_hash_mismatch(
         self,
     ) -> None:

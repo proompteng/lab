@@ -576,7 +576,6 @@ def _validate_replay_artifact_hashes(
             "profitability_stage_manifest_replay_artifact_hashes_missing",
             str(manifest_path),
         )
-        return
 
     expected_stage_artifact_hashes: dict[str, str] = {}
     for stage_name in _PROFITABILITY_STAGE_ORDER:
