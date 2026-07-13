@@ -205,3 +205,22 @@ test('lint-workflows fails on eval and Function constructors in workflow modules
     expect(result.violations.some((v) => v.rule === 'deny-global' && v.message.includes('Function'))).toBeTrue()
   })
 })
+
+test('lint-workflows changed-only mode fails closed when the merge-base ref is unavailable', async () => {
+  await withTempDir(async (dir) => {
+    const workflowsDir = join(dir, 'workflows')
+    await mkdir(workflowsDir, { recursive: true })
+    const entry = join(workflowsDir, 'index.ts')
+    await writeFile(entry, 'export const run = () => "ok"\n')
+
+    await expect(
+      executeLintWorkflows({
+        cwd: dir,
+        workflows: [entry],
+        mode: 'strict',
+        format: 'json',
+        changedOnly: true,
+      }),
+    ).rejects.toThrow('Unable to determine changed workflow files')
+  })
+})

@@ -587,7 +587,7 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
   if (typeof originalWebSocket === 'function') {
     globalRef[ORIGINAL_WEBSOCKET_SYMBOL] = originalWebSocket
     // biome-ignore lint/complexity/useArrowFunction: must remain constructable (usable with `new`)
-    ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = function (...args: unknown[]) {
+    const PatchedWebSocket = function (...args: unknown[]) {
       const ctx = currentWorkflowLogContext()
       if (!ctx) {
         handleViolation({
@@ -604,6 +604,11 @@ export const installWorkflowRuntimeGuards = (options: { mode: WorkflowGuardsMode
       })
       return new (originalWebSocket as unknown as new (...args: unknown[]) => unknown)(...args)
     }
+    ;(PatchedWebSocket as unknown as { prototype: unknown }).prototype = (
+      originalWebSocket as unknown as { prototype: unknown }
+    ).prototype
+    Object.setPrototypeOf(PatchedWebSocket, originalWebSocket)
+    ;(globalThis as unknown as { WebSocket: unknown }).WebSocket = PatchedWebSocket
   }
 
   const processRef = (globalThis as unknown as { process?: { env?: Record<string, string | undefined> } }).process
