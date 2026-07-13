@@ -94,6 +94,7 @@ targets:
     kind: validation
     paths:
       - argocd/**/*.yaml
+      - argocd/**/*.river
       - scripts/argo-lint.sh
 
   kubeconform:
@@ -101,6 +102,7 @@ targets:
     paths:
       - argocd/**/*.yaml
       - argocd/**/*.yml
+      - argocd/**/*.river
       - schemas/custom/**
       - scripts/kubeconform.sh
       - kubernetes/**/*.yaml

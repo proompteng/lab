@@ -6,7 +6,9 @@ const repoRoot = new URL('../../../../../', import.meta.url)
 const readRepoFile = (path: string): string => readFileSync(new URL(path, repoRoot), 'utf8')
 
 test('Alloy scrapes Flink operator and TA metrics with alert-compatible labels', () => {
-  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-configmap.yaml')
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const deployment = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-deployment.yaml')
+  const kustomization = readRepoFile('argocd/applications/observability/kustomization.yaml')
 
   expect(config).toContain('prometheus.scrape "flink"')
   expect(config).toContain('flink-operator-metrics.flink.svc.cluster.local:8080')
@@ -16,6 +18,9 @@ test('Alloy scrapes Flink operator and TA metrics with alert-compatible labels',
   expect(config).toContain('"namespace"   = "torghut"')
   expect(config).toContain('"service"     = "torghut-ta-metrics"')
   expect(config).toContain('forward_to      = [prometheus.remote_write.mimir.receiver]')
+  expect(kustomization).toContain('configMapGenerator:')
+  expect(kustomization).toContain('config.river=cluster-metrics-alloy-config.river')
+  expect(deployment).toContain('name: observability-cluster-metrics-alloy')
 })
 
 test('Ceph migration guide uses Hadoop S3A configuration keys', () => {

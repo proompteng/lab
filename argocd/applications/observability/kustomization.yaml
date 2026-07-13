@@ -1,6 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+configMapGenerator:
+  - name: observability-cluster-metrics-alloy
+    files:
+      - config.river=cluster-metrics-alloy-config.river
+
 resources:
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
@@ -15,7 +20,6 @@ resources:
   - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
-  - cluster-metrics-alloy-configmap.yaml
   - cluster-metrics-alloy-deployment.yaml
 
 helmCharts:
