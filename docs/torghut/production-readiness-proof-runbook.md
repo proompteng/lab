@@ -117,25 +117,14 @@ Persist the captured readiness payload as `session-ready.json`.
 ### 5. Proof repair capture
 
 If the readiness gate is blocked by stale empirical, order-feed source-window, execution TCA, or zero-notional drift
-receipts, capture the live status first. The old scheduled empirical renewal, source-window repair, and TCA refresh
-CronJobs have been removed; do not recreate them for proof recovery. The remaining GitOps-owned repair CronJob is the
-zero-notional drift repair.
-
-The zero-notional repair CronJob runs the script with `--execute-policy dispatchable-only`: it first calls the repair
-endpoint with `execute=false` and only dispatches when the receipt contains a concrete `zero_notional_action` or
-`candidate_id`. A capital-safe `no_selected_repair` receipt should complete successfully with
-`preflight_skipped_execute=true`.
+receipts, capture the live status first. The scheduled repair CronJobs and their maintenance API endpoints have been
+removed; do not recreate them for proof recovery. Repairs now run through the scheduler-owned runtime and its normal
+capital-safety gates.
 
 ```bash
 stamp="$(date -u +%Y%m%d%H%M%S)"
 out="/tmp/torghut-proof-rerun-${stamp}"
 mkdir -p "${out}"
-
-job="torghut-zero-notional-drift-repair-manual-${stamp}"
-kubectl create job -n torghut --from="cronjob/torghut-zero-notional-drift-repair" "${job}"
-kubectl wait -n torghut --for=condition=complete --timeout=20m "job/${job}"
-kubectl get job -n torghut "${job}" -o yaml > "${out}/${job}.yaml"
-kubectl logs -n torghut -l "job-name=${job}" --all-containers --timestamps --tail=-1 > "${out}/${job}.log"
 ```
 
 After the rerun, capture:

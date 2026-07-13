@@ -82,13 +82,11 @@
 - Use squash merges: `gh pr merge <number> --squash -R proompteng/lab`. Do not pass `--delete-branch`, which conflicts with worktrees.
 - Normal deployments flow through committed CI/CD and GitOps; do not deploy services directly from a worktree.
 
-## Codex Review Gate
+## Codex Review
 
-- Automatic Codex review is required alongside CI. Let it start automatically; do not post `@codex review`.
-- After CI finishes, poll every 30–60 seconds for the current head SHA and signals from `chatgpt-codex-connector[bot]`: PR reactions, submitted reviews, and inline findings.
-- `eyes` means review is running. A `+1` created after the current head commit means review completed without blocking findings unless Codex also posted an actionable finding. Signals that predate the current head are stale.
+- Let automatic Codex review run without posting `@codex review` or polling for review signals.
+- Treat actionable Codex findings as blocking and resolve them before merge. A push that fixes reviewed feedback does not require another current-head review cycle.
 - For each actionable finding, verify the cited code and range, fix it, add focused regression coverage or exact validation, then push. Reply with the commit and evidence and resolve the finding only after the fix is present.
-- A new push resets the review gate. Merge only when required CI is green, the PR is mergeable, Codex completed review of the current head, and no blocking finding remains.
 
 ## Sub-agents
 

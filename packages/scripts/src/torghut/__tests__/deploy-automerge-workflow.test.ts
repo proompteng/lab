@@ -52,7 +52,6 @@ describe('torghut-deploy-automerge workflow', () => {
 
   test('allowlists every Torghut maintenance manifest promoted by torghut-release', () => {
     const promotedMaintenanceManifests = [
-      'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
       'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
       'argocd/applications/torghut/tigerbeetle-smoke-job.yaml',
     ]

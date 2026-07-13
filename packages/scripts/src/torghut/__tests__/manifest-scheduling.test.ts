@@ -119,10 +119,7 @@ describe('Torghut manifest scheduling', () => {
   })
 
   it('retains Torghut scheduled failure logs for same-day debugging', () => {
-    const cronJobPaths = [
-      'argocd/applications/torghut/zero-notional-drift-repair-cronjob.yaml',
-      'argocd/applications/torghut/generated-resource-retention-cronjob.yaml',
-    ]
+    const cronJobPaths = ['argocd/applications/torghut/generated-resource-retention-cronjob.yaml']
 
     let checkedCronJobs = 0
     for (const path of cronJobPaths) {
@@ -141,12 +138,13 @@ describe('Torghut manifest scheduling', () => {
         checkedCronJobs += 1
       }
     }
-    expect(checkedCronJobs).toBe(2)
+    expect(checkedCronJobs).toBe(1)
 
     const kustomization = parseManifest('argocd/applications/torghut/kustomization.yaml')
     const resources = kustomization.resources
     expect(Array.isArray(resources)).toBe(true)
     expect(resources).not.toContain('tigerbeetle-journal-order-events-cronjob.yaml')
+    expect(resources).not.toContain('zero-notional-drift-repair-cronjob.yaml')
     expect(resources).not.toContain('whitepaper-autoresearch-replay-materialization-cronworkflow.yaml')
   })
 
