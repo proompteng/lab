@@ -154,6 +154,7 @@ fun main() {
           config,
           Duration.ofSeconds(1),
           SignalBarTimestampAnchor.END,
+          config.resetLegacyOneSecondSignalState,
         ),
       ).name("ta-signals")
       .uid("ta-signals")
@@ -169,6 +170,7 @@ fun main() {
               config,
               Duration.ofMinutes(1),
               SignalBarTimestampAnchor.START,
+              resetLegacyOneSecondState = false,
             ),
           ).name("ta-signals-1m")
           .uid("ta-signals-1m")
@@ -1479,27 +1481,33 @@ internal class TaSignalsFunction(
   private val config: FlinkTaConfig,
   private val barDuration: Duration,
   private val timestampAnchor: SignalBarTimestampAnchor,
+  private val resetLegacyOneSecondState: Boolean,
 ) : KeyedCoProcessFunction<String, Envelope<MicroBarPayload>, Envelope<QuotePayload>, Envelope<TaSignalsPayload>>() {
   private lateinit var barsState: ListState<MicroBarPayload>
   private lateinit var quoteState: ValueState<TimedQuoteState>
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
 
   override fun open(openContext: OpenContext) {
-    val stateNamespace = signalStateNamespace(barDuration, timestampAnchor)
+    val stateNames =
+      signalStateDescriptorNames(
+        barDuration = barDuration,
+        timestampAnchor = timestampAnchor,
+        resetLegacyOneSecondState = resetLegacyOneSecondState,
+      )
     barsState =
       runtimeContext.getListState(
         ListStateDescriptor(
-          "bars-$stateNamespace",
+          stateNames.bars,
           TypeInformation.of(MicroBarPayload::class.java),
         ),
       )
     quoteState =
       runtimeContext.getState(
-        ValueStateDescriptor("quote-timed-$stateNamespace", TimedQuoteState::class.java),
+        ValueStateDescriptor(stateNames.quote, TimedQuoteState::class.java),
       )
     sessionState =
       runtimeContext.getState(
-        ValueStateDescriptor("session-$stateNamespace", SessionAccumulatorState::class.java),
+        ValueStateDescriptor(stateNames.session, SessionAccumulatorState::class.java),
       )
   }
 
@@ -1666,6 +1674,36 @@ internal class TaSignalsFunction(
 internal enum class SignalBarTimestampAnchor {
   START,
   END,
+}
+
+internal data class SignalStateDescriptorNames(
+  val bars: String,
+  val quote: String,
+  val session: String,
+)
+
+internal fun signalStateDescriptorNames(
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+  resetLegacyOneSecondState: Boolean,
+): SignalStateDescriptorNames {
+  val isLegacyOneSecondBranch =
+    barDuration == Duration.ofSeconds(1) &&
+      timestampAnchor == SignalBarTimestampAnchor.END
+  if (isLegacyOneSecondBranch && !resetLegacyOneSecondState) {
+    return SignalStateDescriptorNames(
+      bars = "bars",
+      quote = "quote-timed-v1",
+      session = "session",
+    )
+  }
+
+  val namespace = signalStateNamespace(barDuration, timestampAnchor)
+  return SignalStateDescriptorNames(
+    bars = "bars-$namespace",
+    quote = "quote-timed-$namespace",
+    session = "session-$namespace",
+  )
 }
 
 internal fun signalStateNamespace(

@@ -154,11 +154,28 @@ class SerializationSchemasTest {
       "v2-pt1m-start",
       signalStateNamespace(Duration.ofMinutes(1), SignalBarTimestampAnchor.START),
     )
+    assertEquals(
+      SignalStateDescriptorNames("bars", "quote-timed-v1", "session"),
+      signalStateDescriptorNames(
+        Duration.ofSeconds(1),
+        SignalBarTimestampAnchor.END,
+        resetLegacyOneSecondState = false,
+      ),
+    )
+    assertEquals(
+      SignalStateDescriptorNames("bars-v2-pt1s-end", "quote-timed-v2-pt1s-end", "session-v2-pt1s-end"),
+      signalStateDescriptorNames(
+        Duration.ofSeconds(1),
+        SignalBarTimestampAnchor.END,
+        resetLegacyOneSecondState = true,
+      ),
+    )
     assertSerializable(
       TaSignalsFunction(
         FlinkTaConfig.fromEnv(),
         Duration.ofMinutes(1),
         SignalBarTimestampAnchor.START,
+        resetLegacyOneSecondState = false,
       ),
     )
   }
