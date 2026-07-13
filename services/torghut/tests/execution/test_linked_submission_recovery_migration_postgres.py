@@ -58,7 +58,7 @@ def _enable_claim_guard(session: Session) -> None:
     )
 
 
-def test_0062_deferred_guard_rejects_asymmetric_recovery_after(
+def test_0063_deferred_guard_rejects_asymmetric_recovery_after(
     recovery_harness: RecoveryHarness,
 ) -> None:
     fixture, _ = enter_linked_io(recovery_harness)
@@ -76,7 +76,7 @@ def test_0062_deferred_guard_rejects_asymmetric_recovery_after(
         session.rollback()
 
 
-def test_0062_upgrade_rejects_asymmetric_recovery_after(
+def test_0063_upgrade_rejects_asymmetric_recovery_after(
     recovery_harness: RecoveryHarness,
 ) -> None:
     fixture, _ = enter_linked_io(recovery_harness)
@@ -99,7 +99,7 @@ def test_0062_upgrade_rejects_asymmetric_recovery_after(
     ):
         command.upgrade(
             recovery_harness.alembic,
-            "0062_linked_submission_recovery",
+            "0063_linked_submission_recovery",
         )
     with recovery_harness.engine.connect() as connection:
         assert (
@@ -110,7 +110,7 @@ def test_0062_upgrade_rejects_asymmetric_recovery_after(
         )
 
 
-def test_0062_downgrade_rejects_active_linked_recovery(
+def test_0063_downgrade_rejects_active_linked_recovery(
     recovery_harness: RecoveryHarness,
 ) -> None:
     fixture, acquired = enter_linked_io(recovery_harness)
@@ -145,5 +145,5 @@ def test_0062_downgrade_rejects_active_linked_recovery(
             connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-            == "0062_linked_submission_recovery"
+            == "0063_linked_submission_recovery"
         )

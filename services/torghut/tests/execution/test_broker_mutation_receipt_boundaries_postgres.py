@@ -814,11 +814,11 @@ def test_postgres_0061_preserves_canonical_and_linked_boundaries(
     not POSTGRES_DSN,
     reason="set TORGHUT_TEST_POSTGRES_DSN for PostgreSQL boundary tests",
 )
-def test_postgres_0062_upgrade_and_downgrade_preserve_unlinked_claim_identity(
+def test_postgres_0063_upgrade_and_downgrade_preserve_unlinked_claim_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with _postgres_harness(
-        monkeypatch, revision="0062_linked_submission_recovery"
+        monkeypatch, revision="0063_linked_submission_recovery"
     ) as harness:
         _assert_unlinked_settlement_rejects_claim_identity(harness)
         command.downgrade(harness.alembic, "0061_linked_submission_terminal")

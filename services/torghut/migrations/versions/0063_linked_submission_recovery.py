@@ -1,7 +1,7 @@
 """Coordinate fenced recovery for linked submission receipts.
 
-Revision ID: 0062_linked_submission_recovery
-Revises: 0061_linked_submission_terminal
+Revision ID: 0063_linked_submission_recovery
+Revises: 0062_loop_status_read_indexes
 Create Date: 2026-07-11 00:00:00.000000
 """
 
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision = "0062_linked_submission_recovery"
-down_revision = "0061_linked_submission_terminal"
+revision = "0063_linked_submission_recovery"
+down_revision = "0062_loop_status_read_indexes"
 branch_labels = None
 depends_on = None
 
@@ -347,7 +347,7 @@ def _settlement_envelope_guard_sql(*, allow_recovery: bool) -> str:
     """
 
 
-_TERMINAL_ASSERTION_0062_SQL = """
+_TERMINAL_ASSERTION_0063_SQL = """
 CREATE OR REPLACE FUNCTION torghut_assert_linked_submission_terminal_0061(
     target_claim_id uuid
 ) RETURNS void LANGUAGE plpgsql AS $$
@@ -608,7 +608,7 @@ $$
 
 
 # The exact 0059 body is retained below so downgrade does not depend on source files
-# from another revision. The 0062 variant is derived with two checked, one-time edits.
+# from another revision. The 0063 variant is derived with two checked, one-time edits.
 _BROKER_EVENT_GUARD_0061_SQL = """
 CREATE OR REPLACE FUNCTION torghut_guard_broker_mutation_event()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -938,7 +938,7 @@ $$
 """
 
 
-def _broker_event_guard_0062_sql() -> str:
+def _broker_event_guard_0063_sql() -> str:
     sql = _BROKER_EVENT_GUARD_0061_SQL
     state_branch = """        ELSIF previous.state = 'broker_io' THEN
 """
@@ -949,7 +949,7 @@ def _broker_event_guard_0062_sql() -> str:
             END IF;
 """
     if sql.count(state_branch) != 1:
-        raise RuntimeError("0062 broker event state branch drifted")
+        raise RuntimeError("0063 broker event state branch drifted")
     sql = sql.replace(state_branch, replacement)
     equality = """                   NEW, previous, base_ignored || ARRAY[
                        'state', 'settlement_source',
@@ -971,20 +971,20 @@ def _broker_event_guard_0062_sql() -> str:
                    END
 """
     if sql.count(equality) != 2:
-        raise RuntimeError("0062 broker event settlement equality drifted")
+        raise RuntimeError("0063 broker event settlement equality drifted")
     head, separator, tail = sql.rpartition(equality)
     if not separator:
-        raise RuntimeError("0062 broker event settlement equality missing")
+        raise RuntimeError("0063 broker event settlement equality missing")
     return head + recovery_equality + tail
 
 
 def upgrade() -> None:
     op.execute(sa.text(_LOCK_SQL))
     op.execute(sa.text(_UPGRADE_COMPATIBILITY_SQL))
-    op.execute(sa.text(_broker_event_guard_0062_sql()))
+    op.execute(sa.text(_broker_event_guard_0063_sql()))
     op.execute(sa.text(_linked_terminal_guard_sql(allow_recovery=True)))
     op.execute(sa.text(_settlement_envelope_guard_sql(allow_recovery=True)))
-    op.execute(sa.text(_TERMINAL_ASSERTION_0062_SQL))
+    op.execute(sa.text(_TERMINAL_ASSERTION_0063_SQL))
 
 
 def downgrade() -> None:

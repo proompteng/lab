@@ -478,7 +478,7 @@ def test_recovery_reconciled_terminal_commits_exactly_once(
             connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-            == "0062_linked_submission_recovery"
+            == "0063_linked_submission_recovery"
         )
 
 
@@ -590,7 +590,7 @@ def test_recovery_terminal_failure_rolls_back_claim_receipt_and_execution(
     _assert_recovery_still_nonterminal(recovery_harness, context=context)
 
 
-def test_0062_deferred_guards_reject_each_recovery_lease_half(
+def test_0063_deferred_guards_reject_each_recovery_lease_half(
     recovery_harness: RecoveryHarness,
 ) -> None:
     receipt_fixture, receipt_acquired = enter_linked_io(recovery_harness)
@@ -660,7 +660,7 @@ def test_0062_deferred_guards_reject_each_recovery_lease_half(
 
 
 @pytest.mark.parametrize("outcome", ["acknowledged", "rejected"])
-def test_0062_database_rejects_nonreconciled_recovery_terminal(
+def test_0063_database_rejects_nonreconciled_recovery_terminal(
     recovery_harness: RecoveryHarness,
     outcome: str,
 ) -> None:
@@ -709,7 +709,7 @@ def test_0062_database_rejects_nonreconciled_recovery_terminal(
     _assert_recovery_still_nonterminal(recovery_harness, context=context)
 
 
-def test_0062_database_rejects_null_found_observation(
+def test_0063_database_rejects_null_found_observation(
     recovery_harness: RecoveryHarness,
 ) -> None:
     context = _acquire_linked_recovery(recovery_harness)

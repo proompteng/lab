@@ -65,7 +65,7 @@ def build_recovery_harness(
         )
         alembic = AlembicConfig(str(SERVICE_ROOT / "alembic.ini"))
         command.stamp(alembic, "0057_generic_multifactor_machine")
-        command.upgrade(alembic, "0062_linked_submission_recovery")
+        command.upgrade(alembic, "0063_linked_submission_recovery")
         yield RecoveryHarness(
             engine=schema_engine,
             sessions=sessions,

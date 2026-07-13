@@ -8,15 +8,15 @@ from unittest.mock import patch
 from tests.migration_testing import load_migration_module
 
 
-MIGRATION_FILENAME = "0062_linked_submission_recovery.py"
+MIGRATION_FILENAME = "0063_linked_submission_recovery.py"
 
 
 class TestLinkedSubmissionRecoveryMigration(TestCase):
     def test_revision_is_bounded_and_extends_linked_terminal_contract(self) -> None:
         module = load_migration_module(MIGRATION_FILENAME)
 
-        self.assertEqual(module.revision, "0062_linked_submission_recovery")
-        self.assertEqual(module.down_revision, "0061_linked_submission_terminal")
+        self.assertEqual(module.revision, "0063_linked_submission_recovery")
+        self.assertEqual(module.down_revision, "0062_loop_status_read_indexes")
         self.assertLessEqual(len(module.revision), 32)
         source = Path(module.__file__ or "").read_text(encoding="utf-8")
         self.assertLessEqual(len(source.splitlines()), 1100)
