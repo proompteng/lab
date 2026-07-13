@@ -6,6 +6,7 @@ import {
   resolveWhitepaperControlConfig,
   resolveWhitepaperStorageConfig as resolveConfiguredWhitepaperStorageConfig,
 } from './whitepaper-config'
+import { fetchWhitepaperPdfFromUrl } from './torghut-whitepaper-pdf-proxy'
 
 type NullableString = string | null
 
@@ -321,7 +322,6 @@ const DEFAULT_LIMIT = 30
 const MAX_LIMIT = 100
 const DEFAULT_SEARCH_LIMIT = 15
 const MAX_SEARCH_LIMIT = 50
-const DEFAULT_WHITEPAPER_CONTROL_BASE_URL = 'http://torghut.torghut.svc.cluster.local'
 const WHITEPAPER_CONTROL_TIMEOUT_MS = 15_000
 
 const asString = (value: unknown): string | null => {
@@ -371,6 +371,7 @@ const asStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value.map((entry) => asString(entry)).filter((entry): entry is string => entry !== null)
   }
+
   const single = asString(value)
   return single ? [single] : []
 }
@@ -461,52 +462,6 @@ const buildSignedPdfUrl = async (bucket: string, key: string) => {
     const client = whitepaperS3ClientCache(config)
     const command = new GetObjectCommand({ Bucket: bucket, Key: key })
     return await getSignedUrl(client, command, { expiresIn: 5 * 60 })
-  } catch {
-    return null
-  }
-}
-
-const formatPdfResponse = (
-  upstream: Response,
-  {
-    fileName,
-    source,
-  }: {
-    fileName: string | null
-    source: 'bucket' | 'source_url'
-  },
-) => {
-  if (!upstream.ok || !upstream.body) return null
-
-  const safeName = (fileName ?? 'whitepaper.pdf').replace(/[^a-zA-Z0-9._-]+/g, '_')
-  const headers = new Headers()
-  headers.set('content-type', upstream.headers.get('content-type') ?? 'application/pdf')
-  headers.set('cache-control', 'private, max-age=60')
-  headers.set('content-disposition', `inline; filename="${safeName}"`)
-  headers.set('x-whitepaper-pdf-source', source)
-
-  const contentLength = upstream.headers.get('content-length')
-  if (contentLength) headers.set('content-length', contentLength)
-
-  return new Response(upstream.body, {
-    status: 200,
-    headers,
-  })
-}
-
-const fetchPdfFromUrl = async (
-  url: string,
-  {
-    fileName,
-    source,
-  }: {
-    fileName: string | null
-    source: 'bucket' | 'source_url'
-  },
-) => {
-  try {
-    const upstream = await fetch(url)
-    return formatPdfResponse(upstream, { fileName, source })
   } catch {
     return null
   }
@@ -1309,7 +1264,7 @@ export const streamTorghutWhitepaperPdf = async (locator: TorghutWhitepaperPdfLo
   if (bucket && key) {
     const signedUrl = await buildSignedPdfUrl(bucket, key)
     if (signedUrl) {
-      const streamed = await fetchPdfFromUrl(signedUrl, {
+      const streamed = await fetchWhitepaperPdfFromUrl(signedUrl, {
         fileName: locator.fileName,
         source: 'bucket',
       })
@@ -1320,7 +1275,7 @@ export const streamTorghutWhitepaperPdf = async (locator: TorghutWhitepaperPdfLo
   const sourceUrl = asString(locator.sourceAttachmentUrl)
   if (!sourceUrl) return null
 
-  return fetchPdfFromUrl(sourceUrl, {
+  return fetchWhitepaperPdfFromUrl(sourceUrl, {
     fileName: locator.fileName,
     source: 'source_url',
   })
