@@ -171,11 +171,13 @@ def test_busy_recovery_does_not_call_broker(
         return _broker_order()
 
     result = worker.recover_linked_submission(
-        session_factory=_session_factory(events),
-        receipt_id=uuid.uuid4(),
-        recovery_owner="recovery-worker",
-        writer_generation=7,
-        broker_read=broker_read,
+        worker.LinkedRecoveryRequest(
+            session_factory=_session_factory(events),
+            receipt_id=uuid.uuid4(),
+            recovery_owner="recovery-worker",
+            writer_generation=7,
+            broker_read=broker_read,
+        )
     )
 
     assert result.outcome == "busy"
@@ -196,11 +198,13 @@ def test_absent_broker_order_is_quarantined_and_released(
         return None
 
     result = worker.recover_linked_submission(
-        session_factory=_session_factory(events),
-        receipt_id=uuid.uuid4(),
-        recovery_owner="recovery-worker",
-        writer_generation=7,
-        broker_read=broker_read,
+        worker.LinkedRecoveryRequest(
+            session_factory=_session_factory(events),
+            receipt_id=uuid.uuid4(),
+            recovery_owner="recovery-worker",
+            writer_generation=7,
+            broker_read=broker_read,
+        )
     )
 
     assert result.outcome == "not_found"
@@ -235,11 +239,13 @@ def test_broker_read_failure_is_quarantined_and_released(
         raise worker.LinkedRecoveryBrokerReadError("broker unavailable")
 
     result = worker.recover_linked_submission(
-        session_factory=_session_factory(events),
-        receipt_id=uuid.uuid4(),
-        recovery_owner="recovery-worker",
-        writer_generation=7,
-        broker_read=broker_read,
+        worker.LinkedRecoveryRequest(
+            session_factory=_session_factory(events),
+            receipt_id=uuid.uuid4(),
+            recovery_owner="recovery-worker",
+            writer_generation=7,
+            broker_read=broker_read,
+        )
     )
 
     assert result.outcome == "indeterminate"
@@ -286,11 +292,13 @@ def test_unsafe_broker_read_is_indeterminate_without_materialization(
     )
 
     result = worker.recover_linked_submission(
-        session_factory=_session_factory(events),
-        receipt_id=uuid.uuid4(),
-        recovery_owner="recovery-worker",
-        writer_generation=7,
-        broker_read=lambda **_kwargs: _broker_order(**broker_overrides),
+        worker.LinkedRecoveryRequest(
+            session_factory=_session_factory(events),
+            receipt_id=uuid.uuid4(),
+            recovery_owner="recovery-worker",
+            writer_generation=7,
+            broker_read=lambda **_kwargs: _broker_order(**broker_overrides),
+        )
     )
 
     assert result.outcome == "indeterminate"
@@ -327,11 +335,13 @@ def test_validated_order_materializes_before_paired_settlement(
     )
 
     result = worker.recover_linked_submission(
-        session_factory=_session_factory(events),
-        receipt_id=uuid.uuid4(),
-        recovery_owner="recovery-worker",
-        writer_generation=7,
-        broker_read=lambda **_kwargs: _broker_order(),
+        worker.LinkedRecoveryRequest(
+            session_factory=_session_factory(events),
+            receipt_id=uuid.uuid4(),
+            recovery_owner="recovery-worker",
+            writer_generation=7,
+            broker_read=lambda **_kwargs: _broker_order(),
+        )
     )
 
     assert result.outcome == "reconciled"
@@ -373,11 +383,13 @@ def test_materialization_conflict_is_quarantined_without_settlement(
     )
 
     result = worker.recover_linked_submission(
-        session_factory=_session_factory(events),
-        receipt_id=uuid.uuid4(),
-        recovery_owner="recovery-worker",
-        writer_generation=7,
-        broker_read=lambda **_kwargs: _broker_order(),
+        worker.LinkedRecoveryRequest(
+            session_factory=_session_factory(events),
+            receipt_id=uuid.uuid4(),
+            recovery_owner="recovery-worker",
+            writer_generation=7,
+            broker_read=lambda **_kwargs: _broker_order(),
+        )
     )
 
     assert result.outcome == "indeterminate"

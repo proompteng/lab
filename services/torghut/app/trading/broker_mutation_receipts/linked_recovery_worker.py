@@ -95,6 +95,19 @@ class LinkedRecoverySessionFactory(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class LinkedRecoveryRequest:
+    """Inputs for one explicitly scoped linked recovery attempt."""
+
+    session_factory: LinkedRecoverySessionFactory
+    receipt_id: uuid.UUID | str
+    recovery_owner: str
+    writer_generation: int
+    broker_read: LinkedRecoveryBrokerReader
+    options: BrokerMutationRecoveryAcquireOptions | None = None
+    retry_seconds: int = 120
+
+
+@dataclass(frozen=True, slots=True)
 class LinkedRecoveryWorkerResult:
     """Safe outcome of one recovery attempt.
 
@@ -114,15 +127,26 @@ class LinkedRecoveryWorkerResult:
 _WORKER_EVIDENCE_SCHEMA = "torghut.linked-submission-recovery-worker.v1"
 
 
+@dataclass(frozen=True, slots=True)
+class _RecoveryScope:
+    acquisition: BrokerMutationLinkedSubmissionRecoveryAcquireResult
+    handle: BrokerMutationLinkedSubmissionRecoveryHandle
+    receipt: BrokerMutationReceiptSnapshot
+    expected_broker_order_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class _QuarantineRequest:
+    request: LinkedRecoveryRequest
+    scope: _RecoveryScope
+    outcome: Literal["not_found", "indeterminate"]
+    reason: str
+    error_code: str
+    observation: AlpacaRecoveryObservation | None = None
+
+
 def recover_linked_submission(
-    *,
-    session_factory: LinkedRecoverySessionFactory,
-    receipt_id: uuid.UUID | str,
-    recovery_owner: str,
-    writer_generation: int,
-    broker_read: LinkedRecoveryBrokerReader,
-    options: BrokerMutationRecoveryAcquireOptions | None = None,
-    retry_seconds: int = 120,
+    request: LinkedRecoveryRequest,
 ) -> LinkedRecoveryWorkerResult:
     """Attempt one fail-closed linked submission recovery.
 
@@ -136,62 +160,43 @@ def recover_linked_submission(
     worker or infrastructure failure and must not be rewritten as broker truth.
     """
 
-    acquisition = _acquire(
-        session_factory=session_factory,
-        receipt_id=receipt_id,
-        recovery_owner=recovery_owner,
-        writer_generation=writer_generation,
-        options=options,
-    )
+    acquisition = _acquire(request)
     if not acquisition.acquired:
         return LinkedRecoveryWorkerResult(
             outcome=cast(LinkedRecoveryWorkerOutcome, acquisition.outcome),
             acquisition=acquisition,
         )
 
-    handle = acquisition.handle
-    receipt = acquisition.receipt
-    claim = acquisition.submission_claim
-    if handle is None or receipt is None or claim is None:  # pragma: no cover
-        raise RuntimeError("linked_recovery_acquisition_contract_broken")
-
-    expected_broker_order_id = claim.broker_order_id
+    scope = _recovery_scope(acquisition)
     try:
-        broker_order = broker_read(
-            intent=receipt.intent,
-            account_label=receipt.intent.account_label,
-            client_order_id=receipt.intent.client_request_id,
-            expected_broker_order_id=expected_broker_order_id,
-        )
+        broker_order = _read_broker_order(request.broker_read, scope)
     except LinkedRecoveryBrokerReadError:
         return _quarantine_and_release(
-            session_factory=session_factory,
-            handle=handle,
-            receipt=receipt,
-            outcome="indeterminate",
-            reason="broker_read_failed",
-            error_code="broker_read_failed",
-            retry_seconds=retry_seconds,
-            acquisition=acquisition,
+            _QuarantineRequest(
+                request=request,
+                scope=scope,
+                outcome="indeterminate",
+                reason="broker_read_failed",
+                error_code="broker_read_failed",
+            )
         )
 
     if broker_order is None:
         return _quarantine_and_release(
-            session_factory=session_factory,
-            handle=handle,
-            receipt=receipt,
-            outcome="not_found",
-            reason="broker_order_absent",
-            error_code="broker_order_absent",
-            retry_seconds=retry_seconds,
-            acquisition=acquisition,
+            _QuarantineRequest(
+                request=request,
+                scope=scope,
+                outcome="not_found",
+                reason="broker_order_absent",
+                error_code="broker_order_absent",
+            )
         )
 
     observation = validate_alpaca_recovery_observation(
-        intent=receipt.intent,
-        account_label=receipt.intent.account_label,
+        intent=scope.receipt.intent,
+        account_label=scope.receipt.intent.account_label,
         broker_order=broker_order,
-        expected_broker_order_id=expected_broker_order_id,
+        expected_broker_order_id=scope.expected_broker_order_id,
     )
     if observation.outcome is not AlpacaRecoveryObservationOutcome.VALIDATED:
         reason = (
@@ -200,37 +205,85 @@ def recover_linked_submission(
             else "observation_not_validated"
         )
         return _quarantine_and_release(
-            session_factory=session_factory,
-            handle=handle,
-            receipt=receipt,
-            outcome="indeterminate",
-            reason=reason,
-            error_code=reason,
-            retry_seconds=retry_seconds,
-            acquisition=acquisition,
-            observation=observation,
+            _QuarantineRequest(
+                request=request,
+                scope=scope,
+                outcome="indeterminate",
+                reason=reason,
+                error_code=reason,
+                observation=observation,
+            )
         )
 
+    return _materialize_and_settle(request, scope, observation)
+
+
+def _acquire(
+    request: LinkedRecoveryRequest,
+) -> BrokerMutationLinkedSubmissionRecoveryAcquireResult:
+    with request.session_factory() as session:
+        return acquire_linked_submission_recovery(
+            session,
+            receipt_id=request.receipt_id,
+            recovery_owner=request.recovery_owner,
+            writer_generation=request.writer_generation,
+            options=request.options,
+        )
+
+
+def _recovery_scope(
+    acquisition: BrokerMutationLinkedSubmissionRecoveryAcquireResult,
+) -> _RecoveryScope:
+    handle = acquisition.handle
+    receipt = acquisition.receipt
+    claim = acquisition.submission_claim
+    if handle is None or receipt is None or claim is None:  # pragma: no cover
+        raise RuntimeError("linked_recovery_acquisition_contract_broken")
+    return _RecoveryScope(
+        acquisition=acquisition,
+        handle=handle,
+        receipt=receipt,
+        expected_broker_order_id=claim.broker_order_id,
+    )
+
+
+def _read_broker_order(
+    broker_read: LinkedRecoveryBrokerReader,
+    scope: _RecoveryScope,
+) -> object | None:
+    return broker_read(
+        intent=scope.receipt.intent,
+        account_label=scope.receipt.intent.account_label,
+        client_order_id=scope.receipt.intent.client_request_id,
+        expected_broker_order_id=scope.expected_broker_order_id,
+    )
+
+
+def _materialize_and_settle(
+    request: LinkedRecoveryRequest,
+    scope: _RecoveryScope,
+    observation: AlpacaRecoveryObservation,
+) -> LinkedRecoveryWorkerResult:
     order = observation.order
     if order is None:  # pragma: no cover - validator outcome contract
         raise RuntimeError("validated_recovery_observation_order_missing")
 
     try:
-        with session_factory() as session:
+        with request.session_factory() as session:
             execution = materialize_validated_alpaca_recovery(
                 session,
-                intent=receipt.intent,
+                intent=scope.receipt.intent,
                 observation=observation,
             )
             settlement = build_linked_submission_recovery_settlement(
-                submission_claim_handle=handle.submission_claim,
+                submission_claim_handle=scope.handle.submission_claim,
                 broker_status=order.status,
                 broker_reference=order.broker_order_id,
                 execution_id=execution.id,
             )
             terminal = settle_linked_submission_recovery(
                 session,
-                handle=handle,
+                handle=scope.handle,
                 settlement=settlement,
             )
     except RecoveryMaterializationError:
@@ -238,89 +291,66 @@ def recover_linked_submission(
         # the broker evidence as quarantined only after that transaction is
         # gone, so a DB identity/lifecycle conflict cannot leave an execution.
         return _quarantine_and_release(
-            session_factory=session_factory,
-            handle=handle,
-            receipt=receipt,
-            outcome="indeterminate",
-            reason="recovery_materialization_rejected",
-            error_code="recovery_materialization_rejected",
-            retry_seconds=retry_seconds,
-            acquisition=acquisition,
-            observation=observation,
+            _QuarantineRequest(
+                request=request,
+                scope=scope,
+                outcome="indeterminate",
+                reason="recovery_materialization_rejected",
+                error_code="recovery_materialization_rejected",
+                observation=observation,
+            )
         )
 
     return LinkedRecoveryWorkerResult(
         outcome="reconciled",
-        acquisition=acquisition,
+        acquisition=scope.acquisition,
         observation=observation,
         execution_id=execution.id,
         terminal=terminal,
     )
 
 
-def _acquire(
-    *,
-    session_factory: LinkedRecoverySessionFactory,
-    receipt_id: uuid.UUID | str,
-    recovery_owner: str,
-    writer_generation: int,
-    options: BrokerMutationRecoveryAcquireOptions | None,
-) -> BrokerMutationLinkedSubmissionRecoveryAcquireResult:
-    with session_factory() as session:
-        return acquire_linked_submission_recovery(
-            session,
-            receipt_id=receipt_id,
-            recovery_owner=recovery_owner,
-            writer_generation=writer_generation,
-            options=options,
-        )
-
-
 def _quarantine_and_release(
-    *,
-    session_factory: LinkedRecoverySessionFactory,
-    handle: BrokerMutationLinkedSubmissionRecoveryHandle,
-    receipt: BrokerMutationReceiptSnapshot,
-    outcome: Literal["not_found", "indeterminate"],
-    reason: str,
-    error_code: str,
-    retry_seconds: int,
-    acquisition: BrokerMutationLinkedSubmissionRecoveryAcquireResult,
-    observation: AlpacaRecoveryObservation | None = None,
+    quarantine: _QuarantineRequest,
 ) -> LinkedRecoveryWorkerResult:
-    intent = receipt.intent
+    request = quarantine.request
+    intent = quarantine.scope.receipt.intent
     recovery_observation = build_broker_mutation_recovery_observation(
         BrokerMutationRecoveryObservationRequest(
             checked_client_request_id=intent.client_request_id,
             checked_target_key=intent.target.key,
-            outcome=outcome,
+            outcome=quarantine.outcome,
             evidence_payload={
                 "schema_version": _WORKER_EVIDENCE_SCHEMA,
-                "observation_outcome": outcome,
-                "reason": reason,
+                "observation_outcome": quarantine.outcome,
+                "reason": quarantine.reason,
             },
         )
     )
-    with session_factory() as session:
+    with request.session_factory() as session:
         record_linked_submission_recovery_observation(
             session,
-            handle=handle,
+            handle=quarantine.scope.handle,
             observation=recovery_observation,
-            retry_seconds=retry_seconds,
+            retry_seconds=request.retry_seconds,
         )
-    with session_factory() as session:
-        release_linked_submission_recovery(session, handle=handle)
+    with request.session_factory() as session:
+        release_linked_submission_recovery(
+            session,
+            handle=quarantine.scope.handle,
+        )
     return LinkedRecoveryWorkerResult(
-        outcome=outcome,
-        acquisition=acquisition,
-        observation=observation,
-        error_code=error_code,
+        outcome=quarantine.outcome,
+        acquisition=quarantine.scope.acquisition,
+        observation=quarantine.observation,
+        error_code=quarantine.error_code,
     )
 
 
 __all__ = [
     "LinkedRecoveryBrokerReader",
     "LinkedRecoveryBrokerReadError",
+    "LinkedRecoveryRequest",
     "LinkedRecoverySessionFactory",
     "LinkedRecoveryWorkerOutcome",
     "LinkedRecoveryWorkerResult",
