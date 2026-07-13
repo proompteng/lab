@@ -311,6 +311,7 @@ spec:
                     jsonPointers:
                       # Ignore only operator-defaulted fields. User-controlled metadata must remain diff-visible.
                       - /spec/traffic
+                      - /spec/template/metadata/annotations/client.knative.dev~1updateTimestamp
                       - /spec/template/metadata/creationTimestamp
                       - /spec/template/spec/containers/0/ports/0/protocol
                       - /spec/template/spec/containers/0/readinessProbe
