@@ -58,6 +58,44 @@ export type ReviewSummary = {
   issueComments: Array<{ author: string | null; body: string | null; createdAt: string | null; url: string | null }>
 }
 
+type NormalizedReviewState = {
+  author: string | null
+  state: string
+  submittedAt: string | null
+}
+
+export const summarizeLatestReviewStates = (
+  reviews: readonly NormalizedReviewState[],
+): Pick<ReviewSummary, 'status' | 'requestedChanges'> => {
+  const latestByAuthor = new Map<string, { review: NormalizedReviewState; index: number }>()
+
+  reviews.forEach((review, index) => {
+    const key = review.author ?? `anonymous:${index}`
+    const current = latestByAuthor.get(key)
+    if (!current) {
+      latestByAuthor.set(key, { review, index })
+      return
+    }
+
+    const currentTime = current.review.submittedAt ? Date.parse(current.review.submittedAt) : Number.NaN
+    const candidateTime = review.submittedAt ? Date.parse(review.submittedAt) : Number.NaN
+    const candidateIsLater =
+      Number.isFinite(candidateTime) && Number.isFinite(currentTime)
+        ? candidateTime >= currentTime
+        : index > current.index
+    if (candidateIsLater) {
+      latestByAuthor.set(key, { review, index })
+    }
+  })
+
+  const latestStates = [...latestByAuthor.values()].map(({ review }) => review.state)
+  const requestedChanges = latestStates.includes('CHANGES_REQUESTED')
+  if (requestedChanges) return { status: 'changes_requested', requestedChanges: true }
+  if (latestStates.includes('APPROVED')) return { status: 'approved', requestedChanges: false }
+  if (latestStates.includes('COMMENTED')) return { status: 'commented', requestedChanges: false }
+  return { status: 'pending', requestedChanges: false }
+}
+
 export type IssueSummary = {
   number: number
   title: string
@@ -564,8 +602,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
 
     const reviews = reviewNodes
 
-    let requestedChanges = false
-    let status: ReviewSummary['status'] = 'pending'
+    const normalizedReviews: NormalizedReviewState[] = []
     const reviewComments = reviews
       .map((review) => {
         const reviewRecord = review as Record<string, unknown>
@@ -578,15 +615,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
         const body = typeof reviewRecord.body === 'string' ? reviewRecord.body : null
         const submittedAt = typeof reviewRecord.submittedAt === 'string' ? reviewRecord.submittedAt : null
         const url = typeof reviewRecord.url === 'string' ? reviewRecord.url : null
-
-        if (rawState === 'CHANGES_REQUESTED') {
-          requestedChanges = true
-          status = 'changes_requested'
-        } else if (rawState === 'APPROVED' && status !== 'changes_requested') {
-          status = 'approved'
-        } else if (rawState === 'COMMENTED' && status === 'pending') {
-          status = 'commented'
-        }
+        normalizedReviews.push({ author: login, state: rawState, submittedAt })
 
         const shouldIncludeBody = body && body.trim().length > 0
         const shouldIncludeState = rawState === 'CHANGES_REQUESTED' || rawState === 'COMMENTED'
@@ -603,6 +632,7 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
         }
       })
       .filter((comment): comment is ReviewSummaryComment => comment !== null)
+    let { status, requestedChanges } = summarizeLatestReviewStates(normalizedReviews)
 
     const rawComments: Array<Record<string, unknown>> = []
     for (let page = 1; page <= 10; page += 1) {
@@ -667,9 +697,9 @@ export const createGitHubClient = ({ token, apiBaseUrl, userAgent }: GitHubClien
       status = 'changes_requested'
     } else if (unresolvedThreads.length > 0) {
       status = 'commented'
-    } else if (reviews.length === 0 && issueComments.length > 0) {
+    } else if (normalizedReviews.length === 0 && issueComments.length > 0) {
       status = 'commented'
-    } else if (reviews.length === 0) {
+    } else if (normalizedReviews.length === 0) {
       status = 'pending'
     }
 
