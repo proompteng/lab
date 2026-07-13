@@ -25,6 +25,7 @@ data:
   TA_CHECKPOINT_TIMEOUT_MS: "300000"
   TA_CHECKPOINT_PAUSE_MS: "10000"
   TA_MAX_OUT_OF_ORDER_MS: "2000"
+  TA_WATERMARK_IDLE_TIMEOUT_MS: "30000"
   # IEX quote cadence can be sparse for the capped chip universe; keep TA quotes
   # fresh enough for execution gates without admitting overnight/stale state.
   TA_QUOTE_STALE_AFTER_MS: "15000"

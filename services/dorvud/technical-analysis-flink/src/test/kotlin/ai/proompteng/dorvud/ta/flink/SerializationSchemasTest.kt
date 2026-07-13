@@ -130,6 +130,16 @@ class SerializationSchemasTest {
   }
 
   @Test
+  fun `watermark idle timeout is bounded away from zero`() {
+    assertEquals(1_000, normalizeWatermarkIdleTimeoutMs(0))
+    assertEquals(1_000, normalizeWatermarkIdleTimeoutMs(999))
+    assertEquals(
+      DEFAULT_WATERMARK_IDLE_TIMEOUT_MS,
+      normalizeWatermarkIdleTimeoutMs(DEFAULT_WATERMARK_IDLE_TIMEOUT_MS),
+    )
+  }
+
+  @Test
   fun `clickhouse insert batch size is capped to safe ceiling`() {
     assertEquals(1, normalizeClickhouseInsertBatchSize(0))
     assertEquals(64, normalizeClickhouseInsertBatchSize(64))
