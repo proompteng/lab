@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - 'services/symphony/**'
-      - 'packages/codex/**'
       - 'packages/scripts/src/symphony/**'
       - 'argocd/applications/symphony/**'
       - 'argocd/applications/symphony-jangar/**'
@@ -16,18 +15,11 @@ on:
       - 'argocd/applications/observability/kustomization.yaml'
       - 'argocd/applications/observability/symphony-fleet-dashboard-configmap.yaml'
       - 'argocd/applicationsets/product.yaml'
-      - 'nix/images/symphony.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'package.json'
-      - 'bun.lock'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'tsconfig.base.json'
+      - '.github/workflows/symphony-ci.yml'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:

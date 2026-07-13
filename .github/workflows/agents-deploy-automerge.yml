@@ -11,6 +11,10 @@ on:
       - 'argocd/applications/agents/values.yaml'
       - '.github/workflows/agents-deploy-automerge.yml'
 
+concurrency:
+  group: ci-pr-target-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   enable:
     if: >-

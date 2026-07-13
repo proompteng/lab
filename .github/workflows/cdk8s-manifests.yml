@@ -4,22 +4,6 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'packages/k8s/**'
-      - 'argocd/applications/docs/**'
-      - 'argocd/applications/analysis/**'
-      - 'argocd/applications/*/generated/**'
-      - 'argocd/applications/argocd/base/image-updater-product.yaml'
-      - 'bun.lock'
-      - 'package.json'
-      - 'scripts/kubeconform.sh'
-      - 'schemas/custom/**'
-      - 'flake.nix'
-      - 'flake.lock'
-      - 'nix/**'
-      - '.github/actions/setup-nix-toolchain/**'
-      - '.github/workflows/cdk8s-manifests.yml'
   push:
     branches:
       - main

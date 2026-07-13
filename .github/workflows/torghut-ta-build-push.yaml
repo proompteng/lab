@@ -4,24 +4,6 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'services/dorvud/gradle/**'
-      - 'services/dorvud/gradlew'
-      - 'services/dorvud/gradle.properties'
-      - 'services/dorvud/settings.gradle.kts'
-      - 'services/dorvud/build.gradle.kts'
-      - 'services/dorvud/platform/**'
-      - 'services/dorvud/technical-analysis/**'
-      - 'services/dorvud/technical-analysis-flink/**'
-      - 'nix/images/torghut-ta.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'flake.nix'
-      - 'flake.lock'
   push:
     branches:
       - main
@@ -35,13 +17,6 @@ on:
       - 'services/dorvud/technical-analysis/**'
       - 'services/dorvud/technical-analysis-flink/**'
       - 'nix/images/torghut-ta.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'flake.nix'
-      - 'flake.lock'
   workflow_dispatch:
 
 concurrency:
@@ -50,12 +25,13 @@ concurrency:
 
 jobs:
   nix-image:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: torghut-ta
       package_attr: torghut-ta-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'torghut-ta-release-contract' || '' }}
     secrets: inherit

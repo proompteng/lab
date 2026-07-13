@@ -4,42 +4,12 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'services/symphony/**'
-      - 'packages/codex/**'
-      - 'packages/otel/**'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
-      - 'flake.lock'
-      - 'nix/images/symphony.nix'
-      - 'nix/images/openai-codex-cli.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
   push:
     branches:
       - main
     paths:
       - 'services/symphony/**'
-      - 'packages/codex/**'
-      - 'packages/otel/**'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
-      - 'flake.lock'
       - 'nix/images/symphony.nix'
-      - 'nix/images/openai-codex-cli.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
   workflow_dispatch:
 
 concurrency:
@@ -48,12 +18,13 @@ concurrency:
 
 jobs:
   nix-image:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: symphony
       package_attr: symphony-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'symphony-release-contract' || '' }}
     secrets: inherit

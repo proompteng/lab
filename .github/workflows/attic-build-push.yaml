@@ -4,30 +4,11 @@ permissions:
   contents: read
 
 on:
-  pull_request:
-    paths:
-      - 'flake.lock'
-      - 'nix/images/attic.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'docs/nix-cache.md'
-      - 'docs/nix-oci-real-image-build-adoption-plan.md'
   push:
     branches:
       - main
     paths:
-      - 'flake.lock'
       - 'nix/images/attic.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
       - 'docs/nix-cache.md'
       - 'docs/nix-oci-real-image-build-adoption-plan.md'
   workflow_dispatch:
@@ -43,6 +24,7 @@ jobs:
       image_name: attic
       package_attr: atticd-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: attic-release-contract
     secrets: inherit

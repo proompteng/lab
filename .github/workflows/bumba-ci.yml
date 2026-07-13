@@ -6,37 +6,15 @@ on:
       - main
     paths:
       - 'services/bumba/**'
-      - 'packages/temporal-bun-sdk/**'
-      - 'flake.lock'
       - 'nix/images/bumba.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'services/bumba/**'
-      - 'packages/temporal-bun-sdk/**'
-      - 'flake.lock'
       - 'nix/images/bumba.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -56,7 +34,6 @@ jobs:
   nix-image:
     if: >-
       ${{
-        github.event_name == 'pull_request' ||
         github.event_name == 'workflow_dispatch' ||
         (
           github.event_name == 'push' &&
@@ -69,6 +46,7 @@ jobs:
       image_name: bumba
       package_attr: bumba-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'bumba-release-contract' || '' }}
     secrets: inherit

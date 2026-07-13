@@ -6,7 +6,6 @@ on:
       - main
     paths:
       - 'apps/synthesis/**'
-      - 'packages/design/**'
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
@@ -15,7 +14,6 @@ on:
   pull_request:
     paths:
       - 'apps/synthesis/**'
-      - 'packages/design/**'
       - 'packages/scripts/src/synthesis/**'
       - 'argocd/applications/synthesis/**'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'

@@ -6,37 +6,15 @@ on:
       - main
     paths:
       - 'services/oirat/**'
-      - 'packages/discord/**'
-      - 'flake.lock'
       - 'nix/images/oirat.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
   pull_request:
     paths:
       - 'services/oirat/**'
-      - 'packages/discord/**'
-      - 'flake.lock'
       - 'nix/images/oirat.nix'
-      - 'nix/images/bun-workspace-service.nix'
-      - 'nix/packages.nix'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/oci-inspect-archive.sh'
-      - 'nix/oci-push.sh'
-      - 'bun.lock'
-      - 'tsconfig.base.json'
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -54,12 +32,13 @@ jobs:
     secrets: inherit
 
   nix-image:
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: oirat
       package_attr: oirat-image
       tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
       latest: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' }}
       release_artifact_name: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && 'oirat-release-contract' || '' }}
     secrets: inherit

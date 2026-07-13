@@ -2,38 +2,34 @@ name: CI
 
 on:
   pull_request:
-    paths:
-      - 'apps/**'
-      - 'packages/**'
-      - 'services/**'
-      - 'scripts/**'
 
 permissions:
   contents: read
   pull-requests: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
-  check_changed_files:
+  plan:
+    name: Plan changed-area validation
     runs-on: ubuntu-latest
     outputs:
-      proompteng: ${{ steps.filter.outputs.proompteng }}
-      app: ${{ steps.filter.outputs.app }}
-      cms: ${{ steps.filter.outputs.cms }}
-      docs: ${{ steps.filter.outputs.docs }}
-      olden: ${{ steps.filter.outputs.olden }}
-      kitty-krew: ${{ steps.filter.outputs.kitty-krew }}
-      reviseur: ${{ steps.filter.outputs.reviseur }}
-      bonjour: ${{ steps.filter.outputs.bonjour }}
-      codex: ${{ steps.filter.outputs.codex }}
-      discord: ${{ steps.filter.outputs.discord }}
-      scripts: ${{ steps.filter.outputs.scripts }}
+      targets: ${{ steps.impact.outputs.targets }}
+      delegated: ${{ steps.impact.outputs.delegated }}
+      changed_files: ${{ steps.impact.outputs.changed_files }}
     steps:
-      - name: Check changed files
-        id: filter
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Fetch changed files once
+        id: files
         shell: bash
         env:
           GH_REPO: ${{ github.repository }}
@@ -41,17 +37,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-
-          changed_files="$(mktemp)"
+          changed_files="${RUNNER_TEMP}/changed-files.txt"
+          : > "${changed_files}"
           page=1
           while true; do
-            response="$(
+            response="$({
               curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors \
                 -H 'Accept: application/vnd.github+json' \
                 -H "Authorization: Bearer ${GH_TOKEN}" \
                 -H 'X-GitHub-Api-Version: 2022-11-28' \
                 "https://api.github.com/repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100&page=${page}"
-            )"
+            })"
             count="$(jq 'length' <<< "${response}")"
             if [ "${count}" -eq 0 ]; then
               break
@@ -59,429 +55,214 @@ jobs:
             jq -r '.[].filename' <<< "${response}" >> "${changed_files}"
             page=$((page + 1))
           done
+          printf 'changed_files=%s\n' "${changed_files}" >> "${GITHUB_OUTPUT}"
 
-          output_flag() {
-            local name="$1"
-            local regex="$2"
-            local value=false
-            if grep -Eq "${regex}" "${changed_files}"; then
-              value=true
-            fi
-            echo "${name}=${value}" >> "$GITHUB_OUTPUT"
-          }
+      - name: Resolve impact targets
+        id: impact
+        env:
+          CHANGED_FILES: ${{ steps.files.outputs.changed_files }}
+        run: >-
+          bun run packages/scripts/src/ci/impact-router.ts
+          --files "${CHANGED_FILES}"
+          --map .github/ci/impact-map.yml
+          --github-output "${GITHUB_OUTPUT}"
 
-          output_flag proompteng '^apps/landing/'
-          output_flag app '^apps/app/'
-          output_flag cms '^apps/cms/'
-          output_flag bonjour '^services/bonjour/'
-          output_flag docs '^apps/docs/'
-          output_flag olden '^apps/olden/'
-          output_flag kitty-krew '^apps/kitty-krew/'
-          output_flag reviseur '^apps/reviseur/'
-          output_flag codex '^packages/codex/'
-          output_flag discord '^packages/discord/'
-          output_flag scripts '^scripts/'
-
-  docs:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.docs == 'true' }}
-    runs-on: arc-arm64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/apps/docs/.next/cache
-          key: ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/docs/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-docs-${{ hashFiles('**/bun.lock') }}-
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Install build tools
+      - name: Summarize impact plan
+        env:
+          TARGETS: ${{ steps.impact.outputs.targets }}
+          DELEGATED: ${{ steps.impact.outputs.delegated }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
+          {
+            echo '### PR impact plan'
+            echo
+            echo "- Router validations: \`${TARGETS}\`"
+            echo "- Delegated service workflows: \`${DELEGATED}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
 
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter docs --filter @proompteng/design
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/docs lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/docs lint:oxlint:type
-
-      - run: bun run --filter docs build
-
-  olden:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.olden == 'true' }}
-    runs-on: arc-arm64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/apps/olden/.next/cache
-          key: ${{ runner.os }}-nextjs-olden-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/olden/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-olden-${{ hashFiles('**/bun.lock') }}-
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter olden --filter @proompteng/design
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/olden lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/olden lint:oxlint:type
-
-      - run: bun run --filter olden test
-
-      - run: bun run --filter olden build
-
-  proompteng:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.proompteng == 'true' }}
-    runs-on: arc-arm64
+  validate:
+    name: PR validation (${{ matrix.target }})
+    needs: plan
+    if: ${{ needs.plan.result == 'success' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    runs-on: ${{ (matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur') && 'arc-arm64' || 'ubuntu-latest' }}
     env:
+      CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
       CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
       CONVEX_SELF_HOSTED_ADMIN_KEY: ${{ secrets.CONVEX_SELF_HOSTED_ADMIN_KEY }}
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Bun
+        if: ${{ matrix.target != 'shellcheck' && matrix.target != 'workflow-lint' && matrix.target != 'argo-lint' && matrix.target != 'kubeconform' }}
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
 
       - name: Install build tools
+        if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
 
-      - uses: actions/cache@v4
+      - name: Set up Nix toolchain
+        if: ${{ matrix.target == 'shared-compat' || matrix.target == 'argo-lint' || matrix.target == 'kubeconform' || matrix.target == 'cdk8s' }}
+        uses: ./.github/actions/setup-nix-toolchain
         with:
-          path: |
-            ${{ github.workspace }}/apps/landing/.next/cache
-          key: ${{ runner.os }}-nextjs-landing-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/landing/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-landing-${{ hashFiles('**/bun.lock') }}-
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          extra-nix-config: |
+            experimental-features = nix-command flakes
 
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/landing lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/landing lint:oxlint:type
-
-      - run: bun run --filter landing build
-
-  cms:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.cms == 'true' }}
-    runs-on: arc-arm64
-    env:
-      PAYLOAD_SECRET: ci-build-secret
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install build tools
+      - name: Run selected validation
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ${{ github.workspace }}/apps/cms/.next/cache
-          key: ${{ runner.os }}-nextjs-cms-${{ hashFiles('**/bun.lock') }}-${{ hashFiles('apps/cms/**/*.[jt]s?(x)', 'packages/**/*.[jt]s?(x)') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-cms-${{ hashFiles('**/bun.lock') }}-
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter cms
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/cms lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/cms lint:oxlint:type
-
-      - run: bun run --filter cms build
-
-  app:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.app == 'true' }}
-    runs-on: arc-arm64
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/app lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd apps/app lint:oxlint:type
-
-      - run: bun run --filter app build
-
-  bonjour:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.bonjour == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bonjour --filter @proompteng/otel
-
-      - run: bun run --filter @proompteng/otel build
-
-      - run: bun run --filter @proompteng/bonjour build
-      - run: |
           set -euo pipefail
-          bun run --filter @proompteng/bonjour synth
-          test "$(find services/bonjour/manifests -type f -name '*.yaml' | wc -l | tr -d ' ')" = 3
-          ! grep -R '^---$' services/bonjour/manifests
+          target="${{ matrix.target }}"
+          case "${target}" in
+            planner)
+              echo 'No owned validation target; planner success is sufficient.'
+              ;;
+            docs)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter docs --filter @proompteng/design
+              bun run --cwd apps/docs lint:oxlint
+              bun run --cwd apps/docs lint:oxlint:type
+              bun run --filter docs build
+              ;;
+            landing)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
+              bun run --cwd apps/landing lint:oxlint
+              bun run --cwd apps/landing lint:oxlint:type
+              bun run --filter landing build
+              ;;
+            app)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
+              bun run --cwd apps/app lint:oxlint
+              bun run --cwd apps/app lint:oxlint:type
+              bun run --filter app build
+              ;;
+            cms)
+              PAYLOAD_SECRET=ci-build-secret bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter cms
+              bun run --cwd apps/cms lint:oxlint
+              bun run --cwd apps/cms lint:oxlint:type
+              PAYLOAD_SECRET=ci-build-secret bun run --filter cms build
+              ;;
+            bonjour)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/bonjour --filter @proompteng/otel
+              bun run --filter @proompteng/otel build
+              bun run --filter @proompteng/bonjour build
+              bun run --filter @proompteng/bonjour synth
+              test "$(find services/bonjour/manifests -type f -name '*.yaml' | wc -l | tr -d ' ')" = 3
+              ! grep -R '^---$' services/bonjour/manifests
+              ;;
+            discord)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/discord
+              bun run --cwd packages/discord lint:oxlint
+              bun run --cwd packages/discord lint:oxlint:type
+              bun run --filter @proompteng/discord test
+              bun run --filter @proompteng/discord build
+              ;;
+            kitty-krew)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter tanstack-router-react-example-with-trpc-react-query
+              bun run --cwd apps/kitty-krew lint:oxlint
+              bun run --cwd apps/kitty-krew lint:oxlint:type
+              bunx oxfmt --check --no-error-on-unmatched-pattern 'apps/kitty-krew/**/*.{js,jsx,mjs,cjs,ts,tsx}'
+              bun tsc --noEmit --project apps/kitty-krew/tsconfig.json
+              bun run --cwd apps/kitty-krew build
+              ;;
+            reviseur)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter reviseur
+              bun run --cwd apps/reviseur lint:oxlint
+              bun run --cwd apps/reviseur lint:oxlint:type
+              bun run --cwd apps/reviseur build
+              ;;
+            root-scripts)
+              bun install --frozen-lockfile
+              bun run lint:flamingo-hard-migration
+              ;;
+            sag)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/sag
+              bun run --filter @proompteng/sag lint:oxlint
+              bun run --filter @proompteng/sag lint:oxlint:type
+              bun run --filter @proompteng/sag tsc
+              bun run --filter @proompteng/sag test
+              bun run --filter @proompteng/sag build
+              ;;
+            shared-compat)
+              bun install --frozen-lockfile --ignore-scripts
+              if jq -e 'any(.[]; . == "flake.lock" or . == "flake.nix" or startswith("nix/") or startswith(".github/actions/setup-nix-toolchain/"))' <<< "${CHANGED_FILES_JSON}" >/dev/null; then
+                nix flake check --no-build
+              fi
+              ;;
+            argo-lint)
+              nix run .#lint-argo-workflows
+              ;;
+            kubeconform)
+              mapfile -t changed_manifests < <(jq -r '.[] | select(test("^(argocd|kubernetes)/.*\\.ya?ml$"))' <<< "${CHANGED_FILES_JSON}")
+              if [ "${#changed_manifests[@]}" -gt 0 ]; then
+                nix develop -c scripts/kubeconform.sh "${changed_manifests[@]}"
+              else
+                nix develop -c scripts/kubeconform.sh argocd
+              fi
+              ;;
+            cdk8s)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/k8s
+              bunx oxfmt --check packages/k8s
+              bun run --filter @proompteng/k8s lint:oxlint
+              bun run --filter @proompteng/k8s lint:oxlint:type
+              bun run --filter @proompteng/k8s typecheck
+              bun run --filter @proompteng/k8s test
+              bun run --filter @proompteng/k8s imports:check
+              git diff --exit-code -- packages/k8s/src/imports
+              bun run --filter @proompteng/k8s synth:check -- --all
+              bun run --filter @proompteng/k8s synth:check -- --all
+              git diff --exit-code -- ':(glob)argocd/applications/*/generated/**'
+              mapfile -t applications < <(bun run packages/k8s/src/cli.ts list)
+              test "${#applications[@]}" -gt 0
+              for application in "${applications[@]}"; do
+                rendered="${RUNNER_TEMP}/${application}.yaml"
+                nix develop -c scripts/kubeconform.sh "argocd/applications/${application}/generated"
+                nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
+                nix develop -c scripts/kubeconform.sh "${rendered}"
+              done
+              ;;
+            shellcheck)
+              if ! command -v shellcheck >/dev/null 2>&1; then
+                sudo apt-get update
+                sudo apt-get install -y shellcheck
+              fi
+              mapfile -t shell_scripts < <(git ls-files '*.sh')
+              if [ "${#shell_scripts[@]}" -gt 0 ]; then shellcheck "${shell_scripts[@]}"; fi
+              ;;
+            workflow-lint)
+              go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+              "$(go env GOPATH)/bin/actionlint" -shellcheck '' -pyflakes ''
+              ;;
+            *)
+              echo "Unknown impact target: ${target}" >&2
+              exit 2
+              ;;
+          esac
 
-  codex:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.codex == 'true' }}
+  ci-pr:
+    name: ci-pr
+    if: ${{ always() }}
+    needs:
+      - plan
+      - validate
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-      # codex CI handled by dedicated workflow (.github/workflows/codex-ci.yml)
-
-  discord:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.discord == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/discord
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        run: bun run --cwd packages/discord lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        run: bun run --cwd packages/discord lint:oxlint:type
-
-      - run: bun run --filter @proompteng/discord test
-
-      - run: bun run --filter @proompteng/discord build
-
-  kitty-krew:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.kitty-krew == 'true' }}
-    runs-on: arc-arm64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - name: Install build tools
+      - name: Enforce selected validation results
+        env:
+          PLAN_RESULT: ${{ needs.plan.result }}
+          VALIDATE_RESULT: ${{ needs.validate.result }}
+          DELEGATED: ${{ needs.plan.outputs.delegated }}
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter tanstack-router-react-example-with-trpc-react-query
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        working-directory: apps/kitty-krew
-        run: bun run lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        working-directory: apps/kitty-krew
-        run: bun run lint:oxlint:type
-
-      - name: Lint
-        working-directory: apps/kitty-krew
-        run: bun run lint:oxlint
-
-      - name: Format check
-        run: bunx oxfmt --check --no-error-on-unmatched-pattern "apps/kitty-krew/**/*.{js,jsx,mjs,cjs,ts,tsx}"
-
-      - name: Type check
-        working-directory: apps/kitty-krew
-        run: bun tsc --noEmit
-
-      - name: Build kitty-krew app
-        working-directory: apps/kitty-krew
-        run: bun run build
-
-  reviseur:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.reviseur == 'true' }}
-    runs-on: arc-arm64
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 24.11.1
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-
-      - uses: actions/cache@v4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-1.3.14-${{ hashFiles('bun.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-bun-1.3.14-
-
-      - run: bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter reviseur
-
-      - name: Oxlint (non-blocking)
-        continue-on-error: true
-        working-directory: apps/reviseur
-        run: bun run lint:oxlint
-
-      - name: Oxlint (type-aware, non-blocking)
-        continue-on-error: true
-        working-directory: apps/reviseur
-        run: bun run lint:oxlint:type
-
-      - run: bun run build
-        working-directory: apps/reviseur
-
-  scripts:
-    needs: check_changed_files
-    if: ${{ needs.check_changed_files.outputs.scripts == 'true' }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.14
-      - run: bun install --frozen-lockfile
-      - run: bun run lint:flamingo-hard-migration
+          set -euo pipefail
+          if [ "${PLAN_RESULT}" != success ] || [ "${VALIDATE_RESULT}" != success ]; then
+            echo "PR validation failed: plan=${PLAN_RESULT}, validate=${VALIDATE_RESULT}" >&2
+            exit 1
+          fi
+          echo "Router validation passed. Delegated workflows: ${DELEGATED}"
