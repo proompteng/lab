@@ -45,4 +45,21 @@ describe('summarizeLatestReviewStates', () => {
       ]),
     ).toEqual({ status: 'approved', requestedChanges: false })
   })
+
+  it('ignores a newer pending draft review when retaining the last submitted decision', () => {
+    expect(
+      summarizeLatestReviewStates([
+        {
+          author: 'reviewer',
+          state: 'CHANGES_REQUESTED',
+          submittedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          author: 'reviewer',
+          state: 'PENDING',
+          submittedAt: '2026-01-02T00:00:00Z',
+        },
+      ]),
+    ).toEqual({ status: 'changes_requested', requestedChanges: true })
+  })
 })

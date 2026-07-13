@@ -70,6 +70,7 @@ export const summarizeLatestReviewStates = (
   const latestByAuthor = new Map<string, { review: NormalizedReviewState; index: number }>()
 
   reviews.forEach((review, index) => {
+    if (review.state === 'PENDING') return
     const key = review.author ?? `anonymous:${index}`
     const current = latestByAuthor.get(key)
     if (!current) {
