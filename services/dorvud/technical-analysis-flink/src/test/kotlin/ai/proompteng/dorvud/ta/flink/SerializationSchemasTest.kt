@@ -17,6 +17,7 @@ import org.apache.flink.api.common.serialization.SerializerConfigImpl
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
 import java.io.ByteArrayOutputStream
 import java.io.ObjectOutputStream
+import java.time.Duration
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -137,6 +138,13 @@ class SerializationSchemasTest {
       DEFAULT_WATERMARK_IDLE_TIMEOUT_MS,
       normalizeWatermarkIdleTimeoutMs(DEFAULT_WATERMARK_IDLE_TIMEOUT_MS),
     )
+  }
+
+  @Test
+  fun `signal history limits respect the source cadence`() {
+    assertEquals(360, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofSeconds(1)))
+    assertEquals(65, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofMinutes(1)))
+    assertSerializable(TaSignalsFunction(FlinkTaConfig.fromEnv(), Duration.ofMinutes(1)))
   }
 
   @Test

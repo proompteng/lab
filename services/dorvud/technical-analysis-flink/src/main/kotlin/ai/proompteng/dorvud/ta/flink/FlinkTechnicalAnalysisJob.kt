@@ -145,21 +145,40 @@ fun main() {
       .name("ta-microbars")
       .uid("ta-microbars")
 
-  val microBarsForSignals = if (config.bars1mTopic != null) microBars.union(bars1mStream) else microBars
-
-  val signals =
-    microBarsForSignals
+  val microbarSignals =
+    microBars
       .keyBy { it.symbol }
       .connect(quotesStream.keyBy { it.symbol })
-      .process(TaSignalsFunction(config))
+      .process(TaSignalsFunction(config, Duration.ofSeconds(1)))
       .name("ta-signals")
       .uid("ta-signals")
+
+  val signals =
+    if (config.bars1mTopic != null) {
+      val minuteSignals =
+        bars1mStream
+          .keyBy { it.symbol }
+          .connect(quotesStream.keyBy { it.symbol })
+          .process(TaSignalsFunction(config, Duration.ofMinutes(1)))
+          .name("ta-signals-1m")
+          .uid("ta-signals-1m")
+      microbarSignals.union(minuteSignals)
+    } else {
+      microbarSignals
+    }
+
+  val barsForStatus =
+    if (config.bars1mTopic != null) {
+      microBars.union(bars1mStream)
+    } else {
+      microBars
+    }
 
   if (config.statusTopic != null) {
     val statusIntervalMs = config.checkpointIntervalMs.coerceAtLeast(1_000)
     val statusInputType = TypeInformation.of(object : TypeHint<StatusHeartbeatInput>() {})
     val microbarStatusInputs =
-      microBarsForSignals
+      barsForStatus
         .map { envelope: Envelope<MicroBarPayload> -> StatusHeartbeatInput.MicroBar(envelope) as StatusHeartbeatInput }
         .returns(statusInputType)
     val signalStatusInputs =
@@ -1446,8 +1465,9 @@ private data class BucketState(
   }
 }
 
-private class TaSignalsFunction(
+internal class TaSignalsFunction(
   private val config: FlinkTaConfig,
+  private val barDuration: Duration,
 ) : KeyedCoProcessFunction<String, Envelope<MicroBarPayload>, Envelope<QuotePayload>, Envelope<TaSignalsPayload>>() {
   private lateinit var barsState: ListState<MicroBarPayload>
   private lateinit var quoteState: ValueState<TimedQuoteState>
@@ -1467,7 +1487,7 @@ private class TaSignalsFunction(
   ) {
     val bars = barsState.get().toMutableList()
     bars.add(value.payload)
-    val historyLimit = maxOf(config.realizedVolWindow + 5, (config.vwapWindow.seconds + 60).toInt())
+    val historyLimit = signalHistoryLimit(config.vwapWindow, config.realizedVolWindow, barDuration)
     while (bars.size > historyLimit) {
       bars.removeAt(0)
     }
@@ -1496,10 +1516,10 @@ private class TaSignalsFunction(
     bars: List<MicroBarPayload>,
     session: SessionAccumulatorState,
   ): Envelope<TaSignalsPayload> {
-    val series = BaseBarSeries("ta-${envelope.symbol}")
+    val series = BaseBarSeries("ta-${barDuration}-${envelope.symbol}")
     bars.forEach { bar ->
       val barTime = ZonedDateTime.ofInstant(bar.t, ZoneOffset.UTC)
-      val baseBar = BaseBar(Duration.ofSeconds(1), barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
+      val baseBar = BaseBar(barDuration, barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
       if (series.barCount == 0) {
         series.addBar(baseBar)
       } else {
@@ -1582,11 +1602,11 @@ private class TaSignalsFunction(
     val window =
       envelope.window
         ?: Window(
-          size = "PT1S",
-          step = "PT1S",
+          size = barDuration.toString(),
+          step = barDuration.toString(),
           start =
             envelope.payload.t
-              .minusSeconds(1)
+              .minus(barDuration)
               .toString(),
           end = envelope.payload.t.toString(),
         )
@@ -1629,6 +1649,19 @@ private class TaSignalsFunction(
     val variance = returns.map { (it - mean) * (it - mean) }.average()
     return kotlin.math.sqrt(variance)
   }
+}
+
+internal fun signalHistoryLimit(
+  vwapWindow: Duration,
+  realizedVolWindow: Int,
+  barDuration: Duration,
+): Int {
+  require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val vwapBars =
+    kotlin.math
+      .ceil(vwapWindow.toMillis().toDouble() / barDuration.toMillis().toDouble())
+      .toInt()
+  return maxOf(realizedVolWindow + 5, vwapBars + 60)
 }
 
 internal fun taSignalOutputSource(inputSource: String): String =
