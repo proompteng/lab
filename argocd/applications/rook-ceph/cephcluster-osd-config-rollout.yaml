@@ -1,0 +1,6 @@
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  annotations:
+    ops.proompteng.ai/osd-config-revision: scrub-auto-repair-v1
