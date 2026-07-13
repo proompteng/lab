@@ -754,7 +754,7 @@ describe('native OCI build workflows', () => {
     }
     expect(atticWorkflow).not.toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
-    expect(headlampWorkflow.split("- 'flake.nix'")).toHaveLength(3)
+    expect(headlampWorkflow).not.toContain("- 'flake.nix'")
     expect(headlampReleaseWorkflow).toContain('flake.nix')
   })
 
