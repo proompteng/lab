@@ -378,6 +378,36 @@ const buildReviewThread = (
   }
 }
 
+const buildReviewThreadResolution = (
+  payload: Record<string, unknown>,
+  action: string | null,
+  receivedAt: string,
+): GithubReviewThread | null => {
+  if (!isRecord(payload.thread) || !Array.isArray(payload.thread.comments)) return null
+  const resolved = action === 'resolved' ? true : action === 'unresolved' ? false : null
+  if (resolved === null) return null
+
+  const comments = payload.thread.comments.filter(isRecord)
+  const rootComment = comments.find(
+    (comment) => comment.in_reply_to_id === null || comment.in_reply_to_id === undefined,
+  )
+  const fallbackComment = comments[0]
+  const comment = rootComment ?? fallbackComment
+  if (!comment) return null
+
+  const threadKey = normalizeString(comment.id) || String(comment.id ?? '')
+  if (!threadKey) return null
+  const threadId = normalizeString(payload.thread.node_id) || null
+  const thread = buildReviewThread({ comment }, threadKey, receivedAt)
+  if (!thread) return null
+
+  return {
+    ...thread,
+    threadId,
+    isResolved: resolved,
+  }
+}
+
 const buildReviewComment = (payload: Record<string, unknown>, receivedAt: string): GithubReviewComment | null => {
   if (!isRecord(payload.comment)) return null
   const comment = payload.comment
@@ -603,6 +633,35 @@ export const ingestGithubReviewEvent = async (input: GithubWebhookEvent): Promis
       count: unresolvedThreadsCount,
       receivedAt,
     })
+  }
+
+  if (input.event === 'pull_request_review_thread') {
+    const thread = buildReviewThreadResolution(input.payload, input.action, receivedAt)
+    if (thread) {
+      await store.upsertReviewThread({
+        ...thread,
+        repository,
+        prNumber,
+        commitSha,
+        receivedAt,
+      })
+      await store.updateThreadResolution({
+        repository,
+        prNumber,
+        threadKey: thread.threadKey,
+        threadId: thread.threadId,
+        resolved: thread.isResolved,
+        receivedAt,
+      })
+
+      const unresolvedThreadsCount = await store.getUnresolvedThreadCount({ repository, prNumber })
+      await store.updateUnresolvedThreadCount({
+        repository,
+        prNumber,
+        count: unresolvedThreadsCount,
+        receivedAt,
+      })
+    }
   }
 
   if (input.event === 'issue_comment') {
