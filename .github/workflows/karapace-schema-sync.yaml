@@ -14,7 +14,6 @@ on:
       - 'proto/**'
       - 'proto/schema-subjects.json'
       - 'scripts/karapace/**'
-      - '.github/workflows/karapace-schema-sync.yaml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

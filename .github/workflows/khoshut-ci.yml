@@ -17,8 +17,6 @@ on:
       - 'argocd/applications/khoshut/**'
       - 'argocd/applicationsets/product.yaml'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
-      - '.github/workflows/khoshut-ci.yml'
-      - '.github/workflows/common-monorepo.yml'
   workflow_dispatch:
 
 concurrency:

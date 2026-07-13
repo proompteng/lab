@@ -18,7 +18,6 @@ on:
       - 'argocd/applications/synthesis/**'
       - 'argocd/applications/argocd/base/image-updater-product.yaml'
       - 'argocd/applicationsets/product.yaml'
-      - '.github/workflows/synthesis-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

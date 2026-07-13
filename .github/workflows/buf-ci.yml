@@ -16,7 +16,6 @@ on:
       - 'buf.work.yaml'
       - 'buf.gen.yaml'
       - 'scripts/generate-proto.sh'
-      - '.github/workflows/buf-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

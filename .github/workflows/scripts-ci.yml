@@ -18,7 +18,6 @@ on:
       - 'argocd/applicationsets/**'
       - 'docs/runbooks/rook-ceph-client-ops-performance.md'
       - 'docs/nix-enabled-app-build-performance-rollout-plan.md'
-      - '.github/workflows/scripts-ci.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

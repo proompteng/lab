@@ -5,7 +5,6 @@ on:
     paths:
       - 'services/agents/agentctl/**'
       - 'docs/agents/agentctl-release.md'
-      - '.github/workflows/agentctl-*.yml'
   push:
     branches:
       - main

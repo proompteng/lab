@@ -14,7 +14,6 @@ on:
       - 'packages/temporal-bun-sdk/**'
       - 'packages/temporal-bun-sdk-example/**'
       - 'apps/docs/content/docs/temporal-bun-sdk*.mdx'
-      - '.github/workflows/temporal-bun-sdk.yml'
   workflow_dispatch:
     inputs:
       npm_tag:

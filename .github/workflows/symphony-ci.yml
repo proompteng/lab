@@ -15,7 +15,6 @@ on:
       - 'argocd/applications/observability/kustomization.yaml'
       - 'argocd/applications/observability/symphony-fleet-dashboard-configmap.yaml'
       - 'argocd/applicationsets/product.yaml'
-      - '.github/workflows/symphony-ci.yml'
   workflow_dispatch:
 
 concurrency:
