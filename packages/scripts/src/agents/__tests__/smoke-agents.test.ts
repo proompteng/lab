@@ -594,7 +594,7 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(spec, 'argsTemplate')).toEqual([])
     expect(objectAt(adapter, 'type')).toBe('codex-app-server')
     expect(objectAt(codex, 'model')).toBe('gpt-5.3-codex-spark')
-    expect(objectAt(codex, 'effort')).toBe('xhigh')
+    expect(objectAt(codex, 'effort')).toBe('high')
     expect(objectAt(codex, 'sandbox')).toBe('danger-full-access')
     expect(objectAt(codex, 'approval')).toBe('never')
     expect(objectAt(codex, 'cwd')).toBe('/workspace/lab')
@@ -607,6 +607,8 @@ describe('scheduled AgentRun templates', () => {
     expect(objectAt(envTemplate, 'CODEX_MODEL_FALLBACKS')).not.toContain('gpt-5.3-codex-spark')
     expect(objectAt(envTemplate, 'CODEX_MAX_SESSION_ATTEMPTS')).toBe('5')
     expect(objectAt(codexConfig, 'content')).toContain('model = "gpt-5.3-codex-spark"')
+    expect(objectAt(codexConfig, 'content')).toContain('model_reasoning_effort = "high"')
+    expect(objectAt(codexConfig, 'content')).not.toContain('model_reasoning_effort = "xhigh"')
     expect(objectAt(codexConfig, 'content')).not.toContain('model = "gpt-5.6-sol"')
     expect((inputFiles ?? []).map((inputFile) => objectAt(inputFile, 'path'))).not.toContain(
       '/root/.codex/provider-codex-spark.json',
