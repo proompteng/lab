@@ -37,7 +37,7 @@ def _mimir_groups() -> list[Mapping[str, object]]:
 
 
 class SchedulerObservabilityManifestTests(TestCase):
-    def test_service_inventory_collector_is_enabled(self) -> None:
+    def test_scheduler_inventory_metrics_are_enabled(self) -> None:
         values = safe_load(
             (
                 _repo_root()
@@ -53,6 +53,7 @@ class SchedulerObservabilityManifestTests(TestCase):
             "argocd/applications/observability/cluster-metrics-alloy-configmap.yaml",
             "config.river",
         )
+        self.assertIn("kube_deployment_spec_replicas", alloy_config)
         self.assertIn("kube_service_info", alloy_config)
 
     def test_api_availability_and_scheduler_availability_have_distinct_targets(
