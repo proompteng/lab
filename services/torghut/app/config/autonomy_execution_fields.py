@@ -15,6 +15,13 @@ class AutonomyExecutionSettingsFields(BaseSettings):
         description="Output directory for autonomous lane artifacts.",
     )
 
+    trading_autonomy_artifact_retention_runs: int = Field(
+        default=288,
+        ge=1,
+        alias="TRADING_AUTONOMY_ARTIFACT_RETENTION_RUNS",
+        description="Maximum number of timestamped autonomy run directories retained on local storage.",
+    )
+
     trading_autonomy_alpha_train_prices_path: Optional[str] = Field(
         default=None,
         alias="TRADING_AUTONOMY_ALPHA_TRAIN_PRICES_PATH",

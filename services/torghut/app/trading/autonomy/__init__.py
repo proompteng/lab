@@ -13,6 +13,7 @@ from .lane import (
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
 )
+from .retention import prune_autonomy_run_directories
 from .policy_checks import (
     PromotionPrerequisiteResult,
     RollbackReadinessResult,
@@ -87,4 +88,5 @@ __all__ = [
     "required_key_errors",
     "upsert_autonomy_no_signal_run",
     "run_autonomous_lane",
+    "prune_autonomy_run_directories",
 ]
