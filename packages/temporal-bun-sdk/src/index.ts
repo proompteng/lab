@@ -21,6 +21,7 @@ export {
   TemporalTlsHandshakeError,
   temporalCallOptions,
 } from './client'
+export * from './common'
 export { createTemporalClientLayer, TemporalClientLayer, TemporalClientService } from './client/layer'
 export type { TemporalRpcRetryPolicy } from './client/retries'
 export type {
@@ -58,6 +59,7 @@ export {
   TemporalTestServerUnavailableError,
   TestWorkflowEnvironment,
 } from './testing'
+export * from './worker'
 export {
   createWorkerRuntimeLayer,
   makeWorkerRuntimeEffect,
@@ -68,3 +70,4 @@ export {
 export type { WorkerPlugin, WorkerPluginContext } from './worker/plugins'
 export type { WorkerTuner } from './worker/tuner'
 export { createStaticWorkerTuner } from './worker/tuner'
+export * from './workflow'

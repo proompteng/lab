@@ -431,7 +431,7 @@ const serializeRetryPolicy = (policy?: RetryPolicyOptions): RetryPolicy | undefi
 
   return create(RetryPolicySchema, {
     initialInterval: toDuration(policy.initialIntervalMs),
-    backoffCoefficient: policy.backoffCoefficient ?? 0,
+    backoffCoefficient: policy.backoffCoefficient ?? 2,
     maximumInterval: toDuration(policy.maximumIntervalMs),
     maximumAttempts: policy.maximumAttempts ?? 0,
     nonRetryableErrorTypes: policy.nonRetryableErrorTypes ?? [],

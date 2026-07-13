@@ -91,6 +91,27 @@ test('buildStartWorkflowRequest defaults to unversioned behavior', async () => {
   expect(request.versioningOverride).toBeUndefined()
 })
 
+test('buildStartWorkflowRequest preserves the server retry backoff default for partial policies', async () => {
+  const request = await buildStartWorkflowRequest(
+    {
+      options: {
+        workflowId: 'wf-partial-retry',
+        workflowType: 'exampleWorkflow',
+        retryPolicy: { maximumAttempts: 3 },
+      },
+      defaults: {
+        namespace: 'default',
+        identity: 'test-worker',
+        taskQueue: 'example',
+      },
+    },
+    dataConverter,
+  )
+
+  expect(request.retryPolicy?.maximumAttempts).toBe(3)
+  expect(request.retryPolicy?.backoffCoefficient).toBe(2)
+})
+
 test('buildStartWorkflowRequest preserves workflow ID reuse policy', async () => {
   const request = await buildStartWorkflowRequest(
     {

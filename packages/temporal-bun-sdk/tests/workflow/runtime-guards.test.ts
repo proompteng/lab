@@ -287,6 +287,20 @@ test('WebSocket constructor throws in strict mode when called from workflow code
   )
 })
 
+test('WebSocket guard preserves constructor prototype and static members when available', () => {
+  installWorkflowRuntimeGuards({ mode: 'strict' })
+  const globalRef = globalThis as unknown as Record<symbol, unknown>
+  const original = globalRef[Symbol.for('@proompteng/temporal-bun-sdk.original.WebSocket')] as
+    | (Function & { prototype?: unknown; OPEN?: unknown })
+    | undefined
+  const patched = (globalThis as unknown as { WebSocket?: Function & { prototype?: unknown; OPEN?: unknown } }).WebSocket
+  if (!original || !patched) return
+
+  expect(patched.prototype).toBe(original.prototype)
+  expect(Object.getPrototypeOf(patched)).toBe(original)
+  expect(patched.OPEN).toBe(original.OPEN)
+})
+
 test('Bun.spawn() throws in strict mode when called from workflow code', async () => {
   const { registry, executor } = makeExecutor()
   registry.register(
