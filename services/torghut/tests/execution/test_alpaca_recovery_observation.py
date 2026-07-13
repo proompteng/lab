@@ -84,6 +84,7 @@ def _request(**overrides: object) -> dict[str, object]:
         "order_class": "simple",
         "position_intent": "buy_to_open",
         "extended_hours": False,
+        "client_order_id": _CLIENT_ORDER_ID,
     }
     payload.update(overrides)
     return payload
@@ -242,6 +243,23 @@ def test_conflicting_canonical_client_order_id_is_indeterminate(
     )
 
 
+@pytest.mark.parametrize("client_order_id", [None])
+def test_canonical_client_order_id_is_required_and_non_null(
+    client_order_id: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_INVALID,
+        result=_observe(intent=_intent(client_order_id=client_order_id)),
+    )
+
+
+def test_missing_canonical_client_order_id_is_indeterminate() -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_INVALID,
+        result=_observe(intent=_intent_without_client_order_id()),
+    )
+
+
 def test_matching_canonical_client_order_id_is_accepted() -> None:
     result = _observe(intent=_intent(client_order_id=_CLIENT_ORDER_ID))
 
@@ -264,6 +282,35 @@ def test_only_exact_broker_blank_class_normalizes_to_simple(
         AlpacaRecoveryObservationReason.ORDER_IDENTITY_MISMATCH,
         result=_observe(broker_order=_broker_order(order_class=broker_order_class)),
     )
+
+
+def _intent_without_client_order_id():
+    payload = _request()
+    del payload["client_order_id"]
+    return build_broker_mutation_intent(
+        BrokerMutationIntentRequest(
+            broker_route="alpaca",
+            account_label="paper-primary",
+            endpoint_fingerprint="a" * 64,
+            operation="submit_order",
+            risk_class="risk_increasing",
+            purpose="initial_submission",
+            workflow_id="decision/101",
+            client_request_id=_CLIENT_ORDER_ID,
+            target=BrokerMutationTarget(kind="order", key=_CLIENT_ORDER_ID),
+            request_payload=payload,
+            submission_claim_id=_DECISION_ID,
+        )
+    )
+
+
+def test_request_sdk_defaults_normalize_to_simple_and_false() -> None:
+    result = _observe(intent=_intent(order_class=None, extended_hours=None))
+
+    assert result.validated
+    assert result.order is not None
+    assert result.order.terms.order_class == "simple"
+    assert result.order.terms.extended_hours is False
 
 
 def test_notional_intent_cannot_be_recovered_from_computed_broker_qty() -> None:
@@ -463,7 +510,7 @@ def test_twelve_integer_digit_scientific_values_remain_in_bounds() -> None:
         {"limit_price": Decimal("0")},
         {"limit_price": Decimal("190.25"), "stop_price": Decimal("180")},
         {"trail_price": Decimal("1")},
-        {"order_class": None},
+        {"order_class": False},
         {"order_class": ""},
         {"position_intent": 1},
         {"extended_hours": "false"},
@@ -516,6 +563,61 @@ def test_matching_complex_order_classes_remain_indeterminate_until_legs_are_mode
     _assert_indeterminate(
         AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
         result=result,
+    )
+
+
+@pytest.mark.parametrize(
+    ("nested_field", "nested_value"),
+    [
+        ("take_profit", {"limit_price": "210"}),
+        ("stop_loss", {"stop_price": "180"}),
+        (
+            "legs",
+            [
+                {"type": "limit", "limit_price": "210"},
+                {"type": "stop", "stop_price": "180"},
+            ],
+        ),
+    ],
+)
+def test_simple_order_nested_terms_remain_indeterminate_until_modeled(
+    nested_field: str,
+    nested_value: object,
+) -> None:
+    overrides = {nested_field: nested_value}
+
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
+        result=_observe(
+            intent=_intent(**overrides),
+            broker_order=_broker_order(**overrides),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("nested_field", "nested_value"),
+    [
+        ("take_profit", {"limit_price": "210"}),
+        ("stop_loss", {"stop_price": "180"}),
+        (
+            "legs",
+            [
+                {"type": "limit", "limit_price": "210"},
+                {"type": "stop", "stop_price": "180"},
+            ],
+        ),
+    ],
+)
+def test_simple_broker_nested_terms_remain_indeterminate_until_modeled(
+    nested_field: str,
+    nested_value: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.ORDER_IDENTITY_MISMATCH,
+        result=_observe(
+            broker_order=_broker_order(**{nested_field: nested_value}),
+        ),
     )
 
 

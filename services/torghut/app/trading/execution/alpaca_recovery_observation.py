@@ -29,6 +29,7 @@ from ..broker_mutation_receipts.validation import (
 _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,31}$")
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit", "trailing_stop"})
 _TIME_IN_FORCE = frozenset({"day", "gtc", "opg", "cls", "ioc", "fok"})
+_UNSUPPORTED_NESTED_ORDER_FIELDS = ("take_profit", "stop_loss", "legs")
 _BROKER_STATUSES = frozenset(status.value for status in OrderStatus)
 _POSITION_INTENTS = frozenset(
     position_intent.value for position_intent in PositionIntent
@@ -214,11 +215,7 @@ def _canonical_request_terms(
     if request is None:
         return AlpacaRecoveryObservationReason.REQUEST_INVALID
     request_client_order_id = request.get("client_order_id")
-    if (
-        request_client_order_id is not None
-        and _bounded_text(request_client_order_id, maximum=128)
-        != intent.client_request_id
-    ):
+    if _bounded_text(request_client_order_id, maximum=128) != intent.client_request_id:
         return AlpacaRecoveryObservationReason.REQUEST_INVALID
     sizing = _request_sizing(request)
     if isinstance(sizing, AlpacaRecoveryObservationReason):
@@ -404,7 +401,9 @@ def _parse_terms(
     time_in_force = _lower_text(payload.get("time_in_force"), maximum=16)
     order_class = _normalized_order_class(payload.get("order_class"), broker=broker)
     position_intent = _optional_position_intent(payload.get("position_intent"))
-    extended_hours = payload.get("extended_hours")
+    extended_hours = _normalized_extended_hours(
+        payload.get("extended_hours"), broker=broker
+    )
     if (
         symbol is None
         or _SYMBOL.fullmatch(symbol) is None
@@ -414,6 +413,10 @@ def _parse_terms(
         or order_class != "simple"
         or position_intent is _INVALID
         or not isinstance(extended_hours, bool)
+    ):
+        return None
+    if any(
+        payload.get(field) is not None for field in _UNSUPPORTED_NESTED_ORDER_FIELDS
     ):
         return None
     prices = _parse_prices(payload)
@@ -456,9 +459,17 @@ def _request_type_key(payload: Mapping[str, object]) -> str | None:
 
 
 def _normalized_order_class(value: object, *, broker: bool) -> str | None:
+    if not broker and value is None:
+        return "simple"
     if broker and isinstance(value, str) and value == "":
         return "simple"
     return _lower_text(value, maximum=32)
+
+
+def _normalized_extended_hours(value: object, *, broker: bool) -> object:
+    if not broker and value is None:
+        return False
+    return value
 
 
 def _validate_broker_account(
