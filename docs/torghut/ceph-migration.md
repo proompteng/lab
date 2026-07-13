@@ -66,7 +66,7 @@ fs.s3a.connection.establish.timeout: 60000
 ### Phase 0 - Prep
 
 - Deploy Rook operator + CephCluster (distinct storage class or raw devices).
-- Create `CephObjectStore` (`objstore`), `CephObjectStoreUser` (`torghut-flink`).
+- Create `CephObjectStore` (`objectstore`), `CephObjectStoreUser` (`torghut-flink`).
 - Create buckets via `radosgw-admin bucket create` or `aws s3api --endpoint`.
 - Add NetworkPolicy allowing JM/TM → RGW:80.
 
