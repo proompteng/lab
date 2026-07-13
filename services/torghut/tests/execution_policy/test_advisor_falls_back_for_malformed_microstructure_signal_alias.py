@@ -16,6 +16,75 @@ from tests.execution_policy.support import (
 class TestAdvisorFallsBackForMalformedMicrostructureSignalAlias(
     _TestExecutionPolicyBase
 ):
+    def test_advisor_cap_cannot_loosen_adaptive_participation_limit(self) -> None:
+        config.settings.trading_execution_advisor_enabled = True
+        policy = ExecutionPolicy(config=_config(max_participation_rate=Decimal("0.20")))
+        decision = _decision(
+            qty=Decimal("100"), price=Decimal("10"), order_type="market"
+        ).model_copy(
+            update={
+                "params": {
+                    "price": Decimal("10"),
+                    "adv": Decimal("1000"),
+                    "microstructure_state": {
+                        "schema_version": "microstructure_state_v1",
+                        "symbol": "AAPL",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "spread_bps": "2",
+                        "depth_top5_usd": "1500000",
+                        "order_flow_imbalance": "0.10",
+                        "latency_ms_estimate": 20,
+                        "fill_hazard": "0.20",
+                        "liquidity_regime": "normal",
+                    },
+                    "execution_advice": {
+                        "urgency_tier": "normal",
+                        "event_ts": "2026-01-01T00:00:00Z",
+                        "max_participation_rate": "0.15",
+                    },
+                }
+            }
+        )
+        adaptive_policy = AdaptiveExecutionPolicyDecision(
+            key="AAPL:trend",
+            symbol="AAPL",
+            regime_label="trend",
+            sample_size=6,
+            adaptive_samples=6,
+            baseline_slippage_bps=Decimal("8"),
+            recent_slippage_bps=Decimal("3"),
+            baseline_shortfall_notional=Decimal("1"),
+            recent_shortfall_notional=Decimal("0.5"),
+            effect_size_bps=Decimal("-2"),
+            degradation_bps=Decimal("1"),
+            expected_shortfall_coverage=Decimal("1"),
+            expected_shortfall_sample_count=6,
+            fallback_active=False,
+            fallback_reason=None,
+            prefer_limit=False,
+            participation_rate_scale=Decimal("0.25"),
+            execution_seconds_scale=Decimal("1"),
+            aggressiveness="neutral",
+            generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        )
+
+        outcome = policy.evaluate(
+            decision,
+            strategy=None,
+            positions=[],
+            market_snapshot=None,
+            adaptive_policy=adaptive_policy,
+        )
+
+        self.assertTrue(outcome.adaptive.applied)
+        self.assertTrue(outcome.advisor_metadata["applied"])
+        self.assertFalse(outcome.approved)
+        self.assertIn("participation_exceeds_max", outcome.reasons)
+        self.assertEqual(
+            outcome.impact_assumptions["model"]["max_participation_rate"],
+            "0.0500",
+        )
+
     def test_advisor_falls_back_for_malformed_microstructure_signal_alias(
         self,
     ) -> None:

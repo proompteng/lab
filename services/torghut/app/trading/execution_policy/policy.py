@@ -266,9 +266,12 @@ class ExecutionPolicy:
             impact_inputs=impact_inputs,
             execution_seconds=execution_seconds,
         )
-        max_participation = (
-            runtime.advisor_max_participation or runtime.config.max_participation_rate
-        )
+        max_participation = runtime.config.max_participation_rate
+        if runtime.advisor_max_participation is not None:
+            max_participation = min(
+                max_participation,
+                runtime.advisor_max_participation,
+            )
         participation_rate = estimate.participation_rate
         if participation_rate is not None and participation_rate > max_participation:
             runtime.reasons.append("participation_exceeds_max")
