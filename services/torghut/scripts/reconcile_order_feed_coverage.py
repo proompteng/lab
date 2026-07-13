@@ -15,11 +15,11 @@ import json
 import os
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import create_engine, exists, func, or_, select
+from sqlalchemy.sql import ColumnElement
+from sqlalchemy.sql.base import Executable
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import Execution, ExecutionOrderEvent
 
@@ -69,11 +69,11 @@ def _bounded_limit(value: object, *, default: int = 100) -> int:
     return max(1, min(parsed, 5000)) if parsed else default
 
 
-def _event_time_expression() -> Any:
+def _event_time_expression() -> ColumnElement[object]:
     return func.coalesce(ExecutionOrderEvent.event_ts, ExecutionOrderEvent.created_at)
 
 
-def _execution_time_expression() -> Any:
+def _execution_time_expression() -> ColumnElement[object]:
     return func.coalesce(
         Execution.order_feed_last_event_ts,
         Execution.last_update_at,
@@ -82,12 +82,12 @@ def _execution_time_expression() -> Any:
 
 
 def _scope_predicates(
-    column: Any,
+    column: ColumnElement[object],
     *,
     account_label: str | None,
     window_start: datetime | None,
     window_end: datetime | None,
-    time_expression: Any,
+    time_expression: ColumnElement[object],
 ) -> list[ColumnElement[bool]]:
     predicates: list[ColumnElement[bool]] = []
     if account_label:
@@ -122,7 +122,7 @@ def _filled_execution_predicate() -> ColumnElement[bool]:
     )
 
 
-def _count(session: Session, statement: Any) -> int:
+def _count(session: Session, statement: Executable) -> int:
     value = session.scalar(statement)
     return int(value or 0)
 
@@ -187,7 +187,7 @@ def _event_sample(row: ExecutionOrderEvent) -> dict[str, object]:
 
 def _sample_rows(
     session: Session,
-    statement: Any,
+    statement: Executable,
     *,
     sample_limit: int,
 ) -> list[dict[str, object]]:
@@ -197,7 +197,7 @@ def _sample_rows(
 
 def _sample_events(
     session: Session,
-    statement: Any,
+    statement: Executable,
     *,
     sample_limit: int,
 ) -> list[dict[str, object]]:
