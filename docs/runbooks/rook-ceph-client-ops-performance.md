@@ -160,6 +160,8 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell 'osd.*' bench
 kubectl apply -k kubernetes/rook-ceph-rbd-canary
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block.yaml
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary.yaml
+kubectl -n rook-ceph-benchmarks wait --for=condition=complete --timeout=30m \
+  job/rook-ceph-block-nbd-canary-benchmark
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary-remount.yaml
 
 kubectl apply -k kubernetes/rook-ceph-rwx-benchmarks
@@ -326,20 +328,41 @@ the split completes. This is temporary maintenance mode, not the final client-op
 Temporary GitOps patch for recovery surge:
 
 ```yaml
-osd_mclock_profile: "high_recovery_ops"
-osd_mclock_max_capacity_iops_hdd: "750"
-osd_mclock_override_recovery_settings: "true"
-osd_max_backfills: "6"
-osd_recovery_max_active_hdd: "12"
-osd_recovery_sleep_hdd: "0"
-target_max_misplaced_ratio: "0.10"
+osd:
+  osd_mclock_profile: "high_recovery_ops"
+  osd_mclock_max_capacity_iops_hdd: "750"
+  osd_mclock_override_recovery_settings: "true"
+  osd_max_backfills: "6"
+  osd_recovery_max_active_hdd: "12"
+  osd_recovery_sleep_hdd: "0"
+osd.0:
+  osd_mclock_max_capacity_iops_hdd: "750"
+osd.1:
+  osd_mclock_max_capacity_iops_hdd: "750"
+osd.2:
+  osd_mclock_max_capacity_iops_hdd: "750"
+osd.3:
+  osd_mclock_max_capacity_iops_hdd: "750"
+osd.4:
+  osd_mclock_max_capacity_iops_hdd: "750"
+osd.5:
+  osd_mclock_max_capacity_iops_hdd: "750"
+mgr:
+  target_max_misplaced_ratio: "0.10"
 ```
+
+The per-OSD entries are required because daemon-scoped values override the type-wide `osd` value. Changing only
+the type-wide fallback leaves the six calibrated daemon overrides active and does not raise recovery capacity.
 
 Live command equivalent:
 
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_recovery_ops
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 750
+for osd_id in 0 1 2 3 4 5; do
+  kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+    ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd 750
+done
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_override_recovery_settings true
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_max_backfills 6
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_recovery_max_active_hdd 12
@@ -378,6 +401,12 @@ single known OSD:
 ```bash
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_profile high_client_ops
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set osd osd_mclock_max_capacity_iops_hdd 275
+for osd_value in 0:210 1:250 2:260 3:200 4:220 5:240; do
+  osd_id="${osd_value%%:*}"
+  capacity="${osd_value##*:}"
+  kubectl -n rook-ceph exec deploy/rook-ceph-tools -- \
+    ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd "${capacity}"
+done
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config set mgr target_max_misplaced_ratio 0.03
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_mclock_override_recovery_settings
 kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph config rm osd osd_max_backfills
@@ -389,9 +418,23 @@ After `ceph -s` reports zero misplaced objects and zero remapped/backfilling/bac
 in GitOps:
 
 ```yaml
-osd_mclock_profile: "high_client_ops"
-osd_mclock_max_capacity_iops_hdd: "275"
-target_max_misplaced_ratio: "0.03"
+osd:
+  osd_mclock_profile: "high_client_ops"
+  osd_mclock_max_capacity_iops_hdd: "275"
+osd.0:
+  osd_mclock_max_capacity_iops_hdd: "210"
+osd.1:
+  osd_mclock_max_capacity_iops_hdd: "250"
+osd.2:
+  osd_mclock_max_capacity_iops_hdd: "260"
+osd.3:
+  osd_mclock_max_capacity_iops_hdd: "200"
+osd.4:
+  osd_mclock_max_capacity_iops_hdd: "220"
+osd.5:
+  osd_mclock_max_capacity_iops_hdd: "240"
+mgr:
+  target_max_misplaced_ratio: "0.03"
 ```
 
 Remove the recovery override keys from GitOps at the same time:
@@ -410,6 +453,8 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph tell 'osd.*' bench
 kubectl apply -k kubernetes/rook-ceph-rbd-canary
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block.yaml
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary.yaml
+kubectl -n rook-ceph-benchmarks wait --for=condition=complete --timeout=30m \
+  job/rook-ceph-block-nbd-canary-benchmark
 kubectl apply -k kubernetes/rook-ceph-rwx-benchmarks
 kubectl apply -f kubernetes/rook-ceph-rwx-benchmarks/job-rook-cephfs-fuse.yaml
 ```
@@ -508,6 +553,8 @@ Apply the benchmark assets on demand:
 kubectl apply -k kubernetes/rook-ceph-rbd-canary
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block.yaml
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary.yaml
+kubectl -n rook-ceph-benchmarks wait --for=condition=complete --timeout=30m \
+  job/rook-ceph-block-nbd-canary-benchmark
 ```
 
 Capture results:
@@ -523,6 +570,8 @@ kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd perf
 Restart/remount proof for the canary class:
 
 ```bash
+kubectl -n rook-ceph-benchmarks wait --for=condition=complete --timeout=30m \
+  job/rook-ceph-block-nbd-canary-benchmark
 kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary-remount.yaml
 kubectl -n rook-ceph-benchmarks logs -f job/rook-ceph-block-nbd-canary-remount
 ```
