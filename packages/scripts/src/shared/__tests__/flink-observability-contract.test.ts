@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 
 import { expect, test } from 'bun:test'
@@ -20,7 +21,11 @@ test('Alloy scrapes Flink operator and TA metrics with alert-compatible labels',
   expect(config).toContain('forward_to      = [prometheus.remote_write.mimir.receiver]')
   expect(kustomization).toContain('configMapGenerator:')
   expect(kustomization).toContain('config.river=cluster-metrics-alloy-config.river')
+  expect(kustomization).toContain('disableNameSuffixHash: true')
   expect(deployment).toContain('name: observability-cluster-metrics-alloy')
+  expect(deployment).toContain(
+    `observability.proompteng.ai/config-sha256: ${createHash('sha256').update(config).digest('hex')}`,
+  )
 })
 
 test('Ceph migration guide uses Hadoop S3A configuration keys', () => {

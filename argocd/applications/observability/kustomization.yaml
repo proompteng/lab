@@ -6,6 +6,9 @@ configMapGenerator:
     files:
       - config.river=cluster-metrics-alloy-config.river
 
+generatorOptions:
+  disableNameSuffixHash: true
+
 resources:
   - rook-ceph-rgw-loki-reflected-secret.yaml
   - tailscale-ingresses.yaml
