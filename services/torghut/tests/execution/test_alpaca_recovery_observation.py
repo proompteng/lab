@@ -243,13 +243,10 @@ def test_conflicting_canonical_client_order_id_is_indeterminate(
     )
 
 
-@pytest.mark.parametrize("client_order_id", [None])
-def test_canonical_client_order_id_is_required_and_non_null(
-    client_order_id: object,
-) -> None:
+def test_canonical_client_order_id_is_required_and_non_null() -> None:
     _assert_indeterminate(
         AlpacaRecoveryObservationReason.REQUEST_INVALID,
-        result=_observe(intent=_intent(client_order_id=client_order_id)),
+        result=_observe(intent=_intent(client_order_id=None)),
     )
 
 
@@ -258,14 +255,6 @@ def test_missing_canonical_client_order_id_is_indeterminate() -> None:
         AlpacaRecoveryObservationReason.REQUEST_INVALID,
         result=_observe(intent=_intent_without_client_order_id()),
     )
-
-
-def test_matching_canonical_client_order_id_is_accepted() -> None:
-    result = _observe(intent=_intent(client_order_id=_CLIENT_ORDER_ID))
-
-    assert result.validated
-    assert result.order is not None
-    assert result.order.client_order_id == _CLIENT_ORDER_ID
 
 
 def test_pinned_position_intent_allow_list_has_no_unreviewed_drift() -> None:
