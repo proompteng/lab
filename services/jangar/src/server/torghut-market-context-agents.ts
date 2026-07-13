@@ -37,6 +37,13 @@ export type MarketContextProviderCitation = {
   url: string | null
 }
 
+const PROVIDER_CIRCUIT_FAILURE_ERRORS = new Set([
+  'provider_capacity_exhausted',
+  'provider_bootstrap_failure',
+  'provider_attempt_timeout',
+  'provider_turn_failed',
+])
+
 export type MarketContextProviderResult = {
   symbol: string
   domain: MarketContextProviderDomain
@@ -538,11 +545,14 @@ export const resolveProviderCircuitStateFromRows = (params: {
   for (const row of params.rows) {
     const status = row.status.trim().toLowerCase()
     if (status === 'succeeded' || status === 'partial') break
-    if (status !== 'failed') break
+    const error = parseNonEmptyString(row.error)
+    const isProviderFailureCancellation =
+      status === 'cancelled' && error !== null && PROVIDER_CIRCUIT_FAILURE_ERRORS.has(error)
+    if (status !== 'failed' && !isProviderFailureCancellation) break
     consecutiveFailures += 1
     if (!lastFailureAt) {
       lastFailureAt = row.updatedAt
-      lastError = parseNonEmptyString(row.error)
+      lastError = error
     }
   }
 
@@ -751,6 +761,20 @@ const coerceLifecycleStatus = (value: unknown, fallback: string) => {
 
 const isLifecycleStatusTerminal = (status: string) =>
   status === 'succeeded' || status === 'failed' || status === 'partial' || status === 'cancelled'
+
+export const resolveProviderRunProgressFailureSignal = (params: {
+  status: string
+  metadata: Record<string, unknown>
+  message: string | null
+}) => {
+  if (params.status === 'failed') {
+    return resolveFailureSignal({ metadata: params.metadata, message: params.message })
+  }
+  if (params.status !== 'cancelled' || resolveFailureCategoryFromMetadata(params.metadata) === null) {
+    return null
+  }
+  return resolveFailureSignal({ metadata: params.metadata, message: params.message })
+}
 
 const parseRunIdentifier = (value: unknown) => {
   const requestId = parseNonEmptyString(value)
@@ -994,7 +1018,7 @@ export const recordMarketContextProviderRunProgress = async (input: RunProgressP
   const now = new Date()
 
   const context = await loadRunContext({ requestId })
-  const failureSignal = status === 'failed' ? resolveFailureSignal({ metadata, message }) : null
+  const failureSignal = resolveProviderRunProgressFailureSignal({ status, metadata, message })
   const runError = failureSignal?.error ?? null
   const finishedAt = isLifecycleStatusTerminal(status) ? now : null
 
