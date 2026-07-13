@@ -5,7 +5,7 @@ import { getDb } from '~/server/db'
 import { ensureMigrations } from '~/server/kysely-migrations'
 import { createKubernetesClient } from '~/server/primitives-kube'
 import { stableJsonStringifyForHash } from '@proompteng/agent-contracts'
-import { resolveTorghutSimulationStorageConfig } from './torghut-config'
+import { buildDatasetCacheArtifactPaths, resolveDurableDatasetCacheRow } from './torghut-simulation-cache'
 
 type JsonRecord = Record<string, unknown>
 
@@ -117,9 +117,6 @@ const DEFAULT_CONFIRM_PHRASE = 'START_HISTORICAL_SIMULATION'
 const DEFAULT_WORKFLOW_TEMPLATE_NAME = 'torghut-historical-simulation'
 const DEFAULT_DUMP_FORMAT = 'jsonl.zst'
 const DEFAULT_CAMPAIGN_OUTPUT_ROOT = `${DEFAULT_OUTPUT_ROOT}/campaigns`
-const simulationStorageConfig = resolveTorghutSimulationStorageConfig(process.env)
-const DEFAULT_SIMULATION_CACHE_BUCKET = simulationStorageConfig.cacheBucket
-const DEFAULT_SIMULATION_CACHE_PREFIX = simulationStorageConfig.cachePrefix
 const DEFAULT_SIMULATION_KAFKA_BOOTSTRAP = 'kafka-kafka-bootstrap.kafka.svc.cluster.local:9092'
 const DEFAULT_SIMULATION_KAFKA_USERNAME = 'kafka-codex-credentials'
 const DEFAULT_SIMULATION_KAFKA_PASSWORD_ENV = 'TORGHUT_SIM_KAFKA_PASSWORD'
@@ -300,21 +297,6 @@ const resolveWorkflowOutputRoot = (outputRoot: string) => {
   if (!normalized) return DEFAULT_WORKFLOW_OUTPUT_ROOT
   if (normalized.startsWith('/')) return normalized
   return pathPosix.join(DEFAULT_WORKFLOW_OUTPUT_ROOT, normalized)
-}
-
-const dumpSuffixForFormat = (dumpFormat: string) =>
-  dumpFormat === 'jsonl.gz' ? '.jsonl.gz' : dumpFormat === 'jsonl.zst' ? '.jsonl.zst' : '.ndjson'
-
-const buildDatasetCacheArtifactPaths = (cacheKey: string, dumpFormat: string) => {
-  const objectKey = pathPosix.join(
-    DEFAULT_SIMULATION_CACHE_PREFIX,
-    cacheKey,
-    `source-dump${dumpSuffixForFormat(dumpFormat)}`,
-  )
-  return {
-    artifactPath: `s3://${DEFAULT_SIMULATION_CACHE_BUCKET}/${objectKey}`,
-    chunkManifestPath: `s3://${DEFAULT_SIMULATION_CACHE_BUCKET}/${objectKey}.manifest.json`,
-  }
 }
 
 const reserveSimulationLane = async (params: { runId: string; runClass: string; cacheKey: string | null }) => {
@@ -1136,12 +1118,7 @@ export const submitTorghutSimulationRun = async (request: TorghutSimulationRunRe
           .where('cache_key', '=', cacheKey)
           .where('status', '=', 'ready')
           .executeTakeFirst()
-  const cachedArtifactPath = asString(cachedDatasetRow?.artifact_path)
-  const cachedChunkManifestPath = asString(cachedDatasetRow?.chunk_manifest_path)
-  const cachedDataset =
-    cachedDatasetRow && cachedArtifactPath?.startsWith('s3://') && cachedChunkManifestPath?.startsWith('s3://')
-      ? cachedDatasetRow
-      : null
+  const cachedDataset = resolveDurableDatasetCacheRow(cachedDatasetRow)
   const cacheDecision = cachedDataset ? 'hit' : requestedCachePolicy === 'refresh' ? 'refresh' : 'miss'
   const cacheStatus = cachedDataset ? 'hit' : 'miss'
   const cachePaths = buildDatasetCacheArtifactPaths(cacheKey, asString(performance.dumpFormat) ?? DEFAULT_DUMP_FORMAT)
