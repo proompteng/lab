@@ -42,6 +42,7 @@ spec:
       sourceConnector:
         tasksMax: 4
         config:
+          emit.offset-syncs.enabled: "true"
           replication.factor: 3
           offset-syncs.topic.replication.factor: 3
           offset-syncs.topic.location: target
