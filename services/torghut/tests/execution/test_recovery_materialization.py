@@ -184,6 +184,58 @@ def test_materializer_flushes_without_commit_and_rollback_removes_execution(
         assert session.get(Execution, execution_id) is None
 
 
+@pytest.mark.parametrize("status", ["held", "pending_review"])
+def test_materializer_accepts_validated_zero_fill_statuses(
+    engine: Engine,
+    status: str,
+) -> None:
+    with Session(engine) as session:
+        _seed_submission(session)
+        observation = _observation(status=status)
+        assert observation.outcome is AlpacaRecoveryObservationOutcome.VALIDATED
+        execution = materialize_validated_alpaca_recovery(
+            session,
+            intent=_intent(),
+            observation=observation,
+        )
+        assert execution.status == status
+        assert execution.filled_qty == Decimal("0")
+
+
+def test_materializer_canonicalizes_decimal_identity_scale(engine: Engine) -> None:
+    with Session(engine) as session:
+        _seed_submission(session)
+        first = materialize_validated_alpaca_recovery(
+            session,
+            intent=_intent(),
+            observation=_observation(),
+        )
+        first_audit = dict(first.execution_audit_json)
+        first_identity = dict(first_audit["materialization_identity"])
+        first_identity.update(submitted_qty="2", limit_price="190.25")
+        first_audit["materialization_identity"] = first_identity
+        first.execution_audit_json = first_audit
+        session.flush()
+
+        scaled_intent = _intent(
+            qty=Decimal("2.00000000"),
+            limit_price=Decimal("190.25000000"),
+        )
+        second = materialize_validated_alpaca_recovery(
+            session,
+            intent=scaled_intent,
+            observation=_observation(
+                intent=scaled_intent,
+                qty="2.00000000",
+                limit_price="190.25000000",
+            ),
+        )
+        assert second.id == first.id
+        persisted_identity = second.execution_audit_json["materialization_identity"]
+        assert persisted_identity["submitted_qty"] == "2.00000000"
+        assert persisted_identity["limit_price"] == "190.25000000"
+
+
 def test_materializer_updates_one_exact_execution_monotonically(engine: Engine) -> None:
     with Session(engine) as session:
         _seed_submission(session)

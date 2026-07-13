@@ -57,6 +57,8 @@ _STATUS_PHASE: dict[str, int] = {
     "new": 1,
     "accepted": 1,
     "accepted_for_bidding": 1,
+    "held": 1,
+    "pending_review": 1,
     "partially_filled": 2,
     "pending_cancel": 2,
     "pending_replace": 2,
@@ -84,7 +86,15 @@ _TERMINAL_STATUSES = frozenset(
     }
 )
 _ZERO_FILL_STATUSES = frozenset(
-    {"accepted", "accepted_for_bidding", "new", "pending_new", "rejected"}
+    {
+        "accepted",
+        "accepted_for_bidding",
+        "held",
+        "new",
+        "pending_new",
+        "pending_review",
+        "rejected",
+    }
 )
 
 
@@ -101,7 +111,7 @@ class RecoveryMaterializationLifecycleConflict(RecoveryMaterializationError):
 
 
 @dataclass(frozen=True, slots=True)
-class RecoveryMaterializationIdentity:
+class RecoveryMaterializationIdentity:  # pylint: disable=too-many-instance-attributes
     """Immutable identity attached to every row materialized by this module."""
 
     trade_decision_id: uuid.UUID
@@ -586,6 +596,13 @@ def _optional_decimal_text(value: Decimal | None) -> str | None:
     return str(value) if value is not None else None
 
 
+def _canonical_decimal_text(value: object, *, field: str) -> str:
+    """Encode numeric(20,8) identity values with one stable scale."""
+
+    normalized = _numeric_decimal(value, field=field, positive=False)
+    return f"{normalized:.{_NUMERIC_SCALE}f}"
+
+
 def _identity_payload(
     identity: RecoveryMaterializationIdentity,
 ) -> dict[str, object | None]:
@@ -597,16 +614,38 @@ def _identity_payload(
         "broker_order_id": identity.broker_order_id,
         "symbol": identity.symbol,
         "side": identity.side,
-        "submitted_qty": str(identity.submitted_qty),
+        "submitted_qty": _canonical_decimal_text(
+            identity.submitted_qty,
+            field="identity.submitted_qty",
+        ),
         "order_type": identity.order_type,
         "time_in_force": identity.time_in_force,
         "order_class": identity.order_class,
         "position_intent": identity.position_intent,
         "extended_hours": identity.extended_hours,
-        "limit_price": _optional_decimal_text(identity.limit_price),
-        "stop_price": _optional_decimal_text(identity.stop_price),
-        "trail_price": _optional_decimal_text(identity.trail_price),
-        "trail_percent": _optional_decimal_text(identity.trail_percent),
+        "limit_price": (
+            _canonical_decimal_text(identity.limit_price, field="identity.limit_price")
+            if identity.limit_price is not None
+            else None
+        ),
+        "stop_price": (
+            _canonical_decimal_text(identity.stop_price, field="identity.stop_price")
+            if identity.stop_price is not None
+            else None
+        ),
+        "trail_price": (
+            _canonical_decimal_text(identity.trail_price, field="identity.trail_price")
+            if identity.trail_price is not None
+            else None
+        ),
+        "trail_percent": (
+            _canonical_decimal_text(
+                identity.trail_percent,
+                field="identity.trail_percent",
+            )
+            if identity.trail_percent is not None
+            else None
+        ),
     }
 
 
@@ -646,6 +685,25 @@ def _existing_identity(existing: Execution) -> dict[str, object | None]:
         raise RecoveryMaterializationIdentityConflict(
             "recovery_execution_identity_schema_invalid"
         )
+    for field in (
+        "submitted_qty",
+        "limit_price",
+        "stop_price",
+        "trail_price",
+        "trail_percent",
+    ):
+        raw_value = normalized.get(field)
+        if raw_value is None:
+            continue
+        try:
+            normalized[field] = _canonical_decimal_text(
+                raw_value,
+                field=f"existing_identity.{field}",
+            )
+        except RecoveryMaterializationLifecycleConflict as exc:
+            raise RecoveryMaterializationIdentityConflict(
+                f"recovery_execution_identity_decimal_invalid:{field}"
+            ) from exc
     return normalized
 
 
@@ -706,12 +764,31 @@ def _merge_existing_payload(existing: Execution, payload: Mapping[str, object]) 
         raise RecoveryMaterializationIdentityConflict(
             "recovery_execution_audit_missing"
         )
-    existing_identity = cast(Mapping[object, object], existing_audit).get(
+    existing_identity = _existing_identity(existing)
+    incoming_identity_value = cast(Mapping[object, object], incoming_audit).get(
         "materialization_identity"
     )
-    incoming_identity = cast(Mapping[object, object], incoming_audit).get(
-        "materialization_identity"
-    )
+    if not isinstance(incoming_identity_value, Mapping):
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_identity_missing"
+        )
+    incoming_identity = {
+        str(key): value
+        for key, value in cast(Mapping[object, object], incoming_identity_value).items()
+    }
+    for field in (
+        "submitted_qty",
+        "limit_price",
+        "stop_price",
+        "trail_price",
+        "trail_percent",
+    ):
+        raw_value = incoming_identity.get(field)
+        if raw_value is not None:
+            incoming_identity[field] = _canonical_decimal_text(
+                raw_value,
+                field=f"incoming_identity.{field}",
+            )
     if existing_identity != incoming_identity:
         raise RecoveryMaterializationIdentityConflict(
             "recovery_execution_identity_conflict"
