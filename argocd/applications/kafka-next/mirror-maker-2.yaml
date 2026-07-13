@@ -62,5 +62,5 @@ spec:
           replication.policy.class: org.apache.kafka.connect.mirror.IdentityReplicationPolicy
           sync.group.offsets.enabled: "true"
           sync.group.offsets.interval.seconds: 10
-      topicsPattern: '^(?!torghut\.sim\..*\.sim_).*$'
+      topicsPattern: '^(?!torghut\.sim\..*\.(?:options_)?sim_).*$'
       groupsPattern: ".*"
