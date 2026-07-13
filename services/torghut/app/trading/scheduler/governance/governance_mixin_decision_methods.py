@@ -330,6 +330,7 @@ class TradingSchedulerGovernanceDecisionMethods(
         prune_autonomy_run_directories(
             artifact_root,
             retention_runs=settings.trading_autonomy_artifact_retention_runs,
+            active_run_directory=run_output_dir,
         )
         no_signal_path = run_output_dir / "no-signals.json"
         reason = batch.no_signal_reason or "no_signal"
@@ -455,6 +456,7 @@ class TradingSchedulerGovernanceDecisionMethods(
         prune_autonomy_run_directories(
             artifact_root,
             retention_runs=settings.trading_autonomy_artifact_retention_runs,
+            active_run_directory=run_output_dir,
         )
         signals_path = run_output_dir / "signals.json"
         signal_payloads = [signal.model_dump(mode="json") for signal in signals]

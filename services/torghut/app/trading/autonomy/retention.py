@@ -11,11 +11,22 @@ def prune_autonomy_run_directories(
     artifact_root: Path,
     *,
     retention_runs: int,
+    active_run_directory: Path | None = None,
 ) -> tuple[Path, ...]:
     """Remove old timestamped run directories while preserving non-run evidence."""
     retain = max(1, int(retention_runs))
     if not artifact_root.exists():
         return ()
+
+    protected_run = (
+        active_run_directory
+        if active_run_directory is not None
+        and active_run_directory.parent == artifact_root
+        and active_run_directory.is_dir()
+        and not active_run_directory.is_symlink()
+        and _RUN_DIRECTORY_PATTERN.fullmatch(active_run_directory.name)
+        else None
+    )
 
     run_directories = sorted(
         (
@@ -24,12 +35,14 @@ def prune_autonomy_run_directories(
             if child.is_dir()
             and not child.is_symlink()
             and _RUN_DIRECTORY_PATTERN.fullmatch(child.name)
+            and child != protected_run
         ),
         key=lambda child: child.name,
         reverse=True,
     )
+    retained_other_runs = max(0, retain - (1 if protected_run is not None else 0))
     removed: list[Path] = []
-    for run_directory in reversed(run_directories[retain:]):
+    for run_directory in reversed(run_directories[retained_other_runs:]):
         shutil.rmtree(run_directory)
         removed.append(run_directory)
     return tuple(removed)

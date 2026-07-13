@@ -39,3 +39,22 @@ def test_retains_at_least_one_run_directory(tmp_path: Path) -> None:
 
     assert [path.name for path in removed] == ["20260713T000000"]
     assert (tmp_path / "20260713T000500").is_dir()
+
+
+def test_preserves_active_run_when_its_timestamp_is_older(tmp_path: Path) -> None:
+    active_run = tmp_path / "20260712T235500"
+    active_run.mkdir()
+    for run_name in ["20260713T000000", "20260713T000500", "20260713T001000"]:
+        (tmp_path / run_name).mkdir()
+
+    removed = prune_autonomy_run_directories(
+        tmp_path,
+        retention_runs=2,
+        active_run_directory=active_run,
+    )
+
+    assert [path.name for path in removed] == ["20260713T000000", "20260713T000500"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == [
+        "20260712T235500",
+        "20260713T001000",
+    ]
