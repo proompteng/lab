@@ -51,5 +51,7 @@ it('rolls OSDs when scrub configuration changes', () => {
   expect(kustomization).toContain('path: cephcluster-osd-config-rollout.yaml')
   expect(kustomization).toContain('kind: CephCluster')
   expect(kustomization).toContain('name: rook-ceph')
+  expect(rolloutPatch).toContain('spec:\n  annotations:\n    osd:')
   expect(rolloutPatch).toContain('ops.proompteng.ai/osd-config-revision: scrub-auto-repair-v1')
+  expect(rolloutPatch).not.toContain('metadata:\n  name: rook-ceph\n  annotations:')
 })
