@@ -1,6 +1,9 @@
 from pathlib import Path
 
-from app.trading.autonomy.retention import prune_autonomy_run_directories
+from app.trading.autonomy.retention import (
+    mark_autonomy_owned_root,
+    prune_autonomy_run_directories,
+)
 
 
 def test_prunes_only_old_timestamped_run_directories(tmp_path: Path) -> None:
@@ -80,6 +83,19 @@ def test_refuses_to_prune_unmarked_shared_root(tmp_path: Path) -> None:
 def test_prunes_the_default_torghut_autonomy_root(tmp_path: Path) -> None:
     artifact_root = tmp_path / "torghut-autonomy"
     artifact_root.mkdir()
+    for run_name in ["20260713T000000", "20260713T000500"]:
+        (artifact_root / run_name).mkdir()
+
+    removed = prune_autonomy_run_directories(artifact_root, retention_runs=1)
+
+    assert [path.name for path in removed] == ["20260713T000000"]
+    assert (artifact_root / "20260713T000500").is_dir()
+
+
+def test_prunes_explicitly_marked_custom_root(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "custom-autonomy-artifacts"
+    artifact_root.mkdir()
+    mark_autonomy_owned_root(artifact_root)
     for run_name in ["20260713T000000", "20260713T000500"]:
         (artifact_root / run_name).mkdir()
 

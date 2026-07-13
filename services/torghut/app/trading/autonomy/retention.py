@@ -8,6 +8,11 @@ _RUN_DIRECTORY_PATTERN = re.compile(r"^\d{8}T\d{6}$")
 _AUTONOMY_ROOT_MARKER = ".torghut-autonomy-root"
 
 
+def mark_autonomy_owned_root(artifact_root: Path) -> None:
+    """Mark an explicitly resolved artifact root as scheduler-owned."""
+    (artifact_root / _AUTONOMY_ROOT_MARKER).touch(exist_ok=True)
+
+
 def _is_autonomy_owned_root(artifact_root: Path) -> bool:
     return (
         artifact_root.name in {"autonomy", "torghut-autonomy"}

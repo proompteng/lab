@@ -19,6 +19,7 @@ from ...autonomy import (
     decide_drift_action,
     detect_drift,
     evaluate_live_promotion_evidence,
+    mark_autonomy_owned_root,
     evaluate_evidence_continuity,
     run_autonomous_lane,
     upsert_autonomy_no_signal_run,
@@ -66,6 +67,7 @@ def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
                 test_file.unlink(missing_ok=True)
             except OSError:
                 pass
+            mark_autonomy_owned_root(root)
             return root
         except OSError as exc:
             if root == preferred_root:
