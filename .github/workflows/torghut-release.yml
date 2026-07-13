@@ -173,6 +173,25 @@ jobs:
             echo "promote=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve currently promoted Torghut source
+        if: steps.meta.outputs.promote == 'true'
+        id: promoted
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROMOTED_SOURCE_SHA="$(
+            git show origin/main:argocd/applications/torghut/knative-service.yaml |
+              sed -n '/- name: TORGHUT_COMMIT/{n;s/^[[:space:]]*value:[[:space:]]*//;s/"//g;p;q;}'
+          )" || true
+          PROMOTED_SOURCE_VERIFIED='true'
+          if ! printf '%s' "${PROMOTED_SOURCE_SHA}" | grep -Eiq '^[0-9a-f]{40}$'; then
+            echo "Unable to resolve the currently promoted Torghut source from origin/main; manual approval will be required"
+            PROMOTED_SOURCE_SHA=''
+            PROMOTED_SOURCE_VERIFIED='false'
+          fi
+          echo "source_sha=${PROMOTED_SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "verified=${PROMOTED_SOURCE_VERIFIED}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout source revision
         if: steps.meta.outputs.promote == 'true'
         shell: bash
@@ -225,8 +244,33 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          CHANGED_FILES="$(git diff-tree --no-commit-id --name-only -r "${{ steps.meta.outputs.source_sha }}")"
-          if printf '%s\n' "${CHANGED_FILES}" | grep -Eq '^services/torghut/migrations/'; then
+          SOURCE_SHA='${{ steps.meta.outputs.source_sha }}'
+          PROMOTED_SOURCE_SHA='${{ steps.promoted.outputs.source_sha }}'
+          PROMOTED_SOURCE_VERIFIED='${{ steps.promoted.outputs.verified }}'
+          REQUIRES_APPROVAL='false'
+
+          if [ "${PROMOTED_SOURCE_VERIFIED}" != 'true' ]; then
+            echo "Currently promoted Torghut source could not be parsed from origin/main"
+            REQUIRES_APPROVAL='true'
+          elif ! git cat-file -e "${PROMOTED_SOURCE_SHA}^{commit}" >/dev/null 2>&1; then
+            echo "Currently promoted Torghut source ${PROMOTED_SOURCE_SHA} is not present in git history"
+            REQUIRES_APPROVAL='true'
+          elif ! git merge-base --is-ancestor "${PROMOTED_SOURCE_SHA}" "${SOURCE_SHA}"; then
+            echo "Currently promoted Torghut source ${PROMOTED_SOURCE_SHA} is not an ancestor of ${SOURCE_SHA}"
+            REQUIRES_APPROVAL='true'
+          else
+            CHANGED_MIGRATIONS="$(
+              git diff --name-only "${PROMOTED_SOURCE_SHA}..${SOURCE_SHA}" -- \
+                services/torghut/migrations/
+            )"
+            if [ -n "${CHANGED_MIGRATIONS}" ]; then
+              echo "Migration changes detected since promoted source ${PROMOTED_SOURCE_SHA}:"
+              printf '%s\n' "${CHANGED_MIGRATIONS}"
+              REQUIRES_APPROVAL='true'
+            fi
+          fi
+
+          if [ "${REQUIRES_APPROVAL}" = 'true' ]; then
             {
               echo "requires_approval=true"
               echo "label=do-not-automerge"
