@@ -581,10 +581,7 @@ def _lineage_counts(
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
                 linked_fill_event_predicate,
-                or_(
-                    ExecutionOrderEvent.source_partition.is_(None),
-                    ExecutionOrderEvent.source_offset.is_(None),
-                ),
+                ExecutionOrderEvent.source_offset.is_(None),
             ),
         ),
         fill_events_missing_order_identity=_count(

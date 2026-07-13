@@ -452,6 +452,37 @@ class TestOrderFeedCoverageProjection(TestCase):
             )
             self.assertIn("fill_events_missing_trade_decision", report["blockers"])
 
+    def test_source_offset_without_partition_is_valid_evidence(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            execution = _execution(
+                order_id="offset-without-partition",
+                filled_qty="1",
+                status="filled",
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                _event(
+                    fingerprint="offset-without-partition-fill",
+                    execution_id=execution.id,
+                    source_window_id=execution.id,
+                    source_partition=None,
+                    source_offset=42,
+                )
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(
+                report["event_lineage"][
+                    "linked_fill_events_missing_source_offset_count"
+                ],
+                0,
+            )
+            self.assertNotIn("fill_events_missing_source_offset", report["blockers"])
+
     def test_execution_window_uses_updated_at_and_reports_sample_activity(self) -> None:
         engine = _engine()
         with Session(engine) as session:
