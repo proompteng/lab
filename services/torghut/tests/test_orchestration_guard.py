@@ -181,6 +181,60 @@ class TestOrchestrationGuard(TestCase):
         self.assertEqual(result["nextAction"], "halt")
         self.assertEqual(result["reason"], "run_mismatch:run-stale-1")
 
+    def test_blocks_transition_when_candidate_ownership_is_missing(self) -> None:
+        state: dict[str, Any] = {
+            "runId": "run-abc123",
+            "activeStage": "gate-evaluation",
+            "paused": False,
+            "failureCounts": {},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / "report.json"
+            artifact.write_text('{"ok":true}', encoding="utf-8")
+            result = evaluate_transition(
+                policy=self.policy,
+                state=state,
+                candidate_id="cand-abc123",
+                run_id="run-abc123",
+                from_stage="gate-evaluation",
+                to_stage="promotion-prerequisites",
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode="gitops",
+                emergency_ticket=None,
+            )
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "missing_candidate_id")
+
+    def test_accepts_snake_case_candidate_ownership(self) -> None:
+        state: dict[str, Any] = {
+            "candidate_id": "cand-abc123",
+            "runId": "run-abc123",
+            "activeStage": "gate-evaluation",
+            "paused": False,
+            "failureCounts": {},
+        }
+        with tempfile.TemporaryDirectory() as tmpdir:
+            artifact = Path(tmpdir) / "report.json"
+            artifact.write_text('{"ok":true}', encoding="utf-8")
+            result = evaluate_transition(
+                policy=self.policy,
+                state=state,
+                candidate_id="cand-abc123",
+                run_id="run-abc123",
+                from_stage="gate-evaluation",
+                to_stage="promotion-prerequisites",
+                previous_artifact=artifact,
+                previous_gate_passed=True,
+                risk_controls_passed=True,
+                execution_controls_passed=True,
+                mode="gitops",
+                emergency_ticket=None,
+            )
+        self.assertTrue(result["allowed"])
+
     def test_allows_ticketed_emergency_transition(self) -> None:
         state: dict[str, Any] = {
             "candidateId": "cand-abc123",
