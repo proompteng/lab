@@ -20,3 +20,20 @@ it('runs the packages scripts regression suite when the protected runbook change
 
   expect(workflow.split(runbookPath)).toHaveLength(3)
 })
+
+it('waits for the NBD writer before starting remount readback', () => {
+  const runbook = readFileSync(join(repoRoot, 'docs/runbooks/rook-ceph-client-ops-performance.md'), 'utf8')
+  const writerWait = 'wait --for=condition=complete --timeout=30m \\\n  job/rook-ceph-block-nbd-canary-benchmark'
+  const remountApply = 'kubectl apply -f kubernetes/rook-ceph-rbd-canary/job-rook-ceph-block-nbd-canary-remount.yaml'
+
+  expect(runbook).toContain(writerWait)
+  expect(runbook.indexOf(writerWait)).toBeLessThan(runbook.indexOf(remountApply))
+})
+
+it('overrides and restores daemon-scoped mClock capacity during recovery surge', () => {
+  const runbook = readFileSync(join(repoRoot, 'docs/runbooks/rook-ceph-client-ops-performance.md'), 'utf8')
+
+  expect(runbook).toContain('ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd 750')
+  expect(runbook).toContain('for osd_value in 0:210 1:250 2:260 3:200 4:220 5:240; do')
+  expect(runbook).toContain('ceph config set "osd.${osd_id}" osd_mclock_max_capacity_iops_hdd "${capacity}"')
+})
