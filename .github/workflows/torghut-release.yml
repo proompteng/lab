@@ -173,6 +173,22 @@ jobs:
             echo "promote=${PROMOTE}"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Resolve currently promoted Torghut source
+        if: steps.meta.outputs.promote == 'true'
+        id: promoted
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROMOTED_SOURCE_SHA="$(
+            git show origin/main:argocd/applications/torghut/knative-service.yaml |
+              sed -n '/- name: TORGHUT_COMMIT/{n;s/^[[:space:]]*value:[[:space:]]*//;s/"//g;p;q;}'
+          )"
+          if ! printf '%s' "${PROMOTED_SOURCE_SHA}" | grep -Eiq '^[0-9a-f]{40}$'; then
+            echo "Unable to resolve the currently promoted Torghut source from origin/main"
+            exit 1
+          fi
+          echo "source_sha=${PROMOTED_SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+
       - name: Checkout source revision
         if: steps.meta.outputs.promote == 'true'
         shell: bash
@@ -226,10 +242,7 @@ jobs:
         run: |
           set -euo pipefail
           SOURCE_SHA='${{ steps.meta.outputs.source_sha }}'
-          PROMOTED_SOURCE_SHA="$(
-            bun run packages/scripts/src/torghut/source-ci.ts source-sha \
-              --manifest argocd/applications/torghut/knative-service.yaml
-          )"
+          PROMOTED_SOURCE_SHA='${{ steps.promoted.outputs.source_sha }}'
           REQUIRES_APPROVAL='false'
 
           if ! git cat-file -e "${PROMOTED_SOURCE_SHA}^{commit}" >/dev/null 2>&1; then

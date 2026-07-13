@@ -179,14 +179,21 @@ describe('torghut build-push workflow', () => {
   })
 
   it('evaluates migration safety across every commit since the promoted source', () => {
+    const promotedSourceStart = releaseWorkflow.indexOf('      - name: Resolve currently promoted Torghut source')
+    const checkoutSourceStart = releaseWorkflow.indexOf('      - name: Checkout source revision')
     const migrationGateStart = releaseWorkflow.indexOf('      - name: Evaluate migration safety gate')
     const migrationGateEnd = releaseWorkflow.indexOf('      - name: Update Torghut manifests', migrationGateStart)
     const migrationGate = releaseWorkflow.slice(migrationGateStart, migrationGateEnd)
 
+    expect(promotedSourceStart).toBeGreaterThan(-1)
+    expect(checkoutSourceStart).toBeGreaterThan(promotedSourceStart)
     expect(migrationGateStart).toBeGreaterThan(-1)
     expect(migrationGateEnd).toBeGreaterThan(migrationGateStart)
-    expect(migrationGate).toContain('bun run packages/scripts/src/torghut/source-ci.ts source-sha')
-    expect(migrationGate).toContain('--manifest argocd/applications/torghut/knative-service.yaml')
+    const promotedSourceStep = releaseWorkflow.slice(promotedSourceStart, checkoutSourceStart)
+    expect(promotedSourceStep).toContain('git show origin/main:argocd/applications/torghut/knative-service.yaml')
+    expect(promotedSourceStep).toContain('echo "source_sha=${PROMOTED_SOURCE_SHA}" >> "$GITHUB_OUTPUT"')
+    expect(promotedSourceStep).not.toContain('bun run')
+    expect(migrationGate).toContain("PROMOTED_SOURCE_SHA='${{ steps.promoted.outputs.source_sha }}'")
     expect(migrationGate).toContain('git cat-file -e "${PROMOTED_SOURCE_SHA}^{commit}"')
     expect(migrationGate).toContain('git merge-base --is-ancestor "${PROMOTED_SOURCE_SHA}" "${SOURCE_SHA}"')
     expect(migrationGate).toContain('git diff --name-only "${PROMOTED_SOURCE_SHA}..${SOURCE_SHA}" --')
