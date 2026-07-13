@@ -1040,8 +1040,13 @@ TA/WS/feed build should capture the newer release-contract shape.
 
 Sag is a disabled repo-owned image app with `sag-image`. This checkpoint preserves its historical build/release proof,
 but Sag is no longer counted as an enabled rollout target while the product ApplicationSet keeps `enabled: "false"`.
-The product ApplicationSet uses `preserveResourcesOnDeletion: true` so the generated Argo Application can be disabled
-without intentionally pruning the historical Sag resources it managed.
+The product ApplicationSet now uses `preserveResourcesOnDeletion: true` and keeps Sag non-cascading for future
+disable/re-enable transitions. That protection was added in the same change that first disabled Sag, so it did not
+stage removal of the pre-existing Application finalizer before deletion.
+
+Live verification on 2026-07-13 found no `Application/sag` and no Sag workload resources in namespace `sag`; only
+namespace bootstrap ConfigMaps and the default ServiceAccount remained. Historical Sag resources therefore were not
+preserved by the original transition. The build/release proof below remains historical evidence only.
 
 ### Sag Main Build Proof
 
