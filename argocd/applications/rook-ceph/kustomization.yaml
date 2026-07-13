@@ -24,3 +24,11 @@ helmCharts:
     namespace: rook-ceph
     includeCRDs: true
     valuesFile: cluster-values.yaml
+
+patches:
+  - path: cephcluster-osd-config-rollout.yaml
+    target:
+      group: ceph.rook.io
+      version: v1
+      kind: CephCluster
+      name: rook-ceph
