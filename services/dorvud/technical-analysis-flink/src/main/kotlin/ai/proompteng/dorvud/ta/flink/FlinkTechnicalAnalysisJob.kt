@@ -155,8 +155,7 @@ fun main() {
           Duration.ofSeconds(1),
           SignalBarTimestampAnchor.END,
         ),
-      )
-      .name("ta-signals")
+      ).name("ta-signals")
       .uid("ta-signals")
 
   val signals =
@@ -171,8 +170,7 @@ fun main() {
               Duration.ofMinutes(1),
               SignalBarTimestampAnchor.START,
             ),
-          )
-          .name("ta-signals-1m")
+          ).name("ta-signals-1m")
           .uid("ta-signals-1m")
       microbarSignals.union(minuteSignals)
     } else {
@@ -1578,7 +1576,8 @@ internal class TaSignalsFunction(
     val vwap5m = rollingVwap(bars, config.vwapWindow)
     val realizedVol = realizedVol(series, config.realizedVolWindow)
 
-    val quote = freshQuotePayloadForBar(quoteState.value(), envelope.payload.t, config.quoteStaleAfterMs)
+    val barEndTime = signalBarEndTime(envelope.payload.t, barDuration, timestampAnchor)
+    val quote = freshQuotePayloadForBar(quoteState.value(), barEndTime, config.quoteStaleAfterMs)
     val imbalance =
       quote?.let {
         val spread = it.ap - it.bp

@@ -1,6 +1,7 @@
 package ai.proompteng.dorvud.ta.flink
 
 import ai.proompteng.dorvud.ta.stream.QuotePayload
+import java.time.Duration
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,6 +10,24 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class FlinkTechnicalAnalysisQuoteFreshnessTest {
+  @Test
+  fun `minute bar freshness uses the interval end`() {
+    val barStart = Instant.parse("2026-05-07T16:13:00Z")
+    val quoteTs = barStart.plusSeconds(59)
+    val quote = quotePayload(quoteTs)
+    val state = TimedQuoteState(eventTs = quoteTs, payload = quote)
+    val barEnd = signalBarEndTime(barStart, Duration.ofMinutes(1), SignalBarTimestampAnchor.START)
+
+    assertEquals(
+      quote,
+      freshQuotePayloadForBar(
+        state,
+        barTs = barEnd,
+        quoteStaleAfterMs = 2_000,
+      ),
+    )
+  }
+
   @Test
   fun `fresh quote can be attached to a later microbar`() {
     val quoteTs = Instant.parse("2026-05-07T16:13:10Z")
