@@ -16,7 +16,6 @@ import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Any
 
 from sqlalchemy import create_engine, exists, func, or_, select
 from sqlalchemy.orm import Session, sessionmaker
@@ -190,7 +189,7 @@ def _count(session: Session, statement: Executable) -> int:
     return int(value or 0)
 
 
-def _count_expression(column: object) -> Any:
+def _count_expression(column: object) -> ColumnElement[int]:
     return sql_count(column)
 
 
