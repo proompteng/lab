@@ -8,7 +8,7 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-5.5
+      model: gpt-5.6-sol
       effort: high
       sandbox: danger-full-access
       approval: never
@@ -43,7 +43,7 @@ spec:
     CODEX_CONFIG: /root/.codex/config.toml
     CODEX_LOG_LEVEL: info
     CODEX_MAX_SESSION_ATTEMPTS: "3"
-    CODEX_MODEL: gpt-5.5
+    CODEX_MODEL: gpt-5.6-sol
     CODEX_MODEL_FALLBACKS: gpt-5.4,gpt-5.4-mini,gpt-5.2-codex,gpt-5-codex
     HOME: /root
     SYNTHESIS_API_TOKEN_FILE: /var/run/synthesis/SYNTHESIS_API_TOKEN
@@ -51,7 +51,7 @@ spec:
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.5"
+        model = "gpt-5.6-sol"
         model_reasoning_summary = "detailed"
         model_reasoning_effort = "high"
         model_verbosity = "medium"

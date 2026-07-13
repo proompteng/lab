@@ -135,7 +135,7 @@ describe('codex app-server runner adapter', () => {
         },
       },
       {
-        model: 'gpt-5.5',
+        model: 'gpt-5.6-sol',
         effort: 'high',
         sandbox: 'danger-full-access',
         approval: 'never',
@@ -160,7 +160,7 @@ describe('codex app-server runner adapter', () => {
     expect(prompts).toEqual(['implement the feature'])
     expect(createdClients[0]).toMatchObject({
       binaryPath: DEFAULT_CODEX_BINARY_PATH,
-      defaultModel: 'gpt-5.5',
+      defaultModel: 'gpt-5.6-sol',
       defaultEffort: 'high',
       sandbox: 'danger-full-access',
       approval: 'never',
@@ -168,7 +168,7 @@ describe('codex app-server runner adapter', () => {
       threadConfig: { web_search: 'live', mcp_servers: {} },
     })
     expect(turnOptions[0]).toMatchObject({
-      model: 'gpt-5.5',
+      model: 'gpt-5.6-sol',
       effort: 'high',
       cwd,
       baseInstructions: 'system instructions',

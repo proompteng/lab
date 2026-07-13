@@ -11,7 +11,7 @@ spec:
   adapter:
     type: codex-app-server
     codex:
-      model: gpt-5.5
+      model: gpt-5.6-sol
       effort: high
       sandbox: danger-full-access
       approval: never
@@ -93,7 +93,7 @@ spec:
     CODEX_MARKET_CONTEXT_ATTEMPT_TIMEOUT_SECONDS: "900"
     CODEX_MARKET_CONTEXT_OVERALL_TIMEOUT_SECONDS: "32400"
     CODEX_MAX_SESSION_ATTEMPTS: "1"
-    CODEX_MODEL: gpt-5.5
+    CODEX_MODEL: gpt-5.6-sol
     FASTMCP_LOG_LEVEL: "ERROR"
     FASTMCP_SHOW_SERVER_BANNER: "false"
     HOME: /root
@@ -102,7 +102,7 @@ spec:
   inputFiles:
     - path: /root/.codex/config.toml
       content: |-
-        model = "gpt-5.5"
+        model = "gpt-5.6-sol"
         model_reasoning_summary = "none"
         model_reasoning_effort = "high"
         model_verbosity = "low"

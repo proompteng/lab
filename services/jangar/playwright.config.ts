@@ -15,8 +15,8 @@ const webServerEnv = {
   ...(process.env.PLAYWRIGHT_OPENWEBUI_E2E === '1'
     ? {
         ...(process.env.JANGAR_CHAT_STATE_BACKEND ? {} : { JANGAR_CHAT_STATE_BACKEND: 'memory' }),
-        ...(process.env.JANGAR_MODELS ? {} : { JANGAR_MODELS: 'gpt-5.5' }),
-        ...(process.env.JANGAR_DEFAULT_MODEL ? {} : { JANGAR_DEFAULT_MODEL: 'gpt-5.5' }),
+        ...(process.env.JANGAR_MODELS ? {} : { JANGAR_MODELS: 'gpt-5.6-sol' }),
+        ...(process.env.JANGAR_DEFAULT_MODEL ? {} : { JANGAR_DEFAULT_MODEL: 'gpt-5.6-sol' }),
       }
     : {}),
   JANGAR_LEADER_ELECTION_ENABLED: '0',

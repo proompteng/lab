@@ -40,7 +40,7 @@ The request header `x-jangar-openwebui-render-mode: rich-ui-v1` is optional and 
 - Auth/signup remain disabled (`WEBUI_AUTH=false`, `ENABLE_SIGNUP=false`).
 - Websockets: `WEBSOCKET_MANAGER=redis`, `WEBSOCKET_REDIS_URL=redis://jangar-openwebui-redis:6379/0` (Redis provided by the operator, not the chart).
 - Database: `DATABASE_URL` from CNPG secret `jangar-db-app`; TLS root cert from `jangar-db-ca`.
-- Current code returns configured models from `/v1/models` (default `gpt-5.5`); set `JANGAR_MODELS`/`JANGAR_DEFAULT_MODEL` or update `services/jangar/src/server/config.ts` if this needs to change.
+- Current code returns configured models from `/v1/models` (default `gpt-5.6-sol`); set `JANGAR_MODELS`/`JANGAR_DEFAULT_MODEL` or update `services/jangar/src/server/config.ts` if this needs to change.
 
 ## Image pin
 

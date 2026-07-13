@@ -32,7 +32,7 @@ const requestPayload = {
   risk_policy: { max_notional_per_trade: '7000', kill_switch_enabled: false },
   execution_context: { primary_adapter: 'alpaca', mode: 'paper' },
   llm_review: {
-    model: 'gpt-5.5',
+    model: 'gpt-5.6-sol',
     messages: [{ role: 'user', content: 'review this decision as json' }],
   },
 }

@@ -182,7 +182,7 @@ class TestCompileResultIsDeterministic(_TestLLMDSPyWorkflowBase):
             session.add(
                 LLMDecisionReview(
                     trade_decision_id=decision.id,
-                    model="gpt-5.5",
+                    model="gpt-5.6-sol",
                     prompt_version="v1",
                     input_json={
                         "decision": {"symbol": "AAPL", "action": "buy"},

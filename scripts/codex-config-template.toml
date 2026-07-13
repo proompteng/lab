@@ -1,6 +1,6 @@
-model = "gpt-5.5"
+model = "gpt-5.6-sol"
 model_reasoning_summary = "detailed"
-model_reasoning_effort = "medium"
+model_reasoning_effort = "high"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 suppress_unstable_features_warning = true

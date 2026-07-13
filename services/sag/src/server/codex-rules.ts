@@ -49,8 +49,8 @@ export const translateRuleWithCodex = async (text: string): Promise<RuleIntent> 
       cwd: process.env.SAG_CODEX_CWD ?? '/tmp',
       sandbox: 'read-only',
       approval: 'never',
-      defaultModel: process.env.SAG_CODEX_MODEL ?? 'gpt-5.4-mini',
-      defaultEffort: 'low',
+      defaultModel: process.env.SAG_CODEX_MODEL ?? 'gpt-5.6-sol',
+      defaultEffort: 'high',
       threadConfig: { mcp_servers: {}, web_search: 'live' },
       bootstrapTimeoutMs: 15_000,
       clientInfo: { name: 'sag', title: 'Secure Action Gateway rule translator', version: '0.0.1' },
@@ -73,7 +73,7 @@ Policy request:
 ${text}`
 
     const result = await Promise.race([
-      client.runTurn(prompt, { cwd: process.env.SAG_CODEX_CWD ?? '/tmp', effort: 'low' }),
+      client.runTurn(prompt, { cwd: process.env.SAG_CODEX_CWD ?? '/tmp', effort: 'high' }),
       new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('codex rule translation timed out')), 60_000)
       }),

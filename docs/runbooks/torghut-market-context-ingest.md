@@ -145,7 +145,7 @@ Use this sequence when dispatch is active but snapshots do not persist:
 - Check:
   `kubectl logs -n agents job/<market-context-job> --tail=200`
 - Fix landed:
-  - `model_reasoning_summary = "none"` for `gpt-5.5`.
+  - `model_reasoning_summary = "none"` for `gpt-5.6-sol`.
   - Provider bootstrap rewrites mounted auth to API-key mode before `codex exec`.
 
 4. Fundamentals/news callback payload malformed:
