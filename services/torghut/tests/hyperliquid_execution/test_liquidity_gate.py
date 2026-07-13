@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 from pytest import MonkeyPatch
@@ -196,6 +196,34 @@ def test_exchange_validates_the_generated_order_side_before_submission() -> None
     exchange.validate_order_intent_crossability(_intent(side="sell", limit_price="98"))
 
 
+def test_exchange_fails_closed_on_malformed_pre_submit_price() -> None:
+    exchange = _Exchange(
+        HyperliquidExecutionConfig.from_env({}),
+        sdk=_Sdk(),
+        info=_Info(
+            {"xyz:NVDA": {"levels": [[{"px": "not-a-number"}], [{"px": "103"}]]}}
+        ),
+    )
+
+    with pytest.raises(ValueError, match="order_book_unavailable:InvalidOperation"):
+        exchange.validate_order_intent_crossability(
+            _intent(side="buy", limit_price="102")
+        )
+
+
+def test_exchange_fails_closed_on_non_mapping_pre_submit_book() -> None:
+    exchange = _Exchange(
+        HyperliquidExecutionConfig.from_env({}),
+        sdk=_Sdk(),
+        info=_MalformedBookInfo([{"px": "99"}]),
+    )
+
+    with pytest.raises(ValueError, match="order_book_unavailable:AttributeError"):
+        exchange.validate_order_intent_crossability(
+            _intent(side="buy", limit_price="102")
+        )
+
+
 def test_exchange_reports_mid_lookup_failure_as_unavailable_liquidity() -> None:
     exchange = _Exchange(
         HyperliquidExecutionConfig.from_env(
@@ -348,6 +376,16 @@ class _FailingMidInfo(_Info):
     def _load_mids(self, *, dex: str = "") -> dict[str, object]:
         self.mid_dexes.append(dex)
         raise RuntimeError("mid_lookup_failed")
+
+
+class _MalformedBookInfo(_Info):
+    def __init__(self, book: object) -> None:
+        super().__init__({"xyz:NVDA": {}})
+        self._book = book
+
+    def l2_snapshot(self, name: str) -> dict[str, object]:
+        self.name_to_coin[name]
+        return cast(dict[str, object], self._book)
 
 
 class _Exchange(HyperliquidSdkExecutionExchange):

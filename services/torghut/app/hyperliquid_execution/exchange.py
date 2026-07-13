@@ -189,15 +189,26 @@ class HyperliquidSdkExecutionExchange:
             _register_sdk_market_alias(info, sdk_name, intent.coin)
             book = cast(dict[str, object], info.l2_snapshot(sdk_name))
             self._last_read_at = datetime.now(timezone.utc)
+            best_bid = _best_level_price(book, 0)
+            best_ask = _best_level_price(book, 1)
+            book_empty = best_bid is None or best_ask is None
+            buy_not_crossable = (
+                not book_empty
+                and intent.side == "buy"
+                and intent.limit_price < cast(Decimal, best_ask)
+            )
+            sell_not_crossable = (
+                not book_empty
+                and intent.side == "sell"
+                and intent.limit_price > cast(Decimal, best_bid)
+            )
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             raise ValueError(f"order_book_unavailable:{type(exc).__name__}") from exc
-        best_bid = _best_level_price(book, 0)
-        best_ask = _best_level_price(book, 1)
-        if best_bid is None or best_ask is None:
+        if book_empty:
             raise ValueError("order_book_empty")
-        if intent.side == "buy" and intent.limit_price < best_ask:
+        if buy_not_crossable:
             raise ValueError("order_not_crossable:buy")
-        if intent.side == "sell" and intent.limit_price > best_bid:
+        if sell_not_crossable:
             raise ValueError("order_not_crossable:sell")
 
     def submit_order(self, intent: OrderIntent) -> OrderResult:
