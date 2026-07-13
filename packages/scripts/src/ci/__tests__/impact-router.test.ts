@@ -89,6 +89,15 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['scripts-ci'])
   })
 
+  test('routes Flink observability and S3A documentation through scripts contract tests', () => {
+    const plan = selectImpactPlan(
+      ['argocd/applications/observability/cluster-metrics-alloy-configmap.yaml', 'docs/torghut/ceph-migration.md'],
+      map,
+    )
+    expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])
+    expect(plan.delegatedWorkflows).toEqual(['scripts-ci'])
+  })
+
   test('keeps mixed service changes deterministic', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts', 'services/torghut/src/main.py'], map)
     expect(plan.validationTargets).toEqual(['planner'])

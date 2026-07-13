@@ -12,7 +12,7 @@
 ## 2. Why Ceph RGW fits
 
 - Rook deploys/operates Ceph RGW on Kubernetes and exposes an in-cluster S3 endpoint (`rook-ceph-rgw-<store>.<ns>.svc`).
-- RGW is S3-compatible and works with Flink’s `s3a://` filesystem via custom `s3.endpoint` / `s3.path.style.access` settings.
+- RGW is S3-compatible and works with Flink’s Hadoop `s3a://` filesystem via `fs.s3a.*` settings.
 - Published benchmarks show RGW scales to high aggregate throughput under load (multi-node GET/PUT testing).
 
 ## 3. Target architecture
@@ -47,16 +47,15 @@ graph LR
 Set in `FlinkDeployment` `spec.jobManager.spec.flinkConfiguration` and mirrored in TM section:
 
 ```yaml
-s3.endpoint: https://rook-ceph-rgw-objstore.rook-ceph.svc:443
-s3.path.style.access: true
-s3.access-key: ${CEPH_ACCESS_KEY}
-s3.secret-key: ${CEPH_SECRET_KEY}
-s3.connection.ssl.enabled: true
-s3.connection.maximum: 256
-s3.socket.timeout: 300000
+fs.s3a.endpoint: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
+fs.s3a.path.style.access: true
+fs.s3a.access.key: ${CEPH_ACCESS_KEY}
+fs.s3a.secret.key: ${CEPH_SECRET_KEY}
+fs.s3a.connection.ssl.enabled: false
+fs.s3a.connection.maximum: 256
+fs.s3a.socket.timeout: 300000
 fs.s3a.fast.upload: true
 fs.s3a.connection.establish.timeout: 60000
-fs.s3a.path.style.access: true
 ```
 
 - If the cert is internal, mount CA bundle and set `ssl.truststore.location` accordingly.
@@ -107,7 +106,7 @@ fs.s3a.path.style.access: true
 
 ## 7. Risks and mitigations
 
-- **Client compatibility**: Ensure `s3.path.style.access=true` for s3a; without it virtual-hosted style may fail on cluster DNS. Mitigate via config above.
+- **Client compatibility**: Ensure `fs.s3a.path.style.access=true`; without it virtual-hosted style may fail on cluster DNS. Mitigate via config above.
 - **Checkpoint consistency**: Always migrate via savepoint; do not reuse in-flight MinIO checkpoints.
 - **TLS trust**: Provide CA bundle to Flink pods; misaligned SANs will break HTTPS-match `advertiseEndpoint` in CephObjectStore.
 - **Performance**: Start with conservative `connection.maximum` and adjust after observing RGW CPU; benchmarks indicate network-bound at scale, so watch NIC saturation.
