@@ -119,12 +119,13 @@ def _family_feedback_bundle_for_spec(
         "feedback_match_scope": "family_template_id",
         "feedback_source_candidate_spec_id": bundle.candidate_spec_id,
     }
-    return replace(
+    result: CandidateEvidenceBundle = replace(
         bundle,
         candidate_spec_id=spec.candidate_spec_id,
         candidate_id=f"family-feedback-{bundle.candidate_id}",
         objective_scorecard=scorecard,
     )
+    return result
 
 
 __all__ = [

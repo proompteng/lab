@@ -1,8 +1,34 @@
-# Torghut Pylint File Length Remediation Tracker
+# Torghut Pylint File Length & Quality Remediation Tracker
 
 Date: 2026-06-12
+Updated: 2026-07-12
 Branch: `codex/torghut-pylint-file-length-gate-20260612`
 Base: `origin/main` at `e2170165c`
+
+## Status Overview (2026-07-12 code audit)
+
+All file-length debt is resolved. All anti-pattern suppressions (wildcard imports, `globals().update`, `CompatModule`, file-level `# noqa`/`# type: ignore`/`# pyright: false`) have been removed from source in `app/`, `scripts/`, `tests/`, and `migrations/`. The remaining debt is **design-complexity** (Pylint `too-many-locals`, `too-many-branches`, `too-many-statements`) and **Pyright strictness** for `scripts/` and `app/trading/alpha/`.
+
+Current numbers verified against live code:
+
+| Metric | Docs Claim (June 13) | Actual (July 12) | Status |
+|---|---|---|---|
+| Files over 1000 lines | 0 | 0 | ✅ Resolved |
+| Generated `part_*` source files | 408 | 0 (only `__pycache__` remnants) | ✅ Resolved |
+| Wildcard imports | 571 | 0 | ✅ Resolved |
+| `globals().update` | 72 | 0 in source (checker tool references only) | ✅ Resolved |
+| `CompatModule` | 62 | 0 in source (checker tool references only) | ✅ Resolved |
+| File-level suppressions (`# noqa`, `# type: ignore`, `pyright: false`) | 1,205 | 0 in `app/`; 3 `noqa: E402` in scripts (import ordering) | ✅ Resolved |
+| Design-complexity findings | 826 across 340 files | ~638 across 315 files | 🟡 In progress |
+| `too-many-locals` | 461 | ~415 | 🟡 In progress |
+| `too-many-branches` | 139 | ~116 | 🟡 In progress |
+| `too-many-statements` | 122 | ~107 | 🟡 In progress |
+| `too-many-return-statements` | 104 | ~0 | ✅ Resolved |
+| Pyright strict (`app/`) | strict | strict | ✅ |
+| Pyright basic (`scripts/`) | basic | basic | 🟡 |
+| Pyright basic (`app/trading/alpha/`) | basic | basic | 🟡 |
+
+The file-length gate and refactoring-quality guard are complete and passing. The next tranche focuses on design-complexity refactoring and Pyright profile tightening.
 
 ## Objective
 

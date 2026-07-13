@@ -432,6 +432,78 @@ def upsert_empirical_job_run(
     return record
 
 
+def _job_status_row(
+    *,
+    row: VNextEmpiricalJobRun,
+    cutoff: datetime,
+) -> tuple[dict[str, Any], str | None, bool]:
+    """Build the status dict for a single empirical job row."""
+    created_at_raw = row.created_at or datetime.now(tz=timezone.utc)
+    created_at = (
+        created_at_raw.astimezone(timezone.utc)
+        if created_at_raw.tzinfo is not None
+        else created_at_raw.replace(tzinfo=timezone.utc)
+    )
+    payload = _as_dict(row.payload_json)
+    truthful_reasons = empirical_artifact_truthfulness_reasons(payload)
+    truthful = not truthful_reasons
+    stale = created_at < cutoff or row.status not in {"completed", "success"}
+    dataset_snapshot_ref = _as_text(row.dataset_snapshot_ref)
+    candidate_id = _as_text(row.candidate_id)
+    lineage = _as_dict(payload.get("lineage"))
+    row_model_refs = _as_string_list(lineage.get("model_refs"))
+
+    blocked_reasons = sorted(
+        {
+            *truthful_reasons,
+            *(["job_stale"] if created_at < cutoff else []),
+            *(
+                ["job_status_incomplete"]
+                if row.status not in {"completed", "success"}
+                else []
+            ),
+            *(["row_authority_not_empirical"] if row.authority != "empirical" else []),
+            *(
+                ["row_promotion_authority_ineligible"]
+                if not row.promotion_authority_eligible
+                else []
+            ),
+            *(["row_dataset_snapshot_ref_missing"] if not dataset_snapshot_ref else []),
+        }
+    )
+
+    job_ready = (
+        not stale
+        and truthful
+        and bool(row.promotion_authority_eligible)
+        and row.authority == "empirical"
+        and dataset_snapshot_ref is not None
+    )
+
+    job_dict: dict[str, Any] = {
+        "status": row.status,
+        "authority": row.authority
+        if truthful and row.authority == "empirical"
+        else "blocked",
+        "persisted_authority": row.authority,
+        "promotion_authority_eligible": bool(row.promotion_authority_eligible)
+        and truthful,
+        "persisted_promotion_authority_eligible": bool(
+            row.promotion_authority_eligible
+        ),
+        "dataset_snapshot_ref": row.dataset_snapshot_ref,
+        "candidate_id": row.candidate_id,
+        "job_run_id": row.job_run_id,
+        "created_at": created_at.isoformat(),
+        "model_refs": row_model_refs,
+        "artifact_refs": list(cast(list[object], row.artifact_refs or [])),
+        "stale": stale,
+        "truthful": truthful,
+        "blocked_reasons": blocked_reasons,
+    }
+    return job_dict, candidate_id, job_ready
+
+
 def build_empirical_jobs_status(
     *,
     session: Session,
@@ -449,15 +521,17 @@ def build_empirical_jobs_status(
         latest_by_type[row.job_type] = row
         if len(latest_by_type) == len(EMPIRICAL_JOB_TYPES):
             break
+
     jobs: dict[str, object] = {}
-    fresh_and_eligible = True
     eligible_jobs: list[str] = []
     missing_jobs: list[str] = []
     stale_jobs: list[str] = []
     ineligible_jobs: list[str] = []
     candidate_ids: set[str] = set()
     dataset_snapshot_refs: set[str] = set()
-    model_refs: set[str] = set()
+    model_refs_set: set[str] = set()
+    fresh_and_eligible = True
+
     for job_type in EMPIRICAL_JOB_TYPES:
         row = latest_by_type.get(job_type)
         if row is None:
@@ -473,92 +547,24 @@ def build_empirical_jobs_status(
             }
             fresh_and_eligible = False
             continue
-        created_at_raw = row.created_at or now
-        created_at = (
-            created_at_raw.astimezone(timezone.utc)
-            if created_at_raw.tzinfo is not None
-            else created_at_raw.replace(tzinfo=timezone.utc)
-        )
-        payload = _as_dict(row.payload_json)
-        truthful_reasons = empirical_artifact_truthfulness_reasons(payload)
-        truthful = not truthful_reasons
-        stale = created_at < cutoff or row.status not in {"completed", "success"}
-        dataset_snapshot_ref = _as_text(row.dataset_snapshot_ref)
-        candidate_id = _as_text(row.candidate_id)
-        lineage = _as_dict(payload.get("lineage"))
-        row_model_refs = _as_string_list(lineage.get("model_refs"))
-        blocked_reasons = sorted(
-            {
-                *truthful_reasons,
-                *(["job_stale"] if created_at < cutoff else []),
-                *(
-                    ["job_status_incomplete"]
-                    if row.status not in {"completed", "success"}
-                    else []
-                ),
-                *(
-                    ["row_authority_not_empirical"]
-                    if row.authority != "empirical"
-                    else []
-                ),
-                *(
-                    ["row_promotion_authority_ineligible"]
-                    if not row.promotion_authority_eligible
-                    else []
-                ),
-                *(
-                    ["row_dataset_snapshot_ref_missing"]
-                    if not _as_text(row.dataset_snapshot_ref)
-                    else []
-                ),
-            }
-        )
+        _jd, candidate_id, job_ready = _job_status_row(row=row, cutoff=cutoff)
+        job_dict: dict[str, Any] = _jd
+        stale = job_dict["stale"]
         if stale:
             stale_jobs.append(job_type)
         if candidate_id is not None:
             candidate_ids.add(candidate_id)
-        if dataset_snapshot_ref is not None:
-            dataset_snapshot_refs.add(dataset_snapshot_ref)
-        model_refs.update(row_model_refs)
-        job_ready = (
-            not stale
-            and truthful
-            and bool(row.promotion_authority_eligible)
-            and row.authority == "empirical"
-            and dataset_snapshot_ref is not None
-        )
+        ds_ref = _as_text(job_dict.get("dataset_snapshot_ref"))
+        if ds_ref is not None:
+            dataset_snapshot_refs.add(ds_ref)
+        model_refs_set.update(job_dict.get("model_refs", []))
         if job_ready:
             eligible_jobs.append(job_type)
         else:
             ineligible_jobs.append(job_type)
-        jobs[job_type] = {
-            "status": row.status,
-            "authority": row.authority
-            if truthful and row.authority == "empirical"
-            else "blocked",
-            "persisted_authority": row.authority,
-            "promotion_authority_eligible": bool(row.promotion_authority_eligible)
-            and truthful,
-            "persisted_promotion_authority_eligible": bool(
-                row.promotion_authority_eligible
-            ),
-            "dataset_snapshot_ref": row.dataset_snapshot_ref,
-            "candidate_id": row.candidate_id,
-            "job_run_id": row.job_run_id,
-            "created_at": created_at.isoformat(),
-            "model_refs": row_model_refs,
-            "artifact_refs": list(cast(list[object], row.artifact_refs or [])),
-            "stale": stale,
-            "truthful": truthful,
-            "blocked_reasons": blocked_reasons,
-        }
-        if (
-            stale
-            or not truthful
-            or not row.promotion_authority_eligible
-            or row.authority != "empirical"
-        ):
             fresh_and_eligible = False
+        jobs[job_type] = job_dict
+
     status_blocked_reasons: list[str] = []
     if len(candidate_ids) > 1:
         fresh_and_eligible = False
@@ -588,7 +594,7 @@ def build_empirical_jobs_status(
         "ineligible_jobs": sorted(set(ineligible_jobs)),
         "candidate_ids": sorted(candidate_ids),
         "dataset_snapshot_refs": sorted(dataset_snapshot_refs),
-        "model_refs": sorted(model_refs),
+        "model_refs": sorted(model_refs_set),
         "blocked_reasons": status_blocked_reasons,
         "jobs": jobs,
     }

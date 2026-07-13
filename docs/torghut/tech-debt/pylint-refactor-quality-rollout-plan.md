@@ -6,23 +6,26 @@ This plan turns the Torghut Pylint rollout into an enforceable quality program. 
 
 ## Current Evidence
 
-Snapshot from the current worktree on June 13, 2026:
+Snapshot from the current worktree on July 12, 2026 (audit of live code vs. June 13 docs):
 
-- Python files under `services/torghut/app`, `scripts`, `tests`, and `migrations`: 1558.
-- Files currently over 1000 lines: 0.
-- Generated split files still present: 408.
-- Files containing file-level Pyright suppressions: 461.
-- Files containing file-level Ruff `noqa`: 744.
-- Files containing `globals().update`: 72.
-- Files containing `CompatModule`: 62.
-- Files containing wildcard imports: 571.
-- Files containing `# type: ignore`: 67.
+- Python files under `services/torghut/app`, `scripts`, `tests`, and `migrations`: 1553.
+- Files over 1000 lines: 0 (largest is exactly 1000).
+- Generated split files in source: 0 (only `__pycache__` remnants remain).
+- File-level Pyright suppressions in source: 0 (`app/` clean; a few `noqa: E402` in scripts for import ordering).
+- File-level Ruff `noqa` in source: 0 (`app/` clean; 3 `noqa: E402` in scripts).
+- `globals().update` in source: 0 (checker tool references only).
+- `CompatModule` in source: 0 (checker tool + one negative test reference only).
+- Wildcard imports in source: 0.
+- `# type: ignore` in source: 0.
+- Pylint design-complexity findings: ~638 across ~315 files in `app/` and `scripts/`.
+- Breakdown: `too-many-locals` ~415, `too-many-branches` ~116, `too-many-statements` ~107, `too-many-return-statements` ~0.
+- Pyright strict: `app/` only. `scripts/` and `app/trading/alpha/` still on basic profiles.
 
-The current enforcement is incomplete:
+The remaining enforcement gaps are:
 
-- Pyright is strict for `app` through `pyrightconfig.json`, but `app/trading/alpha` and `scripts` are still basic profiles with multiple diagnostics disabled.
-- Pylint blocks `too-many-lines` at 1000 lines, but design-complexity checks are still non-blocking inventory.
-- Ruff blocks format and the configured lint set, but Ruff/Pylint/Pyright do not understand Torghut-specific anti-patterns such as `source_part_07.py`, dynamic module facades, or generated compatibility packages.
+- Pylint design-complexity checks (`too-many-locals`, `too-many-branches`, `too-many-statements`) are non-blocking inventory. Refactoring by responsibility is needed before the gate can flip to blocking.
+- Pyright is strict for `app/` only. `scripts/` and `app/trading/alpha/` remain on basic profiles with 10 diagnostics disabled each.
+- Two files sit exactly at 1000 lines with zero margin for regression: `scripts/consistent_profitability_frontier/paper_probation.py` and `migrations/versions/0059_broker_mutation_receipts.py`.
 
 ## External Tool Guidance
 
@@ -75,13 +78,30 @@ This guard is changed-file scoped at first because `main` still contains legacy 
 
 ### Global Guard Promotion
 
+### Current Phase (2026-07-12)
+
+All anti-pattern suppressions and generated split files have been removed from source.
+Promotion order is complete through step 4. The remaining work:
+
+1. ~~generated split filenames~~ → **Resolved** (0 in source)
+2. ~~dynamic compatibility facades~~ → **Resolved** (0 in source)
+3. ~~blanket Pyright suppressions~~ → **Resolved** (0 in `app/`; `noqa: E402` only in scripts)
+4. ~~blanket Ruff suppressions and wildcard imports~~ → **Resolved** (0 in source)
+5. Design-complexity refactoring → **Current work**
+6. Pyright strictness tightening for `scripts/` and `app/trading/alpha/` → **Current work**
+7. Remaining line-scoped suppression audit → **Current work**
+
+Next command: `uv run --frozen python scripts/check_refactor_quality.py --all`
+
+### Global Guard Promotion
+
 After each violation class reaches zero in the scoped paths, flip the guard from changed-file mode to global mode in CI:
 
 ```bash
 uv run --frozen python scripts/check_refactor_quality.py --all
 ```
 
-Promotion order:
+Promotion order (legacy list, superseded by current phase):
 
 1. generated split filenames,
 2. dynamic compatibility facades,
@@ -147,182 +167,52 @@ Do not split code by line number. Split by ownership:
 
 ## Cleanup Tranches
 
-### Tranche 1: Guard and Verification Cleanup
+> Note: Tranches 1–7 (anti-pattern cleanup) are resolved. All generated split files, wildcard imports, `globals().update`, `CompatModule`, and file-level suppressions have been removed from source. The remaining tranches focus on design-complexity refactoring and Pyright strictness.
 
-Scope:
+### Tranche 1–7: Anti-Pattern Cleanup
 
-- `scripts/check_refactor_quality.py`
-- `.github/workflows/torghut-ci.yml`
-- `scripts/historical_simulation_verification.py`
-- `scripts/historical_simulation_verification_modules/*`
-- focused guard and historical verification tests
+**Status: Complete.**
+- 0 generated split filenames in source (only `__pycache__` remnants)
+- 0 wildcard imports in source
+- 0 `globals().update` in source
+- 0 `CompatModule` in source
+- 0 file-level Pyright/Ruff/Pylint suppressions in `app/`
+- `check_refactor_quality.py` guard is committed and passing
 
-Acceptance:
+### Current Tranche: Design-Complexity Refactoring
 
-- no generated names in the touched package,
-- no `globals().update`,
-- no custom module mutation,
-- no dynamic `__all__`,
-- no file-level Pyright/Ruff suppressions,
-- changed-file Pylint design gate passes for the touched `app scripts` files,
-- existing patch targets still work.
+Scope: All files with Pylint `too-many-locals`, `too-many-branches`, or `too-many-statements` violations (~315 files, ~638 findings). Prioritize high-frequency offenders first.
 
-### Tranche 2: Config and Settings Package
+Method: Split by **ownership/responsibility**, not by line number:
+- constants/config schema
+- parsing
+- external I/O
+- persistence
+- orchestration
+- validation
+- reporting/artifacts
+- CLI entrypoints
 
-Scope:
+Do NOT use `part_*`, `source_part_*`, or `test_part_*` filenames. Use responsibility names like `runtime_health.py`, `claim_parsing.py`, `portfolio_selection.py`.
 
-- `app/config.py`
-- `app/config_modules/*`
-- `app/config.pyi`
-- config-focused tests and scheduler tests that mutate `app.config.settings`
-
-Target module names:
-
-- `settings_base.py`
-- `core_settings.py`
-- `trading_settings.py`
-- `risk_settings.py`
-- `llm_settings.py`
-- `normalization.py`
-- `validation.py`
-
-Acceptance:
-
-- no generated filenames,
-- no dynamic `app.config` replacement,
-- explicit settings exports,
-- all `from app import config` and `from app.config import Settings, settings` paths stable.
-
-### Tranche 3: Scheduler Packages
-
-Scope:
-
-- `app/trading/scheduler/pipeline_modules`
-- `state_modules`
-- `source_collection_modules`
-- `submission_preparation_modules`
-- `paper_route_probe_modules`
-- matching `tests/pipeline/*`
-
-Target module names:
-
-- `pipeline_state.py`,
-- `source_collection.py`,
-- `submission_preparation.py`,
-- `paper_route_probe.py`,
-- `runtime_migrations.py`,
-- `target_plan_materialization.py`,
-- `health_signals.py`.
-
-Acceptance:
-
-- no `CompatModule`,
-- no wildcard module stitching,
-- scheduler patch tests updated to explicit public targets.
-
-### Tranche 4: Runtime Window Import
-
-Scope:
-
-- `app/trading/runtime_window_import_modules`
-- `scripts/import_hypothesis_runtime_windows_modules`
-- runtime-window tests
-
-Target module names:
-
-- `window_bounds.py`,
-- `source_rows.py`,
-- `lineage.py`,
-- `costs.py`,
-- `materialization.py`,
-- `audit.py`,
-- `cli.py`.
-
-Acceptance:
-
-- runtime-ledger behavior unchanged,
-- source-kind authority and fail-closed proof semantics preserved,
-- no blanket Pyright/Ruff suppressions.
-
-### Tranche 5: Whitepaper and Autoresearch
-
-Scope:
-
-- `app/whitepapers/workflow_modules`
-- `app/whitepapers/claim_compiler_modules`
-- `scripts/run_whitepaper_autoresearch_profit_target_modules`
-- related tests
-
-Target module names:
-
-- `claim_parsing.py`,
-- `claim_graph.py`,
-- `workflow_storage.py`,
-- `workflow_orchestration.py`,
-- `epoch_selection.py`,
-- `portfolio_outputs.py`,
-- `promotion_artifacts.py`,
-- `runner_cli.py`.
-
-Acceptance:
-
-- script entrypoint remains stable,
-- workflow service behavior covered by focused tests,
-- no generated source shards.
-
-### Tranche 6: Trading Discovery and Runtime Hotspots
-
-Scope:
-
-- candidate specs,
-- research sleeves,
-- fast replay,
-- evidence bundles,
-- runtime closure,
-- portfolio optimizer,
-- policy checks,
-- submission council.
-
-Acceptance:
-
-- explicit public exports,
-- no wildcard test wrappers,
-- design-complexity violations reduced enough to enable blocking Pylint design gate.
-
-### Tranche 7: Test Wrapper Cleanup
-
-Scope:
-
-- `tests/**/test_part_*`
-- root `tests/test_*.py` wildcard aggregators
-- support modules with file-level Ruff suppressions
-
-Policy:
-
-- Prefer real pytest discovery in domain folders.
-- Delete aggregator wrappers when direct files are collected.
-- Keep support modules explicit and named.
-
-Acceptance:
-
-- no `test_part_*` in touched domains,
-- no wildcard import aggregators,
-- coverage remains equivalent or better.
-
-### Tranche 8: Global Enforcement Flip
+### Tranche 8: Pyright Strictness + Global Enforcement Flip
 
 Scope:
 
 - `scripts/check_refactor_quality.py --all`
-- blocking Pylint design gate for `app scripts`
-- final Pyright profile tightening plan for remaining basic-only areas
+- blocking Pylint design gate for `app scripts` (after complexity refactoring reduces findings)
+- Pyright profile tightening:
+  - `scripts/`: move from `basic` toward `strict` by package
+  - `app/trading/alpha/`: move from `basic` toward `strict`
 
 Acceptance:
 
-- zero generated split files,
-- zero dynamic compat facades,
+- zero generated split files in source,
+- zero dynamic compat facades in source,
 - zero blanket Pyright/Ruff suppressions in scoped paths,
-- zero wildcard imports in scoped paths except explicitly documented public API exceptions, if any.
+- zero wildcard imports in scoped paths except explicitly documented public API exceptions, if any,
+- all three Pyright profiles pass without new blanket suppressions,
+- Pylint design gate is blocking and green for `app scripts`.
 
 ## PR Discipline
 
