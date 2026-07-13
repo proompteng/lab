@@ -15,7 +15,7 @@ from decimal import Decimal, InvalidOperation
 from enum import StrEnum
 from typing import cast
 
-from alpaca.trading.enums import OrderStatus
+from alpaca.trading.enums import OrderStatus, PositionIntent
 
 from ..broker_mutation_receipts import BrokerMutationIntent
 from ..broker_mutation_receipts.canonicalization import (
@@ -30,6 +30,7 @@ _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,31}$")
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit", "trailing_stop"})
 _TIME_IN_FORCE = frozenset({"day", "gtc", "opg", "cls", "ioc", "fok"})
 _BROKER_STATUSES = frozenset(status.value for status in OrderStatus)
+_POSITION_INTENTS = frozenset(position_intent.value for position_intent in PositionIntent)
 _FULL_FILL_PERMITTED_STATUSES = frozenset({"calculated", "filled"})
 _ZERO_FILL_STATUSES = frozenset(
     {
@@ -393,7 +394,7 @@ def _parse_terms(
     order_type = _lower_text(payload.get(type_key), maximum=32)
     time_in_force = _lower_text(payload.get("time_in_force"), maximum=16)
     order_class = _normalized_order_class(payload.get("order_class"), broker=broker)
-    position_intent = _optional_lower_text(payload.get("position_intent"), maximum=32)
+    position_intent = _optional_position_intent(payload.get("position_intent"))
     extended_hours = payload.get("extended_hours")
     if (
         symbol is None
@@ -612,6 +613,13 @@ def _optional_lower_text(value: object, *, maximum: int) -> str | None | _Invali
         return None
     normalized = _lower_text(value, maximum=maximum)
     return normalized if normalized is not None else _INVALID
+
+
+def _optional_position_intent(value: object) -> str | None | _Invalid:
+    normalized = _optional_lower_text(value, maximum=32)
+    if normalized is None or normalized is _INVALID:
+        return normalized
+    return normalized if normalized in _POSITION_INTENTS else _INVALID
 
 
 def _indeterminate(
