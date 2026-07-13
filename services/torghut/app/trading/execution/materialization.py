@@ -198,8 +198,15 @@ def materialize_alpaca_recovery_observation(
 def _validated_intent(intent: BrokerMutationIntent) -> uuid.UUID:
     try:
         verify_broker_mutation_intent(intent)
-    except (BrokerMutationReceiptValidationError, AttributeError, TypeError, ValueError) as exc:
-        raise RecoveryMaterializationIdentityConflict("recovery_intent_invalid") from exc
+    except (
+        BrokerMutationReceiptValidationError,
+        AttributeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_intent_invalid"
+        ) from exc
     if (
         intent.broker_route != "alpaca"
         or intent.operation != "submit_order"
@@ -235,7 +242,9 @@ def _validated_observation(
         broker_order=_broker_payload(order),
     )
     if not result.validated or result.order != order:
-        raise RecoveryMaterializationIdentityConflict("recovery_observation_identity_invalid")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_observation_identity_invalid"
+        )
     return order
 
 
@@ -287,7 +296,9 @@ def _lock_submission_claim(
         .execution_options(populate_existing=True)
     ).scalar_one_or_none()
     if claim is None:
-        raise RecoveryMaterializationIdentityConflict("recovery_submission_claim_not_found")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_submission_claim_not_found"
+        )
     if claim.state not in {"broker_io", "submitted"}:
         raise RecoveryMaterializationIdentityConflict(
             f"recovery_submission_claim_state_invalid:{claim.state}"
@@ -302,9 +313,13 @@ def _verify_decision_identity(
     intent: BrokerMutationIntent,
 ) -> None:
     if decision.alpaca_account_label != intent.account_label:
-        raise RecoveryMaterializationIdentityConflict("recovery_decision_account_mismatch")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_decision_account_mismatch"
+        )
     if decision.symbol.strip().upper() != order.terms.symbol:
-        raise RecoveryMaterializationIdentityConflict("recovery_decision_symbol_mismatch")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_decision_symbol_mismatch"
+        )
 
 
 def _verify_claim_identity(
@@ -318,11 +333,23 @@ def _verify_claim_identity(
         or claim.client_order_id != intent.client_request_id
         or claim.client_order_id != order.client_order_id
     ):
-        raise RecoveryMaterializationIdentityConflict("recovery_submission_claim_identity_mismatch")
-    if claim.broker_order_id is not None and claim.broker_order_id != order.broker_order_id:
-        raise RecoveryMaterializationIdentityConflict("recovery_submission_claim_broker_order_mismatch")
-    if claim.broker_client_order_id is not None and claim.broker_client_order_id != order.client_order_id:
-        raise RecoveryMaterializationIdentityConflict("recovery_submission_claim_client_order_mismatch")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_submission_claim_identity_mismatch"
+        )
+    if (
+        claim.broker_order_id is not None
+        and claim.broker_order_id != order.broker_order_id
+    ):
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_submission_claim_broker_order_mismatch"
+        )
+    if (
+        claim.broker_client_order_id is not None
+        and claim.broker_client_order_id != order.client_order_id
+    ):
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_submission_claim_client_order_mismatch"
+        )
 
 
 def _verify_claim_execution_identity(
@@ -369,7 +396,9 @@ def _lock_existing_execution(
         ).scalars()
     )
     if len(rows) > 1:
-        raise RecoveryMaterializationIdentityConflict("recovery_execution_identity_split")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_identity_split"
+        )
     return rows[0] if rows else None
 
 
@@ -408,25 +437,41 @@ class _MaterializationState:
     avg_fill_price: Decimal | None
 
 
-def _materialization_state(order: ValidatedAlpacaRecoveryOrder) -> _MaterializationState:
+def _materialization_state(
+    order: ValidatedAlpacaRecoveryOrder,
+) -> _MaterializationState:
     status = _bounded_status(order.status)
-    submitted_qty = _numeric_decimal(order.terms.qty, field="submitted_qty", positive=True)
+    submitted_qty = _numeric_decimal(
+        order.terms.qty, field="submitted_qty", positive=True
+    )
     filled_qty = _numeric_decimal(order.filled_qty, field="filled_qty", positive=False)
     avg_price = (
-        _numeric_decimal(order.filled_avg_price, field="filled_avg_price", positive=True)
+        _numeric_decimal(
+            order.filled_avg_price, field="filled_avg_price", positive=True
+        )
         if order.filled_avg_price is not None
         else None
     )
     if filled_qty > submitted_qty:
-        raise RecoveryMaterializationLifecycleConflict("filled_qty_exceeds_submitted_qty")
+        raise RecoveryMaterializationLifecycleConflict(
+            "filled_qty_exceeds_submitted_qty"
+        )
     if filled_qty == 0 and avg_price is not None:
-        raise RecoveryMaterializationLifecycleConflict("filled_avg_price_forbidden_without_fills")
+        raise RecoveryMaterializationLifecycleConflict(
+            "filled_avg_price_forbidden_without_fills"
+        )
     if filled_qty > 0 and avg_price is None:
-        raise RecoveryMaterializationLifecycleConflict("filled_avg_price_required_for_fills")
+        raise RecoveryMaterializationLifecycleConflict(
+            "filled_avg_price_required_for_fills"
+        )
     if status == "filled" and filled_qty != submitted_qty:
-        raise RecoveryMaterializationLifecycleConflict("filled_status_requires_complete_fill")
+        raise RecoveryMaterializationLifecycleConflict(
+            "filled_status_requires_complete_fill"
+        )
     if status == "partially_filled" and not 0 < filled_qty < submitted_qty:
-        raise RecoveryMaterializationLifecycleConflict("partially_filled_status_requires_partial_fill")
+        raise RecoveryMaterializationLifecycleConflict(
+            "partially_filled_status_requires_partial_fill"
+        )
     if status in _ZERO_FILL_STATUSES and filled_qty != 0:
         raise RecoveryMaterializationLifecycleConflict(f"{status}_status_forbids_fills")
     return _MaterializationState(
@@ -452,7 +497,9 @@ def _numeric_decimal(value: object, *, field: str, positive: bool) -> Decimal:
     try:
         normalized = Decimal(value)
     except (ArithmeticError, ValueError) as exc:
-        raise RecoveryMaterializationLifecycleConflict(f"{field}_must_be_decimal") from exc
+        raise RecoveryMaterializationLifecycleConflict(
+            f"{field}_must_be_decimal"
+        ) from exc
     if not normalized.is_finite() or normalized < 0 or (positive and normalized <= 0):
         raise RecoveryMaterializationLifecycleConflict(f"{field}_outside_numeric_20_8")
     sign, digits, exponent = normalized.as_tuple()
@@ -539,7 +586,9 @@ def _optional_decimal_text(value: Decimal | None) -> str | None:
     return str(value) if value is not None else None
 
 
-def _identity_payload(identity: RecoveryMaterializationIdentity) -> dict[str, object | None]:
+def _identity_payload(
+    identity: RecoveryMaterializationIdentity,
+) -> dict[str, object | None]:
     return {
         "schema_version": _MATERIALIZATION_IDENTITY_SCHEMA,
         "trade_decision_id": str(identity.trade_decision_id),
@@ -582,16 +631,21 @@ def _require_existing_identity(
 def _existing_identity(existing: Execution) -> dict[str, object | None]:
     audit = existing.execution_audit_json
     if not isinstance(audit, Mapping):
-        raise RecoveryMaterializationIdentityConflict("recovery_execution_identity_missing")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_identity_missing"
+        )
     value = cast(Mapping[object, object], audit).get("materialization_identity")
     if not isinstance(value, Mapping):
-        raise RecoveryMaterializationIdentityConflict("recovery_execution_identity_missing")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_identity_missing"
+        )
     normalized = {
-        str(key): item
-        for key, item in cast(Mapping[object, object], value).items()
+        str(key): item for key, item in cast(Mapping[object, object], value).items()
     }
     if normalized.get("schema_version") != _MATERIALIZATION_IDENTITY_SCHEMA:
-        raise RecoveryMaterializationIdentityConflict("recovery_execution_identity_schema_invalid")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_identity_schema_invalid"
+        )
     return normalized
 
 
@@ -636,24 +690,41 @@ def _require_existing_state(
         raise RecoveryMaterializationLifecycleConflict("terminal_status_regression")
     if _STATUS_PHASE[incoming.status] < _STATUS_PHASE[observed.status]:
         raise RecoveryMaterializationLifecycleConflict("status_regression")
-    if incoming.filled_qty == observed.filled_qty and incoming.avg_fill_price != observed.avg_fill_price:
+    if (
+        incoming.filled_qty == observed.filled_qty
+        and incoming.avg_fill_price != observed.avg_fill_price
+    ):
         raise RecoveryMaterializationLifecycleConflict("fill_price_drift")
 
 
 def _merge_existing_payload(existing: Execution, payload: Mapping[str, object]) -> None:
     existing_audit = existing.execution_audit_json
     incoming_audit = payload.get("execution_audit_json")
-    if not isinstance(existing_audit, Mapping) or not isinstance(incoming_audit, Mapping):
-        raise RecoveryMaterializationIdentityConflict("recovery_execution_audit_missing")
-    existing_identity = cast(Mapping[object, object], existing_audit).get("materialization_identity")
-    incoming_identity = cast(Mapping[object, object], incoming_audit).get("materialization_identity")
+    if not isinstance(existing_audit, Mapping) or not isinstance(
+        incoming_audit, Mapping
+    ):
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_audit_missing"
+        )
+    existing_identity = cast(Mapping[object, object], existing_audit).get(
+        "materialization_identity"
+    )
+    incoming_identity = cast(Mapping[object, object], incoming_audit).get(
+        "materialization_identity"
+    )
     if existing_identity != incoming_identity:
-        raise RecoveryMaterializationIdentityConflict("recovery_execution_identity_conflict")
+        raise RecoveryMaterializationIdentityConflict(
+            "recovery_execution_identity_conflict"
+        )
     merged_audit = {
-        str(key): value for key, value in cast(Mapping[object, object], existing_audit).items()
+        str(key): value
+        for key, value in cast(Mapping[object, object], existing_audit).items()
     }
     merged_audit.update(
-        {str(key): value for key, value in cast(Mapping[object, object], incoming_audit).items()}
+        {
+            str(key): value
+            for key, value in cast(Mapping[object, object], incoming_audit).items()
+        }
     )
     updated = dict(payload)
     updated["execution_audit_json"] = coerce_json_payload(merged_audit)

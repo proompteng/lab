@@ -30,7 +30,9 @@ _SYMBOL = re.compile(r"^[A-Z][A-Z0-9./-]{0,31}$")
 _ORDER_TYPES = frozenset({"market", "limit", "stop", "stop_limit", "trailing_stop"})
 _TIME_IN_FORCE = frozenset({"day", "gtc", "opg", "cls", "ioc", "fok"})
 _BROKER_STATUSES = frozenset(status.value for status in OrderStatus)
-_POSITION_INTENTS = frozenset(position_intent.value for position_intent in PositionIntent)
+_POSITION_INTENTS = frozenset(
+    position_intent.value for position_intent in PositionIntent
+)
 _FULL_FILL_PERMITTED_STATUSES = frozenset({"calculated", "filled"})
 _ZERO_FILL_STATUSES = frozenset(
     {

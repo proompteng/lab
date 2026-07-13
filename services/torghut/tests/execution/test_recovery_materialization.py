@@ -9,7 +9,13 @@ import pytest
 from sqlalchemy import Engine, create_engine, select
 from sqlalchemy.orm import Session
 
-from app.models import Base, Execution, Strategy, TradeDecision, TradeDecisionSubmissionClaim
+from app.models import (
+    Base,
+    Execution,
+    Strategy,
+    TradeDecision,
+    TradeDecisionSubmissionClaim,
+)
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
     BrokerMutationTarget,
@@ -146,13 +152,17 @@ def _seed_submission(session: Session, *, state: str = "broker_io") -> None:
             claimed_at=now,
             lease_expires_at=now + timedelta(minutes=5),
             broker_io_started_at=now if state in {"broker_io", "submitted"} else None,
-            recovery_after=now - timedelta(minutes=1) if state in {"broker_io", "submitted"} else None,
+            recovery_after=now - timedelta(minutes=1)
+            if state in {"broker_io", "submitted"}
+            else None,
         )
     )
     session.flush()
 
 
-def test_materializer_flushes_without_commit_and_rollback_removes_execution(engine: Engine) -> None:
+def test_materializer_flushes_without_commit_and_rollback_removes_execution(
+    engine: Engine,
+) -> None:
     with Session(engine) as session:
         _seed_submission(session)
         execution = materialize_validated_alpaca_recovery(
@@ -162,7 +172,12 @@ def test_materializer_flushes_without_commit_and_rollback_removes_execution(engi
         )
         execution_id = execution.id
         assert execution in session
-        assert session.execute(select(Execution).where(Execution.id == execution_id)).scalar_one() is execution
+        assert (
+            session.execute(
+                select(Execution).where(Execution.id == execution_id)
+            ).scalar_one()
+            is execution
+        )
         session.rollback()
 
     with Session(engine) as session:
@@ -205,7 +220,12 @@ def test_materializer_rejects_status_and_fill_regressions(engine: Engine) -> Non
         materialize_validated_alpaca_recovery(
             session,
             intent=intent,
-            observation=_observation(intent=intent, status="filled", filled_qty="2", filled_avg_price="190.30"),
+            observation=_observation(
+                intent=intent,
+                status="filled",
+                filled_qty="2",
+                filled_avg_price="190.30",
+            ),
         )
         with pytest.raises(
             RecoveryMaterializationLifecycleConflict,
@@ -219,18 +239,25 @@ def test_materializer_rejects_status_and_fill_regressions(engine: Engine) -> Non
         session.rollback()
 
 
-def test_materializer_rejects_indeterminate_notional_and_complex_observations(engine: Engine) -> None:
+def test_materializer_rejects_indeterminate_notional_and_complex_observations(
+    engine: Engine,
+) -> None:
     with Session(engine) as session:
         _seed_submission(session)
         notional_intent = _intent(qty=None, notional=Decimal("500"))
         notional = _observation(intent=notional_intent)
         assert notional.outcome is AlpacaRecoveryObservationOutcome.INDETERMINATE
         with pytest.raises(ValueError, match="recovery_observation_not_validated"):
-            materialize_validated_alpaca_recovery(session, intent=notional_intent, observation=notional)
+            materialize_validated_alpaca_recovery(
+                session, intent=notional_intent, observation=notional
+            )
 
         complex_intent = _intent(order_class="bracket")
         complex_observation = _observation(intent=complex_intent)
-        assert complex_observation.outcome is AlpacaRecoveryObservationOutcome.INDETERMINATE
+        assert (
+            complex_observation.outcome
+            is AlpacaRecoveryObservationOutcome.INDETERMINATE
+        )
         with pytest.raises(ValueError, match="recovery_observation_not_validated"):
             materialize_validated_alpaca_recovery(
                 session,
@@ -240,7 +267,9 @@ def test_materializer_rejects_indeterminate_notional_and_complex_observations(en
         assert session.execute(select(Execution)).scalars().all() == []
 
 
-def test_materializer_rejects_legacy_execution_without_identity_audit(engine: Engine) -> None:
+def test_materializer_rejects_legacy_execution_without_identity_audit(
+    engine: Engine,
+) -> None:
     with Session(engine) as session:
         _seed_submission(session)
         session.add(
@@ -261,7 +290,9 @@ def test_materializer_rejects_legacy_execution_without_identity_audit(engine: En
             )
         )
         session.flush()
-        with pytest.raises(RecoveryMaterializationIdentityConflict, match="identity_missing"):
+        with pytest.raises(
+            RecoveryMaterializationIdentityConflict, match="identity_missing"
+        ):
             materialize_validated_alpaca_recovery(
                 session,
                 intent=_intent(),
@@ -270,14 +301,18 @@ def test_materializer_rejects_legacy_execution_without_identity_audit(engine: En
         session.rollback()
 
 
-def test_materializer_rejects_wrong_claim_identity_before_insert(engine: Engine) -> None:
+def test_materializer_rejects_wrong_claim_identity_before_insert(
+    engine: Engine,
+) -> None:
     with Session(engine) as session:
         _seed_submission(session)
         claim = session.get(TradeDecisionSubmissionClaim, _DECISION_ID)
         assert claim is not None
         claim.client_order_id = "different-client-order"
         session.flush()
-        with pytest.raises(RecoveryMaterializationIdentityConflict, match="claim_identity_mismatch"):
+        with pytest.raises(
+            RecoveryMaterializationIdentityConflict, match="claim_identity_mismatch"
+        ):
             materialize_validated_alpaca_recovery(
                 session,
                 intent=_intent(),
@@ -289,7 +324,9 @@ def test_materializer_rejects_wrong_claim_identity_before_insert(engine: Engine)
 def test_materializer_rejects_claim_before_broker_io(engine: Engine) -> None:
     with Session(engine) as session:
         _seed_submission(session, state="claimed")
-        with pytest.raises(RecoveryMaterializationIdentityConflict, match="claim_state_invalid"):
+        with pytest.raises(
+            RecoveryMaterializationIdentityConflict, match="claim_state_invalid"
+        ):
             materialize_validated_alpaca_recovery(
                 session,
                 intent=_intent(),
