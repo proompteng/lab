@@ -226,6 +226,77 @@ def _filled_execution_predicate() -> ColumnElement[bool]:
     )
 
 
+def _has_delta_provenance_predicate() -> ColumnElement[bool]:
+    normalized_basis = func.replace(
+        func.replace(
+            func.lower(func.trim(ExecutionOrderEvent.fill_quantity_basis)),
+            "-",
+            "_",
+        ),
+        " ",
+        "_",
+    )
+    return normalized_basis.in_(FILL_DELTA_PROVENANCE_ALIASES)
+
+
+def _resolved_trade_decision_predicate(
+    predicates: _CoveragePredicates,
+) -> ColumnElement[bool]:
+    event_decision_ref_present = ExecutionOrderEvent.trade_decision_id.is_not(None)
+    execution_identity_match = _event_execution_identity_match(
+        execution_id=Execution.id,
+        account_label=Execution.alpaca_account_label,
+        alpaca_order_id=Execution.alpaca_order_id,
+        client_order_id=Execution.client_order_id,
+    )
+    linked_execution_has_trade_decision = exists(
+        select(1).where(
+            execution_identity_match,
+            Execution.trade_decision_id.is_not(None),
+        )
+    )
+    linked_execution_decision_ref_present = and_(
+        predicates.event_has_unique_execution,
+        linked_execution_has_trade_decision,
+    )
+    event_decision_account_match = exists(
+        select(1).where(
+            TradeDecision.id == ExecutionOrderEvent.trade_decision_id,
+            TradeDecision.alpaca_account_label
+            == ExecutionOrderEvent.alpaca_account_label,
+        )
+    )
+    linked_execution_decision_account_match = exists(
+        select(1).where(
+            execution_identity_match,
+            Execution.trade_decision_id == TradeDecision.id,
+            TradeDecision.alpaca_account_label
+            == ExecutionOrderEvent.alpaca_account_label,
+        )
+    )
+    client_order_decision_match = exists(
+        select(1).where(
+            TradeDecision.alpaca_account_label
+            == ExecutionOrderEvent.alpaca_account_label,
+            TradeDecision.decision_hash
+            == func.nullif(ExecutionOrderEvent.client_order_id, ""),
+        )
+    )
+    return or_(
+        and_(event_decision_ref_present, event_decision_account_match),
+        and_(
+            ~event_decision_ref_present,
+            linked_execution_decision_ref_present,
+            linked_execution_decision_account_match,
+        ),
+        and_(
+            ~event_decision_ref_present,
+            ~linked_execution_decision_ref_present,
+            client_order_decision_match,
+        ),
+    )
+
+
 def _count(session: Session, statement: Executable) -> int:
     value = session.scalar(statement)
     return int(value or 0)
@@ -470,76 +541,9 @@ def _lineage_counts(
 ) -> _LineageCounts:
     fill_event_scope = predicates.fill_event_scope
     event_scope = predicates.event_scope
-    normalized_fill_quantity_basis = func.replace(
-        func.replace(
-            func.lower(func.trim(ExecutionOrderEvent.fill_quantity_basis)),
-            "-",
-            "_",
-        ),
-        " ",
-        "_",
-    )
-    has_delta_provenance = normalized_fill_quantity_basis.in_(
-        FILL_DELTA_PROVENANCE_ALIASES
-    )
+    has_delta_provenance = _has_delta_provenance_predicate()
     linked_fill_event_predicate = predicates.event_has_unique_execution
-    event_decision_ref_present = ExecutionOrderEvent.trade_decision_id.is_not(None)
-    linked_execution_has_trade_decision = exists(
-        select(1).where(
-            _event_execution_identity_match(
-                execution_id=Execution.id,
-                account_label=Execution.alpaca_account_label,
-                alpaca_order_id=Execution.alpaca_order_id,
-                client_order_id=Execution.client_order_id,
-            ),
-            Execution.trade_decision_id.is_not(None),
-        )
-    )
-    linked_execution_decision_ref_present = and_(
-        predicates.event_has_unique_execution,
-        linked_execution_has_trade_decision,
-    )
-    event_decision_account_match = exists(
-        select(1).where(
-            TradeDecision.id == ExecutionOrderEvent.trade_decision_id,
-            TradeDecision.alpaca_account_label
-            == ExecutionOrderEvent.alpaca_account_label,
-        )
-    )
-    linked_execution_decision_account_match = exists(
-        select(1).where(
-            _event_execution_identity_match(
-                execution_id=Execution.id,
-                account_label=Execution.alpaca_account_label,
-                alpaca_order_id=Execution.alpaca_order_id,
-                client_order_id=Execution.client_order_id,
-            ),
-            Execution.trade_decision_id == TradeDecision.id,
-            TradeDecision.alpaca_account_label
-            == ExecutionOrderEvent.alpaca_account_label,
-        )
-    )
-    client_order_decision_match = exists(
-        select(1).where(
-            TradeDecision.alpaca_account_label
-            == ExecutionOrderEvent.alpaca_account_label,
-            TradeDecision.decision_hash
-            == func.nullif(ExecutionOrderEvent.client_order_id, ""),
-        )
-    )
-    resolved_trade_decision = or_(
-        and_(event_decision_ref_present, event_decision_account_match),
-        and_(
-            ~event_decision_ref_present,
-            linked_execution_decision_ref_present,
-            linked_execution_decision_account_match,
-        ),
-        and_(
-            ~event_decision_ref_present,
-            ~linked_execution_decision_ref_present,
-            client_order_decision_match,
-        ),
-    )
+    resolved_trade_decision = _resolved_trade_decision_predicate(predicates)
     # Keep this SQL-only projection conservative: runtime can derive a delta
     # from a well-formed raw broker payload, but this diagnostic deliberately
     # requires the persisted structured proof before reporting promotion-ready.
