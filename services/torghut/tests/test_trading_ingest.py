@@ -119,6 +119,32 @@ def test_fetch_signals_closes_cursor_transaction_before_clickhouse_query() -> No
     assert ingestor.transaction_open_during_signal_query is False
 
 
+def test_empty_fetch_preserves_event_cursor_tiebreakers_at_stream_tail() -> None:
+    cursor_at = datetime(2026, 6, 17, 13, 51, tzinfo=timezone.utc)
+    ingestor = ClickHouseSignalIngestor(
+        schema="envelope",
+        table="torghut.ta_signals",
+        url="http://clickhouse.test",
+        fast_forward_stale_cursor=False,
+    )
+
+    batch = ingestor._empty_fetch_batch(
+        cursor_at=cursor_at,
+        cursor_seq=42,
+        cursor_symbol="MSFT",
+        latest_signal_at=cursor_at,
+        time_column="event_ts",
+        query_start=cursor_at,
+        query_end=cursor_at + timedelta(seconds=5),
+        poll_started_at=cursor_at + timedelta(seconds=5),
+    )
+
+    assert batch.no_signal_reason == "cursor_tail_stable"
+    assert batch.cursor_at == cursor_at
+    assert batch.cursor_symbol == "MSFT"
+    assert batch.cursor_seq == 42
+
+
 def test_scoped_timeout_returns_only_non_authority_last_good_fallback() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
