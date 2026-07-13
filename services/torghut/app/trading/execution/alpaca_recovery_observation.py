@@ -213,6 +213,13 @@ def _canonical_request_terms(
     request = _canonical_request(intent)
     if request is None:
         return AlpacaRecoveryObservationReason.REQUEST_INVALID
+    request_client_order_id = request.get("client_order_id")
+    if (
+        request_client_order_id is not None
+        and _bounded_text(request_client_order_id, maximum=128)
+        != intent.client_request_id
+    ):
+        return AlpacaRecoveryObservationReason.REQUEST_INVALID
     sizing = _request_sizing(request)
     if isinstance(sizing, AlpacaRecoveryObservationReason):
         return sizing

@@ -232,6 +232,24 @@ def test_unsupported_broker_position_intent_is_indeterminate(
     )
 
 
+@pytest.mark.parametrize("client_order_id", ["different-client", "", 7])
+def test_conflicting_canonical_client_order_id_is_indeterminate(
+    client_order_id: object,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_INVALID,
+        result=_observe(intent=_intent(client_order_id=client_order_id)),
+    )
+
+
+def test_matching_canonical_client_order_id_is_accepted() -> None:
+    result = _observe(intent=_intent(client_order_id=_CLIENT_ORDER_ID))
+
+    assert result.validated
+    assert result.order is not None
+    assert result.order.client_order_id == _CLIENT_ORDER_ID
+
+
 def test_pinned_position_intent_allow_list_has_no_unreviewed_drift() -> None:
     assert frozenset(position_intent.value for position_intent in PositionIntent) == (
         _PINNED_POSITION_INTENTS
