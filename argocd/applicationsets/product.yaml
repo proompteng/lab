@@ -274,6 +274,7 @@ spec:
                 path: argocd/sag
                 namespace: sag
                 renderWithLovely: false
+                # Keep disabled apps non-cascading unless destructive removal is explicitly staged and reviewed.
                 annotations:
                   argocd.argoproj.io/sync-wave: "6"
                 managedNamespaceMetadata:

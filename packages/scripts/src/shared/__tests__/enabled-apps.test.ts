@@ -42,6 +42,8 @@ describe('enabled app inventory', () => {
 
   it('records preservation intent when a product app is disabled', () => {
     expect(productApplicationSet.spec?.syncPolicy?.preserveResourcesOnDeletion).toBe(true)
+    const productElements = productApplicationSet.spec?.generators?.[0]?.matrix?.generators?.[1]?.list?.elements ?? []
+    expect(productElements.find((candidate) => candidate.name === 'sag')?.cascadeResourcesOnDeletion).not.toBe(true)
   })
 
   it('cascades resources for generated Applications that are disabled destructively', () => {
