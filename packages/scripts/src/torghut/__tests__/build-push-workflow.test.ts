@@ -76,6 +76,7 @@ describe('torghut build-push workflow', () => {
       'packages/scripts/src/shared/cli.ts',
       'packages/scripts/src/shared/git.ts',
       'nix/images/torghut.nix',
+      'flake.nix',
     ]
 
     for (const pattern of requiredPatterns) {
@@ -155,6 +156,7 @@ describe('torghut build-push workflow', () => {
       'nix/ci-run-timed.sh',
       'nix/oci-inspect-archive.sh',
       'nix/oci-push.sh',
+      'flake.nix',
       'flake.lock',
       'services/torghut/uv.lock',
     ]
@@ -202,6 +204,7 @@ describe('torghut build-push workflow', () => {
       expect(serviceWorkflow).toContain(`- '${servicePath}'`)
       expect(serviceWorkflow).toContain("- 'services/dorvud/platform/**'")
       expect(serviceWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
+      expect(serviceWorkflow.split("- 'flake.nix'")).toHaveLength(3)
       expect(serviceWorkflow).not.toContain("- 'services/dorvud/**'")
       expect(serviceWorkflow).not.toContain('workflow_run:')
       expect(serviceWorkflow).toContain("github.event_name == 'push'")
@@ -220,6 +223,7 @@ describe('torghut build-push workflow', () => {
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/hyperliquid-feed/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/platform/**'")
     expect(hyperliquidFeedWorkflow).toContain("- 'services/dorvud/settings.gradle.kts'")
+    expect(hyperliquidFeedWorkflow.split("- 'flake.nix'")).toHaveLength(3)
     expect(hyperliquidFeedWorkflow).not.toContain("- 'nix/oci-release-contract.sh'")
     expect(hyperliquidFeedWorkflow).not.toContain("- 'services/dorvud/**'")
     expect(hyperliquidFeedWorkflow).not.toContain('workflow_run:')
@@ -492,6 +496,7 @@ describe('torghut build-push workflow', () => {
       expect(staleDiffBlock).toContain('nix/ci-run-timed.sh')
       expect(staleDiffBlock).toContain('nix/oci-inspect-archive.sh')
       expect(staleDiffBlock).toContain('nix/oci-push.sh')
+      expect(staleDiffBlock).toContain('flake.nix')
       expect(staleDiffBlock).not.toContain('nix/oci-release-contract.sh')
       expect(staleDiffBlock).toContain('flake.lock')
       expect(staleDiffBlock).not.toContain('.github/workflows/')
@@ -515,6 +520,7 @@ describe('torghut build-push workflow', () => {
     expect(staleDiffBlock).toContain('nix/ci-run-timed.sh')
     expect(staleDiffBlock).toContain('nix/oci-inspect-archive.sh')
     expect(staleDiffBlock).toContain('nix/oci-push.sh')
+    expect(staleDiffBlock).toContain('flake.nix')
     expect(staleDiffBlock).not.toContain('nix/oci-release-contract.sh')
     expect(staleDiffBlock).toContain('flake.lock')
     expect(staleDiffBlock).not.toContain('.github/workflows/')

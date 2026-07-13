@@ -593,7 +593,6 @@ describe('native OCI build workflows', () => {
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
-      headlampWorkflow,
     ]) {
       expect(workflow).not.toContain("'package.json'")
     }
@@ -729,7 +728,6 @@ describe('native OCI build workflows', () => {
       jangarBuildWorkflow,
       symphonyBuildWorkflow,
       sagBuildWorkflow,
-      headlampWorkflow,
     ]) {
       expect(workflow).not.toContain("- 'flake.nix'")
       expect(workflow).not.toContain('- flake.nix')
@@ -756,6 +754,8 @@ describe('native OCI build workflows', () => {
     }
     expect(atticWorkflow).toContain("- 'flake.lock'")
     expect(atticWorkflow).toContain("- 'nix/images/attic.nix'")
+    expect(headlampWorkflow.split("- 'flake.nix'")).toHaveLength(3)
+    expect(headlampReleaseWorkflow).toContain('flake.nix')
   })
 
   it('allows Nix dockerTools archives without Docker repo tags', () => {
