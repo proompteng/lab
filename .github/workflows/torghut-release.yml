@@ -132,6 +132,7 @@ jobs:
                     nix/ci-run-timed.sh \
                     nix/oci-inspect-archive.sh \
                     nix/oci-push.sh \
+                    flake.nix \
                     flake.lock \
                     services/torghut/uv.lock
                 )"

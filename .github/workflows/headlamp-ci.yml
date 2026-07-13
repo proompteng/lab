@@ -7,6 +7,7 @@ on:
   pull_request:
     paths:
       - 'services/headlamp/**'
+      - 'flake.nix'
       - 'flake.lock'
       - 'nix/images/headlamp.nix'
       - 'nix/packages.nix'
@@ -20,6 +21,7 @@ on:
       - main
     paths:
       - 'services/headlamp/**'
+      - 'flake.nix'
       - 'flake.lock'
       - 'nix/images/headlamp.nix'
       - 'nix/packages.nix'
