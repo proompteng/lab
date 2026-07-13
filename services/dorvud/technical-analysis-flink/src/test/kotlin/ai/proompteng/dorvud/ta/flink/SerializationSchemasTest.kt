@@ -144,7 +144,39 @@ class SerializationSchemasTest {
   fun `signal history limits respect the source cadence`() {
     assertEquals(360, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofSeconds(1)))
     assertEquals(65, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofMinutes(1)))
-    assertSerializable(TaSignalsFunction(FlinkTaConfig.fromEnv(), Duration.ofMinutes(1)))
+    assertSerializable(
+      TaSignalsFunction(
+        FlinkTaConfig.fromEnv(),
+        Duration.ofMinutes(1),
+        SignalBarTimestampAnchor.START,
+      ),
+    )
+  }
+
+  @Test
+  fun `signal fallback windows honor source timestamp anchors`() {
+    val timestamp = Instant.parse("2026-02-22T02:50:00Z")
+    val minuteWindow =
+      fallbackSignalWindow(
+        timestamp,
+        Duration.ofMinutes(1),
+        SignalBarTimestampAnchor.START,
+      )
+    assertEquals("2026-02-22T02:50:00Z", minuteWindow.start)
+    assertEquals("2026-02-22T02:51:00Z", minuteWindow.end)
+    assertEquals(
+      Instant.parse("2026-02-22T02:51:00Z"),
+      signalBarEndTime(timestamp, Duration.ofMinutes(1), SignalBarTimestampAnchor.START),
+    )
+
+    val microbarWindow =
+      fallbackSignalWindow(
+        timestamp,
+        Duration.ofSeconds(1),
+        SignalBarTimestampAnchor.END,
+      )
+    assertEquals("2026-02-22T02:49:59Z", microbarWindow.start)
+    assertEquals("2026-02-22T02:50:00Z", microbarWindow.end)
   }
 
   @Test

@@ -149,7 +149,13 @@ fun main() {
     microBars
       .keyBy { it.symbol }
       .connect(quotesStream.keyBy { it.symbol })
-      .process(TaSignalsFunction(config, Duration.ofSeconds(1)))
+      .process(
+        TaSignalsFunction(
+          config,
+          Duration.ofSeconds(1),
+          SignalBarTimestampAnchor.END,
+        ),
+      )
       .name("ta-signals")
       .uid("ta-signals")
 
@@ -159,7 +165,13 @@ fun main() {
         bars1mStream
           .keyBy { it.symbol }
           .connect(quotesStream.keyBy { it.symbol })
-          .process(TaSignalsFunction(config, Duration.ofMinutes(1)))
+          .process(
+            TaSignalsFunction(
+              config,
+              Duration.ofMinutes(1),
+              SignalBarTimestampAnchor.START,
+            ),
+          )
           .name("ta-signals-1m")
           .uid("ta-signals-1m")
       microbarSignals.union(minuteSignals)
@@ -1468,6 +1480,7 @@ private data class BucketState(
 internal class TaSignalsFunction(
   private val config: FlinkTaConfig,
   private val barDuration: Duration,
+  private val timestampAnchor: SignalBarTimestampAnchor,
 ) : KeyedCoProcessFunction<String, Envelope<MicroBarPayload>, Envelope<QuotePayload>, Envelope<TaSignalsPayload>>() {
   private lateinit var barsState: ListState<MicroBarPayload>
   private lateinit var quoteState: ValueState<TimedQuoteState>
@@ -1516,9 +1529,9 @@ internal class TaSignalsFunction(
     bars: List<MicroBarPayload>,
     session: SessionAccumulatorState,
   ): Envelope<TaSignalsPayload> {
-    val series = BaseBarSeries("ta-$barDuration-${envelope.symbol}")
+    val series = BaseBarSeries("ta-$barDuration-$timestampAnchor-${envelope.symbol}")
     bars.forEach { bar ->
-      val barTime = ZonedDateTime.ofInstant(bar.t, ZoneOffset.UTC)
+      val barTime = ZonedDateTime.ofInstant(signalBarEndTime(bar.t, barDuration, timestampAnchor), ZoneOffset.UTC)
       val baseBar = BaseBar(barDuration, barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
       if (series.barCount == 0) {
         series.addBar(baseBar)
@@ -1599,17 +1612,7 @@ internal class TaSignalsFunction(
           },
       )
 
-    val window =
-      envelope.window
-        ?: Window(
-          size = barDuration.toString(),
-          step = barDuration.toString(),
-          start =
-            envelope.payload.t
-              .minus(barDuration)
-              .toString(),
-          end = envelope.payload.t.toString(),
-        )
+    val window = envelope.window ?: fallbackSignalWindow(envelope.payload.t, barDuration, timestampAnchor)
     return envelope
       .withPayload(payload, window = window, seqOverride = envelope.seq)
       .copy(source = taSignalOutputSource(envelope.source))
@@ -1649,6 +1652,40 @@ internal class TaSignalsFunction(
     val variance = returns.map { (it - mean) * (it - mean) }.average()
     return kotlin.math.sqrt(variance)
   }
+}
+
+internal enum class SignalBarTimestampAnchor {
+  START,
+  END,
+}
+
+internal fun signalBarEndTime(
+  timestamp: Instant,
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): Instant =
+  when (timestampAnchor) {
+    SignalBarTimestampAnchor.START -> timestamp.plus(barDuration)
+    SignalBarTimestampAnchor.END -> timestamp
+  }
+
+internal fun fallbackSignalWindow(
+  timestamp: Instant,
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): Window {
+  val start =
+    when (timestampAnchor) {
+      SignalBarTimestampAnchor.START -> timestamp
+      SignalBarTimestampAnchor.END -> timestamp.minus(barDuration)
+    }
+  val end = signalBarEndTime(timestamp, barDuration, timestampAnchor)
+  return Window(
+    size = barDuration.toString(),
+    step = barDuration.toString(),
+    start = start.toString(),
+    end = end.toString(),
+  )
 }
 
 internal fun signalHistoryLimit(
