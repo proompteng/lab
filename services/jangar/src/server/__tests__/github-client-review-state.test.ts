@@ -62,4 +62,38 @@ describe('summarizeLatestReviewStates', () => {
       ]),
     ).toEqual({ status: 'changes_requested', requestedChanges: true })
   })
+
+  it('keeps an earlier change request blocking across a later comment-only review', () => {
+    expect(
+      summarizeLatestReviewStates([
+        {
+          author: 'reviewer',
+          state: 'CHANGES_REQUESTED',
+          submittedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          author: 'reviewer',
+          state: 'COMMENTED',
+          submittedAt: '2026-01-02T00:00:00Z',
+        },
+      ]),
+    ).toEqual({ status: 'changes_requested', requestedChanges: true })
+  })
+
+  it('lets a dismissed review clear an earlier change request', () => {
+    expect(
+      summarizeLatestReviewStates([
+        {
+          author: 'reviewer',
+          state: 'CHANGES_REQUESTED',
+          submittedAt: '2026-01-01T00:00:00Z',
+        },
+        {
+          author: 'reviewer',
+          state: 'DISMISSED',
+          submittedAt: '2026-01-02T00:00:00Z',
+        },
+      ]),
+    ).toEqual({ status: 'pending', requestedChanges: false })
+  })
 })

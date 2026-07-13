@@ -68,9 +68,14 @@ export const summarizeLatestReviewStates = (
   reviews: readonly NormalizedReviewState[],
 ): Pick<ReviewSummary, 'status' | 'requestedChanges'> => {
   const latestByAuthor = new Map<string, { review: NormalizedReviewState; index: number }>()
+  let hasCommentedReview = false
 
   reviews.forEach((review, index) => {
-    if (review.state === 'PENDING') return
+    if (review.state === 'COMMENTED') {
+      hasCommentedReview = true
+      return
+    }
+    if (!['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'].includes(review.state)) return
     const key = review.author ?? `anonymous:${index}`
     const current = latestByAuthor.get(key)
     if (!current) {
@@ -93,7 +98,7 @@ export const summarizeLatestReviewStates = (
   const requestedChanges = latestStates.includes('CHANGES_REQUESTED')
   if (requestedChanges) return { status: 'changes_requested', requestedChanges: true }
   if (latestStates.includes('APPROVED')) return { status: 'approved', requestedChanges: false }
-  if (latestStates.includes('COMMENTED')) return { status: 'commented', requestedChanges: false }
+  if (hasCommentedReview) return { status: 'commented', requestedChanges: false }
   return { status: 'pending', requestedChanges: false }
 }
 
