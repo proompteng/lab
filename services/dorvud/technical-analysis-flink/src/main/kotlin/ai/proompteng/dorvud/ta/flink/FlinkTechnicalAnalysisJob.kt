@@ -458,6 +458,7 @@ private fun applyS3SystemProperties(config: FlinkTaConfig) {
 private fun <T> watermarkStrategy(config: FlinkTaConfig): WatermarkStrategy<Envelope<T>> =
   WatermarkStrategy
     .forBoundedOutOfOrderness<Envelope<T>>(Duration.ofMillis(config.maxOutOfOrderMs))
+    .withIdleness(Duration.ofMillis(config.watermarkIdleTimeoutMs))
     .withTimestampAssigner(SerializableTimestampAssigner<Envelope<T>> { event, _ -> event.eventTs.toEpochMilli() })
 
 private fun <T> emptyWatermarks(): WatermarkStrategy<T> = WatermarkStrategy.noWatermarks()

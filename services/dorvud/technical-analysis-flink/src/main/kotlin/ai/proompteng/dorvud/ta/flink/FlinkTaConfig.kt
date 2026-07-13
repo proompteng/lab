@@ -28,6 +28,7 @@ data class FlinkTaConfig(
   val checkpointTimeoutMs: Long,
   val minPauseBetweenCheckpointsMs: Long,
   val maxOutOfOrderMs: Long,
+  val watermarkIdleTimeoutMs: Long,
   val quoteStaleAfterMs: Long,
   val sourceLagDegradedAfterMs: Long,
   val marketHolidays: Set<LocalDate>,
@@ -136,6 +137,10 @@ data class FlinkTaConfig(
         checkpointTimeoutMs = envLong("TA_CHECKPOINT_TIMEOUT_MS", 120_000),
         minPauseBetweenCheckpointsMs = envLong("TA_CHECKPOINT_PAUSE_MS", 5_000),
         maxOutOfOrderMs = envLong("TA_MAX_OUT_OF_ORDER_MS", 2_000),
+        watermarkIdleTimeoutMs =
+          normalizeWatermarkIdleTimeoutMs(
+            envLong("TA_WATERMARK_IDLE_TIMEOUT_MS", DEFAULT_WATERMARK_IDLE_TIMEOUT_MS),
+          ),
         quoteStaleAfterMs = quoteStaleAfterMs,
         sourceLagDegradedAfterMs = sourceLagDegradedAfterMs,
         marketHolidays =
@@ -181,6 +186,10 @@ data class FlinkTaConfig(
     }
   }
 }
+
+internal const val DEFAULT_WATERMARK_IDLE_TIMEOUT_MS: Long = 30_000
+
+internal fun normalizeWatermarkIdleTimeoutMs(value: Long): Long = value.coerceAtLeast(1_000)
 
 private val DEFAULT_US_EQUITY_MARKET_HOLIDAYS: Set<LocalDate> =
   setOf(
