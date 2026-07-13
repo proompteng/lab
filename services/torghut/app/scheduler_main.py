@@ -17,7 +17,6 @@ from .api.application import build_registered_app
 from .bootstrap import assert_dspy_cutover_migration_guard, sqlalchemy_exception_handler
 from .config import settings
 from .db import SessionLocal, ensure_schema
-from .observability import shutdown_posthog_telemetry
 from .trading.autonomy import assert_runtime_gate_policy_contract
 from .trading.scheduler import TradingScheduler
 from .whitepapers import WhitepaperKafkaWorker, whitepaper_workflow_enabled
@@ -255,7 +254,6 @@ async def scheduler_lifespan(app: FastAPI):
         logger.info("Torghut scheduler shutdown initiated")
         await whitepaper_worker.stop()
         await scheduler.stop()
-        shutdown_posthog_telemetry()
         logger.info("Torghut scheduler shutdown complete")
 
 

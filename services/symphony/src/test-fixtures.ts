@@ -2,17 +2,7 @@ import type { RuntimeSnapshot, SymphonyConfig } from './types'
 
 type SymphonyConfigOverrides = Omit<
   Partial<SymphonyConfig>,
-  | 'tracker'
-  | 'hooks'
-  | 'worker'
-  | 'agent'
-  | 'codex'
-  | 'server'
-  | 'posthog'
-  | 'instance'
-  | 'target'
-  | 'release'
-  | 'health'
+  'tracker' | 'hooks' | 'worker' | 'agent' | 'codex' | 'server' | 'instance' | 'target' | 'release' | 'health'
 > & {
   tracker?: Partial<SymphonyConfig['tracker']>
   hooks?: Partial<SymphonyConfig['hooks']>
@@ -20,7 +10,6 @@ type SymphonyConfigOverrides = Omit<
   agent?: Partial<SymphonyConfig['agent']>
   codex?: Partial<SymphonyConfig['codex']>
   server?: Partial<SymphonyConfig['server']>
-  posthog?: Partial<SymphonyConfig['posthog']>
   instance?: Partial<SymphonyConfig['instance']>
   target?: Partial<SymphonyConfig['target']>
   release?: Partial<SymphonyConfig['release']>
@@ -69,16 +58,6 @@ export const makeTestConfig = (overrides: SymphonyConfigOverrides = {}): Symphon
   server: {
     host: overrides.server?.host ?? '127.0.0.1',
     port: overrides.server?.port ?? null,
-  },
-  posthog: {
-    enabled: overrides.posthog?.enabled ?? false,
-    host: overrides.posthog?.host ?? 'http://posthog-capture.posthog.svc.cluster.local:3000',
-    apiKey: overrides.posthog?.apiKey ?? null,
-    projectId: overrides.posthog?.projectId ?? null,
-    distinctId: overrides.posthog?.distinctId ?? 'symphony:symphony',
-    requestTimeoutMs: overrides.posthog?.requestTimeoutMs ?? 1_000,
-    flushAt: overrides.posthog?.flushAt ?? 1,
-    flushIntervalMs: overrides.posthog?.flushIntervalMs ?? 1_000,
   },
   instance: {
     name: overrides.instance?.name ?? 'symphony',
@@ -231,13 +210,6 @@ export const makeTestSnapshot = (): RuntimeSnapshot => ({
     lastTransitionAt: '2026-03-14T11:58:00.000Z',
     lastAttemptAt: '2026-03-14T11:59:59.000Z',
     lastSuccessAt: '2026-03-14T11:59:59.000Z',
-    lastError: null,
-  },
-  telemetry: {
-    enabled: true,
-    host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
-    projectId: '1',
-    distinctId: 'symphony:symphony',
     lastError: null,
   },
   recentEvents: [

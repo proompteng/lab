@@ -219,5 +219,5 @@ Engineering
 Deployer
 
 - Deploy in canary scope first and verify gate behavior in `agents` and `torghut` namespaces.
-- Confirm event volume reduction and segment recovery times in PostHog / cluster logs.
+- Confirm event volume reduction and segment recovery times in cluster metrics and logs.
 - Escalate only on `escalate` gate state transitions.

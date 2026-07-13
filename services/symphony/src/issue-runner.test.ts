@@ -7,7 +7,6 @@ import { CodexSessionService, type CodexSessionOptions } from './codex-app-sessi
 import { DeliveryService, createEmptyDeliveryTransaction } from './delivery-service'
 import { makeIssueRunnerLayer, IssueRunnerService } from './issue-runner'
 import { createLogger } from './logger'
-import { PostHogTelemetryService } from './posthog'
 import { makeTestConfig } from './test-fixtures'
 import type { Issue } from './types'
 import { TrackerService } from './linear-client'
@@ -130,20 +129,6 @@ describe('issue runner runtime tools', () => {
               }),
           }),
         ),
-        Layer.provide(
-          Layer.succeed(PostHogTelemetryService, {
-            captureTrace: () => Effect.void,
-            captureSpan: () => Effect.void,
-            captureGeneration: () => Effect.void,
-            summary: Effect.succeed({
-              enabled: false,
-              host: null,
-              projectId: null,
-              distinctId: 'symphony:test',
-              lastError: null,
-            }),
-          }),
-        ),
       ),
     )
 
@@ -154,19 +139,10 @@ describe('issue runner runtime tools', () => {
       await runtime.runPromise(
         Effect.gen(function* () {
           const runner = yield* IssueRunnerService
-          const workspacePath = yield* runner.runAttempt(
-            issue,
-            null,
-            {
-              onEvent: () => Effect.void,
-              onWorkspacePath: () => Effect.void,
-            },
-            {
-              sessionId: 'session-1',
-              traceId: 'trace-1',
-              rootSpanId: 'root-1',
-            },
-          )
+          const workspacePath = yield* runner.runAttempt(issue, null, {
+            onEvent: () => Effect.void,
+            onWorkspacePath: () => Effect.void,
+          })
 
           expect(workspacePath).toBe('/tmp/ABC-1')
           expect(seenTools[0]).toContain('linear_graphql')

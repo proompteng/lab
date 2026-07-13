@@ -12,7 +12,6 @@ from typing import Any, Optional, cast
 
 from ...config import TradingAccountLane, settings
 from ...db import engine as database_engine
-from ...observability import capture_posthog_event
 from ..execution import OrderExecutor
 from ..llm.dspy_programs.runtime import (
     DSPyReviewRuntime,
@@ -98,17 +97,16 @@ class TradingScheduler(
         severity: str,
         properties: Mapping[str, Any],
     ) -> None:
-        payload = {str(key): value for key, value in properties.items()}
-        emitted, drop_reason = capture_posthog_event(
+        logger.log(
+            logging.ERROR if severity == "error" else logging.INFO,
+            "Torghut autonomy event event=%s properties=%s",
             event_name,
-            severity=severity,
-            distinct_id=f"torghut-autonomy-{settings.trading_account_label}",
-            properties=payload,
+            {str(key): value for key, value in properties.items()},
         )
         self.state.metrics.record_domain_telemetry(
             event_name=event_name,
-            emitted=emitted,
-            drop_reason=drop_reason,
+            emitted=True,
+            drop_reason=None,
         )
 
     def _emit_runtime_loop_failure(
@@ -118,21 +116,17 @@ class TradingScheduler(
         error: Exception,
         account_label: str | None = None,
     ) -> None:
-        emitted, drop_reason = capture_posthog_event(
-            "torghut.runtime.loop_failed",
-            severity="error",
-            distinct_id=f"torghut-runtime-{settings.trading_account_label}",
-            properties={
-                "loop": loop_name,
-                "account_label": account_label or settings.trading_account_label,
-                "error_class": type(error).__name__,
-                "error": str(error),
-            },
+        logger.error(
+            "Torghut runtime loop failed loop=%s account_label=%s error_class=%s error=%s",
+            loop_name,
+            account_label or settings.trading_account_label,
+            type(error).__name__,
+            error,
         )
         self.state.metrics.record_domain_telemetry(
             event_name="torghut.runtime.loop_failed",
-            emitted=emitted,
-            drop_reason=drop_reason,
+            emitted=True,
+            drop_reason=None,
         )
 
     def llm_status(self) -> dict[str, object]:

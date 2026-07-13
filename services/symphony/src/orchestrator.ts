@@ -22,7 +22,7 @@ import {
   type WorkspaceError,
   type WorkflowError,
 } from './errors'
-import { IssueRunnerService, type IssueRunTelemetryContext } from './issue-runner'
+import { IssueRunnerService } from './issue-runner'
 import {
   finishSymphonySpan,
   recordCandidateFetch,
@@ -38,7 +38,6 @@ import {
 } from './instrumentation'
 import { LeaderElectionService } from './leader-election'
 import { TrackerService } from './linear-client'
-import { PostHogTelemetryService } from './posthog'
 import { emptyPersistedSchedulerState, StateStoreService } from './state-store'
 import { TargetHealthService } from './target-health'
 import type {
@@ -69,11 +68,6 @@ import type { Logger } from './logger'
 
 type WorkerStopReason = 'running' | 'failed' | 'stalled' | 'terminal' | 'inactive' | 'leadership_lost'
 
-type TurnTelemetryBuffer = {
-  startedAt: string
-  prompt: string | null
-}
-
 type RunningRuntimeEntry = {
   issue: Issue
   issueId: string
@@ -88,9 +82,6 @@ type RunningRuntimeEntry = {
   workerFiber: Fiber.RuntimeFiber<void, never> | null
   stopReason: WorkerStopReason
   terminalCleanupRequested: boolean
-  telemetry: IssueRunTelemetryContext & {
-    turns: Map<string, TurnTelemetryBuffer>
-  }
 }
 
 type RetryRuntimeEntry = {
@@ -135,24 +126,6 @@ const DEFAULT_CANDIDATE_FETCH_RETRY_ATTEMPTS = 2
 const DEFAULT_CANDIDATE_FETCH_RETRY_INITIAL_DELAY_MS = 250
 const DEFAULT_CANDIDATE_FETCH_RETRY_MAX_DELAY_MS = 2_000
 const TERMINAL_DELIVERY_STAGES = new Set(['completed', 'rolled_back', 'failed'])
-
-const buildTelemetrySessionId = (projectSlug: string | null, issueId: string) =>
-  `symphony:${projectSlug ?? 'unknown'}:${issueId}`
-
-const buildTelemetryTraceId = (issueId: string, startedAtMs: number, attempt: number | null) =>
-  `symphony:${issueId}:${startedAtMs}:${attempt ?? 0}`
-
-const buildRootSpanId = (traceId: string) => `${traceId}:root`
-
-const extractErrorDetails = (value: unknown): Record<string, unknown> => {
-  if (value instanceof Error) {
-    return { message: value.message, name: value.name }
-  }
-  if (value && typeof value === 'object') {
-    return value as Record<string, unknown>
-  }
-  return { message: typeof value === 'string' ? value : JSON.stringify(value) }
-}
 
 const EMPTY_SESSION = (): LiveSession => ({
   sessionId: null,
@@ -555,7 +528,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
       const workspace = yield* WorkspaceService
       const issueRunner = yield* IssueRunnerService
       const delivery = yield* DeliveryService
-      const posthog = yield* PostHogTelemetryService
       const leaderElection = yield* LeaderElectionService
       const stateStore = yield* StateStoreService
       const targetHealth = yield* TargetHealthService
@@ -655,118 +627,55 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         reason: 'manual_work_required' | 'promotion_pr_open' | 'target_not_ready',
         detail: string,
       ) =>
-        Effect.gen(function* () {
-          const startedAtMs = Date.now()
-          const sessionId = buildTelemetrySessionId(config.tracker.projectSlug, issue.id)
-          const traceId = buildTelemetryTraceId(issue.id, startedAtMs, 0)
-          const rootSpanId = buildRootSpanId(traceId)
-          yield* posthog.captureTrace({
-            traceId,
-            sessionId,
-            spanName: 'symphony_issue_handoff',
-            inputState: {
-              issue_id: issue.id,
-              issue_identifier: issue.identifier,
-              title: issue.title,
-              state: issue.state,
-              detail,
-              reason,
-            },
-            properties: {
-              issue_id: issue.id,
-              issue_identifier: issue.identifier,
-            },
-          })
-          return yield* tracker
-            .handoffIssue(issue.id, buildHandoffMessage(issue, config, detail), config.tracker.handoffState)
-            .pipe(
-              Effect.tap(() => Effect.sync(() => recordIssueHandoff(reason))),
-              Effect.tap(() =>
-                posthog.captureSpan({
-                  traceId,
-                  sessionId,
-                  spanId: rootSpanId,
-                  spanName: 'handoff',
-                  latencySeconds: Math.max(0, Date.now() - startedAtMs) / 1_000,
-                  outputState: {
-                    handoff_state: config.tracker.handoffState,
-                    detail,
-                    reason,
-                  },
-                  properties: {
-                    issue_id: issue.id,
-                    issue_identifier: issue.identifier,
-                  },
-                }),
-              ),
-              Effect.tap(() =>
+        tracker.handoffIssue(issue.id, buildHandoffMessage(issue, config, detail), config.tracker.handoffState).pipe(
+          Effect.tap(() => Effect.sync(() => recordIssueHandoff(reason))),
+          Effect.tap(() =>
+            SynchronizedRef.modifyEffect(stateRef, (state) => {
+              addRecentEvent(state, {
+                at: new Date().toISOString(),
+                event: 'issue_handed_off',
+                message: `issue ${issue.identifier} moved to ${config.tracker.handoffState}: ${detail}`,
+                issueId: issue.id,
+                issueIdentifier: issue.identifier,
+                level: 'warn',
+                reason,
+              })
+              const record = ensureIssueRecord(state, issue.id, issue.identifier)
+              record.delivery = {
+                ...(record.delivery ?? createEmptyDeliveryTransaction()),
+                stage: 'handoff_required',
+                updatedAt: new Date().toISOString(),
+                lastError: detail,
+              }
+              return Effect.succeed([undefined, state] as const)
+            }),
+          ),
+          Effect.catchAll((error) =>
+            Effect.sync(() => {
+              orchestratorLogger.log('warn', 'issue_handoff_failed', {
+                issue_id: issue.id,
+                issue_identifier: issue.identifier,
+                handoff_state: config.tracker.handoffState,
+                reason,
+                ...toLogError(error),
+              })
+            }).pipe(
+              Effect.zipRight(
                 SynchronizedRef.modifyEffect(stateRef, (state) => {
-                  addRecentEvent(state, {
+                  addRecentError(state, {
                     at: new Date().toISOString(),
-                    event: 'issue_handed_off',
-                    message: `issue ${issue.identifier} moved to ${config.tracker.handoffState}: ${detail}`,
+                    code: error.code,
+                    message: error.message,
                     issueId: issue.id,
                     issueIdentifier: issue.identifier,
-                    level: 'warn',
-                    reason,
+                    context: 'issue_handoff',
                   })
-                  const record = ensureIssueRecord(state, issue.id, issue.identifier)
-                  record.delivery = {
-                    ...(record.delivery ?? createEmptyDeliveryTransaction()),
-                    stage: 'handoff_required',
-                    updatedAt: new Date().toISOString(),
-                    lastError: detail,
-                  }
                   return Effect.succeed([undefined, state] as const)
                 }),
               ),
-              Effect.catchAll((error) =>
-                posthog
-                  .captureSpan({
-                    traceId,
-                    sessionId,
-                    spanId: rootSpanId,
-                    spanName: 'handoff',
-                    latencySeconds: Math.max(0, Date.now() - startedAtMs) / 1_000,
-                    error: extractErrorDetails(error),
-                    properties: {
-                      issue_id: issue.id,
-                      issue_identifier: issue.identifier,
-                      handoff_state: config.tracker.handoffState,
-                      reason,
-                    },
-                  })
-                  .pipe(
-                    Effect.zipRight(
-                      Effect.sync(() => {
-                        orchestratorLogger.log('warn', 'issue_handoff_failed', {
-                          issue_id: issue.id,
-                          issue_identifier: issue.identifier,
-                          handoff_state: config.tracker.handoffState,
-                          reason,
-                          ...toLogError(error),
-                        })
-                      }),
-                    ),
-                  )
-                  .pipe(
-                    Effect.zipRight(
-                      SynchronizedRef.modifyEffect(stateRef, (state) => {
-                        addRecentError(state, {
-                          at: new Date().toISOString(),
-                          code: error.code,
-                          message: error.message,
-                          issueId: issue.id,
-                          issueIdentifier: issue.identifier,
-                          context: 'issue_handoff',
-                        })
-                        return Effect.succeed([undefined, state] as const)
-                      }),
-                    ),
-                  ),
-              ),
-            )
-        })
+            ),
+          ),
+        )
 
       const scheduleRetry = (
         issueId: string,
@@ -774,7 +683,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         attempt: number,
         delayType: 'continuation' | 'failure',
         error: string | null,
-        telemetryContext?: IssueRunTelemetryContext | null,
       ) =>
         Effect.gen(function* () {
           const config = yield* workflow.config
@@ -837,28 +745,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             return Effect.succeed([undefined, state] as const)
           })
 
-          if (telemetryContext) {
-            yield* posthog.captureSpan({
-              traceId: telemetryContext.traceId,
-              sessionId: telemetryContext.sessionId,
-              spanId: `${telemetryContext.traceId}:retry:${attempt}:${Date.now()}`,
-              parentId: telemetryContext.rootSpanId,
-              spanName: 'retry_wait',
-              outputState: {
-                due_at: new Date(dueAtMs).toISOString(),
-                delay_type: delayType,
-                error,
-              },
-              latencySeconds: delayMs / 1_000,
-              error,
-              properties: {
-                issue_id: issueId,
-                issue_identifier: identifier,
-                retry_attempt: attempt,
-              },
-            })
-          }
-
           yield* persistStateBestEffort
         })
 
@@ -894,10 +780,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
         SynchronizedRef.modifyEffect(stateRef, (state) => {
           const running = state.running.get(issueId)
           if (!running) {
-            return Effect.succeed([
-              { shouldPersist: false, telemetryEffects: [] as Array<Effect.Effect<void, never>> },
-              state,
-            ] as const)
+            return Effect.succeed([false, state] as const)
           }
 
           running.session.codexAppServerPid = event.codexAppServerPid
@@ -921,7 +804,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           syncRecordFromRunning(record, running)
 
           let shouldPersist = false
-          const telemetryEffects: Array<Effect.Effect<void, never>> = []
           if (event.message && event.message.trim().length > 0) {
             const recentEvent: RecentEvent = {
               at: event.timestamp,
@@ -934,38 +816,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             pushBounded(running.recentEvents, recentEvent, MAX_ISSUE_EVENTS)
             addRecentEvent(state, recentEvent)
             shouldPersist = true
-          }
-
-          if (event.event === 'turn_started' && event.turnId) {
-            running.telemetry.turns.set(event.turnId, {
-              startedAt: event.timestamp,
-              prompt: event.prompt ?? null,
-            })
-          }
-
-          if (event.toolCall) {
-            const toolSpanId = `${running.telemetry.traceId}:tool:${event.toolCall.callId ?? Date.parse(event.timestamp)}`
-            telemetryEffects.push(
-              posthog.captureSpan({
-                traceId: running.telemetry.traceId,
-                sessionId: running.telemetry.sessionId,
-                spanId: toolSpanId,
-                parentId: running.telemetry.rootSpanId,
-                spanName: event.toolCall.name,
-                inputState: { args: event.toolCall.args },
-                outputState: { result: event.toolCall.result, status: event.toolCall.status },
-                latencySeconds: event.toolCall.latencySeconds,
-                error: event.toolCall.status === 'failed' ? extractErrorDetails(event.toolCall.result) : null,
-                properties: {
-                  issue_id: running.issueId,
-                  issue_identifier: running.identifier,
-                  call_id: event.toolCall.callId,
-                  retry_attempt: running.retryAttempt ?? 0,
-                  span_kind: 'dynamic_tool_call',
-                  tool_name: event.toolCall.name,
-                },
-              }),
-            )
           }
 
           if (
@@ -996,91 +846,14 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             shouldPersist = true
           }
 
-          if (
-            event.event === 'turn_completed' ||
-            event.event === 'turn_failed' ||
-            event.event === 'turn_cancelled' ||
-            event.event === 'turn_ended_with_error'
-          ) {
-            const turnId = event.turnId ?? running.session.turnId ?? `${running.telemetry.traceId}:unknown-turn`
-            const turnBuffer = running.telemetry.turns.get(turnId) ?? null
-            if (turnBuffer) {
-              running.telemetry.turns.delete(turnId)
-            }
-            const derivedLatencySeconds =
-              event.latencySeconds ??
-              (turnBuffer ? Math.max(0, Date.parse(event.timestamp) - Date.parse(turnBuffer.startedAt)) / 1_000 : null)
-            const outputChoices =
-              event.outputChoices && event.outputChoices.length > 0
-                ? event.outputChoices
-                : [
-                    {
-                      role: 'assistant',
-                      content: event.message?.trim() || `Turn ${turnId} ended with ${event.event}`,
-                    },
-                  ]
-
-            telemetryEffects.push(
-              posthog.captureGeneration({
-                traceId: running.telemetry.traceId,
-                sessionId: running.telemetry.sessionId,
-                spanId: `${running.telemetry.traceId}:generation:${turnId}`,
-                spanName: 'codex_turn',
-                parentId: running.telemetry.rootSpanId,
-                model: event.model ?? 'unknown',
-                provider: event.provider ?? 'codex',
-                input: turnBuffer?.prompt ? [{ role: 'user', content: turnBuffer.prompt }] : [],
-                outputChoices,
-                inputTokens: event.usage?.inputTokens ?? null,
-                outputTokens: event.usage?.outputTokens ?? null,
-                latencySeconds: derivedLatencySeconds,
-                timeToFirstTokenSeconds: event.timeToFirstTokenSeconds ?? null,
-                stream: event.stream ?? null,
-                error:
-                  event.event === 'turn_completed'
-                    ? null
-                    : extractErrorDetails(event.rawParams ?? event.message ?? event.event),
-                properties: {
-                  issue_id: running.issueId,
-                  issue_identifier: running.identifier,
-                  retry_attempt: running.retryAttempt ?? 0,
-                  turn_id: turnId,
-                  thread_id: event.threadId ?? running.session.threadId,
-                  codex_session_id: running.session.sessionId,
-                  output_capture_mode:
-                    event.outputChoices && event.outputChoices.length > 0 ? 'captured' : 'summary_fallback',
-                  turn_status:
-                    event.event === 'turn_completed'
-                      ? 'completed'
-                      : event.event === 'turn_cancelled'
-                        ? 'cancelled'
-                        : 'failed',
-                },
-              }),
-            )
-          }
-
-          return Effect.succeed([{ shouldPersist, telemetryEffects }, state] as const)
-        }).pipe(
-          Effect.flatMap(({ shouldPersist, telemetryEffects }) =>
-            Effect.forEach(telemetryEffects, (effect) => effect, { concurrency: 1, discard: true }).pipe(
-              Effect.zipRight(shouldPersist ? persistStateBestEffort : Effect.void),
-            ),
-          ),
-        )
+          return Effect.succeed([shouldPersist, state] as const)
+        }).pipe(Effect.flatMap((shouldPersist) => (shouldPersist ? persistStateBestEffort : Effect.void)))
 
       const dispatchIssue = (issue: Issue, attempt: number | null) =>
         Effect.gen(function* () {
           const startedAtMs = Date.now()
           const startedAt = new Date(startedAtMs).toISOString()
           recordIssueDispatch(normalizeState(issue.state))
-          const config = yield* workflow.config
-          const traceId = buildTelemetryTraceId(issue.id, startedAtMs, attempt)
-          const telemetryContext: IssueRunTelemetryContext = {
-            sessionId: buildTelemetrySessionId(config.tracker.projectSlug, issue.id),
-            traceId,
-            rootSpanId: buildRootSpanId(traceId),
-          }
 
           const existingRetry = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             state.claimed.add(issue.id)
@@ -1103,10 +876,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               workerFiber: null,
               stopReason: 'running',
               terminalCleanupRequested: false,
-              telemetry: {
-                ...telemetryContext,
-                turns: new Map(),
-              },
             }
             state.running.set(issue.id, running)
 
@@ -1137,46 +906,13 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             yield* Fiber.interruptFork(existingRetry.fiber)
           }
 
-          yield* posthog.captureTrace({
-            traceId: telemetryContext.traceId,
-            sessionId: telemetryContext.sessionId,
-            spanName: 'symphony_issue_run',
-            inputState: {
-              issue_id: issue.id,
-              issue_identifier: issue.identifier,
-              title: issue.title,
-              description: issue.description,
-              priority: issue.priority,
-              state: issue.state,
-              branch_name: issue.branchName,
-              labels: issue.labels,
-              blocked_by: issue.blockedBy,
-              attempt: attempt ?? 0,
-              workflow_path: config.workflowPath,
-              target_repo: config.target.repo,
-              target_application: config.target.argocdApplication,
-              target_namespace: config.target.namespace,
-            },
-            properties: {
-              issue_id: issue.id,
-              issue_identifier: issue.identifier,
-              retry_attempt: attempt ?? 0,
-              service: 'symphony',
-            },
-          })
-
           const workerEffect = issueRunner
-            .runAttempt(
-              issue,
-              attempt,
-              {
-                onEvent: (event) =>
-                  Queue.offer(queue, { _tag: 'CodexEventReceived', issueId: issue.id, event }).pipe(Effect.asVoid),
-                onWorkspacePath: (workspacePath) =>
-                  Queue.offer(queue, { _tag: 'WorkspaceReady', issueId: issue.id, workspacePath }).pipe(Effect.asVoid),
-              },
-              telemetryContext,
-            )
+            .runAttempt(issue, attempt, {
+              onEvent: (event) =>
+                Queue.offer(queue, { _tag: 'CodexEventReceived', issueId: issue.id, event }).pipe(Effect.asVoid),
+              onWorkspacePath: (workspacePath) =>
+                Queue.offer(queue, { _tag: 'WorkspaceReady', issueId: issue.id, workspacePath }).pipe(Effect.asVoid),
+            })
             .pipe(
               Effect.exit,
               Effect.flatMap((exit) => Queue.offer(queue, { _tag: 'WorkerExited', issueId: issue.id, exit })),
@@ -1847,7 +1583,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               : 'failed'
           const durationMs = Math.max(0, completedAtMs - running.startedAtMs)
           recordWorkerOutcome(reason, durationMs)
-          const runtimeSeconds = durationMs / 1_000
 
           const record = yield* SynchronizedRef.modifyEffect(stateRef, (state) => {
             const existing = ensureIssueRecord(state, running.issueId, running.identifier)
@@ -1856,28 +1591,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             existing.lastError = errorMessage
             syncRecordFromIssue(existing, running.issue)
             return Effect.succeed([existing, state] as const)
-          })
-
-          yield* posthog.captureSpan({
-            traceId: running.telemetry.traceId,
-            sessionId: running.telemetry.sessionId,
-            spanId: running.telemetry.rootSpanId,
-            spanName: 'symphony_issue_run',
-            latencySeconds: runtimeSeconds,
-            outputState: {
-              reason,
-              issue_state: running.issue.state,
-              workspace_path: running.workspacePath || null,
-              turn_count: running.session.turnCount,
-              last_event: running.session.lastCodexEvent,
-              total_tokens: running.session.codexTotalTokens,
-            },
-            error: reason === 'normal' || reason === 'terminal' ? null : { message: errorMessage, reason },
-            properties: {
-              issue_id: running.issueId,
-              issue_identifier: running.identifier,
-              retry_attempt: running.retryAttempt ?? 0,
-            },
           })
 
           if (reason === 'terminal') {
@@ -1906,51 +1619,15 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               return Effect.succeed([undefined, state] as const)
             })
             if (running.terminalCleanupRequested) {
-              const cleanupStartedAtMs = Date.now()
               yield* workspace.removeWorkspace(running.identifier).pipe(
-                Effect.tap(() =>
-                  posthog.captureSpan({
-                    traceId: running.telemetry.traceId,
-                    sessionId: running.telemetry.sessionId,
-                    spanId: `${running.telemetry.traceId}:terminal-cleanup:${cleanupStartedAtMs}`,
-                    parentId: running.telemetry.rootSpanId,
-                    spanName: 'terminal_cleanup',
-                    latencySeconds: Math.max(0, Date.now() - cleanupStartedAtMs) / 1_000,
-                    outputState: {
-                      workspace_identifier: running.identifier,
-                    },
-                    properties: {
-                      issue_id: running.issueId,
-                      issue_identifier: running.identifier,
-                    },
-                  }),
-                ),
                 Effect.catchAll((error) =>
-                  posthog
-                    .captureSpan({
-                      traceId: running.telemetry.traceId,
-                      sessionId: running.telemetry.sessionId,
-                      spanId: `${running.telemetry.traceId}:terminal-cleanup:${cleanupStartedAtMs}`,
-                      parentId: running.telemetry.rootSpanId,
-                      spanName: 'terminal_cleanup',
-                      latencySeconds: Math.max(0, Date.now() - cleanupStartedAtMs) / 1_000,
-                      error: extractErrorDetails(error),
-                      properties: {
-                        issue_id: running.issueId,
-                        issue_identifier: running.identifier,
-                      },
+                  Effect.sync(() => {
+                    orchestratorLogger.log('warn', 'terminal_workspace_cleanup_failed', {
+                      issue_id: issueId,
+                      issue_identifier: running.identifier,
+                      ...toLogError(error),
                     })
-                    .pipe(
-                      Effect.zipRight(
-                        Effect.sync(() => {
-                          orchestratorLogger.log('warn', 'terminal_workspace_cleanup_failed', {
-                            issue_id: issueId,
-                            issue_identifier: running.identifier,
-                            ...toLogError(error),
-                          })
-                        }),
-                      ),
-                    ),
+                  }),
                 ),
               )
             }
@@ -1994,7 +1671,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
               })
               return Effect.succeed([undefined, state] as const)
             })
-            yield* scheduleRetry(issueId, running.identifier, 1, 'continuation', null, running.telemetry)
+            yield* scheduleRetry(issueId, running.identifier, 1, 'continuation', null)
             return
           }
 
@@ -2017,14 +1694,7 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             })
             return Effect.succeed([undefined, state] as const)
           })
-          yield* scheduleRetry(
-            issueId,
-            running.identifier,
-            (running.retryAttempt ?? 0) + 1,
-            'failure',
-            errorMessage,
-            running.telemetry,
-          )
+          yield* scheduleRetry(issueId, running.identifier, (running.retryAttempt ?? 0) + 1, 'failure', errorMessage)
         })
 
       const getCommandTimeoutMs = (command: OrchestratorCommand): number =>
@@ -2053,7 +1723,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           case 'WorkspaceReady':
             return SynchronizedRef.modifyEffect(stateRef, (state) => {
               const running = state.running.get(command.issueId)
-              let telemetryEffect: Effect.Effect<void, never> = Effect.void
               if (running) {
                 running.workspacePath = command.workspacePath
                 const record = ensureIssueRecord(state, running.issueId, running.identifier)
@@ -2075,26 +1744,9 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   issueIdentifier: running.identifier,
                   level: 'info',
                 })
-                telemetryEffect = posthog.captureSpan({
-                  traceId: running.telemetry.traceId,
-                  sessionId: running.telemetry.sessionId,
-                  spanId: `${running.telemetry.traceId}:workspace-ready:${Date.now()}`,
-                  parentId: running.telemetry.rootSpanId,
-                  spanName: 'workspace_ready',
-                  outputState: {
-                    workspace_path: command.workspacePath,
-                  },
-                  properties: {
-                    issue_id: running.issueId,
-                    issue_identifier: running.identifier,
-                  },
-                })
               }
-              return Effect.succeed([telemetryEffect, state] as const)
-            }).pipe(
-              Effect.flatMap((telemetryEffect) => telemetryEffect),
-              Effect.zipRight(persistStateBestEffort),
-            )
+              return Effect.succeed([undefined, state] as const)
+            }).pipe(Effect.zipRight(persistStateBestEffort))
           case 'CodexEventReceived':
             return handleCodexEvent(command.issueId, command.event)
           case 'WorkerExited':
@@ -2250,7 +1902,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
           const state = yield* SynchronizedRef.get(stateRef)
           const leader = yield* leaderElection.status
           const workflowResult = yield* Effect.either(workflow.current)
-          const telemetrySummary = yield* posthog.summary
           const generatedAt = new Date().toISOString()
           const nowMs = Date.now()
           const running = Array.from(state.running.values())
@@ -2305,16 +1956,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
                   server: {
                     host: '127.0.0.1',
                     port: null,
-                  },
-                  posthog: {
-                    enabled: false,
-                    host: 'http://posthog-capture.posthog.svc.cluster.local:3000',
-                    apiKey: null,
-                    projectId: null,
-                    distinctId: 'symphony:symphony',
-                    requestTimeoutMs: 1_000,
-                    flushAt: 1,
-                    flushIntervalMs: 1_000,
                   },
                   instance: {
                     name: 'symphony',
@@ -2392,7 +2033,6 @@ export const makeOrchestratorLayer = (logger: Logger) =>
             ),
             targetHealth: preDispatchHealth,
             leader,
-            telemetry: telemetrySummary,
             recentEvents: [...state.recentEvents],
             recentErrors: [...state.recentErrors],
             capacity: buildCapacitySnapshot(state, config),

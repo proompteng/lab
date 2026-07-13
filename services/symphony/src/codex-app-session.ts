@@ -40,15 +40,6 @@ type ActiveTurn = {
   deferred: Deferred.Deferred<TurnOutcome, CodexProtocolError>
 }
 
-type ToolCallTelemetry = {
-  name: string
-  callId: string | null
-  args: unknown
-  result: unknown
-  status: 'completed' | 'failed'
-  latencySeconds: number
-}
-
 type PendingTurnResolution =
   | {
       kind: 'outcome'
@@ -58,13 +49,6 @@ type PendingTurnResolution =
       message?: string | null
       usage?: TokenUsageTotals | null
       rateLimits?: RateLimitSnapshot | null
-      outputChoices?: Array<Record<string, unknown>> | null
-      provider?: string | null
-      model?: string | null
-      stream?: boolean | null
-      timeToFirstTokenSeconds?: number | null
-      latencySeconds?: number | null
-      rawParams?: unknown
     }
   | {
       kind: 'error'
@@ -74,13 +58,6 @@ type PendingTurnResolution =
       turnId: string
       usage?: TokenUsageTotals | null
       rateLimits?: RateLimitSnapshot | null
-      outputChoices?: Array<Record<string, unknown>> | null
-      provider?: string | null
-      model?: string | null
-      stream?: boolean | null
-      timeToFirstTokenSeconds?: number | null
-      latencySeconds?: number | null
-      rawParams?: unknown
     }
 
 export type CodexEvent = {
@@ -93,15 +70,6 @@ export type CodexEvent = {
   message?: string | null
   usage?: TokenUsageTotals | null
   rateLimits?: RateLimitSnapshot | null
-  prompt?: string | null
-  outputChoices?: Array<Record<string, unknown>> | null
-  provider?: string | null
-  model?: string | null
-  stream?: boolean | null
-  timeToFirstTokenSeconds?: number | null
-  latencySeconds?: number | null
-  rawParams?: unknown
-  toolCall?: ToolCallTelemetry | null
 }
 
 export type TurnOutcome = {
@@ -256,95 +224,6 @@ const extractNotificationMessage = (value: unknown): string | null => {
   return null
 }
 
-const extractObjectProperty = (value: unknown, keys: string[]): unknown => {
-  if (!value || typeof value !== 'object') return null
-  const raw = value as Record<string, unknown>
-  for (const key of keys) {
-    if (key in raw) return raw[key]
-  }
-  return null
-}
-
-const extractStringProperty = (value: unknown, keys: string[]): string | null => {
-  const candidate = extractObjectProperty(value, keys)
-  return typeof candidate === 'string' && candidate.trim().length > 0 ? candidate.trim() : null
-}
-
-const extractNumberProperty = (value: unknown, keys: string[]): number | null => {
-  const candidate = extractObjectProperty(value, keys)
-  return typeof candidate === 'number' && Number.isFinite(candidate) ? candidate : null
-}
-
-const extractBooleanProperty = (value: unknown, keys: string[]): boolean | null => {
-  const candidate = extractObjectProperty(value, keys)
-  return typeof candidate === 'boolean' ? candidate : null
-}
-
-const flattenContentText = (value: unknown): string | null => {
-  if (typeof value === 'string' && value.trim().length > 0) {
-    return value
-  }
-  if (Array.isArray(value)) {
-    const parts = value
-      .flatMap((item) => {
-        if (typeof item === 'string') return [item]
-        if (!item || typeof item !== 'object') return []
-        const raw = item as Record<string, unknown>
-        if (typeof raw.text === 'string') return [raw.text]
-        if (typeof raw.content === 'string') return [raw.content]
-        return []
-      })
-      .map((part) => part.trim())
-      .filter((part) => part.length > 0)
-    return parts.length > 0 ? parts.join('\n') : null
-  }
-  if (value && typeof value === 'object') {
-    const raw = value as Record<string, unknown>
-    if (typeof raw.text === 'string' && raw.text.trim().length > 0) return raw.text
-    if (typeof raw.content === 'string' && raw.content.trim().length > 0) return raw.content
-  }
-  return null
-}
-
-const toOutputChoice = (value: unknown): Record<string, unknown> | null => {
-  if (typeof value === 'string' && value.trim().length > 0) {
-    return { role: 'assistant', content: value.trim() }
-  }
-  if (!value || typeof value !== 'object') return null
-
-  const raw = value as Record<string, unknown>
-  const role = typeof raw.role === 'string' && raw.role.trim().length > 0 ? raw.role.trim() : 'assistant'
-  const content =
-    flattenContentText(raw.content) ??
-    flattenContentText(raw.text) ??
-    flattenContentText(raw.output) ??
-    flattenContentText(raw.message)
-
-  if (!content) return null
-  return { role, content }
-}
-
-const extractOutputChoices = (value: unknown): Array<Record<string, unknown>> | null => {
-  const candidate =
-    extractObjectProperty(value, ['outputChoices', 'output_choices']) ??
-    extractObjectProperty(value, ['choices']) ??
-    extractObjectProperty(value, ['messages']) ??
-    extractObjectProperty(value, ['output'])
-
-  if (Array.isArray(candidate)) {
-    const choices = candidate
-      .map((item) => toOutputChoice(item))
-      .filter((item): item is Record<string, unknown> => item !== null)
-    return choices.length > 0 ? choices : null
-  }
-
-  const fallback =
-    toOutputChoice(candidate) ??
-    toOutputChoice(extractObjectProperty(value, ['message'])) ??
-    toOutputChoice(extractObjectProperty(value, ['response']))
-  return fallback ? [fallback] : null
-}
-
 const writeMessage = (
   child: ChildProcessWithoutNullStreams,
   payload: Record<string, unknown>,
@@ -497,7 +376,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 typeof raw.callId === 'string' ? raw.callId : typeof raw.id === 'string' ? raw.id : null
               const toolName = typeof raw.name === 'string' ? raw.name : 'unknown'
               const args = 'input' in raw ? raw.input : raw.arguments
-              const startedAtMs = Date.now()
               const result = yield* withSymphonyEffectSpan(
                 'symphony.codex.tool_call',
                 {
@@ -508,27 +386,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 { parentSpan: options.parentSpan },
               )
               yield* writeMessage(child, { id, result: { ...result, callId: toolCallId } })
-              yield* options.onEvent({
-                event: 'tool_call_completed',
-                timestamp: new Date().toISOString(),
-                codexAppServerPid: String(child.pid ?? ''),
-                threadId: extractThreadId(params),
-                turnId: extractTurnId(params),
-                sessionId:
-                  extractThreadId(params) && extractTurnId(params)
-                    ? `${extractThreadId(params)}-${extractTurnId(params)}`
-                    : null,
-                message: toolName,
-                rawParams: params,
-                toolCall: {
-                  name: toolName,
-                  callId: toolCallId,
-                  args,
-                  result,
-                  status: result.success ? 'completed' : 'failed',
-                  latencySeconds: Math.max(0, Date.now() - startedAtMs) / 1_000,
-                },
-              })
               return
             }
 
@@ -628,13 +485,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
                 {
                   usage: pendingResolution.usage,
                   rateLimits: pendingResolution.rateLimits,
-                  outputChoices: pendingResolution.outputChoices,
-                  provider: pendingResolution.provider,
-                  model: pendingResolution.model,
-                  stream: pendingResolution.stream,
-                  timeToFirstTokenSeconds: pendingResolution.timeToFirstTokenSeconds,
-                  latencySeconds: pendingResolution.latencySeconds,
-                  rawParams: pendingResolution.rawParams,
                 },
               )
               return
@@ -643,13 +493,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
             yield* failActiveTurn(pendingResolution.error, pendingResolution.eventName, {
               usage: pendingResolution.usage,
               rateLimits: pendingResolution.rateLimits,
-              outputChoices: pendingResolution.outputChoices,
-              provider: pendingResolution.provider,
-              model: pendingResolution.model,
-              stream: pendingResolution.stream,
-              timeToFirstTokenSeconds: pendingResolution.timeToFirstTokenSeconds,
-              latencySeconds: pendingResolution.latencySeconds,
-              rawParams: pendingResolution.rawParams,
             })
           })
 
@@ -661,22 +504,9 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               params && typeof params === 'object' && 'rateLimits' in params
                 ? ((params as { rateLimits?: RateLimitSnapshot | null }).rateLimits ?? null)
                 : null
-            const outputChoices = extractOutputChoices(params)
-            const provider = extractStringProperty(params, ['provider', 'modelProvider', 'model_provider'])
-            const model = extractStringProperty(params, ['model', 'modelName', 'model_name'])
-            const stream = extractBooleanProperty(params, ['stream', 'isStream'])
-            const timeToFirstTokenSeconds = extractNumberProperty(params, ['timeToFirstToken', 'time_to_first_token'])
-            const latencySeconds = extractNumberProperty(params, ['latency', 'latencySeconds', 'durationSeconds'])
             const eventDetails = {
               usage,
               rateLimits,
-              outputChoices,
-              provider,
-              model,
-              stream,
-              timeToFirstTokenSeconds,
-              latencySeconds,
-              rawParams: params,
             } satisfies Partial<CodexEvent>
 
             if (method === 'error') {
@@ -982,7 +812,6 @@ export const makeCodexSessionLayer = (logger: Logger) =>
               turnId,
               sessionId: `${threadId}-${turnId}`,
               message: options.title,
-              prompt,
             })
             yield* applyPendingTurnResolution(turnId)
             return {

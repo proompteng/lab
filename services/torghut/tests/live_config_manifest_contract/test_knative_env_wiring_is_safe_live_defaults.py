@@ -58,7 +58,6 @@ class TestKnativeEnvWiringIsSafeLiveDefaults(_TestLiveConfigManifestContractBase
         self.assertFalse(settings.llm_enabled)
         self.assertEqual(env.get("LLM_DSPY_RUNTIME_MODE"), "disabled")
         self.assertEqual(settings.llm_dspy_runtime_mode, "disabled")
-        self.assertFalse(settings.posthog_enabled)
         self.assertTrue(settings.trading_fractional_equities_enabled)
         self.assertFalse(settings.trading_universe_require_non_empty_jangar)
         self.assertFalse(settings.trading_universe_static_fallback_enabled)

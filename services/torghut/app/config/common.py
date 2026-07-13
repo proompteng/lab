@@ -60,7 +60,6 @@ FEATURE_FLAG_BOOLEAN_KEY_BY_FIELD: dict[str, str] = {
     "llm_shadow_mode": "torghut_llm_shadow_mode",
     "llm_committee_enabled": "torghut_llm_committee_enabled",
     "llm_adjustment_approved": "torghut_llm_adjustment_approved",
-    "posthog_enabled": "torghut_posthog_enabled",
 }
 
 LLM_COMMITTEE_ROLES = {

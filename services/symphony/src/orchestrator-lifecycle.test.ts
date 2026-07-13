@@ -10,7 +10,6 @@ import { createLogger } from './logger'
 import { LeaderElectionService } from './leader-election'
 import { TrackerService } from './linear-client'
 import { makeOrchestratorLayer, OrchestratorService } from './orchestrator'
-import { PostHogTelemetryService } from './posthog'
 import { emptyPersistedSchedulerState, StateStoreService } from './state-store'
 import { TargetHealthService } from './target-health'
 import { makeTestConfig } from './test-fixtures'
@@ -54,19 +53,6 @@ const targetHealthSummary: TargetHealthSummary = {
   checks: [],
   lastError: null,
 }
-
-const posthogLayer = Layer.succeed(PostHogTelemetryService, {
-  captureTrace: () => Effect.void,
-  captureSpan: () => Effect.void,
-  captureGeneration: () => Effect.void,
-  summary: Effect.succeed({
-    enabled: false,
-    host: null,
-    projectId: null,
-    distinctId: 'symphony:test',
-    lastError: null,
-  }),
-})
 
 const deliveryLayer = Layer.succeed(DeliveryService, {
   createPullRequest: () => Effect.die('not used'),
@@ -147,11 +133,10 @@ describe('orchestrator lifecycle', () => {
         ),
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
-            runAttempt: (_issue, _attempt, callbacks, _telemetryContext) =>
+            runAttempt: (_issue, _attempt, callbacks) =>
               callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
           }),
         ),
-        Layer.provide(posthogLayer),
         Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
@@ -260,11 +245,10 @@ describe('orchestrator lifecycle', () => {
         ),
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
-            runAttempt: (_issue, _attempt, callbacks, _telemetryContext) =>
+            runAttempt: (_issue, _attempt, callbacks) =>
               callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
           }),
         ),
-        Layer.provide(posthogLayer),
         Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
@@ -350,13 +334,12 @@ describe('orchestrator lifecycle', () => {
         ),
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
-            runAttempt: (_issue, _attempt, callbacks, _telemetryContext) =>
+            runAttempt: (_issue, _attempt, callbacks) =>
               callbacks
                 .onWorkspacePath('/workspace/symphony/ABC-1')
                 .pipe(Effect.zipRight(Effect.succeed('/workspace/symphony/ABC-1'))),
           }),
         ),
-        Layer.provide(posthogLayer),
         Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
@@ -442,10 +425,9 @@ describe('orchestrator lifecycle', () => {
         ),
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
-            runAttempt: (_issue, _attempt, _callbacks, _telemetryContext) => Effect.die('not used'),
+            runAttempt: (_issue, _attempt, _callbacks) => Effect.die('not used'),
           }),
         ),
-        Layer.provide(posthogLayer),
         Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {
@@ -543,10 +525,9 @@ describe('orchestrator lifecycle', () => {
         ),
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
-            runAttempt: (_issue, _attempt, _callbacks, _telemetryContext) => Effect.die('not used'),
+            runAttempt: (_issue, _attempt, _callbacks) => Effect.die('not used'),
           }),
         ),
-        Layer.provide(posthogLayer),
         Layer.provide(
           Layer.succeed(DeliveryService, {
             createPullRequest: () => Effect.die('not used'),
@@ -738,11 +719,10 @@ describe('orchestrator lifecycle', () => {
         ),
         Layer.provide(
           Layer.succeed(IssueRunnerService, {
-            runAttempt: (_issue, _attempt, callbacks, _telemetryContext) =>
+            runAttempt: (_issue, _attempt, callbacks) =>
               callbacks.onWorkspacePath('/workspace/symphony/ABC-1').pipe(Effect.zipRight(Effect.never)),
           }),
         ),
-        Layer.provide(posthogLayer),
         Layer.provide(deliveryLayer),
         Layer.provide(
           Layer.succeed(LeaderElectionService, {

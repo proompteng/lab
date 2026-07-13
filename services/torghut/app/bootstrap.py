@@ -16,7 +16,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from .api.build_metadata import BUILD_COMMIT, BUILD_VERSION
 from .config import settings
 from .db import SessionLocal, ensure_schema
-from .observability import capture_posthog_event, shutdown_posthog_telemetry
 from .trading.autonomy import assert_runtime_gate_policy_contract
 from .trading.scheduler import TradingScheduler
 from .trading.scheduler.leadership import (
@@ -245,7 +244,6 @@ async def lifespan(app: FastAPI):
         if whitepaper_worker is not None:
             await whitepaper_worker.stop()
         await scheduler.stop()
-        shutdown_posthog_telemetry()
         logger.info("Torghut shutdown complete")
 
 
@@ -262,15 +260,6 @@ def sqlalchemy_exception_handler(
         detail = "database schema mismatch; migrations pending"
     else:
         detail = "database unavailable"
-    capture_posthog_event(
-        "torghut.runtime.db_exception",
-        severity="error",
-        properties={
-            "loop": "http",
-            "error_class": type(exc).__name__,
-            "detail": detail,
-        },
-    )
     logger.error("Unhandled database exception: %s", exc)
     return JSONResponse(status_code=503, content={"detail": detail})
 
