@@ -7,6 +7,8 @@ metadata:
     argocd.argoproj.io/sync-options: Replace=true
     strimzi.io/node-pools: enabled
     strimzi.io/kraft: enabled
+    # Freeze the legacy cluster while the local-controller replacement is built and validated.
+    strimzi.io/pause-reconciliation: "true"
 spec:
   kafka:
     version: 4.2.0
