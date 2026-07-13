@@ -13,3 +13,10 @@ test('Temporal static library workflow preserves artifact permissions', () => {
   expect(workflow).toContain('actions/upload-artifact@v5')
   expect(workflow).toContain('actions/download-artifact@v6')
 })
+
+test('Temporal package release skips label updates when no release PR is found', () => {
+  const workflow = readFileSync(join(repoRoot, '.github/workflows/temporal-bun-sdk.yml'), 'utf8')
+
+  expect(workflow).toContain("--jq '.[0].number // empty'")
+  expect(workflow).toContain('if [[ -n "$pr_number" ]]; then')
+})
