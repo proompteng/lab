@@ -196,6 +196,19 @@ def test_exchange_validates_the_generated_order_side_before_submission() -> None
     exchange.validate_order_intent_crossability(_intent(side="sell", limit_price="98"))
 
 
+def test_exchange_validates_sdk_rounded_limit_price_before_submission() -> None:
+    exchange = _Exchange(
+        HyperliquidExecutionConfig.from_env({}),
+        sdk=_Sdk(),
+        info=_Info({"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "100.004"}]]}}),
+    )
+
+    with pytest.raises(ValueError, match="order_not_crossable:buy"):
+        exchange.validate_order_intent_crossability(
+            _intent(side="buy", limit_price="100.004")
+        )
+
+
 def test_exchange_fails_closed_on_malformed_pre_submit_price() -> None:
     exchange = _Exchange(
         HyperliquidExecutionConfig.from_env({}),

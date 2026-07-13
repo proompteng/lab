@@ -192,15 +192,22 @@ class HyperliquidSdkExecutionExchange:
             best_bid = _best_level_price(book, 0)
             best_ask = _best_level_price(book, 1)
             book_empty = best_bid is None or best_ask is None
+            rounded_limit_price = sdk_slippage_limit_price(
+                info,
+                sdk_name,
+                intent.side == "buy",
+                intent.limit_price,
+                Decimal("0"),
+            )
             buy_not_crossable = (
                 not book_empty
                 and intent.side == "buy"
-                and intent.limit_price < cast(Decimal, best_ask)
+                and rounded_limit_price < cast(Decimal, best_ask)
             )
             sell_not_crossable = (
                 not book_empty
                 and intent.side == "sell"
-                and intent.limit_price > cast(Decimal, best_bid)
+                and rounded_limit_price > cast(Decimal, best_bid)
             )
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             raise ValueError(f"order_book_unavailable:{type(exc).__name__}") from exc
