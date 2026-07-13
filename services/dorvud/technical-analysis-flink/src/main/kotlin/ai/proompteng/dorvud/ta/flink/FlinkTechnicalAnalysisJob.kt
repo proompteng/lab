@@ -145,21 +145,52 @@ fun main() {
       .name("ta-microbars")
       .uid("ta-microbars")
 
-  val microBarsForSignals = if (config.bars1mTopic != null) microBars.union(bars1mStream) else microBars
-
-  val signals =
-    microBarsForSignals
+  val microbarSignals =
+    microBars
       .keyBy { it.symbol }
       .connect(quotesStream.keyBy { it.symbol })
-      .process(TaSignalsFunction(config))
-      .name("ta-signals")
+      .process(
+        TaSignalsFunction(
+          config,
+          Duration.ofSeconds(1),
+          SignalBarTimestampAnchor.END,
+          config.resetLegacyOneSecondSignalState,
+        ),
+      ).name("ta-signals")
       .uid("ta-signals")
+
+  val signals =
+    if (config.bars1mTopic != null) {
+      val minuteSignals =
+        bars1mStream
+          .keyBy { it.symbol }
+          .connect(quotesStream.keyBy { it.symbol })
+          .process(
+            TaSignalsFunction(
+              config,
+              Duration.ofMinutes(1),
+              SignalBarTimestampAnchor.START,
+              resetLegacyOneSecondState = false,
+            ),
+          ).name("ta-signals-1m")
+          .uid("ta-signals-1m")
+      microbarSignals.union(minuteSignals)
+    } else {
+      microbarSignals
+    }
+
+  val barsForStatus =
+    if (config.bars1mTopic != null) {
+      microBars.union(bars1mStream)
+    } else {
+      microBars
+    }
 
   if (config.statusTopic != null) {
     val statusIntervalMs = config.checkpointIntervalMs.coerceAtLeast(1_000)
     val statusInputType = TypeInformation.of(object : TypeHint<StatusHeartbeatInput>() {})
     val microbarStatusInputs =
-      microBarsForSignals
+      barsForStatus
         .map { envelope: Envelope<MicroBarPayload> -> StatusHeartbeatInput.MicroBar(envelope) as StatusHeartbeatInput }
         .returns(statusInputType)
     val signalStatusInputs =
@@ -1446,18 +1477,38 @@ private data class BucketState(
   }
 }
 
-private class TaSignalsFunction(
+internal class TaSignalsFunction(
   private val config: FlinkTaConfig,
+  private val barDuration: Duration,
+  private val timestampAnchor: SignalBarTimestampAnchor,
+  private val resetLegacyOneSecondState: Boolean,
 ) : KeyedCoProcessFunction<String, Envelope<MicroBarPayload>, Envelope<QuotePayload>, Envelope<TaSignalsPayload>>() {
   private lateinit var barsState: ListState<MicroBarPayload>
   private lateinit var quoteState: ValueState<TimedQuoteState>
   private lateinit var sessionState: ValueState<SessionAccumulatorState>
 
   override fun open(openContext: OpenContext) {
+    val stateNames =
+      signalStateDescriptorNames(
+        barDuration = barDuration,
+        timestampAnchor = timestampAnchor,
+        resetLegacyOneSecondState = resetLegacyOneSecondState,
+      )
     barsState =
-      runtimeContext.getListState(ListStateDescriptor("bars", TypeInformation.of(MicroBarPayload::class.java)))
-    quoteState = runtimeContext.getState(ValueStateDescriptor("quote-timed-v1", TimedQuoteState::class.java))
-    sessionState = runtimeContext.getState(ValueStateDescriptor("session", SessionAccumulatorState::class.java))
+      runtimeContext.getListState(
+        ListStateDescriptor(
+          stateNames.bars,
+          TypeInformation.of(MicroBarPayload::class.java),
+        ),
+      )
+    quoteState =
+      runtimeContext.getState(
+        ValueStateDescriptor(stateNames.quote, TimedQuoteState::class.java),
+      )
+    sessionState =
+      runtimeContext.getState(
+        ValueStateDescriptor(stateNames.session, SessionAccumulatorState::class.java),
+      )
   }
 
   override fun processElement1(
@@ -1467,7 +1518,7 @@ private class TaSignalsFunction(
   ) {
     val bars = barsState.get().toMutableList()
     bars.add(value.payload)
-    val historyLimit = maxOf(config.realizedVolWindow + 5, (config.vwapWindow.seconds + 60).toInt())
+    val historyLimit = signalHistoryLimit(config.vwapWindow, config.realizedVolWindow, barDuration)
     while (bars.size > historyLimit) {
       bars.removeAt(0)
     }
@@ -1496,10 +1547,10 @@ private class TaSignalsFunction(
     bars: List<MicroBarPayload>,
     session: SessionAccumulatorState,
   ): Envelope<TaSignalsPayload> {
-    val series = BaseBarSeries("ta-${envelope.symbol}")
+    val series = BaseBarSeries("ta-$barDuration-$timestampAnchor-${envelope.symbol}")
     bars.forEach { bar ->
-      val barTime = ZonedDateTime.ofInstant(bar.t, ZoneOffset.UTC)
-      val baseBar = BaseBar(Duration.ofSeconds(1), barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
+      val barTime = ZonedDateTime.ofInstant(signalBarEndTime(bar.t, barDuration, timestampAnchor), ZoneOffset.UTC)
+      val baseBar = BaseBar(barDuration, barTime, bar.o, bar.h, bar.l, bar.c, bar.v)
       if (series.barCount == 0) {
         series.addBar(baseBar)
       } else {
@@ -1542,10 +1593,24 @@ private class TaSignalsFunction(
       }
 
     val vwapSession = session.value()
-    val vwap5m = rollingVwap(bars, config.vwapWindow)
-    val realizedVol = realizedVol(series, config.realizedVolWindow)
+    val vwap5m =
+      rollingSignalVwap(
+        bars = bars,
+        window = config.vwapWindow,
+        barDuration = barDuration,
+        timestampAnchor = timestampAnchor,
+      )
+    val realizedVol =
+      realizedVol(
+        series,
+        realizedVolWindowBars(
+          windowSeconds = config.realizedVolWindow,
+          barDuration = barDuration,
+        ),
+      )
 
-    val quote = freshQuotePayloadForBar(quoteState.value(), envelope.payload.t, config.quoteStaleAfterMs)
+    val barEndTime = signalBarEndTime(envelope.payload.t, barDuration, timestampAnchor)
+    val quote = freshQuotePayloadForBar(quoteState.value(), barEndTime, config.quoteStaleAfterMs)
     val imbalance =
       quote?.let {
         val spread = it.ap - it.bp
@@ -1579,35 +1644,10 @@ private class TaSignalsFunction(
           },
       )
 
-    val window =
-      envelope.window
-        ?: Window(
-          size = "PT1S",
-          step = "PT1S",
-          start =
-            envelope.payload.t
-              .minusSeconds(1)
-              .toString(),
-          end = envelope.payload.t.toString(),
-        )
+    val window = envelope.window ?: fallbackSignalWindow(envelope.payload.t, barDuration, timestampAnchor)
     return envelope
       .withPayload(payload, window = window, seqOverride = envelope.seq)
       .copy(source = taSignalOutputSource(envelope.source))
-  }
-
-  private fun rollingVwap(
-    bars: List<MicroBarPayload>,
-    window: Duration,
-  ): Double? {
-    val cutoff = bars.lastOrNull()?.t?.minus(window) ?: return null
-    var pv = 0.0
-    var vol = 0.0
-    bars.filter { it.t.isAfter(cutoff) || it.t == cutoff }.forEach { bar ->
-      pv += bar.c * bar.v
-      vol += bar.v
-    }
-    if (vol == 0.0) return null
-    return pv / vol
   }
 
   private fun realizedVol(
@@ -1629,6 +1669,130 @@ private class TaSignalsFunction(
     val variance = returns.map { (it - mean) * (it - mean) }.average()
     return kotlin.math.sqrt(variance)
   }
+}
+
+internal enum class SignalBarTimestampAnchor {
+  START,
+  END,
+}
+
+internal data class SignalStateDescriptorNames(
+  val bars: String,
+  val quote: String,
+  val session: String,
+)
+
+internal fun signalStateDescriptorNames(
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+  resetLegacyOneSecondState: Boolean,
+): SignalStateDescriptorNames {
+  val isLegacyOneSecondBranch =
+    barDuration == Duration.ofSeconds(1) &&
+      timestampAnchor == SignalBarTimestampAnchor.END
+  if (isLegacyOneSecondBranch && !resetLegacyOneSecondState) {
+    return SignalStateDescriptorNames(
+      bars = "bars",
+      quote = "quote-timed-v1",
+      session = "session",
+    )
+  }
+
+  val namespace = signalStateNamespace(barDuration, timestampAnchor)
+  return SignalStateDescriptorNames(
+    bars = "bars-$namespace",
+    quote = "quote-timed-$namespace",
+    session = "session-$namespace",
+  )
+}
+
+internal fun signalStateNamespace(
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): String {
+  require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val durationToken = barDuration.toString().lowercase()
+  return "v2-$durationToken-${timestampAnchor.name.lowercase()}"
+}
+
+internal fun signalBarEndTime(
+  timestamp: Instant,
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): Instant =
+  when (timestampAnchor) {
+    SignalBarTimestampAnchor.START -> timestamp.plus(barDuration)
+    SignalBarTimestampAnchor.END -> timestamp
+  }
+
+internal fun fallbackSignalWindow(
+  timestamp: Instant,
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): Window {
+  val start =
+    when (timestampAnchor) {
+      SignalBarTimestampAnchor.START -> timestamp
+      SignalBarTimestampAnchor.END -> timestamp.minus(barDuration)
+    }
+  val end = signalBarEndTime(timestamp, barDuration, timestampAnchor)
+  return Window(
+    size = barDuration.toString(),
+    step = barDuration.toString(),
+    start = start.toString(),
+    end = end.toString(),
+  )
+}
+
+internal fun signalHistoryLimit(
+  vwapWindow: Duration,
+  realizedVolWindow: Int,
+  barDuration: Duration,
+): Int {
+  require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val realizedVolBars = realizedVolWindowBars(realizedVolWindow, barDuration)
+  val vwapBars =
+    kotlin.math
+      .ceil(vwapWindow.toMillis().toDouble() / barDuration.toMillis().toDouble())
+      .toInt()
+  return maxOf(realizedVolBars + 5, vwapBars + 60)
+}
+
+internal fun realizedVolWindowBars(
+  windowSeconds: Int,
+  barDuration: Duration,
+): Int {
+  require(windowSeconds > 0) { "windowSeconds must be positive" }
+  require(!barDuration.isZero && !barDuration.isNegative) { "barDuration must be positive" }
+  val windowMillis = Duration.ofSeconds(windowSeconds.toLong()).toMillis()
+  return kotlin.math
+    .ceil(windowMillis.toDouble() / barDuration.toMillis().toDouble())
+    .toInt()
+    .coerceAtLeast(1)
+}
+
+internal fun rollingSignalVwap(
+  bars: List<MicroBarPayload>,
+  window: Duration,
+  barDuration: Duration,
+  timestampAnchor: SignalBarTimestampAnchor,
+): Double? {
+  val currentEnd =
+    bars.lastOrNull()?.let { bar ->
+      signalBarEndTime(bar.t, barDuration, timestampAnchor)
+    } ?: return null
+  val cutoff = currentEnd.minus(window)
+  var priceVolume = 0.0
+  var volume = 0.0
+
+  bars.forEach { bar ->
+    val barEnd = signalBarEndTime(bar.t, barDuration, timestampAnchor)
+    if (!barEnd.isAfter(cutoff) || barEnd.isAfter(currentEnd)) return@forEach
+    priceVolume += bar.c * bar.v
+    volume += bar.v
+  }
+
+  return if (volume == 0.0) null else priceVolume / volume
 }
 
 internal fun taSignalOutputSource(inputSource: String): String =

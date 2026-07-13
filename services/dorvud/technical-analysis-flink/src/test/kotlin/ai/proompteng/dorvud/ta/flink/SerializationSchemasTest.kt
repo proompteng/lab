@@ -17,6 +17,7 @@ import org.apache.flink.api.common.serialization.SerializerConfigImpl
 import org.apache.flink.api.java.typeutils.runtime.kryo.KryoSerializer
 import java.io.ByteArrayOutputStream
 import java.io.ObjectOutputStream
+import java.time.Duration
 import java.time.Instant
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -137,6 +138,72 @@ class SerializationSchemasTest {
       DEFAULT_WATERMARK_IDLE_TIMEOUT_MS,
       normalizeWatermarkIdleTimeoutMs(DEFAULT_WATERMARK_IDLE_TIMEOUT_MS),
     )
+  }
+
+  @Test
+  fun `signal history limits respect the source cadence`() {
+    assertEquals(360, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofSeconds(1)))
+    assertEquals(65, signalHistoryLimit(Duration.ofMinutes(5), 60, Duration.ofMinutes(1)))
+    assertEquals(60, realizedVolWindowBars(60, Duration.ofSeconds(1)))
+    assertEquals(1, realizedVolWindowBars(60, Duration.ofMinutes(1)))
+    assertEquals(
+      "v2-pt1s-end",
+      signalStateNamespace(Duration.ofSeconds(1), SignalBarTimestampAnchor.END),
+    )
+    assertEquals(
+      "v2-pt1m-start",
+      signalStateNamespace(Duration.ofMinutes(1), SignalBarTimestampAnchor.START),
+    )
+    assertEquals(
+      SignalStateDescriptorNames("bars", "quote-timed-v1", "session"),
+      signalStateDescriptorNames(
+        Duration.ofSeconds(1),
+        SignalBarTimestampAnchor.END,
+        resetLegacyOneSecondState = false,
+      ),
+    )
+    assertEquals(
+      SignalStateDescriptorNames("bars-v2-pt1s-end", "quote-timed-v2-pt1s-end", "session-v2-pt1s-end"),
+      signalStateDescriptorNames(
+        Duration.ofSeconds(1),
+        SignalBarTimestampAnchor.END,
+        resetLegacyOneSecondState = true,
+      ),
+    )
+    assertSerializable(
+      TaSignalsFunction(
+        FlinkTaConfig.fromEnv(),
+        Duration.ofMinutes(1),
+        SignalBarTimestampAnchor.START,
+        resetLegacyOneSecondState = false,
+      ),
+    )
+  }
+
+  @Test
+  fun `signal fallback windows honor source timestamp anchors`() {
+    val timestamp = Instant.parse("2026-02-22T02:50:00Z")
+    val minuteWindow =
+      fallbackSignalWindow(
+        timestamp,
+        Duration.ofMinutes(1),
+        SignalBarTimestampAnchor.START,
+      )
+    assertEquals("2026-02-22T02:50:00Z", minuteWindow.start)
+    assertEquals("2026-02-22T02:51:00Z", minuteWindow.end)
+    assertEquals(
+      Instant.parse("2026-02-22T02:51:00Z"),
+      signalBarEndTime(timestamp, Duration.ofMinutes(1), SignalBarTimestampAnchor.START),
+    )
+
+    val microbarWindow =
+      fallbackSignalWindow(
+        timestamp,
+        Duration.ofSeconds(1),
+        SignalBarTimestampAnchor.END,
+      )
+    assertEquals("2026-02-22T02:49:59Z", microbarWindow.start)
+    assertEquals("2026-02-22T02:50:00Z", microbarWindow.end)
   }
 
   @Test
