@@ -154,6 +154,81 @@ describe('github review ingest', () => {
     expect(store.updateUnresolvedThreadCount).toHaveBeenCalled()
   })
 
+  it.each([
+    { action: 'resolved', resolved: true, unresolvedCount: 0 },
+    { action: 'unresolved', resolved: false, unresolvedCount: 1 },
+  ])('updates review thread resolution for $action webhooks', async ({ action, resolved, unresolvedCount }) => {
+    const handler = await requireHandler()
+    const store = requireStore()
+    ;(store.getUnresolvedThreadCount as ReturnType<typeof vi.fn>).mockResolvedValueOnce(unresolvedCount)
+
+    const payload: GithubWebhookEvent = {
+      event: 'pull_request_review_thread',
+      action,
+      deliveryId: `delivery-thread-${action}`,
+      repository: 'proompteng/lab',
+      sender: 'reviewer',
+      payload: {
+        pull_request: {
+          number: 123,
+          head: { sha: 'deadbeef' },
+          base: { repo: { full_name: 'proompteng/lab' } },
+        },
+        repository: { full_name: 'proompteng/lab' },
+        thread: {
+          node_id: 'PRRT_thread_node',
+          comments: [
+            {
+              id: 556,
+              in_reply_to_id: 555,
+              path: 'services/jangar/src/server/db.ts',
+              line: 12,
+              body: 'Follow-up',
+              user: { login: 'reviewer' },
+            },
+            {
+              id: 555,
+              path: 'services/jangar/src/server/db.ts',
+              line: 10,
+              body: 'Root review comment',
+              user: { login: 'reviewer' },
+            },
+          ],
+        },
+      },
+    }
+
+    const result = await handler(payload)
+
+    expect(result.ok).toBe(true)
+    expect(store.upsertReviewThread).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'proompteng/lab',
+        prNumber: 123,
+        commitSha: 'deadbeef',
+        threadKey: '555',
+        threadId: 'PRRT_thread_node',
+        isResolved: resolved,
+      }),
+    )
+    expect(store.updateThreadResolution).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'proompteng/lab',
+        prNumber: 123,
+        threadKey: '555',
+        threadId: 'PRRT_thread_node',
+        resolved,
+      }),
+    )
+    expect(store.updateUnresolvedThreadCount).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repository: 'proompteng/lab',
+        prNumber: 123,
+        count: unresolvedCount,
+      }),
+    )
+  })
+
   it('skips duplicate delivery ids', async () => {
     const handler = await requireHandler()
     const store = requireStore()
