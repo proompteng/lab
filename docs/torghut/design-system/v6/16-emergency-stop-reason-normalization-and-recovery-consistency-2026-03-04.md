@@ -15,7 +15,6 @@
 - Matched implementation area: Observability, metrics, PostHog, alerts, and operations.
 - Current source evidence:
   - `services/torghut/app/metrics/core.py`
-  - `services/torghut/app/observability/posthog.py`
   - `argocd/applications/torghut/llm-guardrails-exporter.yaml`
   - `argocd/applications/torghut/clickhouse/clickhouse-guardrails-exporter.yaml`
   - `docs/torghut/production-readiness-proof-runbook.md`
