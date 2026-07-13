@@ -87,7 +87,7 @@ jobs:
       fail-fast: false
       matrix:
         target: ${{ fromJSON(needs.plan.outputs.targets) }}
-    runs-on: ${{ (matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur') && 'arc-arm64' || 'ubuntu-latest' }}
+    runs-on: ${{ (matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design') && 'arc-arm64' || 'ubuntu-latest' }}
     env:
       CHANGED_FILES_JSON: ${{ needs.plan.outputs.changed_files }}
       CONVEX_SELF_HOSTED_URL: ${{ secrets.CONVEX_SELF_HOSTED_URL }}
@@ -103,7 +103,7 @@ jobs:
           bun-version: 1.3.14
 
       - name: Install build tools
-        if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' }}
+        if: ${{ matrix.target == 'docs' || matrix.target == 'landing' || matrix.target == 'app' || matrix.target == 'olden' || matrix.target == 'cms' || matrix.target == 'kitty-krew' || matrix.target == 'reviseur' || matrix.target == 'design' }}
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential
@@ -140,6 +140,23 @@ jobs:
             app)
               bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter app --filter @proompteng/design
               bun run --cwd apps/app lint:oxlint
+              bun run --cwd apps/app lint:oxlint:type
+              bun run --filter app build
+              ;;
+            olden)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter olden --filter @proompteng/design
+              bunx oxfmt --check apps/olden
+              bun run --cwd apps/olden lint:oxlint
+              bun run --cwd apps/olden lint:oxlint:type
+              bun run --filter olden test
+              bun run --filter olden build
+              ;;
+            design)
+              bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter @proompteng/design --filter app
+              bunx oxfmt --check packages/design
+              bun run --cwd packages/design lint:oxlint
+              bun run --cwd packages/design lint:oxlint:type
+              bun run --filter @proompteng/design build
               bun run --cwd apps/app lint:oxlint:type
               bun run --filter app build
               ;;
@@ -227,6 +244,14 @@ jobs:
                 nix develop -c kustomize build "argocd/applications/${application}" >"${rendered}"
                 nix develop -c scripts/kubeconform.sh "${rendered}"
               done
+              if grep -R -E '^kind: (Namespace|Secret)$' argocd/applications/{docs,analysis}/generated; then
+                echo 'Generated applications must not contain Namespace or plaintext Secret resources' >&2
+                exit 1
+              fi
+              grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/docs@sha256:[0-9a-f]{64}$' "${RUNNER_TEMP}/docs.yaml"
+              grep -Eq 'image: registry\.ide-newton\.ts\.net/lab/analysis:[0-9a-f]{40}$' "${RUNNER_TEMP}/analysis.yaml"
+              grep -Fq 'writeBackTarget: kustomization:/argocd/applications/docs' argocd/applications/argocd/base/image-updater-product.yaml
+              grep -Fq 'writeBackTarget: kustomization:/argocd/applications/analysis' argocd/applications/argocd/base/image-updater-product.yaml
               ;;
             shellcheck)
               if ! command -v shellcheck >/dev/null 2>&1; then

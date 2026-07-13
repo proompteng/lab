@@ -25,6 +25,18 @@ describe('impact router', () => {
     expect(plan.delegatedWorkflows).toEqual(['jangar-ci'])
   })
 
+  test('routes Olden changes to app validation', () => {
+    const plan = selectImpactPlan(['apps/olden/src/app.tsx'], map)
+    expect(plan.validationTargets).toEqual(['olden'])
+    expect(plan.delegatedWorkflows).toEqual([])
+  })
+
+  test('routes design package changes through consumer compatibility validation', () => {
+    const plan = selectImpactPlan(['packages/design/src/components/ui/button.tsx'], map)
+    expect(plan.validationTargets).toEqual(['design'])
+    expect(plan.delegatedWorkflows).toEqual([])
+  })
+
   test('routes a Torghut change to Torghut CI only', () => {
     const plan = selectImpactPlan(['services/torghut/src/main.py'], map)
     expect(plan.validationTargets).toEqual(['planner'])

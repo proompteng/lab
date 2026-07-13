@@ -25,6 +25,11 @@ targets:
     paths:
       - apps/app/**
 
+  olden:
+    kind: validation
+    paths:
+      - apps/olden/**
+
   cms:
     kind: validation
     paths:
@@ -72,7 +77,6 @@ targets:
       - flake.lock
       - flake.nix
       - package.json
-      - packages/design/**
       - tsconfig.base.json
       - nix/packages.nix
       - nix/cache-push.sh
@@ -82,6 +86,11 @@ targets:
       - nix/images/openai-codex-cli.nix
       - nix/images/dorvud-jvm-service.nix
       - .github/actions/setup-nix-toolchain/**
+
+  design:
+    kind: validation
+    paths:
+      - packages/design/**
 
   argo-lint:
     kind: validation
