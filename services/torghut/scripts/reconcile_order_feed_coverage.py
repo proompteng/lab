@@ -483,6 +483,7 @@ def _lineage_counts(
         FILL_DELTA_PROVENANCE_ALIASES
     )
     linked_fill_event_predicate = predicates.event_has_unique_execution
+    event_decision_ref_present = ExecutionOrderEvent.trade_decision_id.is_not(None)
     linked_execution_has_trade_decision = exists(
         select(1).where(
             _event_execution_identity_match(
@@ -494,6 +495,30 @@ def _lineage_counts(
             Execution.trade_decision_id.is_not(None),
         )
     )
+    linked_execution_decision_ref_present = and_(
+        predicates.event_has_unique_execution,
+        linked_execution_has_trade_decision,
+    )
+    event_decision_account_match = exists(
+        select(1).where(
+            TradeDecision.id == ExecutionOrderEvent.trade_decision_id,
+            TradeDecision.alpaca_account_label
+            == ExecutionOrderEvent.alpaca_account_label,
+        )
+    )
+    linked_execution_decision_account_match = exists(
+        select(1).where(
+            _event_execution_identity_match(
+                execution_id=Execution.id,
+                account_label=Execution.alpaca_account_label,
+                alpaca_order_id=Execution.alpaca_order_id,
+                client_order_id=Execution.client_order_id,
+            ),
+            Execution.trade_decision_id == TradeDecision.id,
+            TradeDecision.alpaca_account_label
+            == ExecutionOrderEvent.alpaca_account_label,
+        )
+    )
     client_order_decision_match = exists(
         select(1).where(
             TradeDecision.alpaca_account_label
@@ -503,9 +528,17 @@ def _lineage_counts(
         )
     )
     resolved_trade_decision = or_(
-        ExecutionOrderEvent.trade_decision_id.is_not(None),
-        linked_execution_has_trade_decision,
-        client_order_decision_match,
+        and_(event_decision_ref_present, event_decision_account_match),
+        and_(
+            ~event_decision_ref_present,
+            linked_execution_decision_ref_present,
+            linked_execution_decision_account_match,
+        ),
+        and_(
+            ~event_decision_ref_present,
+            ~linked_execution_decision_ref_present,
+            client_order_decision_match,
+        ),
     )
     # Keep this SQL-only projection conservative: runtime can derive a delta
     # from a well-formed raw broker payload, but this diagnostic deliberately

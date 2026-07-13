@@ -26,6 +26,24 @@ TRADE_DECISION_ID = uuid.UUID("00000000-0000-0000-0000-000000000777")
 def _engine() -> object:
     engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
     Base.metadata.create_all(engine)
+    with Session(engine) as session:
+        strategy = Strategy(
+            name="coverage-default-strategy",
+            base_timeframe="1Min",
+            universe_type="static",
+        )
+        session.add(
+            TradeDecision(
+                id=TRADE_DECISION_ID,
+                strategy=strategy,
+                alpaca_account_label="PA3SX7FYNUTF",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"action": "buy"},
+                decision_hash="coverage-default-decision",
+            )
+        )
+        session.commit()
     return engine
 
 
@@ -389,6 +407,50 @@ class TestOrderFeedCoverageProjection(TestCase):
             self.assertEqual(report["event_lineage"]["linked_fill_event_count"], 1)
             self.assertEqual(report["event_lineage"]["unlinked_fill_event_count"], 0)
             self.assertNotIn("unlinked_fill_events_present", report["blockers"])
+
+    def test_trade_decision_account_scope_is_enforced(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            execution = _execution(
+                order_id="wrong-account-decision-execution",
+                filled_qty="1",
+                status="filled",
+            )
+            wrong_account_strategy = Strategy(
+                name="wrong-account-strategy",
+                base_timeframe="1Min",
+                universe_type="static",
+            )
+            wrong_account_decision = TradeDecision(
+                id=uuid.uuid4(),
+                strategy=wrong_account_strategy,
+                alpaca_account_label="OTHER_ACCOUNT",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"action": "buy"},
+                decision_hash="wrong-account-decision",
+            )
+            session.add_all([execution, wrong_account_decision])
+            session.flush()
+            session.add(
+                _event(
+                    fingerprint="wrong-account-decision-fill",
+                    execution_id=execution.id,
+                    trade_decision_id=wrong_account_decision.id,
+                    client_order_id=None,
+                )
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(
+                report["event_lineage"][
+                    "linked_fill_events_missing_trade_decision_count"
+                ],
+                1,
+            )
+            self.assertIn("fill_events_missing_trade_decision", report["blockers"])
 
     def test_execution_window_uses_updated_at_and_reports_sample_activity(self) -> None:
         engine = _engine()
