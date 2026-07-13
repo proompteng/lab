@@ -4,7 +4,6 @@ import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 
@@ -26,9 +25,9 @@ _CLIENT_ORDER_ID = "client-order-101"
 @dataclass(frozen=True, slots=True)
 class _Acquisition:
     outcome: str
-    receipt: Any | None
-    submission_claim: Any | None
-    handle: Any | None
+    receipt: object | None
+    submission_claim: object | None
+    handle: object | None
 
     @property
     def acquired(self) -> bool:
@@ -115,7 +114,7 @@ def _broker_order(**overrides: object) -> dict[str, object]:
     return payload
 
 
-def _acquired(intent: Any) -> _Acquisition:
+def _acquired(intent: object) -> _Acquisition:
     receipt = SimpleNamespace(intent=intent)
     claim = SimpleNamespace(broker_order_id=None)
     handle = SimpleNamespace(submission_claim=SimpleNamespace())
@@ -233,7 +232,7 @@ def test_broker_read_failure_is_quarantined_and_released(
     _install_quarantine_hooks(monkeypatch, events)
 
     def broker_read(**_kwargs: object) -> object:
-        raise TimeoutError("broker unavailable")
+        raise worker.LinkedRecoveryBrokerReadError("broker unavailable")
 
     result = worker.recover_linked_submission(
         session_factory=_session_factory(events),

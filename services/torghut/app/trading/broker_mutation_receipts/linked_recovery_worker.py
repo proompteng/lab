@@ -73,8 +73,17 @@ class LinkedRecoveryBrokerReader(Protocol):
         client_order_id: str,
         expected_broker_order_id: str | None,
     ) -> object | None:
-        """Return a raw broker payload, or ``None`` when no order was found."""
+        """Return a raw broker payload, or ``None`` when no order was found.
+
+        Implementations must translate dependency-specific failures into
+        :class:`LinkedRecoveryBrokerReadError` so the worker can quarantine a
+        failed read without swallowing lifecycle or programming errors.
+        """
         ...
+
+
+class LinkedRecoveryBrokerReadError(RuntimeError):
+    """A broker/dependency read failed before an order payload was returned."""
 
 
 class LinkedRecoverySessionFactory(Protocol):
@@ -154,7 +163,7 @@ def recover_linked_submission(
             client_order_id=receipt.intent.client_request_id,
             expected_broker_order_id=expected_broker_order_id,
         )
-    except Exception:
+    except LinkedRecoveryBrokerReadError:
         return _quarantine_and_release(
             session_factory=session_factory,
             handle=handle,
@@ -311,6 +320,7 @@ def _quarantine_and_release(
 
 __all__ = [
     "LinkedRecoveryBrokerReader",
+    "LinkedRecoveryBrokerReadError",
     "LinkedRecoverySessionFactory",
     "LinkedRecoveryWorkerOutcome",
     "LinkedRecoveryWorkerResult",
