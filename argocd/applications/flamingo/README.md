@@ -89,6 +89,26 @@ and uncached 180K/220K/229K input probes with the configured 32K output budget.
   reclaim scans, working-set refaults, limit hits, OOMs, request errors,
   request aborts, or preemptions.
 
+Cold-start validation completed on July 13, 2026 UTC. The vLLM container
+restarted under the candidate cgroups, loaded all six checkpoint shards, and
+became ready in about two minutes. Startup confirmed `max model len 262144`, a
+`24.67 GiB` checkpoint, `23.23 GiB` of GPU model memory, and zero host-memory
+limit or OOM events. The fully salted post-cold profile then matched the
+original-resource control:
+
+| Metric | `16/64` CPU, `128/256Gi` control | `4/8` CPU, `32/40Gi` candidate |
+| --- | ---: | ---: |
+| Prompt tokens/s | `4930.81` | `4904.96` |
+| Generation tokens/s | `136.84` | `134.90` |
+| 229K uncached probe | `37.338s` | `37.366s` |
+| 4K scheduler output tokens/s | `565.82` | `567.77` |
+| 32K scheduler output tokens/s | `270.95` | `287.56` |
+| 128K scheduler output tokens/s | `34.91` | `35.19` |
+
+The post-cold run had zero failed smokes, warmups, benchmarks, or gates, and
+zero request errors, aborts, preemptions, memory-limit hits, reclaim scans, or
+working-set refaults.
+
 The `32Gi` request covers the measured working-set peak after GiB rounding; the
 `40Gi` limit leaves more than 20% burst headroom. Kubernetes memory metrics
 include active file cache, so do not interpret the full working set as vLLM
