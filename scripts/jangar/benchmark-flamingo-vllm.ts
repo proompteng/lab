@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
@@ -133,6 +134,7 @@ export type RunSummary = {
   finishedAt?: string
   candidateId: string
   profile: string
+  cacheSalt: string
   contextTargets: number[]
   model: string
   tokenizer: string
@@ -188,6 +190,8 @@ for (const arg of process.argv.slice(2)) {
 
 const profile = args.get('profile') ?? process.env.FLAMINGO_BENCH_PROFILE ?? 'smoke'
 const candidateId = args.get('candidate-id') ?? process.env.FLAMINGO_CANDIDATE_ID ?? 'live'
+const cacheSalt =
+  args.get('cache-salt') ?? process.env.FLAMINGO_BENCH_CACHE_SALT ?? randomBytes(32).toString('base64url')
 const baselineResultPath = args.get('baseline-result') ?? process.env.FLAMINGO_BASELINE_RESULT
 const failOnGate = (args.get('fail-on-gate') ?? process.env.FLAMINGO_BENCH_FAIL_ON_GATE ?? 'false') !== 'false'
 const kubeContext = args.get('context') ?? process.env.KUBE_CONTEXT ?? 'galactic-tailscale'
@@ -309,6 +313,10 @@ async function fetchText(path: string): Promise<string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+export function withCacheSalt(payload: unknown, salt: string): unknown {
+  return isRecord(payload) ? { ...payload, cache_salt: salt } : payload
 }
 
 function firstNumber(value: unknown): number | undefined {
@@ -465,7 +473,7 @@ async function chatSmoke(label: string, payload: unknown): Promise<ChatResult> {
   try {
     const response = await fetchJson('/chat/completions', {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify(withCacheSalt(payload, cacheSalt)),
     })
     const validationErrors = validateChatSmokeResponse(label, response)
     return {
@@ -663,6 +671,8 @@ async function runBench(label: string, inputLen: number, outputLen: number, numP
     String(numPrompts),
     '--max-concurrency',
     String(concurrency),
+    '--extra-body',
+    JSON.stringify({ cache_salt: cacheSalt }),
     '--save-result',
     '--result-dir',
     podDir,
@@ -997,6 +1007,7 @@ async function main(): Promise<void> {
     startedAt: new Date().toISOString(),
     candidateId,
     profile,
+    cacheSalt,
     contextTargets,
     model,
     tokenizer,

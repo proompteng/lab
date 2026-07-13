@@ -66,6 +66,60 @@ assistant content. The active tool parser is `qwen3_coder`, which is the vLLM
 Qwen3.5/Qwen3.6 recipe recommendation for automatic tool calling.
 Reference: <https://docs.vllm.ai/projects/recipes/en/latest/Qwen/Qwen3.5.html>
 
+## Host CPU and Memory Sizing
+
+The Deployment requests `4` CPU cores and `32Gi` of regular host RAM, with
+limits of `8` cores and `40Gi`. These values do not reserve GPU VRAM;
+`nvidia.com/gpu: 1` and `--gpu-memory-utilization` govern the GPU allocation and
+vLLM's VRAM target. The production `--max-model-len 262144` profile is an
+invariant and was not reduced during host-resource tuning.
+
+The July 12, 2026 tuning run used isolated per-run prefix-cache salts and the
+full benchmark profile: concurrency through 16, 4K/32K/128K scheduler cells,
+and uncached 180K/220K/229K input probes with the configured 32K output budget.
+
+- The `16/64` CPU control and `4/8` candidate produced equivalent scheduler
+  throughput, TTFT, and TPOT within run-to-run noise.
+- The `2/4` CPU candidate increased mean and p99 TTFT for the 32K scheduler cell
+  by about 12% and 14%, respectively, so it was rejected.
+- vLLM reported a `24.67 GiB` checkpoint. The container's measured host-memory
+  peak was `31.65 GiB`: about `25 GiB` file-backed checkpoint cache and about
+  `5 GiB` anonymous runtime memory.
+- At `32Gi` requested and `40Gi` limited, the full profile completed with zero
+  reclaim scans, working-set refaults, limit hits, OOMs, request errors,
+  request aborts, or preemptions.
+
+Cold-start validation completed on July 13, 2026 UTC. The vLLM container
+restarted under the candidate cgroups, loaded all six checkpoint shards, and
+became ready in about two minutes. Startup confirmed `max model len 262144`, a
+`24.67 GiB` checkpoint, `23.23 GiB` of GPU model memory, and zero host-memory
+limit or OOM events. The fully salted post-cold profile then matched the
+original-resource control:
+
+| Metric | `16/64` CPU, `128/256Gi` control | `4/8` CPU, `32/40Gi` candidate |
+| --- | ---: | ---: |
+| Prompt tokens/s | `4930.81` | `4904.96` |
+| Generation tokens/s | `136.84` | `134.90` |
+| 229K uncached probe | `37.338s` | `37.366s` |
+| 4K scheduler output tokens/s | `565.82` | `567.77` |
+| 32K scheduler output tokens/s | `270.95` | `287.56` |
+| 128K scheduler output tokens/s | `34.91` | `35.19` |
+
+The post-cold run had zero failed smokes, warmups, benchmarks, or gates, and
+zero request errors, aborts, preemptions, memory-limit hits, reclaim scans, or
+working-set refaults.
+
+The `32Gi` request covers the measured working-set peak after GiB rounding; the
+`40Gi` limit leaves more than 20% burst headroom. Kubernetes memory metrics
+include active file cache, so do not interpret the full working set as vLLM
+heap.
+
+Revalidate this budget after changing the model, image, checkpoint loading
+strategy, context/concurrency profile, or `/dev/shm` size. The required gate is
+a cold model load followed by the same fully salted full-context benchmark,
+without an OOM kill, restart loop, sustained throttling regression, or
+checkpoint-cache thrash.
+
 Do not enable concurrent partial prefill or DBO directly in this production
 profile on the pinned vLLM image. The July 3, 2026 rollout with
 `--max-num-partial-prefills 2` failed before engine startup with
@@ -220,6 +274,10 @@ Use the repo runner so output is comparable:
 bun run flamingo:benchmark --profile=smoke --candidate-id=baseline-live --fail-on-gate
 bun run flamingo:benchmark --profile=full --candidate-id=<candidate> --baseline-result=<baseline.json> --long-targets=180000,220000,229000 --fail-on-gate
 ```
+
+The runner assigns a distinct 256-bit `cache_salt` to each run and records it
+in the result. This prevents a previous candidate's prefix cache from making a
+later candidate appear faster while preserving within-run prefix-cache tests.
 
 Do not run the `full` profile against production while Saigak is still resident
 on Turin. On July 3, 2026, `full` reached `warmup-c16` and the vLLM engine died
