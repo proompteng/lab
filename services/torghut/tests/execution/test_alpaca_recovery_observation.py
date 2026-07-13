@@ -5,7 +5,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
-from alpaca.trading.enums import OrderStatus
+from alpaca.trading.enums import OrderStatus, PositionIntent
 
 from app.trading.broker_mutation_receipts import (
     BrokerMutationIntentRequest,
@@ -41,6 +41,14 @@ _PINNED_ORDER_STATUSES = frozenset(
         "replaced",
         "stopped",
         "suspended",
+    }
+)
+_PINNED_POSITION_INTENTS = frozenset(
+    {
+        "buy_to_open",
+        "buy_to_close",
+        "sell_to_open",
+        "sell_to_close",
     }
 )
 _ZERO_FILL_ORDER_STATUSES = frozenset(
@@ -198,6 +206,35 @@ def test_blank_canonical_order_class_remains_indeterminate() -> None:
             intent=_intent(order_class=""),
             broker_order=_broker_order(order_class=""),
         ),
+    )
+
+
+@pytest.mark.parametrize("position_intent", ["open", "close", "sell_short", "unknown"])
+def test_unsupported_canonical_position_intent_is_indeterminate(
+    position_intent: str,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.REQUEST_TERMS_INVALID,
+        result=_observe(
+            intent=_intent(position_intent=position_intent),
+            broker_order=_broker_order(position_intent=position_intent),
+        ),
+    )
+
+
+@pytest.mark.parametrize("position_intent", ["open", "close", "sell_short", "unknown"])
+def test_unsupported_broker_position_intent_is_indeterminate(
+    position_intent: str,
+) -> None:
+    _assert_indeterminate(
+        AlpacaRecoveryObservationReason.ORDER_IDENTITY_MISMATCH,
+        result=_observe(broker_order=_broker_order(position_intent=position_intent)),
+    )
+
+
+def test_pinned_position_intent_allow_list_has_no_unreviewed_drift() -> None:
+    assert frozenset(position_intent.value for position_intent in PositionIntent) == (
+        _PINNED_POSITION_INTENTS
     )
 
 
