@@ -13,7 +13,6 @@ from ....config import settings
 from ....models import (
     TradeDecision,
 )
-from ....observability import capture_posthog_event
 from ...models import StrategyDecision
 from ...pair_intent import is_pair_entry
 from ...prices import MarketSnapshot
@@ -630,16 +629,16 @@ class TradingPipelineSubmissionPolicyMixin(TradingPipelineRuntime):
             properties.update(
                 {str(key): value for key, value in event.extra_properties.items()}
             )
-        emitted, drop_reason = capture_posthog_event(
+        logger.log(
+            logging.ERROR if event.severity == "error" else logging.INFO,
+            "Torghut trading event event=%s properties=%s",
             event.event_name,
-            severity=event.severity,
-            distinct_id=f"torghut-{self.account_label}",
-            properties=properties,
+            properties,
         )
         self.state.metrics.record_domain_telemetry(
             event_name=event.event_name,
-            emitted=emitted,
-            drop_reason=drop_reason,
+            emitted=True,
+            drop_reason=None,
         )
 
     def _evaluate_execution_policy_outcome(

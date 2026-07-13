@@ -408,15 +408,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "6"
                 automation: auto
                 enabled: "true"
-              - name: posthog
-                path: argocd/applications/posthog
-                namespace: posthog
-                renderWithLovely: false
-                cascadeResourcesOnDeletion: true
-                annotations:
-                  argocd.argoproj.io/sync-wave: "6"
-                automation: manual
-                enabled: "false"
               - name: miel
                 path: argocd/applications/miel
                 namespace: miel

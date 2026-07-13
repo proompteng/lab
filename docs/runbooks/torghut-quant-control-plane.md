@@ -166,7 +166,7 @@ Alert rules are defined in `argocd/applications/observability/graf-mimir-rules.y
 7. Check Jangar SSE health for control-plane dashboards.
    - Review Jangar logs for `torghut-quant` stream errors.
    - Verify the quant control-plane UI connection in Jangar (`/torghut/control-plane`).
-8. Verify domain telemetry correlation continuity (PostHog contract, non-critical path).
+8. Verify domain event metrics and execution correlation continuity.
    - `curl -fsS "http://127.0.0.1:8081/trading/status" | jq '.control_plane_contract | {last_autonomy_recommendation_trace_id, domain_telemetry_event_total, domain_telemetry_dropped_total}'`
    - `curl -fsS "http://127.0.0.1:8081/trading/executions?limit=20" | jq '[.[] | {id, trade_decision_id, execution_correlation_id, execution_idempotency_key}]'`
    - Pass criteria:

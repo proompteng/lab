@@ -2046,7 +2046,7 @@ data:
           - alert: CriticalArgoApplicationDegraded
             expr: |
               argocd_app_info{
-                name=~"kafka|torghut|torghut-hyperliquid-feed|torghut-options|posthog|froussard|observability",
+                name=~"kafka|torghut|torghut-hyperliquid-feed|torghut-options|froussard|observability",
                 health_status!="Healthy"
               } == 1
             for: 10m

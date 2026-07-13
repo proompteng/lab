@@ -7,7 +7,6 @@ import { DeliveryService } from './delivery-service'
 import { finishSymphonySpan, startSymphonySpan, withSymphonyEffectSpan } from './instrumentation'
 import { TrackerService } from './linear-client'
 import type { Logger } from './logger'
-import { PostHogTelemetryService } from './posthog'
 import { renderPromptTemplate } from './template'
 import type { Issue } from './types'
 import { normalizeState } from './utils'
@@ -77,18 +76,11 @@ export type IssueRunnerCallbacks = {
   onWorkspacePath: (workspacePath: string) => Effect.Effect<void, never>
 }
 
-export type IssueRunTelemetryContext = {
-  sessionId: string
-  traceId: string
-  rootSpanId: string
-}
-
 export interface IssueRunnerServiceDefinition {
   readonly runAttempt: (
     issue: Issue,
     attempt: number | null,
     callbacks: IssueRunnerCallbacks,
-    telemetryContext: IssueRunTelemetryContext,
   ) => Effect.Effect<string, WorkflowError | ConfigError | TrackerError | WorkspaceError | CodexProtocolError>
 }
 
@@ -106,7 +98,6 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
       const delivery = yield* DeliveryService
       const workspace = yield* WorkspaceService
       const codexSessions = yield* CodexSessionService
-      const posthog = yield* PostHogTelemetryService
       const issueRunnerLogger = logger.child({ component: 'issue-runner' })
 
       const handleToolCall = (toolName: string, args: unknown): Effect.Effect<DynamicToolCallResponse, never> =>
@@ -260,7 +251,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
         })
 
       return {
-        runAttempt: (issue, attempt, callbacks, telemetryContext) =>
+        runAttempt: (issue, attempt, callbacks) =>
           Effect.scoped(
             Effect.gen(function* () {
               const runSpan = startSymphonySpan('symphony.worker_attempt', {
@@ -274,62 +265,10 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                 const { definition, config } = yield* workflow.current
                 const runLogger = issueRunnerLogger.child({ issue_id: issue.id, issue_identifier: issue.identifier })
 
-                const captureSpan = <A, E>(
-                  spanName: string,
-                  effect: Effect.Effect<A, E>,
-                  buildOutputState: (result: A) => Record<string, unknown> | null = () => null,
-                ): Effect.Effect<A, E> =>
-                  Effect.gen(function* () {
-                    const startedAtMs = Date.now()
-                    const exit = yield* Effect.exit(effect)
-                    const latencySeconds = Math.max(0, Date.now() - startedAtMs) / 1_000
-
-                    if (exit._tag === 'Success') {
-                      yield* posthog.captureSpan({
-                        traceId: telemetryContext.traceId,
-                        sessionId: telemetryContext.sessionId,
-                        spanId: `${telemetryContext.traceId}:${spanName}:${startedAtMs}`,
-                        parentId: telemetryContext.rootSpanId,
-                        spanName,
-                        outputState: buildOutputState(exit.value),
-                        latencySeconds,
-                        properties: {
-                          issue_id: issue.id,
-                          issue_identifier: issue.identifier,
-                          retry_attempt: attempt ?? 0,
-                        },
-                      })
-                      return exit.value
-                    }
-
-                    const errorInfo = toLogError(exit.cause)
-                    yield* posthog.captureSpan({
-                      traceId: telemetryContext.traceId,
-                      sessionId: telemetryContext.sessionId,
-                      spanId: `${telemetryContext.traceId}:${spanName}:${startedAtMs}`,
-                      parentId: telemetryContext.rootSpanId,
-                      spanName,
-                      latencySeconds,
-                      error: {
-                        code: errorInfo.code,
-                        message: errorInfo.message,
-                      },
-                      properties: {
-                        issue_id: issue.id,
-                        issue_identifier: issue.identifier,
-                        retry_attempt: attempt ?? 0,
-                      },
-                    })
-                    return yield* Effect.failCause(exit.cause)
-                  })
-
                 const workspaceInfo = yield* withSymphonyEffectSpan(
                   'symphony.worker_attempt.workspace_create',
                   { 'issue.identifier': issue.identifier },
-                  captureSpan('workspace_create', workspace.createForIssue(issue.identifier), (result) => ({
-                    workspace_path: result.path,
-                    created_now: result.createdNow,
-                  })),
+                  workspace.createForIssue(issue.identifier),
                   { parentSpan: runSpan },
                 )
                 yield* callbacks.onWorkspacePath(workspaceInfo.path)
@@ -372,9 +311,7 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                 yield* withSymphonyEffectSpan(
                   'symphony.worker_attempt.before_run_hook',
                   { 'issue.identifier': issue.identifier, 'workspace.path': workspaceInfo.path },
-                  captureSpan('before_run_hook', workspace.runBeforeRun(workspaceInfo.path, hookContext), () => ({
-                    workspace_path: workspaceInfo.path,
-                  })),
+                  workspace.runBeforeRun(workspaceInfo.path, hookContext),
                   { parentSpan: runSpan },
                 )
 
@@ -429,23 +366,21 @@ export const makeIssueRunnerLayer = (logger: Logger) =>
                     withSymphonyEffectSpan(
                       'symphony.worker_attempt.after_run_hook',
                       { 'issue.identifier': lastIssue.identifier, 'workspace.path': workspaceInfo.path },
-                      captureSpan(
-                        'after_run_hook',
-                        workspace.runAfterRun(workspaceInfo.path, {
+                      workspace
+                        .runAfterRun(workspaceInfo.path, {
                           issueId: lastIssue.id,
                           issueIdentifier: lastIssue.identifier,
                           issueBranchName: lastIssue.branchName,
                           issueTitle: lastIssue.title,
                           issueState: lastIssue.state,
-                        }),
-                        () => ({ workspace_path: workspaceInfo.path }),
-                      ).pipe(
-                        Effect.catchAll((error) =>
-                          Effect.sync(() => {
-                            runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
-                          }),
+                        })
+                        .pipe(
+                          Effect.catchAll((error) =>
+                            Effect.sync(() => {
+                              runLogger.log('warn', 'workspace_after_run_failed', toLogError(error))
+                            }),
+                          ),
                         ),
-                      ),
                       { parentSpan: runSpan },
                     ),
                   ),

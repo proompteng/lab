@@ -562,27 +562,6 @@ class RuntimeRiskSettingsFields(BaseSettings):
 
     jangar_api_key: Optional[str] = Field(default=None, alias="JANGAR_API_KEY")
 
-    posthog_enabled: bool = Field(
-        default=False,
-        alias="POSTHOG_ENABLED",
-        description=(
-            "Enable best-effort PostHog domain telemetry capture. This must never block trading execution."
-        ),
-    )
-
-    posthog_host: Optional[str] = Field(default=None, alias="POSTHOG_HOST")
-
-    posthog_api_key: Optional[str] = Field(default=None, alias="POSTHOG_API_KEY")
-
-    posthog_project_id: Optional[str] = Field(default=None, alias="POSTHOG_PROJECT_ID")
-
-    posthog_timeout_seconds: float = Field(default=1.0, alias="POSTHOG_TIMEOUT_SECONDS")
-
-    posthog_distinct_id: str = Field(
-        default="torghut-service",
-        alias="POSTHOG_DISTINCT_ID",
-    )
-
     llm_enabled: bool = Field(default=True, alias="LLM_ENABLED")
 
     llm_model: str = Field(default="gpt-5.5", alias="LLM_MODEL")

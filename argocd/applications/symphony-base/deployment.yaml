@@ -65,8 +65,6 @@ spec:
                   name: github-token
                   key: token
                   optional: true
-            - name: POSTHOG_ENABLED
-              value: "false"
             - name: SYMPHONY_LEADER_ELECTION_ENABLED
               value: "true"
             - name: SYMPHONY_LEADER_ELECTION_LEASE_NAME

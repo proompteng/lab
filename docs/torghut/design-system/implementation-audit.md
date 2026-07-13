@@ -53,7 +53,7 @@ This file summarizes the per-document audit blocks inserted into the Torghut des
 - 160: Proof, evidence, freshness, repair, and capital gating
 - 41: Strategy, alpha, TSMOM, regime, portfolio, and sizing
 - 40: Routeability, TCA, fill quality, and market context
-- 29: Observability, metrics, PostHog, alerts, and operations
+- 29: Observability, metrics, traces, alerts, and operations
 - 27: Execution, live submission, and broker path
 - 24: CI/CD, release, GitOps, Argo, Knative, and deployment automation
 - 24: Jangar/control-plane integration

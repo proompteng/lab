@@ -135,11 +135,7 @@ setInterval(() => {}, 1000)
   test('advertises experimentalApi when dynamic tools are enabled', async () => {
     const tempDir = await mkdtemp(path.join(tmpdir(), 'symphony-codex-capabilities-'))
     const scriptPath = path.join(tempDir, 'fake-codex-app-server.mjs')
-    const seenEvents: Array<{
-      event: string
-      prompt?: string | null
-      outputChoices?: Array<Record<string, unknown>> | null
-    }> = []
+    const seenEvents: string[] = []
 
     await writeFile(
       scriptPath,
@@ -178,10 +174,6 @@ rl.on('line', (line) => {
       params: {
         threadId: 'thread-1',
         turnId: 'turn-1',
-        outputChoices: [{ role: 'assistant', content: 'done' }],
-        provider: 'codex',
-        model: 'gpt-5.5',
-        latency: 1.5,
       },
     }))
   }
@@ -215,11 +207,7 @@ rl.on('line', (line) => {
             logger: createStubLogger(),
             onEvent: (event) =>
               Effect.sync(() => {
-                seenEvents.push({
-                  event: event.event,
-                  prompt: event.prompt,
-                  outputChoices: event.outputChoices ?? null,
-                })
+                seenEvents.push(event.event)
               }),
             onToolCall: () =>
               Effect.succeed({
@@ -239,16 +227,8 @@ rl.on('line', (line) => {
         threadId: 'thread-1',
         turnId: 'turn-1',
       })
-      expect(seenEvents).toContainEqual({
-        event: 'turn_started',
-        prompt: 'hello',
-        outputChoices: null,
-      })
-      expect(seenEvents).toContainEqual({
-        event: 'turn_completed',
-        prompt: undefined,
-        outputChoices: [{ role: 'assistant', content: 'done' }],
-      })
+      expect(seenEvents).toContain('turn_started')
+      expect(seenEvents).toContain('turn_completed')
     } finally {
       await rm(tempDir, { recursive: true, force: true })
     }

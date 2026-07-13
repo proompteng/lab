@@ -122,7 +122,6 @@ describe('http request parsing', () => {
       expect(stateBody.target.name).toBe('Symphony')
       expect(stateBody.release.mode).toBe('gitops_pr_on_main')
       expect(stateBody.targetHealth.readyForDispatch).toBe(true)
-      expect(stateBody.telemetry.enabled).toBe(true)
       expect(stateBody.issues[0]?.delivery?.codePr?.number).toBe(101)
 
       const issueResponse = await fetch(`http://127.0.0.1:${port}/api/v1/ABC-1`)
@@ -136,7 +135,6 @@ describe('http request parsing', () => {
       const dashboardText = await dashboardResponse.text()
       expect(dashboardResponse.status).toBe(200)
       expect(dashboardText).toContain('Leader Status')
-      expect(dashboardText).toContain('Telemetry')
       expect(dashboardText).toContain('Recent Errors')
       expect(dashboardText).toContain('Target Health')
       expect(dashboardText).toContain('Delivery Transactions')

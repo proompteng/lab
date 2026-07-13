@@ -72,7 +72,6 @@ class SettingsAccessorsMixin(SettingsNormalizationMixin):
         self._validate_runtime_regime_confidence_thresholds_by_entropy_band()
         self._validate_fragility_settings()
         self._validate_llm_settings()
-        self._validate_posthog_settings()
         self._validate_tigerbeetle_settings()
 
     @property

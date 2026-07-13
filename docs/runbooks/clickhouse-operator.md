@@ -41,7 +41,7 @@ Why:
 The required pattern is:
 
 1. Deliver log tuning through `.spec.configuration.files` so the operator writes a `config.d/*.xml` override into the pod.
-2. Prefer `config.d/99-logging-overrides.xml` or an app-specific equivalent such as `config.d/posthog-system-logs.xml`.
+2. Prefer `config.d/99-logging-overrides.xml` or an app-specific logging override.
 3. Keep the main image defaults intact and use ClickHouse merge semantics (`replace="1"` and `remove="1"`) to override only the sections we intend to own.
 4. If the workload does not explicitly need profiler-derived system tables, disable them up front.
 
@@ -144,8 +144,6 @@ Notes:
 
 Do not blindly copy one cluster's logging profile into another. Start from the baseline above, then adapt:
 
-- PostHog-compatible baseline:
-  Keep `query_views_log` because PostHog makes heavy use of materialized views and migration/view diagnostics are useful during self-hosted recovery. On 4-8Gi pods, prefer the stricter profile: disable `trace_log`, `metric_log`, and `processors_profile_log`, disable the sampling profilers in `users.d`, and leave `query_views_log` as the only extra retained system log beyond `text_log`, `query_log`, and `part_log`. See [argocd/applications/posthog/clickhouse-cluster.yaml](../../argocd/applications/posthog/clickhouse-cluster.yaml).
 - Torghut baseline:
   Prefer the stricter profile: disable `trace_log`, `metric_log`, `asynchronous_metric_log`, and `processors_profile_log`, keep `text_log` and `query_log` bounded, and keep `part_log` short. See [argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml](../../argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml).
 

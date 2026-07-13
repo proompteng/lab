@@ -1,7 +1,6 @@
 """Settings normalization and validation mixins."""
 
 from typing import Literal, Optional, cast
-from urllib.parse import urlsplit
 
 from .common import (
     BooleanFeatureFlagRequest,
@@ -100,7 +99,6 @@ class SettingsNormalizationMixin(
             "trading_lean_backtest_upstream_url",
             "trading_lean_shadow_upstream_url",
             "trading_lean_strategy_shadow_upstream_url",
-            "posthog_host",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:
@@ -130,8 +128,6 @@ class SettingsNormalizationMixin(
             "trading_empirical_advisor_fallback_slo_report_path",
             "trading_empirical_janus_event_car_path",
             "trading_empirical_janus_hgrm_reward_path",
-            "posthog_api_key",
-            "posthog_project_id",
         ):
             raw_value = cast(str | None, getattr(self, field_name))
             if not raw_value:
@@ -139,7 +135,6 @@ class SettingsNormalizationMixin(
             normalized_value = raw_value.strip()
             setattr(self, field_name, normalized_value or None)
 
-        self.posthog_distinct_id = self.posthog_distinct_id.strip() or "torghut-service"
         if self.trading_hypothesis_registry_path is not None:
             self.trading_hypothesis_registry_path = (
                 self.trading_hypothesis_registry_path.strip() or None
@@ -738,19 +733,6 @@ class SettingsNormalizationMixin(
             raise ValueError("LLM_DSPY_PROGRAM_NAME must be set")
         if not self.llm_dspy_signature_version:
             raise ValueError("LLM_DSPY_SIGNATURE_VERSION must be set")
-
-    def _validate_posthog_settings(self) -> None:
-        if self.posthog_timeout_seconds <= 0:
-            raise ValueError("POSTHOG_TIMEOUT_SECONDS must be > 0")
-        if not self.posthog_enabled:
-            return
-        if not self.posthog_host:
-            raise ValueError("POSTHOG_HOST is required when POSTHOG_ENABLED=true")
-        parsed = urlsplit(self.posthog_host)
-        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
-            raise ValueError("POSTHOG_HOST must be a valid http(s) URL")
-        if not self.posthog_api_key:
-            raise ValueError("POSTHOG_API_KEY is required when POSTHOG_ENABLED=true")
 
     def _normalize_tigerbeetle_settings(self) -> None:
         self.tigerbeetle_replica_addresses = self._normalize_csv_setting(
