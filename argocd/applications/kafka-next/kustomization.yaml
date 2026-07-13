@@ -7,3 +7,32 @@ resources:
   - source-credential-reflections.yaml
   - kafka-users.yaml
   - mirror-maker-2.yaml
+patches:
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: strimzi-cluster-operator
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
+  - target:
+      group: rbac.authorization.k8s.io
+      version: v1
+      kind: RoleBinding
+      name: strimzi-cluster-operator-entity-operator-delegation
+    patch: |-
+      apiVersion: rbac.authorization.k8s.io/v1
+      kind: RoleBinding
+      metadata:
+        name: strimzi-cluster-operator-entity-operator-delegation
+      subjects:
+        - kind: ServiceAccount
+          name: strimzi-cluster-operator
+          namespace: kafka
