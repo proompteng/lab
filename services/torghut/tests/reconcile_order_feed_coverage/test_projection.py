@@ -1,13 +1,20 @@
 from __future__ import annotations
 
+import io
+import json
+import os
+import sys
+from argparse import ArgumentTypeError, Namespace
 from datetime import datetime, timezone
 from decimal import Decimal
 from unittest import TestCase
+from unittest.mock import MagicMock, patch
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.models import Base, Execution, ExecutionOrderEvent
+from scripts import reconcile_order_feed_coverage as coverage_script
 from scripts.reconcile_order_feed_coverage import project_order_feed_coverage
 
 
@@ -54,7 +61,7 @@ def _event(
     execution_id: object = None,
     event_type: str | None = "fill",
     status: str | None = "filled",
-    filled_qty: str = "1",
+    filled_qty: str | None = "1",
     filled_qty_delta: str | None = "1",
     source_window_id: object = None,
     source_partition: int | None = 0,
@@ -74,7 +81,7 @@ def _event(
         client_order_id=client_order_id,
         event_type=event_type,
         status=status,
-        filled_qty=Decimal(filled_qty),
+        filled_qty=(Decimal(filled_qty) if filled_qty is not None else None),
         filled_qty_delta=(
             Decimal(filled_qty_delta) if filled_qty_delta is not None else None
         ),
@@ -263,3 +270,183 @@ class TestOrderFeedCoverageProjection(TestCase):
                     window_start=datetime(2026, 7, 11, tzinfo=UTC),
                     window_end=datetime(2026, 7, 10, tzinfo=UTC),
                 )
+
+    def test_helper_parsers_and_bounds_fail_closed(self) -> None:
+        self.assertEqual(
+            coverage_script._sqlalchemy_dsn("postgres://user:pass@db/torghut"),
+            "postgresql+psycopg://user:pass@db/torghut",
+        )
+        self.assertEqual(
+            coverage_script._sqlalchemy_dsn("postgresql://user:pass@db/torghut"),
+            "postgresql+psycopg://user:pass@db/torghut",
+        )
+        self.assertEqual(
+            coverage_script._sqlalchemy_dsn("postgresql+psycopg://db/torghut"),
+            "postgresql+psycopg://db/torghut",
+        )
+        self.assertEqual(
+            coverage_script._sqlalchemy_dsn("sqlite+pysqlite:///:memory:"),
+            "sqlite+pysqlite:///:memory:",
+        )
+        self.assertEqual(
+            coverage_script._parse_datetime("2026-07-10T14:30:00Z").isoformat(),
+            "2026-07-10T14:30:00+00:00",
+        )
+        self.assertEqual(
+            coverage_script._parse_datetime("2026-07-10T14:30:00").isoformat(),
+            "2026-07-10T14:30:00+00:00",
+        )
+        with self.assertRaisesRegex(ArgumentTypeError, "datetime cannot be empty"):
+            coverage_script._parse_datetime(" ")
+        with self.assertRaisesRegex(ArgumentTypeError, "invalid datetime"):
+            coverage_script._parse_datetime("not-a-date")
+        with self.assertRaisesRegex(ValueError, "limit must be an integer"):
+            coverage_script._bounded_limit("not-an-int")
+        self.assertEqual(coverage_script._bounded_limit(0, default=25), 25)
+        self.assertEqual(coverage_script._bounded_limit(6000), 5000)
+        self.assertEqual(coverage_script._bounded_limit(-1), 1)
+        self.assertIsNone(coverage_script._ratio(0, 0))
+        self.assertIsNone(coverage_script._iso(None))
+        self.assertIsNone(coverage_script._decimal_text(None))
+
+    def test_projection_serializes_null_event_fields_and_empty_coverage(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            session.add(
+                _event(
+                    fingerprint="null-unlinked-fill",
+                    event_type="fill",
+                    status="filled",
+                    filled_qty=None,
+                    filled_qty_delta=None,
+                    source_window_id=None,
+                    source_partition=None,
+                    source_offset=None,
+                    alpaca_order_id=None,
+                    client_order_id=None,
+                )
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session, sample_limit=-1)
+            sample = report["samples"]["unlinked_fill_events"][0]
+
+            self.assertEqual(report["population"]["execution_count"], 0)
+            self.assertEqual(report["event_lineage"]["fill_event_count"], 1)
+            self.assertIsNone(
+                report["coverage"]["filled_execution_to_fill_event_ratio"]
+            )
+            self.assertEqual(report["sample_limit"], 1)
+            self.assertIsNone(sample["filled_qty"])
+            self.assertIsNone(sample["filled_qty_delta"])
+            self.assertIsNone(sample["execution_id"])
+            self.assertIsNone(sample["source_window_id"])
+
+    def test_parse_args_covers_read_only_cli_flags(self) -> None:
+        with patch.object(
+            sys,
+            "argv",
+            [
+                "reconcile_order_feed_coverage.py",
+                "--dsn-env",
+                "TEST_DSN",
+                "--account-label",
+                "PA3SX7FYNUTF",
+                "--window-start",
+                "2026-07-10T14:00:00Z",
+                "--window-end",
+                "2026-07-10T15:00:00Z",
+                "--sample-limit",
+                "7",
+                "--fail-on-blockers",
+                "--json",
+            ],
+        ):
+            args = coverage_script._parse_args()
+
+        self.assertEqual(args.dsn_env, "TEST_DSN")
+        self.assertEqual(args.account_label, "PA3SX7FYNUTF")
+        self.assertEqual(args.sample_limit, 7)
+        self.assertTrue(args.fail_on_blockers)
+        self.assertTrue(args.json)
+        self.assertEqual(args.window_start.isoformat(), "2026-07-10T14:00:00+00:00")
+        self.assertEqual(args.window_end.isoformat(), "2026-07-10T15:00:00+00:00")
+
+    def test_run_report_reads_dsn_rolls_back_and_rejects_missing_dsn(self) -> None:
+        fake_session = MagicMock()
+        fake_session.__enter__.return_value = fake_session
+        fake_session.__exit__.return_value = None
+        fake_factory = MagicMock(return_value=fake_session)
+        args = Namespace(
+            dsn_env="TEST_DSN",
+            account_label="PA3SX7FYNUTF",
+            window_start=None,
+            window_end=None,
+            sample_limit=5,
+        )
+        expected = {"blockers": [], "read_only": True}
+        with (
+            patch.dict(os.environ, {"TEST_DSN": "postgresql://example/torghut"}),
+            patch.object(
+                coverage_script, "create_engine", return_value=object()
+            ) as create_engine,
+            patch.object(coverage_script, "sessionmaker", return_value=fake_factory),
+            patch.object(
+                coverage_script,
+                "project_order_feed_coverage",
+                return_value=expected,
+            ) as project,
+        ):
+            self.assertEqual(coverage_script.run_report(args), expected)
+
+        create_engine.assert_called_once_with(
+            "postgresql+psycopg://example/torghut",
+            pool_pre_ping=True,
+            future=True,
+        )
+        project.assert_called_once_with(
+            fake_session,
+            account_label="PA3SX7FYNUTF",
+            window_start=None,
+            window_end=None,
+            sample_limit=5,
+        )
+        fake_session.rollback.assert_called_once_with()
+
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            self.assertRaisesRegex(SystemExit, "missing DSN env var: MISSING_DSN"),
+        ):
+            coverage_script.run_report(
+                Namespace(
+                    dsn_env="MISSING_DSN",
+                    account_label=None,
+                    window_start=None,
+                    window_end=None,
+                    sample_limit=25,
+                )
+            )
+
+    def test_main_emits_compact_and_pretty_json_and_fail_code(self) -> None:
+        compact_args = Namespace(json=True, fail_on_blockers=False)
+        compact_report = {"blockers": [], "read_only": True}
+        compact_stdout = io.StringIO()
+        with (
+            patch.object(coverage_script, "_parse_args", return_value=compact_args),
+            patch.object(coverage_script, "run_report", return_value=compact_report),
+            patch("sys.stdout", compact_stdout),
+        ):
+            self.assertEqual(coverage_script.main(), 0)
+        self.assertEqual(json.loads(compact_stdout.getvalue()), compact_report)
+
+        pretty_args = Namespace(json=False, fail_on_blockers=True)
+        pretty_report = {"blockers": ["unlinked_fill_events_present"]}
+        pretty_stdout = io.StringIO()
+        with (
+            patch.object(coverage_script, "_parse_args", return_value=pretty_args),
+            patch.object(coverage_script, "run_report", return_value=pretty_report),
+            patch("sys.stdout", pretty_stdout),
+        ):
+            self.assertEqual(coverage_script.main(), 1)
+        self.assertIn("\n", pretty_stdout.getvalue())
+        self.assertEqual(json.loads(pretty_stdout.getvalue()), pretty_report)
