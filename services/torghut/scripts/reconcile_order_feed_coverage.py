@@ -17,8 +17,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import create_engine, exists, func, or_, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import and_, create_engine, exists, func, or_, select
+from sqlalchemy.orm import Session, aliased, sessionmaker
 from sqlalchemy.sql import ColumnElement
 from sqlalchemy.sql.base import Executable
 from sqlalchemy.sql.functions import count as sql_count
@@ -58,6 +58,7 @@ class _CoveragePredicates:
     event_scope: tuple[ColumnElement[bool], ...]
     fill_event_scope: tuple[ColumnElement[bool], ...]
     filled_execution_predicate: ColumnElement[bool]
+    event_has_unique_execution: ColumnElement[bool]
     linked_any_event: ColumnElement[bool]
     linked_fill_event: ColumnElement[bool]
 
@@ -192,6 +193,29 @@ def _fill_event_predicate() -> ColumnElement[bool]:
         func.lower(ExecutionOrderEvent.status).in_(FILL_EVENT_TYPES),
         ExecutionOrderEvent.filled_qty > 0,
         ExecutionOrderEvent.filled_qty_delta > 0,
+    )
+
+
+def _event_execution_identity_match(
+    *,
+    execution_id: ColumnElement[object],
+    account_label: ColumnElement[object],
+    alpaca_order_id: ColumnElement[object],
+    client_order_id: ColumnElement[object],
+) -> ColumnElement[bool]:
+    return and_(
+        account_label == ExecutionOrderEvent.alpaca_account_label,
+        or_(
+            execution_id == ExecutionOrderEvent.execution_id,
+            and_(
+                func.nullif(ExecutionOrderEvent.alpaca_order_id, "").is_not(None),
+                alpaca_order_id == ExecutionOrderEvent.alpaca_order_id,
+            ),
+            and_(
+                func.nullif(ExecutionOrderEvent.client_order_id, "").is_not(None),
+                client_order_id == ExecutionOrderEvent.client_order_id,
+            ),
+        ),
     )
 
 
@@ -349,15 +373,37 @@ def _coverage_predicates(
     )
     fill_event_predicate = _fill_event_predicate()
     filled_execution_predicate = _filled_execution_predicate()
+    candidate_execution = aliased(Execution)
+    candidate_match = _event_execution_identity_match(
+        execution_id=candidate_execution.id,
+        account_label=candidate_execution.alpaca_account_label,
+        alpaca_order_id=candidate_execution.alpaca_order_id,
+        client_order_id=candidate_execution.client_order_id,
+    )
+    candidate_count = (
+        select(func.count(candidate_execution.id))
+        .where(candidate_match)
+        .correlate(ExecutionOrderEvent)
+        .scalar_subquery()
+    )
+    event_has_unique_execution = candidate_count == 1
+    current_execution_match = _event_execution_identity_match(
+        execution_id=Execution.id,
+        account_label=Execution.alpaca_account_label,
+        alpaca_order_id=Execution.alpaca_order_id,
+        client_order_id=Execution.client_order_id,
+    )
     linked_any_event = exists(
         select(1).where(
-            ExecutionOrderEvent.execution_id == Execution.id,
+            current_execution_match,
+            event_has_unique_execution,
             *event_scope,
         )
     )
     linked_fill_event = exists(
         select(1).where(
-            ExecutionOrderEvent.execution_id == Execution.id,
+            current_execution_match,
+            event_has_unique_execution,
             fill_event_predicate,
             *event_scope,
         )
@@ -367,6 +413,7 @@ def _coverage_predicates(
         event_scope=event_scope,
         fill_event_scope=(*event_scope, fill_event_predicate),
         filled_execution_predicate=filled_execution_predicate,
+        event_has_unique_execution=event_has_unique_execution,
         linked_any_event=linked_any_event,
         linked_fill_event=linked_fill_event,
     )
@@ -435,10 +482,15 @@ def _lineage_counts(
     has_delta_provenance = normalized_fill_quantity_basis.in_(
         FILL_DELTA_PROVENANCE_ALIASES
     )
-    linked_fill_event_predicate = ExecutionOrderEvent.execution_id.is_not(None)
+    linked_fill_event_predicate = predicates.event_has_unique_execution
     linked_execution_has_trade_decision = exists(
         select(1).where(
-            Execution.id == ExecutionOrderEvent.execution_id,
+            _event_execution_identity_match(
+                execution_id=Execution.id,
+                account_label=Execution.alpaca_account_label,
+                alpaca_order_id=Execution.alpaca_order_id,
+                client_order_id=Execution.client_order_id,
+            ),
             Execution.trade_decision_id.is_not(None),
         )
     )
@@ -474,7 +526,7 @@ def _lineage_counts(
             session,
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
-                ExecutionOrderEvent.execution_id.is_(None),
+                ~linked_fill_event_predicate,
             ),
         ),
     )
@@ -483,7 +535,7 @@ def _lineage_counts(
             session,
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
-                ExecutionOrderEvent.execution_id.is_not(None),
+                linked_fill_event_predicate,
                 ExecutionOrderEvent.source_window_id.is_(None),
             ),
         ),
@@ -491,7 +543,7 @@ def _lineage_counts(
             session,
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
-                ExecutionOrderEvent.execution_id.is_not(None),
+                linked_fill_event_predicate,
                 or_(
                     ExecutionOrderEvent.source_partition.is_(None),
                     ExecutionOrderEvent.source_offset.is_(None),
@@ -558,7 +610,7 @@ def _lineage_counts(
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *event_scope,
                 ExecutionOrderEvent.filled_qty_delta > 0,
-                ExecutionOrderEvent.execution_id.is_(None),
+                ~predicates.event_has_unique_execution,
             ),
         ),
     )
@@ -591,7 +643,7 @@ def _coverage_samples(
         select(ExecutionOrderEvent)
         .where(
             *predicates.fill_event_scope,
-            ExecutionOrderEvent.execution_id.is_(None),
+            ~predicates.event_has_unique_execution,
         )
         .order_by(
             _event_time_expression().asc().nullslast(), ExecutionOrderEvent.id.asc()

@@ -156,6 +156,8 @@ class TestOrderFeedCoverageProjection(TestCase):
                         status="partially_filled",
                         filled_qty="2",
                         filled_qty_delta="1",
+                        alpaca_order_id="unlinked-order",
+                        client_order_id="unlinked-client",
                         source_window_id=None,
                         source_partition=None,
                         source_offset=None,
@@ -354,6 +356,39 @@ class TestOrderFeedCoverageProjection(TestCase):
                 0,
             )
             self.assertNotIn("fill_events_missing_trade_decision", report["blockers"])
+
+    def test_order_identity_fallback_links_unique_execution(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            execution = _execution(
+                order_id="order-id-fallback",
+                filled_qty="1",
+                status="filled",
+            )
+            session.add(execution)
+            session.flush()
+            session.add(
+                _event(
+                    fingerprint="order-id-fallback-fill",
+                    execution_id=None,
+                    alpaca_order_id=execution.alpaca_order_id,
+                    client_order_id=None,
+                    source_window_id=execution.id,
+                    source_offset=30,
+                )
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(report["population"]["execution_with_fill_event_count"], 1)
+            self.assertEqual(
+                report["population"]["filled_executions_missing_fill_event_count"],
+                0,
+            )
+            self.assertEqual(report["event_lineage"]["linked_fill_event_count"], 1)
+            self.assertEqual(report["event_lineage"]["unlinked_fill_event_count"], 0)
+            self.assertNotIn("unlinked_fill_events_present", report["blockers"])
 
     def test_execution_window_uses_updated_at_and_reports_sample_activity(self) -> None:
         engine = _engine()
