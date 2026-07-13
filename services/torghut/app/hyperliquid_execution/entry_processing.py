@@ -198,6 +198,7 @@ def _submit_order(
             now=runtime.context.started_at,
         )
         intent = _normalize_order_intent(runtime.exchange, intent)
+        _validate_order_intent_crossability(runtime.exchange, intent)
         result = runtime.exchange.submit_order(intent)
     except _ORDER_SUBMISSION_ERRORS as exc:
         runtime.counts.record_order_error(type(exc).__name__)
@@ -226,6 +227,15 @@ def _normalize_order_intent(
     if not callable(normalize):
         return intent
     return cast(Callable[[OrderIntent], OrderIntent], normalize)(intent)
+
+
+def _validate_order_intent_crossability(
+    exchange: HyperliquidExecutionExchange,
+    intent: OrderIntent,
+) -> None:
+    validate = getattr(exchange, "validate_order_intent_crossability", None)
+    if callable(validate):
+        cast(Callable[[OrderIntent], None], validate)(intent)
 
 
 def _reduce_only_consumed_order_slot(action: dict[str, object]) -> bool:
