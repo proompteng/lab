@@ -85,7 +85,7 @@
 ## Codex Review
 
 - Let automatic Codex review run without posting `@codex review` or polling for review signals.
-- Treat Codex review as advisory rather than a merge gate. Address actionable findings received before merge, but a push that fixes feedback does not require another review cycle.
+- Treat actionable Codex findings as blocking and resolve them before merge. A push that fixes reviewed feedback does not require another current-head review cycle.
 - For each actionable finding, verify the cited code and range, fix it, add focused regression coverage or exact validation, then push. Reply with the commit and evidence and resolve the finding only after the fix is present.
 
 ## Sub-agents
