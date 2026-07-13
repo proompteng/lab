@@ -83,6 +83,12 @@ describe('impact router', () => {
     expect(plan.validationTargets).toEqual(['kubeconform'])
   })
 
+  test('routes Argo CD application changes through scripts contract tests', () => {
+    const plan = selectImpactPlan(['argocd/applications/argocd/overlays/argocd-cm.yaml'], map)
+    expect(plan.validationTargets).toEqual(['argo-lint', 'kubeconform'])
+    expect(plan.delegatedWorkflows).toEqual(['scripts-ci'])
+  })
+
   test('keeps mixed service changes deterministic', () => {
     const plan = selectImpactPlan(['services/jangar/src/server.ts', 'services/torghut/src/main.py'], map)
     expect(plan.validationTargets).toEqual(['planner'])
