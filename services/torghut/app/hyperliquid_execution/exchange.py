@@ -182,6 +182,24 @@ class HyperliquidSdkExecutionExchange:
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         return self._normalize_order_intent(intent)
 
+    def validate_order_intent_crossability(self, intent: OrderIntent) -> None:
+        try:
+            info = self._info()
+            sdk_name = _sdk_market_name(intent.coin, intent.dex)
+            _register_sdk_market_alias(info, sdk_name, intent.coin)
+            book = cast(dict[str, object], info.l2_snapshot(sdk_name))
+            self._last_read_at = datetime.now(timezone.utc)
+        except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
+            raise ValueError(f"order_book_unavailable:{type(exc).__name__}") from exc
+        best_bid = _best_level_price(book, 0)
+        best_ask = _best_level_price(book, 1)
+        if best_bid is None or best_ask is None:
+            raise ValueError("order_book_empty")
+        if intent.side == "buy" and intent.limit_price < best_ask:
+            raise ValueError("order_not_crossable:buy")
+        if intent.side == "sell" and intent.limit_price > best_bid:
+            raise ValueError("order_not_crossable:sell")
+
     def submit_order(self, intent: OrderIntent) -> OrderResult:
         if intent.tif not in _SUPPORTED_LIMIT_TIFS:
             return OrderResult(
@@ -413,11 +431,11 @@ class HyperliquidSdkExecutionExchange:
             )
         except _BOOK_UNAVAILABLE_EXCEPTIONS as exc:
             return f"book_unavailable:{type(exc).__name__}"
-        if buy_limit >= best_ask and (
-            not self._config.allow_short_entries or sell_limit <= best_bid
-        ):
+        buy_crossable = buy_limit >= best_ask
+        sell_crossable = sell_limit <= best_bid
+        if buy_crossable or (self._config.allow_short_entries and sell_crossable):
             return None
-        expected_sides = "buy,sell" if self._config.allow_short_entries else "buy"
+        expected_sides = "buy|sell" if self._config.allow_short_entries else "buy"
         return (
             f"book_not_crossable:sides={expected_sides}:"
             f"bid={best_bid}:ask={best_ask}:buy_limit={buy_limit}:sell_limit={sell_limit}"

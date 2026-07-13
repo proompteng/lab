@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
+import pytest
 from pytest import MonkeyPatch
 
 from app.hyperliquid_execution.config import HyperliquidExecutionConfig
 from app.hyperliquid_execution.exchange import HyperliquidSdkExecutionExchange
-from app.hyperliquid_execution.models import ExecutionMarket, RuntimeDependencyStatus
+from app.hyperliquid_execution.models import ExecutionMarket, OrderIntent, RuntimeDependencyStatus
 from app.hyperliquid_execution.service import HyperliquidExecutionService
 from tests.hyperliquid_execution.test_runtime_surfaces import (
     _FakeSession,
@@ -145,7 +148,7 @@ def test_exchange_applies_sdk_price_rounding_before_selecting_market() -> None:
     }
 
 
-def test_exchange_requires_buy_crossability_when_short_entries_are_enabled() -> None:
+def test_exchange_keeps_sell_crossable_market_when_short_entries_are_enabled() -> None:
     exchange = _Exchange(
         HyperliquidExecutionConfig.from_env(
             {
@@ -162,11 +165,29 @@ def test_exchange_requires_buy_crossability_when_short_entries_are_enabled() -> 
 
     selected, status = exchange.filter_crossable_markets((_market("NVDA", "xyz"),))
 
-    assert selected == ()
-    assert status.ready is False
-    assert status.details["skipped"] == {
-        "NVDA": "book_not_crossable:sides=buy,sell:bid=99:ask=103:buy_limit=102.0:sell_limit=98.0"
-    }
+    assert [market.coin for market in selected] == ["NVDA"]
+    assert status.ready is True
+    assert status.details["skipped"] == {}
+
+
+def test_exchange_validates_the_generated_order_side_before_submission() -> None:
+    exchange = _Exchange(
+        HyperliquidExecutionConfig.from_env(
+            {
+                "HYPERLIQUID_EXECUTION_ALLOW_SHORT_ENTRIES": "true",
+                "HYPERLIQUID_EXECUTION_MARKETABLE_IOC_SLIPPAGE_BPS": "200",
+            }
+        ),
+        sdk=_Sdk(),
+        info=_Info(
+            {"xyz:NVDA": {"levels": [[{"px": "99"}], [{"px": "103"}]]}},
+            mids={"NVDA": "100"},
+        ),
+    )
+
+    with pytest.raises(ValueError, match="order_not_crossable:buy"):
+        exchange.validate_order_intent_crossability(_intent(side="buy", limit_price="102"))
+    exchange.validate_order_intent_crossability(_intent(side="sell", limit_price="98"))
 
 
 def test_exchange_reports_mid_lookup_failure_as_unavailable_liquidity() -> None:
@@ -371,4 +392,21 @@ def _market(coin: str, dex: str) -> ExecutionMarket:
         dex=dex,
         network="mainnet",
         day_notional_volume_usd=Decimal("1000"),
+    )
+
+
+def _intent(*, side: Literal["buy", "sell"], limit_price: str) -> OrderIntent:
+    return OrderIntent(
+        market_id="hl:perp:xyz:NVDA",
+        coin="NVDA",
+        dex="xyz",
+        side=side,
+        size=Decimal("0.1"),
+        limit_price=Decimal(limit_price),
+        notional_usd=Decimal(limit_price) / Decimal("10"),
+        cloid="0xabc",
+        tif="Ioc",
+        reduce_only=False,
+        signal_id="signal",
+        expires_at=datetime.now(timezone.utc),
     )

@@ -37,6 +37,7 @@ def test_service_persists_exchange_normalized_order_intent() -> None:
     result = service.run_once(session)
 
     assert result.orders_submitted == 1
+    assert exchange.validated_intents == exchange.submitted_intents
     assert exchange.submitted_intents[0].size == Decimal("0.2")
     assert exchange.submitted_intents[0].limit_price == Decimal("101.000000")
     assert exchange.submitted_intents[0].notional_usd == Decimal("20.200000")
@@ -62,6 +63,7 @@ class _NormalizingServiceExchange(_ServiceExchange):
     def __init__(self, *args: object, **kwargs: object) -> None:
         super().__init__(*args, **kwargs)
         self.submitted_intents: list[OrderIntent] = []
+        self.validated_intents: list[OrderIntent] = []
 
     def normalize_order_intent(self, intent: OrderIntent) -> OrderIntent:
         return replace(
@@ -74,3 +76,6 @@ class _NormalizingServiceExchange(_ServiceExchange):
     def submit_order(self, intent: OrderIntent) -> OrderResult:
         self.submitted_intents.append(intent)
         return super().submit_order(intent)
+
+    def validate_order_intent_crossability(self, intent: OrderIntent) -> None:
+        self.validated_intents.append(intent)
