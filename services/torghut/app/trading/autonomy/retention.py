@@ -10,7 +10,7 @@ _AUTONOMY_ROOT_MARKER = ".torghut-autonomy-root"
 
 def _is_autonomy_owned_root(artifact_root: Path) -> bool:
     return (
-        artifact_root.name == "autonomy"
+        artifact_root.name in {"autonomy", "torghut-autonomy"}
         or (artifact_root / _AUTONOMY_ROOT_MARKER).is_file()
     )
 
