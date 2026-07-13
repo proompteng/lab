@@ -152,6 +152,16 @@ def _state_run_id(state: JsonDict) -> str | None:
     return state_run_id or None
 
 
+def _state_candidate_id(state: JsonDict) -> str | None:
+    candidate_id_raw = state.get("candidateId")
+    if not isinstance(candidate_id_raw, str):
+        candidate_id_raw = state.get("candidate_id")
+    if not isinstance(candidate_id_raw, str):
+        return None
+    state_candidate_id = candidate_id_raw.strip()
+    return state_candidate_id or None
+
+
 def _validate_transition_state(
     *,
     state: JsonDict,
@@ -179,7 +189,10 @@ def _validate_transition_state(
     if to_stage not in allowed_targets:
         return _deny(f"illegal_transition:{source_stage}->{to_stage}")
 
-    if str(state.get("candidateId", candidate_id)) != candidate_id:
+    state_candidate_id = _state_candidate_id(state)
+    if not state_candidate_id:
+        return _deny("missing_candidate_id")
+    if state_candidate_id != candidate_id:
         return _deny("candidate_mismatch")
     if bool(state.get("paused", False)):
         return _deny("candidate_paused_for_review", "human_review")
