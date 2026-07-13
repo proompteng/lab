@@ -38,6 +38,9 @@ BLOCKER_FILL_EVENT_SOURCE_WINDOW = "fill_events_missing_source_window"
 BLOCKER_FILL_EVENT_SOURCE_OFFSET = "fill_events_missing_source_offset"
 BLOCKER_FILL_EVENT_ORDER_IDENTITY = "fill_events_missing_order_identity"
 BLOCKER_FILL_EVENT_TRADE_DECISION = "fill_events_missing_trade_decision"
+BLOCKER_FILL_EVENT_DELTA_BASIS = "order_feed_fill_delta_basis_missing"
+BLOCKER_FILL_EVENT_DELTA = "order_feed_fill_delta_missing"
+FILL_DELTA_PROVENANCE_BASES = frozenset({"delta", "cumulative_to_delta"})
 
 
 @dataclass(frozen=True)
@@ -72,6 +75,8 @@ class _SourceEvidenceCounts:
     linked_fill_events_missing_source_offset: int
     fill_events_missing_order_identity: int
     linked_fill_events_missing_trade_decision: int
+    linked_fill_events_missing_delta_basis: int
+    linked_fill_events_missing_delta: int
 
 
 @dataclass(frozen=True)
@@ -286,6 +291,8 @@ def _blockers(
     linked_fill_events_missing_source_offset: int,
     fill_events_missing_order_identity: int,
     linked_fill_events_missing_trade_decision: int,
+    linked_fill_events_missing_delta_basis: int,
+    linked_fill_events_missing_delta: int,
 ) -> list[str]:
     blockers: list[str] = []
     if filled_executions_missing_fill_event:
@@ -300,6 +307,10 @@ def _blockers(
         blockers.append(BLOCKER_FILL_EVENT_ORDER_IDENTITY)
     if linked_fill_events_missing_trade_decision:
         blockers.append(BLOCKER_FILL_EVENT_TRADE_DECISION)
+    if linked_fill_events_missing_delta_basis:
+        blockers.append(BLOCKER_FILL_EVENT_DELTA_BASIS)
+    if linked_fill_events_missing_delta:
+        blockers.append(BLOCKER_FILL_EVENT_DELTA)
     return blockers
 
 
@@ -403,6 +414,16 @@ def _lineage_counts(
 ) -> _LineageCounts:
     fill_event_scope = predicates.fill_event_scope
     event_scope = predicates.event_scope
+    normalized_fill_quantity_basis = func.lower(
+        func.trim(ExecutionOrderEvent.fill_quantity_basis)
+    )
+    has_delta_provenance = normalized_fill_quantity_basis.in_(
+        FILL_DELTA_PROVENANCE_BASES
+    )
+    linked_fill_event_predicate = ExecutionOrderEvent.execution_id.is_not(None)
+    # Keep this SQL-only projection conservative: runtime can derive a delta
+    # from a well-formed raw broker payload, but this diagnostic deliberately
+    # requires the persisted structured proof before reporting promotion-ready.
     fill_events = _FillEventCounts(
         fill_event_count=_count(
             session,
@@ -412,7 +433,7 @@ def _lineage_counts(
             session,
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
-                ExecutionOrderEvent.execution_id.is_not(None),
+                linked_fill_event_predicate,
             ),
         ),
         unlinked_fill_event_count=_count(
@@ -447,16 +468,46 @@ def _lineage_counts(
             session,
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
-                ExecutionOrderEvent.alpaca_order_id.is_(None),
-                ExecutionOrderEvent.client_order_id.is_(None),
+                or_(
+                    ExecutionOrderEvent.alpaca_order_id.is_(None),
+                    func.trim(ExecutionOrderEvent.alpaca_order_id) == "",
+                ),
+                or_(
+                    ExecutionOrderEvent.client_order_id.is_(None),
+                    func.trim(ExecutionOrderEvent.client_order_id) == "",
+                ),
             ),
         ),
         linked_fill_events_missing_trade_decision=_count(
             session,
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
-                ExecutionOrderEvent.execution_id.is_not(None),
+                linked_fill_event_predicate,
                 ExecutionOrderEvent.trade_decision_id.is_(None),
+            ),
+        ),
+        linked_fill_events_missing_delta_basis=_count(
+            session,
+            select(_count_expression(ExecutionOrderEvent.id)).where(
+                *fill_event_scope,
+                linked_fill_event_predicate,
+                or_(
+                    ExecutionOrderEvent.fill_quantity_basis.is_(None),
+                    func.trim(ExecutionOrderEvent.fill_quantity_basis) == "",
+                    ~has_delta_provenance,
+                ),
+            ),
+        ),
+        linked_fill_events_missing_delta=_count(
+            session,
+            select(_count_expression(ExecutionOrderEvent.id)).where(
+                *fill_event_scope,
+                linked_fill_event_predicate,
+                has_delta_provenance,
+                or_(
+                    ExecutionOrderEvent.filled_qty_delta.is_(None),
+                    ExecutionOrderEvent.filled_qty_delta <= 0,
+                ),
             ),
         ),
     )
@@ -569,6 +620,12 @@ def _projection_payload(
             "linked_fill_events_missing_trade_decision_count": (
                 lineage.source_evidence.linked_fill_events_missing_trade_decision
             ),
+            "linked_fill_events_missing_delta_basis_count": (
+                lineage.source_evidence.linked_fill_events_missing_delta_basis
+            ),
+            "linked_fill_events_missing_delta_count": (
+                lineage.source_evidence.linked_fill_events_missing_delta
+            ),
             "positive_fill_delta_event_count": lineage.fill_deltas.positive_fill_delta_event_count,
             "positive_fill_delta_unlinked_count": (
                 lineage.fill_deltas.positive_fill_delta_unlinked_count
@@ -637,6 +694,12 @@ def project_order_feed_coverage(
         ),
         linked_fill_events_missing_trade_decision=(
             lineage.source_evidence.linked_fill_events_missing_trade_decision
+        ),
+        linked_fill_events_missing_delta_basis=(
+            lineage.source_evidence.linked_fill_events_missing_delta_basis
+        ),
+        linked_fill_events_missing_delta=(
+            lineage.source_evidence.linked_fill_events_missing_delta
         ),
     )
     counts = _ProjectionCounts(

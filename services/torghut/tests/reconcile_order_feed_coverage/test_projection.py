@@ -71,6 +71,7 @@ def _event(
     alpaca_order_id: str | None = "order-linked",
     client_order_id: str | None = "client-order-linked",
     trade_decision_id: object = TRADE_DECISION_ID,
+    fill_quantity_basis: str | None = "delta",
 ) -> ExecutionOrderEvent:
     return ExecutionOrderEvent(
         event_fingerprint=fingerprint,
@@ -88,6 +89,7 @@ def _event(
         filled_qty_delta=(
             Decimal(filled_qty_delta) if filled_qty_delta is not None else None
         ),
+        fill_quantity_basis=fill_quantity_basis,
         avg_fill_price=Decimal("100"),
         raw_event={"event": event_type or status or "unknown"},
         execution_id=execution_id,
@@ -184,6 +186,8 @@ class TestOrderFeedCoverageProjection(TestCase):
                     "linked_fill_events_missing_source_offset_count": 1,
                     "fill_events_missing_order_identity_count": 1,
                     "linked_fill_events_missing_trade_decision_count": 1,
+                    "linked_fill_events_missing_delta_basis_count": 0,
+                    "linked_fill_events_missing_delta_count": 0,
                     "positive_fill_delta_event_count": 4,
                     "positive_fill_delta_unlinked_count": 1,
                 },
@@ -213,6 +217,75 @@ class TestOrderFeedCoverageProjection(TestCase):
             self.assertEqual(report["read_only"], True)
             self.assertEqual(report["writes_performed"], False)
             self.assertEqual(report["promotion_authority_eligible"], False)
+
+    def test_blank_order_identity_is_blocked(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            session.add(
+                _event(
+                    fingerprint="blank-order-identity",
+                    alpaca_order_id="",
+                    client_order_id="   ",
+                    execution_id=None,
+                )
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(
+                report["event_lineage"]["fill_events_missing_order_identity_count"],
+                1,
+            )
+            self.assertIn("fill_events_missing_order_identity", report["blockers"])
+
+    def test_linked_fill_events_missing_delta_proof_are_blocked(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            execution = _execution(
+                order_id="delta-proof-execution",
+                filled_qty="2",
+                status="filled",
+            )
+            session.add(execution)
+            session.flush()
+            session.add_all(
+                [
+                    _event(
+                        fingerprint="missing-delta-basis",
+                        execution_id=execution.id,
+                        source_window_id=execution.id,
+                        source_offset=10,
+                        fill_quantity_basis=None,
+                    ),
+                    _event(
+                        fingerprint="missing-delta",
+                        execution_id=execution.id,
+                        source_window_id=execution.id,
+                        source_offset=11,
+                        filled_qty_delta=None,
+                    ),
+                ]
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(
+                report["event_lineage"]["linked_fill_events_missing_delta_basis_count"],
+                1,
+            )
+            self.assertEqual(
+                report["event_lineage"]["linked_fill_events_missing_delta_count"],
+                1,
+            )
+            self.assertEqual(
+                report["blockers"][-2:],
+                [
+                    "order_feed_fill_delta_basis_missing",
+                    "order_feed_fill_delta_missing",
+                ],
+            )
 
     def test_execution_window_uses_updated_at_and_reports_sample_activity(self) -> None:
         engine = _engine()
