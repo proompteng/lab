@@ -14,7 +14,7 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from app.models import Base, Execution, ExecutionOrderEvent
+from app.models import Base, Execution, ExecutionOrderEvent, Strategy, TradeDecision
 from scripts import reconcile_order_feed_coverage as coverage_script
 from scripts.reconcile_order_feed_coverage import project_order_feed_coverage
 
@@ -265,6 +265,13 @@ class TestOrderFeedCoverageProjection(TestCase):
                         source_offset=11,
                         filled_qty_delta=None,
                     ),
+                    _event(
+                        fingerprint="accepted-delta-basis-alias",
+                        execution_id=execution.id,
+                        source_window_id=execution.id,
+                        source_offset=12,
+                        fill_quantity_basis="cum_to_delta",
+                    ),
                 ]
             )
             session.commit()
@@ -286,6 +293,67 @@ class TestOrderFeedCoverageProjection(TestCase):
                     "order_feed_fill_delta_missing",
                 ],
             )
+
+    def test_trade_decision_fallbacks_match_runtime_resolution(self) -> None:
+        engine = _engine()
+        with Session(engine) as session:
+            linked_execution = _execution(
+                order_id="decision-fallback-execution",
+                filled_qty="1",
+                status="filled",
+            )
+            linked_execution.trade_decision_id = TRADE_DECISION_ID
+            client_execution = _execution(
+                order_id="decision-client-fallback-execution",
+                filled_qty="1",
+                status="filled",
+            )
+            session.add_all([linked_execution, client_execution])
+            strategy = Strategy(
+                name="coverage-test-strategy",
+                base_timeframe="1Min",
+                universe_type="static",
+            )
+            client_decision = TradeDecision(
+                strategy=strategy,
+                alpaca_account_label="PA3SX7FYNUTF",
+                symbol="AAPL",
+                timeframe="1Min",
+                decision_json={"action": "buy"},
+                decision_hash="client-decision-fallback",
+            )
+            session.add(client_decision)
+            session.flush()
+            session.add_all(
+                [
+                    _event(
+                        fingerprint="decision-from-execution",
+                        execution_id=linked_execution.id,
+                        trade_decision_id=None,
+                        source_window_id=linked_execution.id,
+                        source_offset=20,
+                    ),
+                    _event(
+                        fingerprint="decision-from-client-order",
+                        execution_id=client_execution.id,
+                        trade_decision_id=None,
+                        client_order_id="client-decision-fallback",
+                        source_window_id=client_execution.id,
+                        source_offset=21,
+                    ),
+                ]
+            )
+            session.commit()
+
+            report = project_order_feed_coverage(session)
+
+            self.assertEqual(
+                report["event_lineage"][
+                    "linked_fill_events_missing_trade_decision_count"
+                ],
+                0,
+            )
+            self.assertNotIn("fill_events_missing_trade_decision", report["blockers"])
 
     def test_execution_window_uses_updated_at_and_reports_sample_activity(self) -> None:
         engine = _engine()

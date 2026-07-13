@@ -23,7 +23,7 @@ from sqlalchemy.sql import ColumnElement
 from sqlalchemy.sql.base import Executable
 from sqlalchemy.sql.functions import count as sql_count
 
-from app.models import Execution, ExecutionOrderEvent
+from app.models import Execution, ExecutionOrderEvent, TradeDecision
 
 
 SCHEMA_VERSION = "torghut.order-feed-coverage-projection.v1"
@@ -40,7 +40,16 @@ BLOCKER_FILL_EVENT_ORDER_IDENTITY = "fill_events_missing_order_identity"
 BLOCKER_FILL_EVENT_TRADE_DECISION = "fill_events_missing_trade_decision"
 BLOCKER_FILL_EVENT_DELTA_BASIS = "order_feed_fill_delta_basis_missing"
 BLOCKER_FILL_EVENT_DELTA = "order_feed_fill_delta_missing"
-FILL_DELTA_PROVENANCE_BASES = frozenset({"delta", "cumulative_to_delta"})
+FILL_DELTA_PROVENANCE_ALIASES = frozenset(
+    {
+        "delta",
+        "fill_delta",
+        "filled_delta",
+        "cumulative_to_delta",
+        "cumulative_delta",
+        "cum_to_delta",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -414,13 +423,38 @@ def _lineage_counts(
 ) -> _LineageCounts:
     fill_event_scope = predicates.fill_event_scope
     event_scope = predicates.event_scope
-    normalized_fill_quantity_basis = func.lower(
-        func.trim(ExecutionOrderEvent.fill_quantity_basis)
+    normalized_fill_quantity_basis = func.replace(
+        func.replace(
+            func.lower(func.trim(ExecutionOrderEvent.fill_quantity_basis)),
+            "-",
+            "_",
+        ),
+        " ",
+        "_",
     )
     has_delta_provenance = normalized_fill_quantity_basis.in_(
-        FILL_DELTA_PROVENANCE_BASES
+        FILL_DELTA_PROVENANCE_ALIASES
     )
     linked_fill_event_predicate = ExecutionOrderEvent.execution_id.is_not(None)
+    linked_execution_has_trade_decision = exists(
+        select(1).where(
+            Execution.id == ExecutionOrderEvent.execution_id,
+            Execution.trade_decision_id.is_not(None),
+        )
+    )
+    client_order_decision_match = exists(
+        select(1).where(
+            TradeDecision.alpaca_account_label
+            == ExecutionOrderEvent.alpaca_account_label,
+            TradeDecision.decision_hash
+            == func.nullif(ExecutionOrderEvent.client_order_id, ""),
+        )
+    )
+    resolved_trade_decision = or_(
+        ExecutionOrderEvent.trade_decision_id.is_not(None),
+        linked_execution_has_trade_decision,
+        client_order_decision_match,
+    )
     # Keep this SQL-only projection conservative: runtime can derive a delta
     # from a well-formed raw broker payload, but this diagnostic deliberately
     # requires the persisted structured proof before reporting promotion-ready.
@@ -483,7 +517,7 @@ def _lineage_counts(
             select(_count_expression(ExecutionOrderEvent.id)).where(
                 *fill_event_scope,
                 linked_fill_event_predicate,
-                ExecutionOrderEvent.trade_decision_id.is_(None),
+                ~resolved_trade_decision,
             ),
         ),
         linked_fill_events_missing_delta_basis=_count(
