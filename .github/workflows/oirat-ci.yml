@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'services/oirat/**'
+      - 'packages/discord/**'
       - 'nix/images/oirat.nix'
   pull_request:
     paths:

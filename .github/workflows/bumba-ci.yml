@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'services/bumba/**'
+      - 'packages/temporal-bun-sdk/**'
       - 'nix/images/bumba.nix'
   pull_request:
     paths:

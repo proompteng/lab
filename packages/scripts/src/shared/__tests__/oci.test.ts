@@ -1210,6 +1210,7 @@ describe('native OCI build workflows', () => {
 
     expect(productNixWorkflow).toContain('uses: ./.github/workflows/nix-oci-build-common.yml')
     expect(productNixWorkflow).toContain('tag: sha-${{ github.sha }}')
+    expect(productNixWorkflow.match(/- 'packages\/design\/\*\*'/g)).toHaveLength(6)
     expect(productNixWorkflow).not.toContain('uses: ./.github/workflows/docker-build-common.yaml')
     expect(productNixWorkflow).not.toContain('mathieudutour/github-tag-action')
     expect(productNixWorkflow).not.toContain('ncipollo/release-action')
@@ -1373,7 +1374,7 @@ describe('native OCI build workflows', () => {
       [froussardWorkflow, "'packages/discord/**'"],
       [froussardWorkflow, "'packages/otel/**'"],
     ]) {
-      expect(workflow).not.toContain(sharedPath)
+      expect(workflow).toContain(sharedPath)
     }
     expect(froussardWorkflow).toContain("'packages/agent-contracts/**'")
     expect(enabledSimpleReleaseWorkflow).toContain('argocd/applications/oirat/kustomization.yaml')

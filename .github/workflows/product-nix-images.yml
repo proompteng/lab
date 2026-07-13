@@ -14,6 +14,7 @@ on:
       - 'apps/olden/**'
       - 'apps/synthesis/**'
       - 'packages/backend/**'
+      - 'packages/design/**'
       - 'nix/images/app.nix'
       - 'nix/images/docs.nix'
       - 'nix/images/olden.nix'
@@ -75,18 +76,23 @@ jobs:
             proompteng:
               - 'apps/landing/**'
               - 'packages/backend/**'
+              - 'packages/design/**'
               - 'nix/images/proompteng.nix'
             app:
               - 'apps/app/**'
+              - 'packages/design/**'
               - 'nix/images/app.nix'
             synthesis:
               - 'apps/synthesis/**'
+              - 'packages/design/**'
               - 'nix/images/synthesis.nix'
             docs:
               - 'apps/docs/**'
+              - 'packages/design/**'
               - 'nix/images/docs.nix'
             olden:
               - 'apps/olden/**'
+              - 'packages/design/**'
               - 'nix/images/olden.nix'
 
       - name: Manual build selection
