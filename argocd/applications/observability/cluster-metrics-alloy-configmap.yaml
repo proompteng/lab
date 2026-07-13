@@ -22,7 +22,7 @@ data:
       rule {
         action        = "keep"
         source_labels = ["__name__"]
-        regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes"
+        regex         = "up|container_cpu_usage_seconds_total|container_memory_working_set_bytes|container_fs_usage_bytes|kube_deployment_status_replicas_available|kube_node_status_allocatable|kube_pod_container_resource_limits|kube_pod_container_resource_requests|kube_pod_container_status_restarts_total|kube_pod_info|kube_pod_labels|kube_pod_status_phase|kube_service_info|kubelet_volume_stats_available_bytes|kubelet_volume_stats_capacity_bytes"
       }
     }
 

@@ -67,7 +67,7 @@ class SingleWriterSchedulerManifestTests(TestCase):
         self.assertEqual(env["TORGHUT_PROCESS_ROLE"].get("value"), "api")
         self.assertEqual(env["TRADING_ENABLED"].get("value"), "false")
 
-    def test_scheduler_is_contained_recreate_and_has_dedicated_probes(self) -> None:
+    def test_scheduler_is_singleton_recreate_and_has_dedicated_probes(self) -> None:
         manifest = _load("argocd/applications/torghut/scheduler-deployment.yaml")
         metadata = cast(Mapping[str, object], manifest["metadata"])
         annotations = cast(Mapping[str, object], metadata["annotations"])
@@ -78,7 +78,7 @@ class SingleWriterSchedulerManifestTests(TestCase):
         env = _env_by_name(container)
 
         self.assertEqual(annotations["argocd.argoproj.io/sync-wave"], "2")
-        self.assertEqual(spec["replicas"], 0)
+        self.assertEqual(spec["replicas"], 1)
         self.assertEqual(spec["revisionHistoryLimit"], 1)
         self.assertEqual(strategy["type"], "Recreate")
         self.assertEqual(pod_spec["serviceAccountName"], "torghut-runtime")

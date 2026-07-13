@@ -10,9 +10,9 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  # P0a containment: keep the dedicated writer disabled until the scheduler-free
-  # API revision is live and every legacy Knative revision has been removed.
-  replicas: 0
+  # Exactly one dedicated writer owns live trading. Knative API revisions run
+  # with TORGHUT_PROCESS_ROLE=api and TRADING_ENABLED=false.
+  replicas: 1
   revisionHistoryLimit: 1
   strategy:
     type: Recreate

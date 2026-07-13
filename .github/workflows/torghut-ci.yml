@@ -287,7 +287,7 @@ jobs:
           }
 
           verified_any=false
-          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|zero-notional-drift-repair-cronjob|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
+          if matches_changed '^argocd/applications/(torghut/(knative-service(-sim)?|scheduler-deployment|db-migrations-job|historical-simulation-workflowtemplate|analysis-template-(runtime-ready|activity|teardown-clean|artifact-bundle)|empirical-jobs-backfill-job|generated-resource-retention-cronjob|whitepaper-semantic-backfill-job|tigerbeetle-smoke-job)\.yaml|torghut-options/(catalog|enricher)/deployment\.yaml|torghut-hyperliquid-runtime/(deployment|db-migrations-job)\.yaml)$'; then
             verify_image_contract \
               "Torghut" \
               argocd/applications/torghut/knative-service.yaml \
