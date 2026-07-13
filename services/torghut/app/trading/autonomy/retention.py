@@ -2,6 +2,7 @@
 
 import re
 import shutil
+import tempfile
 from pathlib import Path
 
 _RUN_DIRECTORY_PATTERN = re.compile(r"^\d{8}T\d{6}$")
@@ -10,7 +11,17 @@ _AUTONOMY_ROOT_MARKER = ".torghut-autonomy-root"
 
 def mark_autonomy_owned_root(artifact_root: Path) -> None:
     """Mark an explicitly resolved artifact root as scheduler-owned."""
-    (artifact_root / _AUTONOMY_ROOT_MARKER).touch(exist_ok=True)
+    resolved_root = artifact_root.resolve()
+    system_temp_root = Path(tempfile.gettempdir()).resolve()
+    unsafe_roots = {
+        Path(resolved_root.anchor),
+        Path.home().resolve(),
+        system_temp_root,
+        system_temp_root / "torghut",
+    }
+    if resolved_root in unsafe_roots:
+        raise ValueError(f"unsafe_autonomy_artifact_root:{resolved_root}")
+    (resolved_root / _AUTONOMY_ROOT_MARKER).touch(exist_ok=True)
 
 
 def _is_autonomy_owned_root(artifact_root: Path) -> bool:

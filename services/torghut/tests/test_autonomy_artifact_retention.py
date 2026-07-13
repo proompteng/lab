@@ -1,4 +1,7 @@
 from pathlib import Path
+import tempfile
+
+import pytest
 
 from app.trading.autonomy.retention import (
     mark_autonomy_owned_root,
@@ -103,3 +106,17 @@ def test_prunes_explicitly_marked_custom_root(tmp_path: Path) -> None:
 
     assert [path.name for path in removed] == ["20260713T000000"]
     assert (artifact_root / "20260713T000500").is_dir()
+
+
+@pytest.mark.parametrize(
+    "artifact_root",
+    [
+        Path(Path.cwd().anchor),
+        Path.home(),
+        Path(tempfile.gettempdir()),
+        Path(tempfile.gettempdir()) / "torghut",
+    ],
+)
+def test_refuses_to_mark_broad_shared_roots(artifact_root: Path) -> None:
+    with pytest.raises(ValueError, match="unsafe_autonomy_artifact_root"):
+        mark_autonomy_owned_root(artifact_root)

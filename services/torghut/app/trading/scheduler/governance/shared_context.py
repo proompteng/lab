@@ -69,7 +69,7 @@ def _resolve_autonomy_artifact_root(raw_root: Path) -> Path:
                 pass
             mark_autonomy_owned_root(root)
             return root
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             if root == preferred_root:
                 logger.warning(
                     "Autonomy artifact root not writable at %s; trying fallback (%s)",
