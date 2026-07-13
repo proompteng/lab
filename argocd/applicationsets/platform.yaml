@@ -297,6 +297,16 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "true"
+              - name: kafka-next
+                path: argocd/applications/kafka-next
+                namespace: kafka-next
+                annotations:
+                  argocd.argoproj.io/sync-wave: "3"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false
               - name: nats
                 path: argocd/applications/nats
                 namespace: nats

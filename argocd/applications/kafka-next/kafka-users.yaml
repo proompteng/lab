@@ -1,0 +1,152 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: user1
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: user1-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: karapace
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: karapace-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: facteur
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: facteur-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: kafka-codex-credentials
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: kafka-codex-credentials-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: froussard
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: froussard-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: flink
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: flink-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: torghut-hyperliquid-feed
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-hyperliquid-feed-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: torghut-options
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-options-source
+          key: password
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaUser
+metadata:
+  name: torghut-ws
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  labels:
+    strimzi.io/cluster: kafka-next
+spec:
+  authentication:
+    type: scram-sha-512
+    password:
+      valueFrom:
+        secretKeyRef:
+          name: torghut-ws-source
+          key: password

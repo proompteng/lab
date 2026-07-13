@@ -1,0 +1,65 @@
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaMirrorMaker2
+metadata:
+  name: kafka-next-mirror
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  version: 4.3.0
+  replicas: 2
+  resources:
+    requests:
+      cpu: "500m"
+      memory: 1Gi
+    limits:
+      cpu: "2000m"
+      memory: 4Gi
+  template:
+    pod:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: kafka-next-mirror
+              topologyKey: kubernetes.io/hostname
+  target:
+    alias: target
+    bootstrapServers: kafka-next-kafka-bootstrap.kafka-next.svc:9093
+    groupId: kafka-next-mirror
+    configStorageTopic: __kafka-next-mirror-config
+    offsetStorageTopic: __kafka-next-mirror-offset
+    statusStorageTopic: __kafka-next-mirror-status
+    config:
+      config.storage.replication.factor: 3
+      offset.storage.replication.factor: 3
+      status.storage.replication.factor: 3
+      plugin.discovery: service_load
+  mirrors:
+    - source:
+        alias: source
+        bootstrapServers: kafka-kafka-bootstrap.kafka.svc:9093
+      sourceConnector:
+        tasksMax: 4
+        config:
+          replication.factor: 3
+          offset-syncs.topic.replication.factor: 3
+          offset-syncs.topic.location: target
+          refresh.topics.interval.seconds: 30
+          replication.policy.class: org.apache.kafka.connect.mirror.IdentityReplicationPolicy
+          sync.topic.acls.enabled: "false"
+          sync.topic.configs.enabled: "true"
+          sync.topic.configs.interval.seconds: 30
+      checkpointConnector:
+        tasksMax: 4
+        config:
+          checkpoints.topic.replication.factor: 3
+          emit.checkpoints.enabled: "true"
+          emit.checkpoints.interval.seconds: 10
+          offset-syncs.topic.location: target
+          refresh.groups.interval.seconds: 30
+          replication.policy.class: org.apache.kafka.connect.mirror.IdentityReplicationPolicy
+          sync.group.offsets.enabled: "true"
+          sync.group.offsets.interval.seconds: 10
+      topicsPattern: '^(?!torghut\.sim\..*\.sim_).*$'
+      groupsPattern: ".*"
